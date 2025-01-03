@@ -281,7 +281,7 @@ func (h *Handler) DeleteVM(c echo.Context) error {
 
 	// Get all service ports in a single query
 	var servicePorts []models.ServicePort
-	if err := tx.Where("vm_id = ?", id).Find(&servicePorts).Error; err != nil {
+	if err := tx.Find(&servicePorts).Error; err != nil {
 		tx.Rollback()
 		return c.JSON(http.StatusInternalServerError, models.Response{
 			Success: false,

@@ -195,7 +195,7 @@ func (m *Manager) RestoreAllTunnels() error {
 	}
 
 	var servicePorts []models.ServicePort
-	if err := m.db.Preload("VM").Find(&servicePorts).Error; err != nil {
+	if err := m.db.Find(&servicePorts).Error; err != nil {
 		return fmt.Errorf("failed to fetch service ports: %w", err)
 	}
 
