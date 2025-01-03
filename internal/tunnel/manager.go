@@ -189,7 +189,7 @@ func (m *Manager) GetVMActiveTunnels(vmID uint) map[string]*SSHTunnel {
 
 func (m *Manager) RestoreAllTunnels() error {
 	var vms []models.VM
-	if err := m.db.Preload("ServicePorts").Preload("Tunnels").Find(&vms).Error; err != nil {
+	if err := m.db.Preload("Tunnels").Find(&vms).Error; err != nil {
 		m.logger.Error("failed to fetch VMs", zap.Error(err))
 		return fmt.Errorf("failed to fetch vms: %w", err)
 	}

@@ -98,7 +98,7 @@ func (h *Handler) CreateVM(c echo.Context) error {
 
 func (h *Handler) ListVMs(c echo.Context) error {
 	var vms []models.VM
-	if err := h.db.Preload("ServicePorts").Preload("Tunnels").Find(&vms).Error; err != nil {
+	if err := h.db.Preload("Tunnels").Find(&vms).Error; err != nil {
 		h.logger.Error("failed to fetch VMs", zap.Error(err))
 		return c.JSON(http.StatusInternalServerError, models.Response{
 			Success: false,
@@ -122,7 +122,7 @@ func (h *Handler) GetVM(c echo.Context) error {
 	}
 
 	var vm models.VM
-	if err := h.db.Preload("ServicePorts").Preload("Tunnels").First(&vm, id).Error; err != nil {
+	if err := h.db.Preload("Tunnels").First(&vm, id).Error; err != nil {
 		return c.JSON(http.StatusNotFound, models.Response{
 			Success: false,
 			Error:   "VM not found",
@@ -376,7 +376,7 @@ func (h *Handler) CreateServicePort(c echo.Context) error {
 	}
 
 	var vms []models.VM
-	if err := h.db.Preload("ServicePorts").Preload("Tunnels").Find(&vms).Error; err != nil {
+	if err := h.db.Preload("Tunnels").Find(&vms).Error; err != nil {
 		h.logger.Error("failed to fetch VMs", zap.Error(err))
 		return c.JSON(http.StatusInternalServerError, models.Response{
 			Success: false,
@@ -489,7 +489,7 @@ func (h *Handler) UpdateServicePort(c echo.Context) error {
 	}
 
 	var vms []models.VM
-	if err := h.db.Preload("ServicePorts").Preload("Tunnels").Find(&vms).Error; err != nil {
+	if err := h.db.Preload("Tunnels").Find(&vms).Error; err != nil {
 		h.logger.Error("failed to fetch VMs", zap.Error(err))
 		return c.JSON(http.StatusInternalServerError, models.Response{
 			Success: false,
@@ -579,7 +579,7 @@ func (h *Handler) DeleteServicePort(c echo.Context) error {
 	}
 
 	var vms []models.VM
-	if err := h.db.Preload("ServicePorts").Preload("Tunnels").Find(&vms).Error; err != nil {
+	if err := h.db.Preload("Tunnels").Find(&vms).Error; err != nil {
 		h.logger.Error("failed to fetch VMs", zap.Error(err))
 		return c.JSON(http.StatusInternalServerError, models.Response{
 			Success: false,
@@ -653,7 +653,7 @@ func (h *Handler) GetVMStatus(c echo.Context) error {
 	}
 
 	var vm models.VM
-	if err := h.db.Preload("ServicePorts").Preload("Tunnels").First(&vm, vmID).Error; err != nil {
+	if err := h.db.Preload("Tunnels").First(&vm, vmID).Error; err != nil {
 		return c.JSON(http.StatusNotFound, models.Response{
 			Success: false,
 			Error:   "VM not found",
