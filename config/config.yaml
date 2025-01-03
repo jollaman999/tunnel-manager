@@ -1,0 +1,13 @@
+database:
+  host: tunnel-manager-db
+  port: 3306
+  user: tunnel-manager
+  password: tunnel-manager-pass
+  name: tunnel-manager
+
+api:
+  port: 8080
+
+logging:
+  level: info
+  format: json

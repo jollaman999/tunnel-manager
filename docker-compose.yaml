@@ -1,0 +1,36 @@
+services:
+  tunnel-manager:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: tunnel-manager
+    image: tunnel-manager:0.0.1
+    ports:
+      - "8080:8080"
+    volumes:
+      - ./config/config.yaml:/config.yaml:ro
+    environment:
+      - TZ=Asia/Seoul
+    restart: always
+    depends_on:
+      - tunnel-manager-db
+    networks:
+      - tunnel-network
+
+  tunnel-manager-db:
+    image: mariadb:11.6
+    container_name: tunnel-manager-db
+    restart: always
+    environment:
+      MARIADB_USER: tunnel-manager
+      MARIADB_PASSWORD: tunnel-manager-pass
+      MARIADB_DATABASE: tunnel-manager
+      MARIADB_ROOT_PASSWORD: tunnel-manager-pass
+    volumes:
+      - ./data/mariadb:/var/lib/mysql
+    networks:
+      - tunnel-network
+
+networks:
+  tunnel-network:
+    driver: bridge
