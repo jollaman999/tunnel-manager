@@ -4,6 +4,7 @@ database:
   user: tunnel-manager
   password: tunnel-manager-pass
   name: tunnel-manager
+  timeout_sec: 30
 
 api:
   port: 8080

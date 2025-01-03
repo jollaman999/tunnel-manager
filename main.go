@@ -3,7 +3,10 @@ package main
 import (
 	"flag"
 	"fmt"
+	"gorm.io/gorm"
 	"log"
+	"strconv"
+	"time"
 
 	"github.com/jollaman999/tunnel-manager/internal/api"
 	"github.com/jollaman999/tunnel-manager/internal/config"
@@ -13,6 +16,35 @@ import (
 	"github.com/labstack/echo/v4/middleware"
 	"go.uber.org/zap"
 )
+
+func initDatabase(cfg *config.Config, logger *zap.Logger) (*gorm.DB, error) {
+	timeout := time.After(time.Duration(cfg.Database.TimeoutSec) * time.Second)
+	tick := time.Tick(1 * time.Second)
+
+	for {
+		select {
+		case <-timeout:
+			return nil, fmt.Errorf("timeout waiting for database connection after " +
+				strconv.Itoa(cfg.Database.TimeoutSec) + " seconds")
+		case <-tick:
+			db, err := database.NewDatabase(
+				cfg.Database.Host,
+				cfg.Database.Port,
+				cfg.Database.User,
+				cfg.Database.Password,
+				cfg.Database.Name,
+			)
+			if err != nil {
+				logger.Info("attempting to connect to database...",
+					zap.String("host", cfg.Database.Host),
+					zap.Int("port", cfg.Database.Port))
+				continue
+			}
+			logger.Info("successfully connected to database")
+			return db, nil
+		}
+	}
+}
 
 func main() {
 	// Initialize Logger
@@ -31,13 +63,7 @@ func main() {
 	}
 
 	// Initialize database
-	db, err := database.NewDatabase(
-		cfg.Database.Host,
-		cfg.Database.Port,
-		cfg.Database.User,
-		cfg.Database.Password,
-		cfg.Database.Name,
-	)
+	db, err := initDatabase(cfg, logger)
 	if err != nil {
 		log.Fatalf("Failed to initialize database: %v", err)
 	}

@@ -8,11 +8,12 @@ import (
 
 type Config struct {
 	Database struct {
-		Host     string `yaml:"host"`
-		Port     int    `yaml:"port"`
-		User     string `yaml:"user"`
-		Password string `yaml:"password"`
-		Name     string `yaml:"name"`
+		Host       string `yaml:"host"`
+		Port       int    `yaml:"port"`
+		User       string `yaml:"user"`
+		Password   string `yaml:"password"`
+		Name       string `yaml:"name"`
+		TimeoutSec int    `yaml:"timeout_sec"`
 	} `yaml:"database"`
 
 	API struct {
