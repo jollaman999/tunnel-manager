@@ -13,7 +13,7 @@ SSH 터널을 관리하기 위한 RESTful API 서버입니다. 여러 VM에 대�
 ## 시스템 요구사항
 
 - Go 1.23 이상
-- MariaDB 11.6 이상
+- MySQL 5.7 이상 또는 MariaDB 10.3 이상
 - Docker & Docker Compose (선택사항)
 
 ## 설치 및 실행
