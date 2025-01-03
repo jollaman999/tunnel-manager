@@ -16,6 +16,43 @@ SSH 터널을 관리하기 위한 RESTful API 서버입니다. 여러 VM에 대�
 - MySQL 5.7 이상 또는 MariaDB 10.3 이상
 - Docker & Docker Compose (선택사항)
 
+## 동작 방식
+
+```mermaid
+sequenceDiagram
+    participant VM as VM (Local)
+    participant Bastion as Tunnel Manager
+    participant WAS as Remote Server
+    
+    rect rgb(255, 255, 220)
+        Note over VM,WAS: Initial Setup Phase
+        Bastion->>VM: SSH Authentication (Password)
+    end
+
+    rect rgb(255, 255, 220)
+        Note over VM,WAS: Tunnel Creation Phase
+        Bastion->>VM: Create SSH Tunnel
+        Note right of Bastion: For each service port:-R 127.0.0.1:localPort:remoteIP:remotePort
+    end
+    
+    rect rgb(255, 255, 220)
+        Note over VM,WAS: Service Access Phase
+        VM->>VM: Connect to 127.0.0.1:localPort
+        VM->>Bastion: Forward Traffic through tunnel
+        Bastion->>WAS: Forward to remoteIP:remotePort
+        WAS-->>Bastion: Response
+        Bastion-->>VM: Response through tunnel
+    end
+
+    Note over VM,WAS: Monitoring & Auto-reconnect
+    loop Every monitoring_interval_sec
+        Bastion->>VM: keepalive@tunnel check
+        alt Connection Lost
+            Bastion->>VM: Reconnect SSH Tunnel
+        end
+    end
+```
+
 ## 설치 및 실행
 
 ### Docker Compose를 사용하는 경우
