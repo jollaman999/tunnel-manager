@@ -9,3 +9,6 @@ build:
 
 clean:
 	rm -f $(APP_NAME)
+
+run-test-server:
+	$(MAKE) -C test-server/httpMultiPort run
