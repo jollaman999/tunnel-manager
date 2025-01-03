@@ -1,6 +1,7 @@
 package api
 
 import (
+	"errors"
 	"fmt"
 	"gorm.io/gorm"
 	"net/http"
@@ -60,6 +61,26 @@ func (h *Handler) CreateVM(c echo.Context) error {
 			Success: false,
 			Error:   "Failed to create VM",
 		})
+	}
+
+	var sps []models.ServicePort
+	if err := h.db.Find(&sps).Error; err != nil {
+		h.logger.Error("failed to fetch service ports", zap.Error(err))
+		return c.JSON(http.StatusInternalServerError, models.Response{
+			Success: false,
+			Error:   "Failed to fetch service ports",
+		})
+	}
+
+	// Start new tunnels
+	for _, sp := range sps {
+		if err := h.manager.StartTunnel(vm, &sp); err != nil {
+			h.logger.Error("failed to restart tunnel",
+				zap.Error(err),
+				zap.String("vm_ip", vm.IP),
+				zap.Int("service_port", sp.ServicePort))
+			// Continue attempting to start other tunnels
+		}
 	}
 
 	if err := tx.Commit().Error; err != nil {
@@ -124,10 +145,19 @@ func (h *Handler) UpdateVM(c echo.Context) error {
 	}
 
 	var vm models.VM
-	if err := h.db.Preload("ServicePorts").First(&vm, id).Error; err != nil {
+	if err := h.db.First(&vm, id).Error; err != nil {
 		return c.JSON(http.StatusNotFound, models.Response{
 			Success: false,
 			Error:   "VM not found",
+		})
+	}
+
+	var sps []models.ServicePort
+	if err := h.db.Find(&sps).Error; err != nil {
+		h.logger.Error("failed to fetch service ports", zap.Error(err))
+		return c.JSON(http.StatusInternalServerError, models.Response{
+			Success: false,
+			Error:   "Failed to fetch service ports",
 		})
 	}
 
@@ -168,9 +198,9 @@ func (h *Handler) UpdateVM(c echo.Context) error {
 	}
 
 	// Restart tunnels if necessary
-	if needTunnelRestart && len(vm.ServicePorts) > 0 {
+	if needTunnelRestart && len(sps) > 0 {
 		// Stop all existing tunnels
-		for _, sp := range vm.ServicePorts {
+		for _, sp := range sps {
 			if err := h.manager.StopTunnel(vm.ID, sp.ID); err != nil {
 				h.logger.Warn("failed to stop tunnel",
 					zap.Uint("vm_id", vm.ID),
@@ -180,7 +210,7 @@ func (h *Handler) UpdateVM(c echo.Context) error {
 		}
 
 		// Start new tunnels
-		for _, sp := range vm.ServicePorts {
+		for _, sp := range sps {
 			if err := h.manager.StartTunnel(&vm, &sp); err != nil {
 				h.logger.Error("failed to restart tunnel",
 					zap.Error(err),
@@ -237,7 +267,7 @@ func (h *Handler) DeleteVM(c echo.Context) error {
 	var vm models.VM
 	if err := tx.Set("gorm:pessimistic_lock", true).First(&vm, id).Error; err != nil {
 		tx.Rollback()
-		if err == gorm.ErrRecordNotFound {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return c.JSON(http.StatusNotFound, models.Response{
 				Success: false,
 				Error:   "VM not found",
@@ -319,21 +349,11 @@ func (h *Handler) CreateServicePort(c echo.Context) error {
 		})
 	}
 
-	// Find associated VM first
-	var vm models.VM
-	if err := h.db.First(&vm, req.VMID).Error; err != nil {
-		return c.JSON(http.StatusBadRequest, models.Response{
-			Success: false,
-			Error:   "VM not found",
-		})
-	}
-
 	sp := &models.ServicePort{
 		ServiceIP:   req.ServiceIP,
 		ServicePort: req.ServicePort,
 		LocalPort:   req.LocalPort,
 		Description: req.Description,
-		VMID:        req.VMID,
 	}
 
 	// Start DB transaction
@@ -355,17 +375,28 @@ func (h *Handler) CreateServicePort(c echo.Context) error {
 		})
 	}
 
-	// Start tunnel
-	if err := h.manager.StartTunnel(&vm, sp); err != nil {
-		tx.Rollback()
-		h.logger.Error("failed to start tunnel",
-			zap.Error(err),
-			zap.String("vm_ip", vm.IP),
-			zap.Int("service_port", sp.ServicePort))
+	var vms []models.VM
+	if err := h.db.Preload("ServicePorts").Preload("Tunnels").Find(&vms).Error; err != nil {
+		h.logger.Error("failed to fetch VMs", zap.Error(err))
 		return c.JSON(http.StatusInternalServerError, models.Response{
 			Success: false,
-			Error:   fmt.Sprintf("Failed to start tunnel: %v", err),
+			Error:   "Failed to fetch VMs",
 		})
+	}
+
+	// Start new tunnels
+	for _, vm := range vms {
+		if err := h.manager.StartTunnel(&vm, sp); err != nil {
+			tx.Rollback()
+			h.logger.Error("failed to start new tunnel",
+				zap.Error(err),
+				zap.String("vm_ip", vm.IP),
+				zap.Int("service_port", sp.ServicePort))
+			return c.JSON(http.StatusInternalServerError, models.Response{
+				Success: false,
+				Error:   fmt.Sprintf("Failed to start new tunnel: %v", err),
+			})
+		}
 	}
 
 	// Commit transaction
@@ -448,15 +479,6 @@ func (h *Handler) UpdateServicePort(c echo.Context) error {
 		})
 	}
 
-	// Find VM
-	var vm models.VM
-	if err := h.db.First(&vm, req.VMID).Error; err != nil {
-		return c.JSON(http.StatusBadRequest, models.Response{
-			Success: false,
-			Error:   "VM not found",
-		})
-	}
-
 	// Start transaction
 	tx := h.db.Begin()
 	if tx.Error != nil {
@@ -466,12 +488,23 @@ func (h *Handler) UpdateServicePort(c echo.Context) error {
 		})
 	}
 
-	// Stop existing tunnel
-	if err := h.manager.StopTunnel(sp.VMID, sp.ID); err != nil {
-		h.logger.Warn("failed to stop existing tunnel",
-			zap.Uint("vm_id", sp.VMID),
-			zap.Uint("service_port_id", sp.ID),
-			zap.Error(err))
+	var vms []models.VM
+	if err := h.db.Preload("ServicePorts").Preload("Tunnels").Find(&vms).Error; err != nil {
+		h.logger.Error("failed to fetch VMs", zap.Error(err))
+		return c.JSON(http.StatusInternalServerError, models.Response{
+			Success: false,
+			Error:   "Failed to fetch VMs",
+		})
+	}
+
+	// Stop existing tunnels
+	for _, vm := range vms {
+		if err := h.manager.StopTunnel(vm.ID, sp.ID); err != nil {
+			h.logger.Warn("failed to stop existing tunnel",
+				zap.String("vm_ip", vm.IP),
+				zap.Int("service_port", sp.ServicePort),
+				zap.Error(err))
+		}
 	}
 
 	// Update service port
@@ -479,7 +512,6 @@ func (h *Handler) UpdateServicePort(c echo.Context) error {
 	sp.ServicePort = req.ServicePort
 	sp.LocalPort = req.LocalPort
 	sp.Description = req.Description
-	sp.VMID = req.VMID
 
 	if err := tx.Save(&sp).Error; err != nil {
 		tx.Rollback()
@@ -490,17 +522,19 @@ func (h *Handler) UpdateServicePort(c echo.Context) error {
 		})
 	}
 
-	// Start new tunnel
-	if err := h.manager.StartTunnel(&vm, &sp); err != nil {
-		tx.Rollback()
-		h.logger.Error("failed to start new tunnel",
-			zap.Error(err),
-			zap.String("vm_ip", vm.IP),
-			zap.Int("service_port", sp.ServicePort))
-		return c.JSON(http.StatusInternalServerError, models.Response{
-			Success: false,
-			Error:   fmt.Sprintf("Failed to start new tunnel: %v", err),
-		})
+	// Start new tunnels
+	for _, vm := range vms {
+		if err := h.manager.StartTunnel(&vm, &sp); err != nil {
+			tx.Rollback()
+			h.logger.Error("failed to start new tunnel",
+				zap.Error(err),
+				zap.String("vm_ip", vm.IP),
+				zap.Int("service_port", sp.ServicePort))
+			return c.JSON(http.StatusInternalServerError, models.Response{
+				Success: false,
+				Error:   fmt.Sprintf("Failed to start new tunnel: %v", err),
+			})
+		}
 	}
 
 	// Commit transaction
@@ -544,22 +578,23 @@ func (h *Handler) DeleteServicePort(c echo.Context) error {
 		})
 	}
 
-	// Stop tunnel first
-	if err := h.manager.StopTunnel(sp.VMID, sp.ID); err != nil {
-		h.logger.Warn("failed to stop tunnel",
-			zap.Uint("vm_id", sp.VMID),
-			zap.Uint("service_port_id", sp.ID),
-			zap.Error(err))
-		// Continue with deletion even if tunnel stop fails
-	}
-
-	// Delete related tunnel records
-	if err := tx.Where("vm_id = ? AND service_port_id = ?", sp.VMID, sp.ID).Delete(&models.Tunnel{}).Error; err != nil {
-		tx.Rollback()
+	var vms []models.VM
+	if err := h.db.Preload("ServicePorts").Preload("Tunnels").Find(&vms).Error; err != nil {
+		h.logger.Error("failed to fetch VMs", zap.Error(err))
 		return c.JSON(http.StatusInternalServerError, models.Response{
 			Success: false,
-			Error:   "Failed to delete tunnel records",
+			Error:   "Failed to fetch VMs",
 		})
+	}
+
+	// Stop tunnel first
+	for _, vm := range vms {
+		if err := h.manager.StopTunnel(vm.ID, sp.ID); err != nil {
+			h.logger.Warn("failed to stop tunnel",
+				zap.String("vm_ip", vm.IP),
+				zap.Int("service_port", sp.ServicePort),
+				zap.Error(err))
+		}
 	}
 
 	// Delete service port
@@ -633,7 +668,6 @@ func (h *Handler) GetVMStatus(c echo.Context) error {
 		Data: map[string]interface{}{
 			"vm":             vm,
 			"tunnels":        vm.Tunnels,
-			"service_ports":  vm.ServicePorts,
 			"active_tunnels": len(activeTunnels),
 			"total_tunnels":  len(vm.Tunnels),
 		},

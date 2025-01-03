@@ -8,6 +8,9 @@ database:
 api:
   port: 8080
 
+monitoring:
+  interval_sec: 5
+
 logging:
   level: info
   format: json

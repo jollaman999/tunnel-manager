@@ -13,10 +13,11 @@ import (
 )
 
 type Manager struct {
-	db      *gorm.DB
-	tunnels map[string]*SSHTunnel
-	mu      sync.RWMutex
-	logger  *zap.Logger
+	db                    *gorm.DB
+	tunnels               map[string]*SSHTunnel
+	mu                    sync.RWMutex
+	logger                *zap.Logger
+	monitoringIntervalSec int
 }
 
 type TunnelKey struct {
@@ -24,11 +25,12 @@ type TunnelKey struct {
 	LocalPort int
 }
 
-func NewManager(db *gorm.DB, logger *zap.Logger) (*Manager, error) {
+func NewManager(db *gorm.DB, logger *zap.Logger, monitoringIntervalSec int) (*Manager, error) {
 	return &Manager{
-		db:      db,
-		tunnels: make(map[string]*SSHTunnel),
-		logger:  logger,
+		db:                    db,
+		tunnels:               make(map[string]*SSHTunnel),
+		logger:                logger,
+		monitoringIntervalSec: monitoringIntervalSec,
 	}, nil
 }
 
@@ -74,8 +76,8 @@ func (m *Manager) StartTunnel(vm *models.VM, sp *models.ServicePort) error {
 	}
 
 	// Start tunnel in background
-	go func() {
-		err := tunnel.Start()
+	go func(m *Manager, tunnel *SSHTunnel, status *models.Tunnel) {
+		err := tunnel.Start(m.monitoringIntervalSec)
 		if err != nil {
 			m.logger.Error("tunnel error",
 				zap.Uint("vm_id", vm.ID),
@@ -97,7 +99,7 @@ func (m *Manager) StartTunnel(vm *models.VM, sp *models.ServicePort) error {
 		if err := m.db.Save(status).Error; err != nil {
 			m.logger.Error("failed to update tunnel connected status", zap.Error(err))
 		}
-	}()
+	}(m, tunnel, status)
 
 	return nil
 }
@@ -186,19 +188,26 @@ func (m *Manager) GetVMActiveTunnels(vmID uint) map[string]*SSHTunnel {
 }
 
 func (m *Manager) RestoreAllTunnels() error {
+	var vms []models.VM
+	if err := m.db.Preload("ServicePorts").Preload("Tunnels").Find(&vms).Error; err != nil {
+		m.logger.Error("failed to fetch VMs", zap.Error(err))
+		return fmt.Errorf("failed to fetch vms: %w", err)
+	}
+
 	var servicePorts []models.ServicePort
 	if err := m.db.Preload("VM").Find(&servicePorts).Error; err != nil {
 		return fmt.Errorf("failed to fetch service ports: %w", err)
 	}
 
-	for _, sp := range servicePorts {
-		if err := m.StartTunnel(sp.VM, &sp); err != nil {
-			m.logger.Error("failed to restore tunnel",
-				zap.Error(err),
-				zap.String("vm_ip", sp.VM.IP),
-				zap.Int("service_port", sp.ServicePort))
-			// Continue trying other tunnels
-			continue
+	for _, vm := range vms {
+		for _, sp := range servicePorts {
+			if err := m.StartTunnel(&vm, &sp); err != nil {
+				m.logger.Error("failed to restore tunnel",
+					zap.Error(err),
+					zap.String("vm_ip", vm.IP),
+					zap.Int("service_port", sp.ServicePort))
+				continue
+			}
 		}
 	}
 

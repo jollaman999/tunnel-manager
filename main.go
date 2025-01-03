@@ -43,7 +43,7 @@ func main() {
 	}
 
 	// Initialize tunnel manager
-	manager, err := tunnel.NewManager(db, logger)
+	manager, err := tunnel.NewManager(db, logger, cfg.Monitoring.IntervalSec)
 	if err != nil {
 		log.Fatalf("Failed to create tunnel manager: %v", err)
 	}

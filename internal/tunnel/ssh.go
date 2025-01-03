@@ -8,6 +8,7 @@ import (
 	"io"
 	"net"
 	"os"
+	"strconv"
 	"sync"
 	"time"
 )
@@ -49,7 +50,7 @@ func NewSSHTunnel(localAddr, serverAddr, remoteAddr string, sshConfig *ssh.Clien
 	}, nil
 }
 
-func (t *SSHTunnel) Start() error {
+func (t *SSHTunnel) Start(monitoringIntervalSec int) error {
 	t.logger.Info("attempting to start tunnel",
 		zap.String("local", t.Local.String()),
 		zap.String("server", t.Server.String()),
@@ -60,18 +61,18 @@ func (t *SSHTunnel) Start() error {
 		case <-t.done:
 			return nil
 		default:
-			err := t.establishConnection()
+			err := t.establishConnection(monitoringIntervalSec)
 			if err != nil {
-				t.logger.Error("connection failed, retrying in 5 seconds",
+				t.logger.Error("connection failed, retrying in "+strconv.Itoa(monitoringIntervalSec)+" seconds",
 					zap.Error(err))
-				time.Sleep(5 * time.Second)
+				time.Sleep(time.Duration(monitoringIntervalSec) * time.Second)
 				continue
 			}
 		}
 	}
 }
 
-func (t *SSHTunnel) establishConnection() error {
+func (t *SSHTunnel) establishConnection(monitoringIntervalSec int) error {
 	// Initialize SSH connection
 	client, err := ssh.Dial("tcp", t.Server.String(), t.Config)
 	if err != nil {
@@ -96,7 +97,7 @@ func (t *SSHTunnel) establishConnection() error {
 		zap.String("remote", t.Remote.String()))
 
 	// Connection monitoring
-	go t.monitorConnection()
+	go t.monitorConnection(monitoringIntervalSec)
 
 	// Handle incoming connections
 	for {
@@ -114,8 +115,8 @@ func (t *SSHTunnel) establishConnection() error {
 	}
 }
 
-func (t *SSHTunnel) monitorConnection() {
-	ticker := time.NewTicker(30 * time.Second)
+func (t *SSHTunnel) monitorConnection(monitoringIntervalSec int) {
+	ticker := time.NewTicker(time.Duration(monitoringIntervalSec) * time.Second)
 	defer ticker.Stop()
 
 	for {
@@ -131,20 +132,31 @@ func (t *SSHTunnel) monitorConnection() {
 				_, _, err := client.SendRequest("keepalive@tunnel", true, nil)
 				if err != nil {
 					t.logger.Warn("connection check failed", zap.Error(err))
-					t.reconnect()
+					t.reconnect(monitoringIntervalSec)
 				}
 			}
 		}
 	}
 }
 
-func (t *SSHTunnel) reconnect() {
+func (t *SSHTunnel) reconnect(monitoringIntervalSec int) {
 	t.mu.Lock()
 	if t.client != nil {
 		_ = t.client.Close()
 		t.client = nil
 	}
 	t.mu.Unlock()
+
+	err := t.establishConnection(monitoringIntervalSec)
+	if err != nil {
+		t.logger.Error("reconnection failed",
+			zap.String("server", t.Server.String()),
+			zap.Error(err))
+		return
+	}
+
+	t.logger.Info("reconnection successful",
+		zap.String("server", t.Server.String()))
 }
 
 func (t *SSHTunnel) forward(localConn net.Conn) {

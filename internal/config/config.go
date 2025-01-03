@@ -19,6 +19,10 @@ type Config struct {
 		Port int `yaml:"port"`
 	} `yaml:"api"`
 
+	Monitoring struct {
+		IntervalSec int `yaml:"interval_sec"`
+	} `yaml:"monitoring"`
+
 	Logging struct {
 		Level  string `yaml:"level"`
 		Format string `yaml:"format"`
