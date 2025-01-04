@@ -14,16 +14,16 @@ import (
 )
 
 type SSHTunnel struct {
-	VMID   *uint
-	SPID   *uint
-	Local  *net.TCPAddr
-	Server *net.TCPAddr
-	Remote *net.TCPAddr
-	Config *ssh.ClientConfig
-	client *ssh.Client
-	mu     sync.RWMutex
-	done   chan bool
-	logger *zap.Logger
+	VMID     *uint
+	SPID     *uint
+	Local    *net.TCPAddr
+	Server   *net.TCPAddr
+	Remote   *net.TCPAddr
+	Config   *ssh.ClientConfig
+	client   *ssh.Client
+	clientMu sync.RWMutex
+	done     chan bool
+	logger   *zap.Logger
 }
 
 func NewSSHTunnel(vmID, spID *uint, localAddr, serverAddr, remoteAddr string, sshConfig *ssh.ClientConfig, logger *zap.Logger) (*SSHTunnel, error) {
@@ -73,12 +73,12 @@ func (t *SSHTunnel) reconnect(m *Manager) {
 		m.logger.Error("failed to update tunnel connected status", zap.Error(err))
 	}
 
-	t.mu.Lock()
+	t.clientMu.Lock()
 	if t.client != nil {
 		_ = t.client.Close()
 		t.client = nil
 	}
-	t.mu.Unlock()
+	t.clientMu.Unlock()
 
 	err = t.establishConnection(m)
 	if err != nil {
@@ -101,9 +101,9 @@ func (t *SSHTunnel) monitorConnection(m *Manager) {
 		case <-t.done:
 			return
 		case <-ticker.C:
-			t.mu.RLock()
+			t.clientMu.RLock()
 			client := t.client
-			t.mu.RUnlock()
+			t.clientMu.RUnlock()
 
 			if client != nil {
 				conn, err := net.DialTimeout("tcp", t.Server.String(),
@@ -134,9 +134,9 @@ func (t *SSHTunnel) forward(localConn net.Conn) {
 		_ = localConn.Close()
 	}()
 
-	t.mu.RLock()
+	t.clientMu.RLock()
 	client := t.client
-	t.mu.RUnlock()
+	t.clientMu.RUnlock()
 
 	if client == nil {
 		t.logger.Error("ssh client is nil during forward")
@@ -166,7 +166,7 @@ func (t *SSHTunnel) forward(localConn net.Conn) {
 
 	err = <-errc
 	if err != nil && err != io.EOF {
-		t.logger.Error("copy error", zap.Error(err))
+		t.logger.Debug("copy error", zap.Error(err))
 	}
 }
 
@@ -195,18 +195,15 @@ func (t *SSHTunnel) establishConnection(m *Manager) error {
 		_ = listener.Close()
 	}()
 
-	t.mu.Lock()
+	t.clientMu.Lock()
 	t.client = client
-	t.mu.Unlock()
+	t.clientMu.Unlock()
 
 	err = m.db.Model(&models.Tunnel{}).
 		Where("vm_id = ?", t.VMID).
 		Where("sp_id = ?", t.SPID).
 		Update("status", "connected").
 		Update("last_connected_at", time.Now()).Error
-	if err != nil {
-		m.logger.Error("failed to update tunnel connected status", zap.Error(err))
-	}
 	if err != nil {
 		m.logger.Error("failed to update tunnel connected status", zap.Error(err))
 	}
@@ -254,17 +251,21 @@ func (t *SSHTunnel) Start(m *Manager) error {
 	}
 }
 
-func (t *SSHTunnel) Stop() error {
+func (t *SSHTunnel) Stop(m *Manager) error {
 	close(t.done)
-	t.mu.Lock()
-	defer t.mu.Unlock()
 
+	t.clientMu.Lock()
 	if t.client != nil {
-		err := t.client.Close()
+		_ = t.client.Close()
 		t.client = nil
-		if err != nil {
-			return fmt.Errorf("failed to close SSH client: %w", err)
-		}
 	}
+	t.clientMu.Unlock()
+
+	err := m.db.Unscoped().Where("vm_id = ? and sp_id = ?", t.VMID, t.SPID).
+		Delete(&models.Tunnel{}).Error
+	if err != nil {
+		return fmt.Errorf("failed to delete tunnel: %w", err)
+	}
+
 	return nil
 }

@@ -115,25 +115,20 @@ func (m *Manager) StopTunnel(vmID uint, spID uint) error {
 		return fmt.Errorf("tunnel does not exist")
 	}
 
-	err = tunnel.Stop()
+	err = tunnel.Stop(m)
 	if err != nil {
 		return fmt.Errorf("failed to stop tunnel: %w", err)
 	}
 
 	delete(m.tunnels, tunnelKey)
 
-	err = m.db.Model(&models.Tunnel{}).
-		Where("vm_id = ?", vmID).
-		Where("sp_id = ?", spID).
-		Update("status", "stopped").Error
-	if err != nil {
-		return fmt.Errorf("failed to update tunnel status: %w", err)
-	}
-
 	return nil
 }
 
 func (m *Manager) RestartTunnel(vmID uint, spID uint) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
 	err := m.StopTunnel(vmID, spID)
 	if err != nil {
 		m.logger.Warn("failed to stop tunnel for restart",
@@ -156,6 +151,9 @@ func (m *Manager) RestartTunnel(vmID uint, spID uint) error {
 }
 
 func (m *Manager) RestoreAllTunnels() error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
 	var vms []models.VM
 	err := m.db.Preload("Tunnels").Find(&vms).Error
 	if err != nil {
