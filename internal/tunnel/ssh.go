@@ -106,9 +106,22 @@ func (t *SSHTunnel) monitorConnection(m *Manager) {
 			t.mu.RUnlock()
 
 			if client != nil {
-				_, _, err := client.SendRequest("keepalive@tunnel", true, nil)
+				conn, err := net.DialTimeout("tcp", t.Server.String(),
+					time.Duration(m.monitoringIntervalSec)*time.Second)
 				if err != nil {
-					t.logger.Warn("connection check failed", zap.Error(err))
+					t.logger.Warn("SSH connection lost, attempting reconnection",
+						zap.String("server", t.Server.String()),
+						zap.Error(err))
+					t.reconnect(m)
+					continue
+				}
+				_ = conn.Close()
+
+				_, _, err = client.SendRequest("keepalive@tunnel", true, nil)
+				if err != nil {
+					t.logger.Warn("SSH keepalive check failed, attempting reconnection",
+						zap.String("server", t.Server.String()),
+						zap.Error(err))
 					t.reconnect(m)
 				}
 			}
