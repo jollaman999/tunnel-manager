@@ -2,7 +2,6 @@ package tunnel
 
 import (
 	"fmt"
-	"strings"
 	"sync"
 	"time"
 
@@ -49,6 +48,8 @@ func (m *Manager) StartTunnel(vm *models.VM, sp *models.ServicePort) error {
 	}
 
 	tunnel, err := NewSSHTunnel(
+		&vm.ID,
+		&sp.ID,
 		fmt.Sprintf("127.0.0.1:%d", sp.LocalPort),
 		fmt.Sprintf("%s:%d", vm.IP, vm.Port),
 		fmt.Sprintf("%s:%d", sp.ServiceIP, sp.ServicePort),
@@ -63,12 +64,11 @@ func (m *Manager) StartTunnel(vm *models.VM, sp *models.ServicePort) error {
 
 	status := &models.Tunnel{
 		VMID:   vm.ID,
+		SPID:   sp.ID,
 		Status: "starting",
-	}
-
-	err = m.db.Unscoped().Where("vm_id = ?", vm.ID).Delete(&models.Tunnel{}).Error
-	if err != nil {
-		return fmt.Errorf("failed to reset tunnel status: %w", err)
+		Local:  fmt.Sprintf("127.0.0.1:%d", sp.LocalPort),
+		Server: fmt.Sprintf("%s:%d", vm.IP, vm.Port),
+		Remote: fmt.Sprintf("%s:%d", sp.ServiceIP, sp.ServicePort),
 	}
 
 	err = m.db.Create(status).Error
@@ -77,17 +77,18 @@ func (m *Manager) StartTunnel(vm *models.VM, sp *models.ServicePort) error {
 	}
 
 	go func(m *Manager, tunnel *SSHTunnel, status *models.Tunnel) {
-		err := tunnel.Start(m, status)
+		err := tunnel.Start(m)
 		if err != nil {
 			m.logger.Error("tunnel error",
 				zap.Uint("vm_id", vm.ID),
 				zap.Int("local_port", sp.LocalPort),
 				zap.Error(err))
 
-			status.Status = "error"
-			status.LastError = err.Error()
-
-			err = m.db.Save(status).Error
+			err = m.db.Model(&models.Tunnel{}).
+				Where("vm_id = ?", vm.ID).
+				Where("sp_id = ?", sp.ID).
+				Update("status", "error").
+				Update("last_error", err.Error()).Error
 			if err != nil {
 				m.logger.Error("failed to update tunnel error status", zap.Error(err))
 			}
@@ -123,6 +124,7 @@ func (m *Manager) StopTunnel(vmID uint, spID uint) error {
 
 	err = m.db.Model(&models.Tunnel{}).
 		Where("vm_id = ?", vmID).
+		Where("sp_id = ?", spID).
 		Update("status", "stopped").Error
 	if err != nil {
 		return fmt.Errorf("failed to update tunnel status: %w", err)
@@ -153,34 +155,6 @@ func (m *Manager) RestartTunnel(vmID uint, spID uint) error {
 	return m.StartTunnel(&vm, &sp)
 }
 
-func (m *Manager) GetActiveTunnels() map[string]*SSHTunnel {
-	m.mu.RLock()
-	defer m.mu.RUnlock()
-
-	tunnels := make(map[string]*SSHTunnel)
-	for k, v := range m.tunnels {
-		tunnels[k] = v
-	}
-
-	return tunnels
-}
-
-func (m *Manager) GetVMActiveTunnels(vmID uint) map[string]*SSHTunnel {
-	m.mu.RLock()
-	defer m.mu.RUnlock()
-
-	tunnels := make(map[string]*SSHTunnel)
-	prefix := fmt.Sprintf("%d-", vmID)
-
-	for k, v := range m.tunnels {
-		if strings.HasPrefix(k, prefix) {
-			tunnels[k] = v
-		}
-	}
-
-	return tunnels
-}
-
 func (m *Manager) RestoreAllTunnels() error {
 	var vms []models.VM
 	err := m.db.Preload("Tunnels").Find(&vms).Error
@@ -196,6 +170,11 @@ func (m *Manager) RestoreAllTunnels() error {
 	}
 
 	for _, vm := range vms {
+		err = m.db.Unscoped().Where("vm_id = ?", vm.ID).Delete(&models.Tunnel{}).Error
+		if err != nil {
+			return fmt.Errorf("failed to reset tunnel status for vm_id=%d: %w", vm.ID, err)
+		}
+
 		for _, sp := range servicePorts {
 			err = m.StartTunnel(&vm, &sp)
 			if err != nil {

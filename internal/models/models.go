@@ -24,12 +24,15 @@ type ServicePort struct {
 }
 
 type Tunnel struct {
-	gorm.Model
 	VMID            uint      `gorm:"not null" json:"vm_id"`
+	SPID            uint      `gorm:"not null" json:"sp_id"`
 	Status          string    `gorm:"not null" json:"status"`
 	LastError       string    `json:"last_error"`
 	RetryCount      int       `gorm:"default:0" json:"retry_count"`
 	LastConnectedAt time.Time `json:"last_connected_at"`
+	Server          string    `gorm:"not null" json:"server"`
+	Local           string    `gorm:"not null" json:"local"`
+	Remote          string    `gorm:"not null" json:"remote"`
 	VM              *VM       `gorm:"foreignKey:VMID" json:"-"`
 }
 

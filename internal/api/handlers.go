@@ -659,14 +659,19 @@ func (h *Handler) GetStatus(c echo.Context) error {
 		})
 	}
 
-	activeTunnels := len(h.manager.GetActiveTunnels())
+	var connectedTunnels int
+	for _, t := range tunnels {
+		if t.Status == "connected" {
+			connectedTunnels++
+		}
+	}
 
 	return c.JSON(http.StatusOK, models.Response{
 		Success: true,
 		Data: map[string]interface{}{
-			"tunnels":      tunnels,
-			"active_count": activeTunnels,
-			"total_count":  len(tunnels),
+			"total_tunnels":     len(tunnels),
+			"connected_tunnels": connectedTunnels,
+			"tunnels":           tunnels,
 		},
 	})
 }
@@ -689,15 +694,23 @@ func (h *Handler) GetVMStatus(c echo.Context) error {
 		})
 	}
 
-	activeTunnels := h.manager.GetVMActiveTunnels(uint(vmID))
+	vmWithoutTunnels := vm
+	vmWithoutTunnels.Tunnels = nil
+
+	var connectedTunnels int
+	for _, t := range vm.Tunnels {
+		if t.Status == "connected" {
+			connectedTunnels++
+		}
+	}
 
 	return c.JSON(http.StatusOK, models.Response{
 		Success: true,
 		Data: map[string]interface{}{
-			"vm":             vm,
-			"tunnels":        vm.Tunnels,
-			"active_tunnels": len(activeTunnels),
-			"total_tunnels":  len(vm.Tunnels),
+			"vm":                vmWithoutTunnels,
+			"total_tunnels":     len(vm.Tunnels),
+			"connected_tunnels": connectedTunnels,
+			"tunnels":           vm.Tunnels,
 		},
 	})
 }
