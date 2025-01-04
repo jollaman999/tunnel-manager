@@ -28,7 +28,6 @@ func NewHandler(db *gorm.DB, manager *tunnel.Manager, logger *zap.Logger) *Handl
 }
 
 func (h *Handler) CreateVM(c echo.Context) error {
-
 	var req models.CreateVMRequest
 	err := c.Bind(&req)
 	if err != nil {
@@ -74,12 +73,46 @@ func (h *Handler) CreateVM(c echo.Context) error {
 	}
 
 	var sps []models.ServicePort
-	err = h.db.Find(&sps).Error
+	err = tx.Find(&sps).Error
 	if err != nil {
+		tx.Rollback()
 		h.logger.Error("failed to fetch service ports", zap.Error(err))
 		return c.JSON(http.StatusInternalServerError, models.Response{
 			Success: false,
 			Error:   "Failed to fetch service ports: " + err.Error(),
+		})
+	}
+
+	var tunnels []models.Tunnel
+	for _, sp := range sps {
+		t := models.Tunnel{
+			VMID:   vm.ID,
+			SPID:   sp.ID,
+			Status: "starting",
+			Local:  fmt.Sprintf("127.0.0.1:%d", sp.LocalPort),
+			Server: fmt.Sprintf("%s:%d", vm.IP, vm.Port),
+			Remote: fmt.Sprintf("%s:%d", sp.ServiceIP, sp.ServicePort),
+		}
+		tunnels = append(tunnels, t)
+	}
+
+	if len(tunnels) > 0 {
+		err = tx.Create(&tunnels).Error
+		if err != nil {
+			tx.Rollback()
+			h.logger.Error("failed to create tunnels", zap.Error(err))
+			return c.JSON(http.StatusInternalServerError, models.Response{
+				Success: false,
+				Error:   "Failed to create tunnels: " + err.Error(),
+			})
+		}
+	}
+
+	err = tx.Commit().Error
+	if err != nil {
+		return c.JSON(http.StatusInternalServerError, models.Response{
+			Success: false,
+			Error:   "Failed to commit transaction: " + err.Error(),
 		})
 	}
 
@@ -91,14 +124,6 @@ func (h *Handler) CreateVM(c echo.Context) error {
 				zap.String("vm_ip", vm.IP),
 				zap.Int("service_port", sp.ServicePort))
 		}
-	}
-
-	err = tx.Commit().Error
-	if err != nil {
-		return c.JSON(http.StatusInternalServerError, models.Response{
-			Success: false,
-			Error:   "Failed to commit transaction: " + err.Error(),
-		})
 	}
 
 	return c.JSON(http.StatusCreated, models.Response{
