@@ -5,7 +5,9 @@ import (
 	"fmt"
 	"gorm.io/gorm"
 	"log"
+	"reflect"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/go-playground/validator/v10"
@@ -52,6 +54,13 @@ type CustomValidator struct {
 }
 
 func (cv *CustomValidator) Validate(i interface{}) error {
+	cv.validator.RegisterTagNameFunc(func(fld reflect.StructField) string {
+		name, _, _ := strings.Cut(fld.Tag.Get("json"), ",")
+		if name == "-" || name == "" {
+			return fld.Name
+		}
+		return name
+	})
 	return cv.validator.Struct(i)
 }
 
