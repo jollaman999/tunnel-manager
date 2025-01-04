@@ -25,12 +25,12 @@ func NewDatabase(host string, port int, user, password, dbname string) (*gorm.DB
 		return nil, fmt.Errorf("failed to connect to database: %w", err)
 	}
 
-	// Auto migrate schemas
-	if err := db.AutoMigrate(
+	err = db.AutoMigrate(
 		&models.VM{},
 		&models.ServicePort{},
 		&models.Tunnel{},
-	); err != nil {
+	)
+	if err != nil {
 		return nil, fmt.Errorf("failed to migrate database: %w", err)
 	}
 

@@ -8,7 +8,6 @@ import (
 	"golang.org/x/crypto/ssh"
 	"io"
 	"net"
-	"os"
 	"strconv"
 	"sync"
 	"time"
@@ -51,82 +50,31 @@ func NewSSHTunnel(localAddr, serverAddr, remoteAddr string, sshConfig *ssh.Clien
 	}, nil
 }
 
-func (t *SSHTunnel) Start(m *Manager, status *models.Tunnel) error {
-	t.logger.Info("attempting to start tunnel",
-		zap.String("local", t.Local.String()),
-		zap.String("server", t.Server.String()),
-		zap.String("remote", t.Remote.String()))
+func (t *SSHTunnel) reconnect(m *Manager, status *models.Tunnel) {
+	status.Status = "reconnecting"
 
-	for {
-		select {
-		case <-t.done:
-			return nil
-		default:
-			err := t.establishConnection(m, status)
-			if err != nil {
-				t.logger.Error("connection failed, retrying in "+strconv.Itoa(m.monitoringIntervalSec)+" seconds",
-					zap.Error(err))
-				time.Sleep(time.Duration(m.monitoringIntervalSec) * time.Second)
-			}
-		}
-	}
-}
-
-func (t *SSHTunnel) establishConnection(m *Manager, status *models.Tunnel) error {
-	// Initialize SSH connection
-	client, err := ssh.Dial("tcp", t.Server.String(), t.Config)
+	err := m.db.Save(status).Error
 	if err != nil {
-		return fmt.Errorf("failed to establish SSH connection: %w", err)
-	}
-
-	listener, err := client.Listen("tcp", t.Local.String())
-	if err != nil {
-		err = fmt.Errorf("failed to start remote listener: %w", err)
-
-		status.Status = "error"
-		status.LastError = err.Error()
-		if err := m.db.Save(status).Error; err != nil {
-			m.logger.Error("failed to update tunnel connected status", zap.Error(err))
-		}
-
-		return err
-	}
-	defer func() {
-		_ = listener.Close()
-	}()
-
-	t.mu.Lock()
-	t.client = client
-	t.mu.Unlock()
-
-	status.Status = "connected"
-	status.LastConnectedAt = time.Now()
-	if err := m.db.Save(status).Error; err != nil {
 		m.logger.Error("failed to update tunnel connected status", zap.Error(err))
 	}
 
-	t.logger.Info("tunnel connected successfully",
-		zap.String("local", t.Local.String()),
-		zap.String("server", t.Server.String()),
-		zap.String("remote", t.Remote.String()))
-
-	// Connection monitoring
-	go t.monitorConnection(m, status)
-
-	// Handle incoming connections
-	for {
-		conn, err := listener.Accept()
-		if err != nil {
-			var netErr net.Error
-			if errors.As(err, &netErr) && netErr.Temporary() {
-				t.logger.Warn("temporary accept error", zap.Error(err))
-				time.Sleep(time.Second)
-				continue
-			}
-			return fmt.Errorf("listener accept error: %w", err)
-		}
-		go t.forward(conn)
+	t.mu.Lock()
+	if t.client != nil {
+		_ = t.client.Close()
+		t.client = nil
 	}
+	t.mu.Unlock()
+
+	err = t.establishConnection(m, status)
+	if err != nil {
+		t.logger.Error("reconnection failed",
+			zap.String("server", t.Server.String()),
+			zap.Error(err))
+		return
+	}
+
+	t.logger.Info("reconnection successful",
+		zap.String("server", t.Server.String()))
 }
 
 func (t *SSHTunnel) monitorConnection(m *Manager, status *models.Tunnel) {
@@ -151,31 +99,6 @@ func (t *SSHTunnel) monitorConnection(m *Manager, status *models.Tunnel) {
 			}
 		}
 	}
-}
-
-func (t *SSHTunnel) reconnect(m *Manager, status *models.Tunnel) {
-	status.Status = "reconnecting"
-	if err := m.db.Save(status).Error; err != nil {
-		m.logger.Error("failed to update tunnel connected status", zap.Error(err))
-	}
-
-	t.mu.Lock()
-	if t.client != nil {
-		_ = t.client.Close()
-		t.client = nil
-	}
-	t.mu.Unlock()
-
-	err := t.establishConnection(m, status)
-	if err != nil {
-		t.logger.Error("reconnection failed",
-			zap.String("server", t.Server.String()),
-			zap.Error(err))
-		return
-	}
-
-	t.logger.Info("reconnection successful",
-		zap.String("server", t.Server.String()))
 }
 
 func (t *SSHTunnel) forward(localConn net.Conn) {
@@ -203,7 +126,6 @@ func (t *SSHTunnel) forward(localConn net.Conn) {
 		_ = remoteConn.Close()
 	}()
 
-	// Bidirectional copy
 	errc := make(chan error, 2)
 	go func() {
 		_, err := io.Copy(localConn, remoteConn)
@@ -214,10 +136,87 @@ func (t *SSHTunnel) forward(localConn net.Conn) {
 		errc <- err
 	}()
 
-	// Wait for either copy to complete
 	err = <-errc
 	if err != nil && err != io.EOF {
 		t.logger.Error("copy error", zap.Error(err))
+	}
+}
+
+func (t *SSHTunnel) establishConnection(m *Manager, status *models.Tunnel) error {
+	client, err := ssh.Dial("tcp", t.Server.String(), t.Config)
+	if err != nil {
+		return fmt.Errorf("failed to establish SSH connection: %w", err)
+	}
+
+	listener, err := client.Listen("tcp", t.Local.String())
+	if err != nil {
+		err = fmt.Errorf("failed to start remote listener: %w", err)
+
+		status.Status = "error"
+		status.LastError = err.Error()
+		err = m.db.Save(status).Error
+		if err != nil {
+			m.logger.Error("failed to update tunnel connected status", zap.Error(err))
+		}
+
+		return err
+	}
+	defer func() {
+		_ = listener.Close()
+	}()
+
+	t.mu.Lock()
+	t.client = client
+	t.mu.Unlock()
+
+	status.Status = "connected"
+	status.LastConnectedAt = time.Now()
+
+	err = m.db.Save(status).Error
+	if err != nil {
+		m.logger.Error("failed to update tunnel connected status", zap.Error(err))
+	}
+
+	t.logger.Info("tunnel connected successfully",
+		zap.String("local", t.Local.String()),
+		zap.String("server", t.Server.String()),
+		zap.String("remote", t.Remote.String()))
+
+	go t.monitorConnection(m, status)
+
+	for {
+		conn, err := listener.Accept()
+		if err != nil {
+			var netErr net.Error
+			if errors.As(err, &netErr) && netErr.Temporary() {
+				t.logger.Warn("temporary accept error", zap.Error(err))
+				time.Sleep(time.Second)
+				continue
+			}
+			return fmt.Errorf("listener accept error: %w", err)
+		}
+		go t.forward(conn)
+	}
+}
+
+func (t *SSHTunnel) Start(m *Manager, status *models.Tunnel) error {
+	t.logger.Info("attempting to start tunnel",
+		zap.String("local", t.Local.String()),
+		zap.String("server", t.Server.String()),
+		zap.String("remote", t.Remote.String()))
+
+	for {
+		select {
+		case <-t.done:
+			return nil
+		default:
+			err := t.establishConnection(m, status)
+			if err != nil {
+				t.logger.Error("connection failed, retrying in "+strconv.Itoa(m.monitoringIntervalSec)+" seconds",
+					zap.Error(err))
+				time.Sleep(time.Duration(m.monitoringIntervalSec) * time.Second)
+			}
+		}
 	}
 }
 
@@ -234,18 +233,4 @@ func (t *SSHTunnel) Stop() error {
 		}
 	}
 	return nil
-}
-
-func loadPrivateKey(path string) (ssh.Signer, error) {
-	key, err := os.ReadFile(path)
-	if err != nil {
-		return nil, fmt.Errorf("failed to read private key: %w", err)
-	}
-
-	signer, err := ssh.ParsePrivateKey(key)
-	if err != nil {
-		return nil, fmt.Errorf("failed to parse private key: %w", err)
-	}
-
-	return signer, nil
 }
