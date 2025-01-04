@@ -66,6 +66,11 @@ func (m *Manager) StartTunnel(vm *models.VM, sp *models.ServicePort) error {
 		Status: "starting",
 	}
 
+	err = m.db.Unscoped().Where("vm_id = ?", vm.ID).Delete(&models.Tunnel{}).Error
+	if err != nil {
+		return fmt.Errorf("failed to reset tunnel status: %w", err)
+	}
+
 	err = m.db.Create(status).Error
 	if err != nil {
 		return fmt.Errorf("failed to create tunnel status: %w", err)
