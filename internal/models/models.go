@@ -10,7 +10,7 @@ type VM struct {
 	IP          string   `gorm:"uniqueIndex;not null" json:"ip"`
 	Port        int      `gorm:"not null" json:"port"`
 	User        string   `gorm:"not null" json:"user"`
-	Password    string   `gorm:"not null" json:"password"`
+	Password    string   `gorm:"not null" json:"-"`
 	Description string   `json:"description"`
 	Tunnels     []Tunnel `gorm:"foreignKey:VMID" json:"tunnels,omitempty"`
 }
