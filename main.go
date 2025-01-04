@@ -8,6 +8,7 @@ import (
 	"strconv"
 	"time"
 
+	"github.com/go-playground/validator/v10"
 	"github.com/jollaman999/tunnel-manager/internal/api"
 	"github.com/jollaman999/tunnel-manager/internal/config"
 	"github.com/jollaman999/tunnel-manager/internal/database"
@@ -46,6 +47,14 @@ func initDatabase(cfg *config.Config, logger *zap.Logger) (*gorm.DB, error) {
 	}
 }
 
+type CustomValidator struct {
+	validator *validator.Validate
+}
+
+func (cv *CustomValidator) Validate(i interface{}) error {
+	return cv.validator.Struct(i)
+}
+
 func main() {
 	logger, _ := zap.NewProduction()
 	defer func() {
@@ -75,6 +84,8 @@ func main() {
 	}
 
 	e := echo.New()
+
+	e.Validator = &CustomValidator{validator: validator.New()}
 
 	e.Use(middleware.Logger())
 	e.Use(middleware.Recover())

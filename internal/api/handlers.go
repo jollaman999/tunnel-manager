@@ -37,6 +37,14 @@ func (h *Handler) CreateVM(c echo.Context) error {
 		})
 	}
 
+	err = c.Validate(&req)
+	if err != nil {
+		return c.JSON(http.StatusBadRequest, models.Response{
+			Success: false,
+			Error:   "Validation failed: " + err.Error(),
+		})
+	}
+
 	tx := h.db.Begin()
 	if tx.Error != nil {
 		return c.JSON(http.StatusInternalServerError, models.Response{
@@ -172,6 +180,14 @@ func (h *Handler) UpdateVM(c echo.Context) error {
 		return c.JSON(http.StatusBadRequest, models.Response{
 			Success: false,
 			Error:   "Invalid request body",
+		})
+	}
+
+	err = c.Validate(&req)
+	if err != nil {
+		return c.JSON(http.StatusBadRequest, models.Response{
+			Success: false,
+			Error:   "Validation failed: " + err.Error(),
 		})
 	}
 
@@ -344,6 +360,14 @@ func (h *Handler) CreateServicePort(c echo.Context) error {
 		})
 	}
 
+	err = c.Validate(&req)
+	if err != nil {
+		return c.JSON(http.StatusBadRequest, models.Response{
+			Success: false,
+			Error:   "Validation failed: " + err.Error(),
+		})
+	}
+
 	sp := &models.ServicePort{
 		ServiceIP:   req.ServiceIP,
 		ServicePort: req.ServicePort,
@@ -466,13 +490,20 @@ func (h *Handler) UpdateServicePort(c echo.Context) error {
 			Error:   "Service port not found",
 		})
 	}
-
 	var req models.CreateServicePortRequest
 	err = c.Bind(&req)
 	if err != nil {
 		return c.JSON(http.StatusBadRequest, models.Response{
 			Success: false,
 			Error:   "Invalid request body",
+		})
+	}
+
+	err = c.Validate(&req)
+	if err != nil {
+		return c.JSON(http.StatusBadRequest, models.Response{
+			Success: false,
+			Error:   "Validation failed: " + err.Error(),
 		})
 	}
 
