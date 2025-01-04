@@ -77,7 +77,7 @@ func (m *Manager) StartTunnel(vm *models.VM, sp *models.ServicePort) error {
 
 	// Start tunnel in background
 	go func(m *Manager, tunnel *SSHTunnel, status *models.Tunnel) {
-		err := tunnel.Start(m.monitoringIntervalSec)
+		err := tunnel.Start(m, status)
 		if err != nil {
 			m.logger.Error("tunnel error",
 				zap.Uint("vm_id", vm.ID),
@@ -91,13 +91,6 @@ func (m *Manager) StartTunnel(vm *models.VM, sp *models.ServicePort) error {
 				m.logger.Error("failed to update tunnel error status", zap.Error(err))
 			}
 			return
-		}
-
-		status.Status = "connected"
-		status.LastConnectedAt = time.Now()
-
-		if err := m.db.Save(status).Error; err != nil {
-			m.logger.Error("failed to update tunnel connected status", zap.Error(err))
 		}
 	}(m, tunnel, status)
 

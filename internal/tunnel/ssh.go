@@ -3,6 +3,7 @@ package tunnel
 import (
 	"errors"
 	"fmt"
+	"github.com/jollaman999/tunnel-manager/internal/models"
 	"go.uber.org/zap"
 	"golang.org/x/crypto/ssh"
 	"io"
@@ -50,7 +51,7 @@ func NewSSHTunnel(localAddr, serverAddr, remoteAddr string, sshConfig *ssh.Clien
 	}, nil
 }
 
-func (t *SSHTunnel) Start(monitoringIntervalSec int) error {
+func (t *SSHTunnel) Start(m *Manager, status *models.Tunnel) error {
 	t.logger.Info("attempting to start tunnel",
 		zap.String("local", t.Local.String()),
 		zap.String("server", t.Server.String()),
@@ -61,18 +62,17 @@ func (t *SSHTunnel) Start(monitoringIntervalSec int) error {
 		case <-t.done:
 			return nil
 		default:
-			err := t.establishConnection(monitoringIntervalSec)
+			err := t.establishConnection(m, status)
 			if err != nil {
-				t.logger.Error("connection failed, retrying in "+strconv.Itoa(monitoringIntervalSec)+" seconds",
+				t.logger.Error("connection failed, retrying in "+strconv.Itoa(m.monitoringIntervalSec)+" seconds",
 					zap.Error(err))
-				time.Sleep(time.Duration(monitoringIntervalSec) * time.Second)
-				continue
+				time.Sleep(time.Duration(m.monitoringIntervalSec) * time.Second)
 			}
 		}
 	}
 }
 
-func (t *SSHTunnel) establishConnection(monitoringIntervalSec int) error {
+func (t *SSHTunnel) establishConnection(m *Manager, status *models.Tunnel) error {
 	// Initialize SSH connection
 	client, err := ssh.Dial("tcp", t.Server.String(), t.Config)
 	if err != nil {
@@ -81,7 +81,15 @@ func (t *SSHTunnel) establishConnection(monitoringIntervalSec int) error {
 
 	listener, err := client.Listen("tcp", t.Local.String())
 	if err != nil {
-		return fmt.Errorf("failed to start remote listener: %w", err)
+		err = fmt.Errorf("failed to start remote listener: %w", err)
+
+		status.Status = "error"
+		status.LastError = err.Error()
+		if err := m.db.Save(status).Error; err != nil {
+			m.logger.Error("failed to update tunnel connected status", zap.Error(err))
+		}
+
+		return err
 	}
 	defer func() {
 		_ = listener.Close()
@@ -91,13 +99,19 @@ func (t *SSHTunnel) establishConnection(monitoringIntervalSec int) error {
 	t.client = client
 	t.mu.Unlock()
 
+	status.Status = "connected"
+	status.LastConnectedAt = time.Now()
+	if err := m.db.Save(status).Error; err != nil {
+		m.logger.Error("failed to update tunnel connected status", zap.Error(err))
+	}
+
 	t.logger.Info("tunnel connected successfully",
 		zap.String("local", t.Local.String()),
 		zap.String("server", t.Server.String()),
 		zap.String("remote", t.Remote.String()))
 
 	// Connection monitoring
-	go t.monitorConnection(monitoringIntervalSec)
+	go t.monitorConnection(m, status)
 
 	// Handle incoming connections
 	for {
@@ -115,8 +129,8 @@ func (t *SSHTunnel) establishConnection(monitoringIntervalSec int) error {
 	}
 }
 
-func (t *SSHTunnel) monitorConnection(monitoringIntervalSec int) {
-	ticker := time.NewTicker(time.Duration(monitoringIntervalSec) * time.Second)
+func (t *SSHTunnel) monitorConnection(m *Manager, status *models.Tunnel) {
+	ticker := time.NewTicker(time.Duration(m.monitoringIntervalSec) * time.Second)
 	defer ticker.Stop()
 
 	for {
@@ -132,14 +146,19 @@ func (t *SSHTunnel) monitorConnection(monitoringIntervalSec int) {
 				_, _, err := client.SendRequest("keepalive@tunnel", true, nil)
 				if err != nil {
 					t.logger.Warn("connection check failed", zap.Error(err))
-					t.reconnect(monitoringIntervalSec)
+					t.reconnect(m, status)
 				}
 			}
 		}
 	}
 }
 
-func (t *SSHTunnel) reconnect(monitoringIntervalSec int) {
+func (t *SSHTunnel) reconnect(m *Manager, status *models.Tunnel) {
+	status.Status = "reconnecting"
+	if err := m.db.Save(status).Error; err != nil {
+		m.logger.Error("failed to update tunnel connected status", zap.Error(err))
+	}
+
 	t.mu.Lock()
 	if t.client != nil {
 		_ = t.client.Close()
@@ -147,7 +166,7 @@ func (t *SSHTunnel) reconnect(monitoringIntervalSec int) {
 	}
 	t.mu.Unlock()
 
-	err := t.establishConnection(monitoringIntervalSec)
+	err := t.establishConnection(m, status)
 	if err != nil {
 		t.logger.Error("reconnection failed",
 			zap.String("server", t.Server.String()),
