@@ -33,7 +33,7 @@ func (h *Handler) CreateVM(c echo.Context) error {
 	if err != nil {
 		return c.JSON(http.StatusBadRequest, models.Response{
 			Success: false,
-			Error:   "Invalid request body",
+			Error:   "Invalid request body: " + err.Error(),
 		})
 	}
 
@@ -46,10 +46,11 @@ func (h *Handler) CreateVM(c echo.Context) error {
 	}
 
 	tx := h.db.Begin()
+	err = tx.Error
 	if tx.Error != nil {
 		return c.JSON(http.StatusInternalServerError, models.Response{
 			Success: false,
-			Error:   "Failed to start transaction",
+			Error:   "Failed to start transaction: " + err.Error(),
 		})
 	}
 
@@ -67,7 +68,7 @@ func (h *Handler) CreateVM(c echo.Context) error {
 		h.logger.Error("failed to create VM", zap.Error(err))
 		return c.JSON(http.StatusInternalServerError, models.Response{
 			Success: false,
-			Error:   "Failed to create VM",
+			Error:   "Failed to create VM: " + err.Error(),
 		})
 	}
 
@@ -77,7 +78,7 @@ func (h *Handler) CreateVM(c echo.Context) error {
 		h.logger.Error("failed to fetch service ports", zap.Error(err))
 		return c.JSON(http.StatusInternalServerError, models.Response{
 			Success: false,
-			Error:   "Failed to fetch service ports",
+			Error:   "Failed to fetch service ports: " + err.Error(),
 		})
 	}
 
@@ -95,7 +96,7 @@ func (h *Handler) CreateVM(c echo.Context) error {
 	if err != nil {
 		return c.JSON(http.StatusInternalServerError, models.Response{
 			Success: false,
-			Error:   "Failed to commit transaction",
+			Error:   "Failed to commit transaction: " + err.Error(),
 		})
 	}
 
@@ -112,7 +113,7 @@ func (h *Handler) ListVMs(c echo.Context) error {
 		h.logger.Error("failed to fetch VMs", zap.Error(err))
 		return c.JSON(http.StatusInternalServerError, models.Response{
 			Success: false,
-			Error:   "Failed to fetch VMs",
+			Error:   "Failed to fetch VMs: " + err.Error(),
 		})
 	}
 
@@ -127,7 +128,7 @@ func (h *Handler) GetVM(c echo.Context) error {
 	if err != nil {
 		return c.JSON(http.StatusBadRequest, models.Response{
 			Success: false,
-			Error:   "Invalid VM ID",
+			Error:   "Invalid VM ID: " + err.Error(),
 		})
 	}
 
@@ -136,7 +137,7 @@ func (h *Handler) GetVM(c echo.Context) error {
 	if err != nil {
 		return c.JSON(http.StatusNotFound, models.Response{
 			Success: false,
-			Error:   "VM not found",
+			Error:   "VM not found: " + err.Error(),
 		})
 	}
 
@@ -151,7 +152,7 @@ func (h *Handler) UpdateVM(c echo.Context) error {
 	if err != nil {
 		return c.JSON(http.StatusBadRequest, models.Response{
 			Success: false,
-			Error:   "Invalid VM ID",
+			Error:   "Invalid VM ID: " + err.Error(),
 		})
 	}
 
@@ -160,7 +161,7 @@ func (h *Handler) UpdateVM(c echo.Context) error {
 	if err != nil {
 		return c.JSON(http.StatusNotFound, models.Response{
 			Success: false,
-			Error:   "VM not found",
+			Error:   "VM not found: " + err.Error(),
 		})
 	}
 
@@ -170,7 +171,7 @@ func (h *Handler) UpdateVM(c echo.Context) error {
 		h.logger.Error("failed to fetch service ports", zap.Error(err))
 		return c.JSON(http.StatusInternalServerError, models.Response{
 			Success: false,
-			Error:   "Failed to fetch service ports",
+			Error:   "Failed to fetch service ports: " + err.Error(),
 		})
 	}
 
@@ -179,7 +180,7 @@ func (h *Handler) UpdateVM(c echo.Context) error {
 	if err != nil {
 		return c.JSON(http.StatusBadRequest, models.Response{
 			Success: false,
-			Error:   "Invalid request body",
+			Error:   "Invalid request body: " + err.Error(),
 		})
 	}
 
@@ -192,10 +193,11 @@ func (h *Handler) UpdateVM(c echo.Context) error {
 	}
 
 	tx := h.db.Begin()
+	err = tx.Error
 	if tx.Error != nil {
 		return c.JSON(http.StatusInternalServerError, models.Response{
 			Success: false,
-			Error:   "Failed to start transaction",
+			Error:   "Failed to start transaction: " + err.Error(),
 		})
 	}
 
@@ -216,7 +218,7 @@ func (h *Handler) UpdateVM(c echo.Context) error {
 		h.logger.Error("failed to update VM", zap.Error(err))
 		return c.JSON(http.StatusInternalServerError, models.Response{
 			Success: false,
-			Error:   "Failed to update VM",
+			Error:   "Failed to update VM: " + err.Error(),
 		})
 	}
 
@@ -246,7 +248,7 @@ func (h *Handler) UpdateVM(c echo.Context) error {
 	if err != nil {
 		return c.JSON(http.StatusInternalServerError, models.Response{
 			Success: false,
-			Error:   "Failed to commit transaction",
+			Error:   "Failed to commit transaction: " + err.Error(),
 		})
 	}
 
@@ -261,15 +263,16 @@ func (h *Handler) DeleteVM(c echo.Context) error {
 	if err != nil {
 		return c.JSON(http.StatusBadRequest, models.Response{
 			Success: false,
-			Error:   "Invalid VM ID",
+			Error:   "Invalid VM ID: " + err.Error(),
 		})
 	}
 
 	tx := h.db.Begin()
+	err = tx.Error
 	if tx.Error != nil {
 		return c.JSON(http.StatusInternalServerError, models.Response{
 			Success: false,
-			Error:   "Failed to start transaction",
+			Error:   "Failed to start transaction: " + err.Error(),
 		})
 	}
 
@@ -285,7 +288,7 @@ func (h *Handler) DeleteVM(c echo.Context) error {
 		}
 		return c.JSON(http.StatusInternalServerError, models.Response{
 			Success: false,
-			Error:   "Failed to lock VM record",
+			Error:   "Failed to lock VM record: " + err.Error(),
 		})
 	}
 
@@ -295,7 +298,7 @@ func (h *Handler) DeleteVM(c echo.Context) error {
 		tx.Rollback()
 		return c.JSON(http.StatusInternalServerError, models.Response{
 			Success: false,
-			Error:   "Failed to fetch service ports",
+			Error:   "Failed to fetch service ports: " + err.Error(),
 		})
 	}
 
@@ -309,30 +312,12 @@ func (h *Handler) DeleteVM(c echo.Context) error {
 		}
 	}
 
-	err = tx.Unscoped().Where("vm_id = ?", id).Delete(&models.Tunnel{}).Error
-	if err != nil {
-		tx.Rollback()
-		return c.JSON(http.StatusInternalServerError, models.Response{
-			Success: false,
-			Error:   "Failed to delete tunnels",
-		})
-	}
-
-	err = tx.Unscoped().Where("vm_id = ?", id).Delete(&models.ServicePort{}).Error
-	if err != nil {
-		tx.Rollback()
-		return c.JSON(http.StatusInternalServerError, models.Response{
-			Success: false,
-			Error:   "Failed to delete service ports",
-		})
-	}
-
 	err = tx.Unscoped().Delete(&vm).Error
 	if err != nil {
 		tx.Rollback()
 		return c.JSON(http.StatusInternalServerError, models.Response{
 			Success: false,
-			Error:   "Failed to delete VM",
+			Error:   "Failed to delete VM: " + err.Error(),
 		})
 	}
 
@@ -340,7 +325,7 @@ func (h *Handler) DeleteVM(c echo.Context) error {
 	if err != nil {
 		return c.JSON(http.StatusInternalServerError, models.Response{
 			Success: false,
-			Error:   "Failed to commit transaction",
+			Error:   "Failed to commit transaction: " + err.Error(),
 		})
 	}
 
@@ -356,7 +341,7 @@ func (h *Handler) CreateServicePort(c echo.Context) error {
 	if err != nil {
 		return c.JSON(http.StatusBadRequest, models.Response{
 			Success: false,
-			Error:   "Invalid request body",
+			Error:   "Invalid request body: " + err.Error(),
 		})
 	}
 
@@ -376,10 +361,11 @@ func (h *Handler) CreateServicePort(c echo.Context) error {
 	}
 
 	tx := h.db.Begin()
+	err = tx.Error
 	if tx.Error != nil {
 		return c.JSON(http.StatusInternalServerError, models.Response{
 			Success: false,
-			Error:   "Failed to start transaction",
+			Error:   "Failed to start transaction: " + err.Error(),
 		})
 	}
 
@@ -389,7 +375,7 @@ func (h *Handler) CreateServicePort(c echo.Context) error {
 		h.logger.Error("failed to create service port", zap.Error(err))
 		return c.JSON(http.StatusInternalServerError, models.Response{
 			Success: false,
-			Error:   "Failed to create service port",
+			Error:   "Failed to create service port: " + err.Error(),
 		})
 	}
 
@@ -399,7 +385,7 @@ func (h *Handler) CreateServicePort(c echo.Context) error {
 		h.logger.Error("failed to fetch VMs", zap.Error(err))
 		return c.JSON(http.StatusInternalServerError, models.Response{
 			Success: false,
-			Error:   "Failed to fetch VMs",
+			Error:   "Failed to fetch VMs: " + err.Error(),
 		})
 	}
 
@@ -422,7 +408,7 @@ func (h *Handler) CreateServicePort(c echo.Context) error {
 	if err != nil {
 		return c.JSON(http.StatusInternalServerError, models.Response{
 			Success: false,
-			Error:   "Failed to commit transaction",
+			Error:   "Failed to commit transaction: " + err.Error(),
 		})
 	}
 
@@ -439,7 +425,7 @@ func (h *Handler) ListServicePorts(c echo.Context) error {
 		h.logger.Error("failed to fetch service ports", zap.Error(err))
 		return c.JSON(http.StatusInternalServerError, models.Response{
 			Success: false,
-			Error:   "Failed to fetch service ports",
+			Error:   "Failed to fetch service ports: " + err.Error(),
 		})
 	}
 
@@ -454,7 +440,7 @@ func (h *Handler) GetServicePort(c echo.Context) error {
 	if err != nil {
 		return c.JSON(http.StatusBadRequest, models.Response{
 			Success: false,
-			Error:   "Invalid service port ID",
+			Error:   "Invalid service port ID: " + err.Error(),
 		})
 	}
 
@@ -463,7 +449,7 @@ func (h *Handler) GetServicePort(c echo.Context) error {
 	if err != nil {
 		return c.JSON(http.StatusNotFound, models.Response{
 			Success: false,
-			Error:   "Service port not found",
+			Error:   "Service port not found: " + err.Error(),
 		})
 	}
 
@@ -478,7 +464,7 @@ func (h *Handler) UpdateServicePort(c echo.Context) error {
 	if err != nil {
 		return c.JSON(http.StatusBadRequest, models.Response{
 			Success: false,
-			Error:   "Invalid service port ID",
+			Error:   "Invalid service port ID: " + err.Error(),
 		})
 	}
 
@@ -487,7 +473,7 @@ func (h *Handler) UpdateServicePort(c echo.Context) error {
 	if err != nil {
 		return c.JSON(http.StatusNotFound, models.Response{
 			Success: false,
-			Error:   "Service port not found",
+			Error:   "Service port not found: " + err.Error(),
 		})
 	}
 	var req models.CreateServicePortRequest
@@ -495,7 +481,7 @@ func (h *Handler) UpdateServicePort(c echo.Context) error {
 	if err != nil {
 		return c.JSON(http.StatusBadRequest, models.Response{
 			Success: false,
-			Error:   "Invalid request body",
+			Error:   "Invalid request body: " + err.Error(),
 		})
 	}
 
@@ -508,10 +494,11 @@ func (h *Handler) UpdateServicePort(c echo.Context) error {
 	}
 
 	tx := h.db.Begin()
+	err = tx.Error
 	if tx.Error != nil {
 		return c.JSON(http.StatusInternalServerError, models.Response{
 			Success: false,
-			Error:   "Failed to start transaction",
+			Error:   "Failed to start transaction: " + err.Error(),
 		})
 	}
 
@@ -521,7 +508,7 @@ func (h *Handler) UpdateServicePort(c echo.Context) error {
 		h.logger.Error("failed to fetch VMs", zap.Error(err))
 		return c.JSON(http.StatusInternalServerError, models.Response{
 			Success: false,
-			Error:   "Failed to fetch VMs",
+			Error:   "Failed to fetch VMs: " + err.Error(),
 		})
 	}
 
@@ -546,7 +533,7 @@ func (h *Handler) UpdateServicePort(c echo.Context) error {
 		h.logger.Error("failed to update service port", zap.Error(err))
 		return c.JSON(http.StatusInternalServerError, models.Response{
 			Success: false,
-			Error:   "Failed to update service port",
+			Error:   "Failed to update service port: " + err.Error(),
 		})
 	}
 
@@ -569,7 +556,7 @@ func (h *Handler) UpdateServicePort(c echo.Context) error {
 	if err != nil {
 		return c.JSON(http.StatusInternalServerError, models.Response{
 			Success: false,
-			Error:   "Failed to commit transaction",
+			Error:   "Failed to commit transaction: " + err.Error(),
 		})
 	}
 
@@ -584,7 +571,7 @@ func (h *Handler) DeleteServicePort(c echo.Context) error {
 	if err != nil {
 		return c.JSON(http.StatusBadRequest, models.Response{
 			Success: false,
-			Error:   "Invalid service port ID",
+			Error:   "Invalid service port ID: " + err.Error(),
 		})
 	}
 
@@ -593,15 +580,16 @@ func (h *Handler) DeleteServicePort(c echo.Context) error {
 	if err != nil {
 		return c.JSON(http.StatusNotFound, models.Response{
 			Success: false,
-			Error:   "Service port not found",
+			Error:   "Service port not found: " + err.Error(),
 		})
 	}
 
 	tx := h.db.Begin()
+	err = tx.Error
 	if tx.Error != nil {
 		return c.JSON(http.StatusInternalServerError, models.Response{
 			Success: false,
-			Error:   "Failed to start transaction",
+			Error:   "Failed to start transaction: " + err.Error(),
 		})
 	}
 
@@ -611,7 +599,7 @@ func (h *Handler) DeleteServicePort(c echo.Context) error {
 		h.logger.Error("failed to fetch VMs", zap.Error(err))
 		return c.JSON(http.StatusInternalServerError, models.Response{
 			Success: false,
-			Error:   "Failed to fetch VMs",
+			Error:   "Failed to fetch VMs: " + err.Error(),
 		})
 	}
 
@@ -630,7 +618,7 @@ func (h *Handler) DeleteServicePort(c echo.Context) error {
 		tx.Rollback()
 		return c.JSON(http.StatusInternalServerError, models.Response{
 			Success: false,
-			Error:   "Failed to delete service port",
+			Error:   "Failed to delete service port: " + err.Error(),
 		})
 	}
 
@@ -638,7 +626,7 @@ func (h *Handler) DeleteServicePort(c echo.Context) error {
 	if err != nil {
 		return c.JSON(http.StatusInternalServerError, models.Response{
 			Success: false,
-			Error:   "Failed to commit transaction",
+			Error:   "Failed to commit transaction: " + err.Error(),
 		})
 	}
 
@@ -655,7 +643,7 @@ func (h *Handler) GetStatus(c echo.Context) error {
 		h.logger.Error("failed to fetch tunnel status", zap.Error(err))
 		return c.JSON(http.StatusInternalServerError, models.Response{
 			Success: false,
-			Error:   "Failed to fetch tunnel status",
+			Error:   "Failed to fetch tunnel status: " + err.Error(),
 		})
 	}
 
@@ -681,7 +669,7 @@ func (h *Handler) GetVMStatus(c echo.Context) error {
 	if err != nil {
 		return c.JSON(http.StatusBadRequest, models.Response{
 			Success: false,
-			Error:   "Invalid VM ID",
+			Error:   "Invalid VM ID: " + err.Error(),
 		})
 	}
 
@@ -690,7 +678,7 @@ func (h *Handler) GetVMStatus(c echo.Context) error {
 	if err != nil {
 		return c.JSON(http.StatusNotFound, models.Response{
 			Success: false,
-			Error:   "VM not found",
+			Error:   "VM not found: " + err.Error(),
 		})
 	}
 
