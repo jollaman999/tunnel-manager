@@ -28,6 +28,7 @@ func NewHandler(db *gorm.DB, manager *tunnel.Manager, logger *zap.Logger) *Handl
 }
 
 func (h *Handler) CreateVM(c echo.Context) error {
+
 	var req models.CreateVMRequest
 	err := c.Bind(&req)
 	if err != nil {
@@ -47,7 +48,7 @@ func (h *Handler) CreateVM(c echo.Context) error {
 
 	tx := h.db.Begin()
 	err = tx.Error
-	if tx.Error != nil {
+	if err != nil {
 		return c.JSON(http.StatusInternalServerError, models.Response{
 			Success: false,
 			Error:   "Failed to start transaction: " + err.Error(),
@@ -194,7 +195,7 @@ func (h *Handler) UpdateVM(c echo.Context) error {
 
 	tx := h.db.Begin()
 	err = tx.Error
-	if tx.Error != nil {
+	if err != nil {
 		return c.JSON(http.StatusInternalServerError, models.Response{
 			Success: false,
 			Error:   "Failed to start transaction: " + err.Error(),
@@ -269,7 +270,7 @@ func (h *Handler) DeleteVM(c echo.Context) error {
 
 	tx := h.db.Begin()
 	err = tx.Error
-	if tx.Error != nil {
+	if err != nil {
 		return c.JSON(http.StatusInternalServerError, models.Response{
 			Success: false,
 			Error:   "Failed to start transaction: " + err.Error(),
@@ -277,7 +278,7 @@ func (h *Handler) DeleteVM(c echo.Context) error {
 	}
 
 	var vm models.VM
-	err = tx.Set("gorm:pessimistic_lock", true).First(&vm, id).Error
+	err = tx.First(&vm, id).Error
 	if err != nil {
 		tx.Rollback()
 		if errors.Is(err, gorm.ErrRecordNotFound) {
@@ -288,26 +289,25 @@ func (h *Handler) DeleteVM(c echo.Context) error {
 		}
 		return c.JSON(http.StatusInternalServerError, models.Response{
 			Success: false,
-			Error:   "Failed to lock VM record: " + err.Error(),
+			Error:   "Failed to fetch VM: " + err.Error(),
 		})
 	}
 
-	var servicePorts []models.ServicePort
-	err = tx.Find(&servicePorts).Error
+	err = tx.Where("vm_id = ?", id).Delete(&models.Tunnel{}).Error
 	if err != nil {
 		tx.Rollback()
 		return c.JSON(http.StatusInternalServerError, models.Response{
 			Success: false,
-			Error:   "Failed to fetch service ports: " + err.Error(),
+			Error:   "Failed to delete tunnels: " + err.Error(),
 		})
 	}
 
-	for _, sp := range servicePorts {
-		err = h.manager.StopTunnel(uint(id), sp.ID)
+	for _, t := range vm.Tunnels {
+		err = h.manager.StopTunnel(vm.ID, t.SPID)
 		if err != nil {
 			h.logger.Warn("failed to stop tunnel",
-				zap.Uint("vm_id", uint(id)),
-				zap.Uint("service_port_id", sp.ID),
+				zap.Uint("vm_id", vm.ID),
+				zap.Uint("service_port_id", t.SPID),
 				zap.Error(err))
 		}
 	}
@@ -362,7 +362,7 @@ func (h *Handler) CreateServicePort(c echo.Context) error {
 
 	tx := h.db.Begin()
 	err = tx.Error
-	if tx.Error != nil {
+	if err != nil {
 		return c.JSON(http.StatusInternalServerError, models.Response{
 			Success: false,
 			Error:   "Failed to start transaction: " + err.Error(),
@@ -495,7 +495,7 @@ func (h *Handler) UpdateServicePort(c echo.Context) error {
 
 	tx := h.db.Begin()
 	err = tx.Error
-	if tx.Error != nil {
+	if err != nil {
 		return c.JSON(http.StatusInternalServerError, models.Response{
 			Success: false,
 			Error:   "Failed to start transaction: " + err.Error(),
@@ -586,7 +586,7 @@ func (h *Handler) DeleteServicePort(c echo.Context) error {
 
 	tx := h.db.Begin()
 	err = tx.Error
-	if tx.Error != nil {
+	if err != nil {
 		return c.JSON(http.StatusInternalServerError, models.Response{
 			Success: false,
 			Error:   "Failed to start transaction: " + err.Error(),

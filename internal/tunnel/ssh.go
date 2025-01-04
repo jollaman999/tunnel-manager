@@ -278,29 +278,10 @@ func (t *SSHTunnel) Stop(m *Manager) error {
 	}
 	t.clientMu.Unlock()
 
-	tx := m.db.Begin()
-	err := tx.Error
-	if err != nil {
-		return fmt.Errorf("failed to start transaction: %w", err)
-	}
-
-	var tunnel models.Tunnel
-	err = tx.Set("gorm:pessimistic_lock", true).
-		Where("vm_id = ? and sp_id = ?", t.VMID, t.SPID).
-		First(&tunnel).Error
-	if err != nil {
-		return fmt.Errorf("failed to lock tunnel: %w", err)
-	}
-
-	err = tx.Unscoped().Where("vm_id = ? and sp_id = ?", t.VMID, t.SPID).
+	err := m.db.Where("vm_id = ? and sp_id = ?", t.VMID, t.SPID).
 		Delete(&models.Tunnel{}).Error
 	if err != nil {
 		return fmt.Errorf("failed to delete tunnel: %w", err)
-	}
-
-	err = tx.Commit().Error
-	if err != nil {
-		return fmt.Errorf("failed to commit transaction: %w", err)
 	}
 
 	return nil
