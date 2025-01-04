@@ -27,7 +27,7 @@ services:
       MARIADB_DATABASE: tunnel-manager
       MARIADB_ROOT_PASSWORD: tunnel-manager-pass
     volumes:
-      - ./data/mariadb:/var/lib/mysql
+      - ./_data/mariadb:/var/lib/mysql
     networks:
       - tunnel-network
 
