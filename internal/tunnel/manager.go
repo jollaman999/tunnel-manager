@@ -90,8 +90,12 @@ func (m *Manager) StartTunnel(vm *models.VM, sp *models.ServicePort) error {
 				Update("status", "error").
 				Update("last_error", err.Error()).Error
 			if err != nil {
-				m.logger.Error("failed to update tunnel error status", zap.Error(err))
+				m.logger.Error("tunnel error",
+					zap.Uint("vm_id", vm.ID),
+					zap.Int("local_port", sp.LocalPort),
+					zap.Error(fmt.Errorf("failed to update tunnel error status: %w", err)))
 			}
+
 			return
 		}
 	}(m, tunnel, status)
@@ -123,31 +127,6 @@ func (m *Manager) StopTunnel(vmID uint, spID uint) error {
 	delete(m.tunnels, tunnelKey)
 
 	return nil
-}
-
-func (m *Manager) RestartTunnel(vmID uint, spID uint) error {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-
-	err := m.StopTunnel(vmID, spID)
-	if err != nil {
-		m.logger.Warn("failed to stop tunnel for restart",
-			zap.Error(err))
-	}
-
-	var vm models.VM
-	err = m.db.First(&vm, vmID).Error
-	if err != nil {
-		return fmt.Errorf("vm not found: %w", err)
-	}
-
-	var sp models.ServicePort
-	err = m.db.First(&sp, spID).Error
-	if err != nil {
-		return fmt.Errorf("service port not found: %w", err)
-	}
-
-	return m.StartTunnel(&vm, &sp)
 }
 
 func (m *Manager) RestoreAllTunnels() error {

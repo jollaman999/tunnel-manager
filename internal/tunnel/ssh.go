@@ -14,16 +14,18 @@ import (
 )
 
 type SSHTunnel struct {
-	VMID     *uint
-	SPID     *uint
-	Local    *net.TCPAddr
-	Server   *net.TCPAddr
-	Remote   *net.TCPAddr
-	Config   *ssh.ClientConfig
-	client   *ssh.Client
-	clientMu sync.RWMutex
-	done     chan bool
-	logger   *zap.Logger
+	VMID      *uint
+	SPID      *uint
+	Local     *net.TCPAddr
+	Server    *net.TCPAddr
+	Remote    *net.TCPAddr
+	Config    *ssh.ClientConfig
+	client    *ssh.Client
+	clientMu  sync.RWMutex
+	done      chan bool
+	isStopped bool
+	stopMu    sync.Mutex
+	logger    *zap.Logger
 }
 
 func NewSSHTunnel(vmID, spID *uint, localAddr, serverAddr, remoteAddr string, sshConfig *ssh.ClientConfig, logger *zap.Logger) (*SSHTunnel, error) {
@@ -55,6 +57,13 @@ func NewSSHTunnel(vmID, spID *uint, localAddr, serverAddr, remoteAddr string, ss
 }
 
 func (t *SSHTunnel) reconnect(m *Manager) {
+	t.stopMu.Lock()
+	if t.isStopped {
+		t.stopMu.Unlock()
+		return
+	}
+	t.stopMu.Unlock()
+
 	var tunnel models.Tunnel
 	err := m.db.Model(&models.Tunnel{}).
 		Where("vm_id = ?", t.VMID).
@@ -252,6 +261,14 @@ func (t *SSHTunnel) Start(m *Manager) error {
 }
 
 func (t *SSHTunnel) Stop(m *Manager) error {
+	t.stopMu.Lock()
+	if t.isStopped {
+		t.stopMu.Unlock()
+		return nil
+	}
+	t.isStopped = true
+	t.stopMu.Unlock()
+
 	close(t.done)
 
 	t.clientMu.Lock()
@@ -261,10 +278,29 @@ func (t *SSHTunnel) Stop(m *Manager) error {
 	}
 	t.clientMu.Unlock()
 
-	err := m.db.Unscoped().Where("vm_id = ? and sp_id = ?", t.VMID, t.SPID).
+	tx := m.db.Begin()
+	err := tx.Error
+	if err != nil {
+		return fmt.Errorf("failed to start transaction: %w", err)
+	}
+
+	var tunnel models.Tunnel
+	err = tx.Set("gorm:pessimistic_lock", true).
+		Where("vm_id = ? and sp_id = ?", t.VMID, t.SPID).
+		First(&tunnel).Error
+	if err != nil {
+		return fmt.Errorf("failed to lock tunnel: %w", err)
+	}
+
+	err = tx.Unscoped().Where("vm_id = ? and sp_id = ?", t.VMID, t.SPID).
 		Delete(&models.Tunnel{}).Error
 	if err != nil {
 		return fmt.Errorf("failed to delete tunnel: %w", err)
+	}
+
+	err = tx.Commit().Error
+	if err != nil {
+		return fmt.Errorf("failed to commit transaction: %w", err)
 	}
 
 	return nil
