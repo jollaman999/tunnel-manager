@@ -7,7 +7,7 @@ import (
 
 type VM struct {
 	gorm.Model
-	IP          string   `gorm:"uniqueIndex;not null" json:"ip"`
+	IP          string   `gorm:"index:idx_vms_ip,unique,where:deleted_at IS NULL" json:"ip"`
 	Port        int      `gorm:"not null" json:"port"`
 	User        string   `gorm:"not null" json:"user"`
 	Password    string   `gorm:"not null" json:"-"`
