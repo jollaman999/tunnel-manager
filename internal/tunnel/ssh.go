@@ -52,6 +52,7 @@ func NewSSHTunnel(localAddr, serverAddr, remoteAddr string, sshConfig *ssh.Clien
 
 func (t *SSHTunnel) reconnect(m *Manager, status *models.Tunnel) {
 	status.Status = "reconnecting"
+	status.RetryCount++
 
 	err := m.db.Save(status).Error
 	if err != nil {
