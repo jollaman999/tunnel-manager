@@ -131,11 +131,10 @@ func (m *Manager) StopTunnel(vmID uint, spID uint) error {
 
 func (m *Manager) RestoreAllTunnels() error {
 	m.mu.Lock()
-	defer m.mu.Unlock()
-
 	var vms []models.VM
 	err := m.db.Preload("Tunnels").Find(&vms).Error
 	if err != nil {
+		m.mu.Unlock()
 		m.logger.Error("failed to fetch VMs", zap.Error(err))
 		return fmt.Errorf("failed to fetch vms: %w", err)
 	}
@@ -143,8 +142,10 @@ func (m *Manager) RestoreAllTunnels() error {
 	var servicePorts []models.ServicePort
 	err = m.db.Find(&servicePorts).Error
 	if err != nil {
+		m.mu.Unlock()
 		return fmt.Errorf("failed to fetch service ports: %w", err)
 	}
+	m.mu.Unlock()
 
 	for _, vm := range vms {
 		err = m.db.Unscoped().Where("vm_id = ?", vm.ID).Delete(&models.Tunnel{}).Error
