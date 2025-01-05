@@ -248,6 +248,14 @@ func (h *Handler) UpdateVM(c echo.Context) error {
 		})
 	}
 
+	err = tx.Commit().Error
+	if err != nil {
+		return c.JSON(http.StatusInternalServerError, models.Response{
+			Success: false,
+			Error:   "Failed to commit transaction: " + err.Error(),
+		})
+	}
+
 	if needTunnelRestart && len(sps) > 0 {
 		for _, sp := range sps {
 			err = h.manager.StopTunnel(vm.ID, sp.ID)
@@ -268,14 +276,6 @@ func (h *Handler) UpdateVM(c echo.Context) error {
 					zap.Int("service_port", sp.ServicePort))
 			}
 		}
-	}
-
-	err = tx.Commit().Error
-	if err != nil {
-		return c.JSON(http.StatusInternalServerError, models.Response{
-			Success: false,
-			Error:   "Failed to commit transaction: " + err.Error(),
-		})
 	}
 
 	return c.JSON(http.StatusOK, models.Response{
@@ -537,16 +537,6 @@ func (h *Handler) UpdateServicePort(c echo.Context) error {
 		})
 	}
 
-	for _, vm := range vms {
-		err = h.manager.StopTunnel(vm.ID, sp.ID)
-		if err != nil {
-			h.logger.Warn("failed to stop existing tunnel",
-				zap.String("vm_ip", vm.IP),
-				zap.Int("service_port", sp.ServicePort),
-				zap.Error(err))
-		}
-	}
-
 	sp.ServiceIP = req.ServiceIP
 	sp.ServicePort = req.ServicePort
 	sp.LocalPort = req.LocalPort
@@ -562,27 +552,32 @@ func (h *Handler) UpdateServicePort(c echo.Context) error {
 		})
 	}
 
-	for _, vm := range vms {
-		err = h.manager.StartTunnel(&vm, &sp)
-		if err != nil {
-			tx.Rollback()
-			h.logger.Error("failed to start new tunnel",
-				zap.Error(err),
-				zap.String("vm_ip", vm.IP),
-				zap.Int("service_port", sp.ServicePort))
-			return c.JSON(http.StatusInternalServerError, models.Response{
-				Success: false,
-				Error:   fmt.Sprintf("Failed to start new tunnel: %v", err),
-			})
-		}
-	}
-
 	err = tx.Commit().Error
 	if err != nil {
 		return c.JSON(http.StatusInternalServerError, models.Response{
 			Success: false,
 			Error:   "Failed to commit transaction: " + err.Error(),
 		})
+	}
+
+	for _, vm := range vms {
+		err = h.manager.StopTunnel(vm.ID, sp.ID)
+		if err != nil {
+			h.logger.Warn("failed to stop existing tunnel",
+				zap.String("vm_ip", vm.IP),
+				zap.Int("service_port", sp.ServicePort),
+				zap.Error(err))
+		}
+	}
+
+	for _, vm := range vms {
+		err = h.manager.StartTunnel(&vm, &sp)
+		if err != nil {
+			h.logger.Error("failed to start new tunnel",
+				zap.Error(err),
+				zap.String("vm_ip", vm.IP),
+				zap.Int("service_port", sp.ServicePort))
+		}
 	}
 
 	return c.JSON(http.StatusOK, models.Response{
