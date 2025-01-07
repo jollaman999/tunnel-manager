@@ -45,9 +45,16 @@ func initDatabase(cfg *config.Config, logger *zap.Logger) (*gorm.DB, error) {
 }
 
 func initLogger(cfg *config.Config) (*zap.Logger, error) {
-	err := os.MkdirAll(filepath.Dir(cfg.Logging.File.Path), 0755)
+	logDir := filepath.Dir(cfg.Logging.File.Path)
+	err := os.MkdirAll(logDir, 0755)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create log directory: %v", err)
+	}
+
+	logFile := cfg.Logging.File.Path
+	_, err = os.OpenFile(logFile, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create log file: %v", err)
 	}
 
 	logWriter := &lumberjack.Logger{
@@ -59,7 +66,8 @@ func initLogger(cfg *config.Config) (*zap.Logger, error) {
 	}
 
 	var level zapcore.Level
-	if err := level.UnmarshalText([]byte(cfg.Logging.Level)); err != nil {
+	err = level.UnmarshalText([]byte(cfg.Logging.Level))
+	if err != nil {
 		return nil, fmt.Errorf("failed to parse log level: %v", err)
 	}
 
