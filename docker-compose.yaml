@@ -6,7 +6,7 @@ services:
     container_name: tunnel-manager
     image: tunnel-manager:0.0.1
     ports:
-      - "8080:8080"
+      - "8888:8888"
     volumes:
       - ./config/config.yaml:/config.yaml:ro
     environment:
