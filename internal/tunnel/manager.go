@@ -79,27 +79,7 @@ func (m *Manager) StartTunnel(vm *models.VM, sp *models.ServicePort) error {
 	}
 
 	go func(m *Manager, t *SSHTunnel, tunnel *models.Tunnel) {
-		err := t.Start(m, tunnel)
-		if err != nil {
-			m.logger.Error("tunnel error",
-				zap.Uint("vm_id", vm.ID),
-				zap.Int("local_port", sp.LocalPort),
-				zap.Error(err))
-
-			err = m.db.Model(&models.Tunnel{}).
-				Where("vm_id = ?", vm.ID).
-				Where("sp_id = ?", sp.ID).
-				Update("status", "error").
-				Update("last_error", err.Error()).Error
-			if err != nil {
-				m.logger.Error("tunnel error",
-					zap.Uint("vm_id", vm.ID),
-					zap.Int("local_port", sp.LocalPort),
-					zap.Error(fmt.Errorf("failed to update tunnel error status: %w", err)))
-			}
-
-			return
-		}
+		t.Start(m, tunnel)
 	}(m, t, &tunnel)
 
 	return nil

@@ -9,6 +9,7 @@ import (
 	"io"
 	"net"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 )
@@ -263,7 +264,7 @@ func (t *SSHTunnel) establishConnection(m *Manager, tunnel *models.Tunnel) error
 	}
 }
 
-func (t *SSHTunnel) Start(m *Manager, tunnel *models.Tunnel) error {
+func (t *SSHTunnel) Start(m *Manager, tunnel *models.Tunnel) {
 	t.logger.Info("attempting to start tunnel",
 		zap.String("local", t.Local.String()),
 		zap.String("server", t.Server.String()),
@@ -272,17 +273,26 @@ func (t *SSHTunnel) Start(m *Manager, tunnel *models.Tunnel) error {
 	for {
 		select {
 		case <-t.done:
-			return nil
+			return
 		default:
 			t.stopMu.Lock()
 			if t.isStopped {
 				t.stopMu.Unlock()
-				return nil
+				return
 			}
 			t.stopMu.Unlock()
 
 			err := t.establishConnection(m, tunnel)
 			if err != nil {
+				if strings.Contains(err.Error(), "unable to authenticate") {
+					t.logger.Error("connection failed",
+						zap.String("local", t.Local.String()),
+						zap.String("server", t.Server.String()),
+						zap.String("remote", t.Remote.String()),
+						zap.Error(err))
+					return
+				}
+
 				t.logger.Error("connection failed, retrying in "+strconv.Itoa(m.monitoringIntervalSec)+" seconds",
 					zap.String("local", t.Local.String()),
 					zap.String("server", t.Server.String()),
