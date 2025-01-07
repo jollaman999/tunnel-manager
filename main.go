@@ -183,6 +183,8 @@ func main() {
 		_ = logger.Sync()
 	}()
 
+	logger.Info("Starting tunnel-manager...")
+
 	checkUlimit(logger)
 
 	db, err := initDatabase(cfg, logger)
