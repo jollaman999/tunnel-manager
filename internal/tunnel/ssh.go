@@ -262,11 +262,23 @@ func (t *SSHTunnel) Start(m *Manager, tunnel *models.Tunnel) error {
 		case <-t.done:
 			return nil
 		default:
+			t.stopMu.Lock()
+			if t.isStopped {
+				t.stopMu.Unlock()
+				return nil
+			}
+			t.stopMu.Unlock()
+
 			err := t.establishConnection(m, tunnel)
 			if err != nil {
 				t.logger.Error("connection failed, retrying in "+strconv.Itoa(m.monitoringIntervalSec)+" seconds",
 					zap.Error(err))
+
 				time.Sleep(time.Duration(m.monitoringIntervalSec) * time.Second)
+
+				tunnel.Status = "reconnecting"
+				tunnel.RetryCount++
+				saveTunnelStatus(m, tunnel)
 			}
 		}
 	}
