@@ -17,7 +17,8 @@ RUN apk --no-cache add tzdata
 RUN echo "Asia/Seoul" >  /etc/timezone
 RUN cp -f /usr/share/zoneinfo/Asia/Seoul /etc/localtime
 
-COPY --from=builder /go/src/github.com/jollaman999/tunnel-manager/config/config.yaml /config.yaml
+RUN mkdir -p /config/
+COPY --from=builder /go/src/github.com/jollaman999/tunnel-manager/config/config.yaml /config/config.yaml
 COPY --from=builder /go/src/github.com/jollaman999/tunnel-manager/tunnel-manager /tunnel-manager
 
 USER root
