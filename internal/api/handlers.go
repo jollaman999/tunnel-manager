@@ -547,6 +547,16 @@ func (h *Handler) UpdateServicePort(c echo.Context) error {
 		})
 	}
 
+	for _, vm := range vms {
+		err = h.manager.StopTunnel(vm.ID, sp.ID)
+		if err != nil {
+			h.logger.Warn("failed to stop existing tunnel",
+				zap.String("vm_ip", vm.IP),
+				zap.Int("service_port", sp.ServicePort),
+				zap.Error(err))
+		}
+	}
+
 	sp.ServiceIP = req.ServiceIP
 	sp.ServicePort = req.ServicePort
 	sp.LocalPort = req.LocalPort
@@ -568,16 +578,6 @@ func (h *Handler) UpdateServicePort(c echo.Context) error {
 			Success: false,
 			Error:   "Failed to commit transaction: " + err.Error(),
 		})
-	}
-
-	for _, vm := range vms {
-		err = h.manager.StopTunnel(vm.ID, sp.ID)
-		if err != nil {
-			h.logger.Warn("failed to stop existing tunnel",
-				zap.String("vm_ip", vm.IP),
-				zap.Int("service_port", sp.ServicePort),
-				zap.Error(err))
-		}
 	}
 
 	for _, vm := range vms {
