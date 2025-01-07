@@ -722,16 +722,6 @@ func (h *Handler) GetVMStatus(c echo.Context) error {
 		})
 	}
 
-	for _, t := range tunnels {
-		err = h.manager.StopTunnel(vm.ID, t.SPID)
-		if err != nil {
-			h.logger.Warn("failed to stop tunnel",
-				zap.Uint("vm_id", vm.ID),
-				zap.Uint("service_port_id", t.SPID),
-				zap.Error(err))
-		}
-	}
-
 	var connectedTunnels int
 	for _, t := range tunnels {
 		if t.Status == "connected" {
