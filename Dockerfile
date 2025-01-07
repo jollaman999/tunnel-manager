@@ -24,4 +24,4 @@ COPY --from=builder /go/src/github.com/jollaman999/tunnel-manager/tunnel-manager
 USER root
 CMD ["/tunnel-manager"]
 
-EXPOSE 8083
+EXPOSE 8888
