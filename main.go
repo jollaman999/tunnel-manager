@@ -83,11 +83,17 @@ func initLogger(cfg *config.Config) (*zap.Logger, error) {
 		encoder = zapcore.NewConsoleEncoder(encoderConfig)
 	}
 
-	core := zapcore.NewCore(
-		encoder,
-		zapcore.AddSync(logWriter),
-		level,
-	)
+	core := zapcore.NewTee(
+		zapcore.NewCore(
+			encoder,
+			zapcore.AddSync(logWriter),
+			level,
+		),
+		zapcore.NewCore(
+			encoder,
+			zapcore.AddSync(os.Stdout),
+			level,
+		))
 
 	return zap.New(core, zap.AddCaller()), nil
 }
