@@ -5,6 +5,10 @@ services:
       dockerfile: Dockerfile
     container_name: tunnel-manager
     image: tunnel-manager:0.0.1
+    ulimits:
+      nofile:
+        soft: 65535
+        hard: 65535
     ports:
       - "8888:8888"
     volumes:
