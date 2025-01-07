@@ -87,22 +87,15 @@ cd tunnel-manager
 go mod tidy
 ```
 
-3. 빌드
+3. 설정 파일 수정
 ```bash
-make
-```
-
-4. 설정 파일 수정
-```bash
-cp config/config.yaml config.yaml
-
 # config.yaml 파일을 환경에 맞게 수정
-vi config.yaml
+vi config/config.yaml
 ```
 
-5. 실행
+4. 빌드 및 실행
 ```bash
-./tunnel-manager
+make run
 ```
 
 ## API 엔드포인트
@@ -138,14 +131,20 @@ database:
   timeout_sec: 30
 
 api:
-  port: 8080
+  port: 8888
 
 monitoring:
-  interval_sec: 60
+  interval_sec: 5
 
 logging:
-  level: info
-  format: json
+  level: info     # Available levels: debug, info, warn, error, dpanic, panic, fatal
+  format: json    # Available formats: json, console
+  file:
+    path: "/var/tunnel-manager/tunnel-manager.log"
+    max_size: 100    # Maximum size in megabytes before rotation
+    max_backups: 5   # Number of rotated files to keep
+    max_age: 7       # Days to keep rotated files
+    compress: true   # Whether to compress rotated files
 ```
 
 ## 라이선스
