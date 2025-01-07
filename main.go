@@ -118,7 +118,7 @@ func checkUlimit(logger *zap.Logger) {
 			zap.String("message", "tunnel-manager recommends setting max ulimit to more than 65535 for reliable connection management"))
 	}
 
-	if rLimit.Max > desiredCur && rLimit.Cur > desiredCur {
+	if rLimit.Max >= desiredCur && rLimit.Cur >= desiredCur {
 		logger.Info("no need to change ulimit")
 		return
 	}
