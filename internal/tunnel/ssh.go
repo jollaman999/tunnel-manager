@@ -235,6 +235,10 @@ func (t *SSHTunnel) establishConnection(m *Manager) error {
 			}
 
 			if err == io.EOF {
+				t.logger.Info("connection closed",
+					zap.String("local", t.Local.String()),
+					zap.String("server", t.Server.String()),
+					zap.String("remote", t.Remote.String()))
 				return nil
 			}
 
