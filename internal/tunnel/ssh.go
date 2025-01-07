@@ -186,26 +186,30 @@ func (t *SSHTunnel) forward(localConn net.Conn) {
 func (t *SSHTunnel) establishConnection(m *Manager, tunnel *models.Tunnel) error {
 	client, err := ssh.Dial("tcp", t.Server.String(), t.Config)
 	if err != nil {
-		err = fmt.Errorf("failed to establish SSH connection: %w", err)
-		m.logger.Error(err.Error())
+		m.logger.Error("failed to establish SSH connection",
+			zap.String("local", t.Local.String()),
+			zap.String("server", t.Server.String()),
+			zap.String("remote", t.Remote.String()), zap.Error(err))
 
 		tunnel.Status = "error"
 		tunnel.LastError = err.Error()
 		saveTunnelStatus(m, tunnel)
 
-		return err
+		return fmt.Errorf("failed to establish SSH connection: %w", err)
 	}
 
 	listener, err := client.Listen("tcp", t.Local.String())
 	if err != nil {
-		err = fmt.Errorf("failed to start remote listener: %w", err)
-		m.logger.Error(err.Error())
+		m.logger.Error("failed to start remote listener",
+			zap.String("local", t.Local.String()),
+			zap.String("server", t.Server.String()),
+			zap.String("remote", t.Remote.String()), zap.Error(err))
 
 		tunnel.Status = "error"
 		tunnel.LastError = err.Error()
 		saveTunnelStatus(m, tunnel)
 
-		return err
+		return fmt.Errorf("failed to start remote listener: %w", err)
 	}
 	defer func() {
 		_ = listener.Close()
@@ -232,7 +236,10 @@ func (t *SSHTunnel) establishConnection(m *Manager, tunnel *models.Tunnel) error
 		if err != nil {
 			var netErr net.Error
 			if errors.As(err, &netErr) && netErr.Temporary() {
-				t.logger.Warn("temporary accept error", zap.Error(err))
+				t.logger.Warn("temporary accept error",
+					zap.String("local", t.Local.String()),
+					zap.String("server", t.Server.String()),
+					zap.String("remote", t.Remote.String()), zap.Error(err))
 				time.Sleep(time.Second)
 				continue
 			}
@@ -244,6 +251,11 @@ func (t *SSHTunnel) establishConnection(m *Manager, tunnel *models.Tunnel) error
 					zap.String("remote", t.Remote.String()))
 				return nil
 			}
+
+			m.logger.Error("listener accept error",
+				zap.String("local", t.Local.String()),
+				zap.String("server", t.Server.String()),
+				zap.String("remote", t.Remote.String()), zap.Error(err))
 
 			return fmt.Errorf("listener accept error: %w", err)
 		}
@@ -272,6 +284,9 @@ func (t *SSHTunnel) Start(m *Manager, tunnel *models.Tunnel) error {
 			err := t.establishConnection(m, tunnel)
 			if err != nil {
 				t.logger.Error("connection failed, retrying in "+strconv.Itoa(m.monitoringIntervalSec)+" seconds",
+					zap.String("local", t.Local.String()),
+					zap.String("server", t.Server.String()),
+					zap.String("remote", t.Remote.String()),
 					zap.Error(err))
 
 				time.Sleep(time.Duration(m.monitoringIntervalSec) * time.Second)
