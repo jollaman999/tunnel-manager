@@ -56,7 +56,14 @@ func NewSSHTunnel(vmID, spID *uint, localAddr, serverAddr, remoteAddr string, ss
 	}, nil
 }
 
-func (t *SSHTunnel) reconnect(m *Manager) {
+func saveTunnelStatus(m *Manager, tunnel *models.Tunnel) {
+	err := m.db.Save(tunnel).Error
+	if err != nil {
+		m.logger.Error("failed to update tunnel connected status", zap.Error(err))
+	}
+}
+
+func (t *SSHTunnel) reconnect(m *Manager, tunnel *models.Tunnel) {
 	t.stopMu.Lock()
 	if t.isStopped {
 		t.stopMu.Unlock()
@@ -64,23 +71,9 @@ func (t *SSHTunnel) reconnect(m *Manager) {
 	}
 	t.stopMu.Unlock()
 
-	var tunnel models.Tunnel
-	err := m.db.Model(&models.Tunnel{}).
-		Where("vm_id = ?", t.VMID).
-		Where("sp_id = ?", t.SPID).
-		First(&tunnel).Error
-	if err != nil {
-		m.logger.Error("failed to get previous tunnel", zap.Error(err))
-	}
-
-	err = m.db.Model(&models.Tunnel{}).
-		Where("vm_id = ?", t.VMID).
-		Where("sp_id = ?", t.SPID).
-		Update("status", "reconnecting").
-		Update("retry_count", tunnel.RetryCount+1).Error
-	if err != nil {
-		m.logger.Error("failed to update tunnel connected status", zap.Error(err))
-	}
+	tunnel.Status = "reconnecting"
+	tunnel.RetryCount++
+	saveTunnelStatus(m, tunnel)
 
 	t.clientMu.Lock()
 	if t.client != nil {
@@ -89,19 +82,23 @@ func (t *SSHTunnel) reconnect(m *Manager) {
 	}
 	t.clientMu.Unlock()
 
-	err = t.establishConnection(m)
+	err := t.establishConnection(m, tunnel)
 	if err != nil {
 		t.logger.Error("reconnection failed",
+			zap.String("local", t.Local.String()),
 			zap.String("server", t.Server.String()),
+			zap.String("remote", t.Remote.String()),
 			zap.Error(err))
 		return
 	}
 
 	t.logger.Info("reconnection successful",
-		zap.String("server", t.Server.String()))
+		zap.String("local", t.Local.String()),
+		zap.String("server", t.Server.String()),
+		zap.String("remote", t.Remote.String()))
 }
 
-func (t *SSHTunnel) monitorConnection(m *Manager) {
+func (t *SSHTunnel) monitorConnection(m *Manager, tunnel *models.Tunnel) {
 	ticker := time.NewTicker(time.Duration(m.monitoringIntervalSec) * time.Second)
 	defer ticker.Stop()
 
@@ -119,9 +116,11 @@ func (t *SSHTunnel) monitorConnection(m *Manager) {
 					time.Duration(m.monitoringIntervalSec)*time.Second)
 				if err != nil {
 					t.logger.Warn("SSH connection lost, attempting reconnection",
+						zap.String("local", t.Local.String()),
 						zap.String("server", t.Server.String()),
+						zap.String("remote", t.Remote.String()),
 						zap.Error(err))
-					t.reconnect(m)
+					t.reconnect(m, tunnel)
 					continue
 				}
 				_ = conn.Close()
@@ -131,7 +130,7 @@ func (t *SSHTunnel) monitorConnection(m *Manager) {
 					t.logger.Warn("SSH keepalive check failed, attempting reconnection",
 						zap.String("server", t.Server.String()),
 						zap.Error(err))
-					t.reconnect(m)
+					t.reconnect(m, tunnel)
 				}
 			}
 		}
@@ -148,13 +147,18 @@ func (t *SSHTunnel) forward(localConn net.Conn) {
 	t.clientMu.RUnlock()
 
 	if client == nil {
-		t.logger.Error("ssh client is nil during forward")
+		t.logger.Error("ssh client is nil during forward",
+			zap.String("local", t.Local.String()),
+			zap.String("server", t.Server.String()),
+			zap.String("remote", t.Remote.String()))
 		return
 	}
 
 	remoteConn, err := client.Dial("tcp", t.Remote.String())
 	if err != nil {
 		t.logger.Error("failed to dial remote service",
+			zap.String("local", t.Local.String()),
+			zap.String("server", t.Server.String()),
 			zap.String("remote", t.Remote.String()),
 			zap.Error(err))
 		return
@@ -179,24 +183,27 @@ func (t *SSHTunnel) forward(localConn net.Conn) {
 	}
 }
 
-func (t *SSHTunnel) establishConnection(m *Manager) error {
+func (t *SSHTunnel) establishConnection(m *Manager, tunnel *models.Tunnel) error {
 	client, err := ssh.Dial("tcp", t.Server.String(), t.Config)
 	if err != nil {
-		return fmt.Errorf("failed to establish SSH connection: %w", err)
+		err = fmt.Errorf("failed to establish SSH connection: %w", err)
+		m.logger.Error(err.Error())
+
+		tunnel.Status = "error"
+		tunnel.LastError = err.Error()
+		saveTunnelStatus(m, tunnel)
+
+		return err
 	}
 
 	listener, err := client.Listen("tcp", t.Local.String())
 	if err != nil {
 		err = fmt.Errorf("failed to start remote listener: %w", err)
+		m.logger.Error(err.Error())
 
-		err = m.db.Model(&models.Tunnel{}).
-			Where("vm_id = ?", t.VMID).
-			Where("sp_id = ?", t.SPID).
-			Update("status", "error").
-			Update("last_error", err.Error()).Error
-		if err != nil {
-			m.logger.Error("failed to update tunnel connected status", zap.Error(err))
-		}
+		tunnel.Status = "error"
+		tunnel.LastError = err.Error()
+		saveTunnelStatus(m, tunnel)
 
 		return err
 	}
@@ -208,21 +215,16 @@ func (t *SSHTunnel) establishConnection(m *Manager) error {
 	t.client = client
 	t.clientMu.Unlock()
 
-	err = m.db.Model(&models.Tunnel{}).
-		Where("vm_id = ?", t.VMID).
-		Where("sp_id = ?", t.SPID).
-		Update("status", "connected").
-		Update("last_connected_at", time.Now()).Error
-	if err != nil {
-		m.logger.Error("failed to update tunnel connected status", zap.Error(err))
-	}
+	tunnel.Status = "connected"
+	tunnel.LastConnectedAt = time.Now()
+	saveTunnelStatus(m, tunnel)
 
 	t.logger.Info("tunnel connected successfully",
 		zap.String("local", t.Local.String()),
 		zap.String("server", t.Server.String()),
 		zap.String("remote", t.Remote.String()))
 
-	go t.monitorConnection(m)
+	go t.monitorConnection(m, tunnel)
 
 	for {
 		conn, err := listener.Accept()
@@ -248,7 +250,7 @@ func (t *SSHTunnel) establishConnection(m *Manager) error {
 	}
 }
 
-func (t *SSHTunnel) Start(m *Manager) error {
+func (t *SSHTunnel) Start(m *Manager, tunnel *models.Tunnel) error {
 	t.logger.Info("attempting to start tunnel",
 		zap.String("local", t.Local.String()),
 		zap.String("server", t.Server.String()),
@@ -259,7 +261,7 @@ func (t *SSHTunnel) Start(m *Manager) error {
 		case <-t.done:
 			return nil
 		default:
-			err := t.establishConnection(m)
+			err := t.establishConnection(m, tunnel)
 			if err != nil {
 				t.logger.Error("connection failed, retrying in "+strconv.Itoa(m.monitoringIntervalSec)+" seconds",
 					zap.Error(err))

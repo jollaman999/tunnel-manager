@@ -134,7 +134,7 @@ func (h *Handler) CreateVM(c echo.Context) error {
 
 func (h *Handler) ListVMs(c echo.Context) error {
 	var vms []models.VM
-	err := h.db.Preload("Tunnels").Find(&vms).Error
+	err := h.db.Find(&vms).Error
 	if err != nil {
 		h.logger.Error("failed to fetch VMs", zap.Error(err))
 		return c.JSON(http.StatusInternalServerError, models.Response{
@@ -159,7 +159,7 @@ func (h *Handler) GetVM(c echo.Context) error {
 	}
 
 	var vm models.VM
-	err = h.db.Preload("Tunnels").First(&vm, id).Error
+	err = h.db.First(&vm, id).Error
 	if err != nil {
 		return c.JSON(http.StatusNotFound, models.Response{
 			Success: false,
@@ -318,16 +318,17 @@ func (h *Handler) DeleteVM(c echo.Context) error {
 		})
 	}
 
-	err = tx.Where("vm_id = ?", id).Delete(&models.Tunnel{}).Error
+	var tunnels []models.Tunnel
+	err = h.db.Find(&tunnels).Error
 	if err != nil {
-		tx.Rollback()
+		h.logger.Error("failed to fetch tunnels", zap.Error(err))
 		return c.JSON(http.StatusInternalServerError, models.Response{
 			Success: false,
-			Error:   "Failed to delete tunnels: " + err.Error(),
+			Error:   "Failed to fetch tunnels: " + err.Error(),
 		})
 	}
 
-	for _, t := range vm.Tunnels {
+	for _, t := range tunnels {
 		err = h.manager.StopTunnel(vm.ID, t.SPID)
 		if err != nil {
 			h.logger.Warn("failed to stop tunnel",
@@ -335,6 +336,15 @@ func (h *Handler) DeleteVM(c echo.Context) error {
 				zap.Uint("service_port_id", t.SPID),
 				zap.Error(err))
 		}
+	}
+
+	err = tx.Where("vm_id = ?", id).Delete(&models.Tunnel{}).Error
+	if err != nil {
+		tx.Rollback()
+		return c.JSON(http.StatusInternalServerError, models.Response{
+			Success: false,
+			Error:   "Failed to delete tunnels: " + err.Error(),
+		})
 	}
 
 	err = tx.Unscoped().Delete(&vm).Error
@@ -405,7 +415,7 @@ func (h *Handler) CreateServicePort(c echo.Context) error {
 	}
 
 	var vms []models.VM
-	err = h.db.Preload("Tunnels").Find(&vms).Error
+	err = h.db.Find(&vms).Error
 	if err != nil {
 		h.logger.Error("failed to fetch VMs", zap.Error(err))
 		return c.JSON(http.StatusInternalServerError, models.Response{
@@ -528,7 +538,7 @@ func (h *Handler) UpdateServicePort(c echo.Context) error {
 	}
 
 	var vms []models.VM
-	err = h.db.Preload("Tunnels").Find(&vms).Error
+	err = h.db.Find(&vms).Error
 	if err != nil {
 		h.logger.Error("failed to fetch VMs", zap.Error(err))
 		return c.JSON(http.StatusInternalServerError, models.Response{
@@ -614,7 +624,7 @@ func (h *Handler) DeleteServicePort(c echo.Context) error {
 	}
 
 	var vms []models.VM
-	err = h.db.Preload("Tunnels").Find(&vms).Error
+	err = h.db.Find(&vms).Error
 	if err != nil {
 		h.logger.Error("failed to fetch VMs", zap.Error(err))
 		return c.JSON(http.StatusInternalServerError, models.Response{
@@ -658,7 +668,7 @@ func (h *Handler) DeleteServicePort(c echo.Context) error {
 
 func (h *Handler) GetStatus(c echo.Context) error {
 	var tunnels []models.Tunnel
-	err := h.db.Preload("VM").Find(&tunnels).Error
+	err := h.db.Find(&tunnels).Error
 	if err != nil {
 		h.logger.Error("failed to fetch tunnel status", zap.Error(err))
 		return c.JSON(http.StatusInternalServerError, models.Response{
@@ -694,7 +704,7 @@ func (h *Handler) GetVMStatus(c echo.Context) error {
 	}
 
 	var vm models.VM
-	err = h.db.Preload("Tunnels").First(&vm, vmID).Error
+	err = h.db.First(&vm, vmID).Error
 	if err != nil {
 		return c.JSON(http.StatusNotFound, models.Response{
 			Success: false,
@@ -702,11 +712,28 @@ func (h *Handler) GetVMStatus(c echo.Context) error {
 		})
 	}
 
-	vmWithoutTunnels := vm
-	vmWithoutTunnels.Tunnels = nil
+	var tunnels []models.Tunnel
+	err = h.db.Find(&tunnels).Error
+	if err != nil {
+		h.logger.Error("failed to fetch tunnels", zap.Error(err))
+		return c.JSON(http.StatusInternalServerError, models.Response{
+			Success: false,
+			Error:   "Failed to fetch tunnels: " + err.Error(),
+		})
+	}
+
+	for _, t := range tunnels {
+		err = h.manager.StopTunnel(vm.ID, t.SPID)
+		if err != nil {
+			h.logger.Warn("failed to stop tunnel",
+				zap.Uint("vm_id", vm.ID),
+				zap.Uint("service_port_id", t.SPID),
+				zap.Error(err))
+		}
+	}
 
 	var connectedTunnels int
-	for _, t := range vm.Tunnels {
+	for _, t := range tunnels {
 		if t.Status == "connected" {
 			connectedTunnels++
 		}
@@ -715,10 +742,10 @@ func (h *Handler) GetVMStatus(c echo.Context) error {
 	return c.JSON(http.StatusOK, models.Response{
 		Success: true,
 		Data: map[string]interface{}{
-			"vm":                vmWithoutTunnels,
-			"total_tunnels":     len(vm.Tunnels),
+			"vm":                vm,
+			"total_tunnels":     len(tunnels),
 			"connected_tunnels": connectedTunnels,
-			"tunnels":           vm.Tunnels,
+			"tunnels":           tunnels,
 		},
 	})
 }

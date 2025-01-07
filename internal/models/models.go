@@ -7,12 +7,11 @@ import (
 
 type VM struct {
 	gorm.Model
-	IP          string   `gorm:"index:idx_vms_ip,unique,where:deleted_at IS NULL" json:"ip"`
-	Port        int      `gorm:"not null" json:"port"`
-	User        string   `gorm:"not null" json:"user"`
-	Password    string   `gorm:"not null" json:"-"`
-	Description string   `json:"description"`
-	Tunnels     []Tunnel `gorm:"foreignKey:VMID" json:"tunnels,omitempty"`
+	IP          string `gorm:"index:idx_vms_ip,unique,where:deleted_at IS NULL" json:"ip"`
+	Port        int    `gorm:"not null" json:"port"`
+	User        string `gorm:"not null" json:"user"`
+	Password    string `gorm:"not null" json:"-"`
+	Description string `json:"description"`
 }
 
 type ServicePort struct {
@@ -29,8 +28,8 @@ type ServicePort struct {
 }
 
 type Tunnel struct {
-	VMID            uint      `gorm:"not null" json:"vm_id"`
-	SPID            uint      `gorm:"not null" json:"sp_id"`
+	VMID            uint      `gorm:"primaryKey;not null" json:"vm_id"`
+	SPID            uint      `gorm:"primaryKey;not null" json:"sp_id"`
 	Status          string    `gorm:"not null" json:"status"`
 	LastError       string    `json:"last_error"`
 	RetryCount      int       `gorm:"default:0" json:"retry_count"`
@@ -38,7 +37,6 @@ type Tunnel struct {
 	Server          string    `gorm:"not null" json:"server"`
 	Local           string    `gorm:"not null" json:"local"`
 	Remote          string    `gorm:"not null" json:"remote"`
-	VM              *VM       `gorm:"foreignKey:VMID" json:"-"`
 }
 
 type CreateVMRequest struct {
