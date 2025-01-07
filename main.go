@@ -10,6 +10,7 @@ import (
 	"reflect"
 	"strconv"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/go-playground/validator/v10"
@@ -91,6 +92,54 @@ func initLogger(cfg *config.Config) (*zap.Logger, error) {
 	return zap.New(core, zap.AddCaller()), nil
 }
 
+func checkUlimit(logger *zap.Logger) {
+	var rLimit syscall.Rlimit
+	desiredCur := uint64(65535)
+
+	err := syscall.Getrlimit(syscall.RLIMIT_NOFILE, &rLimit)
+	if err != nil {
+		logger.Warn("error getting rlimit", zap.Error(err))
+		return
+	}
+
+	logger.Info("current ulimit before change",
+		zap.Uint64("cur", rLimit.Cur),
+		zap.Uint64("max", rLimit.Max))
+
+	if rLimit.Max < desiredCur {
+		logger.Warn("max ulimit is low",
+			zap.Uint64("current", rLimit.Max),
+			zap.String("message", "tunnel-manager recommends setting max ulimit to more than 65535 for reliable connection management"))
+	}
+
+	if rLimit.Max > desiredCur && rLimit.Cur > desiredCur {
+		logger.Info("no need to change ulimit")
+		return
+	}
+
+	if rLimit.Max > desiredCur {
+		desiredCur = rLimit.Max
+	}
+
+	newLimit := syscall.Rlimit{
+		Cur: desiredCur,
+		Max: rLimit.Max,
+	}
+
+	err = syscall.Setrlimit(syscall.RLIMIT_NOFILE, &newLimit)
+	if err != nil {
+		logger.Warn("failed to change ulimit",
+			zap.Error(err),
+			zap.Uint64("current", rLimit.Cur),
+			zap.Uint64("max", rLimit.Max))
+		return
+	}
+
+	logger.Info("successfully changed ulimit",
+		zap.Uint64("old_limit", rLimit.Cur),
+		zap.Uint64("new_limit", newLimit.Cur))
+}
+
 type CustomValidator struct {
 	validator *validator.Validate
 }
@@ -126,6 +175,8 @@ func main() {
 	defer func() {
 		_ = logger.Sync()
 	}()
+
+	checkUlimit(logger)
 
 	db, err := initDatabase(cfg, logger)
 	if err != nil {
