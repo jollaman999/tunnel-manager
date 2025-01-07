@@ -99,7 +99,7 @@ func (cv *CustomValidator) Validate(i interface{}) error {
 }
 
 func main() {
-	configPath := flag.String("config", "config.yaml", "path to config file")
+	configPath := flag.String("config", "config/config.yaml", "path to config file")
 	flag.Parse()
 
 	cfg, err := config.LoadConfig(*configPath)
