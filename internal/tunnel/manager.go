@@ -169,3 +169,39 @@ func (m *Manager) RestoreAllTunnels() error {
 
 	return nil
 }
+
+func (m *Manager) StopAllTunnels() {
+	m.mu.Lock()
+	var vms []models.VM
+	err := m.db.Find(&vms).Error
+	if err != nil {
+		m.mu.Unlock()
+		m.logger.Error("failed to fetch VMs", zap.Error(err))
+	}
+
+	var servicePorts []models.ServicePort
+	err = m.db.Find(&servicePorts).Error
+	if err != nil {
+		m.mu.Unlock()
+		m.logger.Error(fmt.Sprintf("failed to fetch service ports: %v", err))
+	}
+	m.mu.Unlock()
+
+	for _, vm := range vms {
+		err = m.db.Unscoped().Where("vm_id = ?", vm.ID).Delete(&models.Tunnel{}).Error
+		if err != nil {
+			m.logger.Error(fmt.Sprintf("failed to reset tunnel status for vm_id=%d: %w", vm.ID, err))
+		}
+
+		for _, sp := range servicePorts {
+			err = m.StopTunnel(vm.ID, sp.ID)
+			if err != nil {
+				m.logger.Error("failed to stop tunnel",
+					zap.Error(err),
+					zap.String("vm_ip", vm.IP),
+					zap.Int("service_port", sp.ServicePort))
+				continue
+			}
+		}
+	}
+}

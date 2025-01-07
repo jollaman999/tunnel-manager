@@ -197,7 +197,9 @@ func main() {
 		log.Fatalf("Failed to create tunnel manager: %v", err)
 	}
 
-	if err = manager.RestoreAllTunnels(); err != nil {
+	logger.Info("Restoring all tunnels...")
+	err = manager.RestoreAllTunnels()
+	if err != nil {
 		logger.Error("failed to restore tunnels", zap.Error(err))
 	}
 
@@ -205,6 +207,8 @@ func main() {
 	signal.Notify(sigChan, os.Interrupt, syscall.SIGINT, syscall.SIGTERM)
 	go func() {
 		<-sigChan
+		logger.Info("Stopping all tunnels...")
+		manager.StopAllTunnels()
 		logger.Info("Exiting tunnel-manager...")
 		os.Exit(0)
 	}()
