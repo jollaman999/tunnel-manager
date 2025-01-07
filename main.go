@@ -26,6 +26,8 @@ import (
 	"gopkg.in/natefinch/lumberjack.v2"
 )
 
+const version = "0.0.2"
+
 func initDatabase(cfg *config.Config, logger *zap.Logger) (*gorm.DB, error) {
 	timeout := time.After(time.Duration(cfg.Database.TimeoutSec) * time.Second)
 	tick := time.Tick(1 * time.Second)
@@ -163,12 +165,18 @@ func (cv *CustomValidator) Validate(i interface{}) error {
 }
 
 func main() {
+	versionFlag := flag.Bool("version", false, "show the version and exit")
+	configPath := flag.String("config", "config/config.yaml", "path to config file")
+	flag.Parse()
+
+	if *versionFlag {
+		fmt.Printf("tunnel-manager v%s\n", version)
+		os.Exit(0)
+	}
+
 	if os.Geteuid() != 0 {
 		log.Fatal("This program must be run as root")
 	}
-
-	configPath := flag.String("config", "config/config.yaml", "path to config file")
-	flag.Parse()
 
 	cfg, err := config.LoadConfig(*configPath)
 	if err != nil {
