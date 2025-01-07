@@ -19,6 +19,8 @@ services:
 
   tunnel-manager-db:
     image: mariadb:11.6
+    ports:
+      - "3306:3306"
     container_name: tunnel-manager-db
     restart: always
     environment:
