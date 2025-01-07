@@ -233,6 +233,11 @@ func (t *SSHTunnel) establishConnection(m *Manager) error {
 				time.Sleep(time.Second)
 				continue
 			}
+
+			if err == io.EOF {
+				return nil
+			}
+
 			return fmt.Errorf("listener accept error: %w", err)
 		}
 		go t.forward(conn)
