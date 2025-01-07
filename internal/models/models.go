@@ -17,13 +17,15 @@ type VM struct {
 
 type ServicePort struct {
 	ID          uint   `gorm:"primaryKey;autoIncrement" json:"id"`
-	ServiceIP   string `gorm:"not null;index:idx_service_ip_port,unique" json:"service_ip"`
-	ServicePort int    `gorm:"not null;index:idx_service_ip_port,unique" json:"service_port"`
+	ServiceIP   string `gorm:"not null" json:"service_ip"`
+	ServicePort int    `gorm:"not null" json:"service_port"`
 	LocalPort   int    `gorm:"not null" json:"local_port"`
 	Description string `json:"description"`
 	CreatedAt   time.Time
 	UpdatedAt   time.Time
 	DeletedAt   gorm.DeletedAt `gorm:"index"`
+
+	_ int `gorm:"uniqueIndex:idx_service_ip_port,priority:1,cols:service_ip,service_port,deleted_at;where:deleted_at IS NULL"`
 }
 
 type Tunnel struct {
