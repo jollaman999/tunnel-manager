@@ -6,6 +6,7 @@ import (
 	"gorm.io/gorm"
 	"log"
 	"os"
+	"os/signal"
 	"path/filepath"
 	"reflect"
 	"strconv"
@@ -197,6 +198,14 @@ func main() {
 	if err = manager.RestoreAllTunnels(); err != nil {
 		logger.Error("failed to restore tunnels", zap.Error(err))
 	}
+
+	sigChan := make(chan os.Signal, 1)
+	signal.Notify(sigChan, os.Interrupt, syscall.SIGINT, syscall.SIGTERM)
+	go func() {
+		<-sigChan
+		logger.Info("Exiting tunnel-manager...")
+		os.Exit(0)
+	}()
 
 	e := echo.New()
 	e.Validator = &CustomValidator{validator: validator.New()}
