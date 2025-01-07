@@ -13,5 +13,11 @@ monitoring:
   interval_sec: 5
 
 logging:
-  level: info
-  format: json
+  level: info     # Available levels: debug, info, warn, error, dpanic, panic, fatal
+  format: json    # Available formats: json, console
+  file:
+    path: "/var/tunnel-manager/tunnel-manager.log"
+    max_size: 100    # Maximum size in megabytes before rotation
+    max_backups: 5   # Number of rotated files to keep
+    max_age: 7       # Days to keep rotated files
+    compress: true   # Whether to compress rotated files
