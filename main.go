@@ -107,6 +107,10 @@ func (cv *CustomValidator) Validate(i interface{}) error {
 }
 
 func main() {
+	if os.Geteuid() != 0 {
+		log.Fatal("This program must be run as root")
+	}
+
 	configPath := flag.String("config", "config/config.yaml", "path to config file")
 	flag.Parse()
 
