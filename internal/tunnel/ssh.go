@@ -143,19 +143,7 @@ func (t *SSHTunnel) forward(localConn net.Conn) {
 		_ = localConn.Close()
 	}()
 
-	t.clientMu.RLock()
-	client := t.client
-	t.clientMu.RUnlock()
-
-	if client == nil {
-		t.logger.Error("ssh client is nil during forward",
-			zap.String("local", t.Local.String()),
-			zap.String("server", t.Server.String()),
-			zap.String("remote", t.Remote.String()))
-		return
-	}
-
-	remoteConn, err := client.Dial("tcp", t.Remote.String())
+	remoteConn, err := net.Dial("tcp", t.Remote.String())
 	if err != nil {
 		t.logger.Error("failed to dial remote service",
 			zap.String("local", t.Local.String()),
