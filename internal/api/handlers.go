@@ -201,7 +201,7 @@ func (h *Handler) UpdateVM(c echo.Context) error {
 		})
 	}
 
-	var req models.CreateVMRequest
+	var req models.UpdateVMRequest
 	err = c.Bind(&req)
 	if err != nil {
 		return c.JSON(http.StatusBadRequest, models.Response{
@@ -218,6 +218,28 @@ func (h *Handler) UpdateVM(c echo.Context) error {
 		})
 	}
 
+	needTunnelRestart := (req.IP != "" && vm.IP != req.IP) ||
+		(req.Port != nil && vm.Port != *req.Port) ||
+		(req.User != "" && vm.User != req.User) ||
+		(req.Password != "" && vm.Password != req.Password)
+	needTunnelStop := req.Enabled != nil && !*req.Enabled
+
+	if req.IP != "" {
+		vm.IP = req.IP
+	}
+	if req.Port != nil {
+		vm.Port = *req.Port
+	}
+	if req.User != "" {
+		vm.User = req.User
+	}
+	if req.Password != "" {
+		vm.Password = req.Password
+	}
+	if vm.Description != "" {
+		vm.Description = req.Description
+	}
+
 	tx := h.db.Begin()
 	err = tx.Error
 	if err != nil {
@@ -226,17 +248,6 @@ func (h *Handler) UpdateVM(c echo.Context) error {
 			Error:   "Failed to start transaction: " + err.Error(),
 		})
 	}
-
-	needTunnelRestart := vm.IP != req.IP ||
-		vm.Port != req.Port ||
-		vm.User != req.User ||
-		vm.Password != req.Password
-
-	vm.IP = req.IP
-	vm.Port = req.Port
-	vm.User = req.User
-	vm.Password = req.Password
-	vm.Description = req.Description
 
 	err = tx.Save(&vm).Error
 	if err != nil {
@@ -256,7 +267,7 @@ func (h *Handler) UpdateVM(c echo.Context) error {
 		})
 	}
 
-	if needTunnelRestart && len(sps) > 0 {
+	if needTunnelStop || needTunnelRestart {
 		for _, sp := range sps {
 			err = h.manager.StopTunnel(vm.ID, sp.ID)
 			if err != nil {
@@ -266,7 +277,9 @@ func (h *Handler) UpdateVM(c echo.Context) error {
 					zap.Error(err))
 			}
 		}
+	}
 
+	if !needTunnelStop || needTunnelRestart {
 		for _, sp := range sps {
 			err = h.manager.StartTunnel(&vm, &sp)
 			if err != nil {
@@ -275,6 +288,37 @@ func (h *Handler) UpdateVM(c echo.Context) error {
 					zap.String("vm_ip", vm.IP),
 					zap.Int("service_port", sp.ServicePort))
 			}
+		}
+	}
+
+	if req.Enabled != nil && vm.Enabled != *req.Enabled {
+		vm.Enabled = *req.Enabled
+
+		tx = h.db.Begin()
+		err = tx.Error
+		if err != nil {
+			return c.JSON(http.StatusInternalServerError, models.Response{
+				Success: false,
+				Error:   "Failed to start transaction: " + err.Error(),
+			})
+		}
+
+		err = tx.Save(&vm).Error
+		if err != nil {
+			tx.Rollback()
+			h.logger.Error("failed to update VM", zap.Error(err))
+			return c.JSON(http.StatusInternalServerError, models.Response{
+				Success: false,
+				Error:   "Failed to update VM: " + err.Error(),
+			})
+		}
+
+		err = tx.Commit().Error
+		if err != nil {
+			return c.JSON(http.StatusInternalServerError, models.Response{
+				Success: false,
+				Error:   "Failed to commit transaction: " + err.Error(),
+			})
 		}
 	}
 

@@ -7,11 +7,12 @@ import (
 
 type VM struct {
 	gorm.Model
-	IP          string `gorm:"index:idx_vms_ip,unique,where:deleted_at IS NULL" json:"ip"`
+	IP          string `gorm:"uniqueIndex:idx_vms_ip,priority:1,cols:ip,deleted_at,where:deleted_at IS NULL" json:"ip"`
 	Port        int    `gorm:"not null" json:"port"`
 	User        string `gorm:"not null" json:"user"`
 	Password    string `gorm:"not null" json:"-"`
 	Description string `json:"description"`
+	Enabled     bool   `gorm:"default:true" json:"enabled"`
 }
 
 type ServicePort struct {
@@ -45,6 +46,15 @@ type CreateVMRequest struct {
 	User        string `json:"user" validate:"required"`
 	Password    string `json:"password" validate:"required"`
 	Description string `json:"description"`
+}
+
+type UpdateVMRequest struct {
+	IP          string `json:"ip" validate:"omitempty,ip"`
+	Port        *int   `json:"port" validate:"omitempty,min=1,max=65535"`
+	User        string `json:"user" validate:"omitempty"`
+	Password    string `json:"password" validate:"omitempty"`
+	Description string `json:"description"`
+	Enabled     *bool  `json:"enabled"`
 }
 
 type CreateServicePortRequest struct {
