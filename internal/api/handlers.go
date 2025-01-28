@@ -83,31 +83,6 @@ func (h *Handler) CreateVM(c echo.Context) error {
 		})
 	}
 
-	var tunnels []models.Tunnel
-	for _, sp := range sps {
-		t := models.Tunnel{
-			VMID:   vm.ID,
-			SPID:   sp.ID,
-			Status: "starting",
-			Local:  fmt.Sprintf("127.0.0.1:%d", sp.LocalPort),
-			Server: fmt.Sprintf("%s:%d", vm.IP, vm.Port),
-			Remote: fmt.Sprintf("%s:%d", sp.ServiceIP, sp.ServicePort),
-		}
-		tunnels = append(tunnels, t)
-	}
-
-	if len(tunnels) > 0 {
-		err = tx.Create(&tunnels).Error
-		if err != nil {
-			tx.Rollback()
-			h.logger.Error("failed to create tunnels", zap.Error(err))
-			return c.JSON(http.StatusInternalServerError, models.Response{
-				Success: false,
-				Error:   "Failed to create tunnels: " + err.Error(),
-			})
-		}
-	}
-
 	err = tx.Commit().Error
 	if err != nil {
 		return c.JSON(http.StatusInternalServerError, models.Response{
