@@ -676,10 +676,8 @@ func (h *Handler) DeleteServicePort(c echo.Context) error {
 }
 
 func (h *Handler) GetStatus(c echo.Context) error {
-	var tunnels []models.Tunnel
-	err := h.db.Find(&tunnels).Error
+	tunnels, err := h.manager.GetAllTunnels()
 	if err != nil {
-		h.logger.Error("failed to fetch tunnel status", zap.Error(err))
 		return c.JSON(http.StatusInternalServerError, models.Response{
 			Success: false,
 			Error:   "Failed to fetch tunnel status: " + err.Error(),
@@ -687,7 +685,7 @@ func (h *Handler) GetStatus(c echo.Context) error {
 	}
 
 	var connectedTunnels int
-	for _, t := range tunnels {
+	for _, t := range *tunnels {
 		if t.Status == "connected" {
 			connectedTunnels++
 		}
@@ -696,7 +694,7 @@ func (h *Handler) GetStatus(c echo.Context) error {
 	return c.JSON(http.StatusOK, models.Response{
 		Success: true,
 		Data: map[string]interface{}{
-			"total_tunnels":     len(tunnels),
+			"total_tunnels":     len(*tunnels),
 			"connected_tunnels": connectedTunnels,
 			"tunnels":           tunnels,
 		},
@@ -721,18 +719,16 @@ func (h *Handler) GetVMStatus(c echo.Context) error {
 		})
 	}
 
-	var tunnels []models.Tunnel
-	err = h.db.Find(&tunnels).Error
+	tunnels, err := h.manager.GetVMTunnels(uint(vmID))
 	if err != nil {
-		h.logger.Error("failed to fetch tunnels", zap.Error(err))
 		return c.JSON(http.StatusInternalServerError, models.Response{
 			Success: false,
-			Error:   "Failed to fetch tunnels: " + err.Error(),
+			Error:   "Failed to fetch tunnel status: " + err.Error(),
 		})
 	}
 
 	var connectedTunnels int
-	for _, t := range tunnels {
+	for _, t := range *tunnels {
 		if t.Status == "connected" {
 			connectedTunnels++
 		}
@@ -742,7 +738,7 @@ func (h *Handler) GetVMStatus(c echo.Context) error {
 		Success: true,
 		Data: map[string]interface{}{
 			"vm":                vm,
-			"total_tunnels":     len(tunnels),
+			"total_tunnels":     len(*tunnels),
 			"connected_tunnels": connectedTunnels,
 			"tunnels":           tunnels,
 		},

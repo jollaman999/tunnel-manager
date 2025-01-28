@@ -33,7 +33,6 @@ func (m *Manager) StartTunnel(vm *models.VM, sp *models.ServicePort) error {
 	defer m.mu.Unlock()
 
 	tunnelKey := fmt.Sprintf("%d-%d", vm.ID, sp.LocalPort)
-
 	if _, exists := m.tunnels[tunnelKey]; exists {
 		return fmt.Errorf("tunnel already exists")
 	}
@@ -109,6 +108,34 @@ func (m *Manager) StopTunnel(vmID uint, spID uint) error {
 	delete(m.tunnels, tunnelKey)
 
 	return nil
+}
+
+func (m *Manager) GetVMTunnels(vmID uint) (*[]models.Tunnel, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	var tunnels []models.Tunnel
+	err := m.db.Find(&tunnels).Where("vm_id = ?", vmID).Error
+	if err != nil {
+		m.logger.Error(fmt.Sprintf("failed to fetch VM's tunnels (vm_id=%d)", vmID), zap.Error(err))
+		return nil, fmt.Errorf("failed to fetch VM's tunnels (vm_id=%d): %w", vmID, err)
+	}
+
+	return &tunnels, nil
+}
+
+func (m *Manager) GetAllTunnels() (*[]models.Tunnel, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	var tunnels []models.Tunnel
+	err := m.db.Find(&tunnels).Error
+	if err != nil {
+		m.logger.Error("failed to fetch tunnels", zap.Error(err))
+		return nil, fmt.Errorf("failed to fetch tunnels: %w", err)
+	}
+
+	return &tunnels, nil
 }
 
 func (m *Manager) RestoreAllTunnels() error {
