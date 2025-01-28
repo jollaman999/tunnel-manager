@@ -312,19 +312,9 @@ func (h *Handler) DeleteVM(c echo.Context) error {
 		})
 	}
 
-	tx := h.db.Begin()
-	err = tx.Error
-	if err != nil {
-		return c.JSON(http.StatusInternalServerError, models.Response{
-			Success: false,
-			Error:   "Failed to start transaction: " + err.Error(),
-		})
-	}
-
 	var vm models.VM
-	err = tx.First(&vm, id).Error
+	err = h.db.First(&vm, id).Error
 	if err != nil {
-		tx.Rollback()
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return c.JSON(http.StatusNotFound, models.Response{
 				Success: false,
@@ -337,24 +327,33 @@ func (h *Handler) DeleteVM(c echo.Context) error {
 		})
 	}
 
-	var tunnels []models.Tunnel
-	err = h.db.Find(&tunnels).Error
+	var sps []models.ServicePort
+	err = h.db.Find(&sps).Error
 	if err != nil {
-		h.logger.Error("failed to fetch tunnels", zap.Error(err))
+		h.logger.Error("failed to fetch service ports", zap.Error(err))
 		return c.JSON(http.StatusInternalServerError, models.Response{
 			Success: false,
-			Error:   "Failed to fetch tunnels: " + err.Error(),
+			Error:   "Failed to fetch service ports: " + err.Error(),
 		})
 	}
 
-	for _, t := range tunnels {
-		err = h.manager.StopTunnel(vm.ID, t.SPID)
+	for _, sp := range sps {
+		err = h.manager.StopTunnel(vm.ID, sp.ID)
 		if err != nil {
 			h.logger.Warn("failed to stop tunnel",
 				zap.Uint("vm_id", vm.ID),
-				zap.Uint("service_port_id", t.SPID),
+				zap.Uint("service_port_id", sp.ID),
 				zap.Error(err))
 		}
+	}
+
+	tx := h.db.Begin()
+	err = tx.Error
+	if err != nil {
+		return c.JSON(http.StatusInternalServerError, models.Response{
+			Success: false,
+			Error:   "Failed to start transaction: " + err.Error(),
+		})
 	}
 
 	err = tx.Delete(&vm).Error
