@@ -6,6 +6,7 @@ import (
 	"gorm.io/gorm"
 	"net/http"
 	"strconv"
+	"sync"
 
 	"github.com/jollaman999/tunnel-manager/internal/models"
 	"github.com/jollaman999/tunnel-manager/internal/tunnel"
@@ -17,6 +18,7 @@ type Handler struct {
 	db      *gorm.DB
 	manager *tunnel.Manager
 	logger  *zap.Logger
+	rwLock  sync.RWMutex
 }
 
 func NewHandler(db *gorm.DB, manager *tunnel.Manager, logger *zap.Logger) *Handler {
@@ -44,6 +46,9 @@ func (h *Handler) CreateVM(c echo.Context) error {
 			Error:   "Validation failed: " + err.Error(),
 		})
 	}
+
+	h.rwLock.Lock()
+	defer h.rwLock.Unlock()
 
 	tx := h.db.Begin()
 	err = tx.Error
@@ -108,6 +113,9 @@ func (h *Handler) CreateVM(c echo.Context) error {
 }
 
 func (h *Handler) ListVMs(c echo.Context) error {
+	h.rwLock.RLock()
+	defer h.rwLock.RUnlock()
+
 	var vms []models.VM
 	err := h.db.Find(&vms).Error
 	if err != nil {
@@ -133,6 +141,9 @@ func (h *Handler) GetVM(c echo.Context) error {
 		})
 	}
 
+	h.rwLock.RLock()
+	defer h.rwLock.RUnlock()
+
 	var vm models.VM
 	err = h.db.First(&vm, id).Error
 	if err != nil {
@@ -157,6 +168,26 @@ func (h *Handler) UpdateVM(c echo.Context) error {
 		})
 	}
 
+	var req models.UpdateVMRequest
+	err = c.Bind(&req)
+	if err != nil {
+		return c.JSON(http.StatusBadRequest, models.Response{
+			Success: false,
+			Error:   "Invalid request body: " + err.Error(),
+		})
+	}
+
+	err = c.Validate(&req)
+	if err != nil {
+		return c.JSON(http.StatusBadRequest, models.Response{
+			Success: false,
+			Error:   "Validation failed: " + err.Error(),
+		})
+	}
+
+	h.rwLock.Lock()
+	defer h.rwLock.Unlock()
+
 	var vm models.VM
 	err = h.db.First(&vm, id).Error
 	if err != nil {
@@ -173,23 +204,6 @@ func (h *Handler) UpdateVM(c echo.Context) error {
 		return c.JSON(http.StatusInternalServerError, models.Response{
 			Success: false,
 			Error:   "Failed to fetch service ports: " + err.Error(),
-		})
-	}
-
-	var req models.UpdateVMRequest
-	err = c.Bind(&req)
-	if err != nil {
-		return c.JSON(http.StatusBadRequest, models.Response{
-			Success: false,
-			Error:   "Invalid request body: " + err.Error(),
-		})
-	}
-
-	err = c.Validate(&req)
-	if err != nil {
-		return c.JSON(http.StatusBadRequest, models.Response{
-			Success: false,
-			Error:   "Validation failed: " + err.Error(),
 		})
 	}
 
@@ -312,6 +326,9 @@ func (h *Handler) DeleteVM(c echo.Context) error {
 		})
 	}
 
+	h.rwLock.Lock()
+	defer h.rwLock.Unlock()
+
 	var vm models.VM
 	err = h.db.First(&vm, id).Error
 	if err != nil {
@@ -397,6 +414,9 @@ func (h *Handler) CreateServicePort(c echo.Context) error {
 		})
 	}
 
+	h.rwLock.Lock()
+	defer h.rwLock.Unlock()
+
 	sp := &models.ServicePort{
 		ServiceIP:   req.ServiceIP,
 		ServicePort: req.ServicePort,
@@ -463,6 +483,9 @@ func (h *Handler) CreateServicePort(c echo.Context) error {
 }
 
 func (h *Handler) ListServicePorts(c echo.Context) error {
+	h.rwLock.RLock()
+	defer h.rwLock.RUnlock()
+
 	var sps []models.ServicePort
 	err := h.db.Find(&sps).Error
 	if err != nil {
@@ -488,6 +511,9 @@ func (h *Handler) GetServicePort(c echo.Context) error {
 		})
 	}
 
+	h.rwLock.RLock()
+	defer h.rwLock.RUnlock()
+
 	var sp models.ServicePort
 	err = h.db.First(&sp, id).Error
 	if err != nil {
@@ -511,6 +537,9 @@ func (h *Handler) UpdateServicePort(c echo.Context) error {
 			Error:   "Invalid service port ID: " + err.Error(),
 		})
 	}
+
+	h.rwLock.Lock()
+	defer h.rwLock.Unlock()
 
 	var sp models.ServicePort
 	err = h.db.First(&sp, id).Error
@@ -614,6 +643,9 @@ func (h *Handler) DeleteServicePort(c echo.Context) error {
 		})
 	}
 
+	h.rwLock.Lock()
+	defer h.rwLock.Unlock()
+
 	var sp models.ServicePort
 	err = h.db.First(&sp, id).Error
 	if err != nil {
@@ -676,6 +708,9 @@ func (h *Handler) DeleteServicePort(c echo.Context) error {
 }
 
 func (h *Handler) GetStatus(c echo.Context) error {
+	h.rwLock.RLock()
+	defer h.rwLock.RUnlock()
+
 	tunnels, err := h.manager.GetAllTunnels()
 	if err != nil {
 		return c.JSON(http.StatusInternalServerError, models.Response{
@@ -709,6 +744,9 @@ func (h *Handler) GetVMStatus(c echo.Context) error {
 			Error:   "Invalid VM ID: " + err.Error(),
 		})
 	}
+
+	h.rwLock.RLock()
+	defer h.rwLock.RUnlock()
 
 	var vm models.VM
 	err = h.db.First(&vm, vmID).Error
