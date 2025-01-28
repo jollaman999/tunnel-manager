@@ -26,7 +26,7 @@ import (
 	"gopkg.in/natefinch/lumberjack.v2"
 )
 
-const version = "0.0.2"
+const version = "0.0.3"
 
 func initDatabase(cfg *config.Config, logger *zap.Logger) (*gorm.DB, error) {
 	timeout := time.After(time.Duration(cfg.Database.TimeoutSec) * time.Second)
