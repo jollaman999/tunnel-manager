@@ -347,7 +347,7 @@ func (h *Handler) DeleteVM(c echo.Context) error {
 		})
 	}
 
-	err = tx.Unscoped().Delete(&vm).Error
+	err = tx.Delete(&vm).Error
 	if err != nil {
 		tx.Rollback()
 		return c.JSON(http.StatusInternalServerError, models.Response{
