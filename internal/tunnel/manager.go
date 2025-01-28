@@ -121,12 +121,25 @@ func (m *Manager) RestoreAllTunnels() error {
 		return fmt.Errorf("failed to fetch vms: %w", err)
 	}
 
+	if len(vms) == 0 {
+		m.mu.Unlock()
+		m.logger.Info("no VMs to restore")
+		return nil
+	}
+
 	var servicePorts []models.ServicePort
 	err = m.db.Find(&servicePorts).Error
 	if err != nil {
 		m.mu.Unlock()
 		return fmt.Errorf("failed to fetch service ports: %w", err)
 	}
+
+	if len(servicePorts) == 0 {
+		m.mu.Unlock()
+		m.logger.Info("no service ports to restore")
+		return nil
+	}
+
 	m.mu.Unlock()
 
 	for _, vm := range vms {
