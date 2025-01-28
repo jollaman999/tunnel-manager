@@ -1,31 +1,29 @@
 package models
 
 import (
-	"gorm.io/gorm"
 	"time"
 )
 
 type VM struct {
-	gorm.Model
-	IP          string `gorm:"uniqueIndex:idx_vms_ip,priority:1,cols:ip,deleted_at,where:deleted_at IS NULL" json:"ip"`
-	Port        int    `gorm:"not null" json:"port"`
-	User        string `gorm:"not null" json:"user"`
-	Password    string `gorm:"not null" json:"-"`
-	Description string `json:"description"`
-	Enabled     bool   `gorm:"default:true" json:"enabled"`
+	ID          uint      `gorm:"primaryKey;autoIncrement" json:"id"`
+	IP          string    `gorm:"uniqueIndex:idx_vms_ip;not null" json:"ip"`
+	Port        int       `gorm:"not null" json:"port"`
+	User        string    `gorm:"not null" json:"user"`
+	Password    string    `gorm:"not null" json:"-"`
+	Description string    `json:"description"`
+	Enabled     bool      `gorm:"default:true" json:"enabled"`
+	CreatedAt   time.Time `json:"created_at"`
+	UpdatedAt   time.Time `json:"updated_at"`
 }
 
 type ServicePort struct {
-	ID          uint   `gorm:"primaryKey;autoIncrement" json:"id"`
-	ServiceIP   string `gorm:"not null" json:"service_ip"`
-	ServicePort int    `gorm:"not null" json:"service_port"`
-	LocalPort   int    `gorm:"not null" json:"local_port"`
-	Description string `json:"description"`
-	CreatedAt   time.Time
-	UpdatedAt   time.Time
-	DeletedAt   gorm.DeletedAt `gorm:"index"`
-
-	_ int `gorm:"uniqueIndex:idx_service_ip_port,priority:1,cols:service_ip,service_port,deleted_at;where:deleted_at IS NULL"`
+	ID          uint      `gorm:"primaryKey;autoIncrement" json:"id"`
+	ServiceIP   string    `gorm:"uniqueIndex:idx_service_ip_port;not null" json:"service_ip"`
+	ServicePort int       `gorm:"uniqueIndex:idx_service_ip_port;not null" json:"service_port"`
+	LocalPort   int       `gorm:"not null" json:"local_port"`
+	Description string    `json:"description"`
+	CreatedAt   time.Time `json:"created_at"`
+	UpdatedAt   time.Time `json:"updated_at"`
 }
 
 type Tunnel struct {
