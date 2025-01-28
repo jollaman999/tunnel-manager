@@ -209,6 +209,7 @@ func (t *SSHTunnel) establishConnection(m *Manager, tunnel *models.Tunnel) error
 	t.clientMu.Unlock()
 
 	tunnel.Status = "connected"
+	tunnel.RetryCount = 0
 	tunnel.LastError = ""
 	tunnel.LastConnectedAt = time.Now()
 	saveTunnelStatus(m, tunnel)
