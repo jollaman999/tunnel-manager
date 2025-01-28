@@ -256,7 +256,7 @@ func (h *Handler) UpdateVM(c echo.Context) error {
 		})
 	}
 
-	if needTunnelStop || needTunnelRestart {
+	if (vm.Enabled && needTunnelStop) || needTunnelRestart {
 		for _, sp := range sps {
 			err = h.manager.StopTunnel(vm.ID, sp.ID)
 			if err != nil {
@@ -268,7 +268,7 @@ func (h *Handler) UpdateVM(c echo.Context) error {
 		}
 	}
 
-	if !needTunnelStop || needTunnelRestart {
+	if (!vm.Enabled && !needTunnelStop) || needTunnelRestart {
 		for _, sp := range sps {
 			err = h.manager.StartTunnel(&vm, &sp)
 			if err != nil {
