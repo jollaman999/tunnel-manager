@@ -382,15 +382,6 @@ func (h *Handler) DeleteVM(c echo.Context) error {
 		}
 	}
 
-	err = tx.Where("vm_id = ?", id).Delete(&models.Tunnel{}).Error
-	if err != nil {
-		tx.Rollback()
-		return c.JSON(http.StatusInternalServerError, models.Response{
-			Success: false,
-			Error:   "Failed to delete tunnels: " + err.Error(),
-		})
-	}
-
 	err = tx.Delete(&vm).Error
 	if err != nil {
 		tx.Rollback()
