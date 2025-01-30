@@ -109,7 +109,7 @@ func (m *Manager) GetHostTunnels(hostID uint) (*[]models.Tunnel, error) {
 	defer m.mu.RUnlock()
 
 	var tunnels []models.Tunnel
-	err := m.db.Find(&tunnels).Where("host_id = ?", hostID).Error
+	err := m.db.Where("host_id = ?", hostID).Find(&tunnels).Error
 	if err != nil {
 		m.logger.Error(fmt.Sprintf("failed to fetch Host's tunnels (host_id=%d)", hostID), zap.Error(err))
 		return nil, fmt.Errorf("failed to fetch Host's tunnels (host_id=%d): %w", hostID, err)
