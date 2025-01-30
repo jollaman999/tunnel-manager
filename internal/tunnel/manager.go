@@ -32,7 +32,7 @@ func (m *Manager) StartTunnel(host *models.Host, sp *models.ServicePort) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	tunnelKey := fmt.Sprintf("%d-%d", host.ID, sp.LocalPort)
+	tunnelKey := fmt.Sprintf("%d-%d", host.ID, sp.ID)
 	if _, exists := m.tunnels[tunnelKey]; exists {
 		return fmt.Errorf("tunnel already exists")
 	}
@@ -88,19 +88,13 @@ func (m *Manager) StopTunnel(hostID uint, spID uint) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	var sp models.ServicePort
-	err := m.db.First(&sp, spID).Error
-	if err != nil {
-		return fmt.Errorf("service port not found: %w", err)
-	}
-
-	tunnelKey := fmt.Sprintf("%d-%d", hostID, sp.LocalPort)
+	tunnelKey := fmt.Sprintf("%d-%d", hostID, spID)
 	tunnel, exists := m.tunnels[tunnelKey]
 	if !exists {
 		return fmt.Errorf("tunnel does not exist")
 	}
 
-	err = tunnel.Stop(m)
+	err := tunnel.Stop(m)
 	if err != nil {
 		return fmt.Errorf("failed to stop tunnel: %w", err)
 	}

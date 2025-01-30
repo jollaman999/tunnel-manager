@@ -57,7 +57,14 @@ func NewSSHTunnel(hostID, spID *uint, localAddr, serverAddr, remoteAddr string, 
 	}, nil
 }
 
-func saveTunnelStatus(m *Manager, tunnel *models.Tunnel) {
+func (t *SSHTunnel) saveTunnelStatus(m *Manager, tunnel *models.Tunnel) {
+	t.stopMu.Lock()
+	if t.isStopped {
+		t.stopMu.Unlock()
+		return
+	}
+	t.stopMu.Unlock()
+
 	err := m.db.Save(tunnel).Error
 	if err != nil {
 		m.logger.Error("failed to update tunnel connected status", zap.Error(err))
@@ -74,7 +81,7 @@ func (t *SSHTunnel) reconnect(m *Manager, tunnel *models.Tunnel) {
 
 	tunnel.Status = "reconnecting"
 	tunnel.RetryCount++
-	saveTunnelStatus(m, tunnel)
+	t.saveTunnelStatus(m, tunnel)
 
 	t.clientMu.Lock()
 	if t.client != nil {
@@ -182,7 +189,7 @@ func (t *SSHTunnel) establishConnection(m *Manager, tunnel *models.Tunnel) error
 
 		tunnel.Status = "error"
 		tunnel.LastError = err.Error()
-		saveTunnelStatus(m, tunnel)
+		t.saveTunnelStatus(m, tunnel)
 
 		return fmt.Errorf("failed to establish SSH connection: %w", err)
 	}
@@ -196,7 +203,7 @@ func (t *SSHTunnel) establishConnection(m *Manager, tunnel *models.Tunnel) error
 
 		tunnel.Status = "error"
 		tunnel.LastError = err.Error()
-		saveTunnelStatus(m, tunnel)
+		t.saveTunnelStatus(m, tunnel)
 
 		return fmt.Errorf("failed to start remote listener: %w", err)
 	}
@@ -212,7 +219,7 @@ func (t *SSHTunnel) establishConnection(m *Manager, tunnel *models.Tunnel) error
 	tunnel.RetryCount = 0
 	tunnel.LastError = ""
 	tunnel.LastConnectedAt = time.Now()
-	saveTunnelStatus(m, tunnel)
+	t.saveTunnelStatus(m, tunnel)
 
 	t.logger.Info("tunnel connected successfully",
 		zap.String("local", t.Local.String()),
@@ -292,7 +299,7 @@ func (t *SSHTunnel) Start(m *Manager, tunnel *models.Tunnel) {
 
 				tunnel.Status = "reconnecting"
 				tunnel.RetryCount++
-				saveTunnelStatus(m, tunnel)
+				t.saveTunnelStatus(m, tunnel)
 			}
 		}
 	}
@@ -304,8 +311,11 @@ func (t *SSHTunnel) Stop(m *Manager) error {
 		t.stopMu.Unlock()
 		return nil
 	}
-	t.isStopped = true
-	t.stopMu.Unlock()
+
+	defer func() {
+		t.isStopped = true
+		t.stopMu.Unlock()
+	}()
 
 	close(t.done)
 
