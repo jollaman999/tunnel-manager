@@ -101,18 +101,18 @@ make run
 ## API 엔드포인트
 
 ### Host 관리
-- `POST /api/hosts` - Host 생성
-- `GET /api/hosts` - Host 목록 조회
-- `GET /api/hosts/:id` - 특정 Host 조회
-- `PUT /api/hosts/:id` - Host 정보 수정
-- `DELETE /api/hosts/:id` - Host 삭제
+- `POST /api/host` - Host 생성
+- `GET /api/host` - Host 목록 조회
+- `GET /api/host/:id` - 특정 Host 조회
+- `PUT /api/host/:id` - Host 정보 수정
+- `DELETE /api/host/:id` - Host 삭제
 
 ### 서비스 포트 관리
-- `POST /api/service-ports` - 서비스 포트 생성
-- `GET /api/service-ports` - 서비스 포트 목록 조회
-- `GET /api/service-ports/:id` - 특정 서비스 포트 조회
-- `PUT /api/service-ports/:id` - 서비스 포트 정보 수정
-- `DELETE /api/service-ports/:id` - 서비스 포트 삭제
+- `POST /api/service-port` - 서비스 포트 생성
+- `GET /api/service-port` - 서비스 포트 목록 조회
+- `GET /api/service-port/:id` - 특정 서비스 포트 조회
+- `PUT /api/service-port/:id` - 서비스 포트 정보 수정
+- `DELETE /api/service-port/:id` - 서비스 포트 삭제
 
 ### 상태 모니터링
 - `GET /api/status` - 전체 터널 상태 조회
