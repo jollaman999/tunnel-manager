@@ -28,35 +28,35 @@ func NewManager(db *gorm.DB, logger *zap.Logger, monitoringIntervalSec int) (*Ma
 	}, nil
 }
 
-func (m *Manager) StartTunnel(vm *models.VM, sp *models.ServicePort) error {
+func (m *Manager) StartTunnel(host *models.Host, sp *models.ServicePort) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	tunnelKey := fmt.Sprintf("%d-%d", vm.ID, sp.LocalPort)
+	tunnelKey := fmt.Sprintf("%d-%d", host.ID, sp.LocalPort)
 	if _, exists := m.tunnels[tunnelKey]; exists {
 		return fmt.Errorf("tunnel already exists")
 	}
 
 	sshConfig := &ssh.ClientConfig{
-		User: vm.User,
+		User: host.User,
 		Auth: []ssh.AuthMethod{
-			ssh.Password(vm.Password),
+			ssh.Password(host.Password),
 		},
 		HostKeyCallback: ssh.InsecureIgnoreHostKey(),
 		Timeout:         time.Second * 10,
 	}
 
 	tunnel := models.Tunnel{
-		VMID:   vm.ID,
+		HostID: host.ID,
 		SPID:   sp.ID,
 		Status: "starting",
 		Local:  fmt.Sprintf("127.0.0.1:%d", sp.LocalPort),
-		Server: fmt.Sprintf("%s:%d", vm.IP, vm.Port),
+		Server: fmt.Sprintf("%s:%d", host.IP, host.Port),
 		Remote: fmt.Sprintf("%s:%d", sp.ServiceIP, sp.ServicePort),
 	}
 
 	t, err := NewSSHTunnel(
-		&tunnel.VMID,
+		&tunnel.HostID,
 		&tunnel.SPID,
 		tunnel.Local,
 		tunnel.Server,
@@ -70,7 +70,7 @@ func (m *Manager) StartTunnel(vm *models.VM, sp *models.ServicePort) error {
 
 	m.tunnels[tunnelKey] = t
 
-	err = m.db.Where("vm_id = ? AND sp_id = ?", vm.ID, sp.ID).
+	err = m.db.Where("host_id = ? AND sp_id = ?", host.ID, sp.ID).
 		Attrs(tunnel).
 		FirstOrCreate(&tunnel).Error
 	if err != nil {
@@ -84,7 +84,7 @@ func (m *Manager) StartTunnel(vm *models.VM, sp *models.ServicePort) error {
 	return nil
 }
 
-func (m *Manager) StopTunnel(vmID uint, spID uint) error {
+func (m *Manager) StopTunnel(hostID uint, spID uint) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
@@ -94,7 +94,7 @@ func (m *Manager) StopTunnel(vmID uint, spID uint) error {
 		return fmt.Errorf("service port not found: %w", err)
 	}
 
-	tunnelKey := fmt.Sprintf("%d-%d", vmID, sp.LocalPort)
+	tunnelKey := fmt.Sprintf("%d-%d", hostID, sp.LocalPort)
 	tunnel, exists := m.tunnels[tunnelKey]
 	if !exists {
 		return fmt.Errorf("tunnel does not exist")
@@ -110,15 +110,15 @@ func (m *Manager) StopTunnel(vmID uint, spID uint) error {
 	return nil
 }
 
-func (m *Manager) GetVMTunnels(vmID uint) (*[]models.Tunnel, error) {
+func (m *Manager) GetHostTunnels(hostID uint) (*[]models.Tunnel, error) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 
 	var tunnels []models.Tunnel
-	err := m.db.Find(&tunnels).Where("vm_id = ?", vmID).Error
+	err := m.db.Find(&tunnels).Where("host_id = ?", hostID).Error
 	if err != nil {
-		m.logger.Error(fmt.Sprintf("failed to fetch VM's tunnels (vm_id=%d)", vmID), zap.Error(err))
-		return nil, fmt.Errorf("failed to fetch VM's tunnels (vm_id=%d): %w", vmID, err)
+		m.logger.Error(fmt.Sprintf("failed to fetch Host's tunnels (host_id=%d)", hostID), zap.Error(err))
+		return nil, fmt.Errorf("failed to fetch Host's tunnels (host_id=%d): %w", hostID, err)
 	}
 
 	return &tunnels, nil
@@ -140,17 +140,17 @@ func (m *Manager) GetAllTunnels() (*[]models.Tunnel, error) {
 
 func (m *Manager) RestoreAllTunnels() error {
 	m.mu.Lock()
-	var vms []models.VM
-	err := m.db.Find(&vms).Error
+	var hosts []models.Host
+	err := m.db.Find(&hosts).Error
 	if err != nil {
 		m.mu.Unlock()
-		m.logger.Error("failed to fetch VMs", zap.Error(err))
-		return fmt.Errorf("failed to fetch vms: %w", err)
+		m.logger.Error("failed to fetch Hosts", zap.Error(err))
+		return fmt.Errorf("failed to fetch hosts: %w", err)
 	}
 
-	if len(vms) == 0 {
+	if len(hosts) == 0 {
 		m.mu.Unlock()
-		m.logger.Info("no VMs to restore")
+		m.logger.Info("no Hosts to restore")
 		return nil
 	}
 
@@ -169,18 +169,18 @@ func (m *Manager) RestoreAllTunnels() error {
 
 	m.mu.Unlock()
 
-	for _, vm := range vms {
-		err = m.db.Unscoped().Where("vm_id = ?", vm.ID).Delete(&models.Tunnel{}).Error
+	for _, host := range hosts {
+		err = m.db.Unscoped().Where("host_id = ?", host.ID).Delete(&models.Tunnel{}).Error
 		if err != nil {
-			return fmt.Errorf("failed to reset tunnel status for vm_id=%d: %w", vm.ID, err)
+			return fmt.Errorf("failed to reset tunnel status for host_id=%d: %w", host.ID, err)
 		}
 
 		for _, sp := range servicePorts {
-			err = m.StartTunnel(&vm, &sp)
+			err = m.StartTunnel(&host, &sp)
 			if err != nil {
 				m.logger.Error("failed to restore tunnel",
 					zap.Error(err),
-					zap.String("vm_ip", vm.IP),
+					zap.String("host_ip", host.IP),
 					zap.Int("service_port", sp.ServicePort))
 				continue
 			}
@@ -192,11 +192,11 @@ func (m *Manager) RestoreAllTunnels() error {
 
 func (m *Manager) StopAllTunnels() {
 	m.mu.Lock()
-	var vms []models.VM
-	err := m.db.Find(&vms).Error
+	var hosts []models.Host
+	err := m.db.Find(&hosts).Error
 	if err != nil {
 		m.mu.Unlock()
-		m.logger.Error("failed to fetch VMs", zap.Error(err))
+		m.logger.Error("failed to fetch Hosts", zap.Error(err))
 	}
 
 	var servicePorts []models.ServicePort
@@ -207,18 +207,18 @@ func (m *Manager) StopAllTunnels() {
 	}
 	m.mu.Unlock()
 
-	for _, vm := range vms {
-		err = m.db.Unscoped().Where("vm_id = ?", vm.ID).Delete(&models.Tunnel{}).Error
+	for _, host := range hosts {
+		err = m.db.Unscoped().Where("host_id = ?", host.ID).Delete(&models.Tunnel{}).Error
 		if err != nil {
-			m.logger.Error(fmt.Sprintf("failed to reset tunnel status for vm_id=%d: %w", vm.ID, err))
+			m.logger.Error(fmt.Sprintf("failed to reset tunnel status for host_id=%d: %w", host.ID, err))
 		}
 
 		for _, sp := range servicePorts {
-			err = m.StopTunnel(vm.ID, sp.ID)
+			err = m.StopTunnel(host.ID, sp.ID)
 			if err != nil {
 				m.logger.Error("failed to stop tunnel",
 					zap.Error(err),
-					zap.String("vm_ip", vm.IP),
+					zap.String("host_ip", host.IP),
 					zap.Int("service_port", sp.ServicePort))
 				continue
 			}

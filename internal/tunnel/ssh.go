@@ -15,7 +15,7 @@ import (
 )
 
 type SSHTunnel struct {
-	VMID      *uint
+	HostID    *uint
 	SPID      *uint
 	Local     *net.TCPAddr
 	Server    *net.TCPAddr
@@ -29,7 +29,7 @@ type SSHTunnel struct {
 	logger    *zap.Logger
 }
 
-func NewSSHTunnel(vmID, spID *uint, localAddr, serverAddr, remoteAddr string, sshConfig *ssh.ClientConfig, logger *zap.Logger) (*SSHTunnel, error) {
+func NewSSHTunnel(hostID, spID *uint, localAddr, serverAddr, remoteAddr string, sshConfig *ssh.ClientConfig, logger *zap.Logger) (*SSHTunnel, error) {
 	local, err := net.ResolveTCPAddr("tcp", localAddr)
 	if err != nil {
 		return nil, fmt.Errorf("failed to resolve local address: %w", err)
@@ -46,7 +46,7 @@ func NewSSHTunnel(vmID, spID *uint, localAddr, serverAddr, remoteAddr string, ss
 	}
 
 	return &SSHTunnel{
-		VMID:   vmID,
+		HostID: hostID,
 		SPID:   spID,
 		Local:  local,
 		Server: server,
@@ -316,7 +316,7 @@ func (t *SSHTunnel) Stop(m *Manager) error {
 	}
 	t.clientMu.Unlock()
 
-	err := m.db.Where("vm_id = ? and sp_id = ?", t.VMID, t.SPID).
+	err := m.db.Where("host_id = ? and sp_id = ?", t.HostID, t.SPID).
 		Delete(&models.Tunnel{}).Error
 	if err != nil {
 		return fmt.Errorf("failed to delete tunnel: %w", err)

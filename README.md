@@ -1,10 +1,10 @@
 # Tunnel Manager
 
-SSH 터널을 관리하기 위한 RESTful API 서버입니다. 여러 VM에 대한 SSH 터널을 생성하고 관리할 수 있습니다.
+SSH 터널을 관리하기 위한 RESTful API 서버입니다. 여러 Host에 대한 SSH 터널을 생성하고 관리할 수 있습니다.
 
 ## 주요 기능
 
-- VM 및 서비스 포트 관리
+- Host 및 서비스 포트 관리
 - SSH 터널 자동 생성 및 관리
 - 터널 상태 모니터링
 - 장애 발생 시 자동 재연결
@@ -20,35 +20,35 @@ SSH 터널을 관리하기 위한 RESTful API 서버입니다. 여러 VM에 대�
 
 ```mermaid
 sequenceDiagram
-    participant VM as VM (Local)
+    participant Host as Host (Local)
     participant Bastion as Tunnel Manager
     participant WAS as Remote Server
     
     rect rgb(255, 255, 220)
-        Note over VM,WAS: Initial Setup Phase
-        Bastion->>VM: SSH Authentication (Password)
+        Note over Host,WAS: Initial Setup Phase
+        Bastion->>Host: SSH Authentication (Password)
     end
 
     rect rgb(255, 255, 220)
-        Note over VM,WAS: Tunnel Creation Phase
-        Bastion->>VM: Create SSH Tunnel
+        Note over Host,WAS: Tunnel Creation Phase
+        Bastion->>Host: Create SSH Tunnel
         Note right of Bastion: For each service port:-R 127.0.0.1:localPort:remoteIP:remotePort
     end
     
     rect rgb(255, 255, 220)
-        Note over VM,WAS: Service Access Phase
-        VM->>VM: Connect to 127.0.0.1:localPort
-        VM->>Bastion: Forward Traffic through tunnel
+        Note over Host,WAS: Service Access Phase
+        Host->>Host: Connect to 127.0.0.1:localPort
+        Host->>Bastion: Forward Traffic through tunnel
         Bastion->>WAS: Forward to remoteIP:remotePort
         WAS-->>Bastion: Response
-        Bastion-->>VM: Response through tunnel
+        Bastion-->>Host: Response through tunnel
     end
 
-    Note over VM,WAS: Monitoring & Auto-reconnect
+    Note over Host,WAS: Monitoring & Auto-reconnect
     loop Every monitoring_interval_sec
-        Bastion->>VM: keepalive@tunnel check
+        Bastion->>Host: keepalive@tunnel check
         alt Connection Lost
-            Bastion->>VM: Reconnect SSH Tunnel
+            Bastion->>Host: Reconnect SSH Tunnel
         end
     end
 ```
@@ -100,12 +100,12 @@ make run
 
 ## API 엔드포인트
 
-### VM 관리
-- `POST /api/vms` - VM 생성
-- `GET /api/vms` - VM 목록 조회
-- `GET /api/vms/:id` - 특정 VM 조회
-- `PUT /api/vms/:id` - VM 정보 수정
-- `DELETE /api/vms/:id` - VM 삭제
+### Host 관리
+- `POST /api/hosts` - Host 생성
+- `GET /api/hosts` - Host 목록 조회
+- `GET /api/hosts/:id` - 특정 Host 조회
+- `PUT /api/hosts/:id` - Host 정보 수정
+- `DELETE /api/hosts/:id` - Host 삭제
 
 ### 서비스 포트 관리
 - `POST /api/service-ports` - 서비스 포트 생성
@@ -116,7 +116,7 @@ make run
 
 ### 상태 모니터링
 - `GET /api/status` - 전체 터널 상태 조회
-- `GET /api/status/:vmId` - 특정 VM의 터널 상태 조회
+- `GET /api/status/:hostId` - 특정 Host의 터널 상태 조회
 
 ## 설정 파일 구조
 

@@ -4,9 +4,9 @@ import (
 	"time"
 )
 
-type VM struct {
+type Host struct {
 	ID          uint      `gorm:"primaryKey;autoIncrement" json:"id"`
-	IP          string    `gorm:"uniqueIndex:idx_vms_ip;not null" json:"ip"`
+	IP          string    `gorm:"uniqueIndex:idx_hosts_ip;not null" json:"ip"`
 	Port        int       `gorm:"not null" json:"port"`
 	User        string    `gorm:"not null" json:"user"`
 	Password    string    `gorm:"not null" json:"-"`
@@ -27,7 +27,7 @@ type ServicePort struct {
 }
 
 type Tunnel struct {
-	VMID            uint      `gorm:"primaryKey;not null" json:"vm_id"`
+	HostID          uint      `gorm:"primaryKey;not null" json:"host_id"`
 	SPID            uint      `gorm:"primaryKey;not null" json:"sp_id"`
 	Status          string    `gorm:"not null" json:"status"`
 	LastError       string    `json:"last_error"`
@@ -38,7 +38,7 @@ type Tunnel struct {
 	Remote          string    `gorm:"not null" json:"remote"`
 }
 
-type CreateVMRequest struct {
+type CreateHostRequest struct {
 	IP          string `json:"ip" validate:"required,ip"`
 	Port        int    `json:"port" validate:"required,min=1,max=65535"`
 	User        string `json:"user" validate:"required"`
@@ -46,7 +46,7 @@ type CreateVMRequest struct {
 	Description string `json:"description"`
 }
 
-type UpdateVMRequest struct {
+type UpdateHostRequest struct {
 	IP          string `json:"ip" validate:"omitempty,ip"`
 	Port        *int   `json:"port" validate:"omitempty,min=1,max=65535"`
 	User        string `json:"user" validate:"omitempty"`

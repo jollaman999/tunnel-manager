@@ -29,8 +29,8 @@ func NewHandler(db *gorm.DB, manager *tunnel.Manager, logger *zap.Logger) *Handl
 	}
 }
 
-func (h *Handler) CreateVM(c echo.Context) error {
-	var req models.CreateVMRequest
+func (h *Handler) CreateHost(c echo.Context) error {
+	var req models.CreateHostRequest
 	err := c.Bind(&req)
 	if err != nil {
 		return c.JSON(http.StatusBadRequest, models.Response{
@@ -59,7 +59,7 @@ func (h *Handler) CreateVM(c echo.Context) error {
 		})
 	}
 
-	vm := &models.VM{
+	host := &models.Host{
 		IP:          req.IP,
 		Port:        req.Port,
 		User:        req.User,
@@ -67,13 +67,13 @@ func (h *Handler) CreateVM(c echo.Context) error {
 		Description: req.Description,
 	}
 
-	err = tx.Create(vm).Error
+	err = tx.Create(host).Error
 	if err != nil {
 		tx.Rollback()
-		h.logger.Error("failed to create VM", zap.Error(err))
+		h.logger.Error("failed to create Host", zap.Error(err))
 		return c.JSON(http.StatusInternalServerError, models.Response{
 			Success: false,
-			Error:   "Failed to create VM: " + err.Error(),
+			Error:   "Failed to create Host: " + err.Error(),
 		})
 	}
 
@@ -97,78 +97,78 @@ func (h *Handler) CreateVM(c echo.Context) error {
 	}
 
 	for _, sp := range sps {
-		err = h.manager.StartTunnel(vm, &sp)
+		err = h.manager.StartTunnel(host, &sp)
 		if err != nil {
 			h.logger.Error("failed to start tunnel",
 				zap.Error(err),
-				zap.String("vm_ip", vm.IP),
+				zap.String("host_ip", host.IP),
 				zap.Int("service_port", sp.ServicePort))
 		}
 	}
 
 	return c.JSON(http.StatusCreated, models.Response{
 		Success: true,
-		Data:    vm,
+		Data:    host,
 	})
 }
 
-func (h *Handler) ListVMs(c echo.Context) error {
+func (h *Handler) ListHosts(c echo.Context) error {
 	h.rwLock.RLock()
 	defer h.rwLock.RUnlock()
 
-	var vms []models.VM
-	err := h.db.Find(&vms).Error
+	var hosts []models.Host
+	err := h.db.Find(&hosts).Error
 	if err != nil {
-		h.logger.Error("failed to fetch VMs", zap.Error(err))
+		h.logger.Error("failed to fetch Hosts", zap.Error(err))
 		return c.JSON(http.StatusInternalServerError, models.Response{
 			Success: false,
-			Error:   "Failed to fetch VMs: " + err.Error(),
+			Error:   "Failed to fetch Hosts: " + err.Error(),
 		})
 	}
 
 	return c.JSON(http.StatusOK, models.Response{
 		Success: true,
-		Data:    vms,
+		Data:    hosts,
 	})
 }
 
-func (h *Handler) GetVM(c echo.Context) error {
+func (h *Handler) GetHost(c echo.Context) error {
 	id, err := strconv.ParseUint(c.Param("id"), 10, 32)
 	if err != nil {
 		return c.JSON(http.StatusBadRequest, models.Response{
 			Success: false,
-			Error:   "Invalid VM ID: " + err.Error(),
+			Error:   "Invalid Host ID: " + err.Error(),
 		})
 	}
 
 	h.rwLock.RLock()
 	defer h.rwLock.RUnlock()
 
-	var vm models.VM
-	err = h.db.First(&vm, id).Error
+	var host models.Host
+	err = h.db.First(&host, id).Error
 	if err != nil {
 		return c.JSON(http.StatusNotFound, models.Response{
 			Success: false,
-			Error:   "VM not found: " + err.Error(),
+			Error:   "Host not found: " + err.Error(),
 		})
 	}
 
 	return c.JSON(http.StatusOK, models.Response{
 		Success: true,
-		Data:    vm,
+		Data:    host,
 	})
 }
 
-func (h *Handler) UpdateVM(c echo.Context) error {
+func (h *Handler) UpdateHost(c echo.Context) error {
 	id, err := strconv.ParseUint(c.Param("id"), 10, 32)
 	if err != nil {
 		return c.JSON(http.StatusBadRequest, models.Response{
 			Success: false,
-			Error:   "Invalid VM ID: " + err.Error(),
+			Error:   "Invalid Host ID: " + err.Error(),
 		})
 	}
 
-	var req models.UpdateVMRequest
+	var req models.UpdateHostRequest
 	err = c.Bind(&req)
 	if err != nil {
 		return c.JSON(http.StatusBadRequest, models.Response{
@@ -188,12 +188,12 @@ func (h *Handler) UpdateVM(c echo.Context) error {
 	h.rwLock.Lock()
 	defer h.rwLock.Unlock()
 
-	var vm models.VM
-	err = h.db.First(&vm, id).Error
+	var host models.Host
+	err = h.db.First(&host, id).Error
 	if err != nil {
 		return c.JSON(http.StatusNotFound, models.Response{
 			Success: false,
-			Error:   "VM not found: " + err.Error(),
+			Error:   "Host not found: " + err.Error(),
 		})
 	}
 
@@ -207,26 +207,26 @@ func (h *Handler) UpdateVM(c echo.Context) error {
 		})
 	}
 
-	needTunnelRestart := (req.IP != "" && vm.IP != req.IP) ||
-		(req.Port != nil && vm.Port != *req.Port) ||
-		(req.User != "" && vm.User != req.User) ||
-		(req.Password != "" && vm.Password != req.Password)
+	needTunnelRestart := (req.IP != "" && host.IP != req.IP) ||
+		(req.Port != nil && host.Port != *req.Port) ||
+		(req.User != "" && host.User != req.User) ||
+		(req.Password != "" && host.Password != req.Password)
 	needTunnelStop := req.Enabled != nil && !*req.Enabled
 
 	if req.IP != "" {
-		vm.IP = req.IP
+		host.IP = req.IP
 	}
 	if req.Port != nil {
-		vm.Port = *req.Port
+		host.Port = *req.Port
 	}
 	if req.User != "" {
-		vm.User = req.User
+		host.User = req.User
 	}
 	if req.Password != "" {
-		vm.Password = req.Password
+		host.Password = req.Password
 	}
-	if vm.Description != "" {
-		vm.Description = req.Description
+	if host.Description != "" {
+		host.Description = req.Description
 	}
 
 	tx := h.db.Begin()
@@ -238,13 +238,13 @@ func (h *Handler) UpdateVM(c echo.Context) error {
 		})
 	}
 
-	err = tx.Save(&vm).Error
+	err = tx.Save(&host).Error
 	if err != nil {
 		tx.Rollback()
-		h.logger.Error("failed to update VM", zap.Error(err))
+		h.logger.Error("failed to update Host", zap.Error(err))
 		return c.JSON(http.StatusInternalServerError, models.Response{
 			Success: false,
-			Error:   "Failed to update VM: " + err.Error(),
+			Error:   "Failed to update Host: " + err.Error(),
 		})
 	}
 
@@ -256,32 +256,32 @@ func (h *Handler) UpdateVM(c echo.Context) error {
 		})
 	}
 
-	if (vm.Enabled && needTunnelStop) || needTunnelRestart {
+	if (host.Enabled && needTunnelStop) || needTunnelRestart {
 		for _, sp := range sps {
-			err = h.manager.StopTunnel(vm.ID, sp.ID)
+			err = h.manager.StopTunnel(host.ID, sp.ID)
 			if err != nil {
 				h.logger.Warn("failed to stop tunnel",
-					zap.Uint("vm_id", vm.ID),
+					zap.Uint("host_id", host.ID),
 					zap.Uint("service_port_id", sp.ID),
 					zap.Error(err))
 			}
 		}
 	}
 
-	if (!vm.Enabled && !needTunnelStop) || needTunnelRestart {
+	if (!host.Enabled && !needTunnelStop) || needTunnelRestart {
 		for _, sp := range sps {
-			err = h.manager.StartTunnel(&vm, &sp)
+			err = h.manager.StartTunnel(&host, &sp)
 			if err != nil {
 				h.logger.Error("failed to restart tunnel",
 					zap.Error(err),
-					zap.String("vm_ip", vm.IP),
+					zap.String("host_ip", host.IP),
 					zap.Int("service_port", sp.ServicePort))
 			}
 		}
 	}
 
-	if req.Enabled != nil && vm.Enabled != *req.Enabled {
-		vm.Enabled = *req.Enabled
+	if req.Enabled != nil && host.Enabled != *req.Enabled {
+		host.Enabled = *req.Enabled
 
 		tx = h.db.Begin()
 		err = tx.Error
@@ -292,13 +292,13 @@ func (h *Handler) UpdateVM(c echo.Context) error {
 			})
 		}
 
-		err = tx.Save(&vm).Error
+		err = tx.Save(&host).Error
 		if err != nil {
 			tx.Rollback()
-			h.logger.Error("failed to update VM", zap.Error(err))
+			h.logger.Error("failed to update Host", zap.Error(err))
 			return c.JSON(http.StatusInternalServerError, models.Response{
 				Success: false,
-				Error:   "Failed to update VM: " + err.Error(),
+				Error:   "Failed to update Host: " + err.Error(),
 			})
 		}
 
@@ -313,34 +313,34 @@ func (h *Handler) UpdateVM(c echo.Context) error {
 
 	return c.JSON(http.StatusOK, models.Response{
 		Success: true,
-		Data:    vm,
+		Data:    host,
 	})
 }
 
-func (h *Handler) DeleteVM(c echo.Context) error {
+func (h *Handler) DeleteHost(c echo.Context) error {
 	id, err := strconv.ParseUint(c.Param("id"), 10, 32)
 	if err != nil {
 		return c.JSON(http.StatusBadRequest, models.Response{
 			Success: false,
-			Error:   "Invalid VM ID: " + err.Error(),
+			Error:   "Invalid Host ID: " + err.Error(),
 		})
 	}
 
 	h.rwLock.Lock()
 	defer h.rwLock.Unlock()
 
-	var vm models.VM
-	err = h.db.First(&vm, id).Error
+	var host models.Host
+	err = h.db.First(&host, id).Error
 	if err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return c.JSON(http.StatusNotFound, models.Response{
 				Success: false,
-				Error:   "VM not found",
+				Error:   "Host not found",
 			})
 		}
 		return c.JSON(http.StatusInternalServerError, models.Response{
 			Success: false,
-			Error:   "Failed to fetch VM: " + err.Error(),
+			Error:   "Failed to fetch Host: " + err.Error(),
 		})
 	}
 
@@ -355,10 +355,10 @@ func (h *Handler) DeleteVM(c echo.Context) error {
 	}
 
 	for _, sp := range sps {
-		err = h.manager.StopTunnel(vm.ID, sp.ID)
+		err = h.manager.StopTunnel(host.ID, sp.ID)
 		if err != nil {
 			h.logger.Warn("failed to stop tunnel",
-				zap.Uint("vm_id", vm.ID),
+				zap.Uint("host_id", host.ID),
 				zap.Uint("service_port_id", sp.ID),
 				zap.Error(err))
 		}
@@ -373,12 +373,12 @@ func (h *Handler) DeleteVM(c echo.Context) error {
 		})
 	}
 
-	err = tx.Delete(&vm).Error
+	err = tx.Delete(&host).Error
 	if err != nil {
 		tx.Rollback()
 		return c.JSON(http.StatusInternalServerError, models.Response{
 			Success: false,
-			Error:   "Failed to delete VM: " + err.Error(),
+			Error:   "Failed to delete Host: " + err.Error(),
 		})
 	}
 
@@ -392,7 +392,7 @@ func (h *Handler) DeleteVM(c echo.Context) error {
 
 	return c.JSON(http.StatusOK, models.Response{
 		Success: true,
-		Data:    "VM deleted successfully",
+		Data:    "Host deleted successfully",
 	})
 }
 
@@ -443,23 +443,23 @@ func (h *Handler) CreateServicePort(c echo.Context) error {
 		})
 	}
 
-	var vms []models.VM
-	err = h.db.Find(&vms).Error
+	var hosts []models.Host
+	err = h.db.Find(&hosts).Error
 	if err != nil {
-		h.logger.Error("failed to fetch VMs", zap.Error(err))
+		h.logger.Error("failed to fetch Hosts", zap.Error(err))
 		return c.JSON(http.StatusInternalServerError, models.Response{
 			Success: false,
-			Error:   "Failed to fetch VMs: " + err.Error(),
+			Error:   "Failed to fetch Hosts: " + err.Error(),
 		})
 	}
 
-	for _, vm := range vms {
-		err = h.manager.StartTunnel(&vm, sp)
+	for _, host := range hosts {
+		err = h.manager.StartTunnel(&host, sp)
 		if err != nil {
 			tx.Rollback()
 			h.logger.Error("failed to start new tunnel",
 				zap.Error(err),
-				zap.String("vm_ip", vm.IP),
+				zap.String("host_ip", host.IP),
 				zap.Int("service_port", sp.ServicePort))
 			return c.JSON(http.StatusInternalServerError, models.Response{
 				Success: false,
@@ -575,21 +575,21 @@ func (h *Handler) UpdateServicePort(c echo.Context) error {
 		})
 	}
 
-	var vms []models.VM
-	err = h.db.Find(&vms).Error
+	var hosts []models.Host
+	err = h.db.Find(&hosts).Error
 	if err != nil {
-		h.logger.Error("failed to fetch VMs", zap.Error(err))
+		h.logger.Error("failed to fetch Hosts", zap.Error(err))
 		return c.JSON(http.StatusInternalServerError, models.Response{
 			Success: false,
-			Error:   "Failed to fetch VMs: " + err.Error(),
+			Error:   "Failed to fetch Hosts: " + err.Error(),
 		})
 	}
 
-	for _, vm := range vms {
-		err = h.manager.StopTunnel(vm.ID, sp.ID)
+	for _, host := range hosts {
+		err = h.manager.StopTunnel(host.ID, sp.ID)
 		if err != nil {
 			h.logger.Warn("failed to stop existing tunnel",
-				zap.String("vm_ip", vm.IP),
+				zap.String("host_ip", host.IP),
 				zap.Int("service_port", sp.ServicePort),
 				zap.Error(err))
 		}
@@ -618,12 +618,12 @@ func (h *Handler) UpdateServicePort(c echo.Context) error {
 		})
 	}
 
-	for _, vm := range vms {
-		err = h.manager.StartTunnel(&vm, &sp)
+	for _, host := range hosts {
+		err = h.manager.StartTunnel(&host, &sp)
 		if err != nil {
 			h.logger.Error("failed to start new tunnel",
 				zap.Error(err),
-				zap.String("vm_ip", vm.IP),
+				zap.String("host_ip", host.IP),
 				zap.Int("service_port", sp.ServicePort))
 		}
 	}
@@ -664,21 +664,21 @@ func (h *Handler) DeleteServicePort(c echo.Context) error {
 		})
 	}
 
-	var vms []models.VM
-	err = h.db.Find(&vms).Error
+	var hosts []models.Host
+	err = h.db.Find(&hosts).Error
 	if err != nil {
-		h.logger.Error("failed to fetch VMs", zap.Error(err))
+		h.logger.Error("failed to fetch Hosts", zap.Error(err))
 		return c.JSON(http.StatusInternalServerError, models.Response{
 			Success: false,
-			Error:   "Failed to fetch VMs: " + err.Error(),
+			Error:   "Failed to fetch Hosts: " + err.Error(),
 		})
 	}
 
-	for _, vm := range vms {
-		err = h.manager.StopTunnel(vm.ID, sp.ID)
+	for _, host := range hosts {
+		err = h.manager.StopTunnel(host.ID, sp.ID)
 		if err != nil {
 			h.logger.Warn("failed to stop tunnel",
-				zap.String("vm_ip", vm.IP),
+				zap.String("host_ip", host.IP),
 				zap.Int("service_port", sp.ServicePort),
 				zap.Error(err))
 		}
@@ -736,28 +736,28 @@ func (h *Handler) GetStatus(c echo.Context) error {
 	})
 }
 
-func (h *Handler) GetVMStatus(c echo.Context) error {
-	vmID, err := strconv.ParseUint(c.Param("vmId"), 10, 32)
+func (h *Handler) GetHostStatus(c echo.Context) error {
+	hostID, err := strconv.ParseUint(c.Param("hostId"), 10, 32)
 	if err != nil {
 		return c.JSON(http.StatusBadRequest, models.Response{
 			Success: false,
-			Error:   "Invalid VM ID: " + err.Error(),
+			Error:   "Invalid Host ID: " + err.Error(),
 		})
 	}
 
 	h.rwLock.RLock()
 	defer h.rwLock.RUnlock()
 
-	var vm models.VM
-	err = h.db.First(&vm, vmID).Error
+	var host models.Host
+	err = h.db.First(&host, hostID).Error
 	if err != nil {
 		return c.JSON(http.StatusNotFound, models.Response{
 			Success: false,
-			Error:   "VM not found: " + err.Error(),
+			Error:   "Host not found: " + err.Error(),
 		})
 	}
 
-	tunnels, err := h.manager.GetVMTunnels(uint(vmID))
+	tunnels, err := h.manager.GetHostTunnels(uint(hostID))
 	if err != nil {
 		return c.JSON(http.StatusInternalServerError, models.Response{
 			Success: false,
@@ -775,7 +775,7 @@ func (h *Handler) GetVMStatus(c echo.Context) error {
 	return c.JSON(http.StatusOK, models.Response{
 		Success: true,
 		Data: map[string]interface{}{
-			"vm":                vm,
+			"host":              host,
 			"total_tunnels":     len(*tunnels),
 			"connected_tunnels": connectedTunnels,
 			"tunnels":           tunnels,

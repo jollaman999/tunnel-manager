@@ -230,11 +230,11 @@ func main() {
 	h := api.NewHandler(db, manager, logger)
 	g := e.Group("/api")
 
-	g.POST("/vms", h.CreateVM)
-	g.GET("/vms", h.ListVMs)
-	g.GET("/vms/:id", h.GetVM)
-	g.PUT("/vms/:id", h.UpdateVM)
-	g.DELETE("/vms/:id", h.DeleteVM)
+	g.POST("/hosts", h.CreateHost)
+	g.GET("/hosts", h.ListHosts)
+	g.GET("/hosts/:id", h.GetHost)
+	g.PUT("/hosts/:id", h.UpdateHost)
+	g.DELETE("/hosts/:id", h.DeleteHost)
 
 	g.POST("/service-ports", h.CreateServicePort)
 	g.GET("/service-ports", h.ListServicePorts)
@@ -243,7 +243,7 @@ func main() {
 	g.DELETE("/service-ports/:id", h.DeleteServicePort)
 
 	g.GET("/status", h.GetStatus)
-	g.GET("/status/:vmId", h.GetVMStatus)
+	g.GET("/status/:hostId", h.GetHostStatus)
 
 	e.Logger.Fatal(e.Start(fmt.Sprintf(":%d", cfg.API.Port)))
 }

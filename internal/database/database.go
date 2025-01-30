@@ -26,7 +26,7 @@ func NewDatabase(host string, port int, user, password, dbname string) (*gorm.DB
 	}
 
 	err = db.AutoMigrate(
-		&models.VM{},
+		&models.Host{},
 		&models.ServicePort{},
 		&models.Tunnel{},
 	)
