@@ -50,7 +50,7 @@ func (m *Manager) StartTunnel(host *models.Host, sp *models.ServicePort) error {
 		HostID: host.ID,
 		SPID:   sp.ID,
 		Status: "starting",
-		Local:  fmt.Sprintf("127.0.0.1:%d", sp.LocalPort),
+		Local:  fmt.Sprintf("0.0.0.0:%d", sp.LocalPort),
 		Server: fmt.Sprintf("%s:%d", host.IP, host.Port),
 		Remote: fmt.Sprintf("%s:%d", sp.ServiceIP, sp.ServicePort),
 	}
