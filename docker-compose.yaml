@@ -4,7 +4,7 @@ services:
       context: .
       dockerfile: Dockerfile
     container_name: tunnel-manager
-    image: tunnel-manager:0.0.1
+    image: tunnel-manager:1.0.0
     ulimits:
       nofile:
         soft: 65535
