@@ -20,7 +20,7 @@ type ServicePort struct {
 	ID          uint      `gorm:"primaryKey;autoIncrement" json:"id"`
 	ServiceIP   string    `gorm:"uniqueIndex:idx_service_ip_port;not null" json:"service_ip"`
 	ServicePort int       `gorm:"uniqueIndex:idx_service_ip_port;not null" json:"service_port"`
-	LocalPort   int       `gorm:"not null" json:"local_port"`
+	LocalPort   int       `gorm:"uniqueIndex:idx_service_local_port;not null" json:"local_port"`
 	Description string    `json:"description"`
 	CreatedAt   time.Time `json:"created_at"`
 	UpdatedAt   time.Time `json:"updated_at"`
