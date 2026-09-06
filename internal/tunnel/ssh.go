@@ -14,6 +14,10 @@ import (
 	"time"
 )
 
+// errConnectionClosed reports that the peer closed the tunnel connection. It is
+// not a failure, but the Start loop still has to wait before reconnecting.
+var errConnectionClosed = errors.New("connection closed")
+
 type SSHTunnel struct {
 	HostID    *uint
 	SPID      *uint
@@ -221,22 +225,12 @@ func (t *SSHTunnel) establishConnection(m *Manager, tunnel *models.Tunnel) error
 	for {
 		conn, err := listener.Accept()
 		if err != nil {
-			var netErr net.Error
-			if errors.As(err, &netErr) && netErr.Temporary() {
-				t.logger.Warn("temporary accept error",
-					zap.String("local", t.Local.String()),
-					zap.String("server", t.Server.String()),
-					zap.String("remote", t.Remote.String()), zap.Error(err))
-				time.Sleep(time.Second)
-				continue
-			}
-
-			if err == io.EOF {
+			if errors.Is(err, io.EOF) {
 				t.logger.Info("connection closed",
 					zap.String("local", t.Local.String()),
 					zap.String("server", t.Server.String()),
 					zap.String("remote", t.Remote.String()))
-				return nil
+				return errConnectionClosed
 			}
 
 			m.logger.Error("listener accept error",
@@ -247,6 +241,20 @@ func (t *SSHTunnel) establishConnection(m *Manager, tunnel *models.Tunnel) error
 			return fmt.Errorf("listener accept error: %w", err)
 		}
 		go t.forward(conn)
+	}
+}
+
+// waitBeforeRetry waits for the retry interval and reports whether the tunnel
+// should keep running.
+func (t *SSHTunnel) waitBeforeRetry(m *Manager) bool {
+	timer := time.NewTimer(time.Duration(m.monitoringIntervalSec) * time.Second)
+	defer timer.Stop()
+
+	select {
+	case <-t.done:
+		return false
+	case <-timer.C:
+		return true
 	}
 }
 
@@ -284,6 +292,13 @@ func (t *SSHTunnel) Start(m *Manager, tunnel *models.Tunnel) {
 
 			err := t.establishConnection(m, tunnel)
 			if err != nil {
+				if errors.Is(err, errConnectionClosed) {
+					if !t.waitBeforeRetry(m) {
+						return
+					}
+					continue
+				}
+
 				if strings.Contains(err.Error(), "unable to authenticate") {
 					t.logger.Error("connection failed",
 						zap.String("local", t.Local.String()),
@@ -299,7 +314,9 @@ func (t *SSHTunnel) Start(m *Manager, tunnel *models.Tunnel) {
 					zap.String("remote", t.Remote.String()),
 					zap.Error(err))
 
-				time.Sleep(time.Duration(m.monitoringIntervalSec) * time.Second)
+				if !t.waitBeforeRetry(m) {
+					return
+				}
 
 				tunnel.Status = "reconnecting"
 				tunnel.RetryCount++
