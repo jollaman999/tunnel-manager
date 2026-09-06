@@ -159,6 +159,25 @@ func (h *Handler) GetHost(c echo.Context) error {
 	})
 }
 
+// resolveTunnelActions decides the enabled state after the update and whether
+// the tunnels of the host have to be stopped and started.
+func resolveTunnelActions(req *models.UpdateHostRequest, host *models.Host) (finalEnabled, needStop, needStart bool) {
+	finalEnabled = host.Enabled
+	if req.Enabled != nil {
+		finalEnabled = *req.Enabled
+	}
+
+	connectionChanged := (req.IP != "" && host.IP != req.IP) ||
+		(req.Port != nil && host.Port != *req.Port) ||
+		(req.User != "" && host.User != req.User) ||
+		(req.Password != "" && host.Password != req.Password)
+
+	needStop = host.Enabled && (!finalEnabled || connectionChanged)
+	needStart = finalEnabled && (!host.Enabled || connectionChanged)
+
+	return finalEnabled, needStop, needStart
+}
+
 func (h *Handler) UpdateHost(c echo.Context) error {
 	id, err := strconv.ParseUint(c.Param("id"), 10, 32)
 	if err != nil {
@@ -207,11 +226,7 @@ func (h *Handler) UpdateHost(c echo.Context) error {
 		})
 	}
 
-	needTunnelRestart := (req.IP != "" && host.IP != req.IP) ||
-		(req.Port != nil && host.Port != *req.Port) ||
-		(req.User != "" && host.User != req.User) ||
-		(req.Password != "" && host.Password != req.Password)
-	needTunnelStop := req.Enabled != nil && !*req.Enabled
+	finalEnabled, needTunnelStop, needTunnelStart := resolveTunnelActions(&req, &host)
 
 	if req.IP != "" {
 		host.IP = req.IP
@@ -225,9 +240,10 @@ func (h *Handler) UpdateHost(c echo.Context) error {
 	if req.Password != "" {
 		host.Password = req.Password
 	}
-	if host.Description != "" {
+	if req.Description != "" {
 		host.Description = req.Description
 	}
+	host.Enabled = finalEnabled
 
 	tx := h.db.Begin()
 	err = tx.Error
@@ -256,7 +272,7 @@ func (h *Handler) UpdateHost(c echo.Context) error {
 		})
 	}
 
-	if (host.Enabled && needTunnelStop) || needTunnelRestart {
+	if needTunnelStop {
 		for _, sp := range sps {
 			err = h.manager.StopTunnel(host.ID, sp.ID)
 			if err != nil {
@@ -268,7 +284,7 @@ func (h *Handler) UpdateHost(c echo.Context) error {
 		}
 	}
 
-	if (!host.Enabled && !needTunnelStop) || needTunnelRestart {
+	if needTunnelStart {
 		for _, sp := range sps {
 			err = h.manager.StartTunnel(&host, &sp)
 			if err != nil {
@@ -277,37 +293,6 @@ func (h *Handler) UpdateHost(c echo.Context) error {
 					zap.String("host_ip", host.IP),
 					zap.Int("service_port", sp.ServicePort))
 			}
-		}
-	}
-
-	if req.Enabled != nil && host.Enabled != *req.Enabled {
-		host.Enabled = *req.Enabled
-
-		tx = h.db.Begin()
-		err = tx.Error
-		if err != nil {
-			return c.JSON(http.StatusInternalServerError, models.Response{
-				Success: false,
-				Error:   "Failed to start transaction: " + err.Error(),
-			})
-		}
-
-		err = tx.Save(&host).Error
-		if err != nil {
-			tx.Rollback()
-			h.logger.Error("failed to update Host", zap.Error(err))
-			return c.JSON(http.StatusInternalServerError, models.Response{
-				Success: false,
-				Error:   "Failed to update Host: " + err.Error(),
-			})
-		}
-
-		err = tx.Commit().Error
-		if err != nil {
-			return c.JSON(http.StatusInternalServerError, models.Response{
-				Success: false,
-				Error:   "Failed to commit transaction: " + err.Error(),
-			})
 		}
 	}
 
