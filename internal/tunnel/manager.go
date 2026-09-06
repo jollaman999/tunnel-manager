@@ -191,6 +191,7 @@ func (m *Manager) StopAllTunnels() {
 	if err != nil {
 		m.mu.Unlock()
 		m.logger.Error("failed to fetch Hosts", zap.Error(err))
+		return
 	}
 
 	var servicePorts []models.ServicePort
@@ -198,6 +199,7 @@ func (m *Manager) StopAllTunnels() {
 	if err != nil {
 		m.mu.Unlock()
 		m.logger.Error(fmt.Sprintf("failed to fetch service ports: %v", err))
+		return
 	}
 	m.mu.Unlock()
 
