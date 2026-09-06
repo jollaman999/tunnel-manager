@@ -1,5 +1,6 @@
 .idea/
 .vscode/
 _data/
+/keys/
 tunnel-manager
 *.tar*

@@ -11,9 +11,11 @@ services:
         hard: 65535
     ports:
       - "8888:8888"
+    working_dir: /
     volumes:
       - ./config/config.yaml:/config/config.yaml:ro
       - ./_data/tunnel-manager:/var/log/tunnel-manager
+      - ./_data/keys:/keys
     environment:
       - TZ=Asia/Seoul
     restart: always

@@ -149,6 +149,23 @@ logging:
     compress: true   # Whether to compress rotated files
 ```
 
+### 암호화 키
+
+Host의 SSH 비밀번호는 AES-256-GCM으로 암호화해서 데이터베이스에 저장합니다. 암호화 키는 `security.key_file`이 가리키는 파일에서 읽고, 기본값은 `keys/tunnel-manager.key`입니다. 상대 경로는 프로세스의 작업 디렉터리를 기준으로 하므로 `make run`으로 실행하면 저장소 루트의 `keys/` 아래에 만들어집니다. 다른 경로를 쓰려면 config.yaml에 아래 항목을 추가합니다.
+
+```yaml
+security:
+  key_file: "keys/tunnel-manager.key"
+```
+
+키 파일이 없으면 첫 기동 때 32바이트 키를 만들어 권한 `0600`으로 저장하고, 이미 있으면 그대로 읽습니다.
+
+> **키를 잃어버리면 저장된 비밀번호를 하나도 복호할 수 없습니다.** 이때는 등록된 Host를 전부 다시 등록하는 것 말고는 방법이 없습니다. 데이터베이스를 백업할 때 키 파일도 같이 백업해야 짝이 맞습니다.
+
+키 파일을 그룹이나 다른 사용자가 읽을 수 있으면 기동을 거부하고 종료합니다. 이때는 `chmod 600 keys/tunnel-manager.key`로 권한을 좁힌 뒤 다시 실행합니다.
+
+Docker Compose로 실행하면 컨테이너의 `/keys`가 호스트의 `./_data/keys`에 연결되므로 컨테이너를 지웠다 다시 만들어도 키가 남습니다. 컨테이너는 root로 도는 탓에 이 디렉터리와 키 파일은 호스트에서 root 소유로 보입니다. 데이터베이스는 `./_data/mariadb`에 따로 남으니, `./_data/keys`만 지우면 데이터베이스에 있는 비밀번호를 읽을 수 없게 됩니다.
+
 ## 라이선스
 
 MIT License
