@@ -1,6 +1,7 @@
 package tunnel
 
 import (
+	"errors"
 	"fmt"
 	"sync"
 	"time"
@@ -11,6 +12,11 @@ import (
 	"golang.org/x/crypto/ssh"
 	"gorm.io/gorm"
 )
+
+// ErrTunnelNotExist reports that the tunnel to stop is not running. Stopping a
+// tunnel that was never started is not a failure, so callers that stop tunnels
+// in bulk can tell it apart with errors.Is.
+var ErrTunnelNotExist = errors.New("tunnel does not exist")
 
 type Manager struct {
 	db                    *gorm.DB
@@ -139,7 +145,7 @@ func (m *Manager) StopTunnel(hostID uint, spID uint) error {
 	tunnelKey := fmt.Sprintf("%d-%d", hostID, spID)
 	tunnel, exists := m.tunnels[tunnelKey]
 	if !exists {
-		return fmt.Errorf("tunnel does not exist")
+		return ErrTunnelNotExist
 	}
 
 	err := tunnel.Stop(m)
@@ -260,6 +266,13 @@ func (m *Manager) StopAllTunnels() {
 		for _, sp := range servicePorts {
 			err = m.StopTunnel(host.ID, sp.ID)
 			if err != nil {
+				if errors.Is(err, ErrTunnelNotExist) {
+					m.logger.Debug("no tunnel to stop",
+						zap.String("host_ip", host.IP),
+						zap.Int("service_port", sp.ServicePort))
+					continue
+				}
+
 				m.logger.Error("failed to stop tunnel",
 					zap.Error(err),
 					zap.String("host_ip", host.IP),

@@ -13,8 +13,11 @@ import (
 	"github.com/go-playground/validator/v10"
 	"github.com/jollaman999/tunnel-manager/internal/crypto"
 	"github.com/jollaman999/tunnel-manager/internal/models"
+	"github.com/jollaman999/tunnel-manager/internal/tunnel"
 	"github.com/labstack/echo/v4"
 	"go.uber.org/zap"
+	"go.uber.org/zap/zapcore"
+	"go.uber.org/zap/zaptest/observer"
 	"gorm.io/driver/mysql"
 	"gorm.io/gorm"
 	gormlogger "gorm.io/gorm/logger"
@@ -351,5 +354,141 @@ func TestCreateServicePortRollsBackOnHostFetchFailure(t *testing.T) {
 	}
 	if tx.commits != 0 {
 		t.Errorf("commits = %d, want 0", tx.commits)
+	}
+}
+
+// newStubQueryDB returns a gorm DB that answers queries from memory. Creating a
+// tunnel row fails, so StartTunnel registers a tunnel and then returns before it
+// dials, and deleting a tunnel row fails too, so stopping that tunnel fails for
+// a reason other than the tunnel not being there.
+func newStubQueryDB(t *testing.T, host models.Host, sps []models.ServicePort) *gorm.DB {
+	t.Helper()
+
+	db, _ := newTxRecordingDB(t)
+
+	err := db.Callback().Query().Replace("gorm:query", func(tx *gorm.DB) {
+		switch dest := tx.Statement.Dest.(type) {
+		case *models.Host:
+			*dest = host
+			tx.RowsAffected = 1
+		case *[]models.Host:
+			*dest = []models.Host{host}
+			tx.RowsAffected = 1
+		case *[]models.ServicePort:
+			*dest = sps
+			tx.RowsAffected = int64(len(sps))
+		}
+	})
+	if err != nil {
+		t.Fatalf("failed to replace the query callback: %v", err)
+	}
+
+	err = db.Callback().Create().Replace("gorm:create", func(tx *gorm.DB) {
+		_ = tx.AddError(errQueryFailed)
+	})
+	if err != nil {
+		t.Fatalf("failed to replace the create callback: %v", err)
+	}
+
+	err = db.Callback().Delete().Replace("gorm:delete", func(tx *gorm.DB) {
+		if _, ok := tx.Statement.Dest.(*models.Tunnel); ok {
+			_ = tx.AddError(errQueryFailed)
+		}
+	})
+	if err != nil {
+		t.Fatalf("failed to replace the delete callback: %v", err)
+	}
+
+	return db
+}
+
+func newDeleteHostContext(hostID string) (echo.Context, *httptest.ResponseRecorder) {
+	e := echo.New()
+	req := httptest.NewRequest(http.MethodDelete, "/api/hosts/"+hostID, nil)
+	rec := httptest.NewRecorder()
+	c := e.NewContext(req, rec)
+	c.SetParamNames("id")
+	c.SetParamValues(hostID)
+
+	return c, rec
+}
+
+func TestDeleteHostDoesNotWarnWhenNoTunnelIsRunning(t *testing.T) {
+	host := models.Host{ID: 1, IP: "10.0.0.1", Port: 22, User: "root", Password: "pass", Enabled: false}
+	sps := []models.ServicePort{
+		{ID: 1, ServiceIP: "10.0.0.2", ServicePort: 8081, LocalPort: 18081},
+		{ID: 2, ServiceIP: "10.0.0.2", ServicePort: 8082, LocalPort: 18082},
+		{ID: 3, ServiceIP: "10.0.0.2", ServicePort: 8083, LocalPort: 18083},
+	}
+
+	db := newStubQueryDB(t, host, sps)
+	core, logs := observer.New(zapcore.DebugLevel)
+
+	manager, err := tunnel.NewManager(db, zap.NewNop(), newTestCipher(t), 1)
+	if err != nil {
+		t.Fatalf("failed to create manager: %v", err)
+	}
+
+	c, rec := newDeleteHostContext("1")
+	h := NewHandler(db, manager, zap.New(core), newTestCipher(t))
+
+	err = h.DeleteHost(c)
+	if err != nil {
+		t.Fatalf("DeleteHost returned error: %v", err)
+	}
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d, body: %s", rec.Code, http.StatusOK, rec.Body.String())
+	}
+
+	for _, entry := range logs.All() {
+		if entry.Level >= zapcore.WarnLevel {
+			t.Fatalf("deleting a Host with no running tunnel logged %s: %s", entry.Level, entry.Message)
+		}
+	}
+
+	got := logs.FilterMessage("no tunnel to stop").Len()
+	if got != len(sps) {
+		t.Fatalf("no tunnel to stop was logged %d times, want %d", got, len(sps))
+	}
+}
+
+func TestDeleteHostWarnsWhenTunnelCannotBeStopped(t *testing.T) {
+	host := models.Host{ID: 1, IP: "10.0.0.1", Port: 22, User: "root", Password: "pass", Enabled: true}
+	sps := []models.ServicePort{{ID: 2, ServiceIP: "10.0.0.2", ServicePort: 8081, LocalPort: 18081}}
+
+	db := newStubQueryDB(t, host, sps)
+	core, logs := observer.New(zapcore.DebugLevel)
+
+	manager, err := tunnel.NewManager(db, zap.NewNop(), newTestCipher(t), 1)
+	if err != nil {
+		t.Fatalf("failed to create manager: %v", err)
+	}
+
+	// The tunnel row cannot be created, so the tunnel is registered but never dials.
+	err = manager.StartTunnel(&host, &sps[0])
+	if err == nil {
+		t.Fatal("StartTunnel with a failing create returned no error")
+	}
+
+	c, rec := newDeleteHostContext("1")
+	h := NewHandler(db, manager, zap.New(core), newTestCipher(t))
+
+	err = h.DeleteHost(c)
+	if err != nil {
+		t.Fatalf("DeleteHost returned error: %v", err)
+	}
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d, body: %s", rec.Code, http.StatusOK, rec.Body.String())
+	}
+
+	entries := logs.FilterMessage("failed to stop tunnel").All()
+	if len(entries) != 1 {
+		t.Fatalf("failed to stop tunnel was logged %d times, want 1", len(entries))
+	}
+	if entries[0].Level != zapcore.WarnLevel {
+		t.Fatalf("failed to stop tunnel was logged at %s, want %s", entries[0].Level, zapcore.WarnLevel)
+	}
+	if logs.FilterMessage("no tunnel to stop").Len() != 0 {
+		t.Fatal("a tunnel that could not be stopped was reported as not running")
 	}
 }

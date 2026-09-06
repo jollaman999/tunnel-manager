@@ -306,6 +306,13 @@ func (h *Handler) UpdateHost(c echo.Context) error {
 		for _, sp := range sps {
 			err = h.manager.StopTunnel(host.ID, sp.ID)
 			if err != nil {
+				if errors.Is(err, tunnel.ErrTunnelNotExist) {
+					h.logger.Debug("no tunnel to stop",
+						zap.Uint("host_id", host.ID),
+						zap.Uint("service_port_id", sp.ID))
+					continue
+				}
+
 				h.logger.Warn("failed to stop tunnel",
 					zap.Uint("host_id", host.ID),
 					zap.Uint("service_port_id", sp.ID),
@@ -372,6 +379,13 @@ func (h *Handler) DeleteHost(c echo.Context) error {
 	for _, sp := range sps {
 		err = h.manager.StopTunnel(host.ID, sp.ID)
 		if err != nil {
+			if errors.Is(err, tunnel.ErrTunnelNotExist) {
+				h.logger.Debug("no tunnel to stop",
+					zap.Uint("host_id", host.ID),
+					zap.Uint("service_port_id", sp.ID))
+				continue
+			}
+
 			h.logger.Warn("failed to stop tunnel",
 				zap.Uint("host_id", host.ID),
 				zap.Uint("service_port_id", sp.ID),
@@ -605,6 +619,13 @@ func (h *Handler) UpdateServicePort(c echo.Context) error {
 	for _, host := range hosts {
 		err = h.manager.StopTunnel(host.ID, sp.ID)
 		if err != nil {
+			if errors.Is(err, tunnel.ErrTunnelNotExist) {
+				h.logger.Debug("no existing tunnel to stop",
+					zap.String("host_ip", host.IP),
+					zap.Int("service_port", sp.ServicePort))
+				continue
+			}
+
 			h.logger.Warn("failed to stop existing tunnel",
 				zap.String("host_ip", host.IP),
 				zap.Int("service_port", sp.ServicePort),
@@ -695,6 +716,13 @@ func (h *Handler) DeleteServicePort(c echo.Context) error {
 	for _, host := range hosts {
 		err = h.manager.StopTunnel(host.ID, sp.ID)
 		if err != nil {
+			if errors.Is(err, tunnel.ErrTunnelNotExist) {
+				h.logger.Debug("no tunnel to stop",
+					zap.String("host_ip", host.IP),
+					zap.Int("service_port", sp.ServicePort))
+				continue
+			}
+
 			h.logger.Warn("failed to stop tunnel",
 				zap.String("host_ip", host.IP),
 				zap.Int("service_port", sp.ServicePort),
