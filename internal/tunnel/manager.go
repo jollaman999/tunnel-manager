@@ -206,7 +206,7 @@ func (m *Manager) StopAllTunnels() {
 	for _, host := range hosts {
 		err = m.db.Unscoped().Where("host_id = ?", host.ID).Delete(&models.Tunnel{}).Error
 		if err != nil {
-			m.logger.Error(fmt.Sprintf("failed to reset tunnel status for host_id=%d: %w", host.ID, err))
+			m.logger.Error(fmt.Sprintf("failed to reset tunnel status for host_id=%d", host.ID), zap.Error(err))
 		}
 
 		for _, sp := range servicePorts {
