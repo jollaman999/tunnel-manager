@@ -44,7 +44,7 @@ func initDatabase(cfg *config.Config, logger *zap.Logger) (*gorm.DB, error) {
 		case <-timeout:
 			return nil, fmt.Errorf("timeout waiting for database connection after %s seconds", strconv.Itoa(cfg.Database.TimeoutSec))
 		case <-tick:
-			db, err := database.NewDatabase(cfg.Database.Host, cfg.Database.Port, cfg.Database.User, cfg.Database.Password, cfg.Database.Name)
+			db, err := database.NewDatabase(cfg.Database.Host, cfg.Database.Port, cfg.Database.User, cfg.Database.Password, cfg.Database.Name, logger, cfg.Logging.Level)
 			if err != nil {
 				logger.Info("attempting to connect to database...", zap.String("host", cfg.Database.Host), zap.Int("port", cfg.Database.Port), zap.Error(err))
 				continue
