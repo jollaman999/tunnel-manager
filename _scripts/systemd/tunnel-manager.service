@@ -6,9 +6,9 @@ After=network.target
 Type=simple
 User=root
 ExecStart=/usr/local/bin/tunnel-manager -config /etc/tunnel-manager/config.yaml
-ExecStop=/usr/bin/killall tunnel-manager
 Restart=always
 RestartSec=5
+TimeoutStopSec=90
 
 [Install]
 WantedBy=multi-user.target

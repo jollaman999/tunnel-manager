@@ -1,10 +1,13 @@
 package main
 
 import (
+	"context"
+	"errors"
 	"flag"
 	"fmt"
 	"gorm.io/gorm"
 	"log"
+	"net/http"
 	"os"
 	"os/signal"
 	"path/filepath"
@@ -27,6 +30,9 @@ import (
 )
 
 const version = "1.0.0"
+
+// Maximum time to wait for in-flight HTTP requests to finish on shutdown.
+const shutdownTimeout = 10 * time.Second
 
 func initDatabase(cfg *config.Config, logger *zap.Logger) (*gorm.DB, error) {
 	timeout := time.After(time.Duration(cfg.Database.TimeoutSec) * time.Second)
@@ -228,16 +234,6 @@ func main() {
 		logger.Error("failed to restore tunnels", zap.Error(err))
 	}
 
-	sigChan := make(chan os.Signal, 1)
-	signal.Notify(sigChan, os.Interrupt, syscall.SIGINT, syscall.SIGTERM)
-	go func() {
-		<-sigChan
-		logger.Info("Stopping all tunnels...")
-		manager.StopAllTunnels()
-		logger.Info("Exiting tunnel-manager...")
-		os.Exit(0)
-	}()
-
 	e := echo.New()
 	e.Validator = &CustomValidator{validator: validator.New()}
 	e.Use(middleware.Logger())
@@ -262,5 +258,29 @@ func main() {
 	g.GET("/status", h.GetStatus)
 	g.GET("/status/:hostId", h.GetHostStatus)
 
-	e.Logger.Fatal(e.Start(fmt.Sprintf(":%d", cfg.API.Port)))
+	sigChan := make(chan os.Signal, 1)
+	signal.Notify(sigChan, os.Interrupt, syscall.SIGINT, syscall.SIGTERM)
+
+	go func() {
+		err := e.Start(fmt.Sprintf(":%d", cfg.API.Port))
+		if err != nil && !errors.Is(err, http.ErrServerClosed) {
+			logger.Fatal("failed to start API server", zap.Error(err))
+		}
+	}()
+
+	sig := <-sigChan
+	logger.Info("Received signal, shutting down...", zap.String("signal", sig.String()))
+
+	// The API server goes down first so that no request observes tunnels
+	// being torn down underneath it.
+	ctx, cancel := context.WithTimeout(context.Background(), shutdownTimeout)
+	defer cancel()
+	err = e.Shutdown(ctx)
+	if err != nil {
+		logger.Error("failed to shut down API server gracefully", zap.Error(err))
+	}
+
+	logger.Info("Stopping all tunnels...")
+	manager.StopAllTunnels()
+	logger.Info("Exiting tunnel-manager...")
 }
