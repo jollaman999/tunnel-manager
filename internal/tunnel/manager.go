@@ -29,6 +29,14 @@ func NewManager(db *gorm.DB, logger *zap.Logger, monitoringIntervalSec int) (*Ma
 }
 
 func (m *Manager) StartTunnel(host *models.Host, sp *models.ServicePort) error {
+	if !host.Enabled {
+		m.logger.Info("skipped starting tunnel for disabled Host",
+			zap.Uint("host_id", host.ID),
+			zap.String("host_ip", host.IP),
+			zap.Int("service_port", sp.ServicePort))
+		return nil
+	}
+
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
