@@ -429,8 +429,9 @@ func (h *Handler) CreateServicePort(c echo.Context) error {
 	}
 
 	var hosts []models.Host
-	err = h.db.Find(&hosts).Error
+	err = tx.Find(&hosts).Error
 	if err != nil {
+		tx.Rollback()
 		h.logger.Error("failed to fetch Hosts", zap.Error(err))
 		return c.JSON(http.StatusInternalServerError, models.Response{
 			Success: false,
@@ -561,8 +562,9 @@ func (h *Handler) UpdateServicePort(c echo.Context) error {
 	}
 
 	var hosts []models.Host
-	err = h.db.Find(&hosts).Error
+	err = tx.Find(&hosts).Error
 	if err != nil {
+		tx.Rollback()
 		h.logger.Error("failed to fetch Hosts", zap.Error(err))
 		return c.JSON(http.StatusInternalServerError, models.Response{
 			Success: false,
@@ -650,8 +652,9 @@ func (h *Handler) DeleteServicePort(c echo.Context) error {
 	}
 
 	var hosts []models.Host
-	err = h.db.Find(&hosts).Error
+	err = tx.Find(&hosts).Error
 	if err != nil {
+		tx.Rollback()
 		h.logger.Error("failed to fetch Hosts", zap.Error(err))
 		return c.JSON(http.StatusInternalServerError, models.Response{
 			Success: false,
