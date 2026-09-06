@@ -90,29 +90,21 @@ func (t *SSHTunnel) reconnect(m *Manager, tunnel *models.Tunnel) {
 	}
 	t.clientMu.Unlock()
 
-	err := t.establishConnection(m, tunnel)
-	if err != nil {
-		t.logger.Error("reconnection failed",
-			zap.String("local", t.Local.String()),
-			zap.String("server", t.Server.String()),
-			zap.String("remote", t.Remote.String()),
-			zap.Error(err))
-		return
-	}
-
-	t.logger.Info("reconnection successful",
+	t.logger.Info("closed current connection, waiting for the tunnel to be re-established",
 		zap.String("local", t.Local.String()),
 		zap.String("server", t.Server.String()),
 		zap.String("remote", t.Remote.String()))
 }
 
-func (t *SSHTunnel) monitorConnection(m *Manager, tunnel *models.Tunnel) {
+func (t *SSHTunnel) monitorConnection(m *Manager, tunnel *models.Tunnel, stop <-chan struct{}) {
 	ticker := time.NewTicker(time.Duration(m.monitoringIntervalSec) * time.Second)
 	defer ticker.Stop()
 
 	for {
 		select {
 		case <-t.done:
+			return
+		case <-stop:
 			return
 		case <-ticker.C:
 			t.clientMu.RLock()
@@ -226,8 +218,6 @@ func (t *SSHTunnel) establishConnection(m *Manager, tunnel *models.Tunnel) error
 		zap.String("server", t.Server.String()),
 		zap.String("remote", t.Remote.String()))
 
-	go t.monitorConnection(m, tunnel)
-
 	for {
 		conn, err := listener.Accept()
 		if err != nil {
@@ -265,6 +255,20 @@ func (t *SSHTunnel) Start(m *Manager, tunnel *models.Tunnel) {
 		zap.String("local", t.Local.String()),
 		zap.String("server", t.Server.String()),
 		zap.String("remote", t.Remote.String()))
+
+	stopMonitor := make(chan struct{})
+	var monitorWg sync.WaitGroup
+
+	monitorWg.Add(1)
+	go func() {
+		defer monitorWg.Done()
+		t.monitorConnection(m, tunnel, stopMonitor)
+	}()
+
+	defer func() {
+		close(stopMonitor)
+		monitorWg.Wait()
+	}()
 
 	for {
 		select {
