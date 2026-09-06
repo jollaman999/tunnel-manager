@@ -32,12 +32,12 @@ sequenceDiagram
     rect rgb(255, 255, 220)
         Note over Host,WAS: Tunnel Creation Phase
         Bastion->>Host: Create SSH Tunnel
-        Note right of Bastion: For each service port:-R 127.0.0.1:localPort:remoteIP:remotePort
+        Note right of Bastion: For each service port:-R 0.0.0.0:localPort:remoteIP:remotePort
     end
     
     rect rgb(255, 255, 220)
         Note over Host,WAS: Service Access Phase
-        Host->>Host: Connect to 127.0.0.1:localPort
+        Host->>Host: Connect to localPort (listener bound to 0.0.0.0)
         Host->>Bastion: Forward Traffic through tunnel
         Bastion->>WAS: Forward to remoteIP:remotePort
         WAS-->>Bastion: Response
@@ -52,6 +52,8 @@ sequenceDiagram
         end
     end
 ```
+
+원격 리스너가 `0.0.0.0`으로 열리는지는 Host의 SSH 서버 설정에 달려 있습니다. sshd의 `GatewayPorts`가 꺼져 있으면 요청한 주소와 관계없이 루프백에만 바인딩될 수 있습니다.
 
 ## 설치 및 실행
 
