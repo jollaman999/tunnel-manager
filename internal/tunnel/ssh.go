@@ -19,8 +19,11 @@ import (
 var errConnectionClosed = errors.New("connection closed")
 
 type SSHTunnel struct {
-	HostID    *uint
-	SPID      *uint
+	HostID *uint
+	SPID   *uint
+	// Local is the address requested for the remote listener. The
+	// tcpip-forward reply carries a port and nothing else, so the SSH server
+	// never confirms which address it bound.
 	Local     *net.TCPAddr
 	Server    *net.TCPAddr
 	Remote    *net.TCPAddr
@@ -75,17 +78,28 @@ func (t *SSHTunnel) saveTunnelStatus(m *Manager, tunnel *models.Tunnel) {
 	}
 }
 
-func (t *SSHTunnel) reconnect(m *Manager, tunnel *models.Tunnel) {
+// markReconnecting reports that the tunnel is down and waiting for the next
+// connection attempt. It reports whether the status was updated, which does not
+// happen once Stop deleted the tunnel row.
+func (t *SSHTunnel) markReconnecting(m *Manager, tunnel *models.Tunnel) bool {
 	t.stopMu.Lock()
 	if t.isStopped {
 		t.stopMu.Unlock()
-		return
+		return false
 	}
 	t.stopMu.Unlock()
 
 	tunnel.Status = "reconnecting"
 	tunnel.RetryCount++
 	t.saveTunnelStatus(m, tunnel)
+
+	return true
+}
+
+func (t *SSHTunnel) reconnect(m *Manager, tunnel *models.Tunnel) {
+	if !t.markReconnecting(m, tunnel) {
+		return
+	}
 
 	t.clientMu.Lock()
 	if t.client != nil {
@@ -211,6 +225,17 @@ func (t *SSHTunnel) establishConnection(m *Manager, tunnel *models.Tunnel) error
 	t.client = client
 	t.clientMu.Unlock()
 
+	// Addr reports the requested address with the port the server confirmed,
+	// so only the port is known to be real here.
+	tunnel.Local = listener.Addr().String()
+
+	if t.Local.IP.IsUnspecified() {
+		t.logger.Info("a wildcard local address was requested, the SSH server binds it to loopback only unless GatewayPorts is enabled",
+			zap.String("local", tunnel.Local),
+			zap.String("server", t.Server.String()),
+			zap.String("remote", t.Remote.String()))
+	}
+
 	tunnel.Status = "connected"
 	tunnel.RetryCount = 0
 	tunnel.LastError = ""
@@ -230,6 +255,9 @@ func (t *SSHTunnel) establishConnection(m *Manager, tunnel *models.Tunnel) error
 					zap.String("local", t.Local.String()),
 					zap.String("server", t.Server.String()),
 					zap.String("remote", t.Remote.String()))
+
+				t.markReconnecting(m, tunnel)
+
 				return errConnectionClosed
 			}
 

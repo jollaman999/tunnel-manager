@@ -588,14 +588,72 @@ func TestEstablishConnectionReportsClosedConnection(t *testing.T) {
 		t.Fatal("establishConnection did not return after the connection was closed")
 	}
 
-	if tunnel.Status != "connected" {
-		t.Fatalf("tunnel status = %q, want %q, a closed connection is not a failure", tunnel.Status, "connected")
+	if tunnel.Status != "reconnecting" {
+		t.Fatalf("tunnel status = %q, want %q, the tunnel is down until Start reconnects",
+			tunnel.Status, "reconnecting")
 	}
-	if tunnel.RetryCount != 0 {
-		t.Fatalf("RetryCount = %d, want 0, a closed connection is not a failure", tunnel.RetryCount)
+	if tunnel.RetryCount != 1 {
+		t.Fatalf("RetryCount = %d, want 1, the closed connection starts a reconnect cycle", tunnel.RetryCount)
 	}
 	if tunnel.LastError != "" {
-		t.Fatalf("LastError = %q, want empty, a closed connection is not a failure", tunnel.LastError)
+		t.Fatalf("LastError = %q, want empty, a closed connection is not an error", tunnel.LastError)
+	}
+}
+
+func TestEstablishConnectionReportsServerConfirmedPort(t *testing.T) {
+	m := newSSHTestManager(t, 1)
+	serverAddr, _ := startForwardingSSHServer(t)
+	tun, tunnel := newSSHTestTunnel(t, serverAddr)
+
+	errc := make(chan error, 1)
+	go func() {
+		errc <- tun.establishConnection(m, tunnel)
+	}()
+
+	waitTunnelClient(t, tun, 10*time.Second)
+	closeTunnelClient(t, tun)
+
+	select {
+	case <-errc:
+	case <-time.After(5 * time.Second):
+		t.Fatal("establishConnection did not return after the connection was closed")
+	}
+
+	// The test server hands out port 12345 for a request on port 0.
+	if tunnel.Local != "127.0.0.1:12345" {
+		t.Fatalf("reported local = %q, want %q, the requested port was not the one the server bound",
+			tunnel.Local, "127.0.0.1:12345")
+	}
+}
+
+func TestStopKeepsTunnelStatusUntouched(t *testing.T) {
+	m := newSSHTestManager(t, 5)
+	serverAddr, _ := startForwardingSSHServer(t)
+	tun, tunnel := newSSHTestTunnel(t, serverAddr)
+
+	returned := make(chan struct{})
+	go func() {
+		tun.Start(m, tunnel)
+		close(returned)
+	}()
+
+	waitTunnelClient(t, tun, 10*time.Second)
+
+	_ = tun.Stop(m)
+
+	select {
+	case <-returned:
+	case <-time.After(5 * time.Second):
+		t.Fatal("Start did not return after Stop")
+	}
+
+	// Stop deleted the tunnel row, so writing a status after it would bring the
+	// row back.
+	if tunnel.Status != "connected" {
+		t.Fatalf("tunnel status = %q, want %q, the status was updated after Stop", tunnel.Status, "connected")
+	}
+	if tunnel.RetryCount != 0 {
+		t.Fatalf("RetryCount = %d, want 0, it was increased after Stop", tunnel.RetryCount)
 	}
 }
 
