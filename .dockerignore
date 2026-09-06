@@ -5,3 +5,9 @@ Dockerfile
 docker-compose.yaml
 _data/
 keys/
+.idea/
+.vscode/
+.claude/
+tunnel-manager
+*.tar*
+test-server/httpMultiPort/httpMultiPort
