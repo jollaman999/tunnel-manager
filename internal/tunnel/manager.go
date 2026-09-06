@@ -5,6 +5,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/jollaman999/tunnel-manager/internal/crypto"
 	"github.com/jollaman999/tunnel-manager/internal/models"
 	"go.uber.org/zap"
 	"golang.org/x/crypto/ssh"
@@ -16,16 +17,55 @@ type Manager struct {
 	tunnels               map[string]*SSHTunnel
 	mu                    sync.RWMutex
 	logger                *zap.Logger
+	cipher                *crypto.Cipher
 	monitoringIntervalSec int
 }
 
-func NewManager(db *gorm.DB, logger *zap.Logger, monitoringIntervalSec int) (*Manager, error) {
+func NewManager(db *gorm.DB, logger *zap.Logger, cipher *crypto.Cipher, monitoringIntervalSec int) (*Manager, error) {
 	return &Manager{
 		db:                    db,
 		tunnels:               make(map[string]*SSHTunnel),
 		logger:                logger,
+		cipher:                cipher,
 		monitoringIntervalSec: monitoringIntervalSec,
 	}, nil
+}
+
+// hostPassword returns the password to authenticate to the Host with. A stored
+// value that does not decrypt is taken as one written before passwords were
+// encrypted, and is stored encrypted before it is used.
+func (m *Manager) hostPassword(host *models.Host) string {
+	password, err := m.cipher.Decrypt(host.Password)
+	if err == nil {
+		return password
+	}
+
+	password = host.Password
+
+	encrypted, err := m.cipher.Encrypt(password)
+	if err != nil {
+		m.logger.Warn("failed to encrypt the stored password of the Host",
+			zap.Uint("host_id", host.ID),
+			zap.String("host_ip", host.IP),
+			zap.Error(err))
+		return password
+	}
+
+	err = m.db.Model(&models.Host{}).Where("id = ?", host.ID).Update("password", encrypted).Error
+	if err != nil {
+		m.logger.Warn("failed to store the encrypted password of the Host",
+			zap.Uint("host_id", host.ID),
+			zap.String("host_ip", host.IP),
+			zap.Error(err))
+		return password
+	}
+
+	host.Password = encrypted
+	m.logger.Info("replaced the stored password of the Host with an encrypted one",
+		zap.Uint("host_id", host.ID),
+		zap.String("host_ip", host.IP))
+
+	return password
 }
 
 func (m *Manager) StartTunnel(host *models.Host, sp *models.ServicePort) error {
@@ -48,7 +88,7 @@ func (m *Manager) StartTunnel(host *models.Host, sp *models.ServicePort) error {
 	sshConfig := &ssh.ClientConfig{
 		User: host.User,
 		Auth: []ssh.AuthMethod{
-			ssh.Password(host.Password),
+			ssh.Password(m.hostPassword(host)),
 		},
 		HostKeyCallback: ssh.InsecureIgnoreHostKey(),
 		Timeout:         time.Second * 10,

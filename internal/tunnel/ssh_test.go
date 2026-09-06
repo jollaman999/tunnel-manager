@@ -56,7 +56,7 @@ func newSSHTestManager(t *testing.T, monitoringIntervalSec int) *Manager {
 		t.Fatalf("failed to open gorm with test conn pool: %v", err)
 	}
 
-	m, err := NewManager(db, zap.NewNop(), monitoringIntervalSec)
+	m, err := NewManager(db, zap.NewNop(), newTestCipher(t), monitoringIntervalSec)
 	if err != nil {
 		t.Fatalf("failed to create manager: %v", err)
 	}

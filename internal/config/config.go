@@ -24,6 +24,10 @@ type Config struct {
 		IntervalSec int `yaml:"interval_sec"`
 	} `yaml:"monitoring"`
 
+	Security struct {
+		KeyFile string `yaml:"key_file"`
+	} `yaml:"security"`
+
 	Logging struct {
 		Level  string `yaml:"level"`
 		Format string `yaml:"format"`
@@ -100,6 +104,9 @@ func (c *Config) Validate() error {
 }
 
 func (c *Config) setDefaults() {
+	if c.Security.KeyFile == "" {
+		c.Security.KeyFile = "keys/tunnel-manager.key"
+	}
 	if c.Logging.Level == "" {
 		c.Logging.Level = "info"
 	}

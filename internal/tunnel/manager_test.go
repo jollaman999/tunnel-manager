@@ -4,9 +4,11 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"path/filepath"
 	"testing"
 	"time"
 
+	"github.com/jollaman999/tunnel-manager/internal/crypto"
 	"github.com/jollaman999/tunnel-manager/internal/models"
 	"go.uber.org/zap"
 	"gorm.io/driver/mysql"
@@ -52,10 +54,26 @@ func newFailingDB(t *testing.T) *gorm.DB {
 	return db
 }
 
+func newTestCipher(t *testing.T) *crypto.Cipher {
+	t.Helper()
+
+	key, err := crypto.LoadOrCreateKey(filepath.Join(t.TempDir(), "test.key"))
+	if err != nil {
+		t.Fatalf("failed to create a key: %v", err)
+	}
+
+	c, err := crypto.NewCipher(key)
+	if err != nil {
+		t.Fatalf("failed to create a cipher: %v", err)
+	}
+
+	return c
+}
+
 func TestStopAllTunnelsWithFailingDB(t *testing.T) {
 	db := newFailingDB(t)
 
-	m, err := NewManager(db, zap.NewNop(), 1)
+	m, err := NewManager(db, zap.NewNop(), newTestCipher(t), 1)
 	if err != nil {
 		t.Fatalf("failed to create manager: %v", err)
 	}
@@ -89,7 +107,7 @@ func TestStopAllTunnelsWithFailingDB(t *testing.T) {
 func TestStartTunnelSkipsDisabledHost(t *testing.T) {
 	db := newFailingDB(t)
 
-	m, err := NewManager(db, zap.NewNop(), 1)
+	m, err := NewManager(db, zap.NewNop(), newTestCipher(t), 1)
 	if err != nil {
 		t.Fatalf("failed to create manager: %v", err)
 	}
@@ -115,7 +133,7 @@ func TestStartTunnelSkipsDisabledHost(t *testing.T) {
 func TestStartTunnelProceedsForEnabledHost(t *testing.T) {
 	db := newFailingDB(t)
 
-	m, err := NewManager(db, zap.NewNop(), 1)
+	m, err := NewManager(db, zap.NewNop(), newTestCipher(t), 1)
 	if err != nil {
 		t.Fatalf("failed to create manager: %v", err)
 	}
@@ -136,5 +154,48 @@ func TestStartTunnelProceedsForEnabledHost(t *testing.T) {
 
 	if !exists {
 		t.Fatal("tunnel was not created for an enabled Host")
+	}
+}
+
+func TestHostPasswordDecryptsStoredValue(t *testing.T) {
+	db := newFailingDB(t)
+	cipher := newTestCipher(t)
+
+	m, err := NewManager(db, zap.NewNop(), cipher, 1)
+	if err != nil {
+		t.Fatalf("failed to create manager: %v", err)
+	}
+
+	encrypted, err := cipher.Encrypt("s3cr3t")
+	if err != nil {
+		t.Fatalf("failed to encrypt: %v", err)
+	}
+
+	host := models.Host{ID: 1, IP: "127.0.0.1", Port: 22, User: "user", Password: encrypted, Enabled: true}
+
+	got := m.hostPassword(&host)
+	if got != "s3cr3t" {
+		t.Fatal("hostPassword did not return the stored password")
+	}
+	if host.Password != encrypted {
+		t.Fatal("hostPassword rewrote a password that was already encrypted")
+	}
+}
+
+func TestHostPasswordFallsBackToPlaintext(t *testing.T) {
+	// The database rejects every statement, so the re-encryption cannot be
+	// stored. Authenticating still has to work with the plaintext value.
+	db := newFailingDB(t)
+
+	m, err := NewManager(db, zap.NewNop(), newTestCipher(t), 1)
+	if err != nil {
+		t.Fatalf("failed to create manager: %v", err)
+	}
+
+	host := models.Host{ID: 1, IP: "127.0.0.1", Port: 22, User: "user", Password: "s3cr3t", Enabled: true}
+
+	got := m.hostPassword(&host)
+	if got != "s3cr3t" {
+		t.Fatal("hostPassword did not fall back to the plaintext value")
 	}
 }

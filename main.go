@@ -20,6 +20,7 @@ import (
 	"github.com/go-playground/validator/v10"
 	"github.com/jollaman999/tunnel-manager/internal/api"
 	"github.com/jollaman999/tunnel-manager/internal/config"
+	"github.com/jollaman999/tunnel-manager/internal/crypto"
 	"github.com/jollaman999/tunnel-manager/internal/database"
 	"github.com/jollaman999/tunnel-manager/internal/tunnel"
 	"github.com/labstack/echo/v4"
@@ -243,12 +244,25 @@ func main() {
 
 	checkUlimit(logger)
 
+	// Without the key no stored password can be read, so a key that cannot be
+	// loaded stops the startup instead of leaving every tunnel unable to connect.
+	key, err := crypto.LoadOrCreateKey(cfg.Security.KeyFile)
+	if err != nil {
+		log.Fatalf("Failed to load the encryption key: %v", err)
+	}
+
+	cipher, err := crypto.NewCipher(key)
+	if err != nil {
+		log.Fatalf("Failed to initialize the encryption: %v", err)
+	}
+	logger.Info("loaded the encryption key", zap.String("path", cfg.Security.KeyFile))
+
 	db, err := initDatabase(cfg, logger)
 	if err != nil {
 		log.Fatalf("Failed to initialize database: %v", err)
 	}
 
-	manager, err := tunnel.NewManager(db, logger, cfg.Monitoring.IntervalSec)
+	manager, err := tunnel.NewManager(db, logger, cipher, cfg.Monitoring.IntervalSec)
 	if err != nil {
 		log.Fatalf("Failed to create tunnel manager: %v", err)
 	}
@@ -265,7 +279,7 @@ func main() {
 	e.Use(middleware.Recover())
 	e.Use(middleware.CORS())
 
-	h := api.NewHandler(db, manager, logger)
+	h := api.NewHandler(db, manager, logger, cipher)
 	g := e.Group("/api")
 
 	g.POST("/host", h.CreateHost)

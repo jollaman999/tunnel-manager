@@ -6,10 +6,12 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/go-playground/validator/v10"
+	"github.com/jollaman999/tunnel-manager/internal/crypto"
 	"github.com/jollaman999/tunnel-manager/internal/models"
 	"github.com/labstack/echo/v4"
 	"go.uber.org/zap"
@@ -26,7 +28,25 @@ func intPtr(i int) *int {
 	return &i
 }
 
+func newTestCipher(t *testing.T) *crypto.Cipher {
+	t.Helper()
+
+	key, err := crypto.LoadOrCreateKey(filepath.Join(t.TempDir(), "test.key"))
+	if err != nil {
+		t.Fatalf("failed to create a key: %v", err)
+	}
+
+	c, err := crypto.NewCipher(key)
+	if err != nil {
+		t.Fatalf("failed to create a cipher: %v", err)
+	}
+
+	return c
+}
+
 func TestResolveTunnelActions(t *testing.T) {
+	cipher := newTestCipher(t)
+
 	baseHost := func(enabled bool) models.Host {
 		return models.Host{
 			ID:          1,
@@ -126,9 +146,77 @@ func TestResolveTunnelActions(t *testing.T) {
 			host := tt.host
 			req := tt.req
 
-			finalEnabled, needStop, needStart := resolveTunnelActions(&req, &host)
+			finalEnabled, needStop, needStart := resolveTunnelActions(&req, &host, cipher)
 			if finalEnabled != tt.finalEnabled {
 				t.Errorf("finalEnabled = %v, want %v", finalEnabled, tt.finalEnabled)
+			}
+			if needStop != tt.needStop {
+				t.Errorf("needStop = %v, want %v", needStop, tt.needStop)
+			}
+			if needStart != tt.needStart {
+				t.Errorf("needStart = %v, want %v", needStart, tt.needStart)
+			}
+		})
+	}
+}
+
+// TestResolveTunnelActionsWithEncryptedPassword pins down that a stored
+// password, which is a ciphertext, is never compared against the plaintext of
+// the request. Comparing them directly would restart every tunnel of the host
+// on every update.
+func TestResolveTunnelActionsWithEncryptedPassword(t *testing.T) {
+	cipher := newTestCipher(t)
+
+	storedPassword, err := cipher.Encrypt("pass")
+	if err != nil {
+		t.Fatalf("failed to encrypt: %v", err)
+	}
+
+	host := func() models.Host {
+		return models.Host{
+			ID:       1,
+			IP:       "10.0.0.1",
+			Port:     22,
+			User:     "root",
+			Password: storedPassword,
+			Enabled:  true,
+		}
+	}
+
+	tests := []struct {
+		name      string
+		req       models.UpdateHostRequest
+		needStop  bool
+		needStart bool
+	}{
+		{
+			name:      "update without a password",
+			req:       models.UpdateHostRequest{Description: "new"},
+			needStop:  false,
+			needStart: false,
+		},
+		{
+			name:      "update with the password that is already stored",
+			req:       models.UpdateHostRequest{Password: "pass"},
+			needStop:  false,
+			needStart: false,
+		},
+		{
+			name:      "update with a different password",
+			req:       models.UpdateHostRequest{Password: "other"},
+			needStop:  true,
+			needStart: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			h := host()
+			req := tt.req
+
+			finalEnabled, needStop, needStart := resolveTunnelActions(&req, &h, cipher)
+			if !finalEnabled {
+				t.Errorf("finalEnabled = %v, want %v", finalEnabled, true)
 			}
 			if needStop != tt.needStop {
 				t.Errorf("needStop = %v, want %v", needStop, tt.needStop)
@@ -245,7 +333,7 @@ func TestCreateServicePortRollsBackOnHostFetchFailure(t *testing.T) {
 	rec := httptest.NewRecorder()
 	c := e.NewContext(req, rec)
 
-	h := NewHandler(db, nil, zap.NewNop())
+	h := NewHandler(db, nil, zap.NewNop(), newTestCipher(t))
 
 	err := h.CreateServicePort(c)
 	if err != nil {

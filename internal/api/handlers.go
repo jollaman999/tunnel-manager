@@ -8,6 +8,7 @@ import (
 	"strconv"
 	"sync"
 
+	"github.com/jollaman999/tunnel-manager/internal/crypto"
 	"github.com/jollaman999/tunnel-manager/internal/models"
 	"github.com/jollaman999/tunnel-manager/internal/tunnel"
 	"github.com/labstack/echo/v4"
@@ -18,14 +19,16 @@ type Handler struct {
 	db      *gorm.DB
 	manager *tunnel.Manager
 	logger  *zap.Logger
+	cipher  *crypto.Cipher
 	rwLock  sync.RWMutex
 }
 
-func NewHandler(db *gorm.DB, manager *tunnel.Manager, logger *zap.Logger) *Handler {
+func NewHandler(db *gorm.DB, manager *tunnel.Manager, logger *zap.Logger, cipher *crypto.Cipher) *Handler {
 	return &Handler{
 		db:      db,
 		manager: manager,
 		logger:  logger,
+		cipher:  cipher,
 	}
 }
 
@@ -47,6 +50,15 @@ func (h *Handler) CreateHost(c echo.Context) error {
 		})
 	}
 
+	password, err := h.cipher.Encrypt(req.Password)
+	if err != nil {
+		h.logger.Error("failed to encrypt the password of the Host", zap.Error(err))
+		return c.JSON(http.StatusInternalServerError, models.Response{
+			Success: false,
+			Error:   "Failed to encrypt the password",
+		})
+	}
+
 	h.rwLock.Lock()
 	defer h.rwLock.Unlock()
 
@@ -63,7 +75,7 @@ func (h *Handler) CreateHost(c echo.Context) error {
 		IP:          req.IP,
 		Port:        req.Port,
 		User:        req.User,
-		Password:    req.Password,
+		Password:    password,
 		Description: req.Description,
 	}
 
@@ -160,17 +172,27 @@ func (h *Handler) GetHost(c echo.Context) error {
 }
 
 // resolveTunnelActions decides the enabled state after the update and whether
-// the tunnels of the host have to be stopped and started.
-func resolveTunnelActions(req *models.UpdateHostRequest, host *models.Host) (finalEnabled, needStop, needStart bool) {
+// the tunnels of the host have to be stopped and started. The stored password
+// is compared after decryption because the request carries a plaintext one and
+// because encrypting the same plaintext twice never yields the same value.
+func resolveTunnelActions(req *models.UpdateHostRequest, host *models.Host, cipher *crypto.Cipher) (finalEnabled, needStop, needStart bool) {
 	finalEnabled = host.Enabled
 	if req.Enabled != nil {
 		finalEnabled = *req.Enabled
 	}
 
+	// A stored value that does not decrypt was written before passwords were
+	// encrypted, so it is already plaintext.
+	storedPassword := host.Password
+	decrypted, err := cipher.Decrypt(host.Password)
+	if err == nil {
+		storedPassword = decrypted
+	}
+
 	connectionChanged := (req.IP != "" && host.IP != req.IP) ||
 		(req.Port != nil && host.Port != *req.Port) ||
 		(req.User != "" && host.User != req.User) ||
-		(req.Password != "" && host.Password != req.Password)
+		(req.Password != "" && storedPassword != req.Password)
 
 	needStop = host.Enabled && (!finalEnabled || connectionChanged)
 	needStart = finalEnabled && (!host.Enabled || connectionChanged)
@@ -226,7 +248,7 @@ func (h *Handler) UpdateHost(c echo.Context) error {
 		})
 	}
 
-	finalEnabled, needTunnelStop, needTunnelStart := resolveTunnelActions(&req, &host)
+	finalEnabled, needTunnelStop, needTunnelStart := resolveTunnelActions(&req, &host, h.cipher)
 
 	if req.IP != "" {
 		host.IP = req.IP
@@ -238,7 +260,15 @@ func (h *Handler) UpdateHost(c echo.Context) error {
 		host.User = req.User
 	}
 	if req.Password != "" {
-		host.Password = req.Password
+		password, err := h.cipher.Encrypt(req.Password)
+		if err != nil {
+			h.logger.Error("failed to encrypt the password of the Host", zap.Error(err))
+			return c.JSON(http.StatusInternalServerError, models.Response{
+				Success: false,
+				Error:   "Failed to encrypt the password",
+			})
+		}
+		host.Password = password
 	}
 	if req.Description != "" {
 		host.Description = req.Description
