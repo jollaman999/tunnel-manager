@@ -22,6 +22,7 @@ import (
 	"github.com/jollaman999/tunnel-manager/internal/config"
 	"github.com/jollaman999/tunnel-manager/internal/crypto"
 	"github.com/jollaman999/tunnel-manager/internal/database"
+	"github.com/jollaman999/tunnel-manager/internal/models"
 	"github.com/jollaman999/tunnel-manager/internal/tunnel"
 	"github.com/labstack/echo/v4"
 	"github.com/labstack/echo/v4/middleware"
@@ -196,6 +197,93 @@ func checkUlimit(logger *zap.Logger) {
 	}
 }
 
+// storedPasswordCheck holds what the stored passwords answered when they were
+// read with the encryption key in use.
+type storedPasswordCheck struct {
+	decrypted     int
+	notEncrypted  int
+	wrongKeyHosts []uint
+}
+
+// checkStoredPasswords sorts the stored password of every Host into one that
+// opens with the key in use, one that was stored before passwords were
+// encrypted, and one that is encrypted but does not open with this key.
+func checkStoredPasswords(hosts []models.Host, cipher *crypto.Cipher) storedPasswordCheck {
+	var check storedPasswordCheck
+
+	for _, host := range hosts {
+		_, err := cipher.Decrypt(host.Password)
+		switch {
+		case err == nil:
+			check.decrypted++
+		case errors.Is(err, crypto.ErrNotEncrypted):
+			check.notEncrypted++
+		default:
+			check.wrongKeyHosts = append(check.wrongKeyHosts, host.ID)
+		}
+	}
+
+	return check
+}
+
+// keyIsWrong reports whether the key in use is not the one the stored passwords
+// were sealed with. A process holds a single key, so a wrong one fails every
+// Host at once. One password that opens is therefore proof that the key is the
+// right one, and a value that still does not open next to it was never sealed
+// with this key, which is a fault of that row alone and no reason to keep the
+// other Hosts from being served.
+func (c storedPasswordCheck) keyIsWrong() bool {
+	return len(c.wrongKeyHosts) > 0 && c.decrypted == 0
+}
+
+// checkEncryptionKey stops the startup when the configured key file opens none
+// of the stored passwords. Every tunnel needs a password that opens, so keeping
+// the process up with the wrong key would serve an API that looks healthy while
+// no Host can be connected to.
+func checkEncryptionKey(db *gorm.DB, cipher *crypto.Cipher, logger *zap.Logger, keyFile string) {
+	var hosts []models.Host
+
+	err := db.Find(&hosts).Error
+	if err != nil {
+		// A read that fails says nothing about the key, and restoring the
+		// tunnels reports the same failure, so the startup goes on.
+		logger.Warn("failed to read the Hosts to check the encryption key against", zap.Error(err))
+		return
+	}
+
+	check := checkStoredPasswords(hosts, cipher)
+
+	if check.keyIsWrong() {
+		logger.Fatal("the configured key file opens none of the stored passwords, so it is not the key "+
+			"they were encrypted with. Put the key file that the passwords were stored with back in place, "+
+			"or set the password of every Host again through the API. Starting against another key is "+
+			"refused because no tunnel could be built and no stored password could be read",
+			zap.String("key_file", keyFile),
+			zap.Int("hosts", len(hosts)),
+			zap.Int("hosts_that_do_not_open", len(check.wrongKeyHosts)),
+			zap.Uints("host_ids_that_do_not_open", check.wrongKeyHosts))
+	}
+
+	if len(check.wrongKeyHosts) > 0 {
+		logger.Warn("the encryption key opens other stored passwords, so the key file is the right one, "+
+			"but the stored password of these Hosts does not open with it. Set their password again "+
+			"through the API. No tunnel is built for them until then",
+			zap.String("key_file", keyFile),
+			zap.Int("hosts_that_do_not_open", len(check.wrongKeyHosts)),
+			zap.Uints("host_ids_that_do_not_open", check.wrongKeyHosts))
+	}
+
+	if check.decrypted == 0 {
+		logger.Info("no stored password is encrypted, so there is nothing to check the encryption key against",
+			zap.Int("hosts", len(hosts)))
+		return
+	}
+
+	logger.Info("the encryption key opens the stored passwords",
+		zap.String("key_file", keyFile),
+		zap.Int("hosts_that_open", check.decrypted))
+}
+
 type CustomValidator struct {
 	validator *validator.Validate
 }
@@ -261,6 +349,11 @@ func main() {
 	if err != nil {
 		log.Fatalf("Failed to initialize database: %v", err)
 	}
+
+	// The stored passwords are read before any tunnel is built, so a key that
+	// opens none of them stops the startup here instead of letting every Host
+	// fail one SSH attempt at a time behind an API that answers normally.
+	checkEncryptionKey(db, cipher, logger, cfg.Security.KeyFile)
 
 	manager, err := tunnel.NewManager(db, logger, cipher, cfg.Monitoring.IntervalSec)
 	if err != nil {
