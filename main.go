@@ -54,29 +54,33 @@ func initDatabase(cfg *config.Config, logger *zap.Logger) (*gorm.DB, error) {
 	}
 }
 
-func initLogger(cfg *config.Config) (*zap.Logger, error) {
+// prepareLogFile makes sure the configured log file can be written to.
+func prepareLogFile(cfg *config.Config) error {
 	logDir := filepath.Dir(cfg.Logging.File.Path)
 	err := os.MkdirAll(logDir, 0755)
 	if err != nil {
-		return nil, fmt.Errorf("failed to create log directory: %v", err)
+		return fmt.Errorf("failed to create log directory: %v", err)
 	}
 
 	logFile := cfg.Logging.File.Path
 	_, err = os.OpenFile(logFile, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
 	if err != nil {
-		return nil, fmt.Errorf("failed to create log file: %v", err)
+		return fmt.Errorf("failed to create log file: %v", err)
 	}
 
-	logWriter := &lumberjack.Logger{
-		Filename:   cfg.Logging.File.Path,
-		MaxSize:    cfg.Logging.File.MaxSize,
-		MaxBackups: cfg.Logging.File.MaxBackups,
-		MaxAge:     cfg.Logging.File.MaxAge,
-		Compress:   cfg.Logging.File.Compress,
+	return nil
+}
+
+func initLogger(cfg *config.Config) (*zap.Logger, error) {
+	// An unusable log file is not fatal. The logger falls back to the console
+	// only, but the reason has to be visible since nothing is written to the file.
+	fileErr := prepareLogFile(cfg)
+	if fileErr != nil {
+		log.Printf("Logging to file is disabled: %v (path: %s)", fileErr, cfg.Logging.File.Path)
 	}
 
 	var level zapcore.Level
-	err = level.UnmarshalText([]byte(cfg.Logging.Level))
+	err := level.UnmarshalText([]byte(cfg.Logging.Level))
 	if err != nil {
 		return nil, fmt.Errorf("failed to parse log level: %v", err)
 	}
@@ -92,19 +96,40 @@ func initLogger(cfg *config.Config) (*zap.Logger, error) {
 		encoder = zapcore.NewConsoleEncoder(encoderConfig)
 	}
 
-	core := zapcore.NewTee(
-		zapcore.NewCore(
+	var cores []zapcore.Core
+
+	if fileErr == nil {
+		logWriter := &lumberjack.Logger{
+			Filename:   cfg.Logging.File.Path,
+			MaxSize:    cfg.Logging.File.MaxSize,
+			MaxBackups: cfg.Logging.File.MaxBackups,
+			MaxAge:     cfg.Logging.File.MaxAge,
+			Compress:   cfg.Logging.File.Compress,
+		}
+
+		cores = append(cores, zapcore.NewCore(
 			encoder,
 			zapcore.AddSync(logWriter),
 			level,
-		),
-		zapcore.NewCore(
-			encoder,
-			zapcore.AddSync(os.Stdout),
-			level,
 		))
+	}
 
-	return zap.New(core, zap.AddCaller()), nil
+	cores = append(cores, zapcore.NewCore(
+		encoder,
+		zapcore.AddSync(os.Stdout),
+		level,
+	))
+
+	logger := zap.New(zapcore.NewTee(cores...), zap.AddCaller())
+
+	if fileErr != nil {
+		logger.Warn("logging to file is disabled",
+			zap.String("path", cfg.Logging.File.Path),
+			zap.Error(fileErr),
+			zap.String("message", "logs are written to the console only"))
+	}
+
+	return logger, nil
 }
 
 func checkUlimit(logger *zap.Logger) {
