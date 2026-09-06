@@ -118,20 +118,28 @@ func checkUlimit(logger *zap.Logger) {
 	if rLimit.Max < desiredCur {
 		logger.Warn("max ulimit is low",
 			zap.Uint64("current", rLimit.Max),
-			zap.String("message", "tunnel-manager recommends setting max ulimit to more than 65535 for reliable connection management"))
+			zap.Uint64("desired", desiredCur),
+			zap.String("message", "tunnel-manager recommends setting max ulimit to more than 65535 for reliable connection management. raising the max ulimit requires root privileges"))
 	}
 
-	if rLimit.Max >= desiredCur && rLimit.Cur >= desiredCur {
+	if rLimit.Cur >= desiredCur {
 		logger.Info("no need to change ulimit")
 		return
 	}
 
-	if rLimit.Max > desiredCur {
-		desiredCur = rLimit.Max
+	// Without root privileges the soft limit can only be raised up to the hard limit.
+	newCur := rLimit.Max
+	if newCur <= rLimit.Cur {
+		logger.Warn("cannot raise the current ulimit any further",
+			zap.Uint64("current", rLimit.Cur),
+			zap.Uint64("max", rLimit.Max),
+			zap.Uint64("desired", desiredCur),
+			zap.String("message", "the current ulimit already reached the max ulimit. raising the max ulimit requires root privileges"))
+		return
 	}
 
 	newLimit := syscall.Rlimit{
-		Cur: desiredCur,
+		Cur: newCur,
 		Max: rLimit.Max,
 	}
 
@@ -140,13 +148,20 @@ func checkUlimit(logger *zap.Logger) {
 		logger.Warn("failed to change ulimit",
 			zap.Error(err),
 			zap.Uint64("current", rLimit.Cur),
-			zap.Uint64("max", rLimit.Max))
+			zap.Uint64("max", rLimit.Max),
+			zap.Uint64("tried", newCur))
 		return
 	}
 
 	logger.Info("successfully changed ulimit",
 		zap.Uint64("old_limit", rLimit.Cur),
 		zap.Uint64("new_limit", newLimit.Cur))
+
+	if newLimit.Cur < desiredCur {
+		logger.Warn("ulimit is still lower than the desired value",
+			zap.Uint64("current", newLimit.Cur),
+			zap.Uint64("desired", desiredCur))
+	}
 }
 
 type CustomValidator struct {
@@ -174,10 +189,6 @@ func main() {
 		os.Exit(0)
 	}
 
-	if os.Geteuid() != 0 {
-		log.Fatal("This program must be run as root")
-	}
-
 	cfg, err := config.LoadConfig(*configPath)
 	if err != nil {
 		log.Fatalf("Failed to load config: %v", err)
@@ -192,6 +203,12 @@ func main() {
 	}()
 
 	logger.Info("Starting tunnel-manager...")
+
+	if os.Geteuid() != 0 {
+		logger.Warn("not running as root",
+			zap.Int("euid", os.Geteuid()),
+			zap.String("message", "operations that require root privileges may fail, such as raising the max ulimit or writing to system directories"))
+	}
 
 	checkUlimit(logger)
 
