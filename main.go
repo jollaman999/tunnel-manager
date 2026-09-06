@@ -45,7 +45,7 @@ func initDatabase(cfg *config.Config, logger *zap.Logger) (*gorm.DB, error) {
 		case <-tick:
 			db, err := database.NewDatabase(cfg.Database.Host, cfg.Database.Port, cfg.Database.User, cfg.Database.Password, cfg.Database.Name)
 			if err != nil {
-				logger.Info("attempting to connect to database...", zap.String("host", cfg.Database.Host), zap.Int("port", cfg.Database.Port))
+				logger.Info("attempting to connect to database...", zap.String("host", cfg.Database.Host), zap.Int("port", cfg.Database.Port), zap.Error(err))
 				continue
 			}
 			logger.Info("successfully connected to database")
