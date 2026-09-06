@@ -4,7 +4,6 @@ on:
   push:
     branches: [ "master" ]
     paths-ignore:
-      - ".github/**"
       - "_scripts/**"
       - "config/**"
       - "test-server/**"
@@ -29,3 +28,18 @@ jobs:
 
     - name: Build
       run: make
+
+    - name: Vet
+      run: go vet ./...
+
+    - name: Check gofmt
+      run: |
+        unformatted=$(gofmt -l main.go internal)
+        if [ -n "$unformatted" ]; then
+          echo "gofmt needed on the following files:"
+          echo "$unformatted"
+          exit 1
+        fi
+
+    - name: Test
+      run: go test ./... -count=1 -race
