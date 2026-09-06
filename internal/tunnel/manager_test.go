@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -175,7 +176,10 @@ func TestHostPasswordDecryptsStoredValue(t *testing.T) {
 
 	host := models.Host{ID: 1, IP: "127.0.0.1", Port: 22, User: "user", Password: encrypted, Enabled: true}
 
-	got := m.hostPassword(&host)
+	got, err := m.hostPassword(&host)
+	if err != nil {
+		t.Fatalf("hostPassword returned an error: %v", err)
+	}
 	if got != "s3cr3t" {
 		t.Fatal("hostPassword did not return the stored password")
 	}
@@ -196,9 +200,227 @@ func TestHostPasswordFallsBackToPlaintext(t *testing.T) {
 
 	host := models.Host{ID: 1, IP: "127.0.0.1", Port: 22, User: "user", Password: "s3cr3t", Enabled: true}
 
-	got := m.hostPassword(&host)
+	got, err := m.hostPassword(&host)
+	if err != nil {
+		t.Fatalf("hostPassword returned an error: %v", err)
+	}
 	if got != "s3cr3t" {
 		t.Fatal("hostPassword did not fall back to the plaintext value")
+	}
+}
+
+// newUpdateCountingDB returns a gorm DB that counts the updates it is asked for
+// instead of running them, so a test can tell whether a statement would have
+// reached the hosts table.
+func newUpdateCountingDB(t *testing.T, updates *int) *gorm.DB {
+	t.Helper()
+
+	db := newFailingDB(t)
+
+	err := db.Callback().Update().Replace("gorm:update", func(tx *gorm.DB) {
+		*updates++
+	})
+	if err != nil {
+		t.Fatalf("failed to replace the update callback: %v", err)
+	}
+
+	return db
+}
+
+// unmarkedCipherText returns plaintext in the encrypted format that carried no
+// marker, which is what the rows written before this change hold.
+func unmarkedCipherText(t *testing.T, c *crypto.Cipher, plaintext string) string {
+	t.Helper()
+
+	encrypted, err := c.Encrypt(plaintext)
+	if err != nil {
+		t.Fatalf("failed to encrypt: %v", err)
+	}
+
+	// The marker ends at the last ':', which base64 never produces.
+	unmarked := encrypted[strings.LastIndex(encrypted, ":")+1:]
+	if crypto.IsEncrypted(unmarked) {
+		t.Fatal("failed to strip the marker")
+	}
+
+	decrypted, err := c.Decrypt(unmarked)
+	if err != nil || decrypted != plaintext {
+		t.Fatalf("the stripped value is not a valid value of the format without a marker: %v", err)
+	}
+
+	return unmarked
+}
+
+func TestHostPasswordKeepsTheStoredValueWhenTheKeyIsWrong(t *testing.T) {
+	stored, err := newTestCipher(t).Encrypt("s3cr3t")
+	if err != nil {
+		t.Fatalf("failed to encrypt: %v", err)
+	}
+
+	updates := 0
+
+	m, err := NewManager(newUpdateCountingDB(t, &updates), zap.NewNop(), newTestCipher(t), 1)
+	if err != nil {
+		t.Fatalf("failed to create manager: %v", err)
+	}
+
+	host := models.Host{ID: 1, IP: "127.0.0.1", Port: 22, User: "user", Password: stored, Enabled: true}
+
+	got, err := m.hostPassword(&host)
+	if err == nil {
+		t.Fatal("hostPassword accepted a password that does not decrypt with the key in use")
+	}
+	if !errors.Is(err, crypto.ErrWrongKey) {
+		t.Fatalf("hostPassword returned an error that callers cannot tell apart: %v", err)
+	}
+	if got != "" {
+		t.Fatal("hostPassword returned a password although the key is wrong")
+	}
+	if updates != 0 {
+		t.Fatalf("hostPassword sent %d updates to the hosts table with a wrong key", updates)
+	}
+	if host.Password != stored {
+		t.Fatal("hostPassword changed the stored password although the key is wrong")
+	}
+}
+
+func TestHostPasswordKeepsTheStoredValueWithoutMarkerWhenTheKeyIsWrong(t *testing.T) {
+	// This is the case that destroyed passwords: a row written by the release
+	// that had no marker yet, read after the key was replaced.
+	stored := unmarkedCipherText(t, newTestCipher(t), "s3cr3t")
+
+	updates := 0
+
+	m, err := NewManager(newUpdateCountingDB(t, &updates), zap.NewNop(), newTestCipher(t), 1)
+	if err != nil {
+		t.Fatalf("failed to create manager: %v", err)
+	}
+
+	host := models.Host{ID: 1, IP: "127.0.0.1", Port: 22, User: "user", Password: stored, Enabled: true}
+
+	_, err = m.hostPassword(&host)
+	if !errors.Is(err, crypto.ErrWrongKey) {
+		t.Fatalf("hostPassword did not report a wrong key: %v", err)
+	}
+	if updates != 0 {
+		t.Fatalf("hostPassword sent %d updates to the hosts table with a wrong key", updates)
+	}
+	if host.Password != stored {
+		t.Fatalf("hostPassword changed the stored value of length %d to one of length %d",
+			len(stored), len(host.Password))
+	}
+}
+
+func TestHostPasswordMigratesPlaintext(t *testing.T) {
+	cipher := newTestCipher(t)
+	updates := 0
+
+	m, err := NewManager(newUpdateCountingDB(t, &updates), zap.NewNop(), cipher, 1)
+	if err != nil {
+		t.Fatalf("failed to create manager: %v", err)
+	}
+
+	host := models.Host{ID: 1, IP: "127.0.0.1", Port: 22, User: "user", Password: "s3cr3t", Enabled: true}
+
+	got, err := m.hostPassword(&host)
+	if err != nil {
+		t.Fatalf("hostPassword returned an error: %v", err)
+	}
+	if got != "s3cr3t" {
+		t.Fatal("hostPassword did not return the stored password")
+	}
+	if updates != 1 {
+		t.Fatalf("a plaintext password was updated %d times, want 1", updates)
+	}
+	if !crypto.IsEncrypted(host.Password) {
+		t.Fatal("the migrated password carries no marker")
+	}
+
+	decrypted, err := cipher.Decrypt(host.Password)
+	if err != nil || decrypted != "s3cr3t" {
+		t.Fatalf("the migrated password does not decrypt to the original one: %v", err)
+	}
+}
+
+func TestHostPasswordMarksTheStoredValueWithoutMarker(t *testing.T) {
+	cipher := newTestCipher(t)
+	stored := unmarkedCipherText(t, cipher, "s3cr3t")
+
+	updates := 0
+
+	m, err := NewManager(newUpdateCountingDB(t, &updates), zap.NewNop(), cipher, 1)
+	if err != nil {
+		t.Fatalf("failed to create manager: %v", err)
+	}
+
+	host := models.Host{ID: 1, IP: "127.0.0.1", Port: 22, User: "user", Password: stored, Enabled: true}
+
+	got, err := m.hostPassword(&host)
+	if err != nil {
+		t.Fatalf("hostPassword returned an error: %v", err)
+	}
+	if got != "s3cr3t" {
+		t.Fatal("hostPassword did not return the stored password")
+	}
+	if updates != 1 {
+		t.Fatalf("a value in the format without a marker was updated %d times, want 1", updates)
+	}
+	if !crypto.IsEncrypted(host.Password) {
+		t.Fatal("the stored value did not get the marker")
+	}
+
+	decrypted, err := cipher.Decrypt(host.Password)
+	if err != nil || decrypted != "s3cr3t" {
+		t.Fatalf("the marked value does not decrypt to the original password: %v", err)
+	}
+}
+
+func TestStartTunnelFailsWhenTheKeyIsWrong(t *testing.T) {
+	stored, err := newTestCipher(t).Encrypt("s3cr3t")
+	if err != nil {
+		t.Fatalf("failed to encrypt: %v", err)
+	}
+
+	updates := 0
+
+	core, logs := observer.New(zapcore.DebugLevel)
+
+	m, err := NewManager(newUpdateCountingDB(t, &updates), zap.New(core), newTestCipher(t), 1)
+	if err != nil {
+		t.Fatalf("failed to create manager: %v", err)
+	}
+
+	host := models.Host{ID: 1, IP: "127.0.0.1", Port: 22, User: "user", Password: stored, Enabled: true}
+	sp := models.ServicePort{ID: 2, ServiceIP: "127.0.0.1", ServicePort: 3306, LocalPort: 13306}
+
+	err = m.StartTunnel(&host, &sp)
+	if !errors.Is(err, crypto.ErrWrongKey) {
+		t.Fatalf("StartTunnel did not report a wrong key: %v", err)
+	}
+	if updates != 0 {
+		t.Fatalf("StartTunnel sent %d updates to the hosts table with a wrong key", updates)
+	}
+	if host.Password != stored {
+		t.Fatal("StartTunnel changed the stored password although the key is wrong")
+	}
+
+	m.mu.RLock()
+	_, exists := m.tunnels["1-2"]
+	m.mu.RUnlock()
+
+	if exists {
+		t.Fatal("a tunnel was started with a password that could not be decrypted")
+	}
+
+	errorLogs := 0
+	for _, entry := range logs.All() {
+		if entry.Level >= zapcore.ErrorLevel {
+			errorLogs++
+		}
+	}
+
+	if errorLogs == 0 {
+		t.Fatal("a password that does not decrypt with the key in use was not logged as an error")
 	}
 }
 

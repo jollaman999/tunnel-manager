@@ -181,8 +181,10 @@ func resolveTunnelActions(req *models.UpdateHostRequest, host *models.Host, ciph
 		finalEnabled = *req.Enabled
 	}
 
-	// A stored value that does not decrypt was written before passwords were
-	// encrypted, so it is already plaintext.
+	// A stored value that does not decrypt is either one written before
+	// passwords were encrypted or one sealed with another key. Neither can be
+	// compared to the requested password, so the stored form is compared as it
+	// is and the tunnels are restarted rather than left on a stale password.
 	storedPassword := host.Password
 	decrypted, err := cipher.Decrypt(host.Password)
 	if err == nil {

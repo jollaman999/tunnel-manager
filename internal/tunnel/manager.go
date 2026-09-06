@@ -38,23 +38,45 @@ func NewManager(db *gorm.DB, logger *zap.Logger, cipher *crypto.Cipher, monitori
 }
 
 // hostPassword returns the password to authenticate to the Host with. A stored
-// value that does not decrypt is taken as one written before passwords were
-// encrypted, and is stored encrypted before it is used.
-func (m *Manager) hostPassword(host *models.Host) string {
+// value that was never encrypted is stored encrypted before it is used, and so
+// is one that is still in the encrypted format that carried no marker. A value
+// that is encrypted but does not open with the key in use is left exactly as it
+// is and reported as an error, because overwriting it destroys the password.
+func (m *Manager) hostPassword(host *models.Host) (string, error) {
 	password, err := m.cipher.Decrypt(host.Password)
 	if err == nil {
-		return password
+		if !crypto.IsEncrypted(host.Password) {
+			m.storeEncryptedPassword(host, password)
+		}
+		return password, nil
+	}
+
+	if !errors.Is(err, crypto.ErrNotEncrypted) {
+		m.logger.Error("the stored password of the Host does not decrypt with the encryption key in use, "+
+			"leaving it as it is. Check that the configured key file is the one the password was stored with",
+			zap.Uint("host_id", host.ID),
+			zap.String("host_ip", host.IP),
+			zap.Error(err))
+		return "", fmt.Errorf("failed to decrypt the stored password of the Host (host_id=%d): %w", host.ID, err)
 	}
 
 	password = host.Password
+	m.storeEncryptedPassword(host, password)
 
+	return password, nil
+}
+
+// storeEncryptedPassword writes the encrypted form of password to the Host row.
+// Failing to store it does not keep the password from being used, so it is only
+// logged.
+func (m *Manager) storeEncryptedPassword(host *models.Host, password string) {
 	encrypted, err := m.cipher.Encrypt(password)
 	if err != nil {
 		m.logger.Warn("failed to encrypt the stored password of the Host",
 			zap.Uint("host_id", host.ID),
 			zap.String("host_ip", host.IP),
 			zap.Error(err))
-		return password
+		return
 	}
 
 	err = m.db.Model(&models.Host{}).Where("id = ?", host.ID).Update("password", encrypted).Error
@@ -63,15 +85,13 @@ func (m *Manager) hostPassword(host *models.Host) string {
 			zap.Uint("host_id", host.ID),
 			zap.String("host_ip", host.IP),
 			zap.Error(err))
-		return password
+		return
 	}
 
 	host.Password = encrypted
 	m.logger.Info("replaced the stored password of the Host with an encrypted one",
 		zap.Uint("host_id", host.ID),
 		zap.String("host_ip", host.IP))
-
-	return password
 }
 
 func (m *Manager) StartTunnel(host *models.Host, sp *models.ServicePort) error {
@@ -91,10 +111,15 @@ func (m *Manager) StartTunnel(host *models.Host, sp *models.ServicePort) error {
 		return fmt.Errorf("tunnel already exists")
 	}
 
+	password, err := m.hostPassword(host)
+	if err != nil {
+		return err
+	}
+
 	sshConfig := &ssh.ClientConfig{
 		User: host.User,
 		Auth: []ssh.AuthMethod{
-			ssh.Password(m.hostPassword(host)),
+			ssh.Password(password),
 		},
 		HostKeyCallback: ssh.InsecureIgnoreHostKey(),
 		Timeout:         time.Second * 10,

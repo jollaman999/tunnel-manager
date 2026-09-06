@@ -11,6 +11,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
 )
 
 // KeySize is the key length of AES-256 in bytes.
@@ -21,6 +22,22 @@ const keyFileMode os.FileMode = 0600
 
 // keyDirMode is the permission the directory of a new key file is created with.
 const keyDirMode os.FileMode = 0700
+
+// encryptedPrefix marks a value that Encrypt produced and names the format it
+// is in. ':' is not part of the standard base64 alphabet, so a value that was
+// never encrypted by this package cannot be a marked one by accident, and the
+// version lets a later format be told apart from this one.
+const encryptedPrefix = "tmenc:v1:"
+
+// ErrNotEncrypted reports that the value carries no marker and does not have
+// the shape of an encrypted one, so it was stored before passwords were
+// encrypted. Callers migrate such a value by encrypting it.
+var ErrNotEncrypted = errors.New("the value is not encrypted")
+
+// ErrWrongKey reports that the value was encrypted but does not open with the
+// key in use. Callers must never overwrite such a value: the plaintext exists
+// nowhere else, so writing over it destroys the secret for good.
+var ErrWrongKey = errors.New("the value does not decrypt with the encryption key in use")
 
 type Cipher struct {
 	aead cipher.AEAD
@@ -56,26 +73,47 @@ func (c *Cipher) Encrypt(plaintext string) (string, error) {
 
 	sealed := c.aead.Seal(nonce, nonce, []byte(plaintext), nil)
 
-	return base64.StdEncoding.EncodeToString(sealed), nil
+	return encryptedPrefix + base64.StdEncoding.EncodeToString(sealed), nil
 }
 
-// Decrypt reverses Encrypt. It fails for any input that this cipher did not
-// produce, which is how a value stored before encryption is told apart from an
-// encrypted one.
+// IsEncrypted reports whether the value carries the marker that Encrypt writes.
+// A value that decrypts without carrying it was written in the format that had
+// no marker yet.
+func IsEncrypted(value string) bool {
+	return strings.HasPrefix(value, encryptedPrefix)
+}
+
+// Decrypt reverses Encrypt. Every failure is either ErrNotEncrypted, meaning
+// the value was stored before passwords were encrypted, or ErrWrongKey, meaning
+// the value is encrypted but the key in use is not the one it was sealed with.
+// Callers have to tell the two apart, because only the first one may be
+// overwritten.
 func (c *Cipher) Decrypt(encoded string) (string, error) {
-	raw, err := base64.StdEncoding.DecodeString(encoded)
+	body, marked := strings.CutPrefix(encoded, encryptedPrefix)
+
+	raw, err := base64.StdEncoding.DecodeString(body)
 	if err != nil {
-		return "", fmt.Errorf("the value is not base64 encoded: %w", err)
+		if marked {
+			return "", fmt.Errorf("the encrypted value is not base64 encoded: %w", ErrWrongKey)
+		}
+		return "", fmt.Errorf("the value is not base64 encoded: %w", ErrNotEncrypted)
 	}
 
 	nonceSize := c.aead.NonceSize()
 	if len(raw) < nonceSize+c.aead.Overhead() {
-		return "", fmt.Errorf("the value is shorter than a nonce and an authentication tag")
+		if marked {
+			return "", fmt.Errorf("the encrypted value is shorter than a nonce and an authentication tag: %w", ErrWrongKey)
+		}
+		return "", fmt.Errorf("the value is shorter than a nonce and an authentication tag: %w", ErrNotEncrypted)
 	}
 
 	plaintext, err := c.aead.Open(nil, raw[:nonceSize], raw[nonceSize:], nil)
 	if err != nil {
-		return "", fmt.Errorf("failed to decrypt the value: %w", err)
+		// An unmarked value that got this far is base64 of at least a nonce and
+		// a tag, which is what the format without a marker looks like, so it is
+		// reported as an encrypted value too. Calling it plaintext would let a
+		// caller encrypt it again and lose the secret it holds.
+		return "", fmt.Errorf("failed to decrypt the value: %w", ErrWrongKey)
 	}
 
 	return string(plaintext), nil
