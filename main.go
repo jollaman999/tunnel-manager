@@ -36,12 +36,23 @@ const version = "1.0.0"
 // Maximum time to wait for in-flight HTTP requests to finish on shutdown.
 const shutdownTimeout = 10 * time.Second
 
-func initDatabase(cfg *config.Config, logger *zap.Logger) (*gorm.DB, error) {
+// errShutdownRequested reports that the wait for the database ended because a
+// shutdown signal arrived, not because the database answered.
+var errShutdownRequested = errors.New("shutdown requested while waiting for the database")
+
+func initDatabase(cfg *config.Config, logger *zap.Logger, sigChan <-chan os.Signal) (*gorm.DB, error) {
 	timeout := time.After(time.Duration(cfg.Database.TimeoutSec) * time.Second)
 	tick := time.Tick(1 * time.Second)
 
 	for {
 		select {
+		case sig := <-sigChan:
+			// The signals are already delivered to the channel at this point,
+			// so the wait has to read it. Leaving it to the shutdown path at
+			// the end of main would let the signal sit in the buffer and keep
+			// the process up until the database answers or the wait times out.
+			logger.Info("Received signal while waiting for the database, shutting down...", zap.String("signal", sig.String()))
+			return nil, errShutdownRequested
 		case <-timeout:
 			return nil, fmt.Errorf("timeout waiting for database connection after %s seconds", strconv.Itoa(cfg.Database.TimeoutSec))
 		case <-tick:
@@ -369,8 +380,23 @@ func main() {
 	}
 	logger.Info("loaded the encryption key", zap.String("path", cfg.Security.KeyFile))
 
-	db, err := initDatabase(cfg, logger)
+	// The signals are taken over before the wait for the database, which runs
+	// for as long as the configured timeout allows. Until they are, the default
+	// disposition kills the process, and nothing that was set up above is torn
+	// down. One channel serves both this wait and the shutdown at the end of
+	// main: only one of the two reads it, because a signal that arrives here
+	// ends the startup.
+	sigChan := make(chan os.Signal, 1)
+	signal.Notify(sigChan, os.Interrupt, syscall.SIGINT, syscall.SIGTERM)
+
+	db, err := initDatabase(cfg, logger, sigChan)
 	if err != nil {
+		if errors.Is(err, errShutdownRequested) {
+			// No tunnel and no manager exist yet, so the logger is all there is
+			// to flush, and a shutdown that was asked for is not a failure.
+			logger.Info("Exiting tunnel-manager...")
+			return
+		}
 		log.Fatalf("Failed to initialize database: %v", err)
 	}
 
@@ -414,21 +440,30 @@ func main() {
 	g.GET("/status", h.GetStatus)
 	g.GET("/status/:hostId", h.GetHostStatus)
 
-	sigChan := make(chan os.Signal, 1)
-	signal.Notify(sigChan, os.Interrupt, syscall.SIGINT, syscall.SIGTERM)
+	// A server that never comes up must not end the process on the spot. The
+	// tunnels are restored by now and their rows are in the database, and
+	// logger.Fatal would leave both behind.
+	serverErr := make(chan error, 1)
 
 	go func() {
 		err := e.Start(fmt.Sprintf(":%d", cfg.API.Port))
 		if err != nil && !errors.Is(err, http.ErrServerClosed) {
-			logger.Fatal("failed to start API server", zap.Error(err))
+			serverErr <- err
 		}
 	}()
 
-	sig := <-sigChan
-	logger.Info("Received signal, shutting down...", zap.String("signal", sig.String()))
+	var startErr error
+
+	select {
+	case sig := <-sigChan:
+		logger.Info("Received signal, shutting down...", zap.String("signal", sig.String()))
+	case startErr = <-serverErr:
+		logger.Error("failed to start API server", zap.Error(startErr))
+	}
 
 	// The API server goes down first so that no request observes tunnels
-	// being torn down underneath it.
+	// being torn down underneath it. A server that failed to bind has nothing
+	// left to serve and answers right away.
 	ctx, cancel := context.WithTimeout(context.Background(), shutdownTimeout)
 	defer cancel()
 	err = e.Shutdown(ctx)
@@ -439,4 +474,10 @@ func main() {
 	logger.Info("Stopping all tunnels...")
 	manager.StopAllTunnels()
 	logger.Info("Exiting tunnel-manager...")
+
+	if startErr != nil {
+		// os.Exit does not run the deferred Sync, so the logs are flushed here.
+		_ = logger.Sync()
+		os.Exit(1)
+	}
 }
