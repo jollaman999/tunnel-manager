@@ -13,7 +13,8 @@ import (
 	gormlogger "gorm.io/gorm/logger"
 )
 
-// Queries slower than this are reported even when every statement is not logged.
+// Queries slower than this are reported without logging every statement, though
+// only up to the "warn" level. "error" and above report failed queries alone.
 const slowQueryThreshold = 200 * time.Millisecond
 
 // gormLogLevel maps an application log level to the level gorm understands.
