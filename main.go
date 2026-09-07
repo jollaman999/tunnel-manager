@@ -65,9 +65,17 @@ func prepareLogFile(cfg *config.Config) error {
 	}
 
 	logFile := cfg.Logging.File.Path
-	_, err = os.OpenFile(logFile, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
+	file, err := os.OpenFile(logFile, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
 	if err != nil {
 		return fmt.Errorf("failed to create log file: %v", err)
+	}
+
+	// The file is opened to see that it can be written to, nothing else. The
+	// logs go through lumberjack, which opens the file on its own, so holding
+	// this one open would keep a descriptor for the life of the process.
+	err = file.Close()
+	if err != nil {
+		return fmt.Errorf("failed to close log file: %v", err)
 	}
 
 	return nil
