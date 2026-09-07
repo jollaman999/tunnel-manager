@@ -427,6 +427,29 @@ func (h *Handler) DeleteHost(c echo.Context) error {
 	})
 }
 
+// stopTunnelsStarted stops the tunnels that the request started for sp. The
+// service port row is gone once the transaction does not go through, so nothing
+// reads that row again to stop these tunnels, and they keep running until the
+// process is restarted.
+func (h *Handler) stopTunnelsStarted(hosts []models.Host, sp *models.ServicePort) {
+	for _, host := range hosts {
+		err := h.manager.StopTunnel(host.ID, sp.ID)
+		if err != nil {
+			if errors.Is(err, tunnel.ErrTunnelNotExist) {
+				h.logger.Debug("no tunnel to stop",
+					zap.Uint("host_id", host.ID),
+					zap.Uint("service_port_id", sp.ID))
+				continue
+			}
+
+			h.logger.Warn("failed to stop the tunnel started for the service port that was not created",
+				zap.Uint("host_id", host.ID),
+				zap.Uint("service_port_id", sp.ID),
+				zap.Error(err))
+		}
+	}
+}
+
 func (h *Handler) CreateServicePort(c echo.Context) error {
 	var req models.CreateServicePortRequest
 	err := c.Bind(&req)
@@ -485,9 +508,11 @@ func (h *Handler) CreateServicePort(c echo.Context) error {
 		})
 	}
 
+	var started []models.Host
 	for _, host := range hosts {
 		err = h.manager.StartTunnel(&host, sp)
 		if err != nil {
+			h.stopTunnelsStarted(started, sp)
 			tx.Rollback()
 			h.logger.Error("failed to start new tunnel",
 				zap.Error(err),
@@ -498,10 +523,13 @@ func (h *Handler) CreateServicePort(c echo.Context) error {
 				Error:   fmt.Sprintf("Failed to start new tunnel: %v", err),
 			})
 		}
+
+		started = append(started, host)
 	}
 
 	err = tx.Commit().Error
 	if err != nil {
+		h.stopTunnelsStarted(started, sp)
 		return c.JSON(http.StatusInternalServerError, models.Response{
 			Success: false,
 			Error:   "Failed to commit transaction: " + err.Error(),

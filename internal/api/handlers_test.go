@@ -492,3 +492,119 @@ func TestDeleteHostWarnsWhenTunnelCannotBeStopped(t *testing.T) {
 		t.Fatal("a tunnel that could not be stopped was reported as not running")
 	}
 }
+
+// newCreateServicePortStubDB returns a gorm DB that answers the queries
+// CreateServicePort and StartTunnel make from memory. Creating the service port
+// row succeeds and gives it spID, the tunnel row is reported as already stored
+// so StartTunnel does not have to write one, and deleting a tunnel row succeeds
+// so a tunnel that was started can be stopped again.
+func newCreateServicePortStubDB(t *testing.T, hosts []models.Host, spID uint) (*gorm.DB, *txConnPool) {
+	t.Helper()
+
+	db, txPool := newTxRecordingDB(t)
+
+	err := db.Callback().Query().Replace("gorm:query", func(tx *gorm.DB) {
+		switch dest := tx.Statement.Dest.(type) {
+		case *[]models.Host:
+			*dest = hosts
+			tx.RowsAffected = int64(len(hosts))
+		case *models.Tunnel:
+			tx.RowsAffected = 1
+		}
+	})
+	if err != nil {
+		t.Fatalf("failed to replace the query callback: %v", err)
+	}
+
+	err = db.Callback().Create().Replace("gorm:create", func(tx *gorm.DB) {
+		if dest, ok := tx.Statement.Dest.(*models.ServicePort); ok {
+			dest.ID = spID
+			tx.RowsAffected = 1
+		}
+	})
+	if err != nil {
+		t.Fatalf("failed to replace the create callback: %v", err)
+	}
+
+	err = db.Callback().Delete().Replace("gorm:delete", func(tx *gorm.DB) {
+		tx.RowsAffected = 1
+	})
+	if err != nil {
+		t.Fatalf("failed to replace the delete callback: %v", err)
+	}
+
+	return db, txPool
+}
+
+// TestCreateServicePortStopsStartedTunnelsOnRollback pins down that a tunnel
+// that was started for a service port the request rolls back does not keep
+// running. The service port row is gone after the rollback, so no later request
+// reads it and stops that tunnel.
+func TestCreateServicePortStopsStartedTunnelsOnRollback(t *testing.T) {
+	cipher := newTestCipher(t)
+	otherCipher := newTestCipher(t)
+
+	startedPassword, err := cipher.Encrypt("fake-value-1")
+	if err != nil {
+		t.Fatalf("failed to encrypt: %v", err)
+	}
+
+	// The second Host is stored under another key, so StartTunnel gives up
+	// before it dials anything.
+	failingPassword, err := otherCipher.Encrypt("fake-value-2")
+	if err != nil {
+		t.Fatalf("failed to encrypt: %v", err)
+	}
+
+	// Port 1 on loopback refuses at once, so the tunnel that does start never
+	// reaches the network.
+	hosts := []models.Host{
+		{ID: 1, IP: "127.0.0.1", Port: 1, User: "root", Password: startedPassword, Enabled: true},
+		{ID: 2, IP: "127.0.0.1", Port: 1, User: "root", Password: failingPassword, Enabled: true},
+	}
+
+	const spID uint = 7
+	db, txPool := newCreateServicePortStubDB(t, hosts, spID)
+
+	manager, err := tunnel.NewManager(db, zap.NewNop(), cipher, 1)
+	if err != nil {
+		t.Fatalf("failed to create manager: %v", err)
+	}
+
+	e := echo.New()
+	e.Validator = &testValidator{validator: validator.New()}
+	body := `{"service_ip":"10.0.0.2","service_port":80,"local_port":8080}`
+	req := httptest.NewRequest(http.MethodPost, "/api/service-ports", strings.NewReader(body))
+	req.Header.Set(echo.HeaderContentType, echo.MIMEApplicationJSON)
+	rec := httptest.NewRecorder()
+	c := e.NewContext(req, rec)
+
+	h := NewHandler(db, manager, zap.NewNop(), cipher)
+
+	err = h.CreateServicePort(c)
+	if err != nil {
+		t.Fatalf("CreateServicePort returned error: %v", err)
+	}
+
+	if rec.Code != http.StatusInternalServerError {
+		t.Fatalf("status = %d, want %d, body: %s", rec.Code, http.StatusInternalServerError, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "Failed to start new tunnel") {
+		t.Fatalf("body = %s, want a tunnel start failure", rec.Body.String())
+	}
+	// Only the rollback is counted here. Deleting the tunnel row runs in a
+	// transaction of its own, so the commit count says nothing about the
+	// transaction this request opened.
+	if txPool.rollbacks != 1 {
+		t.Errorf("rollbacks = %d, want 1", txPool.rollbacks)
+	}
+
+	// Stopping the tunnel of the first Host once more is the only way to tell
+	// from here whether the manager still holds it. Reporting that it is not
+	// there is what the rollback has to leave behind.
+	err = manager.StopTunnel(hosts[0].ID, spID)
+	if !errors.Is(err, tunnel.ErrTunnelNotExist) {
+		t.Fatalf("StopTunnel after the rollback = %v, want %v: the tunnel started for the rolled back service port is still running",
+			err, tunnel.ErrTunnelNotExist)
+	}
+}
