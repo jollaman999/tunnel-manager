@@ -1,8 +1,8 @@
-.PHONY: all build clean ssh
+.PHONY: all build clean
 
 APP_NAME := tunnel-manager
 
-all: clean ssh build
+all: clean build
 
 build:
 	CGO_ENABLED=0 go build -o $(APP_NAME) main.go
