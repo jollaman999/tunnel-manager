@@ -4,6 +4,9 @@ import (
 	"time"
 )
 
+// Host is an SSH endpoint. The gorm default of Enabled applies only when gorm
+// inserts the row, so a Host built in Go without reading the database has
+// Enabled false and StartTunnel skips it.
 type Host struct {
 	ID          uint      `gorm:"primaryKey;autoIncrement" json:"id"`
 	IP          string    `gorm:"uniqueIndex:idx_hosts_ip;not null" json:"ip"`
