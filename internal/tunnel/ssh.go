@@ -24,12 +24,15 @@ type SSHTunnel struct {
 	// Local is the address requested for the remote listener. The
 	// tcpip-forward reply carries a port and nothing else, so the SSH server
 	// never confirms which address it bound.
-	Local     *net.TCPAddr
-	Server    *net.TCPAddr
-	Remote    *net.TCPAddr
-	Config    *ssh.ClientConfig
-	client    *ssh.Client
-	clientMu  sync.RWMutex
+	Local    *net.TCPAddr
+	Server   *net.TCPAddr
+	Remote   *net.TCPAddr
+	Config   *ssh.ClientConfig
+	client   *ssh.Client
+	clientMu sync.RWMutex
+	// tunnelMu serializes the tunnel row the Start loop and the monitor both
+	// write. It is taken before stopMu and never after it.
+	tunnelMu  sync.Mutex
 	done      chan bool
 	isStopped bool
 	stopMu    sync.Mutex
@@ -82,6 +85,9 @@ func (t *SSHTunnel) saveTunnelStatus(m *Manager, tunnel *models.Tunnel) {
 // connection attempt. It reports whether the status was updated, which does not
 // happen once Stop deleted the tunnel row.
 func (t *SSHTunnel) markReconnecting(m *Manager, tunnel *models.Tunnel) bool {
+	t.tunnelMu.Lock()
+	defer t.tunnelMu.Unlock()
+
 	t.stopMu.Lock()
 	if t.isStopped {
 		t.stopMu.Unlock()
@@ -96,17 +102,22 @@ func (t *SSHTunnel) markReconnecting(m *Manager, tunnel *models.Tunnel) bool {
 	return true
 }
 
-func (t *SSHTunnel) reconnect(m *Manager, tunnel *models.Tunnel) {
+// reconnect tears down the connection the caller observed. A connection that is
+// no longer the current one is left alone, because the Start loop already
+// replaced it and the tunnel is up again.
+func (t *SSHTunnel) reconnect(m *Manager, tunnel *models.Tunnel, observed *ssh.Client) {
+	t.clientMu.Lock()
+	if observed == nil || t.client != observed {
+		t.clientMu.Unlock()
+		return
+	}
+	_ = t.client.Close()
+	t.client = nil
+	t.clientMu.Unlock()
+
 	if !t.markReconnecting(m, tunnel) {
 		return
 	}
-
-	t.clientMu.Lock()
-	if t.client != nil {
-		_ = t.client.Close()
-		t.client = nil
-	}
-	t.clientMu.Unlock()
 
 	t.logger.Info("closed current connection, waiting for the tunnel to be re-established",
 		zap.String("local", t.Local.String()),
@@ -138,7 +149,7 @@ func (t *SSHTunnel) monitorConnection(m *Manager, tunnel *models.Tunnel, stop <-
 						zap.String("server", t.Server.String()),
 						zap.String("remote", t.Remote.String()),
 						zap.Error(err))
-					t.reconnect(m, tunnel)
+					t.reconnect(m, tunnel, client)
 					continue
 				}
 				_ = conn.Close()
@@ -148,7 +159,7 @@ func (t *SSHTunnel) monitorConnection(m *Manager, tunnel *models.Tunnel, stop <-
 					t.logger.Warn("SSH keepalive check failed, attempting reconnection",
 						zap.String("server", t.Server.String()),
 						zap.Error(err))
-					t.reconnect(m, tunnel)
+					t.reconnect(m, tunnel, client)
 				}
 			}
 		}
@@ -197,9 +208,11 @@ func (t *SSHTunnel) establishConnection(m *Manager, tunnel *models.Tunnel) error
 			zap.String("server", t.Server.String()),
 			zap.String("remote", t.Remote.String()), zap.Error(err))
 
+		t.tunnelMu.Lock()
 		tunnel.Status = "error"
 		tunnel.LastError = err.Error()
 		t.saveTunnelStatus(m, tunnel)
+		t.tunnelMu.Unlock()
 
 		return fmt.Errorf("failed to establish SSH connection: %w", err)
 	}
@@ -211,9 +224,11 @@ func (t *SSHTunnel) establishConnection(m *Manager, tunnel *models.Tunnel) error
 			zap.String("server", t.Server.String()),
 			zap.String("remote", t.Remote.String()), zap.Error(err))
 
+		t.tunnelMu.Lock()
 		tunnel.Status = "error"
 		tunnel.LastError = err.Error()
 		t.saveTunnelStatus(m, tunnel)
+		t.tunnelMu.Unlock()
 
 		return fmt.Errorf("failed to start remote listener: %w", err)
 	}
@@ -227,20 +242,23 @@ func (t *SSHTunnel) establishConnection(m *Manager, tunnel *models.Tunnel) error
 
 	// Addr reports the requested address with the port the server confirmed,
 	// so only the port is known to be real here.
-	tunnel.Local = listener.Addr().String()
+	localAddr := listener.Addr().String()
 
 	if t.Local.IP.IsUnspecified() {
 		t.logger.Info("a wildcard local address was requested, the SSH server binds it to loopback only unless GatewayPorts is enabled",
-			zap.String("local", tunnel.Local),
+			zap.String("local", localAddr),
 			zap.String("server", t.Server.String()),
 			zap.String("remote", t.Remote.String()))
 	}
 
+	t.tunnelMu.Lock()
+	tunnel.Local = localAddr
 	tunnel.Status = "connected"
 	tunnel.RetryCount = 0
 	tunnel.LastError = ""
 	tunnel.LastConnectedAt = time.Now()
 	t.saveTunnelStatus(m, tunnel)
+	t.tunnelMu.Unlock()
 
 	t.logger.Info("tunnel connected successfully",
 		zap.String("local", t.Local.String()),
@@ -255,6 +273,15 @@ func (t *SSHTunnel) establishConnection(m *Manager, tunnel *models.Tunnel) error
 					zap.String("local", t.Local.String()),
 					zap.String("server", t.Server.String()),
 					zap.String("remote", t.Remote.String()))
+
+				// Drop the dead client, or the monitor keeps checking it and
+				// tears down the connection the Start loop establishes next.
+				t.clientMu.Lock()
+				if t.client == client {
+					_ = t.client.Close()
+					t.client = nil
+				}
+				t.clientMu.Unlock()
 
 				t.markReconnecting(m, tunnel)
 
@@ -346,9 +373,11 @@ func (t *SSHTunnel) Start(m *Manager, tunnel *models.Tunnel) {
 					return
 				}
 
+				t.tunnelMu.Lock()
 				tunnel.Status = "reconnecting"
 				tunnel.RetryCount++
 				t.saveTunnelStatus(m, tunnel)
+				t.tunnelMu.Unlock()
 			}
 		}
 	}

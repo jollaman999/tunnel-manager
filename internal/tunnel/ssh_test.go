@@ -344,7 +344,7 @@ func TestReconnectDoesNotEstablishConnection(t *testing.T) {
 
 	returned := make(chan struct{})
 	go func() {
-		tun.reconnect(m, tunnel)
+		tun.reconnect(m, tunnel, client)
 		close(returned)
 	}()
 
@@ -366,6 +366,46 @@ func TestReconnectDoesNotEstablishConnection(t *testing.T) {
 	}
 	if tunnel.RetryCount != 1 {
 		t.Fatalf("RetryCount = %d, want 1", tunnel.RetryCount)
+	}
+}
+
+func TestReconnectLeavesANewerClientAlone(t *testing.T) {
+	m := newSSHTestManager(t, 1)
+	tun, tunnel := newSSHTestTunnel(t, "127.0.0.1:1")
+
+	observed, closeObserved := newLoopbackSSHClient(t)
+	defer closeObserved()
+	current, closeCurrent := newLoopbackSSHClient(t)
+	defer closeCurrent()
+
+	// The monitor read observed from the tunnel and then blocked in its check,
+	// which is long enough for the Start loop to establish current.
+	_ = observed.Close()
+	tun.clientMu.Lock()
+	tun.client = current
+	tun.clientMu.Unlock()
+
+	tunnel.Status = "connected"
+
+	tun.reconnect(m, tunnel, observed)
+
+	tun.clientMu.RLock()
+	got := tun.client
+	tun.clientMu.RUnlock()
+
+	if got != current {
+		t.Fatal("reconnect closed the connection the Start loop had just established")
+	}
+	if _, _, err := current.SendRequest("keepalive@tunnel", true, nil); err != nil {
+		t.Fatalf("the connection the Start loop established is no longer usable: %v", err)
+	}
+	if tunnel.Status != "connected" {
+		t.Fatalf("tunnel status = %q, want %q, a connected tunnel was reported as reconnecting",
+			tunnel.Status, "connected")
+	}
+	if tunnel.RetryCount != 0 {
+		t.Fatalf("RetryCount = %d, want 0, a connection that was already replaced started a retry cycle",
+			tunnel.RetryCount)
 	}
 }
 
@@ -600,6 +640,53 @@ func TestEstablishConnectionReportsClosedConnection(t *testing.T) {
 	}
 }
 
+// closeTunnelClientOnly closes the SSH connection but leaves the field in place,
+// the way a peer that goes away does.
+func closeTunnelClientOnly(t *testing.T, tun *SSHTunnel) {
+	t.Helper()
+
+	tun.clientMu.RLock()
+	client := tun.client
+	tun.clientMu.RUnlock()
+
+	if client == nil {
+		t.Fatal("tunnel has no client to close")
+	}
+	_ = client.Close()
+}
+
+func TestEstablishConnectionClearsClosedClient(t *testing.T) {
+	m := newSSHTestManager(t, 1)
+	serverAddr, _ := startForwardingSSHServer(t)
+	tun, tunnel := newSSHTestTunnel(t, serverAddr)
+
+	errc := make(chan error, 1)
+	go func() {
+		errc <- tun.establishConnection(m, tunnel)
+	}()
+
+	waitTunnelClient(t, tun, 10*time.Second)
+	closeTunnelClientOnly(t, tun)
+
+	select {
+	case err := <-errc:
+		if !errors.Is(err, errConnectionClosed) {
+			t.Fatalf("establishConnection returned %v, want %v", err, errConnectionClosed)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("establishConnection did not return after the connection was closed")
+	}
+
+	tun.clientMu.RLock()
+	got := tun.client
+	tun.clientMu.RUnlock()
+
+	if got != nil {
+		t.Fatal("the closed client was left in place, so the monitor checks it and closes whatever connection " +
+			"the Start loop establishes next")
+	}
+}
+
 func TestEstablishConnectionReportsServerConfirmedPort(t *testing.T) {
 	m := newSSHTestManager(t, 1)
 	serverAddr, _ := startForwardingSSHServer(t)
@@ -725,4 +812,57 @@ func TestStopIsNotDelayedByRetryInterval(t *testing.T) {
 		t.Fatalf("Start returned %v after Stop, want well under the %ds retry interval",
 			elapsed, m.monitoringIntervalSec)
 	}
+}
+
+// TestConnectAndReconnectDoNotRaceOnTunnelState runs the two writers of the
+// tunnel row at the same time. reconnect is all the monitor does with it and
+// establishConnection is what the Start loop does, so this is the pair that
+// runs in parallel once Start owns the monitor. It is a -race test, the
+// assertions are in the race detector.
+func TestConnectAndReconnectDoNotRaceOnTunnelState(t *testing.T) {
+	m := newSSHTestManager(t, 1)
+	tun, tunnel := newSSHTestTunnel(t, startClosingListener(t))
+
+	client, closeClient := newLoopbackSSHClient(t)
+	defer closeClient()
+
+	stop := make(chan struct{})
+	var wg sync.WaitGroup
+
+	wg.Add(2)
+	go func() {
+		defer wg.Done()
+
+		for {
+			select {
+			case <-stop:
+				return
+			default:
+			}
+
+			// reconnect only tears down the connection it is handed, so the
+			// tunnel needs one to hand over on every round.
+			tun.clientMu.Lock()
+			tun.client = client
+			tun.clientMu.Unlock()
+
+			tun.reconnect(m, tunnel, client)
+		}
+	}()
+	go func() {
+		defer wg.Done()
+
+		for {
+			select {
+			case <-stop:
+				return
+			default:
+			}
+			_ = tun.establishConnection(m, tunnel)
+		}
+	}()
+
+	time.Sleep(500 * time.Millisecond)
+	close(stop)
+	wg.Wait()
 }
