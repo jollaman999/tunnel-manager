@@ -34,7 +34,7 @@ jobs:
 
     - name: Check gofmt
       run: |
-        unformatted=$(gofmt -l main.go internal)
+        unformatted=$(gofmt -l *.go internal)
         if [ -n "$unformatted" ]; then
           echo "gofmt needed on the following files:"
           echo "$unformatted"
