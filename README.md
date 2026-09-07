@@ -100,6 +100,30 @@ vi config/config.yaml
 make run
 ```
 
+### 비root로 실행하는 경우
+
+프로세스는 root가 아니어도 뜹니다. root가 아니면 기동할 때 `not running as root` 경고를 남기고, 아래 두 가지가 제약을 받습니다.
+
+- 파일 디스크립터 한도를 65535까지 올리려 하지만, root가 아니면 하드 리밋까지만 올릴 수 있습니다. 하드 리밋이 그보다 낮으면 `max ulimit is low` 경고를 남기고 그대로 진행합니다. 터널이 많으면 하드 리밋을 미리 올려 두어야 합니다.
+- 로그 파일 기본 경로가 `/var/log/tunnel-manager/tunnel-manager.log`라서 쓰기 권한이 없으면 디렉터리와 파일을 만들지 못합니다. 이때는 종료하지 않고 파일 로깅만 끈 채 콘솔에만 남기며, 이유는 `logging to file is disabled` 경고에 적힙니다.
+
+`api.port`를 1024 미만으로 두면 비root 프로세스는 바인딩에 실패합니다. 1024 이상을 쓰거나 실행 파일에 `CAP_NET_BIND_SERVICE`를 주어야 합니다.
+
+systemd로 돌릴 때는 `_scripts/systemd/tunnel-manager.service`가 `User=root`이므로 계정을 바꾸고 로그 디렉터리를 그 계정이 쓸 수 있게 만들어야 합니다.
+
+```ini
+[Service]
+User=tunnel-manager
+Group=tunnel-manager
+LogsDirectory=tunnel-manager
+```
+
+`LogsDirectory=tunnel-manager`를 주면 systemd가 `/var/log/tunnel-manager`를 `User=`/`Group=`의 소유로 만들어 주므로 `logging.file.path`는 그대로 두면 됩니다. 이미 root 소유로 있던 디렉터리도 소유자가 바뀝니다. 암호화 키 파일도 그 계정이 읽을 수 있어야 하니 소유자를 바꾸고 권한은 `0600`으로 둡니다.
+
+컨테이너는 `Dockerfile`이 `USER root`라서 root로 돕니다. 비root로 돌리려면 docker-compose.yaml의 서비스에 `user: "<uid>:<gid>"`를 주고, 볼륨으로 연결한 `./_data/tunnel-manager`(로그)와 `./_data/keys`(키)를 호스트에서 그 uid 소유로 만들어 두어야 합니다. root로 한 번 띄운 뒤라면 두 디렉터리가 root 소유로 남아 있으니 소유자부터 바꿔야 합니다. 파일 디스크립터 한도는 docker-compose.yaml의 `ulimits`가 정하므로 컨테이너 안의 계정과는 상관이 없습니다.
+
+`service_ports.local_port`가 1024 미만이면 Host의 sshd가 리스너를 열어 주지 않습니다. 이 리스너는 tunnel-manager가 아니라 Host의 sshd가 만들기 때문에, 이 제약은 tunnel-manager를 돌리는 계정이 아니라 Host에 등록한 SSH 접속 계정에 걸립니다. ssh(1)에 적힌 대로 특권 포트는 원격 계정이 root일 때만 포워딩됩니다. Host의 SSH 계정이 root가 아니면 `local_port`는 1024 이상으로 잡아야 합니다.
+
 ## API 엔드포인트
 
 ### Host 관리
