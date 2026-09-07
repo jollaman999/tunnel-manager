@@ -34,7 +34,8 @@ jobs:
 
     - name: Check gofmt
       run: |
-        unformatted=$(gofmt -l *.go internal)
+        dirs=$(go list -f '{{.Dir}}' ./...)
+        unformatted=$(find $dirs -maxdepth 1 -name '*.go' -exec gofmt -l {} +)
         if [ -n "$unformatted" ]; then
           echo "gofmt needed on the following files:"
           echo "$unformatted"
