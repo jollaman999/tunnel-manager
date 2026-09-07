@@ -200,14 +200,17 @@ func checkUlimit(logger *zap.Logger) {
 // storedPasswordCheck holds what the stored passwords answered when they were
 // read with the encryption key in use.
 type storedPasswordCheck struct {
-	decrypted     int
-	notEncrypted  int
-	wrongKeyHosts []uint
+	decrypted          int
+	notEncrypted       int
+	markedNotOpened    int
+	hostsThatDoNotOpen []uint
 }
 
 // checkStoredPasswords sorts the stored password of every Host into one that
 // opens with the key in use, one that was stored before passwords were
-// encrypted, and one that is encrypted but does not open with this key.
+// encrypted, and one that does not open. A value that does not open is counted
+// separately when it carries the marker that Encrypt writes, because only then
+// is it certain that it was encrypted at all.
 func checkStoredPasswords(hosts []models.Host, cipher *crypto.Cipher) storedPasswordCheck {
 	var check storedPasswordCheck
 
@@ -219,7 +222,10 @@ func checkStoredPasswords(hosts []models.Host, cipher *crypto.Cipher) storedPass
 		case errors.Is(err, crypto.ErrNotEncrypted):
 			check.notEncrypted++
 		default:
-			check.wrongKeyHosts = append(check.wrongKeyHosts, host.ID)
+			check.hostsThatDoNotOpen = append(check.hostsThatDoNotOpen, host.ID)
+			if crypto.IsEncrypted(host.Password) {
+				check.markedNotOpened++
+			}
 		}
 	}
 
@@ -228,12 +234,19 @@ func checkStoredPasswords(hosts []models.Host, cipher *crypto.Cipher) storedPass
 
 // keyIsWrong reports whether the key in use is not the one the stored passwords
 // were sealed with. A process holds a single key, so a wrong one fails every
-// Host at once. One password that opens is therefore proof that the key is the
-// right one, and a value that still does not open next to it was never sealed
-// with this key, which is a fault of that row alone and no reason to keep the
-// other Hosts from being served.
+// Host at once, and one password that opens is proof that the key is the right
+// one.
+//
+// Only a value carrying the marker proves the opposite. The marker holds a ':',
+// which the base64 alphabet does not, so a marked value can be nothing but the
+// output of Encrypt. A value that does not open and carries no marker is either
+// the encrypted format from before the marker existed or a password stored
+// before encryption that happens to be spelled in base64 characters, and a
+// deployment upgraded from that time holds nothing but such passwords. Refusing
+// to start over one of them would keep the API that sets a password again from
+// ever coming up.
 func (c storedPasswordCheck) keyIsWrong() bool {
-	return len(c.wrongKeyHosts) > 0 && c.decrypted == 0
+	return c.markedNotOpened > 0 && c.decrypted == 0
 }
 
 // checkEncryptionKey stops the startup when the configured key file opens none
@@ -260,28 +273,31 @@ func checkEncryptionKey(db *gorm.DB, cipher *crypto.Cipher, logger *zap.Logger, 
 			"refused because no tunnel could be built and no stored password could be read",
 			zap.String("key_file", keyFile),
 			zap.Int("hosts", len(hosts)),
-			zap.Int("hosts_that_do_not_open", len(check.wrongKeyHosts)),
-			zap.Uints("host_ids_that_do_not_open", check.wrongKeyHosts))
+			zap.Int("hosts_that_do_not_open", len(check.hostsThatDoNotOpen)),
+			zap.Uints("host_ids_that_do_not_open", check.hostsThatDoNotOpen))
 	}
 
-	if len(check.wrongKeyHosts) > 0 {
-		logger.Warn("the encryption key opens other stored passwords, so the key file is the right one, "+
-			"but the stored password of these Hosts does not open with it. Set their password again "+
-			"through the API. No tunnel is built for them until then",
+	// Whatever the reason a password does not open, the operator does the same
+	// thing about it, so it is one message and not one per reason.
+	if len(check.hostsThatDoNotOpen) > 0 {
+		logger.Warn("the stored password of these Hosts does not open with the encryption key in use, so no "+
+			"tunnel is built for them. Set their password again through the API. The stored value is left as "+
+			"it is, because a password that does not open exists nowhere else and is gone once it is written over",
 			zap.String("key_file", keyFile),
-			zap.Int("hosts_that_do_not_open", len(check.wrongKeyHosts)),
-			zap.Uints("host_ids_that_do_not_open", check.wrongKeyHosts))
+			zap.Int("hosts_that_do_not_open", len(check.hostsThatDoNotOpen)),
+			zap.Uints("host_ids_that_do_not_open", check.hostsThatDoNotOpen),
+			zap.Int("hosts_that_open", check.decrypted))
 	}
 
-	if check.decrypted == 0 {
+	switch {
+	case check.decrypted > 0:
+		logger.Info("the encryption key opens the stored passwords",
+			zap.String("key_file", keyFile),
+			zap.Int("hosts_that_open", check.decrypted))
+	case len(check.hostsThatDoNotOpen) == 0:
 		logger.Info("no stored password is encrypted, so there is nothing to check the encryption key against",
 			zap.Int("hosts", len(hosts)))
-		return
 	}
-
-	logger.Info("the encryption key opens the stored passwords",
-		zap.String("key_file", keyFile),
-		zap.Int("hosts_that_open", check.decrypted))
 }
 
 type CustomValidator struct {
