@@ -18,8 +18,9 @@ const slowQueryThreshold = 200 * time.Millisecond
 
 // gormLogLevel maps an application log level to the level gorm understands.
 // gorm only logs every statement at Info, which is far too noisy for the
-// default setup, so plain SQL tracing is kept for "debug" only. Every other
-// level still reports failed and slow queries.
+// default setup, so plain SQL tracing is kept for "debug" only. "info" and
+// "warn" report failed and slow queries, while "error" and above report
+// failed queries alone.
 func gormLogLevel(level string) gormlogger.LogLevel {
 	switch level {
 	case "debug":
