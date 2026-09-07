@@ -166,6 +166,18 @@ security:
 
 Docker Compose로 실행하면 컨테이너의 `/keys`가 호스트의 `./_data/keys`에 연결되므로 컨테이너를 지웠다 다시 만들어도 키가 남습니다. 컨테이너는 root로 도는 탓에 이 디렉터리와 키 파일은 호스트에서 root 소유로 보입니다. 데이터베이스는 `./_data/mariadb`에 따로 남으니, `./_data/keys`만 지우면 데이터베이스에 있는 비밀번호를 읽을 수 없게 됩니다.
 
+## 업그레이드 시 주의사항
+
+### local_port 유니크 인덱스
+
+`service_ports.local_port`에 유니크 인덱스가 생겼습니다. 이전 버전으로 만든 데이터베이스에 같은 `local_port`를 쓰는 행이 둘 이상 있으면 기동할 때 마이그레이션이 거부됩니다. 올리기 전에 아래 쿼리로 중복을 확인합니다.
+
+```sql
+SELECT local_port, COUNT(*) FROM service_ports GROUP BY local_port HAVING COUNT(*) > 1;
+```
+
+여기에 나온 포트는 한 행만 남기고 나머지를 지우거나 다른 포트로 바꿔야 합니다. 정리하지 않으면 마이그레이션 실패가 데이터베이스 연결 실패처럼 보여서, `attempting to connect to database...` 로그만 반복되다가 `database.timeout_sec`가 지나면 프로세스가 종료됩니다. 실제 원인은 그 로그의 `error` 필드에 있습니다.
+
 ## 라이선스
 
 MIT License
