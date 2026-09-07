@@ -7,6 +7,7 @@ import (
 	"crypto/rand"
 	"database/sql"
 	"errors"
+	"fmt"
 	"net"
 	"runtime"
 	"sync"
@@ -328,6 +329,81 @@ func TestStartEndsMonitorOnAuthFailure(t *testing.T) {
 
 	if tunnel.Status != "error" {
 		t.Fatalf("tunnel status = %q, want %q", tunnel.Status, "error")
+	}
+	if tunnel.RetryCount != 0 {
+		t.Fatalf("RetryCount = %d, want 0, credentials the server refuses are being retried",
+			tunnel.RetryCount)
+	}
+}
+
+func TestMonitorDialTimeoutStaysBelowTheTick(t *testing.T) {
+	for _, monitoringIntervalSec := range []int{1, 2, 3, 5, 10, 30, 60, 300} {
+		interval := time.Duration(monitoringIntervalSec) * time.Second
+		got := monitorDialTimeout(monitoringIntervalSec)
+
+		if got <= 0 {
+			t.Errorf("monitorDialTimeout(%d) = %v, want a positive timeout, a dial without one never gives up",
+				monitoringIntervalSec, got)
+			continue
+		}
+		if got >= interval {
+			t.Errorf("monitorDialTimeout(%d) = %v, want less than the tick interval %v, "+
+				"a dial that lasts a whole tick halves the monitoring rate",
+				monitoringIntervalSec, got, interval)
+		}
+	}
+}
+
+func TestMonitorDialTimeoutIsPositiveForAnyInterval(t *testing.T) {
+	// The configuration rejects these, but a zero timeout means no timeout at
+	// all to net.DialTimeout, which is the one outcome that must not happen.
+	for _, monitoringIntervalSec := range []int{0, -1} {
+		if got := monitorDialTimeout(monitoringIntervalSec); got <= 0 {
+			t.Errorf("monitorDialTimeout(%d) = %v, want a positive timeout", monitoringIntervalSec, got)
+		}
+	}
+}
+
+// TestAuthFailureIsRecognized pins the message golang.org/x/crypto/ssh reports
+// when every authentication method was refused. The library offers nothing else
+// to match on, so this test is what notices a reworded message before a tunnel
+// with wrong credentials starts retrying forever.
+func TestAuthFailureIsRecognized(t *testing.T) {
+	serverAddr := startRejectingSSHServer(t)
+
+	_, err := ssh.Dial("tcp", serverAddr, &ssh.ClientConfig{
+		User:            "tester",
+		Auth:            []ssh.AuthMethod{ssh.Password("wrong-password")},
+		HostKeyCallback: ssh.InsecureIgnoreHostKey(),
+		Timeout:         5 * time.Second,
+	})
+	if err == nil {
+		t.Fatal("ssh.Dial succeeded against a server that refuses every password")
+	}
+	if !isAuthFailure(err) {
+		t.Fatalf("isAuthFailure did not recognize a refused authentication: %v", err)
+	}
+	if !isAuthFailure(fmt.Errorf("failed to establish SSH connection: %w", err)) {
+		t.Fatalf("isAuthFailure did not recognize a refused authentication once wrapped: %v", err)
+	}
+}
+
+func TestIsAuthFailureIgnoresOtherErrors(t *testing.T) {
+	if isAuthFailure(nil) {
+		t.Fatal("isAuthFailure(nil) is true")
+	}
+
+	_, err := ssh.Dial("tcp", startClosingListener(t), &ssh.ClientConfig{
+		User:            "tester",
+		Auth:            []ssh.AuthMethod{ssh.Password("wrong-password")},
+		HostKeyCallback: ssh.InsecureIgnoreHostKey(),
+		Timeout:         5 * time.Second,
+	})
+	if err == nil {
+		t.Fatal("ssh.Dial succeeded against a listener that closes every connection")
+	}
+	if isAuthFailure(err) {
+		t.Fatalf("a connection that never reached authentication was reported as an authentication failure: %v", err)
 	}
 }
 

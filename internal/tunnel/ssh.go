@@ -125,6 +125,25 @@ func (t *SSHTunnel) reconnect(m *Manager, tunnel *models.Tunnel, observed *ssh.C
 		zap.String("remote", t.Remote.String()))
 }
 
+// minMonitorDialTimeout guards the derived dial timeout against a monitoring
+// interval that is not a whole second. The configuration rejects an interval
+// below one second, so it never applies to a running tunnel.
+const minMonitorDialTimeout = 500 * time.Millisecond
+
+// monitorDialTimeout returns how long the monitor waits for the TCP handshake
+// with the SSH server. It is half of the monitoring interval, so that a server
+// that stopped answering cannot hold one check for the whole interval and halve
+// the monitoring rate, while a slow network still gets as much time to answer as
+// the interval allows.
+func monitorDialTimeout(monitoringIntervalSec int) time.Duration {
+	interval := time.Duration(monitoringIntervalSec) * time.Second
+	if interval <= minMonitorDialTimeout {
+		return minMonitorDialTimeout
+	}
+
+	return interval / 2
+}
+
 func (t *SSHTunnel) monitorConnection(m *Manager, tunnel *models.Tunnel, stop <-chan struct{}) {
 	ticker := time.NewTicker(time.Duration(m.monitoringIntervalSec) * time.Second)
 	defer ticker.Stop()
@@ -142,7 +161,7 @@ func (t *SSHTunnel) monitorConnection(m *Manager, tunnel *models.Tunnel, stop <-
 
 			if client != nil {
 				conn, err := net.DialTimeout("tcp", t.Server.String(),
-					time.Duration(m.monitoringIntervalSec)*time.Second)
+					monitorDialTimeout(m.monitoringIntervalSec))
 				if err != nil {
 					t.logger.Warn("SSH connection lost, attempting reconnection",
 						zap.String("local", t.Local.String()),
@@ -299,6 +318,23 @@ func (t *SSHTunnel) establishConnection(m *Manager, tunnel *models.Tunnel) error
 	}
 }
 
+// authFailureMessage is what golang.org/x/crypto/ssh reports when the server
+// refused every configured authentication method. The library builds it with
+// fmt.Errorf and offers no error type or sentinel to match on, so the text is
+// the only handle there is (ssh/client_auth.go, clientAuthenticate).
+// TestAuthFailureIsRecognized fails if a library update rewords it.
+const authFailureMessage = "ssh: unable to authenticate"
+
+// isAuthFailure reports whether the server refused the credentials of the
+// tunnel. Retrying such a connection never succeeds.
+func isAuthFailure(err error) bool {
+	if err == nil {
+		return false
+	}
+
+	return strings.Contains(err.Error(), authFailureMessage)
+}
+
 // waitBeforeRetry waits for the retry interval and reports whether the tunnel
 // should keep running.
 func (t *SSHTunnel) waitBeforeRetry(m *Manager) bool {
@@ -354,7 +390,7 @@ func (t *SSHTunnel) Start(m *Manager, tunnel *models.Tunnel) {
 					continue
 				}
 
-				if strings.Contains(err.Error(), "unable to authenticate") {
+				if isAuthFailure(err) {
 					t.logger.Error("connection failed",
 						zap.String("local", t.Local.String()),
 						zap.String("server", t.Server.String()),
