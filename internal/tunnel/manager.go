@@ -147,14 +147,16 @@ func (m *Manager) StartTunnel(host *models.Host, sp *models.ServicePort) error {
 		return fmt.Errorf("failed to create tunnel: %w", err)
 	}
 
-	m.tunnels[tunnelKey] = t
-
 	err = m.db.Where("host_id = ? AND sp_id = ?", host.ID, sp.ID).
 		Attrs(tunnel).
 		FirstOrCreate(&tunnel).Error
 	if err != nil {
 		return fmt.Errorf("failed to create tunnel information: %w", err)
 	}
+
+	// Registered only once nothing is left that can fail, so a tunnel that was
+	// not started does not keep the key taken.
+	m.tunnels[tunnelKey] = t
 
 	go func(m *Manager, t *SSHTunnel, tunnel *models.Tunnel) {
 		t.Start(m, tunnel)

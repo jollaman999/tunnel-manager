@@ -144,19 +144,49 @@ func TestStartTunnelProceedsForEnabledHost(t *testing.T) {
 	host := models.Host{ID: 1, IP: "127.0.0.1", Port: 22, User: "user", Password: "pass", Enabled: true}
 	sp := models.ServicePort{ID: 2, ServiceIP: "127.0.0.1", ServicePort: 3306, LocalPort: 13306}
 
-	// The failing database stops StartTunnel right after the tunnel is registered,
-	// so no SSH connection is attempted.
+	// The failing database stops StartTunnel at the tunnel row, which it only
+	// reaches for a Host that is not skipped, so no SSH connection is attempted.
 	err = m.StartTunnel(&host, &sp)
 	if err == nil {
 		t.Fatal("StartTunnel with a failing database returned no error")
 	}
+	if !strings.Contains(err.Error(), "failed to create tunnel information") {
+		t.Fatalf("StartTunnel on an enabled Host stopped before the tunnel row: %v", err)
+	}
+}
+
+func TestStartTunnelLeavesNoTunnelWhenTheRowCannotBeCreated(t *testing.T) {
+	db := newFailingDB(t)
+
+	m, err := NewManager(db, zap.NewNop(), newTestCipher(t), 1)
+	if err != nil {
+		t.Fatalf("failed to create manager: %v", err)
+	}
+
+	host := models.Host{ID: 1, IP: "127.0.0.1", Port: 22, User: "user", Password: "pass", Enabled: true}
+	sp := models.ServicePort{ID: 2, ServiceIP: "127.0.0.1", ServicePort: 3306, LocalPort: 13306}
+
+	err = m.StartTunnel(&host, &sp)
+	if err == nil {
+		t.Fatal("StartTunnel with a failing tunnel row returned no error")
+	}
 
 	m.mu.RLock()
-	_, exists := m.tunnels["1-2"]
+	got := len(m.tunnels)
 	m.mu.RUnlock()
 
-	if !exists {
-		t.Fatal("tunnel was not created for an enabled Host")
+	if got != 0 {
+		t.Fatalf("a tunnel that was not started is registered: len(tunnels)=%d", got)
+	}
+
+	// The key has to be free again, otherwise the combination can never be
+	// started once the database answers.
+	err = m.StartTunnel(&host, &sp)
+	if err == nil {
+		t.Fatal("StartTunnel with a failing tunnel row returned no error")
+	}
+	if strings.Contains(err.Error(), "tunnel already exists") {
+		t.Fatalf("StartTunnel reported a tunnel that was never started as existing: %v", err)
 	}
 }
 

@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/go-playground/validator/v10"
@@ -234,10 +235,20 @@ func TestResolveTunnelActionsWithEncryptedPassword(t *testing.T) {
 var errQueryFailed = errors.New("query failed")
 
 // txConnPool stands in for a real transaction. Writes succeed, reads fail, and
-// Commit/Rollback calls are counted.
+// Commit/Rollback calls are counted. A tunnel that is running writes from a
+// goroutine of its own, so the counters are guarded.
 type txConnPool struct {
+	mu        sync.Mutex
 	commits   int
 	rollbacks int
+}
+
+// counts reports how often the transaction was committed and rolled back.
+func (p *txConnPool) counts() (commits, rollbacks int) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+
+	return p.commits, p.rollbacks
 }
 
 func (p *txConnPool) PrepareContext(ctx context.Context, query string) (*sql.Stmt, error) {
@@ -257,11 +268,17 @@ func (p *txConnPool) QueryRowContext(ctx context.Context, query string, args ...
 }
 
 func (p *txConnPool) Commit() error {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+
 	p.commits++
 	return nil
 }
 
 func (p *txConnPool) Rollback() error {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+
 	p.rollbacks++
 	return nil
 }
@@ -349,18 +366,20 @@ func TestCreateServicePortRollsBackOnHostFetchFailure(t *testing.T) {
 	if !strings.Contains(rec.Body.String(), "Failed to fetch Hosts") {
 		t.Fatalf("body = %s, want host fetch failure", rec.Body.String())
 	}
-	if tx.rollbacks != 1 {
-		t.Errorf("rollbacks = %d, want 1", tx.rollbacks)
+	commits, rollbacks := tx.counts()
+	if rollbacks != 1 {
+		t.Errorf("rollbacks = %d, want 1", rollbacks)
 	}
-	if tx.commits != 0 {
-		t.Errorf("commits = %d, want 0", tx.commits)
+	if commits != 0 {
+		t.Errorf("commits = %d, want 0", commits)
 	}
 }
 
-// newStubQueryDB returns a gorm DB that answers queries from memory. Creating a
-// tunnel row fails, so StartTunnel registers a tunnel and then returns before it
-// dials, and deleting a tunnel row fails too, so stopping that tunnel fails for
-// a reason other than the tunnel not being there.
+// newStubQueryDB returns a gorm DB that answers queries from memory. The tunnel
+// row is reported as already stored so StartTunnel does not have to write one,
+// creating any row fails, and deleting a tunnel row fails too, so stopping a
+// tunnel that is running fails for a reason other than the tunnel not being
+// there.
 func newStubQueryDB(t *testing.T, host models.Host, sps []models.ServicePort) *gorm.DB {
 	t.Helper()
 
@@ -377,6 +396,8 @@ func newStubQueryDB(t *testing.T, host models.Host, sps []models.ServicePort) *g
 		case *[]models.ServicePort:
 			*dest = sps
 			tx.RowsAffected = int64(len(sps))
+		case *models.Tunnel:
+			tx.RowsAffected = 1
 		}
 	})
 	if err != nil {
@@ -453,25 +474,34 @@ func TestDeleteHostDoesNotWarnWhenNoTunnelIsRunning(t *testing.T) {
 }
 
 func TestDeleteHostWarnsWhenTunnelCannotBeStopped(t *testing.T) {
-	host := models.Host{ID: 1, IP: "10.0.0.1", Port: 22, User: "root", Password: "pass", Enabled: true}
+	cipher := newTestCipher(t)
+
+	password, err := cipher.Encrypt("fake-value-1")
+	if err != nil {
+		t.Fatalf("failed to encrypt: %v", err)
+	}
+
+	// Port 1 on loopback refuses at once, so the tunnel that does start never
+	// reaches the network.
+	host := models.Host{ID: 1, IP: "127.0.0.1", Port: 1, User: "root", Password: password, Enabled: true}
 	sps := []models.ServicePort{{ID: 2, ServiceIP: "10.0.0.2", ServicePort: 8081, LocalPort: 18081}}
 
 	db := newStubQueryDB(t, host, sps)
 	core, logs := observer.New(zapcore.DebugLevel)
 
-	manager, err := tunnel.NewManager(db, zap.NewNop(), newTestCipher(t), 1)
+	manager, err := tunnel.NewManager(db, zap.NewNop(), cipher, 1)
 	if err != nil {
 		t.Fatalf("failed to create manager: %v", err)
 	}
 
-	// The tunnel row cannot be created, so the tunnel is registered but never dials.
+	// The tunnel row is already stored, so the tunnel is registered and runs.
 	err = manager.StartTunnel(&host, &sps[0])
-	if err == nil {
-		t.Fatal("StartTunnel with a failing create returned no error")
+	if err != nil {
+		t.Fatalf("StartTunnel returned error: %v", err)
 	}
 
 	c, rec := newDeleteHostContext("1")
-	h := NewHandler(db, manager, zap.New(core), newTestCipher(t))
+	h := NewHandler(db, manager, zap.New(core), cipher)
 
 	err = h.DeleteHost(c)
 	if err != nil {
@@ -595,8 +625,9 @@ func TestCreateServicePortStopsStartedTunnelsOnRollback(t *testing.T) {
 	// Only the rollback is counted here. Deleting the tunnel row runs in a
 	// transaction of its own, so the commit count says nothing about the
 	// transaction this request opened.
-	if txPool.rollbacks != 1 {
-		t.Errorf("rollbacks = %d, want 1", txPool.rollbacks)
+	_, rollbacks := txPool.counts()
+	if rollbacks != 1 {
+		t.Errorf("rollbacks = %d, want 1", rollbacks)
 	}
 
 	// Stopping the tunnel of the first Host once more is the only way to tell
