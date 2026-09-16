@@ -15,6 +15,14 @@ const statusRefreshMs = 5000;
 const apiLoginPath = "/api/login";
 const apiSetupPath = "/api/setup";
 
+// csrfCookieName and csrfHeaderName are the two ends of the CSRF check. The
+// server hands the token of the session out in a cookie it leaves readable from
+// here on purpose, and wants it back in a header, which a page on another
+// origin cannot put on a request to this one without a preflight this server
+// never answers.
+const csrfCookieName = "tm_csrf";
+const csrfHeaderName = "X-CSRF-Token";
+
 // currentScreen is what is drawn. An answer that arrives after the operator has
 // moved on is compared against it and dropped, so a slow call cannot draw over
 // the screen that replaced the one it was made from.
@@ -230,6 +238,15 @@ async function apiCall(method, path, body) {
     credentials: "same-origin"
   };
 
+  // The token goes on every call and not only on the ones that change state, so
+  // that nothing here has to keep a second list of which methods those are. The
+  // server is the one that decides where it matters. There is none before the
+  // login, which is the one call that is allowed to arrive without it.
+  const token = csrfToken();
+  if (token !== "") {
+    options.headers[csrfHeaderName] = token;
+  }
+
   if (body !== undefined) {
     options.headers["Content-Type"] = "application/json";
     options.body = JSON.stringify(body);
@@ -271,6 +288,22 @@ async function apiCall(method, path, body) {
   }
 
   return payload === null ? null : payload.data;
+}
+
+// csrfToken is the token of the session, or "" when there is not one yet. It is
+// read out of the cookie at every call rather than kept in a variable, because
+// the server writes the cookie again on every answer and a reload of the page
+// starts with nothing held in memory.
+function csrfToken() {
+  for (const part of document.cookie.split(";")) {
+    const pair = part.trim();
+
+    if (pair.startsWith(csrfCookieName + "=")) {
+      return decodeURIComponent(pair.slice(csrfCookieName.length + 1));
+    }
+  }
+
+  return "";
 }
 
 // readPayload returns the decoded body, or null when there is none to decode.

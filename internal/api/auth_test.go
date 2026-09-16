@@ -115,17 +115,29 @@ type testResponse struct {
 	Success bool   `json:"success"`
 	Error   string `json:"error"`
 	Data    struct {
-		SetupRequired bool `json:"setup_required"`
+		SetupRequired bool   `json:"setup_required"`
+		CSRFToken     string `json:"csrf_token"`
 	} `json:"data"`
 }
 
-// do sends one request, with cookie attached when there is one, and returns the
-// recorder.
-func do(e *echo.Echo, method, target, body string, cookie *http.Cookie) *httptest.ResponseRecorder {
+// do sends one request, with the cookies attached that were handed in, and
+// returns the recorder. A CSRF cookie among them is put in the header as well,
+// which is what the page does with it: a test that wants a request to arrive
+// without a token leaves that cookie out and sends the session one alone.
+func do(e *echo.Echo, method, target, body string, cookies ...*http.Cookie) *httptest.ResponseRecorder {
 	req := httptest.NewRequest(method, target, strings.NewReader(body))
 	req.Header.Set(echo.HeaderContentType, echo.MIMEApplicationJSON)
-	if cookie != nil {
+
+	for _, cookie := range cookies {
+		if cookie == nil {
+			continue
+		}
+
 		req.AddCookie(cookie)
+
+		if cookie.Name == csrfCookieName {
+			req.Header.Set(csrfHeaderName, cookie.Value)
+		}
 	}
 
 	rec := httptest.NewRecorder()
@@ -165,6 +177,36 @@ func login(t *testing.T, e *echo.Echo, body string) (*httptest.ResponseRecorder,
 	rec := do(e, http.MethodPost, "/api/login", body, nil)
 
 	return rec, sessionCookieOf(rec)
+}
+
+// csrfCookieOf returns the CSRF cookie the answer set, or nil.
+func csrfCookieOf(rec *httptest.ResponseRecorder) *http.Cookie {
+	for _, cookie := range rec.Result().Cookies() {
+		if cookie.Name == csrfCookieName {
+			return cookie
+		}
+	}
+
+	return nil
+}
+
+// csrfLoginCookies logs in and returns both cookies the answer set: the session
+// and the CSRF token that belongs to it. That pair is what a client holds after
+// a login, and a request that changes something has to carry both.
+func csrfLoginCookies(t *testing.T, e *echo.Echo, body string) []*http.Cookie {
+	t.Helper()
+
+	rec, session := login(t, e, body)
+	if session == nil {
+		t.Fatalf("the login set no session cookie, body: %s", rec.Body.String())
+	}
+
+	csrf := csrfCookieOf(rec)
+	if csrf == nil {
+		t.Fatalf("the login set no %s cookie, Set-Cookie: %v", csrfCookieName, rec.Result().Header["Set-Cookie"])
+	}
+
+	return []*http.Cookie{session, csrf}
 }
 
 // TestApiIsRefusedWithoutASession pins down that the middleware covers the
@@ -288,12 +330,9 @@ func TestFailedLoginsAreAnsweredTheSameWay(t *testing.T) {
 func TestSessionBeforeTheSetupReachesOnlyTheSetup(t *testing.T) {
 	e, _ := newTestServer(t, newTestAccount(t, true))
 
-	_, cookie := login(t, e, `{"password":"`+testPassword+`"}`)
-	if cookie == nil {
-		t.Fatalf("the login set no session cookie")
-	}
+	cookies := csrfLoginCookies(t, e, `{"password":"`+testPassword+`"}`)
 
-	rec := do(e, http.MethodGet, "/api/host", "", cookie)
+	rec := do(e, http.MethodGet, "/api/host", "", cookies...)
 	if rec.Code != http.StatusForbidden {
 		t.Fatalf("status = %d, want %d, body: %s", rec.Code, http.StatusForbidden, rec.Body.String())
 	}
@@ -306,7 +345,7 @@ func TestSessionBeforeTheSetupReachesOnlyTheSetup(t *testing.T) {
 	// The setup is the one path the gate lets through. The body is empty, so
 	// the handler behind it answers 400, and what is observed here is that the
 	// answer came from the handler rather than from the gate.
-	rec = do(e, http.MethodPost, setupPath, `{}`, cookie)
+	rec = do(e, http.MethodPost, setupPath, `{}`, cookies...)
 	if rec.Code == http.StatusForbidden || rec.Code == http.StatusUnauthorized {
 		t.Errorf("the middleware refused %s with %d", setupPath, rec.Code)
 	}
@@ -342,12 +381,9 @@ func TestSessionAfterTheSetupReachesTheApi(t *testing.T) {
 func TestLogoutEndsTheSession(t *testing.T) {
 	e, _ := newTestServer(t, newTestAccount(t, false))
 
-	_, cookie := login(t, e, `{"username":"`+testUsername+`","password":"`+testPassword+`"}`)
-	if cookie == nil {
-		t.Fatalf("the login set no session cookie")
-	}
+	cookies := csrfLoginCookies(t, e, `{"username":"`+testUsername+`","password":"`+testPassword+`"}`)
 
-	rec := do(e, http.MethodPost, "/api/logout", "", cookie)
+	rec := do(e, http.MethodPost, "/api/logout", "", cookies...)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("logout status = %d, want %d, body: %s", rec.Code, http.StatusOK, rec.Body.String())
 	}
@@ -357,7 +393,22 @@ func TestLogoutEndsTheSession(t *testing.T) {
 		t.Errorf("the logout did not expire the cookie: %v", expired)
 	}
 
-	rec = do(e, http.MethodGet, "/api/host", "", cookie)
+	// The CSRF cookie is set twice on this answer: the middleware writes it
+	// again on the way in, and the handler expires it. The last one is the one
+	// the browser is left holding.
+	var lastCSRF *http.Cookie
+
+	for _, cookie := range rec.Result().Cookies() {
+		if cookie.Name == csrfCookieName {
+			lastCSRF = cookie
+		}
+	}
+
+	if lastCSRF == nil || lastCSRF.MaxAge >= 0 {
+		t.Errorf("the logout did not expire the %s cookie: %v", csrfCookieName, lastCSRF)
+	}
+
+	rec = do(e, http.MethodGet, "/api/host", "", cookies...)
 	if rec.Code != http.StatusUnauthorized {
 		t.Fatalf("status = %d, want %d, body: %s", rec.Code, http.StatusUnauthorized, rec.Body.String())
 	}
@@ -418,7 +469,7 @@ func TestTheSessionDeadlineSlides(t *testing.T) {
 	now := time.Now()
 	store.now = func() time.Time { return now }
 
-	token, err := store.Create(1)
+	token, _, err := store.Create(1)
 	if err != nil {
 		t.Fatalf("Create returned an error: %v", err)
 	}
@@ -427,7 +478,7 @@ func TestTheSessionDeadlineSlides(t *testing.T) {
 	for i := 0; i < 2; i++ {
 		now = now.Add(sessionLifetime - time.Hour)
 
-		_, ok := store.Lookup(token)
+		_, _, ok := store.Lookup(token)
 		if !ok {
 			t.Fatalf("the session was refused %v after the login", time.Duration(i+1)*(sessionLifetime-time.Hour))
 		}
@@ -447,13 +498,13 @@ func TestTheSessionStoreIsUsedFromManyGoroutines(t *testing.T) {
 			defer wg.Done()
 
 			for j := 0; j < 50; j++ {
-				token, err := store.Create(1)
+				token, _, err := store.Create(1)
 				if err != nil {
 					t.Errorf("Create returned an error: %v", err)
 					return
 				}
 
-				_, _ = store.Lookup(token)
+				_, _, _ = store.Lookup(token)
 				store.Delete(token)
 			}
 		}()
@@ -749,16 +800,12 @@ func setupBody(t *testing.T, username, password string) string {
 	return string(body)
 }
 
-// loginBeforeTheSetup logs in with the initial password and returns the session.
-func loginBeforeTheSetup(t *testing.T, f *setupFixture) *http.Cookie {
+// loginBeforeTheSetup logs in with the initial password and returns the cookies
+// of the session it got.
+func loginBeforeTheSetup(t *testing.T, f *setupFixture) []*http.Cookie {
 	t.Helper()
 
-	_, cookie := login(t, f.e, `{"password":"`+testPassword+`"}`)
-	if cookie == nil {
-		t.Fatalf("the login before the setup set no session cookie")
-	}
-
-	return cookie
+	return csrfLoginCookies(t, f.e, `{"password":"`+testPassword+`"}`)
 }
 
 // TestSetupWritesTheAccountInOneTransaction covers the whole of the good case:
@@ -769,9 +816,9 @@ func TestSetupWritesTheAccountInOneTransaction(t *testing.T) {
 	f := newSetupFixture(t, true)
 	writeInitialPassword(t, f.passwordFile)
 
-	cookie := loginBeforeTheSetup(t, f)
+	cookies := loginBeforeTheSetup(t, f)
 
-	rec := do(f.e, http.MethodPost, setupPath, setupBody(t, testUsername, testNewPassword), cookie)
+	rec := do(f.e, http.MethodPost, setupPath, setupBody(t, testUsername, testNewPassword), cookies...)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d, want %d, body: %s", rec.Code, http.StatusOK, rec.Body.String())
 	}
@@ -835,9 +882,9 @@ func TestLoginAfterTheSetupTakesTheNewCredentials(t *testing.T) {
 	f := newSetupFixture(t, true)
 	writeInitialPassword(t, f.passwordFile)
 
-	cookie := loginBeforeTheSetup(t, f)
+	cookies := loginBeforeTheSetup(t, f)
 
-	rec := do(f.e, http.MethodPost, setupPath, setupBody(t, testUsername, testNewPassword), cookie)
+	rec := do(f.e, http.MethodPost, setupPath, setupBody(t, testUsername, testNewPassword), cookies...)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("setup status = %d, want %d, body: %s", rec.Code, http.StatusOK, rec.Body.String())
 	}
@@ -873,12 +920,9 @@ func TestSetupIsRefusedOnceItIsDone(t *testing.T) {
 	f := newSetupFixture(t, false)
 	writeInitialPassword(t, f.passwordFile)
 
-	_, cookie := login(t, f.e, `{"username":"`+testUsername+`","password":"`+testPassword+`"}`)
-	if cookie == nil {
-		t.Fatalf("the login set no session cookie")
-	}
+	cookies := csrfLoginCookies(t, f.e, `{"username":"`+testUsername+`","password":"`+testPassword+`"}`)
 
-	rec := do(f.e, http.MethodPost, setupPath, setupBody(t, "someone-else", testNewPassword), cookie)
+	rec := do(f.e, http.MethodPost, setupPath, setupBody(t, "someone-else", testNewPassword), cookies...)
 	if rec.Code != http.StatusConflict {
 		t.Fatalf("status = %d, want %d, body: %s", rec.Code, http.StatusConflict, rec.Body.String())
 	}
@@ -948,9 +992,9 @@ func TestSetupRefusesWhatItCannotStore(t *testing.T) {
 			f := newSetupFixture(t, true)
 			writeInitialPassword(t, f.passwordFile)
 
-			cookie := loginBeforeTheSetup(t, f)
+			cookies := loginBeforeTheSetup(t, f)
 
-			rec := do(f.e, http.MethodPost, setupPath, setupBody(t, tt.username, tt.password), cookie)
+			rec := do(f.e, http.MethodPost, setupPath, setupBody(t, tt.username, tt.password), cookies...)
 			if rec.Code != http.StatusBadRequest {
 				t.Fatalf("status = %d, want %d, body: %s", rec.Code, http.StatusBadRequest, rec.Body.String())
 			}
@@ -986,10 +1030,10 @@ func TestSetupTakesThePasswordAtEitherEndOfTheRange(t *testing.T) {
 			f := newSetupFixture(t, true)
 			writeInitialPassword(t, f.passwordFile)
 
-			cookie := loginBeforeTheSetup(t, f)
+			cookies := loginBeforeTheSetup(t, f)
 			password := strings.Repeat("x", length)
 
-			rec := do(f.e, http.MethodPost, setupPath, setupBody(t, testUsername, password), cookie)
+			rec := do(f.e, http.MethodPost, setupPath, setupBody(t, testUsername, password), cookies...)
 			if rec.Code != http.StatusOK {
 				t.Fatalf("status = %d, want %d, body: %s", rec.Code, http.StatusOK, rec.Body.String())
 			}
@@ -1003,9 +1047,9 @@ func TestSetupStoresTheUsernameTrimmed(t *testing.T) {
 	f := newSetupFixture(t, true)
 	writeInitialPassword(t, f.passwordFile)
 
-	cookie := loginBeforeTheSetup(t, f)
+	cookies := loginBeforeTheSetup(t, f)
 
-	rec := do(f.e, http.MethodPost, setupPath, setupBody(t, "  "+testUsername+"  ", testNewPassword), cookie)
+	rec := do(f.e, http.MethodPost, setupPath, setupBody(t, "  "+testUsername+"  ", testNewPassword), cookies...)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d, want %d, body: %s", rec.Code, http.StatusOK, rec.Body.String())
 	}
@@ -1045,10 +1089,10 @@ func TestSetupThatCannotCommitKeepsTheInitialPassword(t *testing.T) {
 	f := newSetupFixture(t, true)
 	writeInitialPassword(t, f.passwordFile)
 
-	cookie := loginBeforeTheSetup(t, f)
+	cookies := loginBeforeTheSetup(t, f)
 	f.stub.failCommit(errors.New("commit failed"))
 
-	rec := do(f.e, http.MethodPost, setupPath, setupBody(t, testUsername, testNewPassword), cookie)
+	rec := do(f.e, http.MethodPost, setupPath, setupBody(t, testUsername, testNewPassword), cookies...)
 	if rec.Code != http.StatusInternalServerError {
 		t.Fatalf("status = %d, want %d, body: %s", rec.Code, http.StatusInternalServerError, rec.Body.String())
 	}
@@ -1080,9 +1124,9 @@ func TestSetupSucceedsWithNoInitialPasswordFile(t *testing.T) {
 		t.Fatalf("the fixture created the initial password file")
 	}
 
-	cookie := loginBeforeTheSetup(t, f)
+	cookies := loginBeforeTheSetup(t, f)
 
-	rec := do(f.e, http.MethodPost, setupPath, setupBody(t, testUsername, testNewPassword), cookie)
+	rec := do(f.e, http.MethodPost, setupPath, setupBody(t, testUsername, testNewPassword), cookies...)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d, want %d, body: %s", rec.Code, http.StatusOK, rec.Body.String())
 	}
@@ -1121,9 +1165,9 @@ func TestSetupSucceedsWhenTheFileCannotBeRemoved(t *testing.T) {
 		_ = os.Chmod(dir, 0700)
 	})
 
-	cookie := loginBeforeTheSetup(t, f)
+	cookies := loginBeforeTheSetup(t, f)
 
-	rec := do(f.e, http.MethodPost, setupPath, setupBody(t, testUsername, testNewPassword), cookie)
+	rec := do(f.e, http.MethodPost, setupPath, setupBody(t, testUsername, testNewPassword), cookies...)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d, want %d, body: %s", rec.Code, http.StatusOK, rec.Body.String())
 	}
@@ -1162,12 +1206,12 @@ func TestSetupDropsTheOtherSessions(t *testing.T) {
 	other := loginBeforeTheSetup(t, f)
 	mine := loginBeforeTheSetup(t, f)
 
-	rec := do(f.e, http.MethodPost, setupPath, setupBody(t, testUsername, testNewPassword), mine)
+	rec := do(f.e, http.MethodPost, setupPath, setupBody(t, testUsername, testNewPassword), mine...)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("setup status = %d, want %d, body: %s", rec.Code, http.StatusOK, rec.Body.String())
 	}
 
-	rec = do(f.e, http.MethodGet, "/api/host", "", other)
+	rec = do(f.e, http.MethodGet, "/api/host", "", other...)
 	if rec.Code != http.StatusUnauthorized {
 		t.Fatalf("the other session: status = %d, want %d, body: %s",
 			rec.Code, http.StatusUnauthorized, rec.Body.String())
@@ -1175,7 +1219,7 @@ func TestSetupDropsTheOtherSessions(t *testing.T) {
 
 	// The session that did the setup goes on: the gate is down for it now that
 	// the account has a username and a password.
-	rec = do(f.e, http.MethodGet, "/api/host", "", mine)
+	rec = do(f.e, http.MethodGet, "/api/host", "", mine...)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("the session that did the setup: status = %d, want %d, body: %s",
 			rec.Code, http.StatusOK, rec.Body.String())
@@ -1187,5 +1231,196 @@ func TestSetupDropsTheOtherSessions(t *testing.T) {
 
 	if left != 1 {
 		t.Errorf("%d sessions are left, want 1", left)
+	}
+}
+
+// csrfGoodLogin is the body that logs in against an account that is set up.
+const csrfGoodLogin = `{"username":"` + testUsername + `","password":"` + testPassword + `"}`
+
+// csrfStateChangingMethods is every method this API changes something with, and
+// therefore every method the token is asked for on.
+var csrfStateChangingMethods = []string{http.MethodPost, http.MethodPut, http.MethodDelete}
+
+// csrfProbe stands in for the handlers behind the middleware. It counts the
+// calls that reached it, so a request the middleware refused can be told apart
+// from one that was answered further in.
+type csrfProbe struct {
+	calls int
+}
+
+func (p *csrfProbe) handle(c echo.Context) error {
+	p.calls++
+
+	return c.JSON(http.StatusOK, models.Response{Success: true})
+}
+
+// csrfProbeServer wires the middleware the way main does and hangs the probe
+// behind it on one route per method, the readable one included. The login is
+// registered as well, because it is where the token comes from.
+func csrfProbeServer(t *testing.T) (*echo.Echo, *csrfProbe) {
+	t.Helper()
+
+	e := echo.New()
+	probe := &csrfProbe{}
+
+	authHandler := NewAuthHandler(newAccountStubDB(t, newTestAccount(t, false)), zap.NewNop(),
+		filepath.Join(t.TempDir(), "initial-password"))
+
+	g := e.Group("/api")
+	g.Use(authHandler.RequireSession())
+	g.POST("/login", authHandler.Login)
+	g.GET("/probe", probe.handle)
+
+	for _, method := range csrfStateChangingMethods {
+		g.Add(method, "/probe", probe.handle)
+	}
+
+	return e, probe
+}
+
+// TestCsrfStateChangesWithoutATokenAreRefused is the forged request: another
+// site made the browser send it, so the session cookie rides along and the
+// token does not, because the page that made it cannot read the cookie of this
+// origin. The refusal has to come before the handler.
+func TestCsrfStateChangesWithoutATokenAreRefused(t *testing.T) {
+	for _, method := range csrfStateChangingMethods {
+		t.Run(method, func(t *testing.T) {
+			e, probe := csrfProbeServer(t)
+
+			cookies := csrfLoginCookies(t, e, csrfGoodLogin)
+			session := cookies[0]
+
+			rec := do(e, method, "/api/probe", "", session)
+			if rec.Code != http.StatusForbidden {
+				t.Fatalf("status = %d, want %d, body: %s", rec.Code, http.StatusForbidden, rec.Body.String())
+			}
+
+			if probe.calls != 0 {
+				t.Errorf("the handler ran %d times on a request with no token", probe.calls)
+			}
+
+			resp := decode(t, rec)
+			if !strings.Contains(resp.Error, csrfHeaderName) {
+				t.Errorf("error = %q, want it to name the %s header", resp.Error, csrfHeaderName)
+			}
+
+			// The page moves to the setup screen on a 403 that mentions one, so
+			// this refusal must not read like that one.
+			if strings.Contains(strings.ToLower(resp.Error), "setup") {
+				t.Errorf("error = %q, which the page would read as the setup refusal", resp.Error)
+			}
+		})
+	}
+}
+
+// TestCsrfATokenFromSomewhereElseIsRefused covers what a cookie on its own
+// cannot: something that can write cookies for this host sets both the cookie
+// and the header to a value of its own. They agree with each other and still do
+// not open anything, because the token that counts is the one the session
+// holds.
+func TestCsrfATokenFromSomewhereElseIsRefused(t *testing.T) {
+	for _, method := range csrfStateChangingMethods {
+		t.Run(method, func(t *testing.T) {
+			e, probe := csrfProbeServer(t)
+
+			cookies := csrfLoginCookies(t, e, csrfGoodLogin)
+			planted := &http.Cookie{Name: csrfCookieName, Value: "a-token-the-session-never-had"}
+
+			rec := do(e, method, "/api/probe", "", cookies[0], planted)
+			if rec.Code != http.StatusForbidden {
+				t.Fatalf("status = %d, want %d, body: %s", rec.Code, http.StatusForbidden, rec.Body.String())
+			}
+
+			if probe.calls != 0 {
+				t.Errorf("the handler ran %d times on a planted token", probe.calls)
+			}
+		})
+	}
+}
+
+// TestCsrfStateChangesWithTheTokenPass is the flow the page walks: log in, keep
+// what the answer set, and send the token back on everything that changes
+// something.
+func TestCsrfStateChangesWithTheTokenPass(t *testing.T) {
+	for _, method := range csrfStateChangingMethods {
+		t.Run(method, func(t *testing.T) {
+			e, probe := csrfProbeServer(t)
+
+			cookies := csrfLoginCookies(t, e, csrfGoodLogin)
+
+			rec := do(e, method, "/api/probe", "", cookies...)
+			if rec.Code != http.StatusOK {
+				t.Fatalf("status = %d, want %d, body: %s", rec.Code, http.StatusOK, rec.Body.String())
+			}
+
+			if probe.calls != 1 {
+				t.Errorf("the handler ran %d times, want 1", probe.calls)
+			}
+		})
+	}
+}
+
+// TestCsrfTheLoginNeedsNoToken pins down the one call that cannot have a token
+// yet, and that it is where the token comes from.
+func TestCsrfTheLoginNeedsNoToken(t *testing.T) {
+	e, _ := csrfProbeServer(t)
+
+	rec := do(e, http.MethodPost, "/api/login", csrfGoodLogin)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d, body: %s", rec.Code, http.StatusOK, rec.Body.String())
+	}
+
+	cookie := csrfCookieOf(rec)
+	if cookie == nil {
+		t.Fatalf("the login set no %s cookie, Set-Cookie: %v", csrfCookieName, rec.Result().Header["Set-Cookie"])
+	}
+
+	if cookie.Value == "" {
+		t.Errorf("the %s cookie carries no token", csrfCookieName)
+	}
+
+	// The page has to read it to send it back, which is the one way this cookie
+	// differs from the session one.
+	if cookie.HttpOnly {
+		t.Errorf("the %s cookie is HttpOnly, so the page cannot send it back", csrfCookieName)
+	}
+
+	if cookie.SameSite != http.SameSiteLaxMode || cookie.Path != "/" {
+		t.Errorf("SameSite = %v and path = %q, want %v and /", cookie.SameSite, cookie.Path, http.SameSiteLaxMode)
+	}
+
+	// The test request is plain HTTP, and a Secure cookie would never come back.
+	if cookie.Secure {
+		t.Errorf("the %s cookie is Secure on a plain HTTP request", csrfCookieName)
+	}
+
+	resp := decode(t, rec)
+	if resp.Data.CSRFToken != cookie.Value {
+		t.Errorf("data.csrf_token = %q, want the cookie value %q", resp.Data.CSRFToken, cookie.Value)
+	}
+}
+
+// TestCsrfReadsNeedNoToken pins down that the check is only on the methods that
+// change something. A read that asked for a token would make every screen of
+// the UI wait for a login it already has.
+func TestCsrfReadsNeedNoToken(t *testing.T) {
+	e, probe := csrfProbeServer(t)
+
+	cookies := csrfLoginCookies(t, e, csrfGoodLogin)
+
+	rec := do(e, http.MethodGet, "/api/probe", "", cookies[0])
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d, body: %s", rec.Code, http.StatusOK, rec.Body.String())
+	}
+
+	if probe.calls != 1 {
+		t.Errorf("the handler ran %d times, want 1", probe.calls)
+	}
+
+	// Every answer to a live session carries the cookie again, so a page that
+	// lost its copy gets it back on the next read.
+	again := csrfCookieOf(rec)
+	if again == nil || again.Value != cookies[1].Value {
+		t.Errorf("the read did not hand the token back: %v", again)
 	}
 }

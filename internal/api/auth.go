@@ -43,6 +43,30 @@ const sessionLifetime = 12 * time.Hour
 // is the whole credential, so it is read from crypto/rand and nothing else.
 const sessionTokenBytes = 32
 
+// csrfCookieName is the cookie the CSRF token of a session is carried in. It is
+// a second cookie rather than the session one because the page has to read it
+// to put it back in a header, and the session cookie stays HttpOnly so that a
+// script can never get at the credential itself.
+const csrfCookieName = "tm_csrf"
+
+// csrfHeaderName is the header the token is sent back in. A header is what is
+// checked rather than a form field, because a page on another origin cannot put
+// one on a request to this one without a preflight, and no preflight is ever
+// granted: there is no CORS middleware in front of this API.
+const csrfHeaderName = "X-CSRF-Token"
+
+// csrfTokenBytes is how much randomness a CSRF token carries. It is as large as
+// a session token, because both are defended against guessing and nothing else.
+const csrfTokenBytes = 32
+
+// csrfRefusedMessage is the answer to a state changing request that did not
+// bring its token back. It says what to send, because the client can fix it.
+// It must not read like the setup refusal: the UI moves to the setup screen on
+// a 403 that mentions one.
+const csrfRefusedMessage = "The request carries no valid " + csrfHeaderName +
+	" header. Send the token of the session, which the login answers with and " +
+	"the " + csrfCookieName + " cookie holds, on every POST, PUT and DELETE"
+
 // invalidCredentialsMessage is the answer to every failed login. It does not say
 // whether the username or the password was the wrong one, because that tells an
 // outsider which of the two they have already got right.
@@ -80,6 +104,11 @@ const contextUserIDKey = "auth_user_id"
 // so a session does not hold a copy that goes stale.
 type session struct {
 	userID uint
+	// csrfToken is what a state changing request of this session has to send
+	// back in a header. It is held next to the session rather than derived from
+	// a cookie alone, so a token planted by something that can write cookies is
+	// not a token the server accepts.
+	csrfToken string
 	// expiresAt is moved forward by every lookup that finds the session.
 	expiresAt time.Time
 }
@@ -114,47 +143,68 @@ func NewSessionStore() *SessionStore {
 	}
 }
 
-// Create makes a session for userID and returns the token it is found by.
-func (s *SessionStore) Create(userID uint) (string, error) {
-	raw := make([]byte, sessionTokenBytes)
-
-	_, err := io.ReadFull(rand.Reader, raw)
+// Create makes a session for userID and returns the token it is found by
+// together with the CSRF token that its state changing requests have to carry.
+func (s *SessionStore) Create(userID uint) (string, string, error) {
+	token, err := randomToken(sessionTokenBytes)
 	if err != nil {
-		return "", fmt.Errorf("failed to generate a session token: %w", err)
+		return "", "", fmt.Errorf("failed to generate a session token: %w", err)
 	}
 
-	token := base64.RawURLEncoding.EncodeToString(raw)
+	csrfToken, err := randomToken(csrfTokenBytes)
+	if err != nil {
+		return "", "", fmt.Errorf("failed to generate a CSRF token: %w", err)
+	}
 
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	s.sessions[token] = session{userID: userID, expiresAt: s.now().Add(s.lifetime)}
+	s.sessions[token] = session{
+		userID:    userID,
+		csrfToken: csrfToken,
+		expiresAt: s.now().Add(s.lifetime),
+	}
 
-	return token, nil
+	return token, csrfToken, nil
 }
 
-// Lookup returns the account of the session token stands for and reports
-// whether there is one. A session that has run out is dropped here and answers
-// as if it were never there.
-func (s *SessionStore) Lookup(token string) (uint, bool) {
+// randomToken returns size bytes of randomness, encoded so it can sit in a
+// cookie and in a header. The size is named by the caller rather than fixed
+// here, so that the constant a token is described by is the one that decides
+// how long it is.
+func randomToken(size int) (string, error) {
+	raw := make([]byte, size)
+
+	_, err := io.ReadFull(rand.Reader, raw)
+	if err != nil {
+		return "", err
+	}
+
+	return base64.RawURLEncoding.EncodeToString(raw), nil
+}
+
+// Lookup returns the account and the CSRF token of the session token stands for
+// and reports whether there is one. A session that has run out is dropped here
+// and answers as if it were never there.
+func (s *SessionStore) Lookup(token string) (uint, string, bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
 	found, ok := s.sessions[token]
 	if !ok {
-		return 0, false
+		return 0, "", false
 	}
 
 	now := s.now()
 	if !now.Before(found.expiresAt) {
 		delete(s.sessions, token)
-		return 0, false
+		return 0, "", false
 	}
 
 	found.expiresAt = now.Add(s.lifetime)
 	s.sessions[token] = found
 
-	return found.userID, true
+	return found.userID, found.csrfToken, true
 }
 
 // Delete drops the session token stands for. A token that is not there is not
@@ -212,8 +262,14 @@ type loginRequest struct {
 
 // loginResponse tells the client which screen comes next. Before the setup is
 // done the only thing a session may do is finish it.
+//
+// The CSRF token is in the body as well as in a cookie. The browser reads the
+// cookie, which is what survives a reload of the page; a client that is not a
+// browser reads the body and does not have to take a cookie jar apart to find
+// the value it has to send back.
 type loginResponse struct {
-	SetupRequired bool `json:"setup_required"`
+	SetupRequired bool   `json:"setup_required"`
+	CSRFToken     string `json:"csrf_token"`
 }
 
 // setupRequest is the username and the password the operator settles on.
@@ -232,6 +288,23 @@ func sessionCookie(c echo.Context, token string, maxAge int) *http.Cookie {
 		Path:     "/",
 		MaxAge:   maxAge,
 		HttpOnly: true,
+		SameSite: http.SameSiteLaxMode,
+		Secure:   c.IsTLS(),
+	}
+}
+
+// csrfCookie returns the cookie the CSRF token of a session is handed out in.
+// It is the session cookie in every way but one: HttpOnly is off, because the
+// page has to read the value to send it back in a header. That costs nothing,
+// since the value is not a credential on its own: it is only accepted next to
+// the session it was made for.
+func csrfCookie(c echo.Context, token string, maxAge int) *http.Cookie {
+	return &http.Cookie{
+		Name:     csrfCookieName,
+		Value:    token,
+		Path:     "/",
+		MaxAge:   maxAge,
+		HttpOnly: false,
 		SameSite: http.SameSiteLaxMode,
 		Secure:   c.IsTLS(),
 	}
@@ -288,7 +361,7 @@ func (h *AuthHandler) Login(c echo.Context) error {
 		})
 	}
 
-	token, err := h.sessions.Create(user.ID)
+	token, csrfToken, err := h.sessions.Create(user.ID)
 	if err != nil {
 		h.logger.Error("failed to create a session", zap.Error(err))
 		return c.JSON(http.StatusInternalServerError, models.Response{
@@ -298,10 +371,14 @@ func (h *AuthHandler) Login(c echo.Context) error {
 	}
 
 	c.SetCookie(sessionCookie(c, token, 0))
+	c.SetCookie(csrfCookie(c, csrfToken, 0))
 
 	return c.JSON(http.StatusOK, models.Response{
 		Success: true,
-		Data:    loginResponse{SetupRequired: user.SetupRequired},
+		Data: loginResponse{
+			SetupRequired: user.SetupRequired,
+			CSRFToken:     csrfToken,
+		},
 	})
 }
 
@@ -315,6 +392,7 @@ func (h *AuthHandler) Logout(c echo.Context) error {
 	}
 
 	c.SetCookie(sessionCookie(c, "", -1))
+	c.SetCookie(csrfCookie(c, "", -1))
 
 	return c.JSON(http.StatusOK, models.Response{Success: true})
 }
@@ -483,31 +561,67 @@ func (h *AuthHandler) removeInitialPasswordFile() {
 		zap.String("initial_password_file", h.initialPasswordFile))
 }
 
-// RequireSession returns the middleware that keeps the API behind the login.
-// It is put on the /api group, so a path under it that nobody registered a
-// route for is refused by it as well. The UI files are served outside it,
-// because they are the same bytes for every client and carry no data: what
-// they show is fetched from here, and that is what the session guards.
+// RequireSession returns the middleware that keeps the API behind the login and
+// behind the CSRF check. It is put on the /api group, so a path under it that
+// nobody registered a route for is refused by it as well. The UI files are
+// served outside it, because they are the same bytes for every client and carry
+// no data: what they show is fetched from here, and that is what is guarded.
+//
+// The CSRF check lives here rather than in a middleware of its own because the
+// token it compares against is the one held by the session, and both are read
+// out of the same lookup. Two middlewares would either look the session up
+// twice or depend on being ordered correctly to work at all.
 func (h *AuthHandler) RequireSession() echo.MiddlewareFunc {
 	return func(next echo.HandlerFunc) echo.HandlerFunc {
 		return func(c echo.Context) error {
 			path := c.Request().URL.Path
 
-			// The login is how a session is got, and the logout has to answer a
-			// client whose session is already gone, so neither can be behind
-			// the session check.
-			if path == loginPath || path == logoutPath {
+			// The login is how a session and its CSRF token are got, so it
+			// cannot be behind either check. Nothing is forged by it: a request
+			// made from another origin still has to carry the password, and the
+			// session it would hand out goes into a cookie the attacker cannot
+			// read.
+			if path == loginPath {
 				return next(c)
 			}
 
+			token := ""
+
 			cookie, err := c.Cookie(sessionCookieName)
-			if err != nil {
+			if err == nil {
+				token = cookie.Value
+			}
+
+			userID, csrfToken, ok := h.sessions.Lookup(token)
+			if !ok {
+				// The logout has to answer a client whose session is already
+				// gone, and what it asked for is the state it is in. There is
+				// no session to protect either, so there is nothing to check.
+				if path == logoutPath {
+					return next(c)
+				}
+
 				return unauthenticated(c)
 			}
 
-			userID, ok := h.sessions.Lookup(cookie.Value)
-			if !ok {
-				return unauthenticated(c)
+			// The cookie is written again on every request that carries a live
+			// session, so that a page which lost its copy gets it back on the
+			// next read instead of being unable to change anything until the
+			// operator logs in again.
+			c.SetCookie(csrfCookie(c, csrfToken, 0))
+
+			if !isSafeMethod(c.Request().Method) &&
+				subtle.ConstantTimeCompare([]byte(c.Request().Header.Get(csrfHeaderName)), []byte(csrfToken)) != 1 {
+				return c.JSON(http.StatusForbidden, models.Response{
+					Success: false,
+					Error:   csrfRefusedMessage,
+				})
+			}
+
+			// The logout needs nothing below this point: it ends the session it
+			// was sent with, whatever the account behind it is allowed to reach.
+			if path == logoutPath {
+				return next(c)
 			}
 
 			// SetupRequired is read from the database on every request instead
@@ -535,6 +649,19 @@ func (h *AuthHandler) RequireSession() echo.MiddlewareFunc {
 			return next(c)
 		}
 	}
+}
+
+// isSafeMethod reports whether a method is one that RFC 9110 calls safe, which
+// is the set that changes nothing and therefore needs no CSRF token. Everything
+// this API changes state with is a POST, a PUT or a DELETE, and a method that
+// is added later is checked unless it is named here.
+func isSafeMethod(method string) bool {
+	switch method {
+	case http.MethodGet, http.MethodHead, http.MethodOptions, http.MethodTrace:
+		return true
+	}
+
+	return false
 }
 
 // unauthenticated answers a request that carries no usable session.

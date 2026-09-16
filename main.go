@@ -484,7 +484,15 @@ func main() {
 	e.Validator = &CustomValidator{validator: validator.New()}
 	e.Use(middleware.Logger())
 	e.Use(middleware.Recover())
-	e.Use(middleware.CORS())
+
+	// There is no CORS middleware on purpose. The UI is built into this binary
+	// and served from /ui/, so every call it makes is same-origin and needs no
+	// grant from one. With no Access-Control-Allow-Origin header in the answer,
+	// a browser refuses to hand any page on another origin what this API said,
+	// and it refuses the preflight that a cross-origin request carrying the
+	// CSRF header would need. Clients that are not browsers, curl and scripts
+	// among them, are untouched: CORS is a rule browsers apply to pages, not a
+	// check this server performs.
 
 	h := api.NewHandler(db, manager, logger, cipher)
 	authHandler := api.NewAuthHandler(db, logger, initialPasswordFile)
