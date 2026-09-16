@@ -2,12 +2,18 @@ package tunnel
 
 import (
 	"context"
+	"encoding/hex"
+	"fmt"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
 
+	"github.com/jollaman999/tunnel-manager/internal/crypto"
 	"github.com/jollaman999/tunnel-manager/internal/models"
 	"go.uber.org/zap"
+	"go.uber.org/zap/zapcore"
+	"go.uber.org/zap/zaptest/observer"
 	"gorm.io/gorm"
 )
 
@@ -155,14 +161,18 @@ func TestReconcileLeavesRunningTunnelsAlone(t *testing.T) {
 	}
 
 	tun := registerStoppedTunnel(t, m, 1, 2)
+	// The tunnel runs with the settings the desired state holds, which is what
+	// the pass reads from its fingerprint. The stored password is plaintext, so
+	// it is the password itself.
+	tun.connFP = connectionFingerprint(&hosts[0], &sps[0], hosts[0].Password)
 
 	result, err := m.Reconcile()
 	if err != nil {
 		t.Fatalf("Reconcile returned an error: %v", err)
 	}
-	if result.Started != 0 || result.Stopped != 0 || result.Failed != 0 {
-		t.Fatalf("Reconcile reported started=%d stopped=%d failed=%d for a combination that is on both sides, want 0/0/0",
-			result.Started, result.Stopped, result.Failed)
+	if result.Started != 0 || result.Stopped != 0 || result.Restarted != 0 || result.Failed != 0 {
+		t.Fatalf("Reconcile reported started=%d stopped=%d restarted=%d failed=%d for a combination that is on both sides, want 0/0/0/0",
+			result.Started, result.Stopped, result.Restarted, result.Failed)
 	}
 
 	running := runningKeys(m)
@@ -364,5 +374,245 @@ func TestParseTunnelKeyRoundTrip(t *testing.T) {
 	}
 	if _, _, ok := parseTunnelKey("a-1"); ok {
 		t.Fatal("parseTunnelKey accepted a key that is not made of numbers")
+	}
+}
+
+// encryptedPassword returns what a Host row holds for plaintext.
+func encryptedPassword(t *testing.T, c *crypto.Cipher, plaintext string) string {
+	t.Helper()
+
+	encrypted, err := c.Encrypt(plaintext)
+	if err != nil {
+		t.Fatalf("failed to encrypt: %v", err)
+	}
+
+	return encrypted
+}
+
+// startedTunnelManager runs the first pass, so every combination of hosts and
+// sps is running with the fingerprint of the settings it was built from. The
+// stub answers from the slices the caller holds, so a value changed in them is
+// what the next pass reads.
+func startedTunnelManager(t *testing.T, hosts []models.Host, sps []models.ServicePort, c *crypto.Cipher, logger *zap.Logger) *Manager {
+	t.Helper()
+
+	m, err := NewManager(newWritableStubDB(t, hosts, sps), logger, c, 1)
+	if err != nil {
+		t.Fatalf("failed to create manager: %v", err)
+	}
+	t.Cleanup(m.StopAllTunnels)
+
+	result, err := m.Reconcile()
+	if err != nil {
+		t.Fatalf("the first pass returned an error: %v", err)
+	}
+	if result.Started != len(hosts)*len(sps) {
+		t.Fatalf("the first pass started %d tunnels, want %d", result.Started, len(hosts)*len(sps))
+	}
+
+	return m
+}
+
+func TestReconcileRestartsWhenTheConnectionSettingsChange(t *testing.T) {
+	cases := []struct {
+		name   string
+		change func(t *testing.T, c *crypto.Cipher, host *models.Host, sp *models.ServicePort)
+	}{
+		{"the server IP", func(_ *testing.T, _ *crypto.Cipher, host *models.Host, _ *models.ServicePort) {
+			host.IP = "127.0.0.2"
+		}},
+		{"the server port", func(_ *testing.T, _ *crypto.Cipher, host *models.Host, _ *models.ServicePort) {
+			host.Port = 2
+		}},
+		{"the remote IP", func(_ *testing.T, _ *crypto.Cipher, _ *models.Host, sp *models.ServicePort) {
+			sp.ServiceIP = "127.0.0.2"
+		}},
+		{"the remote port", func(_ *testing.T, _ *crypto.Cipher, _ *models.Host, sp *models.ServicePort) {
+			sp.ServicePort = 2
+		}},
+		{"the local port", func(_ *testing.T, _ *crypto.Cipher, _ *models.Host, sp *models.ServicePort) {
+			sp.LocalPort = 18099
+		}},
+		{"the user", func(_ *testing.T, _ *crypto.Cipher, host *models.Host, _ *models.ServicePort) {
+			host.User = "other"
+		}},
+		{"the password", func(t *testing.T, c *crypto.Cipher, host *models.Host, _ *models.ServicePort) {
+			host.Password = encryptedPassword(t, c, "fake-value-2") // hook:allow
+		}},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			cipher := newTestCipher(t)
+
+			hosts := []models.Host{enabledHost(1, true)}
+			hosts[0].Password = encryptedPassword(t, cipher, "fake-value-1") // hook:allow
+			sps := []models.ServicePort{testServicePort(2)}
+
+			m := startedTunnelManager(t, hosts, sps, cipher, zap.NewNop())
+			before := runningKeys(m)["1-2"]
+			if before == nil {
+				t.Fatal("the first pass registered no tunnel")
+			}
+
+			tc.change(t, cipher, &hosts[0], &sps[0])
+
+			result, err := m.Reconcile()
+			if err != nil {
+				t.Fatalf("Reconcile returned an error: %v", err)
+			}
+			if result.Restarted != 1 || result.Started != 0 || result.Stopped != 0 || result.Failed != 0 {
+				t.Fatalf("Reconcile reported started=%d stopped=%d restarted=%d failed=%d after %s changed, want 0/0/1/0",
+					result.Started, result.Stopped, result.Restarted, result.Failed, tc.name)
+			}
+
+			after := runningKeys(m)["1-2"]
+			if after == nil {
+				t.Fatalf("no tunnel is registered after %s changed", tc.name)
+			}
+			if after == before {
+				t.Fatalf("the tunnel kept running on the settings it was built with after %s changed", tc.name)
+			}
+
+			before.stopMu.Lock()
+			stopped := before.isStopped
+			before.stopMu.Unlock()
+
+			if !stopped {
+				t.Fatalf("the tunnel built with the old settings was replaced without being stopped after %s changed", tc.name)
+			}
+		})
+	}
+}
+
+// reconcileIsQuiet runs passes and fails if any of them changes anything or
+// replaces the tunnel that is running.
+func reconcileIsQuiet(t *testing.T, m *Manager, passes int) {
+	t.Helper()
+
+	running := runningKeys(m)["1-2"]
+	if running == nil {
+		t.Fatal("no tunnel is registered")
+	}
+
+	for pass := 1; pass <= passes; pass++ {
+		result, err := m.Reconcile()
+		if err != nil {
+			t.Fatalf("pass %d returned an error: %v", pass, err)
+		}
+		if result != (ReconcileResult{}) {
+			t.Fatalf("pass %d reported started=%d stopped=%d restarted=%d failed=%d although nothing changed, want 0/0/0/0",
+				pass, result.Started, result.Stopped, result.Restarted, result.Failed)
+		}
+		if runningKeys(m)["1-2"] != running {
+			t.Fatalf("pass %d replaced a tunnel nothing changed for", pass)
+		}
+	}
+}
+
+func TestReconcileDoesNothingOnTwoPassesInARowWhenNothingChanged(t *testing.T) {
+	cipher := newTestCipher(t)
+
+	hosts := []models.Host{enabledHost(1, true)}
+	hosts[0].Password = encryptedPassword(t, cipher, "fake-value-1") // hook:allow
+	sps := []models.ServicePort{testServicePort(2)}
+
+	m := startedTunnelManager(t, hosts, sps, cipher, zap.NewNop())
+
+	reconcileIsQuiet(t, m, 2)
+}
+
+func TestReconcileDoesNothingAfterTheStoredPasswordIsEncryptedInPlace(t *testing.T) {
+	// The stored password is plaintext here, so the first pass that reads it
+	// writes it back encrypted. The password is sealed with a fresh nonce every
+	// time, so a fingerprint taken from the stored value instead of the password
+	// itself would differ on every pass and restart the tunnel on every pass.
+	hosts := []models.Host{enabledHost(1, true)}
+	sps := []models.ServicePort{testServicePort(2)}
+
+	m := startedTunnelManager(t, hosts, sps, newTestCipher(t), zap.NewNop())
+
+	if !crypto.IsEncrypted(hosts[0].Password) {
+		t.Fatal("the plaintext password was not stored encrypted by the first pass")
+	}
+
+	reconcileIsQuiet(t, m, 2)
+}
+
+func TestReconcileKeepsTheTunnelWhoseStoredPasswordCannotBeRead(t *testing.T) {
+	cipher := newTestCipher(t)
+
+	hosts := []models.Host{enabledHost(1, true)}
+	hosts[0].Password = encryptedPassword(t, cipher, "fake-value-1") // hook:allow
+	sps := []models.ServicePort{testServicePort(2)}
+
+	m := startedTunnelManager(t, hosts, sps, cipher, zap.NewNop())
+	running := runningKeys(m)["1-2"]
+
+	// Sealed with another key from here on, as if the key file was replaced.
+	hosts[0].Password = encryptedPassword(t, newTestCipher(t), "fake-value-1") // hook:allow
+
+	result, err := m.Reconcile()
+	if err != nil {
+		t.Fatalf("Reconcile returned an error: %v", err)
+	}
+	if result.Failed != 1 || result.Started != 0 || result.Stopped != 0 || result.Restarted != 0 {
+		t.Fatalf("Reconcile reported started=%d stopped=%d restarted=%d failed=%d for a password that does not decrypt, want 0/0/0/1",
+			result.Started, result.Stopped, result.Restarted, result.Failed)
+	}
+
+	after := runningKeys(m)["1-2"]
+	if after != running {
+		t.Fatal("the tunnel was torn down although it could not be told whether its settings changed")
+	}
+
+	running.stopMu.Lock()
+	stopped := running.isStopped
+	running.stopMu.Unlock()
+
+	if stopped {
+		t.Fatal("the tunnel was stopped although it could not be told whether its settings changed")
+	}
+}
+
+func TestReconcileKeepsTheFingerprintOutOfTheLogs(t *testing.T) {
+	cipher := newTestCipher(t)
+
+	hosts := []models.Host{enabledHost(1, true)}
+	hosts[0].Password = encryptedPassword(t, cipher, "fake-value-1") // hook:allow
+	sps := []models.ServicePort{testServicePort(2)}
+
+	core, logs := observer.New(zapcore.DebugLevel)
+
+	m := startedTunnelManager(t, hosts, sps, cipher, zap.New(core))
+
+	hosts[0].Password = encryptedPassword(t, cipher, "fake-value-2") // hook:allow
+
+	result, err := m.Reconcile()
+	if err != nil {
+		t.Fatalf("Reconcile returned an error: %v", err)
+	}
+	if result.Restarted != 1 {
+		t.Fatalf("the pass restarted %d tunnels, want 1", result.Restarted)
+	}
+
+	// Both fingerprints are derived from a password, so neither may show up
+	// anywhere in what was logged, in any of the forms it can be written in.
+	secrets := []string{"fake-value-1", "fake-value-2"}                 // hook:allow
+	for _, password := range []string{"fake-value-1", "fake-value-2"} { // hook:allow
+		fp := connectionFingerprint(&hosts[0], &sps[0], password)
+		secrets = append(secrets,
+			hex.EncodeToString(fp[:]),
+			fmt.Sprint(fp),
+			fmt.Sprintf("%v", fp[:]))
+	}
+
+	for _, entry := range logs.All() {
+		logged := entry.Message + " " + fmt.Sprint(entry.ContextMap())
+		for _, secret := range secrets {
+			if strings.Contains(logged, secret) {
+				t.Fatalf("a value derived from the password was logged in %q", entry.Message)
+			}
+		}
 	}
 }

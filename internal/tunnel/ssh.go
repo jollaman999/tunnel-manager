@@ -28,6 +28,12 @@ type SSHTunnel struct {
 	Server *net.TCPAddr
 	Remote *net.TCPAddr
 	Config *ssh.ClientConfig
+	// connFP is the fingerprint of the connection settings this tunnel was
+	// built from. A reconcile pass compares it with the fingerprint of the
+	// settings the tunnel should have. It is written before the tunnel is
+	// registered with the manager and never again, so it needs no lock of its
+	// own, and it is never formatted, so it cannot reach a log.
+	connFP connFingerprint
 	client *ssh.Client
 	// clientConn is the connection client was built on. ssh.Client hides it,
 	// and the monitor needs it to put a deadline on the keepalive it sends. It

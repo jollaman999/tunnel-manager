@@ -98,6 +98,15 @@ func (m *Manager) storeEncryptedPassword(host *models.Host, password string) {
 		zap.String("host_ip", host.IP))
 }
 
+// tunnelAddresses returns the local, server and remote addresses a tunnel for
+// this combination is built from. Both the tunnel and its fingerprint are built
+// from these, so the comparison sees what was connected to.
+func tunnelAddresses(host *models.Host, sp *models.ServicePort) (local, server, remote string) {
+	return fmt.Sprintf("0.0.0.0:%d", sp.LocalPort),
+		fmt.Sprintf("%s:%d", host.IP, host.Port),
+		fmt.Sprintf("%s:%d", sp.ServiceIP, sp.ServicePort)
+}
+
 func (m *Manager) StartTunnel(host *models.Host, sp *models.ServicePort) error {
 	if !host.Enabled {
 		m.logger.Info("skipped starting tunnel for disabled Host",
@@ -129,13 +138,15 @@ func (m *Manager) StartTunnel(host *models.Host, sp *models.ServicePort) error {
 		Timeout:         time.Second * 10,
 	}
 
+	local, server, remote := tunnelAddresses(host, sp)
+
 	tunnel := models.Tunnel{
 		HostID: host.ID,
 		SPID:   sp.ID,
 		Status: "starting",
-		Local:  fmt.Sprintf("0.0.0.0:%d", sp.LocalPort),
-		Server: fmt.Sprintf("%s:%d", host.IP, host.Port),
-		Remote: fmt.Sprintf("%s:%d", sp.ServiceIP, sp.ServicePort),
+		Local:  local,
+		Server: server,
+		Remote: remote,
 	}
 
 	t, err := NewSSHTunnel(
@@ -150,6 +161,10 @@ func (m *Manager) StartTunnel(host *models.Host, sp *models.ServicePort) error {
 	if err != nil {
 		return fmt.Errorf("failed to create tunnel: %w", err)
 	}
+
+	// The settings this tunnel is connecting with, so a later pass can tell
+	// whether the ones it should have are still the same.
+	t.connFP = connectionFingerprint(host, sp, password)
 
 	err = m.db.Where("host_id = ? AND sp_id = ?", host.ID, sp.ID).
 		Attrs(tunnel).
