@@ -43,6 +43,28 @@ POST /api/service-port
 `RestoreAllTunnels` 는 첫 조정 패스가 되고, `StopAllTunnels` 는 목표를 비우고 한 번 더 도는 것이 된다.
 `stopTunnelsStarted`(`a562b59`)는 제거한다. 루프가 그 일을 한다.
 
+### 설정이 바뀐 터널도 다시 띄운다
+
+키(`hostID-spID`)의 유무만 비교하면 부족하다. `UpdateHost` 로 IP, 포트, 사용자, 비밀번호를 바꾸거나
+`UpdateServicePort` 로 포트를 바꿔도 키는 그대로라, 떠 있던 터널이 **옛 설정으로 계속 돈다.**
+증상이 조용하다 - API 는 200 을 주고 DB 도 바뀌는데 실제 연결만 옛 주소를 물고 있다.
+
+고치기 전에는 `resolveTunnelActions` 의 `connectionChanged` 가 중지와 시작을 시켰다.
+그 함수를 없애면서 같이 사라졌으므로, 루프가 그 판정을 대신해야 한다.
+
+그래서 **키가 양쪽에 있을 때 접속 정보가 같은지도 본다.**
+
+| 비교 결과 | 행동 |
+|-----------|------|
+| 목표에만 있다 | 띄운다 |
+| 실제에만 있다 | 끈다 |
+| 양쪽에 있고 접속 정보가 같다 | 건드리지 않는다 |
+| **양쪽에 있는데 접속 정보가 다르다** | **끄고 다시 띄운다** |
+
+접속 정보는 터널을 만들 때 쓰는 값 전부다 - 서버 주소, 원격 주소, 로컬 주소, 사용자, 비밀번호.
+비밀번호까지 넣는 이유는 그것만 바뀌어도 기존 연결이 옛 자격증명으로 맺어져 있기 때문이다.
+비밀번호를 그대로 들고 비교하지 않도록, 떠 있는 터널에 그 값들의 지문을 붙여 두고 지문끼리 비교한다.
+
 ### 바뀐 뒤의 동작
 
 `POST /api/service-port` 가 201 을 주는 것은 **적어 뒀다**는 뜻이다. 터널이 떴다는 뜻이 아니다.
@@ -219,6 +241,7 @@ internal/web/
 | # | 작업 | 건드리는 곳 |
 |---|------|-------------|
 | R1 | 조정 루프 신설, Restore/StopAllTunnels 대체 | `internal/tunnel/manager.go` |
+| R7 | 접속 정보가 바뀐 터널을 다시 띄운다 | `internal/tunnel/reconcile.go` |
 | R2 | 핸들러에서 터널 조작과 rwLock 제거, 루프 깨우기 | `internal/api/handlers.go` |
 | R3 | Update 계열에 행 잠금 | `internal/api/handlers.go` |
 | R4 | `reconcile.interval_sec` 추가 | `internal/config/config.go` |
