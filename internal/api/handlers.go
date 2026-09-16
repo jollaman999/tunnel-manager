@@ -2,28 +2,36 @@ package api
 
 import (
 	"errors"
-	"fmt"
 	"net/http"
 	"strconv"
-	"sync"
 
 	"github.com/jollaman999/tunnel-manager/internal/crypto"
 	"github.com/jollaman999/tunnel-manager/internal/models"
-	"github.com/jollaman999/tunnel-manager/internal/tunnel"
 	"github.com/labstack/echo/v4"
 	"go.uber.org/zap"
 	"gorm.io/gorm"
 )
 
-type Handler struct {
-	db      *gorm.DB
-	manager *tunnel.Manager
-	logger  *zap.Logger
-	cipher  *crypto.Cipher
-	rwLock  sync.RWMutex
+// tunnelManager is what the handlers need from the tunnel manager. They write
+// rows and ask for a reconcile pass; starting and stopping tunnels is the work
+// of the loop, so nothing here does it.
+type tunnelManager interface {
+	// WakeReconcile asks for a reconcile pass. It is called once the
+	// transaction is committed, because a pass reads the rows and a pass that
+	// runs before the commit does not see them.
+	WakeReconcile()
+	GetAllTunnels() (*[]models.Tunnel, error)
+	GetHostTunnels(hostID uint) (*[]models.Tunnel, error)
 }
 
-func NewHandler(db *gorm.DB, manager *tunnel.Manager, logger *zap.Logger, cipher *crypto.Cipher) *Handler {
+type Handler struct {
+	db      *gorm.DB
+	manager tunnelManager
+	logger  *zap.Logger
+	cipher  *crypto.Cipher
+}
+
+func NewHandler(db *gorm.DB, manager tunnelManager, logger *zap.Logger, cipher *crypto.Cipher) *Handler {
 	return &Handler{
 		db:      db,
 		manager: manager,
@@ -59,9 +67,6 @@ func (h *Handler) CreateHost(c echo.Context) error {
 		})
 	}
 
-	h.rwLock.Lock()
-	defer h.rwLock.Unlock()
-
 	tx := h.db.Begin()
 	err = tx.Error
 	if err != nil {
@@ -89,17 +94,6 @@ func (h *Handler) CreateHost(c echo.Context) error {
 		})
 	}
 
-	var sps []models.ServicePort
-	err = tx.Find(&sps).Error
-	if err != nil {
-		tx.Rollback()
-		h.logger.Error("failed to fetch service ports", zap.Error(err))
-		return c.JSON(http.StatusInternalServerError, models.Response{
-			Success: false,
-			Error:   "Failed to fetch service ports: " + err.Error(),
-		})
-	}
-
 	err = tx.Commit().Error
 	if err != nil {
 		return c.JSON(http.StatusInternalServerError, models.Response{
@@ -108,15 +102,7 @@ func (h *Handler) CreateHost(c echo.Context) error {
 		})
 	}
 
-	for _, sp := range sps {
-		err = h.manager.StartTunnel(host, &sp)
-		if err != nil {
-			h.logger.Error("failed to start tunnel",
-				zap.Error(err),
-				zap.String("host_ip", host.IP),
-				zap.Int("service_port", sp.ServicePort))
-		}
-	}
+	h.manager.WakeReconcile()
 
 	return c.JSON(http.StatusCreated, models.Response{
 		Success: true,
@@ -125,9 +111,6 @@ func (h *Handler) CreateHost(c echo.Context) error {
 }
 
 func (h *Handler) ListHosts(c echo.Context) error {
-	h.rwLock.RLock()
-	defer h.rwLock.RUnlock()
-
 	var hosts []models.Host
 	err := h.db.Find(&hosts).Error
 	if err != nil {
@@ -153,9 +136,6 @@ func (h *Handler) GetHost(c echo.Context) error {
 		})
 	}
 
-	h.rwLock.RLock()
-	defer h.rwLock.RUnlock()
-
 	var host models.Host
 	err = h.db.First(&host, id).Error
 	if err != nil {
@@ -169,37 +149,6 @@ func (h *Handler) GetHost(c echo.Context) error {
 		Success: true,
 		Data:    host,
 	})
-}
-
-// resolveTunnelActions decides the enabled state after the update and whether
-// the tunnels of the host have to be stopped and started. The stored password
-// is compared after decryption because the request carries a plaintext one and
-// because encrypting the same plaintext twice never yields the same value.
-func resolveTunnelActions(req *models.UpdateHostRequest, host *models.Host, cipher *crypto.Cipher) (finalEnabled, needStop, needStart bool) {
-	finalEnabled = host.Enabled
-	if req.Enabled != nil {
-		finalEnabled = *req.Enabled
-	}
-
-	// A stored value that does not decrypt is either one written before
-	// passwords were encrypted or one sealed with another key. Neither can be
-	// compared to the requested password, so the stored form is compared as it
-	// is and the tunnels are restarted rather than left on a stale password.
-	storedPassword := host.Password
-	decrypted, err := cipher.Decrypt(host.Password)
-	if err == nil {
-		storedPassword = decrypted
-	}
-
-	connectionChanged := (req.IP != "" && host.IP != req.IP) ||
-		(req.Port != nil && host.Port != *req.Port) ||
-		(req.User != "" && host.User != req.User) ||
-		(req.Password != "" && storedPassword != req.Password)
-
-	needStop = host.Enabled && (!finalEnabled || connectionChanged)
-	needStart = finalEnabled && (!host.Enabled || connectionChanged)
-
-	return finalEnabled, needStop, needStart
 }
 
 func (h *Handler) UpdateHost(c echo.Context) error {
@@ -228,9 +177,6 @@ func (h *Handler) UpdateHost(c echo.Context) error {
 		})
 	}
 
-	h.rwLock.Lock()
-	defer h.rwLock.Unlock()
-
 	var host models.Host
 	err = h.db.First(&host, id).Error
 	if err != nil {
@@ -239,18 +185,6 @@ func (h *Handler) UpdateHost(c echo.Context) error {
 			Error:   "Host not found: " + err.Error(),
 		})
 	}
-
-	var sps []models.ServicePort
-	err = h.db.Find(&sps).Error
-	if err != nil {
-		h.logger.Error("failed to fetch service ports", zap.Error(err))
-		return c.JSON(http.StatusInternalServerError, models.Response{
-			Success: false,
-			Error:   "Failed to fetch service ports: " + err.Error(),
-		})
-	}
-
-	finalEnabled, needTunnelStop, needTunnelStart := resolveTunnelActions(&req, &host, h.cipher)
 
 	if req.IP != "" {
 		host.IP = req.IP
@@ -275,7 +209,9 @@ func (h *Handler) UpdateHost(c echo.Context) error {
 	if req.Description != "" {
 		host.Description = req.Description
 	}
-	host.Enabled = finalEnabled
+	if req.Enabled != nil {
+		host.Enabled = *req.Enabled
+	}
 
 	tx := h.db.Begin()
 	err = tx.Error
@@ -304,36 +240,7 @@ func (h *Handler) UpdateHost(c echo.Context) error {
 		})
 	}
 
-	if needTunnelStop {
-		for _, sp := range sps {
-			err = h.manager.StopTunnel(host.ID, sp.ID)
-			if err != nil {
-				if errors.Is(err, tunnel.ErrTunnelNotExist) {
-					h.logger.Debug("no tunnel to stop",
-						zap.Uint("host_id", host.ID),
-						zap.Uint("service_port_id", sp.ID))
-					continue
-				}
-
-				h.logger.Warn("failed to stop tunnel",
-					zap.Uint("host_id", host.ID),
-					zap.Uint("service_port_id", sp.ID),
-					zap.Error(err))
-			}
-		}
-	}
-
-	if needTunnelStart {
-		for _, sp := range sps {
-			err = h.manager.StartTunnel(&host, &sp)
-			if err != nil {
-				h.logger.Error("failed to restart tunnel",
-					zap.Error(err),
-					zap.String("host_ip", host.IP),
-					zap.Int("service_port", sp.ServicePort))
-			}
-		}
-	}
+	h.manager.WakeReconcile()
 
 	return c.JSON(http.StatusOK, models.Response{
 		Success: true,
@@ -350,9 +257,6 @@ func (h *Handler) DeleteHost(c echo.Context) error {
 		})
 	}
 
-	h.rwLock.Lock()
-	defer h.rwLock.Unlock()
-
 	var host models.Host
 	err = h.db.First(&host, id).Error
 	if err != nil {
@@ -366,33 +270,6 @@ func (h *Handler) DeleteHost(c echo.Context) error {
 			Success: false,
 			Error:   "Failed to fetch Host: " + err.Error(),
 		})
-	}
-
-	var sps []models.ServicePort
-	err = h.db.Find(&sps).Error
-	if err != nil {
-		h.logger.Error("failed to fetch service ports", zap.Error(err))
-		return c.JSON(http.StatusInternalServerError, models.Response{
-			Success: false,
-			Error:   "Failed to fetch service ports: " + err.Error(),
-		})
-	}
-
-	for _, sp := range sps {
-		err = h.manager.StopTunnel(host.ID, sp.ID)
-		if err != nil {
-			if errors.Is(err, tunnel.ErrTunnelNotExist) {
-				h.logger.Debug("no tunnel to stop",
-					zap.Uint("host_id", host.ID),
-					zap.Uint("service_port_id", sp.ID))
-				continue
-			}
-
-			h.logger.Warn("failed to stop tunnel",
-				zap.Uint("host_id", host.ID),
-				zap.Uint("service_port_id", sp.ID),
-				zap.Error(err))
-		}
 	}
 
 	tx := h.db.Begin()
@@ -421,33 +298,12 @@ func (h *Handler) DeleteHost(c echo.Context) error {
 		})
 	}
 
+	h.manager.WakeReconcile()
+
 	return c.JSON(http.StatusOK, models.Response{
 		Success: true,
 		Data:    "Host deleted successfully",
 	})
-}
-
-// stopTunnelsStarted stops the tunnels that the request started for sp. The
-// service port row is gone once the transaction does not go through, so nothing
-// reads that row again to stop these tunnels, and they keep running until the
-// process is restarted.
-func (h *Handler) stopTunnelsStarted(hosts []models.Host, sp *models.ServicePort) {
-	for _, host := range hosts {
-		err := h.manager.StopTunnel(host.ID, sp.ID)
-		if err != nil {
-			if errors.Is(err, tunnel.ErrTunnelNotExist) {
-				h.logger.Debug("no tunnel to stop",
-					zap.Uint("host_id", host.ID),
-					zap.Uint("service_port_id", sp.ID))
-				continue
-			}
-
-			h.logger.Warn("failed to stop the tunnel started for the service port that was not created",
-				zap.Uint("host_id", host.ID),
-				zap.Uint("service_port_id", sp.ID),
-				zap.Error(err))
-		}
-	}
 }
 
 func (h *Handler) CreateServicePort(c echo.Context) error {
@@ -467,9 +323,6 @@ func (h *Handler) CreateServicePort(c echo.Context) error {
 			Error:   "Validation failed: " + err.Error(),
 		})
 	}
-
-	h.rwLock.Lock()
-	defer h.rwLock.Unlock()
 
 	sp := &models.ServicePort{
 		ServiceIP:   req.ServiceIP,
@@ -497,44 +350,17 @@ func (h *Handler) CreateServicePort(c echo.Context) error {
 		})
 	}
 
-	var hosts []models.Host
-	err = tx.Find(&hosts).Error
-	if err != nil {
-		tx.Rollback()
-		h.logger.Error("failed to fetch Hosts", zap.Error(err))
-		return c.JSON(http.StatusInternalServerError, models.Response{
-			Success: false,
-			Error:   "Failed to fetch Hosts: " + err.Error(),
-		})
-	}
-
-	var started []models.Host
-	for _, host := range hosts {
-		err = h.manager.StartTunnel(&host, sp)
-		if err != nil {
-			h.stopTunnelsStarted(started, sp)
-			tx.Rollback()
-			h.logger.Error("failed to start new tunnel",
-				zap.Error(err),
-				zap.String("host_ip", host.IP),
-				zap.Int("service_port", sp.ServicePort))
-			return c.JSON(http.StatusInternalServerError, models.Response{
-				Success: false,
-				Error:   fmt.Sprintf("Failed to start new tunnel: %v", err),
-			})
-		}
-
-		started = append(started, host)
-	}
-
 	err = tx.Commit().Error
 	if err != nil {
-		h.stopTunnelsStarted(started, sp)
 		return c.JSON(http.StatusInternalServerError, models.Response{
 			Success: false,
 			Error:   "Failed to commit transaction: " + err.Error(),
 		})
 	}
+
+	// The row is stored, which is what the answer reports. Whether a tunnel can
+	// be built for it is answered by the status of the tunnels, not here.
+	h.manager.WakeReconcile()
 
 	return c.JSON(http.StatusCreated, models.Response{
 		Success: true,
@@ -543,9 +369,6 @@ func (h *Handler) CreateServicePort(c echo.Context) error {
 }
 
 func (h *Handler) ListServicePorts(c echo.Context) error {
-	h.rwLock.RLock()
-	defer h.rwLock.RUnlock()
-
 	var sps []models.ServicePort
 	err := h.db.Find(&sps).Error
 	if err != nil {
@@ -571,9 +394,6 @@ func (h *Handler) GetServicePort(c echo.Context) error {
 		})
 	}
 
-	h.rwLock.RLock()
-	defer h.rwLock.RUnlock()
-
 	var sp models.ServicePort
 	err = h.db.First(&sp, id).Error
 	if err != nil {
@@ -597,9 +417,6 @@ func (h *Handler) UpdateServicePort(c echo.Context) error {
 			Error:   "Invalid service port ID: " + err.Error(),
 		})
 	}
-
-	h.rwLock.Lock()
-	defer h.rwLock.Unlock()
 
 	var sp models.ServicePort
 	err = h.db.First(&sp, id).Error
@@ -635,34 +452,6 @@ func (h *Handler) UpdateServicePort(c echo.Context) error {
 		})
 	}
 
-	var hosts []models.Host
-	err = tx.Find(&hosts).Error
-	if err != nil {
-		tx.Rollback()
-		h.logger.Error("failed to fetch Hosts", zap.Error(err))
-		return c.JSON(http.StatusInternalServerError, models.Response{
-			Success: false,
-			Error:   "Failed to fetch Hosts: " + err.Error(),
-		})
-	}
-
-	for _, host := range hosts {
-		err = h.manager.StopTunnel(host.ID, sp.ID)
-		if err != nil {
-			if errors.Is(err, tunnel.ErrTunnelNotExist) {
-				h.logger.Debug("no existing tunnel to stop",
-					zap.String("host_ip", host.IP),
-					zap.Int("service_port", sp.ServicePort))
-				continue
-			}
-
-			h.logger.Warn("failed to stop existing tunnel",
-				zap.String("host_ip", host.IP),
-				zap.Int("service_port", sp.ServicePort),
-				zap.Error(err))
-		}
-	}
-
 	sp.ServiceIP = req.ServiceIP
 	sp.ServicePort = req.ServicePort
 	sp.LocalPort = req.LocalPort
@@ -686,15 +475,7 @@ func (h *Handler) UpdateServicePort(c echo.Context) error {
 		})
 	}
 
-	for _, host := range hosts {
-		err = h.manager.StartTunnel(&host, &sp)
-		if err != nil {
-			h.logger.Error("failed to start new tunnel",
-				zap.Error(err),
-				zap.String("host_ip", host.IP),
-				zap.Int("service_port", sp.ServicePort))
-		}
-	}
+	h.manager.WakeReconcile()
 
 	return c.JSON(http.StatusOK, models.Response{
 		Success: true,
@@ -710,9 +491,6 @@ func (h *Handler) DeleteServicePort(c echo.Context) error {
 			Error:   "Invalid service port ID: " + err.Error(),
 		})
 	}
-
-	h.rwLock.Lock()
-	defer h.rwLock.Unlock()
 
 	var sp models.ServicePort
 	err = h.db.First(&sp, id).Error
@@ -732,34 +510,6 @@ func (h *Handler) DeleteServicePort(c echo.Context) error {
 		})
 	}
 
-	var hosts []models.Host
-	err = tx.Find(&hosts).Error
-	if err != nil {
-		tx.Rollback()
-		h.logger.Error("failed to fetch Hosts", zap.Error(err))
-		return c.JSON(http.StatusInternalServerError, models.Response{
-			Success: false,
-			Error:   "Failed to fetch Hosts: " + err.Error(),
-		})
-	}
-
-	for _, host := range hosts {
-		err = h.manager.StopTunnel(host.ID, sp.ID)
-		if err != nil {
-			if errors.Is(err, tunnel.ErrTunnelNotExist) {
-				h.logger.Debug("no tunnel to stop",
-					zap.String("host_ip", host.IP),
-					zap.Int("service_port", sp.ServicePort))
-				continue
-			}
-
-			h.logger.Warn("failed to stop tunnel",
-				zap.String("host_ip", host.IP),
-				zap.Int("service_port", sp.ServicePort),
-				zap.Error(err))
-		}
-	}
-
 	err = tx.Delete(&sp).Error
 	if err != nil {
 		tx.Rollback()
@@ -777,6 +527,8 @@ func (h *Handler) DeleteServicePort(c echo.Context) error {
 		})
 	}
 
+	h.manager.WakeReconcile()
+
 	return c.JSON(http.StatusOK, models.Response{
 		Success: true,
 		Data:    "Service port deleted successfully",
@@ -784,9 +536,6 @@ func (h *Handler) DeleteServicePort(c echo.Context) error {
 }
 
 func (h *Handler) GetStatus(c echo.Context) error {
-	h.rwLock.RLock()
-	defer h.rwLock.RUnlock()
-
 	tunnels, err := h.manager.GetAllTunnels()
 	if err != nil {
 		return c.JSON(http.StatusInternalServerError, models.Response{
@@ -820,9 +569,6 @@ func (h *Handler) GetHostStatus(c echo.Context) error {
 			Error:   "Invalid Host ID: " + err.Error(),
 		})
 	}
-
-	h.rwLock.RLock()
-	defer h.rwLock.RUnlock()
 
 	var host models.Host
 	err = h.db.First(&host, hostID).Error

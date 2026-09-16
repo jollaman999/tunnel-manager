@@ -37,6 +37,13 @@ const version = "1.0.0"
 // Maximum time to wait for in-flight HTTP requests to finish on shutdown.
 const shutdownTimeout = 10 * time.Second
 
+// Maximum time to wait for the reconcile loop to return on shutdown. The loop
+// leaves as soon as the pass it is running ends, and a pass that is dialing a
+// Host that does not answer takes as long as the SSH timeouts of the tunnels it
+// still has to start. Waiting for it without a bound would hold the process up
+// long after the API stopped answering.
+const reconcileStopTimeout = 10 * time.Second
+
 // errShutdownRequested reports that the wait for the database ended because a
 // shutdown signal arrived, not because the database answered.
 var errShutdownRequested = errors.New("shutdown requested while waiting for the database")
@@ -449,11 +456,26 @@ func main() {
 		log.Fatalf("Failed to create tunnel manager: %v", err)
 	}
 
+	// The first reconcile pass runs before anything is served, so the tunnels
+	// of the rows that are already stored are up by the time the first request
+	// can ask about them.
 	logger.Info("Restoring all tunnels...")
 	err = manager.RestoreAllTunnels()
 	if err != nil {
 		logger.Error("failed to restore tunnels", zap.Error(err))
 	}
+
+	// From here on the loop is the only thing that starts and stops tunnels. The
+	// handlers write rows and wake it up. reconcileDone reports that it returned,
+	// because stopping the tunnels while it still runs would let it start them
+	// again.
+	reconcileCtx, stopReconcile := context.WithCancel(context.Background())
+	reconcileDone := make(chan struct{})
+
+	go func() {
+		defer close(reconcileDone)
+		manager.RunReconcileLoop(reconcileCtx, cfg.Reconcile.IntervalSec)
+	}()
 
 	e := echo.New()
 	e.Validator = &CustomValidator{validator: validator.New()}
@@ -508,6 +530,20 @@ func main() {
 	err = e.Shutdown(ctx)
 	if err != nil {
 		logger.Error("failed to shut down API server gracefully", zap.Error(err))
+	}
+
+	// The loop is stopped before the tunnels are, because it starts again what
+	// is stopped while it runs. It returns once the pass it is in ends, and the
+	// wait is given up after reconcileStopTimeout: a pass that is still dialing
+	// holds nothing that survives this process, which exits as soon as the
+	// tunnels are down.
+	stopReconcile()
+
+	select {
+	case <-reconcileDone:
+	case <-time.After(reconcileStopTimeout):
+		logger.Warn("the reconcile loop did not return in time, stopping the tunnels anyway",
+			zap.Duration("waited", reconcileStopTimeout))
 	}
 
 	logger.Info("Stopping all tunnels...")
