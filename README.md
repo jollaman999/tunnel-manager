@@ -45,6 +45,29 @@ enabled Hosts and three service ports means six tunnels.
 - MySQL 5.7 or newer, or MariaDB 10.3 or newer
 - Docker and Docker Compose, optional
 
+### Platforms
+
+`make release` builds a binary for each of these. `go build` works on anything
+else Go supports, with the note below.
+
+| Platform | Release binary |
+|----------|----------------|
+| Linux amd64 | `tunnel-manager-linux-amd64` |
+| Linux arm64 | `tunnel-manager-linux-arm64` |
+| macOS Intel | `tunnel-manager-darwin-amd64` |
+| macOS Apple silicon | `tunnel-manager-darwin-arm64` |
+| Windows amd64 | `tunnel-manager-windows-amd64.exe` |
+
+On Unix the process raises its own limit on open file descriptors at startup,
+because every tunnel holds several of them. Windows has no such per process
+limit to raise, so that step does nothing there. Nothing else differs.
+
+The bundled systemd unit is for Linux. On the other platforms the process has to
+be kept running by whatever that system uses.
+
+Only the Linux binaries have been run. The others are built and checked by the
+compiler and the vet tool for their platform, and no more than that.
+
 ## How it works
 
 ### The reconcile loop

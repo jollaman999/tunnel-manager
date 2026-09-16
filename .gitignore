@@ -3,4 +3,7 @@
 _data/
 /keys/
 tunnel-manager
+tunnel-manager-linux-*
+tunnel-manager-darwin-*
+tunnel-manager-windows-*
 *.tar*

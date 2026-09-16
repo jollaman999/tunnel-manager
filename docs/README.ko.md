@@ -42,6 +42,29 @@ Tunnel Manager 는 SSH 터널을 열고 그 상태를 계속 유지합니다. �
 - MySQL 5.7 이상 또는 MariaDB 10.3 이상
 - Docker 와 Docker Compose (선택사항)
 
+### 지원 플랫폼
+
+`make release` 가 아래 각각에 대해 바이너리를 하나씩 만듭니다. 그 밖에 Go 가 지원하는 곳에서도
+`go build` 로 빌드됩니다. 아래 주의사항만 보면 됩니다.
+
+| 플랫폼 | 릴리즈 바이너리 |
+|--------|-----------------|
+| Linux amd64 | `tunnel-manager-linux-amd64` |
+| Linux arm64 | `tunnel-manager-linux-arm64` |
+| macOS 인텔 | `tunnel-manager-darwin-amd64` |
+| macOS 애플 실리콘 | `tunnel-manager-darwin-arm64` |
+| Windows amd64 | `tunnel-manager-windows-amd64.exe` |
+
+유닉스에서는 기동할 때 프로세스가 열 수 있는 파일 디스크립터 한도를 스스로 올립니다. 터널 하나마다
+여러 개를 쓰기 때문입니다. Windows 에는 프로세스마다 걸리는 그런 한도가 없어서 이 단계가 아무것도
+하지 않습니다. 그 밖에 다른 점은 없습니다.
+
+같이 들어 있는 systemd 유닛은 Linux 용입니다. 다른 플랫폼에서는 그 시스템이 쓰는 방법으로 프로세스를
+계속 띄워 두어야 합니다.
+
+**실제로 돌려 본 것은 Linux 바이너리뿐입니다.** 나머지는 그 플랫폼의 컴파일러와 vet 검사를 통과한
+것까지만 확인했습니다.
+
 ## 동작 방식
 
 ### 조정 루프
