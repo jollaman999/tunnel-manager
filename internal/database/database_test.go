@@ -520,3 +520,75 @@ func TestNewDatabaseReportsTheFailureThroughTheGivenLogger(t *testing.T) {
 		}
 	}
 }
+
+// blackholeAddress is reserved for documentation (TEST-NET-1, RFC 5737), so
+// nothing routes it back and a connect attempt either sits there until it is
+// cut off or is refused by the local routing table. Neither outcome depends on
+// a host being up, which is what makes it usable in a test.
+const blackholeAddress = "192.0.2.1"
+
+// TestTheDSNCarriesADialTimeout reads the parameters back out of the assembled
+// DSN. The value only reaches the driver as text, so a name the driver does not
+// know or a duration it cannot parse would be dropped without a word and leave
+// the dial unbounded again.
+func TestTheDSNCarriesADialTimeout(t *testing.T) {
+	dsn := mysqlDSN("127.0.0.1", 3306, testUser, testPassword, testDBName)
+
+	_, params, found := strings.Cut(dsn, "?")
+	if !found {
+		t.Fatalf("the DSN %q carries no parameters", dsn)
+	}
+
+	var timeout string
+	for _, param := range strings.Split(params, "&") {
+		if value, ok := strings.CutPrefix(param, "timeout="); ok {
+			timeout = value
+		}
+	}
+
+	if timeout == "" {
+		t.Fatalf("the DSN %q has no timeout parameter", dsn)
+	}
+
+	parsed, err := time.ParseDuration(timeout)
+	if err != nil {
+		t.Fatalf("the driver cannot parse the timeout %q: %v", timeout, err)
+	}
+
+	if parsed != dialTimeout {
+		t.Fatalf("the DSN asks for %s, want %s", parsed, dialTimeout)
+	}
+
+	// The parameters that were already there have to survive the addition.
+	for _, param := range []string{"charset=utf8mb4", "parseTime=True", "loc=Local"} {
+		if !strings.Contains(params, param) {
+			t.Fatalf("the DSN %q lost %s", dsn, param)
+		}
+	}
+}
+
+// TestNewDatabaseGivesUpOnAnUnreachableAddress is the reason the timeout is in
+// the DSN at all. An address that swallows the packets keeps the kernel
+// retrying the TCP handshake for over two minutes, and the startup wait in main
+// cannot end while one attempt is still inside the driver, so its configured
+// timeout would not hold.
+func TestNewDatabaseGivesUpOnAnUnreachableAddress(t *testing.T) {
+	core, _ := observer.New(zapcore.DebugLevel)
+
+	start := time.Now()
+
+	_, err := NewDatabase(blackholeAddress, 3306, testUser, testPassword, testDBName, zap.New(core), "error")
+
+	elapsed := time.Since(start)
+
+	if err == nil {
+		t.Fatalf("an unreachable address produced a usable handle after %s", elapsed)
+	}
+
+	// The margin covers the dial being set up and the error travelling back
+	// out through gorm. What is being held here is the order of magnitude:
+	// seconds rather than the minutes the kernel would spend on its own.
+	if limit := dialTimeout + 2*time.Second; elapsed > limit {
+		t.Fatalf("the attempt took %s, want it given up within %s", elapsed, limit)
+	}
+}

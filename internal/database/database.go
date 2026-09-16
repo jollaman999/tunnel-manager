@@ -90,9 +90,31 @@ func (l *zapGormLogger) Trace(_ context.Context, begin time.Time, fc func() (str
 	}
 }
 
+// dialTimeout bounds a single connect attempt. Without it the dial runs until
+// the kernel gives up on the TCP handshake, which takes over two minutes
+// against an address that swallows the packets, and the startup wait in
+// initDatabase cannot end while one attempt is still inside the driver. That
+// wait retries once a second and gives up after database.timeout_sec, 30 by
+// default, so one attempt has to stay a small part of that budget: 3 seconds
+// leaves room for several attempts within the default budget while staying far
+// above the handshake on a local network, which finishes in under a
+// millisecond, so a healthy but loaded server is not cut off.
+//
+// Only the dial is bounded. readTimeout and writeTimeout are deadlines per read
+// and per write on an established connection, not per query, so a query that
+// takes longer to produce its first byte than the deadline would be broken off.
+// Nothing here needs that, and the blocked startup is a dial problem.
+const dialTimeout = 3 * time.Second
+
+// mysqlDSN assembles what the driver is opened with. It is kept apart from the
+// open so that the parameters can be read back without a server to connect to.
+func mysqlDSN(host string, port int, user, password, dbname string) string {
+	return fmt.Sprintf("%s:%s@tcp(%s:%d)/%s?charset=utf8mb4&parseTime=True&loc=Local&timeout=%s",
+		user, password, host, port, dbname, dialTimeout)
+}
+
 func NewDatabase(host string, port int, user, password, dbname string, logger *zap.Logger, logLevel string) (*gorm.DB, error) {
-	dsn := fmt.Sprintf("%s:%s@tcp(%s:%d)/%s?charset=utf8mb4&parseTime=True&loc=Local",
-		user, password, host, port, dbname)
+	dsn := mysqlDSN(host, port, user, password, dbname)
 
 	config := &gorm.Config{
 		Logger: &zapGormLogger{
