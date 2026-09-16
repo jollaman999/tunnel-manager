@@ -33,3 +33,199 @@ pre {
   border-radius: 4px;
   font-size: 13px;
 }
+
+nav {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+  align-items: center;
+  margin: -0.25rem 0 1rem;
+  padding-bottom: 0.75rem;
+  border-bottom: 1px solid #dcdfe4;
+}
+
+nav a {
+  color: #24456b;
+  text-decoration: none;
+  padding: 0.2rem 0.5rem;
+  border-radius: 4px;
+}
+
+nav a:hover {
+  background: #eef1f5;
+}
+
+nav a.current {
+  background: #24456b;
+  color: #ffffff;
+}
+
+/* The logout sits apart from the screens, because it is not one of them. */
+nav a.logout {
+  margin-left: auto;
+  color: #8a2f2f;
+}
+
+h2 {
+  margin: 0 0 0.75rem;
+  font-size: 1rem;
+}
+
+.notice {
+  margin: 0 0 1rem;
+  padding: 0.6rem 0.75rem;
+  border-radius: 4px;
+  border: 1px solid;
+}
+
+.notice.error {
+  color: #7a1f1f;
+  background: #fdeeee;
+  border-color: #f0c2c2;
+}
+
+.notice.info {
+  color: #1f4d2b;
+  background: #eefaf0;
+  border-color: #bfe3c8;
+}
+
+.card {
+  margin: 0 0 1.25rem;
+  padding: 1rem;
+  background: #fbfcfd;
+  border: 1px solid #dcdfe4;
+  border-radius: 6px;
+}
+
+.field {
+  display: grid;
+  grid-template-columns: 10rem minmax(0, 22rem);
+  align-items: center;
+  gap: 0.5rem 0.75rem;
+  margin-bottom: 0.6rem;
+}
+
+.field label {
+  color: #4a4f57;
+}
+
+.field input[type="text"],
+.field input[type="password"] {
+  padding: 0.35rem 0.5rem;
+  font: inherit;
+  border: 1px solid #c6cbd2;
+  border-radius: 4px;
+}
+
+.field input[type="checkbox"] {
+  justify-self: start;
+  width: 1rem;
+  height: 1rem;
+}
+
+.field small {
+  grid-column: 2;
+  color: #6b7079;
+  font-size: 12px;
+}
+
+.buttons {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}
+
+button {
+  padding: 0.35rem 0.8rem;
+  font: inherit;
+  color: #1c1c1c;
+  background: #ffffff;
+  border: 1px solid #c6cbd2;
+  border-radius: 4px;
+  cursor: pointer;
+}
+
+button:hover {
+  background: #eef1f5;
+}
+
+button[type="submit"] {
+  color: #ffffff;
+  background: #24456b;
+  border-color: #24456b;
+}
+
+button[type="submit"]:hover {
+  background: #1b3652;
+}
+
+table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 14px;
+}
+
+th,
+td {
+  padding: 0.4rem 0.5rem;
+  text-align: left;
+  border-bottom: 1px solid #e6e8eb;
+  vertical-align: top;
+}
+
+th {
+  color: #4a4f57;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.counts {
+  display: flex;
+  gap: 0.75rem;
+  margin-bottom: 1rem;
+}
+
+.count {
+  display: flex;
+  flex-direction: column;
+  min-width: 7rem;
+  padding: 0.6rem 0.75rem;
+  background: #f0f3f7;
+  border-radius: 6px;
+}
+
+.count span {
+  font-size: 1.5rem;
+  line-height: 1.2;
+}
+
+.count small {
+  color: #4a4f57;
+  font-size: 12px;
+}
+
+.summary {
+  margin: 0 0 0.75rem;
+  padding: 0.5rem 0.75rem;
+  border-radius: 4px;
+}
+
+/* The gap between the three counts is what the screen is for, so the sentence
+   that names it is coloured and the one that says there is no gap is not. */
+.summary.warning {
+  color: #7a4a10;
+  background: #fdf4e6;
+  border: 1px solid #f0d9ae;
+}
+
+.summary.ok {
+  color: #1f4d2b;
+  background: #eefaf0;
+  border: 1px solid #bfe3c8;
+}
+
+.summary.empty {
+  color: #6b7079;
+  background: #f4f5f7;
+}

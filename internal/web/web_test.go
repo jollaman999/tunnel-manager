@@ -60,7 +60,7 @@ func TestEmbeddedFilesArePresent(t *testing.T) {
 	sort.Strings(names)
 	t.Logf("embedded files: %v", names)
 
-	want := []string{"static/app.js", "static/index.html", "static/style.css"}
+	want := []string{"static/app.js", "static/index.html", "static/screens.js", "static/style.css"}
 	if strings.Join(names, " ") != strings.Join(want, " ") {
 		t.Fatalf("embedded files = %v, want %v", names, want)
 	}
@@ -120,6 +120,7 @@ func TestAssetsAreServedWithTheirType(t *testing.T) {
 		contentType string
 	}{
 		{target: "/ui/app.js", contentType: "text/javascript"},
+		{target: "/ui/screens.js", contentType: "text/javascript"},
 		{target: "/ui/style.css", contentType: "text/css"},
 	}
 
@@ -157,6 +158,91 @@ func TestUnknownPathServesTheIndex(t *testing.T) {
 
 	if rec.Body.String() != index.Body.String() {
 		t.Fatalf("GET /ui/hosts did not serve the same body as %s", uiPrefix)
+	}
+}
+
+// TestEveryScreenPathServesTheIndex walks the paths the UI navigates to. They
+// have no route of their own, so a reload or a bookmark of any of them has to
+// come back as the page that reads the path and draws the screen.
+func TestEveryScreenPathServesTheIndex(t *testing.T) {
+	e := newServer()
+
+	index := get(e, uiPrefix)
+
+	for _, target := range []string{"/ui/login", "/ui/setup", "/ui/hosts", "/ui/service-ports"} {
+		rec := get(e, target)
+
+		if rec.Code != http.StatusOK {
+			t.Fatalf("GET %s = %d, want %d", target, rec.Code, http.StatusOK)
+		}
+
+		if rec.Body.String() != index.Body.String() {
+			t.Fatalf("GET %s did not serve the same body as %s", target, uiPrefix)
+		}
+	}
+}
+
+// TestThePageNamesItsAssetsAbsolutely pins what makes the screens above work.
+// The same HTML is served at /ui/hosts as at /ui/, so a src or href without a
+// leading slash would be resolved against the screen path and asked for as
+// /ui/hosts/app.js, which is not where the file is.
+func TestThePageNamesItsAssetsAbsolutely(t *testing.T) {
+	reference := regexp.MustCompile(`(?:src|href)="([^"]+)"`)
+
+	page, err := fs.ReadFile(staticFS, "static/"+indexFile)
+	if err != nil {
+		t.Fatalf("failed to read the page: %v", err)
+	}
+
+	matches := reference.FindAllStringSubmatch(string(page), -1)
+	if len(matches) == 0 {
+		t.Fatalf("the page pulls in nothing, so the assets are not reachable at all")
+	}
+
+	e := newServer()
+
+	for _, match := range matches {
+		target := match[1]
+
+		if !strings.HasPrefix(target, uiPrefix) {
+			t.Fatalf("the page pulls in %q, which is not under %s", target, uiPrefix)
+		}
+
+		if rec := get(e, target); rec.Code != http.StatusOK {
+			t.Fatalf("GET %s = %d, want %d", target, rec.Code, http.StatusOK)
+		}
+	}
+}
+
+// TestNothingIsFetchedFromTheNetwork keeps the UI working on a host that
+// reaches this server and nothing else. A script or a stylesheet pulled from
+// somewhere else would leave the screens blank there, and it would hand a third
+// party the page the SSH passwords are typed into.
+func TestNothingIsFetchedFromTheNetwork(t *testing.T) {
+	external := regexp.MustCompile(`(?i)(https?:)?//[a-z0-9.-]+\.[a-z]{2,}`)
+
+	err := fs.WalkDir(staticFS, ".", func(name string, entry fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+
+		if entry.IsDir() {
+			return nil
+		}
+
+		body, err := fs.ReadFile(staticFS, name)
+		if err != nil {
+			return err
+		}
+
+		if match := external.Find(body); match != nil {
+			t.Errorf("%s names something outside this server: %q", name, match)
+		}
+
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("failed to read the embedded files: %v", err)
 	}
 }
 

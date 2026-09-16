@@ -11,6 +11,9 @@
   </head>
   <body>
     <div id="app">Loading...</div>
+    <!-- screens.js is loaded first: it holds the table of screens that app.js
+         reads as soon as it runs, to draw the screen the URL asks for. -->
+    <script src="/ui/screens.js"></script>
     <script src="/ui/app.js"></script>
   </body>
 </html>
