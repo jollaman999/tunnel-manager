@@ -616,3 +616,75 @@ func TestReconcileKeepsTheFingerprintOutOfTheLogs(t *testing.T) {
 		}
 	}
 }
+
+// TestDesiredTunnelCountCountsWhatAPassWouldStart pins down that the count the
+// status API is answered from is the size of the desired state of a reconcile
+// pass: every service port on every enabled Host.
+func TestDesiredTunnelCountCountsWhatAPassWouldStart(t *testing.T) {
+	tests := []struct {
+		name  string
+		hosts []models.Host
+		sps   []models.ServicePort
+		want  int
+	}{
+		{
+			name:  "every combination of the enabled hosts and the service ports",
+			hosts: []models.Host{enabledHost(1, true), enabledHost(2, true)},
+			sps:   []models.ServicePort{testServicePort(1), testServicePort(2), testServicePort(3)},
+			want:  6,
+		},
+		{
+			name:  "a host that is not enabled counts for nothing",
+			hosts: []models.Host{enabledHost(1, true), enabledHost(2, false)},
+			sps:   []models.ServicePort{testServicePort(1), testServicePort(2), testServicePort(3)},
+			want:  3,
+		},
+		{
+			name:  "no service port leaves nothing to run",
+			hosts: []models.Host{enabledHost(1, true), enabledHost(2, true)},
+			sps:   nil,
+			want:  0,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			m, err := NewManager(newStubDB(t, tt.hosts, tt.sps, nil), zap.NewNop(), newTestCipher(t), 1)
+			if err != nil {
+				t.Fatalf("failed to create manager: %v", err)
+			}
+
+			count, err := m.DesiredTunnelCount()
+			if err != nil {
+				t.Fatalf("DesiredTunnelCount returned error: %v", err)
+			}
+			if count != tt.want {
+				t.Fatalf("DesiredTunnelCount = %d, want %d", count, tt.want)
+			}
+
+			// The same state a pass works from, read through the loop itself.
+			desired, err := m.desiredTunnels()
+			if err != nil {
+				t.Fatalf("desiredTunnels returned error: %v", err)
+			}
+			if len(desired) != count {
+				t.Fatalf("the count is %d while a pass desires %d tunnels", count, len(desired))
+			}
+		})
+	}
+}
+
+// TestDesiredTunnelCountReportsAFailedRead pins down that rows that cannot be
+// read are an error and not a count of zero, which would read as nothing being
+// wanted.
+func TestDesiredTunnelCountReportsAFailedRead(t *testing.T) {
+	m, err := NewManager(newFailingDB(t), zap.NewNop(), newTestCipher(t), 1)
+	if err != nil {
+		t.Fatalf("failed to create manager: %v", err)
+	}
+
+	_, err = m.DesiredTunnelCount()
+	if err == nil {
+		t.Fatal("DesiredTunnelCount returned no error on a database that cannot be read")
+	}
+}

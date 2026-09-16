@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"net/http"
 	"net/http/httptest"
@@ -180,6 +181,10 @@ func (r *wakeRecorder) counts() (wakes, commitsAtFirstWake int) {
 	defer r.mu.Unlock()
 
 	return r.wakes, r.commitsAtFirstWake
+}
+
+func (r *wakeRecorder) DesiredTunnelCount() (int, error) {
+	return 0, errQueryFailed
 }
 
 func (r *wakeRecorder) GetAllTunnels() (*[]models.Tunnel, error) {
@@ -793,5 +798,225 @@ func TestWriteHandlersRollBackWhenTheLockedRowIsGone(t *testing.T) {
 				t.Errorf("reconcile wake-ups = %d, want 0", wakes)
 			}
 		})
+	}
+}
+
+// newStatusStubDB answers the reads the status API makes: the hosts and the
+// service ports the desired state is built from, and the tunnel rows the
+// running tunnels are reported through. The rows are unrelated on purpose, so
+// a status over a desired state that is not reached can be set up.
+func newStatusStubDB(t *testing.T, hosts []models.Host, sps []models.ServicePort, tunnels []models.Tunnel) *gorm.DB {
+	t.Helper()
+
+	db, _ := newTxRecordingDB(t)
+
+	err := db.Callback().Query().Replace("gorm:query", func(tx *gorm.DB) {
+		switch dest := tx.Statement.Dest.(type) {
+		case *[]models.Host:
+			*dest = hosts
+			tx.RowsAffected = int64(len(hosts))
+		case *[]models.ServicePort:
+			*dest = sps
+			tx.RowsAffected = int64(len(sps))
+		case *[]models.Tunnel:
+			*dest = tunnels
+			tx.RowsAffected = int64(len(tunnels))
+		}
+	})
+	if err != nil {
+		t.Fatalf("failed to replace the query callback: %v", err)
+	}
+
+	return db
+}
+
+func statusHost(id uint, enabled bool) models.Host {
+	return models.Host{ID: id, IP: "192.0.2.1", Port: 22, User: "root", Enabled: enabled}
+}
+
+func statusServicePort(id uint) models.ServicePort {
+	return models.ServicePort{ID: id, ServiceIP: "192.0.2.2", ServicePort: 8081, LocalPort: 18080 + int(id)}
+}
+
+func statusTunnel(hostID, spID uint, status string) models.Tunnel {
+	return models.Tunnel{HostID: hostID, SPID: spID, Status: status}
+}
+
+// TestGetStatusReportsTheTunnelsThatShouldBeRunning pins down desired_tunnels:
+// the number of tunnels the reconcile loop works towards, counted by the
+// manager from the state a pass builds. Without it an answer of three tunnels
+// out of three connected says nothing about a fourth that could not be started.
+func TestGetStatusReportsTheTunnelsThatShouldBeRunning(t *testing.T) {
+	tests := []struct {
+		name          string
+		hosts         []models.Host
+		sps           []models.ServicePort
+		tunnels       []models.Tunnel
+		wantDesired   int
+		wantTotal     int
+		wantConnected int
+	}{
+		{
+			name:  "every service port on every enabled host",
+			hosts: []models.Host{statusHost(1, true), statusHost(2, true)},
+			sps:   []models.ServicePort{statusServicePort(1), statusServicePort(2), statusServicePort(3)},
+			tunnels: []models.Tunnel{
+				statusTunnel(1, 1, "connected"), statusTunnel(1, 2, "connected"), statusTunnel(1, 3, "connected"),
+				statusTunnel(2, 1, "connected"), statusTunnel(2, 2, "connected"), statusTunnel(2, 3, "error"),
+			},
+			wantDesired:   6,
+			wantTotal:     6,
+			wantConnected: 5,
+		},
+		{
+			name:  "a host that is not enabled is not wanted",
+			hosts: []models.Host{statusHost(1, true), statusHost(2, false)},
+			sps:   []models.ServicePort{statusServicePort(1), statusServicePort(2), statusServicePort(3)},
+			tunnels: []models.Tunnel{
+				statusTunnel(1, 1, "connected"), statusTunnel(1, 2, "connected"), statusTunnel(1, 3, "connected"),
+			},
+			wantDesired:   3,
+			wantTotal:     3,
+			wantConnected: 3,
+		},
+		{
+			name:          "no service port leaves nothing to run",
+			hosts:         []models.Host{statusHost(1, true), statusHost(2, true)},
+			sps:           nil,
+			tunnels:       nil,
+			wantDesired:   0,
+			wantTotal:     0,
+			wantConnected: 0,
+		},
+		{
+			name:  "tunnels that could not be started are the difference",
+			hosts: []models.Host{statusHost(1, true), statusHost(2, true)},
+			sps:   []models.ServicePort{statusServicePort(1), statusServicePort(2), statusServicePort(3)},
+			tunnels: []models.Tunnel{
+				statusTunnel(1, 1, "connected"), statusTunnel(1, 2, "connected"), statusTunnel(1, 3, "connected"),
+			},
+			wantDesired:   6,
+			wantTotal:     3,
+			wantConnected: 3,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cipher := newTestCipher(t)
+			db := newStatusStubDB(t, tt.hosts, tt.sps, tt.tunnels)
+
+			manager, err := tunnel.NewManager(db, zap.NewNop(), cipher, 1)
+			if err != nil {
+				t.Fatalf("failed to create manager: %v", err)
+			}
+
+			e := echo.New()
+			req := httptest.NewRequest(http.MethodGet, "/api/status", nil)
+			rec := httptest.NewRecorder()
+			c := e.NewContext(req, rec)
+
+			h := NewHandler(db, manager, zap.NewNop(), cipher)
+
+			err = h.GetStatus(c)
+			if err != nil {
+				t.Fatalf("GetStatus returned error: %v", err)
+			}
+			if rec.Code != http.StatusOK {
+				t.Fatalf("status = %d, want %d, body: %s", rec.Code, http.StatusOK, rec.Body.String())
+			}
+
+			var resp struct {
+				Success bool                   `json:"success"`
+				Data    map[string]interface{} `json:"data"`
+			}
+			err = json.Unmarshal(rec.Body.Bytes(), &resp)
+			if err != nil {
+				t.Fatalf("failed to read the answer: %v, body: %s", err, rec.Body.String())
+			}
+			if !resp.Success {
+				t.Fatalf("success = false, body: %s", rec.Body.String())
+			}
+
+			_, ok := resp.Data["desired_tunnels"]
+			if !ok {
+				t.Fatalf("the answer carries no desired_tunnels, body: %s", rec.Body.String())
+			}
+
+			fields := []struct {
+				key  string
+				want int
+			}{
+				{"desired_tunnels", tt.wantDesired},
+				{"total_tunnels", tt.wantTotal},
+				{"connected_tunnels", tt.wantConnected},
+			}
+			for _, field := range fields {
+				got, ok := resp.Data[field.key].(float64)
+				if !ok {
+					t.Fatalf("%s is not a number in the answer, body: %s", field.key, rec.Body.String())
+				}
+				if int(got) != field.want {
+					t.Errorf("%s = %d, want %d", field.key, int(got), field.want)
+				}
+			}
+
+			// The count the answer carries is the size of the desired state of
+			// a pass, which is what the loop starts tunnels from.
+			count, err := manager.DesiredTunnelCount()
+			if err != nil {
+				t.Fatalf("DesiredTunnelCount returned error: %v", err)
+			}
+			if count != tt.wantDesired {
+				t.Fatalf("the manager desires %d tunnels while the answer says %d", count, tt.wantDesired)
+			}
+		})
+	}
+}
+
+// countFailingManager answers the tunnel rows but cannot say how many tunnels
+// should be running.
+type countFailingManager struct {
+	tunnels []models.Tunnel
+}
+
+func (m *countFailingManager) WakeReconcile() {}
+
+func (m *countFailingManager) DesiredTunnelCount() (int, error) {
+	return 0, errQueryFailed
+}
+
+func (m *countFailingManager) GetAllTunnels() (*[]models.Tunnel, error) {
+	return &m.tunnels, nil
+}
+
+func (m *countFailingManager) GetHostTunnels(hostID uint) (*[]models.Tunnel, error) {
+	return &m.tunnels, nil
+}
+
+// TestGetStatusFailsWhenTheDesiredCountCannotBeRead pins down that a count that
+// could not be read is an error. An answer that left the field out would read
+// as every tunnel that should run being there.
+func TestGetStatusFailsWhenTheDesiredCountCannotBeRead(t *testing.T) {
+	cipher := newTestCipher(t)
+	db, _ := newTxRecordingDB(t)
+	manager := &countFailingManager{tunnels: []models.Tunnel{statusTunnel(1, 1, "connected")}}
+
+	e := echo.New()
+	req := httptest.NewRequest(http.MethodGet, "/api/status", nil)
+	rec := httptest.NewRecorder()
+	c := e.NewContext(req, rec)
+
+	h := NewHandler(db, manager, zap.NewNop(), cipher)
+
+	err := h.GetStatus(c)
+	if err != nil {
+		t.Fatalf("GetStatus returned error: %v", err)
+	}
+	if rec.Code != http.StatusInternalServerError {
+		t.Fatalf("status = %d, want %d, body: %s", rec.Code, http.StatusInternalServerError, rec.Body.String())
+	}
+	if strings.Contains(rec.Body.String(), "desired_tunnels") {
+		t.Errorf("the failed answer carries desired_tunnels: %s", rec.Body.String())
 	}
 }

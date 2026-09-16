@@ -21,6 +21,10 @@ type tunnelManager interface {
 	// transaction is committed, because a pass reads the rows and a pass that
 	// runs before the commit does not see them.
 	WakeReconcile()
+	// DesiredTunnelCount reports how many tunnels should be running. It is
+	// taken from the manager rather than counted here, so the state the status
+	// is reported against is the one the loop works towards.
+	DesiredTunnelCount() (int, error)
 	GetAllTunnels() (*[]models.Tunnel, error)
 	GetHostTunnels(hostID uint) (*[]models.Tunnel, error)
 }
@@ -565,6 +569,17 @@ func (h *Handler) GetStatus(c echo.Context) error {
 		})
 	}
 
+	// A count that is missing is an error rather than a field left out: the
+	// answer without it reads as if every tunnel that should run does, which
+	// is the very thing the field is there to show.
+	desiredTunnels, err := h.manager.DesiredTunnelCount()
+	if err != nil {
+		return c.JSON(http.StatusInternalServerError, models.Response{
+			Success: false,
+			Error:   "Failed to count the tunnels that should be running: " + err.Error(),
+		})
+	}
+
 	var connectedTunnels int
 	for _, t := range *tunnels {
 		if t.Status == "connected" {
@@ -575,6 +590,7 @@ func (h *Handler) GetStatus(c echo.Context) error {
 	return c.JSON(http.StatusOK, models.Response{
 		Success: true,
 		Data: map[string]interface{}{
+			"desired_tunnels":   desiredTunnels,
 			"total_tunnels":     len(*tunnels),
 			"connected_tunnels": connectedTunnels,
 			"tunnels":           tunnels,

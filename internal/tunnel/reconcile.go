@@ -321,3 +321,16 @@ func (m *Manager) RunReconcileLoop(ctx context.Context, intervalSec int) {
 		}
 	}
 }
+
+// DesiredTunnelCount returns how many tunnels should be running. It counts the
+// combinations a reconcile pass builds its desired state from, so it cannot
+// drift from what the loop tries to start. A count above the number of tunnels
+// that exist means a pass could not start all of them.
+func (m *Manager) DesiredTunnelCount() (int, error) {
+	desired, err := m.desiredTunnels()
+	if err != nil {
+		return 0, err
+	}
+
+	return len(desired), nil
+}
