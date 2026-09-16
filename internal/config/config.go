@@ -24,6 +24,14 @@ type Config struct {
 		IntervalSec int `yaml:"interval_sec"`
 	} `yaml:"monitoring"`
 
+	// Reconcile is how often the tunnels that should be up are compared with
+	// the ones that are up. Monitoring.IntervalSec checks whether a tunnel
+	// that is already up is still alive, which is a different job, so the two
+	// stay separate even while they share a default.
+	Reconcile struct {
+		IntervalSec int `yaml:"interval_sec"`
+	} `yaml:"reconcile"`
+
 	Security struct {
 		KeyFile string `yaml:"key_file"`
 	} `yaml:"security"`
@@ -69,6 +77,10 @@ func (c *Config) Validate() error {
 		return fmt.Errorf("invalid monitoring interval: %d", c.Monitoring.IntervalSec)
 	}
 
+	if c.Reconcile.IntervalSec <= 0 {
+		return fmt.Errorf("invalid reconcile interval: %d", c.Reconcile.IntervalSec)
+	}
+
 	validLevels := map[string]bool{
 		"debug":  true,
 		"info":   true,
@@ -104,6 +116,9 @@ func (c *Config) Validate() error {
 }
 
 func (c *Config) setDefaults() {
+	if c.Reconcile.IntervalSec == 0 {
+		c.Reconcile.IntervalSec = 5
+	}
 	if c.Security.KeyFile == "" {
 		c.Security.KeyFile = "keys/tunnel-manager.key"
 	}
