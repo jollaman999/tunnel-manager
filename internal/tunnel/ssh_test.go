@@ -8,6 +8,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"io"
 	"net"
 	"runtime"
 	"sync"
@@ -16,6 +17,8 @@ import (
 
 	"github.com/jollaman999/tunnel-manager/internal/models"
 	"go.uber.org/zap"
+	"go.uber.org/zap/zapcore"
+	"go.uber.org/zap/zaptest/observer"
 	"golang.org/x/crypto/ssh"
 	"gorm.io/driver/mysql"
 	"gorm.io/gorm"
@@ -1174,5 +1177,377 @@ func TestMonitorKeepaliveTimeoutIsPositiveForAnyInterval(t *testing.T) {
 			t.Errorf("monitorKeepaliveTimeout(%d) = %v, want a positive deadline",
 				monitoringIntervalSec, got)
 		}
+	}
+}
+
+// forwardTestTimeout bounds every read, write and handover in the forward
+// tests. Everything they move goes over loopback between goroutines of this
+// process, so a second is already far more than the work needs: the value is
+// only high enough that a loaded build machine cannot fail the test.
+const forwardTestTimeout = 10 * time.Second
+
+// newForwardTunnel returns a tunnel whose remote address is remoteAddr, which
+// is the service forward connects the accepted connection to. forward uses
+// neither the SSH configuration nor the manager, so it is built without one.
+func newForwardTunnel(t *testing.T, remoteAddr string) *SSHTunnel {
+	t.Helper()
+
+	hostID := uint(1)
+	spID := uint(1)
+
+	tun, err := NewSSHTunnel(&hostID, &spID, "127.0.0.1:0", "127.0.0.1:1", remoteAddr, nil, zap.NewNop())
+	if err != nil {
+		t.Fatalf("failed to create tunnel: %v", err)
+	}
+
+	return tun
+}
+
+// startLocalService listens on loopback and hands every accepted connection to
+// the test. It stands for the service a tunnel forwards to.
+func startLocalService(t *testing.T) (string, <-chan net.Conn) {
+	t.Helper()
+
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("failed to listen: %v", err)
+	}
+
+	conns := make(chan net.Conn, 16)
+
+	t.Cleanup(func() {
+		_ = ln.Close()
+
+		for {
+			select {
+			case conn := <-conns:
+				_ = conn.Close()
+			default:
+				return
+			}
+		}
+	})
+
+	go func() {
+		for {
+			conn, err := ln.Accept()
+			if err != nil {
+				return
+			}
+
+			select {
+			case conns <- conn:
+			default:
+				_ = conn.Close()
+			}
+		}
+	}()
+
+	return ln.Addr().String(), conns
+}
+
+// serviceConn waits for the connection forward opened to the service.
+func serviceConn(t *testing.T, conns <-chan net.Conn) net.Conn {
+	t.Helper()
+
+	select {
+	case conn := <-conns:
+		return conn
+	case <-time.After(forwardTestTimeout):
+		t.Fatal("forward never connected to the local service")
+		return nil
+	}
+}
+
+// runForward starts forward on one end of a pipe and returns the other end,
+// which stands for the connection the remote listener accepted, together with
+// a channel that is closed once forward returned. The deadline on the test end
+// keeps a direction that carries nothing from hanging the test.
+func runForward(t *testing.T, tun *SSHTunnel, deadline time.Time) (net.Conn, <-chan struct{}) {
+	t.Helper()
+
+	remoteSide, tunnelSide := net.Pipe()
+
+	err := remoteSide.SetDeadline(deadline)
+	if err != nil {
+		t.Fatalf("failed to set the deadline: %v", err)
+	}
+
+	returned := make(chan struct{})
+	go func() {
+		defer close(returned)
+		tun.forward(tunnelSide)
+	}()
+
+	return remoteSide, returned
+}
+
+func waitForwardReturned(t *testing.T, returned <-chan struct{}, what string) {
+	t.Helper()
+
+	select {
+	case <-returned:
+	case <-time.After(forwardTestTimeout):
+		t.Fatalf("forward did not return %s", what)
+	}
+}
+
+func TestForwardCarriesBytesBothWays(t *testing.T) {
+	serviceAddr, conns := startLocalService(t)
+	tun := newForwardTunnel(t, serviceAddr)
+
+	deadline := time.Now().Add(forwardTestTimeout)
+	remoteSide, returned := runForward(t, tun, deadline)
+	defer func() {
+		_ = remoteSide.Close()
+	}()
+
+	service := serviceConn(t, conns)
+	defer func() {
+		_ = service.Close()
+	}()
+
+	err := service.SetDeadline(deadline)
+	if err != nil {
+		t.Fatalf("failed to set the deadline: %v", err)
+	}
+
+	// What the remote listener accepted has to reach the service.
+	_, err = remoteSide.Write([]byte("request"))
+	if err != nil {
+		t.Fatalf("failed to write to the connection forward is serving: %v", err)
+	}
+
+	got := make([]byte, len("request"))
+	_, err = io.ReadFull(service, got)
+	if err != nil {
+		t.Fatalf("the service never received what was sent to the tunnel: %v", err)
+	}
+	if string(got) != "request" {
+		t.Fatalf("the service received %q, want %q", got, "request")
+	}
+
+	// And what the service answers has to come back the other way.
+	_, err = service.Write([]byte("answer"))
+	if err != nil {
+		t.Fatalf("failed to write the answer of the service: %v", err)
+	}
+
+	got = make([]byte, len("answer"))
+	_, err = io.ReadFull(remoteSide, got)
+	if err != nil {
+		t.Fatalf("the answer of the service never came back through the tunnel: %v", err)
+	}
+	if string(got) != "answer" {
+		t.Fatalf("the answer that came back is %q, want %q", got, "answer")
+	}
+
+	_ = remoteSide.Close()
+	waitForwardReturned(t, returned, "after the connection it serves was closed")
+}
+
+func TestForwardClosesTheServiceWhenTheTunnelSideCloses(t *testing.T) {
+	serviceAddr, conns := startLocalService(t)
+	tun := newForwardTunnel(t, serviceAddr)
+
+	deadline := time.Now().Add(forwardTestTimeout)
+	remoteSide, returned := runForward(t, tun, deadline)
+
+	service := serviceConn(t, conns)
+	defer func() {
+		_ = service.Close()
+	}()
+
+	err := service.SetDeadline(deadline)
+	if err != nil {
+		t.Fatalf("failed to set the deadline: %v", err)
+	}
+
+	_ = remoteSide.Close()
+
+	waitForwardReturned(t, returned, "after the connection it serves was closed")
+
+	// A service connection left open outlives every tunnel connection and the
+	// service runs out of them.
+	_, err = service.Read(make([]byte, 1))
+	if err == nil {
+		t.Fatal("the connection to the service is still open after the tunnel side closed")
+	}
+	if !errors.Is(err, io.EOF) {
+		t.Fatalf("reading the service connection returned %v, want %v, it was not closed", err, io.EOF)
+	}
+}
+
+func TestForwardClosesTheTunnelSideWhenTheServiceCloses(t *testing.T) {
+	serviceAddr, conns := startLocalService(t)
+	tun := newForwardTunnel(t, serviceAddr)
+
+	deadline := time.Now().Add(forwardTestTimeout)
+	remoteSide, returned := runForward(t, tun, deadline)
+	defer func() {
+		_ = remoteSide.Close()
+	}()
+
+	service := serviceConn(t, conns)
+	_ = service.Close()
+
+	waitForwardReturned(t, returned, "after the service closed the connection")
+
+	_, err := remoteSide.Read(make([]byte, 1))
+	if err == nil {
+		t.Fatal("the connection from the remote listener is still open after the service closed")
+	}
+	if !errors.Is(err, io.EOF) {
+		t.Fatalf("reading the connection forward served returned %v, want %v, it was not closed", err, io.EOF)
+	}
+}
+
+func TestForwardClosesTheTunnelSideWhenTheServiceCannotBeReached(t *testing.T) {
+	// Port 1 on loopback needs privileges to bind, so nothing listens there and
+	// the dial is refused right away.
+	tun := newForwardTunnel(t, "127.0.0.1:1")
+
+	remoteSide, returned := runForward(t, tun, time.Now().Add(forwardTestTimeout))
+	defer func() {
+		_ = remoteSide.Close()
+	}()
+
+	waitForwardReturned(t, returned, "although the service cannot be reached")
+
+	_, err := remoteSide.Read(make([]byte, 1))
+	if err == nil {
+		t.Fatal("the connection from the remote listener is still open although the service was never reached")
+	}
+	if !errors.Is(err, io.EOF) {
+		t.Fatalf("reading the connection forward served returned %v, want %v, it was not closed", err, io.EOF)
+	}
+}
+
+// countForwardGoroutines reports how many goroutines currently sit in forward
+// or in one of the copies it started.
+func countForwardGoroutines() int {
+	buf := make([]byte, 1<<20)
+	for {
+		n := runtime.Stack(buf, true)
+		if n < len(buf) {
+			return bytes.Count(buf[:n], []byte("tunnel.(*SSHTunnel).forward"))
+		}
+		buf = make([]byte, 2*len(buf))
+	}
+}
+
+func waitForwardGoroutines(t *testing.T, want int, timeout time.Duration) {
+	t.Helper()
+
+	deadline := time.Now().Add(timeout)
+	got := countForwardGoroutines()
+	for time.Now().Before(deadline) {
+		if got == want {
+			return
+		}
+		time.Sleep(20 * time.Millisecond)
+		got = countForwardGoroutines()
+	}
+
+	if got != want {
+		t.Fatalf("goroutines in forward = %d, want %d, a served connection left one behind", got, want)
+	}
+}
+
+func TestForwardLeavesNoGoroutineBehind(t *testing.T) {
+	const connections = 5
+
+	waitForwardGoroutines(t, 0, forwardTestTimeout)
+
+	serviceAddr, conns := startLocalService(t)
+	tun := newForwardTunnel(t, serviceAddr)
+
+	deadline := time.Now().Add(forwardTestTimeout)
+
+	remoteSides := make([]net.Conn, 0, connections)
+	services := make([]net.Conn, 0, connections)
+	returns := make([]<-chan struct{}, 0, connections)
+
+	for i := 0; i < connections; i++ {
+		remoteSide, returned := runForward(t, tun, deadline)
+		remoteSides = append(remoteSides, remoteSide)
+		returns = append(returns, returned)
+
+		service := serviceConn(t, conns)
+		services = append(services, service)
+
+		err := service.SetDeadline(deadline)
+		if err != nil {
+			t.Fatalf("failed to set the deadline: %v", err)
+		}
+
+		// Both copies are blocked on a read from here on, which is where a
+		// connection that is only closed on one side leaves one of them.
+		_, err = remoteSide.Write([]byte("request"))
+		if err != nil {
+			t.Fatalf("failed to write to the connection forward is serving: %v", err)
+		}
+		_, err = io.ReadFull(service, make([]byte, len("request")))
+		if err != nil {
+			t.Fatalf("the service never received what was sent to the tunnel: %v", err)
+		}
+	}
+
+	for _, remoteSide := range remoteSides {
+		_ = remoteSide.Close()
+	}
+
+	for i, returned := range returns {
+		waitForwardReturned(t, returned, fmt.Sprintf("for connection %d after it was closed", i))
+	}
+
+	waitForwardGoroutines(t, 0, forwardTestTimeout)
+
+	for _, service := range services {
+		_ = service.Close()
+	}
+}
+
+func TestForwardEndsWhenTheServiceConnectionIsReset(t *testing.T) {
+	serviceAddr, conns := startLocalService(t)
+
+	core, logs := observer.New(zapcore.DebugLevel)
+
+	tun := newForwardTunnel(t, serviceAddr)
+	tun.logger = zap.New(core)
+
+	deadline := time.Now().Add(forwardTestTimeout)
+	remoteSide, returned := runForward(t, tun, deadline)
+	defer func() {
+		_ = remoteSide.Close()
+	}()
+
+	service := serviceConn(t, conns)
+
+	// Linger 0 makes the close send a reset, which is what a service that dies
+	// does to the connection. The copy from it then fails with an error that is
+	// not the end of the stream.
+	tcp, ok := service.(*net.TCPConn)
+	if !ok {
+		t.Fatalf("the service connection is a %T, not a TCP connection", service)
+	}
+	err := tcp.SetLinger(0)
+	if err != nil {
+		t.Fatalf("failed to set linger: %v", err)
+	}
+	_ = tcp.Close()
+
+	waitForwardReturned(t, returned, "after the service connection was reset")
+
+	_, err = remoteSide.Read(make([]byte, 1))
+	if !errors.Is(err, io.EOF) {
+		t.Fatalf("reading the connection forward served returned %v, want %v, it was not closed", err, io.EOF)
+	}
+
+	// A copy that ended on an error and not on the end of the stream is worth
+	// a line, so a tunnel that keeps losing connections can be told apart from
+	// one whose peers simply close them.
+	if logs.FilterMessage("copy error").Len() == 0 {
+		t.Fatalf("a copy that failed was not logged, the entries are %v", logs.All())
 	}
 }

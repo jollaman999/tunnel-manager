@@ -4,8 +4,11 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"fmt"
 	"path/filepath"
+	"reflect"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -16,6 +19,7 @@ import (
 	"go.uber.org/zap/zaptest/observer"
 	"gorm.io/driver/mysql"
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 	"gorm.io/gorm/logger"
 )
 
@@ -582,5 +586,427 @@ func TestStopAllTunnelsReportsFailureToStopAsError(t *testing.T) {
 		if entry.Level != zapcore.ErrorLevel {
 			t.Fatalf("failed to stop tunnel was logged at %s", entry.Level)
 		}
+	}
+}
+
+// queryHostID returns the host_id a query is filtered by, and whether it
+// carries such a condition at all. It reads the clause the code added instead
+// of the SQL text, so a query that was built without the condition is seen as
+// what it is: a query for every row.
+func queryHostID(t *testing.T, tx *gorm.DB) (uint, bool) {
+	t.Helper()
+
+	c, ok := tx.Statement.Clauses["WHERE"]
+	if !ok {
+		return 0, false
+	}
+
+	where, ok := c.Expression.(clause.Where)
+	if !ok {
+		t.Errorf("the query carries a WHERE clause of type %T that this stub cannot read", c.Expression)
+		return 0, false
+	}
+
+	for _, expr := range where.Exprs {
+		cond, ok := expr.(clause.Expr)
+		if !ok || cond.SQL != "host_id = ?" || len(cond.Vars) != 1 {
+			t.Errorf("the query carries a condition %v that this stub cannot read", expr)
+			continue
+		}
+
+		hostID, ok := cond.Vars[0].(uint)
+		if !ok {
+			t.Errorf("the host_id condition was given a %T, not a host identifier", cond.Vars[0])
+			continue
+		}
+
+		return hostID, true
+	}
+
+	return 0, false
+}
+
+// tunnelRowsFor returns what a database would answer the query of tx with. A
+// query without a host_id condition gets every row, which is what makes the
+// difference between the two readers visible.
+func tunnelRowsFor(t *testing.T, tx *gorm.DB, rows []models.Tunnel) []models.Tunnel {
+	t.Helper()
+
+	hostID, filtered := queryHostID(t, tx)
+
+	// gorm replaces the destination slice before it appends the rows it
+	// scanned (gorm, scan.go:293), so an answer with no row at all is an empty
+	// slice and not a nil one.
+	answer := make([]models.Tunnel, 0, len(rows))
+	for _, row := range rows {
+		if filtered && row.HostID != hostID {
+			continue
+		}
+
+		answer = append(answer, row)
+	}
+
+	return answer
+}
+
+// newTunnelStubDB returns a gorm DB that answers tunnel queries from rows,
+// applying the conditions the query itself carries. A non-nil queryErr makes
+// every tunnel query fail instead.
+func newTunnelStubDB(t *testing.T, rows []models.Tunnel, queryErr error) *gorm.DB {
+	t.Helper()
+
+	db := newFailingDB(t)
+
+	err := db.Callback().Query().Replace("gorm:query", func(tx *gorm.DB) {
+		dest, ok := tx.Statement.Dest.(*[]models.Tunnel)
+		if !ok {
+			return
+		}
+
+		if queryErr != nil {
+			_ = tx.AddError(queryErr)
+			return
+		}
+
+		*dest = tunnelRowsFor(t, tx, rows)
+	})
+	if err != nil {
+		t.Fatalf("failed to replace the query callback: %v", err)
+	}
+
+	return db
+}
+
+// testTunnelRow is a stored tunnel of the Host and the service port with these
+// identifiers.
+func testTunnelRow(hostID, spID uint) models.Tunnel {
+	return models.Tunnel{
+		HostID: hostID,
+		SPID:   spID,
+		Status: "connected",
+		Local:  fmt.Sprintf("0.0.0.0:%d", 18080+spID),
+		Server: fmt.Sprintf("127.0.0.%d:22", hostID),
+		Remote: "127.0.0.1:3306",
+	}
+}
+
+func tunnelKeys(tunnels []models.Tunnel) []string {
+	keys := make([]string, 0, len(tunnels))
+	for _, tunnel := range tunnels {
+		keys = append(keys, tunnelKey(tunnel.HostID, tunnel.SPID))
+	}
+
+	return keys
+}
+
+func TestGetAllTunnelsReturnsEveryStoredTunnel(t *testing.T) {
+	rows := []models.Tunnel{testTunnelRow(1, 1), testTunnelRow(1, 2), testTunnelRow(2, 1)}
+
+	m, err := NewManager(newTunnelStubDB(t, rows, nil), zap.NewNop(), newTestCipher(t), 1)
+	if err != nil {
+		t.Fatalf("failed to create manager: %v", err)
+	}
+
+	got, err := m.GetAllTunnels()
+	if err != nil {
+		t.Fatalf("GetAllTunnels returned an error: %v", err)
+	}
+	if got == nil {
+		t.Fatal("GetAllTunnels returned no result and no error")
+	}
+
+	want := []string{"1-1", "1-2", "2-1"}
+	if !reflect.DeepEqual(tunnelKeys(*got), want) {
+		t.Fatalf("GetAllTunnels returned %v, want %v", tunnelKeys(*got), want)
+	}
+	if !reflect.DeepEqual(*got, rows) {
+		t.Fatal("GetAllTunnels returned rows that are not the stored ones")
+	}
+}
+
+func TestGetAllTunnelsReturnsAnEmptyResultWhenNothingIsStored(t *testing.T) {
+	m, err := NewManager(newTunnelStubDB(t, nil, nil), zap.NewNop(), newTestCipher(t), 1)
+	if err != nil {
+		t.Fatalf("failed to create manager: %v", err)
+	}
+
+	got, err := m.GetAllTunnels()
+	if err != nil {
+		t.Fatalf("GetAllTunnels returned an error although there is simply no tunnel: %v", err)
+	}
+	if got == nil {
+		t.Fatal("GetAllTunnels returned a nil result for a database without tunnels, callers dereference it")
+	}
+	if len(*got) != 0 {
+		t.Fatalf("GetAllTunnels returned %d tunnels although none is stored", len(*got))
+	}
+}
+
+func TestGetAllTunnelsReportsADatabaseFailure(t *testing.T) {
+	m, err := NewManager(newTunnelStubDB(t, nil, errConnPoolClosed), zap.NewNop(), newTestCipher(t), 1)
+	if err != nil {
+		t.Fatalf("failed to create manager: %v", err)
+	}
+
+	got, err := m.GetAllTunnels()
+	if err == nil {
+		t.Fatal("GetAllTunnels reported a database that cannot be read as having no tunnel")
+	}
+	if !errors.Is(err, errConnPoolClosed) {
+		t.Fatalf("GetAllTunnels hid what the database reported: %v", err)
+	}
+	if got != nil {
+		t.Fatal("GetAllTunnels returned a result together with an error")
+	}
+}
+
+func TestGetHostTunnelsReturnsOnlyTheTunnelsOfThatHost(t *testing.T) {
+	rows := []models.Tunnel{testTunnelRow(1, 1), testTunnelRow(2, 1), testTunnelRow(1, 2), testTunnelRow(3, 1)}
+
+	m, err := NewManager(newTunnelStubDB(t, rows, nil), zap.NewNop(), newTestCipher(t), 1)
+	if err != nil {
+		t.Fatalf("failed to create manager: %v", err)
+	}
+
+	got, err := m.GetHostTunnels(1)
+	if err != nil {
+		t.Fatalf("GetHostTunnels returned an error: %v", err)
+	}
+	if got == nil {
+		t.Fatal("GetHostTunnels returned no result and no error")
+	}
+
+	want := []string{"1-1", "1-2"}
+	if !reflect.DeepEqual(tunnelKeys(*got), want) {
+		t.Fatalf("GetHostTunnels(1) returned %v, want %v, the tunnels of the other hosts are being reported "+
+			"as belonging to this one", tunnelKeys(*got), want)
+	}
+}
+
+func TestGetHostTunnelsReturnsAnEmptyResultForAHostWithoutTunnels(t *testing.T) {
+	rows := []models.Tunnel{testTunnelRow(1, 1), testTunnelRow(2, 1)}
+
+	m, err := NewManager(newTunnelStubDB(t, rows, nil), zap.NewNop(), newTestCipher(t), 1)
+	if err != nil {
+		t.Fatalf("failed to create manager: %v", err)
+	}
+
+	got, err := m.GetHostTunnels(9)
+	if err != nil {
+		t.Fatalf("GetHostTunnels returned an error although the Host simply has no tunnel: %v", err)
+	}
+	if got == nil {
+		t.Fatal("GetHostTunnels returned a nil result for a Host without tunnels, callers dereference it")
+	}
+	if len(*got) != 0 {
+		t.Fatalf("GetHostTunnels(9) returned %d tunnels although none of the stored ones belongs to it", len(*got))
+	}
+}
+
+func TestGetHostTunnelsReportsADatabaseFailure(t *testing.T) {
+	m, err := NewManager(newTunnelStubDB(t, nil, errConnPoolClosed), zap.NewNop(), newTestCipher(t), 1)
+	if err != nil {
+		t.Fatalf("failed to create manager: %v", err)
+	}
+
+	got, err := m.GetHostTunnels(1)
+	if err == nil {
+		t.Fatal("GetHostTunnels reported a database that cannot be read as the Host having no tunnel")
+	}
+	if !errors.Is(err, errConnPoolClosed) {
+		t.Fatalf("GetHostTunnels hid what the database reported: %v", err)
+	}
+	if got != nil {
+		t.Fatal("GetHostTunnels returned a result together with an error")
+	}
+}
+
+// statementLog records the statements a stub database was asked for, in the
+// order they arrived.
+type statementLog struct {
+	mu     sync.Mutex
+	events []string
+}
+
+func (l *statementLog) add(event string) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+
+	l.events = append(l.events, event)
+}
+
+func (l *statementLog) all() []string {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+
+	return append([]string(nil), l.events...)
+}
+
+func (l *statementLog) has(event string) bool {
+	for _, got := range l.all() {
+		if got == event {
+			return true
+		}
+	}
+
+	return false
+}
+
+const (
+	deleteTunnels = "delete tunnels"
+	readHosts     = "read hosts"
+)
+
+// newRecordingStubDB returns a writable stub that records the deletes it is
+// asked for and the reads of the desired state, so a test can tell in which
+// order they were sent. A non-nil deleteErr makes every delete fail.
+func newRecordingStubDB(t *testing.T, hosts []models.Host, sps []models.ServicePort, deleteErr error, log *statementLog) *gorm.DB {
+	t.Helper()
+
+	db := newWritableStubDB(t, hosts, sps)
+
+	err := db.Callback().Query().Replace("gorm:query", func(tx *gorm.DB) {
+		switch dest := tx.Statement.Dest.(type) {
+		case *[]models.Host:
+			log.add(readHosts)
+			*dest = hosts
+		case *[]models.ServicePort:
+			*dest = sps
+		}
+	})
+	if err != nil {
+		t.Fatalf("failed to replace the query callback: %v", err)
+	}
+
+	err = db.Callback().Delete().Replace("gorm:delete", func(tx *gorm.DB) {
+		log.add(deleteTunnels)
+		if deleteErr != nil {
+			_ = tx.AddError(deleteErr)
+		}
+	})
+	if err != nil {
+		t.Fatalf("failed to replace the delete callback: %v", err)
+	}
+
+	return db
+}
+
+func TestRestoreAllTunnelsDropsTheStoredRowsBeforeItStartsAnything(t *testing.T) {
+	// The rows of the previous process describe SSH connections that died with
+	// it, so they have to go before the first pass reads what should run.
+	hosts := []models.Host{enabledHost(1, true)}
+	sps := []models.ServicePort{testServicePort(2)}
+
+	log := &statementLog{}
+
+	m, err := NewManager(newRecordingStubDB(t, hosts, sps, nil, log), zap.NewNop(), newTestCipher(t), 1)
+	if err != nil {
+		t.Fatalf("failed to create manager: %v", err)
+	}
+	t.Cleanup(m.StopAllTunnels)
+
+	err = m.RestoreAllTunnels()
+	if err != nil {
+		t.Fatalf("RestoreAllTunnels returned an error: %v", err)
+	}
+
+	events := log.all()
+	if len(events) == 0 || events[0] != deleteTunnels {
+		t.Fatalf("RestoreAllTunnels sent %v, want the stored tunnel rows to be dropped first", events)
+	}
+	if !log.has(readHosts) {
+		t.Fatalf("RestoreAllTunnels sent %v, it never read what should be running", events)
+	}
+
+	running := runningKeys(m)
+	if _, ok := running["1-2"]; !ok || len(running) != 1 {
+		t.Fatalf("the tunnels running after RestoreAllTunnels are %v, want the one of the desired state", running)
+	}
+}
+
+func TestRestoreAllTunnelsStartsNothingForADisabledHost(t *testing.T) {
+	hosts := []models.Host{enabledHost(1, false)}
+	sps := []models.ServicePort{testServicePort(2)}
+
+	log := &statementLog{}
+
+	m, err := NewManager(newRecordingStubDB(t, hosts, sps, nil, log), zap.NewNop(), newTestCipher(t), 1)
+	if err != nil {
+		t.Fatalf("failed to create manager: %v", err)
+	}
+	t.Cleanup(m.StopAllTunnels)
+
+	err = m.RestoreAllTunnels()
+	if err != nil {
+		t.Fatalf("RestoreAllTunnels returned an error for a disabled Host: %v", err)
+	}
+
+	if running := runningKeys(m); len(running) != 0 {
+		t.Fatalf("RestoreAllTunnels started %v for a Host that is not enabled", running)
+	}
+
+	// The rows still go, or the status of a Host that was disabled while the
+	// process was down keeps reading as connected.
+	if !log.has(deleteTunnels) {
+		t.Fatal("RestoreAllTunnels left the stored tunnel rows of the previous process in place")
+	}
+}
+
+func TestRestoreAllTunnelsFailsWhenTheStoredRowsCannotBeDropped(t *testing.T) {
+	hosts := []models.Host{enabledHost(1, true)}
+	sps := []models.ServicePort{testServicePort(2)}
+
+	log := &statementLog{}
+
+	m, err := NewManager(newRecordingStubDB(t, hosts, sps, errConnPoolClosed, log), zap.NewNop(), newTestCipher(t), 1)
+	if err != nil {
+		t.Fatalf("failed to create manager: %v", err)
+	}
+	t.Cleanup(m.StopAllTunnels)
+
+	err = m.RestoreAllTunnels()
+	if err == nil {
+		t.Fatal("RestoreAllTunnels reported a startup in which the stored rows could not be dropped as done")
+	}
+	if !errors.Is(err, errConnPoolClosed) {
+		t.Fatalf("RestoreAllTunnels hid what the database reported: %v", err)
+	}
+
+	if log.has(readHosts) {
+		t.Fatal("RestoreAllTunnels started tunnels although the rows of the previous process are still there")
+	}
+	if running := runningKeys(m); len(running) != 0 {
+		t.Fatalf("RestoreAllTunnels left %v running after it failed", running)
+	}
+}
+
+func TestRestoreAllTunnelsFailsWhenTheDesiredStateCannotBeRead(t *testing.T) {
+	log := &statementLog{}
+
+	// Only the delete is answered, so the pass that follows it cannot read the
+	// hosts and ends before it starts anything.
+	db := newFailingDB(t)
+	err := db.Callback().Delete().Replace("gorm:delete", func(tx *gorm.DB) {
+		log.add(deleteTunnels)
+	})
+	if err != nil {
+		t.Fatalf("failed to replace the delete callback: %v", err)
+	}
+
+	m, err := NewManager(db, zap.NewNop(), newTestCipher(t), 1)
+	if err != nil {
+		t.Fatalf("failed to create manager: %v", err)
+	}
+	t.Cleanup(m.StopAllTunnels)
+
+	err = m.RestoreAllTunnels()
+	if err == nil {
+		t.Fatal("RestoreAllTunnels reported a startup that could not read what should be running as done")
+	}
+	if !log.has(deleteTunnels) {
+		t.Fatal("RestoreAllTunnels never dropped the rows of the previous process")
+	}
+	if running := runningKeys(m); len(running) != 0 {
+		t.Fatalf("RestoreAllTunnels left %v running after it failed", running)
 	}
 }
