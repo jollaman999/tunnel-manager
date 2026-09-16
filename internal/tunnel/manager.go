@@ -25,6 +25,9 @@ type Manager struct {
 	logger                *zap.Logger
 	cipher                *crypto.Cipher
 	monitoringIntervalSec int
+	// reconcileWake carries the request for a reconcile pass. It holds one
+	// wake-up, so a caller never waits for the loop to pick the previous one up.
+	reconcileWake chan struct{}
 }
 
 func NewManager(db *gorm.DB, logger *zap.Logger, cipher *crypto.Cipher, monitoringIntervalSec int) (*Manager, error) {
@@ -34,6 +37,7 @@ func NewManager(db *gorm.DB, logger *zap.Logger, cipher *crypto.Cipher, monitori
 		logger:                logger,
 		cipher:                cipher,
 		monitoringIntervalSec: monitoringIntervalSec,
+		reconcileWake:         make(chan struct{}, 1),
 	}, nil
 }
 
@@ -106,8 +110,8 @@ func (m *Manager) StartTunnel(host *models.Host, sp *models.ServicePort) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	tunnelKey := fmt.Sprintf("%d-%d", host.ID, sp.ID)
-	if _, exists := m.tunnels[tunnelKey]; exists {
+	key := tunnelKey(host.ID, sp.ID)
+	if _, exists := m.tunnels[key]; exists {
 		return fmt.Errorf("tunnel already exists")
 	}
 
@@ -156,7 +160,7 @@ func (m *Manager) StartTunnel(host *models.Host, sp *models.ServicePort) error {
 
 	// Registered only once nothing is left that can fail, so a tunnel that was
 	// not started does not keep the key taken.
-	m.tunnels[tunnelKey] = t
+	m.tunnels[key] = t
 
 	go func(m *Manager, t *SSHTunnel, tunnel *models.Tunnel) {
 		t.Start(m, tunnel)
@@ -169,8 +173,8 @@ func (m *Manager) StopTunnel(hostID uint, spID uint) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	tunnelKey := fmt.Sprintf("%d-%d", hostID, spID)
-	tunnel, exists := m.tunnels[tunnelKey]
+	key := tunnelKey(hostID, spID)
+	tunnel, exists := m.tunnels[key]
 	if !exists {
 		return ErrTunnelNotExist
 	}
@@ -180,7 +184,7 @@ func (m *Manager) StopTunnel(hostID uint, spID uint) error {
 		return fmt.Errorf("failed to stop tunnel: %w", err)
 	}
 
-	delete(m.tunnels, tunnelKey)
+	delete(m.tunnels, key)
 
 	return nil
 }
@@ -213,102 +217,56 @@ func (m *Manager) GetAllTunnels() (*[]models.Tunnel, error) {
 	return &tunnels, nil
 }
 
+// RestoreAllTunnels starts the tunnels that should be running. It is the first
+// reconcile pass: the process holds no tunnel yet, so every combination of the
+// desired state is started here. The tunnel rows left by the previous process
+// are dropped first, because the SSH connections they describe died with it.
 func (m *Manager) RestoreAllTunnels() error {
-	m.mu.Lock()
-	var hosts []models.Host
-	err := m.db.Find(&hosts).Error
+	err := m.db.Where("1 = 1").Delete(&models.Tunnel{}).Error
 	if err != nil {
-		m.mu.Unlock()
-		m.logger.Error("failed to fetch Hosts", zap.Error(err))
-		return fmt.Errorf("failed to fetch hosts: %w", err)
+		m.logger.Error("failed to reset tunnel status", zap.Error(err))
+		return fmt.Errorf("failed to reset tunnel status: %w", err)
 	}
 
-	if len(hosts) == 0 {
-		m.mu.Unlock()
-		m.logger.Info("no Hosts to restore")
-		return nil
-	}
-
-	var servicePorts []models.ServicePort
-	err = m.db.Find(&servicePorts).Error
+	result, err := m.Reconcile()
 	if err != nil {
-		m.mu.Unlock()
-		return fmt.Errorf("failed to fetch service ports: %w", err)
+		m.logger.Error("failed to restore tunnels", zap.Error(err))
+		return err
 	}
 
-	if len(servicePorts) == 0 {
-		m.mu.Unlock()
-		m.logger.Info("no service ports to restore")
-		return nil
-	}
-
-	m.mu.Unlock()
-
-	for _, host := range hosts {
-		err = m.db.Unscoped().Where("host_id = ?", host.ID).Delete(&models.Tunnel{}).Error
-		if err != nil {
-			return fmt.Errorf("failed to reset tunnel status for host_id=%d: %w", host.ID, err)
-		}
-
-		for _, sp := range servicePorts {
-			err = m.StartTunnel(&host, &sp)
-			if err != nil {
-				m.logger.Error("failed to restore tunnel",
-					zap.Error(err),
-					zap.String("host_ip", host.IP),
-					zap.Int("service_port", sp.ServicePort))
-				continue
-			}
-		}
-	}
+	m.logger.Info("restored tunnels",
+		zap.Int("started", result.Started),
+		zap.Int("failed", result.Failed))
 
 	return nil
 }
 
+// StopAllTunnels stops every running tunnel. It is a reconcile pass with an
+// empty desired state, and it reads no rows: what is running is in m.tunnels,
+// and a database that is away on shutdown must not leave a tunnel up.
 func (m *Manager) StopAllTunnels() {
-	m.mu.Lock()
-	var hosts []models.Host
-	err := m.db.Find(&hosts).Error
-	if err != nil {
-		m.mu.Unlock()
-		m.logger.Error("failed to fetch Hosts", zap.Error(err))
-		return
-	}
-
-	var servicePorts []models.ServicePort
-	err = m.db.Find(&servicePorts).Error
-	if err != nil {
-		m.mu.Unlock()
-		m.logger.Error(fmt.Sprintf("failed to fetch service ports: %v", err))
-		return
-	}
-	m.mu.Unlock()
-
-	for _, host := range hosts {
-		err = m.db.Unscoped().Where("host_id = ?", host.ID).Delete(&models.Tunnel{}).Error
-		if err != nil {
-			m.logger.Error("failed to reset tunnel status",
-				zap.Uint("host_id", host.ID),
-				zap.String("host_ip", host.IP),
-				zap.Error(err))
+	for _, key := range m.runningTunnelKeys() {
+		hostID, spID, ok := parseTunnelKey(key)
+		if !ok {
+			m.logger.Error("a running tunnel is registered under a key that cannot be read",
+				zap.String("tunnel_key", key))
+			continue
 		}
 
-		for _, sp := range servicePorts {
-			err = m.StopTunnel(host.ID, sp.ID)
-			if err != nil {
-				if errors.Is(err, ErrTunnelNotExist) {
-					m.logger.Debug("no tunnel to stop",
-						zap.String("host_ip", host.IP),
-						zap.Int("service_port", sp.ServicePort))
-					continue
-				}
-
-				m.logger.Error("failed to stop tunnel",
-					zap.Error(err),
-					zap.String("host_ip", host.IP),
-					zap.Int("service_port", sp.ServicePort))
+		err := m.StopTunnel(hostID, spID)
+		if err != nil {
+			if errors.Is(err, ErrTunnelNotExist) {
+				m.logger.Debug("no tunnel to stop",
+					zap.Uint("host_id", hostID),
+					zap.Uint("sp_id", spID))
 				continue
 			}
+
+			m.logger.Error("failed to stop tunnel",
+				zap.Error(err),
+				zap.Uint("host_id", hostID),
+				zap.Uint("sp_id", spID))
+			continue
 		}
 	}
 }

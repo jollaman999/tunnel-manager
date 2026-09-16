@@ -501,13 +501,42 @@ func TestStopTunnelReportsMissingTunnel(t *testing.T) {
 	}
 }
 
-func TestStopAllTunnelsDoesNotReportMissingTunnelsAsError(t *testing.T) {
-	hosts := []models.Host{{ID: 1, IP: "127.0.0.1", Port: 22, User: "user", Password: "pass", Enabled: false}}
-	sps := []models.ServicePort{
-		{ID: 1, ServiceIP: "127.0.0.1", ServicePort: 8081, LocalPort: 18081},
-		{ID: 2, ServiceIP: "127.0.0.1", ServicePort: 8082, LocalPort: 18082},
-		{ID: 3, ServiceIP: "127.0.0.1", ServicePort: 8083, LocalPort: 18083},
+func TestStopAllTunnelsStopsEveryRunningTunnel(t *testing.T) {
+	// The rows say nothing about what is running: one of the tunnels belongs
+	// to a Host that is no longer there, and it still has to be stopped.
+	hosts := []models.Host{{ID: 1, IP: "127.0.0.1", Port: 1, User: "user", Enabled: true}}
+	sps := []models.ServicePort{{ID: 2, ServiceIP: "127.0.0.1", ServicePort: 8081, LocalPort: 18081}}
+
+	core, logs := observer.New(zapcore.DebugLevel)
+
+	m, err := NewManager(newStubDB(t, hosts, sps, nil), zap.New(core), newTestCipher(t), 1)
+	if err != nil {
+		t.Fatalf("failed to create manager: %v", err)
 	}
+
+	registerStoppedTunnel(t, m, 1, 2)
+	registerStoppedTunnel(t, m, 9, 9)
+
+	m.StopAllTunnels()
+
+	for _, entry := range logs.All() {
+		if entry.Level >= zapcore.ErrorLevel {
+			t.Fatalf("stopping the running tunnels logged %s: %s", entry.Level, entry.Message)
+		}
+	}
+
+	m.mu.RLock()
+	left := len(m.tunnels)
+	m.mu.RUnlock()
+
+	if left != 0 {
+		t.Fatalf("%d tunnels are still registered after StopAllTunnels", left)
+	}
+}
+
+func TestStopAllTunnelsLogsNothingWhenNothingRuns(t *testing.T) {
+	hosts := []models.Host{{ID: 1, IP: "127.0.0.1", Port: 1, User: "user", Enabled: true}}
+	sps := []models.ServicePort{{ID: 2, ServiceIP: "127.0.0.1", ServicePort: 8081, LocalPort: 18081}}
 
 	core, logs := observer.New(zapcore.DebugLevel)
 
@@ -518,15 +547,8 @@ func TestStopAllTunnelsDoesNotReportMissingTunnelsAsError(t *testing.T) {
 
 	m.StopAllTunnels()
 
-	for _, entry := range logs.All() {
-		if entry.Level >= zapcore.ErrorLevel {
-			t.Fatalf("stopping tunnels that are not running logged %s: %s", entry.Level, entry.Message)
-		}
-	}
-
-	got := logs.FilterMessage("no tunnel to stop").Len()
-	if got != len(sps) {
-		t.Fatalf("no tunnel to stop was logged %d times, want %d", got, len(sps))
+	if logs.Len() != 0 {
+		t.Fatalf("stopping no tunnel at all logged %d entries", logs.Len())
 	}
 }
 
