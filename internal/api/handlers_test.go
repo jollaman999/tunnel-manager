@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
@@ -18,6 +19,8 @@ import (
 	"github.com/jollaman999/tunnel-manager/internal/tunnel"
 	"github.com/labstack/echo/v4"
 	"go.uber.org/zap"
+	"go.uber.org/zap/zapcore"
+	"go.uber.org/zap/zaptest/observer"
 	"gorm.io/driver/mysql"
 	"gorm.io/gorm"
 	"gorm.io/gorm/callbacks"
@@ -1397,9 +1400,8 @@ func TestReadHandlersAnswerNotFoundForARowThatIsGone(t *testing.T) {
 }
 
 // TestReadHandlersDoNotAnswerARowWhenTheReadFails pins that a database which
-// did not answer is not turned into a row. The handlers do not tell a missing
-// row from a failed read, so either answer is taken here; what must not happen
-// is a 200 carrying the empty row the read left behind.
+// did not answer is not turned into a row. A read that failed is a 500: the
+// 404 it used to be sent whoever is on call to look for a row that is stored.
 func TestReadHandlersDoNotAnswerARowWhenTheReadFails(t *testing.T) {
 	for _, tt := range readHandlers {
 		t.Run(tt.name, func(t *testing.T) {
@@ -1412,8 +1414,8 @@ func TestReadHandlersDoNotAnswerARowWhenTheReadFails(t *testing.T) {
 			if err != nil {
 				t.Fatalf("the handler returned an error: %v", err)
 			}
-			if rec.Code != http.StatusNotFound && rec.Code != http.StatusInternalServerError {
-				t.Fatalf("status = %d, want %d or %d, body: %s", rec.Code, http.StatusNotFound, http.StatusInternalServerError, rec.Body.String())
+			if rec.Code != http.StatusInternalServerError {
+				t.Fatalf("status = %d, want %d, body: %s", rec.Code, http.StatusInternalServerError, rec.Body.String())
 			}
 
 			success, data := decodeResponse(t, rec)
@@ -1534,5 +1536,241 @@ func TestGetHostStatusReportsTunnelsItCouldNotRead(t *testing.T) {
 	}
 	if len(data) != 0 {
 		t.Fatalf("the answer carries counts while the tunnels could not be read: %s", rec.Body.String())
+	}
+}
+
+// errPathHandler is one of the handlers that read a single row by id. inTx says
+// whether the read is made inside a transaction, which is what decides if a
+// rollback is owed on the way out.
+type errPathHandler struct {
+	name   string
+	method string
+	target string
+	body   string
+	param  string
+	inTx   bool
+	call   func(*Handler, echo.Context) error
+}
+
+// errPathHandlers are the six reads of a single row. What is pinned over them
+// is the answer for a row that is not stored against the answer for a read that
+// did not go through.
+var errPathHandlers = []errPathHandler{
+	{name: "get host", method: http.MethodGet, target: "/api/host/1", param: "id", call: (*Handler).GetHost},
+	{
+		name:   "update host",
+		method: http.MethodPut,
+		target: "/api/host/1",
+		body:   `{"description":"new"}`,
+		param:  "id",
+		inTx:   true,
+		call:   (*Handler).UpdateHost,
+	},
+	{name: "get service port", method: http.MethodGet, target: "/api/service-port/1", param: "id", call: (*Handler).GetServicePort},
+	{
+		name:   "update service port",
+		method: http.MethodPut,
+		target: "/api/service-port/1",
+		body:   `{"service_ip":"192.0.2.2","service_port":80,"local_port":8080}`,
+		param:  "id",
+		inTx:   true,
+		call:   (*Handler).UpdateServicePort,
+	},
+	{name: "delete service port", method: http.MethodDelete, target: "/api/service-port/1", param: "id", inTx: true, call: (*Handler).DeleteServicePort},
+	{name: "get host status", method: http.MethodGet, target: "/api/status/host/1", param: "hostId", call: (*Handler).GetHostStatus},
+}
+
+// errPathDB returns the write stub with every read answered by readErr, so the
+// same handler can be run against a row that is gone and against a database
+// that did not answer.
+func errPathDB(t *testing.T, readErr error) (*gorm.DB, *txConnPool) {
+	t.Helper()
+
+	db, txPool := newWriteStubDB(t)
+
+	err := db.Callback().Query().Replace("gorm:query", func(tx *gorm.DB) {
+		_ = tx.AddError(readErr)
+	})
+	if err != nil {
+		t.Fatalf("failed to replace the query callback: %v", err)
+	}
+
+	return db, txPool
+}
+
+// errPathRequest builds the request of one handler, body and path parameter
+// included.
+func errPathRequest(t *testing.T, tt errPathHandler) (echo.Context, *httptest.ResponseRecorder) {
+	t.Helper()
+
+	e := echo.New()
+	e.Validator = &testValidator{validator: validator.New()}
+	req := httptest.NewRequest(tt.method, tt.target, strings.NewReader(tt.body))
+	req.Header.Set(echo.HeaderContentType, echo.MIMEApplicationJSON)
+	rec := httptest.NewRecorder()
+	c := e.NewContext(req, rec)
+	c.SetParamNames(tt.param)
+	c.SetParamValues("1")
+
+	return c, rec
+}
+
+// errPathLogger returns a logger whose entries can be read back, so that a
+// cause which is kept out of the answer can be looked for in the log.
+func errPathLogger() (*zap.Logger, *observer.ObservedLogs) {
+	core, logs := observer.New(zap.ErrorLevel)
+
+	return zap.New(core), logs
+}
+
+// errPathLoggedCause reports whether an error entry carries want, in its
+// message or in the error it was given.
+func errPathLoggedCause(logs *observer.ObservedLogs, want string) bool {
+	for _, entry := range logs.All() {
+		if entry.Level != zapcore.ErrorLevel {
+			continue
+		}
+		if strings.Contains(entry.Message, want) {
+			return true
+		}
+		for _, field := range entry.Context {
+			if field.Interface != nil && strings.Contains(fmt.Sprint(field.Interface), want) {
+				return true
+			}
+		}
+	}
+
+	return false
+}
+
+// errPathCheckAnswer reads the answer of a failed request: it reports no
+// success, carries no row, and says nothing about the query or the driver that
+// failed. The text of the database is for the log, not for a client that is
+// only allowed to know that its id was not found.
+func errPathCheckAnswer(t *testing.T, rec *httptest.ResponseRecorder) {
+	t.Helper()
+
+	success, data := decodeResponse(t, rec)
+	if success {
+		t.Fatalf("success = true on a failed request, body: %s", rec.Body.String())
+	}
+	if len(data) != 0 {
+		t.Fatalf("the answer carries data while the read did not bring a row: %s", rec.Body.String())
+	}
+
+	for _, leak := range []string{errQueryFailed.Error(), gorm.ErrRecordNotFound.Error()} {
+		if strings.Contains(rec.Body.String(), leak) {
+			t.Fatalf("the answer carries the text of the database (%q): %s", leak, rec.Body.String())
+		}
+	}
+}
+
+// TestErrPathHandlersAnswerNotFoundForARowThatIsGone pins the 404 side of the
+// split over all six handlers, and that the transaction the write handlers
+// opened is rolled back rather than committed.
+func TestErrPathHandlersAnswerNotFoundForARowThatIsGone(t *testing.T) {
+	for _, tt := range errPathHandlers {
+		t.Run(tt.name, func(t *testing.T) {
+			db, txPool := errPathDB(t, gorm.ErrRecordNotFound)
+			logger, logs := errPathLogger()
+
+			c, rec := errPathRequest(t, tt)
+			h := NewHandler(db, &wakeRecorder{tx: txPool}, logger, newTestCipher(t))
+
+			err := tt.call(h, c)
+			if err != nil {
+				t.Fatalf("the handler returned an error: %v", err)
+			}
+			if rec.Code != http.StatusNotFound {
+				t.Fatalf("status = %d, want %d, body: %s", rec.Code, http.StatusNotFound, rec.Body.String())
+			}
+
+			errPathCheckAnswer(t, rec)
+
+			if logs.Len() != 0 {
+				t.Errorf("a row that is not stored was logged as an error: %v", logs.All())
+			}
+
+			if tt.inTx {
+				commits, rollbacks := txPool.counts()
+				if commits != 0 || rollbacks != 1 {
+					t.Fatalf("commits = %d, rollbacks = %d, want 0 and 1", commits, rollbacks)
+				}
+			}
+		})
+	}
+}
+
+// TestErrPathHandlersAnswerServerErrorWhenTheReadFails is the other side: a
+// database that did not answer is a 500 with the cause in the log. Answered as
+// a 404 it reads as a row that was never stored, and the search starts at the
+// client instead of at the database.
+func TestErrPathHandlersAnswerServerErrorWhenTheReadFails(t *testing.T) {
+	for _, tt := range errPathHandlers {
+		t.Run(tt.name, func(t *testing.T) {
+			db, txPool := errPathDB(t, errQueryFailed)
+			logger, logs := errPathLogger()
+
+			c, rec := errPathRequest(t, tt)
+			h := NewHandler(db, &wakeRecorder{tx: txPool}, logger, newTestCipher(t))
+
+			err := tt.call(h, c)
+			if err != nil {
+				t.Fatalf("the handler returned an error: %v", err)
+			}
+			if rec.Code != http.StatusInternalServerError {
+				t.Fatalf("status = %d, want %d, body: %s", rec.Code, http.StatusInternalServerError, rec.Body.String())
+			}
+
+			errPathCheckAnswer(t, rec)
+
+			if !errPathLoggedCause(logs, errQueryFailed.Error()) {
+				t.Fatalf("the read that failed left no cause in the log: %v", logs.All())
+			}
+
+			if tt.inTx {
+				commits, rollbacks := txPool.counts()
+				if commits != 0 || rollbacks != 1 {
+					t.Fatalf("commits = %d, rollbacks = %d, want 0 and 1", commits, rollbacks)
+				}
+			}
+		})
+	}
+}
+
+// TestErrPathWrappedNotFoundIsStillNotFound pins that the split is made with
+// errors.Is. gorm wraps the error it returns once a callback or a plugin has
+// been through it, and a comparison by equality would turn the row that is not
+// stored into a failure of this server.
+func TestErrPathWrappedNotFoundIsStillNotFound(t *testing.T) {
+	for _, tt := range errPathHandlers {
+		t.Run(tt.name, func(t *testing.T) {
+			db, txPool := errPathDB(t, fmt.Errorf("select from the replica: %w", gorm.ErrRecordNotFound))
+			logger, logs := errPathLogger()
+
+			c, rec := errPathRequest(t, tt)
+			h := NewHandler(db, &wakeRecorder{tx: txPool}, logger, newTestCipher(t))
+
+			err := tt.call(h, c)
+			if err != nil {
+				t.Fatalf("the handler returned an error: %v", err)
+			}
+			if rec.Code != http.StatusNotFound {
+				t.Fatalf("status = %d, want %d, body: %s", rec.Code, http.StatusNotFound, rec.Body.String())
+			}
+
+			errPathCheckAnswer(t, rec)
+
+			if logs.Len() != 0 {
+				t.Errorf("a row that is not stored was logged as an error: %v", logs.All())
+			}
+
+			if tt.inTx {
+				commits, rollbacks := txPool.counts()
+				if commits != 0 || rollbacks != 1 {
+					t.Fatalf("commits = %d, rollbacks = %d, want 0 and 1", commits, rollbacks)
+				}
+			}
+		})
 	}
 }

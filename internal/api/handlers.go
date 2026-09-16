@@ -141,12 +141,25 @@ func (h *Handler) GetHost(c echo.Context) error {
 		})
 	}
 
+	// A read that failed is told apart from a row that is not stored, because a
+	// database that cannot be reached answered as "no such Host" sends whoever
+	// is on call after the client rather than after the database. What went
+	// wrong is written to the log alone: the answer would carry the query and
+	// the driver of this server to anyone who may make the request, and the id
+	// it is about is what the client sent in.
 	var host models.Host
 	err = h.db.First(&host, id).Error
 	if err != nil {
-		return c.JSON(http.StatusNotFound, models.Response{
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return c.JSON(http.StatusNotFound, models.Response{
+				Success: false,
+				Error:   "Host not found",
+			})
+		}
+		h.logger.Error("failed to fetch Host", zap.Error(err))
+		return c.JSON(http.StatusInternalServerError, models.Response{
 			Success: false,
-			Error:   "Host not found: " + err.Error(),
+			Error:   "Failed to fetch Host",
 		})
 	}
 
@@ -199,9 +212,16 @@ func (h *Handler) UpdateHost(c echo.Context) error {
 	err = tx.Clauses(clause.Locking{Strength: "UPDATE"}).First(&host, id).Error
 	if err != nil {
 		tx.Rollback()
-		return c.JSON(http.StatusNotFound, models.Response{
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return c.JSON(http.StatusNotFound, models.Response{
+				Success: false,
+				Error:   "Host not found",
+			})
+		}
+		h.logger.Error("failed to fetch Host", zap.Error(err))
+		return c.JSON(http.StatusInternalServerError, models.Response{
 			Success: false,
-			Error:   "Host not found: " + err.Error(),
+			Error:   "Failed to fetch Host",
 		})
 	}
 
@@ -413,9 +433,16 @@ func (h *Handler) GetServicePort(c echo.Context) error {
 	var sp models.ServicePort
 	err = h.db.First(&sp, id).Error
 	if err != nil {
-		return c.JSON(http.StatusNotFound, models.Response{
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return c.JSON(http.StatusNotFound, models.Response{
+				Success: false,
+				Error:   "Service port not found",
+			})
+		}
+		h.logger.Error("failed to fetch service port", zap.Error(err))
+		return c.JSON(http.StatusInternalServerError, models.Response{
 			Success: false,
-			Error:   "Service port not found: " + err.Error(),
+			Error:   "Failed to fetch service port",
 		})
 	}
 
@@ -468,9 +495,16 @@ func (h *Handler) UpdateServicePort(c echo.Context) error {
 	err = tx.Clauses(clause.Locking{Strength: "UPDATE"}).First(&sp, id).Error
 	if err != nil {
 		tx.Rollback()
-		return c.JSON(http.StatusNotFound, models.Response{
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return c.JSON(http.StatusNotFound, models.Response{
+				Success: false,
+				Error:   "Service port not found",
+			})
+		}
+		h.logger.Error("failed to fetch service port", zap.Error(err))
+		return c.JSON(http.StatusInternalServerError, models.Response{
 			Success: false,
-			Error:   "Service port not found: " + err.Error(),
+			Error:   "Failed to fetch service port",
 		})
 	}
 
@@ -529,9 +563,16 @@ func (h *Handler) DeleteServicePort(c echo.Context) error {
 	err = tx.Clauses(clause.Locking{Strength: "UPDATE"}).First(&sp, id).Error
 	if err != nil {
 		tx.Rollback()
-		return c.JSON(http.StatusNotFound, models.Response{
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return c.JSON(http.StatusNotFound, models.Response{
+				Success: false,
+				Error:   "Service port not found",
+			})
+		}
+		h.logger.Error("failed to fetch service port", zap.Error(err))
+		return c.JSON(http.StatusInternalServerError, models.Response{
 			Success: false,
-			Error:   "Service port not found: " + err.Error(),
+			Error:   "Failed to fetch service port",
 		})
 	}
 
@@ -610,9 +651,16 @@ func (h *Handler) GetHostStatus(c echo.Context) error {
 	var host models.Host
 	err = h.db.First(&host, hostID).Error
 	if err != nil {
-		return c.JSON(http.StatusNotFound, models.Response{
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return c.JSON(http.StatusNotFound, models.Response{
+				Success: false,
+				Error:   "Host not found",
+			})
+		}
+		h.logger.Error("failed to fetch Host", zap.Error(err))
+		return c.JSON(http.StatusInternalServerError, models.Response{
 			Success: false,
-			Error:   "Host not found: " + err.Error(),
+			Error:   "Failed to fetch Host",
 		})
 	}
 
