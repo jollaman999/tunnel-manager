@@ -61,10 +61,20 @@ tunnels[].last_error   왜 못 붙었는지
 
 ### 루프를 언제 도나
 
-핸들러가 행을 쓰면 즉시 깨운다. 깨우기를 놓친 경우를 위해 주기 폴백을 둔다.
-주기는 `reconcile.interval_sec` 을 새로 만들고 기본 60초다.
-`monitoring.interval_sec`(5초)은 떠 있는 터널이 살아 있는지 보는 값이라 목적이 다르다.
-한 값으로 묶으면 한쪽을 조절할 때 다른 쪽이 끌려간다.
+**즉시 반영되어야 하는 자리가 둘이다.**
+
+| 언제 | 어떻게 |
+|------|--------|
+| 서비스 포트나 호스트를 등록·수정·삭제할 때 | 핸들러가 커밋 직후 루프를 깨운다 |
+| 앱이 기동할 때 | 첫 조정 패스를 돌고 나서 HTTP 서버를 띄운다 |
+
+깨우기를 놓친 경우를 위해 주기 폴백을 둔다. 주기는 `reconcile.interval_sec` 을 새로 만들고
+**기본 5초**다. 목표와 실제를 비교하는 일은 작은 테이블 두 개를 읽는 것이라 짧게 잡아도 부담이 없고,
+깨우기가 안 왔을 때 어긋난 상태가 남아 있는 시간이 그만큼 짧아진다.
+
+`monitoring.interval_sec` 과 기본값이 같지만 항목은 따로 둔다. 한쪽은 떠 있는 터널이 살아 있는지
+보는 값이고 다른 쪽은 떠야 할 것과 떠 있는 것을 맞추는 값이라, 한 값으로 묶으면 한쪽을 조절할 때
+다른 쪽이 끌려간다.
 
 ### 동시 수정
 
@@ -99,17 +109,25 @@ SSH 비밀번호를 넣을 수 있게 되므로 같이 넣는다.
 
 ### 계정
 
-계정은 하나이고 **DB 에 둔다**. 설정 파일이 아니다.
-비밀번호를 바꿀 때 설정 파일을 고치지 않아도 되게 하기 위해서다.
+계정은 하나이고 **DB 에 둔다**. 설정 파일에는 사용자명도 비밀번호도 두지 않는다.
+설정 파일을 고치지 않고 계정을 바꿀 수 있게 하기 위해서다.
+
+테이블 이름은 `user` 다. 행이 하나뿐이라 복수형이 맞지 않는다.
+`user` 는 SQL 의 함수 이름이기도 하지만, GORM 의 mysql 드라이버가 식별자를 백틱으로 감싸므로
+(`gorm.io/driver/mysql@v1.5.7/mysql.go:290`) 따옴표 없이 나가는 경로가 없다.
 
 ```
-users
+user
   id
-  username
-  password_hash        bcrypt
-  must_change_password bool
+  username        설정 전에는 빈 문자열
+  password_hash   bcrypt
+  setup_required  bool
   created_at, updated_at
 ```
+
+`setup_required` 를 "username 이 비어 있는가" 로 대신할 수도 있지만 칼럼을 둔다.
+로그인 흐름이 이 값으로 갈리는데, 그 분기를 "사용자명이 우연히 비어 있다" 에 기대게 하면
+나중에 비밀번호 강제 재설정 같은 것을 붙일 때 깨진다.
 
 ### 비밀번호는 해시로 저장한다
 
@@ -120,27 +138,38 @@ SSH 접속 비밀번호는 원문을 SSH 서버에 보내야 하므로 복호 �
 bcrypt 를 쓴다. `golang.org/x/crypto` 가 이미 직접 의존성(v0.31.0)이고 그 안에 있어서
 `go.mod` 에 `require` 가 늘지 않는다.
 
-### 첫 기동
+### 첫 기동과 설정
 
-`users` 가 비어 있으면 임시 비밀번호를 난수로 만들어 파일에 `0600` 으로 쓴다.
+`user` 가 비어 있으면 임시 비밀번호를 난수로 만들어 파일에 `0600` 으로 쓰고,
+**사용자명 없이** 행 하나를 만든다 (`username` 은 빈 문자열, `setup_required` 는 true).
+
 **로그에는 경로만 남기고 값은 안 남긴다.** 로그는 파일과 콘솔 양쪽으로 나가기 때문이다.
-암호화 키 파일과 같은 방식이다.
+암호화 키 파일과 같은 방식이다. 경로는 `auth.initial_password_file`, 기본 `keys/initial-password`.
 
-경로는 `auth.initial_password_file`, 기본 `keys/initial-password`.
-비밀번호를 바꾸면 이 파일을 지운다. 바뀐 뒤에는 쓸모가 없다.
+사용자명과 비밀번호는 **처음 로그인한 뒤에 정한다.**
+
+```
+1. 첫 로그인   임시 비밀번호만 입력한다. 사용자명은 아직 없다
+2. 설정        사용자명과 새 비밀번호를 정한다
+               setup_required 를 내리고 임시 비밀번호 파일을 지운다
+3. 그 뒤       사용자명과 비밀번호로 로그인한다
+```
+
+`POST /api/login` 은 `setup_required` 가 true 면 비밀번호만 보고, false 면 사용자명도 본다.
+설정 전에는 로그인해도 `POST /api/setup` 말고는 아무 경로도 통과하지 못한다.
 
 ### 로그인
 
 쿠키 세션이다. 세션은 메모리에 두고 재기동하면 사라진다. 단일 인스턴스를 전제로 한다.
 
 ```
-POST /api/login    -> 성공하면 Set-Cookie
-POST /api/logout   -> 세션 삭제
-POST /api/password -> 비밀번호 변경
+POST /api/login  -> 성공하면 Set-Cookie
+POST /api/logout -> 세션 삭제
+POST /api/setup  -> 사용자명과 비밀번호를 정한다 (설정 전에만)
 
 미들웨어가 /api/** 와 /ui/** 를 막는다
   예외: /api/login, 정적 자산
-must_change_password 가 true 면 비밀번호 변경 외의 경로를 거부한다
+setup_required 가 true 면 /api/setup 외의 경로를 거부한다
 ```
 
 ## 결정 4 - 내장 UI
@@ -158,7 +187,7 @@ internal/web/
 
 | 화면 | 무엇 |
 |------|------|
-| 로그인 | 계정 입력. 첫 로그인이면 비밀번호 변경으로 보낸다 |
+| 로그인 | 설정 전에는 비밀번호만, 설정 뒤에는 사용자명과 비밀번호 |
 | 상태 | 터널 목록. desired / total / connected 와 last_error |
 | 호스트 | 목록과 추가, 수정, 삭제. enabled 토글 |
 | 서비스 포트 | 목록과 추가, 수정, 삭제 |
@@ -181,7 +210,7 @@ internal/web/
 - **API 동작 변경.** `POST`/`PUT` 이 터널 실패에 500 을 안 준다. 이 API 를 부르는 쪽이
   그 500 을 보고 무언가 한다면 그게 안 온다
 - **인증 추가.** 기존 API 호출부가 전부 로그인을 거쳐야 한다
-- **스키마 변경.** `users` 테이블이 는다. `AutoMigrate` 가 만든다
+- **스키마 변경.** `user` 테이블이 는다. `AutoMigrate` 가 만든다
 - **설정 항목 추가.** `reconcile.interval_sec`, `auth.initial_password_file`.
   기존 설정 파일은 기본값으로 돈다
 
@@ -195,12 +224,12 @@ internal/web/
 | R4 | `reconcile.interval_sec` 추가 | `internal/config/config.go` |
 | R5 | `/api/status` 에 `desired_tunnels` | `internal/api/handlers.go` |
 | R6 | keepalive 데드라인, 연결 수립 경로 재작성 | `internal/tunnel/ssh.go` |
-| A1 | `users` 모델, 첫 기동 임시 비밀번호 생성 | `internal/models`, `main.go` |
+| A1 | `user` 모델, 첫 기동 임시 비밀번호 생성 | `internal/models`, `main.go` |
 | A2 | 로그인, 로그아웃, 세션 미들웨어 | `internal/api` |
-| A3 | 비밀번호 변경과 강제 전환 | `internal/api` |
+| A3 | 사용자명과 비밀번호 설정, 강제 전환 | `internal/api` |
 | U1 | `embed` 정적 서빙, 라우팅, `/` 리다이렉트 | `internal/web`, `main.go` |
 | U2 | 상태 화면 | `internal/web/static` |
 | U3 | 호스트 관리 화면 | `internal/web/static` |
 | U4 | 서비스 포트 관리 화면 | `internal/web/static` |
-| U5 | 로그인과 비밀번호 변경 화면 | `internal/web/static` |
+| U5 | 로그인과 초기 설정 화면 | `internal/web/static` |
 | D1 | README 갱신 | `README.md` |
