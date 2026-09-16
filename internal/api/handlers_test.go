@@ -206,9 +206,9 @@ func newWriteStubDB(t *testing.T) (*gorm.DB, *txConnPool) {
 	err := db.Callback().Query().Replace("gorm:query", func(tx *gorm.DB) {
 		switch dest := tx.Statement.Dest.(type) {
 		case *models.Host:
-			*dest = models.Host{ID: 1, IP: "10.0.0.1", Port: 22, User: "root", Enabled: true}
+			*dest = models.Host{ID: 1, IP: "192.0.2.1", Port: 22, User: "root", Enabled: true}
 		case *models.ServicePort:
-			*dest = models.ServicePort{ID: 2, ServiceIP: "10.0.0.2", ServicePort: 8081, LocalPort: 18081}
+			*dest = models.ServicePort{ID: 2, ServiceIP: "192.0.2.2", ServicePort: 8081, LocalPort: 18081}
 		}
 		tx.RowsAffected = 1
 	})
@@ -224,8 +224,8 @@ func newWriteStubDB(t *testing.T) (*gorm.DB, *txConnPool) {
 // transaction is through. A pass that runs before the commit reads the state as
 // it was and leaves the tunnels of the rows the request wrote alone.
 func TestWriteHandlersWakeTheReconcileLoopAfterTheCommit(t *testing.T) {
-	const hostBody = `{"ip":"10.0.0.1","port":22,"user":"root","password":"fake-value-1"}` // hook:allow
-	const servicePortBody = `{"service_ip":"10.0.0.2","service_port":80,"local_port":8080}`
+	const hostBody = `{"ip":"192.0.2.1","port":22,"user":"root","password":"fake-value-1"}` // hook:allow
+	const servicePortBody = `{"service_ip":"192.0.2.2","service_port":80,"local_port":8080}`
 
 	tests := []struct {
 		name   string
@@ -355,7 +355,7 @@ func TestCreateServicePortDoesNotWakeTheLoopOnRollback(t *testing.T) {
 
 	e := echo.New()
 	e.Validator = &testValidator{validator: validator.New()}
-	body := `{"service_ip":"10.0.0.1","service_port":80,"local_port":8080}`
+	body := `{"service_ip":"192.0.2.1","service_port":80,"local_port":8080}`
 	req := httptest.NewRequest(http.MethodPost, "/api/service-port", strings.NewReader(body))
 	req.Header.Set(echo.HeaderContentType, echo.MIMEApplicationJSON)
 	rec := httptest.NewRecorder()
@@ -445,7 +445,7 @@ func TestCreateServicePortIsCreatedWhenNoTunnelCanBeStarted(t *testing.T) {
 
 	const spID uint = 7
 	hosts := []models.Host{{ID: 1, IP: "127.0.0.1", Port: 1, User: "root", Password: password, Enabled: true}}
-	sps := []models.ServicePort{{ID: spID, ServiceIP: "10.0.0.2", ServicePort: 80, LocalPort: 8080}}
+	sps := []models.ServicePort{{ID: spID, ServiceIP: "192.0.2.2", ServicePort: 80, LocalPort: 8080}}
 
 	db, txPool := newReconcileStubDB(t, hosts, sps, spID)
 
@@ -456,7 +456,7 @@ func TestCreateServicePortIsCreatedWhenNoTunnelCanBeStarted(t *testing.T) {
 
 	e := echo.New()
 	e.Validator = &testValidator{validator: validator.New()}
-	body := `{"service_ip":"10.0.0.2","service_port":80,"local_port":8080}`
+	body := `{"service_ip":"192.0.2.2","service_port":80,"local_port":8080}`
 	req := httptest.NewRequest(http.MethodPost, "/api/service-port", strings.NewReader(body))
 	req.Header.Set(echo.HeaderContentType, echo.MIMEApplicationJSON)
 	rec := httptest.NewRecorder()
