@@ -19,6 +19,7 @@ import (
 	"go.uber.org/zap"
 	"gorm.io/driver/mysql"
 	"gorm.io/gorm"
+	"gorm.io/gorm/callbacks"
 	gormlogger "gorm.io/gorm/logger"
 )
 
@@ -483,5 +484,314 @@ func TestCreateServicePortIsCreatedWhenNoTunnelCanBeStarted(t *testing.T) {
 	}
 	if result.Failed != 1 {
 		t.Errorf("failed = %d, want 1: the tunnel of the service port was expected to fail to start", result.Failed)
+	}
+}
+
+// readRecord is one read a handler made, as the database layer saw it: the SQL
+// that was built for it, whether it went out on the transaction, and how many
+// commits had gone through by then.
+type readRecord struct {
+	sql     string
+	inTx    bool
+	commits int
+}
+
+// readRecorder collects the reads of a request. gorm may call back from another
+// goroutine, so the access is guarded.
+type readRecorder struct {
+	mu    sync.Mutex
+	reads []readRecord
+}
+
+func (r *readRecorder) record(rec readRecord) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	r.reads = append(r.reads, rec)
+}
+
+func (r *readRecorder) all() []readRecord {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	return append([]readRecord(nil), r.reads...)
+}
+
+// newReadRecordingDB returns the write stub with the SQL of every read written
+// down. The statement is built the way the query callback of gorm builds it, so
+// what is recorded is what would have been sent.
+func newReadRecordingDB(t *testing.T, notFound bool) (*gorm.DB, *txConnPool, *readRecorder) {
+	t.Helper()
+
+	db, txPool := newWriteStubDB(t)
+	reads := &readRecorder{}
+
+	err := db.Callback().Query().Replace("gorm:query", func(tx *gorm.DB) {
+		callbacks.BuildQuerySQL(tx)
+		commits, _ := txPool.counts()
+		reads.record(readRecord{
+			sql:     tx.Statement.SQL.String(),
+			inTx:    tx.Statement.ConnPool == gorm.ConnPool(txPool),
+			commits: commits,
+		})
+		tx.Statement.SQL.Reset()
+
+		if notFound {
+			_ = tx.AddError(gorm.ErrRecordNotFound)
+			return
+		}
+
+		switch dest := tx.Statement.Dest.(type) {
+		case *models.Host:
+			*dest = models.Host{ID: 1, IP: "192.0.2.1", Port: 22, User: "root", Enabled: true}
+		case *models.ServicePort:
+			*dest = models.ServicePort{ID: 2, ServiceIP: "192.0.2.2", ServicePort: 8081, LocalPort: 18081}
+		}
+		tx.RowsAffected = 1
+	})
+	if err != nil {
+		t.Fatalf("failed to replace the query callback: %v", err)
+	}
+
+	return db, txPool, reads
+}
+
+// TestWriteHandlersReadTheirRowLockedInsideTheTransaction pins down that a
+// handler which writes a row it has read reads it with SELECT ... FOR UPDATE on
+// the transaction that does the write. Two requests on the same row would
+// otherwise both read the old row and the later write would put back what the
+// earlier one changed.
+//
+// A stub database cannot make one request wait for the other, so what is
+// observed here is the statement: the lock is asked for, it is asked for on the
+// transaction handle, and the commit is still ahead, which is what makes the
+// lock cover the write.
+func TestWriteHandlersReadTheirRowLockedInsideTheTransaction(t *testing.T) {
+	const servicePortBody = `{"service_ip":"192.0.2.2","service_port":80,"local_port":8080}`
+
+	tests := []struct {
+		name   string
+		method string
+		target string
+		body   string
+		param  string
+		table  string
+		call   func(*Handler, echo.Context) error
+	}{
+		{
+			name:   "update host",
+			method: http.MethodPut,
+			target: "/api/host/1",
+			body:   `{"description":"new","enabled":true}`,
+			param:  "1",
+			table:  "hosts",
+			call:   (*Handler).UpdateHost,
+		},
+		{
+			name:   "delete host",
+			method: http.MethodDelete,
+			target: "/api/host/1",
+			param:  "1",
+			table:  "hosts",
+			call:   (*Handler).DeleteHost,
+		},
+		{
+			name:   "update service port",
+			method: http.MethodPut,
+			target: "/api/service-port/2",
+			body:   servicePortBody,
+			param:  "2",
+			table:  "service_ports",
+			call:   (*Handler).UpdateServicePort,
+		},
+		{
+			name:   "delete service port",
+			method: http.MethodDelete,
+			target: "/api/service-port/2",
+			param:  "2",
+			table:  "service_ports",
+			call:   (*Handler).DeleteServicePort,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			db, txPool, reads := newReadRecordingDB(t, false)
+			manager := &wakeRecorder{tx: txPool}
+
+			e := echo.New()
+			e.Validator = &testValidator{validator: validator.New()}
+			req := httptest.NewRequest(tt.method, tt.target, strings.NewReader(tt.body))
+			req.Header.Set(echo.HeaderContentType, echo.MIMEApplicationJSON)
+			rec := httptest.NewRecorder()
+			c := e.NewContext(req, rec)
+			c.SetParamNames("id")
+			c.SetParamValues(tt.param)
+
+			h := NewHandler(db, manager, zap.NewNop(), newTestCipher(t))
+
+			err := tt.call(h, c)
+			if err != nil {
+				t.Fatalf("the handler returned an error: %v", err)
+			}
+			if rec.Code != http.StatusOK {
+				t.Fatalf("status = %d, want %d, body: %s", rec.Code, http.StatusOK, rec.Body.String())
+			}
+
+			all := reads.all()
+			if len(all) != 1 {
+				t.Fatalf("reads = %d, want 1: %v", len(all), all)
+			}
+			read := all[0]
+
+			if !strings.Contains(read.sql, "FOR UPDATE") {
+				t.Errorf("the row was read without a lock: %s", read.sql)
+			}
+			if !strings.Contains(read.sql, "`"+tt.table+"`") {
+				t.Errorf("sql = %s, want a read of %s", read.sql, tt.table)
+			}
+			if !read.inTx {
+				t.Errorf("the row was read outside the transaction, so the lock covers nothing: %s", read.sql)
+			}
+			if read.commits != 0 {
+				t.Errorf("commits at the read = %d, want 0: the transaction that writes was already through", read.commits)
+			}
+
+			commits, rollbacks := txPool.counts()
+			if commits != 1 || rollbacks != 0 {
+				t.Fatalf("commits = %d, rollbacks = %d, want 1 and 0", commits, rollbacks)
+			}
+		})
+	}
+}
+
+// TestCreateHandlersLockNothing pins down the other side of it: a create has no
+// row to lock yet, and the unique indexes are what keep a duplicate out.
+func TestCreateHandlersLockNothing(t *testing.T) {
+	tests := []struct {
+		name   string
+		target string
+		body   string
+		call   func(*Handler, echo.Context) error
+	}{
+		{
+			name:   "create host",
+			target: "/api/host",
+			body:   `{"ip":"192.0.2.1","port":22,"user":"root","password":"fake-value-1"}`, // hook:allow
+			call:   (*Handler).CreateHost,
+		},
+		{
+			name:   "create service port",
+			target: "/api/service-port",
+			body:   `{"service_ip":"192.0.2.2","service_port":80,"local_port":8080}`,
+			call:   (*Handler).CreateServicePort,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			db, txPool, reads := newReadRecordingDB(t, false)
+			manager := &wakeRecorder{tx: txPool}
+
+			e := echo.New()
+			e.Validator = &testValidator{validator: validator.New()}
+			req := httptest.NewRequest(http.MethodPost, tt.target, strings.NewReader(tt.body))
+			req.Header.Set(echo.HeaderContentType, echo.MIMEApplicationJSON)
+			rec := httptest.NewRecorder()
+			c := e.NewContext(req, rec)
+
+			h := NewHandler(db, manager, zap.NewNop(), newTestCipher(t))
+
+			err := tt.call(h, c)
+			if err != nil {
+				t.Fatalf("the handler returned an error: %v", err)
+			}
+			if rec.Code != http.StatusCreated {
+				t.Fatalf("status = %d, want %d, body: %s", rec.Code, http.StatusCreated, rec.Body.String())
+			}
+
+			all := reads.all()
+			if len(all) != 0 {
+				t.Fatalf("reads = %d, want 0: %v", len(all), all)
+			}
+		})
+	}
+}
+
+// TestWriteHandlersRollBackWhenTheLockedRowIsGone pins down that the answer for
+// a row that is not there leaves no transaction behind. The lock is taken
+// inside one now, so the path that finds nothing has one open.
+func TestWriteHandlersRollBackWhenTheLockedRowIsGone(t *testing.T) {
+	const servicePortBody = `{"service_ip":"192.0.2.2","service_port":80,"local_port":8080}`
+
+	tests := []struct {
+		name   string
+		method string
+		target string
+		body   string
+		call   func(*Handler, echo.Context) error
+	}{
+		{
+			name:   "update host",
+			method: http.MethodPut,
+			target: "/api/host/1",
+			body:   `{"description":"new"}`,
+			call:   (*Handler).UpdateHost,
+		},
+		{
+			name:   "delete host",
+			method: http.MethodDelete,
+			target: "/api/host/1",
+			call:   (*Handler).DeleteHost,
+		},
+		{
+			name:   "update service port",
+			method: http.MethodPut,
+			target: "/api/service-port/2",
+			body:   servicePortBody,
+			call:   (*Handler).UpdateServicePort,
+		},
+		{
+			name:   "delete service port",
+			method: http.MethodDelete,
+			target: "/api/service-port/2",
+			call:   (*Handler).DeleteServicePort,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			db, txPool, _ := newReadRecordingDB(t, true)
+			manager := &wakeRecorder{tx: txPool}
+
+			e := echo.New()
+			e.Validator = &testValidator{validator: validator.New()}
+			req := httptest.NewRequest(tt.method, tt.target, strings.NewReader(tt.body))
+			req.Header.Set(echo.HeaderContentType, echo.MIMEApplicationJSON)
+			rec := httptest.NewRecorder()
+			c := e.NewContext(req, rec)
+			c.SetParamNames("id")
+			c.SetParamValues("1")
+
+			h := NewHandler(db, manager, zap.NewNop(), newTestCipher(t))
+
+			err := tt.call(h, c)
+			if err != nil {
+				t.Fatalf("the handler returned an error: %v", err)
+			}
+			if rec.Code != http.StatusNotFound {
+				t.Fatalf("status = %d, want %d, body: %s", rec.Code, http.StatusNotFound, rec.Body.String())
+			}
+
+			commits, rollbacks := txPool.counts()
+			if commits != 0 || rollbacks != 1 {
+				t.Fatalf("commits = %d, rollbacks = %d, want 0 and 1", commits, rollbacks)
+			}
+
+			wakes, _ := manager.counts()
+			if wakes != 0 {
+				t.Errorf("reconcile wake-ups = %d, want 0", wakes)
+			}
+		})
 	}
 }

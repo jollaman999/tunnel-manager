@@ -10,6 +10,7 @@ import (
 	"github.com/labstack/echo/v4"
 	"go.uber.org/zap"
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 )
 
 // tunnelManager is what the handlers need from the tunnel manager. They write
@@ -177,9 +178,23 @@ func (h *Handler) UpdateHost(c echo.Context) error {
 		})
 	}
 
-	var host models.Host
-	err = h.db.First(&host, id).Error
+	tx := h.db.Begin()
+	err = tx.Error
 	if err != nil {
+		return c.JSON(http.StatusInternalServerError, models.Response{
+			Success: false,
+			Error:   "Failed to start transaction: " + err.Error(),
+		})
+	}
+
+	// The row is read inside the transaction and locked, because what is written
+	// below is the row that is read here with a few fields replaced. Two requests
+	// on the same Host would otherwise both read the old row, and the write that
+	// lands second would put back the fields the first one changed.
+	var host models.Host
+	err = tx.Clauses(clause.Locking{Strength: "UPDATE"}).First(&host, id).Error
+	if err != nil {
+		tx.Rollback()
 		return c.JSON(http.StatusNotFound, models.Response{
 			Success: false,
 			Error:   "Host not found: " + err.Error(),
@@ -198,6 +213,7 @@ func (h *Handler) UpdateHost(c echo.Context) error {
 	if req.Password != "" {
 		password, err := h.cipher.Encrypt(req.Password)
 		if err != nil {
+			tx.Rollback()
 			h.logger.Error("failed to encrypt the password of the Host", zap.Error(err))
 			return c.JSON(http.StatusInternalServerError, models.Response{
 				Success: false,
@@ -211,15 +227,6 @@ func (h *Handler) UpdateHost(c echo.Context) error {
 	}
 	if req.Enabled != nil {
 		host.Enabled = *req.Enabled
-	}
-
-	tx := h.db.Begin()
-	err = tx.Error
-	if err != nil {
-		return c.JSON(http.StatusInternalServerError, models.Response{
-			Success: false,
-			Error:   "Failed to start transaction: " + err.Error(),
-		})
 	}
 
 	err = tx.Save(&host).Error
@@ -257,9 +264,23 @@ func (h *Handler) DeleteHost(c echo.Context) error {
 		})
 	}
 
-	var host models.Host
-	err = h.db.First(&host, id).Error
+	tx := h.db.Begin()
+	err = tx.Error
 	if err != nil {
+		return c.JSON(http.StatusInternalServerError, models.Response{
+			Success: false,
+			Error:   "Failed to start transaction: " + err.Error(),
+		})
+	}
+
+	// The row is read inside the transaction and locked as well, so that the
+	// answer and the delete agree: an update of the same Host either lands
+	// before the read, and is deleted with the row, or waits and finds the row
+	// gone.
+	var host models.Host
+	err = tx.Clauses(clause.Locking{Strength: "UPDATE"}).First(&host, id).Error
+	if err != nil {
+		tx.Rollback()
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return c.JSON(http.StatusNotFound, models.Response{
 				Success: false,
@@ -269,15 +290,6 @@ func (h *Handler) DeleteHost(c echo.Context) error {
 		return c.JSON(http.StatusInternalServerError, models.Response{
 			Success: false,
 			Error:   "Failed to fetch Host: " + err.Error(),
-		})
-	}
-
-	tx := h.db.Begin()
-	err = tx.Error
-	if err != nil {
-		return c.JSON(http.StatusInternalServerError, models.Response{
-			Success: false,
-			Error:   "Failed to start transaction: " + err.Error(),
 		})
 	}
 
@@ -418,14 +430,8 @@ func (h *Handler) UpdateServicePort(c echo.Context) error {
 		})
 	}
 
-	var sp models.ServicePort
-	err = h.db.First(&sp, id).Error
-	if err != nil {
-		return c.JSON(http.StatusNotFound, models.Response{
-			Success: false,
-			Error:   "Service port not found: " + err.Error(),
-		})
-	}
+	// The body is read before the transaction is opened, because reading it
+	// waits on the client and the lock taken below is held until the commit.
 	var req models.CreateServicePortRequest
 	err = c.Bind(&req)
 	if err != nil {
@@ -449,6 +455,18 @@ func (h *Handler) UpdateServicePort(c echo.Context) error {
 		return c.JSON(http.StatusInternalServerError, models.Response{
 			Success: false,
 			Error:   "Failed to start transaction: " + err.Error(),
+		})
+	}
+
+	// The row is read inside the transaction and locked, for the reason
+	// UpdateHost is: the write below carries the fields this read brought in.
+	var sp models.ServicePort
+	err = tx.Clauses(clause.Locking{Strength: "UPDATE"}).First(&sp, id).Error
+	if err != nil {
+		tx.Rollback()
+		return c.JSON(http.StatusNotFound, models.Response{
+			Success: false,
+			Error:   "Service port not found: " + err.Error(),
 		})
 	}
 
@@ -492,21 +510,24 @@ func (h *Handler) DeleteServicePort(c echo.Context) error {
 		})
 	}
 
-	var sp models.ServicePort
-	err = h.db.First(&sp, id).Error
-	if err != nil {
-		return c.JSON(http.StatusNotFound, models.Response{
-			Success: false,
-			Error:   "Service port not found: " + err.Error(),
-		})
-	}
-
 	tx := h.db.Begin()
 	err = tx.Error
 	if err != nil {
 		return c.JSON(http.StatusInternalServerError, models.Response{
 			Success: false,
 			Error:   "Failed to start transaction: " + err.Error(),
+		})
+	}
+
+	// Locked as in DeleteHost, so that an update of the same service port and
+	// this delete do not both act on the row they read.
+	var sp models.ServicePort
+	err = tx.Clauses(clause.Locking{Strength: "UPDATE"}).First(&sp, id).Error
+	if err != nil {
+		tx.Rollback()
+		return c.JSON(http.StatusNotFound, models.Response{
+			Success: false,
+			Error:   "Service port not found: " + err.Error(),
 		})
 	}
 
