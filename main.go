@@ -484,7 +484,17 @@ func main() {
 	e.Use(middleware.CORS())
 
 	h := api.NewHandler(db, manager, logger, cipher)
+	authHandler := api.NewAuthHandler(db, logger)
 	g := e.Group("/api")
+
+	// The session check is put on the group before any route is added to it.
+	// echo binds the middleware a group carries at the time the route is added,
+	// so a route added first would be served without it. The same middleware is
+	// what the UI group is to be served behind once there is one.
+	g.Use(authHandler.RequireSession())
+
+	g.POST("/login", authHandler.Login)
+	g.POST("/logout", authHandler.Logout)
 
 	g.POST("/host", h.CreateHost)
 	g.GET("/host", h.ListHosts)
