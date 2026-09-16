@@ -11,6 +11,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
@@ -229,7 +230,58 @@ func (t *SSHTunnel) monitorConnection(m *Manager, tunnel *models.Tunnel, stop <-
 	}
 }
 
-func (t *SSHTunnel) forward(localConn net.Conn) {
+// halfCloser is a connection whose writing side can be closed on its own. That
+// is what carries the end of a stream to the peer while the other direction
+// keeps running. Both connections forward joins have it: remoteConn comes from
+// net.Dial and is a *net.TCPConn, and localConn is what the remote listener
+// accepted, an *ssh.chanConn (ssh/tcpip.go, tcpListener.Accept) that promotes
+// CloseWrite from the ssh.Channel it embeds (ssh/channel.go, Channel).
+type halfCloser interface {
+	CloseWrite() error
+}
+
+// forwardIdleTimeout bounds how long forward holds a connection on which
+// nothing moves in either direction. It is not a response time: what travels
+// here is whatever the forwarded service speaks, and a live session may well
+// sit between two messages, so the bound has to be far longer than any such
+// gap. It only exists because a peer that neither sends nor closes would
+// otherwise pin this goroutine and both sockets for as long as the process
+// runs. An hour is longer than any middlebox on the path keeps a silent flow
+// alive (NAT and load balancer idle limits are counted in minutes), so a
+// connection cut here is one the path had already dropped.
+const forwardIdleTimeout = time.Hour
+
+// countingReader counts what was read from src, which is how forward tells a
+// connection that is idle from one that is merely slow. The count only has to
+// change while bytes flow, so a plain atomic add is enough.
+type countingReader struct {
+	src   io.Reader
+	moved *atomic.Int64
+}
+
+func (r *countingReader) Read(p []byte) (int, error) {
+	n, err := r.src.Read(p)
+	r.moved.Add(int64(n))
+
+	return n, err
+}
+
+// isSelfClosed reports whether a copy ended because forward closed the
+// connection under it. That is a teardown forward started itself, not a
+// failure of a peer, and logging it would make every closed connection look
+// like a broken one.
+func isSelfClosed(err error) bool {
+	return errors.Is(err, net.ErrClosed) || errors.Is(err, io.ErrClosedPipe)
+}
+
+// forward joins a connection the remote listener accepted to the service the
+// tunnel points at and returns once both directions have ended. Waiting for
+// both is what keeps an answer whole: a client that sent its request and then
+// closed only its writing side is still waiting to receive, and returning on
+// the first of the two copies would close the connection under that answer.
+// idleTimeout bounds a connection on which nothing moves at all, see
+// forwardIdleTimeout.
+func (t *SSHTunnel) forward(localConn net.Conn, idleTimeout time.Duration) {
 	defer func() {
 		_ = localConn.Close()
 	}()
@@ -247,19 +299,77 @@ func (t *SSHTunnel) forward(localConn net.Conn) {
 		_ = remoteConn.Close()
 	}()
 
-	errc := make(chan error, 2)
-	go func() {
-		_, err := io.Copy(localConn, remoteConn)
-		errc <- err
-	}()
-	go func() {
-		_, err := io.Copy(remoteConn, localConn)
-		errc <- err
-	}()
+	// closeBoth ends the connection in both directions. It is called where
+	// nothing can be carried any further, and it is also what releases a copy
+	// that is blocked in a read.
+	closeBoth := func() {
+		_ = localConn.Close()
+		_ = remoteConn.Close()
+	}
 
-	err = <-errc
-	if err != nil && err != io.EOF {
-		t.logger.Debug("copy error", zap.Error(err))
+	var moved atomic.Int64
+	ended := make(chan struct{}, 2)
+
+	copyOneWay := func(dst, src net.Conn) {
+		defer func() {
+			ended <- struct{}{}
+		}()
+
+		_, err := io.Copy(dst, &countingReader{src: src, moved: &moved})
+		if err != nil && !errors.Is(err, io.EOF) {
+			if !isSelfClosed(err) {
+				t.logger.Debug("copy error", zap.Error(err))
+			}
+
+			// The stream broke. What is left of it cannot be delivered, and
+			// the other direction has no peer left to deliver it to either.
+			closeBoth()
+
+			return
+		}
+
+		// src reached the end of its stream. Half-closing dst passes that end
+		// on and leaves the other direction running, which is what a client
+		// that half-closed after its request needs to receive the answer.
+		// It takes both sides for that: a src that cannot be half-closed can
+		// only have closed the whole connection, and a dst that cannot be
+		// half-closed has no way of being told the stream ended other than
+		// being closed.
+		dstHalf, dstCanHalfClose := dst.(halfCloser)
+		_, srcCanHalfClose := src.(halfCloser)
+		if !dstCanHalfClose || !srcCanHalfClose {
+			closeBoth()
+
+			return
+		}
+
+		_ = dstHalf.CloseWrite()
+	}
+
+	go copyOneWay(localConn, remoteConn)
+	go copyOneWay(remoteConn, localConn)
+
+	timer := time.NewTimer(idleTimeout)
+	defer timer.Stop()
+
+	seen := moved.Load()
+	for left := 2; left > 0; {
+		select {
+		case <-ended:
+			left--
+		case <-timer.C:
+			if now := moved.Load(); now != seen {
+				seen = now
+				timer.Reset(idleTimeout)
+
+				continue
+			}
+
+			// Nothing was carried for a whole timeout, so both copies are
+			// waiting on peers that send nothing and close nothing. Closing
+			// releases them, and the loop then collects both.
+			closeBoth()
+		}
 	}
 }
 
@@ -381,7 +491,7 @@ func (t *SSHTunnel) establishConnection(m *Manager, tunnel *models.Tunnel) error
 
 			return fmt.Errorf("listener accept error: %w", err)
 		}
-		go t.forward(conn)
+		go t.forward(conn, forwardIdleTimeout)
 	}
 }
 

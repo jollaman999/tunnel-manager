@@ -1276,10 +1276,186 @@ func runForward(t *testing.T, tun *SSHTunnel, deadline time.Time) (net.Conn, <-c
 	returned := make(chan struct{})
 	go func() {
 		defer close(returned)
-		tun.forward(tunnelSide)
+		tun.forward(tunnelSide, forwardIdleTimeout)
 	}()
 
 	return remoteSide, returned
+}
+
+// forwardTestIdleTimeout is the idle bound the tests that have to watch it
+// expire hand to forward. No test can wait out forwardIdleTimeout, and this is
+// still far longer than the connections of a test stay silent by accident.
+const forwardTestIdleTimeout = 200 * time.Millisecond
+
+// forwardTestAnswerSize is how much a service sends back in the tests that
+// check an answer arrived whole. It is larger than the buffers of the sockets
+// on the way, so an answer that was cut off cannot have been buffered into
+// looking complete.
+const forwardTestAnswerSize = 4 << 20
+
+// runForwardOverTCP does what runForward does, but over a loopback TCP
+// connection instead of a pipe. A pipe cannot be half-closed (net/pipe.go has
+// no CloseWrite), so it is the only way to stand in for the connection the
+// remote listener accepts, which can.
+func runForwardOverTCP(t *testing.T, tun *SSHTunnel, deadline time.Time, idleTimeout time.Duration) (*net.TCPConn, <-chan struct{}) {
+	t.Helper()
+
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("failed to listen: %v", err)
+	}
+	defer func() {
+		_ = ln.Close()
+	}()
+
+	remoteSide, err := net.Dial("tcp", ln.Addr().String())
+	if err != nil {
+		t.Fatalf("failed to dial the tunnel side: %v", err)
+	}
+	t.Cleanup(func() {
+		_ = remoteSide.Close()
+	})
+
+	tunnelSide, err := ln.Accept()
+	if err != nil {
+		t.Fatalf("failed to accept the tunnel side: %v", err)
+	}
+
+	err = remoteSide.SetDeadline(deadline)
+	if err != nil {
+		t.Fatalf("failed to set the deadline: %v", err)
+	}
+
+	returned := make(chan struct{})
+	go func() {
+		defer close(returned)
+		tun.forward(tunnelSide, idleTimeout)
+	}()
+
+	tcp, ok := remoteSide.(*net.TCPConn)
+	if !ok {
+		t.Fatalf("the tunnel side is a %T, not a TCP connection", remoteSide)
+	}
+
+	return tcp, returned
+}
+
+// TestForwardDeliversTheAnswerAfterTheTunnelSideHalfCloses is the case that
+// half-closing exists for: the client sends its request, closes its writing
+// side and keeps receiving. Returning on the first of the two copies cut the
+// answer off right there.
+func TestForwardDeliversTheAnswerAfterTheTunnelSideHalfCloses(t *testing.T) {
+	serviceAddr, conns := startLocalService(t)
+	tun := newForwardTunnel(t, serviceAddr)
+
+	deadline := time.Now().Add(forwardTestTimeout)
+	remoteSide, returned := runForwardOverTCP(t, tun, deadline, forwardIdleTimeout)
+
+	service := serviceConn(t, conns)
+	defer func() {
+		_ = service.Close()
+	}()
+
+	err := service.SetDeadline(deadline)
+	if err != nil {
+		t.Fatalf("failed to set the deadline: %v", err)
+	}
+
+	_, err = remoteSide.Write([]byte("request"))
+	if err != nil {
+		t.Fatalf("failed to write to the connection forward is serving: %v", err)
+	}
+	err = remoteSide.CloseWrite()
+	if err != nil {
+		t.Fatalf("failed to close the writing side of the connection forward is serving: %v", err)
+	}
+
+	// The end of the request has to reach the service, or it never knows the
+	// request is complete and never answers.
+	got, err := io.ReadAll(service)
+	if err != nil {
+		t.Fatalf("reading the request the service received failed: %v", err)
+	}
+	if string(got) != "request" {
+		t.Fatalf("the service received %q, want %q", got, "request")
+	}
+
+	// The service answers a client that is no longer sending. The write runs
+	// on its own goroutine because the answer does not fit in the buffers on
+	// the way and only moves while the read below drains it.
+	answer := bytes.Repeat([]byte("a"), forwardTestAnswerSize)
+	answered := make(chan error, 1)
+	go func() {
+		_, err := service.Write(answer)
+		if err != nil {
+			answered <- err
+			return
+		}
+		answered <- service.Close()
+	}()
+
+	back, err := io.ReadAll(remoteSide)
+	if err != nil {
+		t.Fatalf("reading the answer through the tunnel failed: %v", err)
+	}
+	if len(back) != len(answer) {
+		t.Fatalf("the answer came back as %d bytes, want %d, it was cut off", len(back), len(answer))
+	}
+	if !bytes.Equal(back, answer) {
+		t.Fatal("the answer that came back is not what the service sent")
+	}
+
+	select {
+	case err := <-answered:
+		if err != nil {
+			t.Fatalf("the service could not send its answer: %v", err)
+		}
+	case <-time.After(forwardTestTimeout):
+		t.Fatal("the service never finished sending its answer")
+	}
+
+	waitForwardReturned(t, returned, "after both directions ended")
+}
+
+// TestForwardEndsWhenNothingMovesInEitherDirection covers the peer that
+// neither sends nor closes. Both copies sit in a read there, so only the idle
+// bound gets forward back.
+func TestForwardEndsWhenNothingMovesInEitherDirection(t *testing.T) {
+	serviceAddr, conns := startLocalService(t)
+	tun := newForwardTunnel(t, serviceAddr)
+
+	deadline := time.Now().Add(forwardTestTimeout)
+	remoteSide, returned := runForwardOverTCP(t, tun, deadline, forwardTestIdleTimeout)
+
+	// The service is left open and silent, and so is the tunnel side.
+	service := serviceConn(t, conns)
+	defer func() {
+		_ = service.Close()
+	}()
+
+	waitForwardReturned(t, returned, "although neither end sent anything or closed")
+
+	// Both connections are gone with it, or the sockets would be held by a
+	// connection nobody is serving anymore.
+	_, err := remoteSide.Read(make([]byte, 1))
+	if err == nil {
+		t.Fatal("the connection from the remote listener is still open after forward gave up on it")
+	}
+	if !errors.Is(err, io.EOF) {
+		t.Fatalf("reading the connection forward served returned %v, want %v, it was not closed", err, io.EOF)
+	}
+
+	err = service.SetDeadline(time.Now().Add(forwardTestTimeout))
+	if err != nil {
+		t.Fatalf("failed to set the deadline: %v", err)
+	}
+	_, err = service.Read(make([]byte, 1))
+	if err == nil {
+		t.Fatal("the connection to the service is still open after forward gave up on it")
+	}
+	if !errors.Is(err, io.EOF) {
+		t.Fatalf("reading the service connection returned %v, want %v, it was not closed", err, io.EOF)
+	}
 }
 
 func waitForwardReturned(t *testing.T, returned <-chan struct{}, what string) {
