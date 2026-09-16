@@ -350,7 +350,17 @@ func main() {
 	if err != nil {
 		log.Fatalf("Failed to initialize the encryption: %v", err)
 	}
-	logger.Info("loaded the encryption key", zap.String("path", cfg.Security.KeyFile))
+	// The path is reported as an absolute one. The configured value may be
+	// relative, and a relative path is read against the working directory,
+	// which differs between running from the repository, from the container and
+	// from systemd. Logging it as it was written tells the operator nothing
+	// about which file was actually opened.
+	keyPath, err := filepath.Abs(cfg.Security.KeyFile)
+	if err != nil {
+		keyPath = cfg.Security.KeyFile
+	}
+
+	logger.Info("loaded the encryption key", zap.String("path", keyPath))
 
 	// The signals are taken over before the wait for the database, which runs
 	// for as long as the configured timeout allows. Until they are, the default

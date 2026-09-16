@@ -519,7 +519,19 @@ logging:
 걸립니다.
 
 `security.key_file` 과 `logging.file.path` 의 상대 경로는 설정 파일이 아니라 프로세스의
-작업 디렉터리를 기준으로 합니다.
+작업 디렉터리를 기준으로 합니다. 그 디렉터리가 띄우는 방법마다 달라서, 기본 키 파일이
+서로 다른 곳에 생깁니다.
+
+| 띄운 방법 | 작업 디렉터리 | 기본 키 파일 |
+|-----------|---------------|--------------|
+| `make run` | 저장소 | 그 안의 `keys/tunnel-manager.key` |
+| Docker Compose | `/` | `/keys/tunnel-manager.key`. compose 파일이 `./_data/keys` 에 연결합니다 |
+| 같이 들어 있는 systemd 유닛 | `/var/lib/tunnel-manager` (유닛이 만듭니다) | `/var/lib/tunnel-manager/keys/tunnel-manager.key` |
+
+**`security.key_file` 에 절대 경로를 주면 위 내용이 전부 해당 없습니다.** 같이 들어 있는 유닛의
+`WorkingDirectory` 줄이 없는 유닛으로 띄우면 작업 디렉터리가 `/` 로 남아서 키가
+`/keys/tunnel-manager.key` 에 생깁니다. 기동 로그에 실제로 연 경로가 절대 경로로 찍히니
+어느 파일을 읽었는지는 로그를 보면 됩니다.
 
 ## 암호화 키
 

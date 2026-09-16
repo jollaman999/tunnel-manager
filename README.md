@@ -543,7 +543,20 @@ cannot eat the whole budget: without that bound the kernel takes over two minute
 to give up on the handshake.
 
 A relative path in `security.key_file` or `logging.file.path` is resolved against
-the working directory of the process, not against the configuration file.
+the working directory of the process, not against the configuration file. That
+directory is not the same everywhere, so the default key file lands in different
+places:
+
+| Started by | Working directory | Default key file |
+|------------|-------------------|------------------|
+| `make run` | The repository | `keys/tunnel-manager.key` in it |
+| Docker Compose | `/` | `/keys/tunnel-manager.key`, which the compose file maps to `./_data/keys` |
+| The bundled systemd unit | `/var/lib/tunnel-manager`, which the unit creates | `/var/lib/tunnel-manager/keys/tunnel-manager.key` |
+
+**Give `security.key_file` an absolute path and none of this applies.** A unit
+without the `WorkingDirectory` line the bundled one carries leaves the working
+directory at `/`, which puts the key at `/keys/tunnel-manager.key`. The startup
+logs the path it resolved to, so the log says which file was opened.
 
 ## Encryption key
 

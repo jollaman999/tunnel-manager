@@ -6,6 +6,16 @@ After=network.target
 Type=simple
 User=root
 ExecStart=/usr/local/bin/tunnel-manager -config /etc/tunnel-manager/config.yaml
+
+# security.key_file is relative by default, and a relative path is read against
+# the working directory. systemd leaves that at / unless it is told otherwise,
+# which puts the encryption key at /keys. StateDirectory makes
+# /var/lib/tunnel-manager and hands it to User=, and WorkingDirectory sends the
+# default there instead. Setting security.key_file to an absolute path in the
+# configuration overrides this and is what a deployment should prefer.
+StateDirectory=tunnel-manager
+WorkingDirectory=/var/lib/tunnel-manager
+
 Restart=always
 RestartSec=5
 TimeoutStopSec=90
