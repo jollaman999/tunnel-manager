@@ -1020,3 +1020,519 @@ func TestGetStatusFailsWhenTheDesiredCountCannotBeRead(t *testing.T) {
 		t.Errorf("the failed answer carries desired_tunnels: %s", rec.Body.String())
 	}
 }
+
+// storedHostPassword is the sealed SSH password a stored Host row carries. The
+// read handlers are asked whether it turns up in what they answer.
+const storedHostPassword = "fake-value-1" // hook:allow
+
+// newHostStubDB returns the write stub with the single Host read answered by
+// host, so a row can be set up field by field and the answer read against it.
+func newHostStubDB(t *testing.T, host models.Host) *gorm.DB {
+	t.Helper()
+
+	db, _ := newWriteStubDB(t)
+
+	err := db.Callback().Query().Replace("gorm:query", func(tx *gorm.DB) {
+		if dest, ok := tx.Statement.Dest.(*models.Host); ok {
+			*dest = host
+		}
+		tx.RowsAffected = 1
+	})
+	if err != nil {
+		t.Fatalf("failed to replace the query callback: %v", err)
+	}
+
+	return db
+}
+
+// newReadFailingDB returns the write stub with every read failing, which is the
+// database being unreachable rather than the row being gone.
+func newReadFailingDB(t *testing.T) *gorm.DB {
+	t.Helper()
+
+	db, _ := newWriteStubDB(t)
+
+	err := db.Callback().Query().Replace("gorm:query", func(tx *gorm.DB) {
+		_ = tx.AddError(errQueryFailed)
+	})
+	if err != nil {
+		t.Fatalf("failed to replace the query callback: %v", err)
+	}
+
+	return db
+}
+
+// storedHost returns the Host row the read handlers are asked about.
+func storedHost() models.Host {
+	return models.Host{
+		ID:          1,
+		IP:          "192.0.2.1",
+		Port:        22,
+		User:        "root",
+		Password:    storedHostPassword,
+		Description: "the host of the test",
+		Enabled:     true,
+	}
+}
+
+// getRequest builds a GET request with one path parameter, the way echo hands
+// one to a handler.
+func getRequest(t *testing.T, target, param, value string) (echo.Context, *httptest.ResponseRecorder) {
+	t.Helper()
+
+	e := echo.New()
+	e.Validator = &testValidator{validator: validator.New()}
+	req := httptest.NewRequest(http.MethodGet, target, nil)
+	rec := httptest.NewRecorder()
+	c := e.NewContext(req, rec)
+
+	if param != "" {
+		c.SetParamNames(param)
+		c.SetParamValues(value)
+	}
+
+	return c, rec
+}
+
+// decodeResponse reads the answer of a handler as success plus a data object.
+func decodeResponse(t *testing.T, rec *httptest.ResponseRecorder) (bool, map[string]interface{}) {
+	t.Helper()
+
+	var resp struct {
+		Success bool                   `json:"success"`
+		Data    map[string]interface{} `json:"data"`
+		Error   string                 `json:"error"`
+	}
+
+	err := json.Unmarshal(rec.Body.Bytes(), &resp)
+	if err != nil {
+		t.Fatalf("failed to read the answer: %v, body: %s", err, rec.Body.String())
+	}
+
+	return resp.Success, resp.Data
+}
+
+// TestGetHostAnswersTheStoredRow pins the shape of the answer: the fields of
+// the row the API is asked for, under data, with success set.
+func TestGetHostAnswersTheStoredRow(t *testing.T) {
+	db := newHostStubDB(t, storedHost())
+
+	c, rec := getRequest(t, "/api/host/1", "id", "1")
+	h := NewHandler(db, &wakeRecorder{tx: &txConnPool{}}, zap.NewNop(), newTestCipher(t))
+
+	err := h.GetHost(c)
+	if err != nil {
+		t.Fatalf("GetHost returned error: %v", err)
+	}
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d, body: %s", rec.Code, http.StatusOK, rec.Body.String())
+	}
+
+	success, data := decodeResponse(t, rec)
+	if !success {
+		t.Fatalf("success = false, body: %s", rec.Body.String())
+	}
+
+	fields := map[string]interface{}{
+		"id":          float64(1),
+		"ip":          "192.0.2.1",
+		"port":        float64(22),
+		"user":        "root",
+		"description": "the host of the test",
+		"enabled":     true,
+	}
+	for key, want := range fields {
+		got, ok := data[key]
+		if !ok {
+			t.Errorf("the answer carries no %s, body: %s", key, rec.Body.String())
+			continue
+		}
+		if got != want {
+			t.Errorf("%s = %v, want %v", key, got, want)
+		}
+	}
+}
+
+// TestGetHostDoesNotAnswerWithTheSSHPassword is what keeps the sealed SSH
+// password of a Host inside the process. Everyone who may read a Host may make
+// this request, and an answer that carries the password hands out the way into
+// every machine the row names.
+func TestGetHostDoesNotAnswerWithTheSSHPassword(t *testing.T) {
+	db := newHostStubDB(t, storedHost())
+
+	c, rec := getRequest(t, "/api/host/1", "id", "1")
+	h := NewHandler(db, &wakeRecorder{tx: &txConnPool{}}, zap.NewNop(), newTestCipher(t))
+
+	err := h.GetHost(c)
+	if err != nil {
+		t.Fatalf("GetHost returned error: %v", err)
+	}
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d, body: %s", rec.Code, http.StatusOK, rec.Body.String())
+	}
+
+	if strings.Contains(rec.Body.String(), storedHostPassword) {
+		t.Fatalf("the answer carries the SSH password of the Host: %s", rec.Body.String())
+	}
+
+	_, data := decodeResponse(t, rec)
+	for _, key := range []string{"password", "Password"} {
+		_, ok := data[key]
+		if ok {
+			t.Fatalf("the answer carries a %s field: %s", key, rec.Body.String())
+		}
+	}
+}
+
+// TestGetHostStatusDoesNotAnswerWithTheSSHPassword covers the second way the
+// row leaves the process. The status answer carries the Host itself, so the
+// same password could ride along with it.
+func TestGetHostStatusDoesNotAnswerWithTheSSHPassword(t *testing.T) {
+	db := newHostStubDB(t, storedHost())
+	manager := &countFailingManager{tunnels: []models.Tunnel{statusTunnel(1, 1, "connected")}}
+
+	c, rec := getRequest(t, "/api/status/host/1", "hostId", "1")
+	h := NewHandler(db, manager, zap.NewNop(), newTestCipher(t))
+
+	err := h.GetHostStatus(c)
+	if err != nil {
+		t.Fatalf("GetHostStatus returned error: %v", err)
+	}
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d, body: %s", rec.Code, http.StatusOK, rec.Body.String())
+	}
+
+	if strings.Contains(rec.Body.String(), storedHostPassword) {
+		t.Fatalf("the answer carries the SSH password of the Host: %s", rec.Body.String())
+	}
+
+	_, data := decodeResponse(t, rec)
+	host, ok := data["host"].(map[string]interface{})
+	if !ok {
+		t.Fatalf("the answer carries no host object, body: %s", rec.Body.String())
+	}
+	_, ok = host["password"]
+	if ok {
+		t.Fatalf("the host of the answer carries a password field: %s", rec.Body.String())
+	}
+}
+
+// TestGetServicePortAnswersTheStoredRow pins the shape of the answer of the
+// other single row read.
+func TestGetServicePortAnswersTheStoredRow(t *testing.T) {
+	db, _ := newWriteStubDB(t)
+
+	c, rec := getRequest(t, "/api/service-port/2", "id", "2")
+	h := NewHandler(db, &wakeRecorder{tx: &txConnPool{}}, zap.NewNop(), newTestCipher(t))
+
+	err := h.GetServicePort(c)
+	if err != nil {
+		t.Fatalf("GetServicePort returned error: %v", err)
+	}
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d, body: %s", rec.Code, http.StatusOK, rec.Body.String())
+	}
+
+	success, data := decodeResponse(t, rec)
+	if !success {
+		t.Fatalf("success = false, body: %s", rec.Body.String())
+	}
+
+	fields := map[string]interface{}{
+		"id":           float64(2),
+		"service_ip":   "192.0.2.2",
+		"service_port": float64(8081),
+		"local_port":   float64(18081),
+	}
+	for key, want := range fields {
+		got, ok := data[key]
+		if !ok {
+			t.Errorf("the answer carries no %s, body: %s", key, rec.Body.String())
+			continue
+		}
+		if got != want {
+			t.Errorf("%s = %v, want %v", key, got, want)
+		}
+	}
+}
+
+// TestListServicePortsAnswersEveryStoredRow pins that the list carries the rows
+// as an array, so a client that reads data[0] finds a service port there.
+func TestListServicePortsAnswersEveryStoredRow(t *testing.T) {
+	sps := []models.ServicePort{statusServicePort(1), statusServicePort(2)}
+	db := newStatusStubDB(t, nil, sps, nil)
+
+	c, rec := getRequest(t, "/api/service-port", "", "")
+	h := NewHandler(db, &wakeRecorder{tx: &txConnPool{}}, zap.NewNop(), newTestCipher(t))
+
+	err := h.ListServicePorts(c)
+	if err != nil {
+		t.Fatalf("ListServicePorts returned error: %v", err)
+	}
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d, body: %s", rec.Code, http.StatusOK, rec.Body.String())
+	}
+
+	var resp struct {
+		Success bool                 `json:"success"`
+		Data    []models.ServicePort `json:"data"`
+	}
+	err = json.Unmarshal(rec.Body.Bytes(), &resp)
+	if err != nil {
+		t.Fatalf("failed to read the answer: %v, body: %s", err, rec.Body.String())
+	}
+	if !resp.Success {
+		t.Fatalf("success = false, body: %s", rec.Body.String())
+	}
+
+	if len(resp.Data) != len(sps) {
+		t.Fatalf("the answer carries %d service ports, want %d, body: %s", len(resp.Data), len(sps), rec.Body.String())
+	}
+	for i, want := range sps {
+		if resp.Data[i].ID != want.ID || resp.Data[i].LocalPort != want.LocalPort {
+			t.Errorf("service port %d = %+v, want id %d and local port %d", i, resp.Data[i], want.ID, want.LocalPort)
+		}
+	}
+}
+
+// TestListServicePortsReportsAReadThatFailed pins that a list which could not
+// be read is an error and not an empty array. An empty array reads as there
+// being no service port, which is what a client would act on.
+func TestListServicePortsReportsAReadThatFailed(t *testing.T) {
+	db := newReadFailingDB(t)
+
+	c, rec := getRequest(t, "/api/service-port", "", "")
+	h := NewHandler(db, &wakeRecorder{tx: &txConnPool{}}, zap.NewNop(), newTestCipher(t))
+
+	err := h.ListServicePorts(c)
+	if err != nil {
+		t.Fatalf("ListServicePorts returned error: %v", err)
+	}
+	if rec.Code != http.StatusInternalServerError {
+		t.Fatalf("status = %d, want %d, body: %s", rec.Code, http.StatusInternalServerError, rec.Body.String())
+	}
+
+	success, _ := decodeResponse(t, rec)
+	if success {
+		t.Fatalf("success = true on a read that failed, body: %s", rec.Body.String())
+	}
+}
+
+// readHandler is one of the reads an id is handed to.
+type readHandler struct {
+	name  string
+	param string
+	call  func(*Handler, echo.Context) error
+}
+
+// readHandlers are the reads that take an id. GetHostStatus reads it from
+// another parameter, which is part of what is pinned here: a handler that reads
+// the wrong parameter never sees the id of the request.
+var readHandlers = []readHandler{
+	{name: "get host", param: "id", call: (*Handler).GetHost},
+	{name: "get service port", param: "id", call: (*Handler).GetServicePort},
+	{name: "get host status", param: "hostId", call: (*Handler).GetHostStatus},
+}
+
+// newReadManager returns a tunnel manager that answers one connected tunnel, so
+// the status handler gets past the manager and the answer is about the read.
+func newReadManager() *countFailingManager {
+	return &countFailingManager{tunnels: []models.Tunnel{statusTunnel(1, 1, "connected")}}
+}
+
+// TestReadHandlersRejectAnIDThatIsNotANumber pins that a path segment which is
+// no number is turned down before the database is asked. It is the client that
+// is wrong, and the answer has to say so rather than report a failed read.
+func TestReadHandlersRejectAnIDThatIsNotANumber(t *testing.T) {
+	for _, tt := range readHandlers {
+		t.Run(tt.name, func(t *testing.T) {
+			db := newHostStubDB(t, storedHost())
+
+			c, rec := getRequest(t, "/api/read/not-a-number", tt.param, "not-a-number")
+			h := NewHandler(db, newReadManager(), zap.NewNop(), newTestCipher(t))
+
+			err := tt.call(h, c)
+			if err != nil {
+				t.Fatalf("the handler returned an error: %v", err)
+			}
+			if rec.Code != http.StatusBadRequest {
+				t.Fatalf("status = %d, want %d, body: %s", rec.Code, http.StatusBadRequest, rec.Body.String())
+			}
+
+			success, _ := decodeResponse(t, rec)
+			if success {
+				t.Fatalf("success = true on an id that is not a number, body: %s", rec.Body.String())
+			}
+		})
+	}
+}
+
+// TestReadHandlersAnswerNotFoundForARowThatIsGone pins that a row which is not
+// stored is a 404 and not an answer carrying an empty row.
+func TestReadHandlersAnswerNotFoundForARowThatIsGone(t *testing.T) {
+	for _, tt := range readHandlers {
+		t.Run(tt.name, func(t *testing.T) {
+			db, _, _ := newReadRecordingDB(t, true)
+
+			c, rec := getRequest(t, "/api/read/9", tt.param, "9")
+			h := NewHandler(db, newReadManager(), zap.NewNop(), newTestCipher(t))
+
+			err := tt.call(h, c)
+			if err != nil {
+				t.Fatalf("the handler returned an error: %v", err)
+			}
+			if rec.Code != http.StatusNotFound {
+				t.Fatalf("status = %d, want %d, body: %s", rec.Code, http.StatusNotFound, rec.Body.String())
+			}
+
+			success, data := decodeResponse(t, rec)
+			if success {
+				t.Fatalf("success = true for a row that is not there, body: %s", rec.Body.String())
+			}
+			if len(data) != 0 {
+				t.Fatalf("the answer carries data for a row that is not there: %s", rec.Body.String())
+			}
+		})
+	}
+}
+
+// TestReadHandlersDoNotAnswerARowWhenTheReadFails pins that a database which
+// did not answer is not turned into a row. The handlers do not tell a missing
+// row from a failed read, so either answer is taken here; what must not happen
+// is a 200 carrying the empty row the read left behind.
+func TestReadHandlersDoNotAnswerARowWhenTheReadFails(t *testing.T) {
+	for _, tt := range readHandlers {
+		t.Run(tt.name, func(t *testing.T) {
+			db := newReadFailingDB(t)
+
+			c, rec := getRequest(t, "/api/read/1", tt.param, "1")
+			h := NewHandler(db, newReadManager(), zap.NewNop(), newTestCipher(t))
+
+			err := tt.call(h, c)
+			if err != nil {
+				t.Fatalf("the handler returned an error: %v", err)
+			}
+			if rec.Code != http.StatusNotFound && rec.Code != http.StatusInternalServerError {
+				t.Fatalf("status = %d, want %d or %d, body: %s", rec.Code, http.StatusNotFound, http.StatusInternalServerError, rec.Body.String())
+			}
+
+			success, data := decodeResponse(t, rec)
+			if success {
+				t.Fatalf("success = true on a read that failed, body: %s", rec.Body.String())
+			}
+			if len(data) != 0 {
+				t.Fatalf("the answer carries data while the read failed: %s", rec.Body.String())
+			}
+		})
+	}
+}
+
+// TestGetHostStatusCountsTheTunnelsOfTheHost pins the two numbers the status of
+// one Host is read off: how many tunnel rows it has and how many of them are
+// connected. A connected count that took every row would report a Host whose
+// tunnels are all down as healthy.
+func TestGetHostStatusCountsTheTunnelsOfTheHost(t *testing.T) {
+	tests := []struct {
+		name          string
+		tunnels       []models.Tunnel
+		wantTotal     int
+		wantConnected int
+	}{
+		{
+			name:          "no tunnel at all",
+			tunnels:       nil,
+			wantTotal:     0,
+			wantConnected: 0,
+		},
+		{
+			name:          "every tunnel connected",
+			tunnels:       []models.Tunnel{statusTunnel(1, 1, "connected"), statusTunnel(1, 2, "connected")},
+			wantTotal:     2,
+			wantConnected: 2,
+		},
+		{
+			name: "the ones that are not connected are the difference",
+			tunnels: []models.Tunnel{
+				statusTunnel(1, 1, "connected"),
+				statusTunnel(1, 2, "error"),
+				statusTunnel(1, 3, "connecting"),
+			},
+			wantTotal:     3,
+			wantConnected: 1,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			db := newHostStubDB(t, storedHost())
+			manager := &countFailingManager{tunnels: tt.tunnels}
+
+			c, rec := getRequest(t, "/api/status/host/1", "hostId", "1")
+			h := NewHandler(db, manager, zap.NewNop(), newTestCipher(t))
+
+			err := h.GetHostStatus(c)
+			if err != nil {
+				t.Fatalf("GetHostStatus returned error: %v", err)
+			}
+			if rec.Code != http.StatusOK {
+				t.Fatalf("status = %d, want %d, body: %s", rec.Code, http.StatusOK, rec.Body.String())
+			}
+
+			success, data := decodeResponse(t, rec)
+			if !success {
+				t.Fatalf("success = false, body: %s", rec.Body.String())
+			}
+
+			host, ok := data["host"].(map[string]interface{})
+			if !ok {
+				t.Fatalf("the answer carries no host object, body: %s", rec.Body.String())
+			}
+			if host["id"] != float64(1) || host["ip"] != "192.0.2.1" {
+				t.Errorf("the answer is about another host: %v", host)
+			}
+
+			counts := []struct {
+				key  string
+				want int
+			}{
+				{"total_tunnels", tt.wantTotal},
+				{"connected_tunnels", tt.wantConnected},
+			}
+			for _, count := range counts {
+				got, ok := data[count.key].(float64)
+				if !ok {
+					t.Fatalf("%s is not a number in the answer, body: %s", count.key, rec.Body.String())
+				}
+				if int(got) != count.want {
+					t.Errorf("%s = %d, want %d", count.key, int(got), count.want)
+				}
+			}
+		})
+	}
+}
+
+// TestGetHostStatusReportsTunnelsItCouldNotRead pins that a status which could
+// not be built is an error. Zero tunnels out of zero reads as a Host that has
+// nothing to run, which is not what a failed read says.
+func TestGetHostStatusReportsTunnelsItCouldNotRead(t *testing.T) {
+	db := newHostStubDB(t, storedHost())
+
+	c, rec := getRequest(t, "/api/status/host/1", "hostId", "1")
+	h := NewHandler(db, &wakeRecorder{tx: &txConnPool{}}, zap.NewNop(), newTestCipher(t))
+
+	err := h.GetHostStatus(c)
+	if err != nil {
+		t.Fatalf("GetHostStatus returned error: %v", err)
+	}
+	if rec.Code != http.StatusInternalServerError {
+		t.Fatalf("status = %d, want %d, body: %s", rec.Code, http.StatusInternalServerError, rec.Body.String())
+	}
+
+	success, data := decodeResponse(t, rec)
+	if success {
+		t.Fatalf("success = true while the tunnels could not be read, body: %s", rec.Body.String())
+	}
+	if len(data) != 0 {
+		t.Fatalf("the answer carries counts while the tunnels could not be read: %s", rec.Body.String())
+	}
+}

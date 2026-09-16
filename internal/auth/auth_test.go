@@ -1,10 +1,19 @@
 package auth
 
 import (
+	"context"
+	"crypto/rand"
+	"database/sql"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/jollaman999/tunnel-manager/internal/models"
+	"gorm.io/driver/mysql"
+	"gorm.io/gorm"
+	gormlogger "gorm.io/gorm/logger"
 )
 
 func TestInitialPasswordFileSitsNextToTheConfigFile(t *testing.T) {
@@ -180,6 +189,430 @@ func TestWriteInitialPasswordFileReportsADirectoryItCannotWriteTo(t *testing.T) 
 	}
 
 	if !strings.Contains(err.Error(), dir) {
+		t.Fatalf("the error does not name the path: %v", err)
+	}
+}
+
+// errStub stands in for a database that answers nothing.
+var errStub = errors.New("the database is not there")
+
+// stubConnPool is a database handle that sends nothing. Every callback that
+// would reach it is replaced below, so it only has to exist and to hand out a
+// transaction, which gorm opens around a create of its own accord.
+type stubConnPool struct{}
+
+func (p *stubConnPool) PrepareContext(ctx context.Context, query string) (*sql.Stmt, error) {
+	return nil, errStub
+}
+
+func (p *stubConnPool) ExecContext(ctx context.Context, query string, args ...interface{}) (sql.Result, error) {
+	return nil, errStub
+}
+
+func (p *stubConnPool) QueryContext(ctx context.Context, query string, args ...interface{}) (*sql.Rows, error) {
+	return nil, errStub
+}
+
+func (p *stubConnPool) QueryRowContext(ctx context.Context, query string, args ...interface{}) *sql.Row {
+	return &sql.Row{}
+}
+
+func (p *stubConnPool) BeginTx(ctx context.Context, opts *sql.TxOptions) (gorm.ConnPool, error) {
+	return p, nil
+}
+
+func (p *stubConnPool) Commit() error { return nil }
+
+func (p *stubConnPool) Rollback() error { return nil }
+
+// accountStub is a database handle whose account table is answered from memory,
+// together with the rows the account setup created in it. The rows are taken
+// from the callback rather than from the SQL, so what was stored can be read
+// field by field.
+type accountStub struct {
+	db      *gorm.DB
+	created []models.User
+}
+
+// newAccountStub returns a handle whose account table holds rowCount rows.
+func newAccountStub(t *testing.T, rowCount int64) *accountStub {
+	t.Helper()
+
+	db, err := gorm.Open(mysql.New(mysql.Config{
+		Conn:                      &stubConnPool{},
+		SkipInitializeWithVersion: true,
+	}), &gorm.Config{
+		Logger:               gormlogger.Discard,
+		DisableAutomaticPing: true,
+	})
+	if err != nil {
+		t.Fatalf("failed to open the database handle: %v", err)
+	}
+
+	stub := &accountStub{db: db}
+
+	err = db.Callback().Query().Replace("gorm:query", func(tx *gorm.DB) {
+		// The only read the account setup makes is the count of the table.
+		if dest, ok := tx.Statement.Dest.(*int64); ok {
+			*dest = rowCount
+		}
+		tx.RowsAffected = 1
+	})
+	if err != nil {
+		t.Fatalf("failed to replace the query callback: %v", err)
+	}
+
+	err = db.Callback().Create().Replace("gorm:create", func(tx *gorm.DB) {
+		if dest, ok := tx.Statement.Dest.(*models.User); ok {
+			stub.created = append(stub.created, *dest)
+		}
+		tx.RowsAffected = 1
+	})
+	if err != nil {
+		t.Fatalf("failed to replace the create callback: %v", err)
+	}
+
+	return stub
+}
+
+// failTheCount makes the read of the account table fail.
+func (s *accountStub) failTheCount(t *testing.T) {
+	t.Helper()
+
+	err := s.db.Callback().Query().Replace("gorm:query", func(tx *gorm.DB) {
+		_ = tx.AddError(errStub)
+	})
+	if err != nil {
+		t.Fatalf("failed to replace the query callback: %v", err)
+	}
+}
+
+// failTheInsert makes the write of the account row fail.
+func (s *accountStub) failTheInsert(t *testing.T) {
+	t.Helper()
+
+	err := s.db.Callback().Create().Replace("gorm:create", func(tx *gorm.DB) {
+		_ = tx.AddError(errStub)
+	})
+	if err != nil {
+		t.Fatalf("failed to replace the create callback: %v", err)
+	}
+}
+
+// passwordFilePath returns a path in a directory of this test that nothing has
+// written to yet.
+func passwordFilePath(t *testing.T) string {
+	t.Helper()
+
+	return filepath.Join(t.TempDir(), "initial-password")
+}
+
+// readPasswordFile returns what was written to the initial password file.
+func readPasswordFile(t *testing.T, path string) string {
+	t.Helper()
+
+	body, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("failed to read the initial password file: %v", err)
+	}
+
+	password := strings.TrimRight(string(body), "\n")
+	if password == "" {
+		t.Fatalf("the initial password file is empty")
+	}
+
+	return password
+}
+
+// mustNotExist fails when a file is there.
+func mustNotExist(t *testing.T, path string) {
+	t.Helper()
+
+	_, err := os.Stat(path)
+	if err == nil {
+		t.Fatalf("the file %s was written", path)
+	}
+	if !os.IsNotExist(err) {
+		t.Fatalf("failed to check the file %s: %v", path, err)
+	}
+}
+
+// TestEnsureUserCreatesTheAccountTheSetupIsRunAgainst pins the row the first
+// startup writes: no username, setup_required set, and a hash in place of a
+// password. A row that arrived with a username or without the flag would let
+// the API be used before anyone chose the credentials.
+func TestEnsureUserCreatesTheAccountTheSetupIsRunAgainst(t *testing.T) {
+	stub := newAccountStub(t, 0)
+	passwordFile := passwordFilePath(t)
+
+	created, err := EnsureUser(stub.db, passwordFile)
+	if err != nil {
+		t.Fatalf("EnsureUser returned error: %v", err)
+	}
+	if !created {
+		t.Fatalf("created = false while the account table was empty")
+	}
+
+	if len(stub.created) != 1 {
+		t.Fatalf("rows created = %d, want 1", len(stub.created))
+	}
+	user := stub.created[0]
+
+	if user.Username != "" {
+		t.Errorf("username = %q, want an empty one", user.Username)
+	}
+	if !user.SetupRequired {
+		t.Errorf("the account was created without setup_required")
+	}
+	if !strings.HasPrefix(user.PasswordHash, "$2a$") {
+		t.Errorf("password_hash = %q, want a bcrypt hash", user.PasswordHash)
+	}
+}
+
+// TestEnsureUserWritesTheInitialPasswordForTheOwnerOnly reads the permission
+// off the file itself. The password opens the API, and the file sits in a
+// directory an operator may share, so anyone but the owner reading it is the
+// whole account handed over.
+func TestEnsureUserWritesTheInitialPasswordForTheOwnerOnly(t *testing.T) {
+	stub := newAccountStub(t, 0)
+	passwordFile := passwordFilePath(t)
+
+	_, err := EnsureUser(stub.db, passwordFile)
+	if err != nil {
+		t.Fatalf("EnsureUser returned error: %v", err)
+	}
+
+	info, err := os.Stat(passwordFile)
+	if err != nil {
+		t.Fatalf("failed to stat the initial password file: %v", err)
+	}
+
+	// The number is spelled out rather than read from the constant, so a
+	// constant that is widened is a failure here and not a passing test.
+	if info.Mode().Perm() != 0600 {
+		t.Fatalf("the initial password file has permission %#o, want %#o", info.Mode().Perm(), 0600)
+	}
+}
+
+// TestEnsureUserWritesThePasswordOfTheStoredHash pins that the file and the row
+// belong together. A file holding anything else is an account nobody can log
+// into, and the row is what keeps the next startup from making another one.
+func TestEnsureUserWritesThePasswordOfTheStoredHash(t *testing.T) {
+	stub := newAccountStub(t, 0)
+	passwordFile := passwordFilePath(t)
+
+	_, err := EnsureUser(stub.db, passwordFile)
+	if err != nil {
+		t.Fatalf("EnsureUser returned error: %v", err)
+	}
+
+	if len(stub.created) != 1 {
+		t.Fatalf("rows created = %d, want 1", len(stub.created))
+	}
+
+	password := readPasswordFile(t, passwordFile)
+
+	if password == stub.created[0].PasswordHash {
+		t.Fatalf("the hash was written to the file in place of the password")
+	}
+	if !CheckPassword(stub.created[0].PasswordHash, password) {
+		t.Fatalf("the stored hash does not verify against the password in the file")
+	}
+}
+
+// TestEnsureUserLeavesTheAccountThatIsAlreadyThere pins that a later startup
+// writes neither a row nor a file, so the password the operator is using is not
+// replaced by one they never saw.
+func TestEnsureUserLeavesTheAccountThatIsAlreadyThere(t *testing.T) {
+	stub := newAccountStub(t, 1)
+	passwordFile := passwordFilePath(t)
+
+	created, err := EnsureUser(stub.db, passwordFile)
+	if err != nil {
+		t.Fatalf("EnsureUser returned error: %v", err)
+	}
+	if created {
+		t.Fatalf("created = true while an account was already there")
+	}
+
+	if len(stub.created) != 0 {
+		t.Fatalf("rows created = %d, want 0", len(stub.created))
+	}
+	mustNotExist(t, passwordFile)
+}
+
+// TestEnsureUserCreatesNoAccountWhenThePasswordFileCannotBeWritten is the one
+// order that matters: a row without a file is an account nobody has the
+// password of, and it keeps every later startup from making another one, so the
+// application would be locked out for good. The file is written first, and a
+// directory that cannot be written to has to end the run before the insert.
+func TestEnsureUserCreatesNoAccountWhenThePasswordFileCannotBeWritten(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("root writes to a directory whatever its permission says")
+	}
+
+	stub := newAccountStub(t, 0)
+
+	dir := filepath.Join(t.TempDir(), "read-only")
+	err := os.Mkdir(dir, 0500)
+	if err != nil {
+		t.Fatalf("failed to prepare the directory: %v", err)
+	}
+	passwordFile := filepath.Join(dir, "initial-password")
+
+	created, err := EnsureUser(stub.db, passwordFile)
+	if err == nil {
+		t.Fatalf("a password file that could not be written was reported as a success")
+	}
+	if created {
+		t.Fatalf("created = true while the run failed")
+	}
+
+	if len(stub.created) != 0 {
+		t.Fatalf("rows created = %d, want 0: an account was left behind that nobody has the password of", len(stub.created))
+	}
+	mustNotExist(t, passwordFile)
+}
+
+// TestEnsureUserWritesNoPasswordFileWhenTheCountFails pins that a read that did
+// not come back is not taken for an empty table. The file would otherwise be
+// written over on a startup whose database was only unreachable for a moment,
+// which is the password of the account in use thrown away.
+func TestEnsureUserWritesNoPasswordFileWhenTheCountFails(t *testing.T) {
+	stub := newAccountStub(t, 0)
+	stub.failTheCount(t)
+	passwordFile := passwordFilePath(t)
+
+	created, err := EnsureUser(stub.db, passwordFile)
+	if err == nil {
+		t.Fatalf("a count that failed was reported as a success")
+	}
+	if created {
+		t.Fatalf("created = true while the count failed")
+	}
+	if !strings.Contains(err.Error(), "count") {
+		t.Errorf("the error does not say the count failed: %v", err)
+	}
+
+	if len(stub.created) != 0 {
+		t.Fatalf("rows created = %d, want 0", len(stub.created))
+	}
+	mustNotExist(t, passwordFile)
+}
+
+// TestEnsureUserReportsAnInsertThatFailed pins that a row that was not stored
+// is not reported as a created account. The startup stops on it, which is what
+// keeps the operator from being handed a password of an account that is not
+// there.
+func TestEnsureUserReportsAnInsertThatFailed(t *testing.T) {
+	stub := newAccountStub(t, 0)
+	stub.failTheInsert(t)
+	passwordFile := passwordFilePath(t)
+
+	created, err := EnsureUser(stub.db, passwordFile)
+	if err == nil {
+		t.Fatalf("an insert that failed was reported as a success")
+	}
+	if created {
+		t.Fatalf("created = true while the insert failed")
+	}
+	if !strings.Contains(err.Error(), "account") {
+		t.Errorf("the error does not say the account could not be created: %v", err)
+	}
+
+	// The file is there, since it is written first. It holds the password of no
+	// account, and the next startup writes over it.
+	_, statErr := os.Stat(passwordFile)
+	if statErr != nil {
+		t.Fatalf("failed to stat the initial password file: %v", statErr)
+	}
+}
+
+// TestEnsureUserCreatesNothingWhenTheRandomnessCannotBeRead pins the same order
+// one step earlier: a password that could not be made leaves neither a file nor
+// a row, so the next startup is the one that sets the account up.
+func TestEnsureUserCreatesNothingWhenTheRandomnessCannotBeRead(t *testing.T) {
+	stub := newAccountStub(t, 0)
+	passwordFile := passwordFilePath(t)
+
+	original := rand.Reader
+	rand.Reader = failingReader{}
+	t.Cleanup(func() {
+		rand.Reader = original
+	})
+
+	created, err := EnsureUser(stub.db, passwordFile)
+	if err == nil {
+		t.Fatalf("a password that could not be generated was reported as a success")
+	}
+	if created {
+		t.Fatalf("created = true while no password could be generated")
+	}
+
+	if len(stub.created) != 0 {
+		t.Fatalf("rows created = %d, want 0", len(stub.created))
+	}
+	mustNotExist(t, passwordFile)
+}
+
+// failingReader stands in for a source of randomness that is not readable.
+type failingReader struct{}
+
+func (failingReader) Read([]byte) (int, error) {
+	return 0, errStub
+}
+
+// TestGenerateInitialPasswordReportsRandomnessItCouldNotRead pins that a short
+// read is an error and not a password. Anything else would hand out a password
+// made of the zero bytes the buffer still holds.
+func TestGenerateInitialPasswordReportsRandomnessItCouldNotRead(t *testing.T) {
+	original := rand.Reader
+	rand.Reader = failingReader{}
+	t.Cleanup(func() {
+		rand.Reader = original
+	})
+
+	generated, err := GenerateInitialPassword()
+	if err == nil {
+		t.Fatalf("a source of randomness that could not be read gave the password %q", generated)
+	}
+	if generated != "" {
+		t.Fatalf("a password came back along with the error: %q", generated)
+	}
+}
+
+// TestHashPasswordReportsAPasswordBcryptWillNotTake pins that a password bcrypt
+// turns down comes back as an error. bcrypt reads at most 72 bytes, and a
+// silent truncation would store a hash that a shorter password also verifies
+// against.
+func TestHashPasswordReportsAPasswordBcryptWillNotTake(t *testing.T) {
+	tooLong := strings.Repeat("a", 73)
+
+	hash, err := HashPassword(tooLong)
+	if err == nil {
+		t.Fatalf("a password of %d bytes was hashed to %q", len(tooLong), hash)
+	}
+	if hash != "" {
+		t.Fatalf("a hash came back along with the error: %q", hash)
+	}
+}
+
+// TestWriteInitialPasswordFileReportsAWriteThatFailed pins that a file that was
+// opened but not filled is an error. The path is a device that takes no bytes,
+// which is the one place a write fails after the open went through.
+func TestWriteInitialPasswordFileReportsAWriteThatFailed(t *testing.T) {
+	const full = "/dev/full"
+
+	_, err := os.Stat(full)
+	if err != nil {
+		t.Skipf("%s is not there: %v", full, err)
+	}
+
+	err = writeInitialPasswordFile(full, "test-password")
+	if err == nil {
+		t.Fatalf("a write that stored nothing was reported as a success")
+	}
+	if !strings.Contains(err.Error(), full) {
 		t.Fatalf("the error does not name the path: %v", err)
 	}
 }
