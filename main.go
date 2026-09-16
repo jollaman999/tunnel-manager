@@ -331,9 +331,7 @@ func checkEncryptionKey(db *gorm.DB, cipher *crypto.Cipher, logger *zap.Logger, 
 // password is written to a file next to the configuration file and never to the
 // log, which goes to the console as well as to the log file, so only the path is
 // reported. The encryption key file is handled the same way.
-func ensureUser(db *gorm.DB, logger *zap.Logger, configFile string) {
-	passwordFile := auth.InitialPasswordFile(configFile)
-
+func ensureUser(db *gorm.DB, logger *zap.Logger, passwordFile string) {
 	created, err := auth.EnsureUser(db, passwordFile)
 	if err != nil {
 		// The startup stops here rather than going on with a warning. Nothing
@@ -449,7 +447,11 @@ func main() {
 	// runs, and a failure here stops the startup while there is nothing to tear
 	// down. Leaving it to a later point would let the API come up with no
 	// account to authenticate against.
-	ensureUser(db, logger, *configPath)
+	// The path is worked out once and handed to both the startup, which writes
+	// the file, and the setup, which deletes it once the account is settled.
+	initialPasswordFile := auth.InitialPasswordFile(*configPath)
+
+	ensureUser(db, logger, initialPasswordFile)
 
 	manager, err := tunnel.NewManager(db, logger, cipher, cfg.Monitoring.IntervalSec)
 	if err != nil {
@@ -484,7 +486,7 @@ func main() {
 	e.Use(middleware.CORS())
 
 	h := api.NewHandler(db, manager, logger, cipher)
-	authHandler := api.NewAuthHandler(db, logger)
+	authHandler := api.NewAuthHandler(db, logger, initialPasswordFile)
 	g := e.Group("/api")
 
 	// The session check is put on the group before any route is added to it.
@@ -495,6 +497,7 @@ func main() {
 
 	g.POST("/login", authHandler.Login)
 	g.POST("/logout", authHandler.Logout)
+	g.POST("/setup", authHandler.Setup)
 
 	g.POST("/host", h.CreateHost)
 	g.GET("/host", h.ListHosts)

@@ -61,7 +61,7 @@ func TestEnsureUserKeepsTheInitialPasswordOutOfTheLog(t *testing.T) {
 	configFile := filepath.Join(t.TempDir(), "config.yaml")
 	passwordFile := filepath.Join(filepath.Dir(configFile), "initial-password")
 
-	ensureUser(db, zap.New(core), configFile)
+	ensureUser(db, zap.New(core), passwordFile)
 
 	password := readInitialPassword(t, passwordFile)
 
@@ -107,7 +107,7 @@ func TestEnsureUserStoresAHashAndNotThePassword(t *testing.T) {
 	configFile := filepath.Join(t.TempDir(), "config.yaml")
 	passwordFile := filepath.Join(filepath.Dir(configFile), "initial-password")
 
-	ensureUser(db, zap.NewNop(), configFile)
+	ensureUser(db, zap.NewNop(), passwordFile)
 
 	password := readInitialPassword(t, passwordFile)
 
@@ -167,7 +167,7 @@ func TestEnsureUserLeavesAnAccountThatIsAlreadyThere(t *testing.T) {
 	configFile := filepath.Join(t.TempDir(), "config.yaml")
 	passwordFile := filepath.Join(filepath.Dir(configFile), "initial-password")
 
-	ensureUser(db, zap.NewNop(), configFile)
+	ensureUser(db, zap.NewNop(), passwordFile)
 
 	for _, statement := range recorder.all() {
 		if strings.HasPrefix(strings.ToUpper(statement.query), "INSERT") {

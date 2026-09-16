@@ -7,6 +7,9 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"os"
+	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -15,6 +18,7 @@ import (
 	"github.com/labstack/echo/v4"
 	"go.uber.org/zap"
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 )
 
 // The paths the session middleware lets through are matched against the request
@@ -48,6 +52,24 @@ const invalidCredentialsMessage = "Invalid username or password"
 // not allowed to make yet. It names what is missing, since the client can fix it
 // and the UI sends the operator to the setup screen on the strength of it.
 const setupRequiredMessage = "The account setup is not finished. Set a username and a password through " + setupPath + " first"
+
+// setupAlreadyDoneMessage is the answer to a setup that comes after the account
+// has one. The setup is how the account is settled the first time, not how it is
+// changed afterwards: it takes no current password, so letting it run twice
+// would let anyone holding a session replace the credentials.
+const setupAlreadyDoneMessage = "The account is already set up"
+
+// minPasswordBytes is the shortest password the setup takes. The password it
+// replaces is 52 characters of randomness, so a much shorter one would be a
+// step down from what the account is opened with in the meantime.
+const minPasswordBytes = 12
+
+// maxPasswordBytes is the longest password the setup takes. bcrypt hashes the
+// first 72 bytes of a password, and anything past that is not part of what is
+// checked at the login, so a password that is longer is refused rather than
+// silently shortened. The count is in bytes because that is what bcrypt counts:
+// one Hangul syllable is three of them.
+const maxPasswordBytes = 72
 
 // contextUserIDKey is where the middleware leaves the account of the session,
 // so a handler behind it does not read the row again.
@@ -144,20 +166,42 @@ func (s *SessionStore) Delete(token string) {
 	delete(s.sessions, token)
 }
 
+// DeleteAllExcept drops every session but the one token stands for. The setup
+// calls it: every session that is open at that point was got with the initial
+// password, and that password was written to a file anyone with a look at the
+// host could have read. The session that is doing the setup is kept, because
+// throwing the operator out of the request they are in the middle of protects
+// nothing: they are the one who just chose the new password.
+func (s *SessionStore) DeleteAllExcept(token string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	for other := range s.sessions {
+		if other != token {
+			delete(s.sessions, other)
+		}
+	}
+}
+
 // AuthHandler serves the login and the logout and guards everything else. It is
 // separate from Handler because it needs no tunnel manager and no cipher, and
 // the sessions belong to it alone.
 type AuthHandler struct {
-	db       *gorm.DB
-	logger   *zap.Logger
-	sessions *SessionStore
+	db     *gorm.DB
+	logger *zap.Logger
+	// initialPasswordFile is the file the startup wrote the initial password to.
+	// It is handed in rather than worked out here, so the path the setup deletes
+	// is the one the startup wrote and the two cannot drift apart.
+	initialPasswordFile string
+	sessions            *SessionStore
 }
 
-func NewAuthHandler(db *gorm.DB, logger *zap.Logger) *AuthHandler {
+func NewAuthHandler(db *gorm.DB, logger *zap.Logger, initialPasswordFile string) *AuthHandler {
 	return &AuthHandler{
-		db:       db,
-		logger:   logger,
-		sessions: NewSessionStore(),
+		db:                  db,
+		logger:              logger,
+		initialPasswordFile: initialPasswordFile,
+		sessions:            NewSessionStore(),
 	}
 }
 
@@ -170,6 +214,12 @@ type loginRequest struct {
 // done the only thing a session may do is finish it.
 type loginResponse struct {
 	SetupRequired bool `json:"setup_required"`
+}
+
+// setupRequest is the username and the password the operator settles on.
+type setupRequest struct {
+	Username string `json:"username"`
+	Password string `json:"password"`
 }
 
 // sessionCookie returns the cookie a session token is handed out in. Secure is
@@ -267,6 +317,170 @@ func (h *AuthHandler) Logout(c echo.Context) error {
 	c.SetCookie(sessionCookie(c, "", -1))
 
 	return c.JSON(http.StatusOK, models.Response{Success: true})
+}
+
+// Setup settles the username and the password of the account and takes the setup
+// gate down. Before it has run it is the only thing a session may do, and it
+// runs once: it asks for no current password, so it is not a way to change the
+// credentials later on.
+func (h *AuthHandler) Setup(c echo.Context) error {
+	var req setupRequest
+
+	err := c.Bind(&req)
+	if err != nil {
+		return c.JSON(http.StatusBadRequest, models.Response{
+			Success: false,
+			Error:   "Invalid request body: " + err.Error(),
+		})
+	}
+
+	// The name is stored with the surrounding space taken off, because that is
+	// how the login compares it. A name stored with a trailing space is one the
+	// operator cannot type back in.
+	username := strings.TrimSpace(req.Username)
+	if username == "" {
+		return c.JSON(http.StatusBadRequest, models.Response{
+			Success: false,
+			Error:   "Username must not be empty",
+		})
+	}
+
+	// len on a string counts bytes, which is the unit bcrypt reads the password
+	// in as well.
+	switch {
+	case len(req.Password) < minPasswordBytes:
+		return c.JSON(http.StatusBadRequest, models.Response{
+			Success: false,
+			Error:   "Password must be at least " + strconv.Itoa(minPasswordBytes) + " bytes long",
+		})
+	case len(req.Password) > maxPasswordBytes:
+		return c.JSON(http.StatusBadRequest, models.Response{
+			Success: false,
+			Error: "Password must be at most " + strconv.Itoa(maxPasswordBytes) +
+				" bytes long, because that is as far as bcrypt reads",
+		})
+	}
+
+	// The hash is made before the transaction is opened. bcrypt is slow on
+	// purpose, and the row is locked for as long as the transaction is open.
+	hash, err := auth.HashPassword(req.Password)
+	if err != nil {
+		h.logger.Error("failed to hash the password", zap.Error(err))
+		return c.JSON(http.StatusInternalServerError, models.Response{
+			Success: false,
+			Error:   "Failed to hash the password",
+		})
+	}
+
+	userID, ok := c.Get(contextUserIDKey).(uint)
+	if !ok {
+		// The middleware is what puts it there, so getting here means the route
+		// was hung somewhere the middleware does not cover.
+		h.logger.Error("the setup was reached with no account on the context")
+		return c.JSON(http.StatusInternalServerError, models.Response{
+			Success: false,
+			Error:   "Failed to read the account",
+		})
+	}
+
+	tx := h.db.Begin()
+	err = tx.Error
+	if err != nil {
+		return c.JSON(http.StatusInternalServerError, models.Response{
+			Success: false,
+			Error:   "Failed to start transaction: " + err.Error(),
+		})
+	}
+
+	// The row is read inside the transaction and locked, and the flag is looked
+	// at again once it is. The middleware checked it too, but two requests can
+	// both get past the middleware, and the second one would otherwise write
+	// over the credentials the first one had just settled.
+	var user models.User
+	err = tx.Clauses(clause.Locking{Strength: "UPDATE"}).First(&user, userID).Error
+	if err != nil {
+		tx.Rollback()
+		h.logger.Error("failed to read the account", zap.Error(err))
+		return c.JSON(http.StatusInternalServerError, models.Response{
+			Success: false,
+			Error:   "Failed to read the account",
+		})
+	}
+
+	if !user.SetupRequired {
+		tx.Rollback()
+		return c.JSON(http.StatusConflict, models.Response{
+			Success: false,
+			Error:   setupAlreadyDoneMessage,
+		})
+	}
+
+	user.Username = username
+	user.PasswordHash = hash
+	user.SetupRequired = false
+
+	err = tx.Save(&user).Error
+	if err != nil {
+		tx.Rollback()
+		h.logger.Error("failed to set up the account", zap.Error(err))
+		return c.JSON(http.StatusInternalServerError, models.Response{
+			Success: false,
+			Error:   "Failed to set up the account",
+		})
+	}
+
+	err = tx.Commit().Error
+	if err != nil {
+		h.logger.Error("failed to commit the account setup", zap.Error(err))
+		return c.JSON(http.StatusInternalServerError, models.Response{
+			Success: false,
+			Error:   "Failed to commit transaction: " + err.Error(),
+		})
+	}
+
+	// Everything below this point runs only because the account has already
+	// been written. Dropping the sessions or the file before the commit would
+	// take away the initial password while it is still the one that opens the
+	// account, and a commit that then failed would leave nobody able to log in.
+	token := ""
+
+	cookie, err := c.Cookie(sessionCookieName)
+	if err == nil {
+		token = cookie.Value
+	}
+
+	h.sessions.DeleteAllExcept(token)
+	h.removeInitialPasswordFile()
+
+	return c.JSON(http.StatusOK, models.Response{Success: true})
+}
+
+// removeInitialPasswordFile deletes the file the startup wrote the initial
+// password to. The password in it stopped opening the account at the commit, so
+// what is left is a readable copy of a credential with no reason to exist.
+//
+// A failure is logged and nothing more. The account has been set up by the time
+// this runs, and answering the request with an error would send the operator
+// back to a login that the initial password no longer opens. Only the path is
+// logged: the log goes to the console as well as to a file, which is why the
+// password was never written to it in the first place.
+func (h *AuthHandler) removeInitialPasswordFile() {
+	if h.initialPasswordFile == "" {
+		return
+	}
+
+	err := os.Remove(h.initialPasswordFile)
+	if err == nil || os.IsNotExist(err) {
+		// A file that is not there is the state that was asked for. It is gone
+		// because a setup already removed it or because the operator did.
+		return
+	}
+
+	h.logger.Error("failed to remove the initial password file. The account is set up and the "+
+		"password in the file no longer opens it, but the file is still there and has to be "+
+		"removed by hand",
+		zap.Error(err),
+		zap.String("initial_password_file", h.initialPasswordFile))
 }
 
 // RequireSession returns the middleware that keeps everything behind the login.
