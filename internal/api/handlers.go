@@ -75,9 +75,10 @@ func (h *Handler) CreateHost(c echo.Context) error {
 	tx := h.db.Begin()
 	err = tx.Error
 	if err != nil {
+		h.logger.Error("failed to start the transaction", zap.Error(err))
 		return c.JSON(http.StatusInternalServerError, models.Response{
 			Success: false,
-			Error:   "Failed to start transaction: " + err.Error(),
+			Error:   "Failed to start transaction",
 		})
 	}
 
@@ -95,15 +96,16 @@ func (h *Handler) CreateHost(c echo.Context) error {
 		h.logger.Error("failed to create Host", zap.Error(err))
 		return c.JSON(http.StatusInternalServerError, models.Response{
 			Success: false,
-			Error:   "Failed to create Host: " + err.Error(),
+			Error:   "Failed to create Host",
 		})
 	}
 
 	err = tx.Commit().Error
 	if err != nil {
+		h.logger.Error("failed to commit the transaction", zap.Error(err))
 		return c.JSON(http.StatusInternalServerError, models.Response{
 			Success: false,
-			Error:   "Failed to commit transaction: " + err.Error(),
+			Error:   "Failed to commit transaction",
 		})
 	}
 
@@ -122,7 +124,7 @@ func (h *Handler) ListHosts(c echo.Context) error {
 		h.logger.Error("failed to fetch Hosts", zap.Error(err))
 		return c.JSON(http.StatusInternalServerError, models.Response{
 			Success: false,
-			Error:   "Failed to fetch Hosts: " + err.Error(),
+			Error:   "Failed to fetch Hosts",
 		})
 	}
 
@@ -198,9 +200,10 @@ func (h *Handler) UpdateHost(c echo.Context) error {
 	tx := h.db.Begin()
 	err = tx.Error
 	if err != nil {
+		h.logger.Error("failed to start the transaction", zap.Error(err))
 		return c.JSON(http.StatusInternalServerError, models.Response{
 			Success: false,
-			Error:   "Failed to start transaction: " + err.Error(),
+			Error:   "Failed to start transaction",
 		})
 	}
 
@@ -259,15 +262,16 @@ func (h *Handler) UpdateHost(c echo.Context) error {
 		h.logger.Error("failed to update Host", zap.Error(err))
 		return c.JSON(http.StatusInternalServerError, models.Response{
 			Success: false,
-			Error:   "Failed to update Host: " + err.Error(),
+			Error:   "Failed to update Host",
 		})
 	}
 
 	err = tx.Commit().Error
 	if err != nil {
+		h.logger.Error("failed to commit the transaction", zap.Error(err))
 		return c.JSON(http.StatusInternalServerError, models.Response{
 			Success: false,
-			Error:   "Failed to commit transaction: " + err.Error(),
+			Error:   "Failed to commit transaction",
 		})
 	}
 
@@ -291,9 +295,10 @@ func (h *Handler) DeleteHost(c echo.Context) error {
 	tx := h.db.Begin()
 	err = tx.Error
 	if err != nil {
+		h.logger.Error("failed to start the transaction", zap.Error(err))
 		return c.JSON(http.StatusInternalServerError, models.Response{
 			Success: false,
-			Error:   "Failed to start transaction: " + err.Error(),
+			Error:   "Failed to start transaction",
 		})
 	}
 
@@ -311,26 +316,29 @@ func (h *Handler) DeleteHost(c echo.Context) error {
 				Error:   "Host not found",
 			})
 		}
+		h.logger.Error("failed to fetch Host", zap.Error(err))
 		return c.JSON(http.StatusInternalServerError, models.Response{
 			Success: false,
-			Error:   "Failed to fetch Host: " + err.Error(),
+			Error:   "Failed to fetch Host",
 		})
 	}
 
 	err = tx.Delete(&host).Error
 	if err != nil {
 		tx.Rollback()
+		h.logger.Error("failed to delete Host", zap.Error(err), zap.Uint64("host_id", id))
 		return c.JSON(http.StatusInternalServerError, models.Response{
 			Success: false,
-			Error:   "Failed to delete Host: " + err.Error(),
+			Error:   "Failed to delete Host",
 		})
 	}
 
 	err = tx.Commit().Error
 	if err != nil {
+		h.logger.Error("failed to commit the transaction", zap.Error(err))
 		return c.JSON(http.StatusInternalServerError, models.Response{
 			Success: false,
-			Error:   "Failed to commit transaction: " + err.Error(),
+			Error:   "Failed to commit transaction",
 		})
 	}
 
@@ -370,9 +378,10 @@ func (h *Handler) CreateServicePort(c echo.Context) error {
 	tx := h.db.Begin()
 	err = tx.Error
 	if err != nil {
+		h.logger.Error("failed to start the transaction", zap.Error(err))
 		return c.JSON(http.StatusInternalServerError, models.Response{
 			Success: false,
-			Error:   "Failed to start transaction: " + err.Error(),
+			Error:   "Failed to start transaction",
 		})
 	}
 
@@ -382,15 +391,16 @@ func (h *Handler) CreateServicePort(c echo.Context) error {
 		h.logger.Error("failed to create service port", zap.Error(err))
 		return c.JSON(http.StatusInternalServerError, models.Response{
 			Success: false,
-			Error:   "Failed to create service port: " + err.Error(),
+			Error:   "Failed to create service port",
 		})
 	}
 
 	err = tx.Commit().Error
 	if err != nil {
+		h.logger.Error("failed to commit the transaction", zap.Error(err))
 		return c.JSON(http.StatusInternalServerError, models.Response{
 			Success: false,
-			Error:   "Failed to commit transaction: " + err.Error(),
+			Error:   "Failed to commit transaction",
 		})
 	}
 
@@ -411,7 +421,7 @@ func (h *Handler) ListServicePorts(c echo.Context) error {
 		h.logger.Error("failed to fetch service ports", zap.Error(err))
 		return c.JSON(http.StatusInternalServerError, models.Response{
 			Success: false,
-			Error:   "Failed to fetch service ports: " + err.Error(),
+			Error:   "Failed to fetch service ports",
 		})
 	}
 
@@ -483,9 +493,10 @@ func (h *Handler) UpdateServicePort(c echo.Context) error {
 	tx := h.db.Begin()
 	err = tx.Error
 	if err != nil {
+		h.logger.Error("failed to start the transaction", zap.Error(err))
 		return c.JSON(http.StatusInternalServerError, models.Response{
 			Success: false,
-			Error:   "Failed to start transaction: " + err.Error(),
+			Error:   "Failed to start transaction",
 		})
 	}
 
@@ -519,15 +530,16 @@ func (h *Handler) UpdateServicePort(c echo.Context) error {
 		h.logger.Error("failed to update service port", zap.Error(err))
 		return c.JSON(http.StatusInternalServerError, models.Response{
 			Success: false,
-			Error:   "Failed to update service port: " + err.Error(),
+			Error:   "Failed to update service port",
 		})
 	}
 
 	err = tx.Commit().Error
 	if err != nil {
+		h.logger.Error("failed to commit the transaction", zap.Error(err))
 		return c.JSON(http.StatusInternalServerError, models.Response{
 			Success: false,
-			Error:   "Failed to commit transaction: " + err.Error(),
+			Error:   "Failed to commit transaction",
 		})
 	}
 
@@ -551,9 +563,10 @@ func (h *Handler) DeleteServicePort(c echo.Context) error {
 	tx := h.db.Begin()
 	err = tx.Error
 	if err != nil {
+		h.logger.Error("failed to start the transaction", zap.Error(err))
 		return c.JSON(http.StatusInternalServerError, models.Response{
 			Success: false,
-			Error:   "Failed to start transaction: " + err.Error(),
+			Error:   "Failed to start transaction",
 		})
 	}
 
@@ -579,17 +592,19 @@ func (h *Handler) DeleteServicePort(c echo.Context) error {
 	err = tx.Delete(&sp).Error
 	if err != nil {
 		tx.Rollback()
+		h.logger.Error("failed to delete service port", zap.Error(err), zap.Uint64("service_port_id", id))
 		return c.JSON(http.StatusInternalServerError, models.Response{
 			Success: false,
-			Error:   "Failed to delete service port: " + err.Error(),
+			Error:   "Failed to delete service port",
 		})
 	}
 
 	err = tx.Commit().Error
 	if err != nil {
+		h.logger.Error("failed to commit the transaction", zap.Error(err))
 		return c.JSON(http.StatusInternalServerError, models.Response{
 			Success: false,
-			Error:   "Failed to commit transaction: " + err.Error(),
+			Error:   "Failed to commit transaction",
 		})
 	}
 
@@ -604,9 +619,10 @@ func (h *Handler) DeleteServicePort(c echo.Context) error {
 func (h *Handler) GetStatus(c echo.Context) error {
 	tunnels, err := h.manager.GetAllTunnels()
 	if err != nil {
+		h.logger.Error("failed to fetch the tunnel status", zap.Error(err))
 		return c.JSON(http.StatusInternalServerError, models.Response{
 			Success: false,
-			Error:   "Failed to fetch tunnel status: " + err.Error(),
+			Error:   "Failed to fetch tunnel status",
 		})
 	}
 
@@ -615,9 +631,10 @@ func (h *Handler) GetStatus(c echo.Context) error {
 	// is the very thing the field is there to show.
 	desiredTunnels, err := h.manager.DesiredTunnelCount()
 	if err != nil {
+		h.logger.Error("failed to count the tunnels that should be running", zap.Error(err))
 		return c.JSON(http.StatusInternalServerError, models.Response{
 			Success: false,
-			Error:   "Failed to count the tunnels that should be running: " + err.Error(),
+			Error:   "Failed to count the tunnels that should be running",
 		})
 	}
 
@@ -666,9 +683,11 @@ func (h *Handler) GetHostStatus(c echo.Context) error {
 
 	tunnels, err := h.manager.GetHostTunnels(uint(hostID))
 	if err != nil {
+		h.logger.Error("failed to fetch the tunnel status of the Host", zap.Error(err),
+			zap.Uint64("host_id", hostID))
 		return c.JSON(http.StatusInternalServerError, models.Response{
 			Success: false,
-			Error:   "Failed to fetch tunnel status: " + err.Error(),
+			Error:   "Failed to fetch tunnel status",
 		})
 	}
 

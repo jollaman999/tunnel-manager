@@ -1552,8 +1552,8 @@ type errPathHandler struct {
 	call   func(*Handler, echo.Context) error
 }
 
-// errPathHandlers are the six reads of a single row. What is pinned over them
-// is the answer for a row that is not stored against the answer for a read that
+// errPathHandlers are the reads of a single row. What is pinned over them is
+// the answer for a row that is not stored against the answer for a read that
 // did not go through.
 var errPathHandlers = []errPathHandler{
 	{name: "get host", method: http.MethodGet, target: "/api/host/1", param: "id", call: (*Handler).GetHost},
@@ -1566,6 +1566,7 @@ var errPathHandlers = []errPathHandler{
 		inTx:   true,
 		call:   (*Handler).UpdateHost,
 	},
+	{name: "delete host", method: http.MethodDelete, target: "/api/host/1", param: "id", inTx: true, call: (*Handler).DeleteHost},
 	{name: "get service port", method: http.MethodGet, target: "/api/service-port/1", param: "id", call: (*Handler).GetServicePort},
 	{
 		name:   "update service port",
@@ -1771,6 +1772,374 @@ func TestErrPathWrappedNotFoundIsStillNotFound(t *testing.T) {
 					t.Fatalf("commits = %d, rollbacks = %d, want 0 and 1", commits, rollbacks)
 				}
 			}
+		})
+	}
+}
+
+// causeOnlyLeaks is what a failed answer must not carry. The text of the
+// database names the query, the driver and the server it ran on, and none of
+// that is the client's to act on: the cause belongs in the log alone.
+var causeOnlyLeaks = []string{errQueryFailed.Error(), "gorm", "sql:", "mysql"}
+
+// causeOnlyBeginFailingPool is the root pool with the start of a transaction
+// failing. It is the one failure a callback cannot stand in for, because the
+// handler never gets a transaction to hang one on.
+type causeOnlyBeginFailingPool struct {
+	rootConnPool
+}
+
+func (p *causeOnlyBeginFailingPool) BeginTx(ctx context.Context, opts *sql.TxOptions) (gorm.ConnPool, error) {
+	return nil, errQueryFailed
+}
+
+// causeOnlyCommitFailingTx counts like the recording transaction and refuses to
+// commit.
+type causeOnlyCommitFailingTx struct {
+	txConnPool
+}
+
+func (p *causeOnlyCommitFailingTx) Commit() error {
+	_ = p.txConnPool.Commit()
+
+	return errQueryFailed
+}
+
+// causeOnlyCommitFailingRoot hands out the transaction that cannot be
+// committed.
+type causeOnlyCommitFailingRoot struct {
+	rootConnPool
+	failing *causeOnlyCommitFailingTx
+}
+
+func (p *causeOnlyCommitFailingRoot) BeginTx(ctx context.Context, opts *sql.TxOptions) (gorm.ConnPool, error) {
+	return p.failing, nil
+}
+
+// causeOnlyDB opens gorm on pool with the reads answered from memory, so a
+// handler is handed the row it asks for and fails where the pool was made to
+// fail rather than on the read before it.
+func causeOnlyDB(t *testing.T, pool gorm.ConnPool) *gorm.DB {
+	t.Helper()
+
+	db, err := gorm.Open(mysql.New(mysql.Config{
+		Conn:                      pool,
+		SkipInitializeWithVersion: true,
+	}), &gorm.Config{
+		Logger:               gormlogger.Discard,
+		DisableAutomaticPing: true,
+	})
+	if err != nil {
+		t.Fatalf("failed to open gorm with the failing conn pool: %v", err)
+	}
+
+	err = db.Callback().Query().Replace("gorm:query", func(tx *gorm.DB) {
+		switch dest := tx.Statement.Dest.(type) {
+		case *models.Host:
+			*dest = models.Host{ID: 1, IP: "192.0.2.1", Port: 22, User: "root", Enabled: true}
+		case *models.ServicePort:
+			*dest = models.ServicePort{ID: 2, ServiceIP: "192.0.2.2", ServicePort: 8081, LocalPort: 18081}
+		case *models.User:
+			*dest = models.User{ID: 1, SetupRequired: true}
+		}
+		tx.RowsAffected = 1
+	})
+	if err != nil {
+		t.Fatalf("failed to replace the query callback: %v", err)
+	}
+
+	return db
+}
+
+// causeOnlyWriteFailingDB returns the write stub with the statement of one
+// processor failing, which is a write the database refused rather than a row
+// that was not there.
+func causeOnlyWriteFailingDB(t *testing.T, processor string) (*gorm.DB, *txConnPool) {
+	t.Helper()
+
+	db, txPool := newWriteStubDB(t)
+
+	fail := func(tx *gorm.DB) {
+		_ = tx.AddError(errQueryFailed)
+	}
+
+	var err error
+	switch processor {
+	case "create":
+		err = db.Callback().Create().Replace("gorm:create", fail)
+	case "update":
+		err = db.Callback().Update().Replace("gorm:update", fail)
+	case "delete":
+		err = db.Callback().Delete().Replace("gorm:delete", fail)
+	default:
+		t.Fatalf("no such processor: %s", processor)
+	}
+	if err != nil {
+		t.Fatalf("failed to replace the %s callback: %v", processor, err)
+	}
+
+	return db, txPool
+}
+
+// causeOnlyCheckAnswer reads a failed answer: it reports no success, carries no
+// data, says nothing of the database that failed, and the cause it left out is
+// in the log.
+func causeOnlyCheckAnswer(t *testing.T, rec *httptest.ResponseRecorder, logs *observer.ObservedLogs) {
+	t.Helper()
+
+	if rec.Code != http.StatusInternalServerError {
+		t.Fatalf("status = %d, want %d, body: %s", rec.Code, http.StatusInternalServerError, rec.Body.String())
+	}
+
+	success, data := decodeResponse(t, rec)
+	if success {
+		t.Fatalf("success = true on a request that failed, body: %s", rec.Body.String())
+	}
+	if len(data) != 0 {
+		t.Fatalf("the answer carries data although the request failed: %s", rec.Body.String())
+	}
+
+	body := strings.ToLower(rec.Body.String())
+	for _, leak := range causeOnlyLeaks {
+		if strings.Contains(body, strings.ToLower(leak)) {
+			t.Fatalf("the answer carries the text of the database (%q): %s", leak, rec.Body.String())
+		}
+	}
+
+	if !errPathLoggedCause(logs, errQueryFailed.Error()) {
+		t.Fatalf("the failure left no cause in the log: %v", logs.All())
+	}
+
+	// Which failure the handler answered for is logged, so that a case which
+	// starts failing earlier than it means to is visible in the output rather
+	// than passing on an answer about something else.
+	t.Logf("answer: %s, log: %v", rec.Body.String(), logs.All())
+}
+
+// causeOnlyWriteCase is one write handler together with the write whose failure
+// it answers for.
+type causeOnlyWriteCase struct {
+	errPathHandler
+	// processor is the gorm processor of the statement this handler issues.
+	processor string
+}
+
+// causeOnlyHostBody and causeOnlyServicePortBody are bodies that get past the
+// validator, so the request reaches the transaction rather than being refused
+// before it.
+const causeOnlyHostBody = `{"ip":"192.0.2.1","port":22,"user":"root","password":"fake-value-1"}` // hook:allow
+const causeOnlyServicePortBody = `{"service_ip":"192.0.2.2","service_port":80,"local_port":8080}`
+
+// causeOnlyWriteCases are the six handlers that write inside a transaction.
+var causeOnlyWriteCases = []causeOnlyWriteCase{
+	{
+		errPathHandler: errPathHandler{
+			name:   "create host",
+			method: http.MethodPost,
+			target: "/api/host",
+			body:   causeOnlyHostBody,
+			call:   (*Handler).CreateHost,
+		},
+		processor: "create",
+	},
+	{
+		errPathHandler: errPathHandler{
+			name:   "update host",
+			method: http.MethodPut,
+			target: "/api/host/1",
+			body:   `{"description":"new"}`,
+			param:  "id",
+			call:   (*Handler).UpdateHost,
+		},
+		processor: "update",
+	},
+	{
+		errPathHandler: errPathHandler{
+			name:   "delete host",
+			method: http.MethodDelete,
+			target: "/api/host/1",
+			param:  "id",
+			call:   (*Handler).DeleteHost,
+		},
+		processor: "delete",
+	},
+	{
+		errPathHandler: errPathHandler{
+			name:   "create service port",
+			method: http.MethodPost,
+			target: "/api/service-port",
+			body:   causeOnlyServicePortBody,
+			call:   (*Handler).CreateServicePort,
+		},
+		processor: "create",
+	},
+	{
+		errPathHandler: errPathHandler{
+			name:   "update service port",
+			method: http.MethodPut,
+			target: "/api/service-port/2",
+			body:   causeOnlyServicePortBody,
+			param:  "id",
+			call:   (*Handler).UpdateServicePort,
+		},
+		processor: "update",
+	},
+	{
+		errPathHandler: errPathHandler{
+			name:   "delete service port",
+			method: http.MethodDelete,
+			target: "/api/service-port/2",
+			param:  "id",
+			call:   (*Handler).DeleteServicePort,
+		},
+		processor: "delete",
+	},
+}
+
+// TestWriteHandlersKeepACauseThatCannotStartATransactionOutOfTheAnswer covers
+// the first failure of every write: the database did not hand out a
+// transaction, and the client is told that the request did not go through and
+// nothing else.
+func TestWriteHandlersKeepACauseThatCannotStartATransactionOutOfTheAnswer(t *testing.T) {
+	for _, tt := range causeOnlyWriteCases {
+		t.Run(tt.name, func(t *testing.T) {
+			db := causeOnlyDB(t, &causeOnlyBeginFailingPool{})
+			logger, logs := errPathLogger()
+
+			c, rec := errPathRequest(t, tt.errPathHandler)
+			h := NewHandler(db, &wakeRecorder{tx: &txConnPool{}}, logger, newTestCipher(t))
+
+			err := tt.call(h, c)
+			if err != nil {
+				t.Fatalf("the handler returned an error: %v", err)
+			}
+
+			causeOnlyCheckAnswer(t, rec, logs)
+		})
+	}
+}
+
+// TestWriteHandlersKeepACommitThatFailedOutOfTheAnswer covers the last one: the
+// statements went through and the commit did not, so the request stored nothing
+// and no reconcile pass is asked for either.
+func TestWriteHandlersKeepACommitThatFailedOutOfTheAnswer(t *testing.T) {
+	for _, tt := range causeOnlyWriteCases {
+		t.Run(tt.name, func(t *testing.T) {
+			failing := &causeOnlyCommitFailingTx{}
+			db := causeOnlyDB(t, &causeOnlyCommitFailingRoot{failing: failing})
+			logger, logs := errPathLogger()
+
+			manager := &wakeRecorder{tx: &failing.txConnPool}
+			c, rec := errPathRequest(t, tt.errPathHandler)
+			h := NewHandler(db, manager, logger, newTestCipher(t))
+
+			err := tt.call(h, c)
+			if err != nil {
+				t.Fatalf("the handler returned an error: %v", err)
+			}
+
+			causeOnlyCheckAnswer(t, rec, logs)
+
+			wakes, _ := manager.counts()
+			if wakes != 0 {
+				t.Errorf("reconcile wake-ups = %d, want 0 after a commit that failed", wakes)
+			}
+		})
+	}
+}
+
+// TestWriteHandlersKeepAWriteThatFailedOutOfTheAnswer covers the statement in
+// between: the row was read and the write on it was refused.
+func TestWriteHandlersKeepAWriteThatFailedOutOfTheAnswer(t *testing.T) {
+	for _, tt := range causeOnlyWriteCases {
+		t.Run(tt.name, func(t *testing.T) {
+			db, txPool := causeOnlyWriteFailingDB(t, tt.processor)
+			logger, logs := errPathLogger()
+
+			c, rec := errPathRequest(t, tt.errPathHandler)
+			h := NewHandler(db, &wakeRecorder{tx: txPool}, logger, newTestCipher(t))
+
+			err := tt.call(h, c)
+			if err != nil {
+				t.Fatalf("the handler returned an error: %v", err)
+			}
+
+			causeOnlyCheckAnswer(t, rec, logs)
+
+			commits, rollbacks := txPool.counts()
+			if commits != 0 || rollbacks != 1 {
+				t.Fatalf("commits = %d, rollbacks = %d, want 0 and 1", commits, rollbacks)
+			}
+		})
+	}
+}
+
+// TestReadHandlersKeepTheCauseOutOfTheAnswer covers the reads that take no id:
+// the two listings, and the two statuses whose counts are read through the
+// tunnel manager rather than through gorm.
+func TestReadHandlersKeepTheCauseOutOfTheAnswer(t *testing.T) {
+	tests := []struct {
+		name    string
+		db      func(*testing.T) *gorm.DB
+		manager func() tunnelManager
+		target  string
+		param   string
+		call    func(*Handler, echo.Context) error
+	}{
+		{
+			name:    "list hosts",
+			db:      newReadFailingDB,
+			manager: func() tunnelManager { return &wakeRecorder{tx: &txConnPool{}} },
+			target:  "/api/host",
+			call:    (*Handler).ListHosts,
+		},
+		{
+			name:    "list service ports",
+			db:      newReadFailingDB,
+			manager: func() tunnelManager { return &wakeRecorder{tx: &txConnPool{}} },
+			target:  "/api/service-port",
+			call:    (*Handler).ListServicePorts,
+		},
+		{
+			name:    "status of every tunnel",
+			db:      newReadFailingDB,
+			manager: func() tunnelManager { return &wakeRecorder{tx: &txConnPool{}} },
+			target:  "/api/status",
+			call:    (*Handler).GetStatus,
+		},
+		{
+			name: "status with a count that cannot be read",
+			db:   newReadFailingDB,
+			manager: func() tunnelManager {
+				return &countFailingManager{tunnels: []models.Tunnel{statusTunnel(1, 1, "connected")}}
+			},
+			target: "/api/status",
+			call:   (*Handler).GetStatus,
+		},
+		{
+			name: "status of one host",
+			db: func(t *testing.T) *gorm.DB {
+				return newHostStubDB(t, storedHost())
+			},
+			manager: func() tunnelManager { return &wakeRecorder{tx: &txConnPool{}} },
+			target:  "/api/status/host/1",
+			param:   "hostId",
+			call:    (*Handler).GetHostStatus,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			logger, logs := errPathLogger()
+
+			c, rec := getRequest(t, tt.target, tt.param, "1")
+			h := NewHandler(tt.db(t), tt.manager(), logger, newTestCipher(t))
+
+			err := tt.call(h, c)
+			if err != nil {
+				t.Fatalf("the handler returned an error: %v", err)
+			}
+
+			causeOnlyCheckAnswer(t, rec, logs)
 		})
 	}
 }

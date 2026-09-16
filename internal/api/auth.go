@@ -464,9 +464,10 @@ func (h *AuthHandler) Setup(c echo.Context) error {
 	tx := h.db.Begin()
 	err = tx.Error
 	if err != nil {
+		h.logger.Error("failed to start the transaction", zap.Error(err))
 		return c.JSON(http.StatusInternalServerError, models.Response{
 			Success: false,
-			Error:   "Failed to start transaction: " + err.Error(),
+			Error:   "Failed to start transaction",
 		})
 	}
 
@@ -512,7 +513,7 @@ func (h *AuthHandler) Setup(c echo.Context) error {
 		h.logger.Error("failed to commit the account setup", zap.Error(err))
 		return c.JSON(http.StatusInternalServerError, models.Response{
 			Success: false,
-			Error:   "Failed to commit transaction: " + err.Error(),
+			Error:   "Failed to commit transaction",
 		})
 	}
 

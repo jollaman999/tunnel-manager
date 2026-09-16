@@ -1424,3 +1424,62 @@ func TestCsrfReadsNeedNoToken(t *testing.T) {
 		t.Errorf("the read did not hand the token back: %v", again)
 	}
 }
+
+// causeOnlySetupRequest builds the setup request the handler is called with
+// directly, carrying the account that the session middleware would have left on
+// the context.
+func causeOnlySetupRequest(t *testing.T) (echo.Context, *httptest.ResponseRecorder) {
+	t.Helper()
+
+	e := echo.New()
+	e.Validator = &testValidator{validator: validator.New()}
+
+	req := httptest.NewRequest(http.MethodPost, setupPath,
+		strings.NewReader(setupBody(t, testUsername, testNewPassword)))
+	req.Header.Set(echo.HeaderContentType, echo.MIMEApplicationJSON)
+
+	rec := httptest.NewRecorder()
+	c := e.NewContext(req, rec)
+	c.Set(contextUserIDKey, uint(1))
+
+	return c, rec
+}
+
+// TestSetupKeepsTheCauseOfATransactionThatFailedOutOfTheAnswer covers the two
+// failures of the setup that carried the text of the database: the transaction
+// it could not start and the one it could not commit. The setup is reached
+// before anyone has logged in with a password of their own, so what it answers
+// is read by whoever can reach the port.
+func TestSetupKeepsTheCauseOfATransactionThatFailedOutOfTheAnswer(t *testing.T) {
+	tests := []struct {
+		name string
+		pool func() gorm.ConnPool
+	}{
+		{
+			name: "the transaction cannot be started",
+			pool: func() gorm.ConnPool { return &causeOnlyBeginFailingPool{} },
+		},
+		{
+			name: "the transaction cannot be committed",
+			pool: func() gorm.ConnPool {
+				return &causeOnlyCommitFailingRoot{failing: &causeOnlyCommitFailingTx{}}
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			logger, logs := errPathLogger()
+			h := NewAuthHandler(causeOnlyDB(t, tt.pool()), logger, "")
+
+			c, rec := causeOnlySetupRequest(t)
+
+			err := h.Setup(c)
+			if err != nil {
+				t.Fatalf("Setup returned an error: %v", err)
+			}
+
+			causeOnlyCheckAnswer(t, rec, logs)
+		})
+	}
+}
