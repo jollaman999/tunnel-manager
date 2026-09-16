@@ -483,9 +483,11 @@ func (h *AuthHandler) removeInitialPasswordFile() {
 		zap.String("initial_password_file", h.initialPasswordFile))
 }
 
-// RequireSession returns the middleware that keeps everything behind the login.
-// It is put on the /api group and on the /ui group, so a path that nobody
-// registered a route for is refused by it as well.
+// RequireSession returns the middleware that keeps the API behind the login.
+// It is put on the /api group, so a path under it that nobody registered a
+// route for is refused by it as well. The UI files are served outside it,
+// because they are the same bytes for every client and carry no data: what
+// they show is fetched from here, and that is what the session guards.
 func (h *AuthHandler) RequireSession() echo.MiddlewareFunc {
 	return func(next echo.HandlerFunc) echo.HandlerFunc {
 		return func(c echo.Context) error {

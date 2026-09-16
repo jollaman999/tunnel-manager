@@ -1,0 +1,35 @@
+/* Everything here is served from the binary. Nothing is fetched from the
+   network, so the UI works on a host that reaches nothing but this server. */
+
+body {
+  margin: 0;
+  padding: 1.5rem;
+  font-family: system-ui, -apple-system, "Segoe UI", Helvetica, Arial, sans-serif;
+  font-size: 15px;
+  line-height: 1.5;
+  color: #1c1c1c;
+  background: #f6f7f9;
+}
+
+h1 {
+  margin: 0 0 1rem;
+  font-size: 1.25rem;
+}
+
+#app {
+  max-width: 60rem;
+  margin: 0 auto;
+  padding: 1.25rem;
+  background: #ffffff;
+  border: 1px solid #dcdfe4;
+  border-radius: 6px;
+}
+
+pre {
+  margin: 0;
+  padding: 0.75rem;
+  overflow-x: auto;
+  background: #f0f1f3;
+  border-radius: 4px;
+  font-size: 13px;
+}

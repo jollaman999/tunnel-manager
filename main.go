@@ -25,6 +25,7 @@ import (
 	"github.com/jollaman999/tunnel-manager/internal/database"
 	"github.com/jollaman999/tunnel-manager/internal/models"
 	"github.com/jollaman999/tunnel-manager/internal/tunnel"
+	"github.com/jollaman999/tunnel-manager/internal/web"
 	"github.com/labstack/echo/v4"
 	"github.com/labstack/echo/v4/middleware"
 	"go.uber.org/zap"
@@ -491,8 +492,10 @@ func main() {
 
 	// The session check is put on the group before any route is added to it.
 	// echo binds the middleware a group carries at the time the route is added,
-	// so a route added first would be served without it. The same middleware is
-	// what the UI group is to be served behind once there is one.
+	// so a route added first would be served without it. The UI is registered
+	// on the instance instead, and stays outside this check on purpose: the
+	// login screen is served from there and would otherwise be behind the very
+	// login it is there to offer.
 	g.Use(authHandler.RequireSession())
 
 	g.POST("/login", authHandler.Login)
@@ -513,6 +516,11 @@ func main() {
 
 	g.GET("/status", h.GetStatus)
 	g.GET("/status/:hostId", h.GetHostStatus)
+
+	// The UI is put on the instance itself and not on the group above. It is
+	// the same bytes for every client and carries no data of its own, while
+	// everything it shows comes from /api/**, which stays behind the session.
+	web.RegisterRoutes(e)
 
 	// A server that never comes up must not end the process on the spot. The
 	// tunnels are restored by now and their rows are in the database, and
