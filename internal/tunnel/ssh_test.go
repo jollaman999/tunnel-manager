@@ -942,3 +942,237 @@ func TestConnectAndReconnectDoNotRaceOnTunnelState(t *testing.T) {
 	close(stop)
 	wg.Wait()
 }
+
+// startMuteSSHServer completes the SSH handshake and then answers nothing. It
+// never services the channel and request streams, so it also stops reading,
+// which is how a peer that is gone but whose TCP connection is still open
+// behaves.
+func startMuteSSHServer(t *testing.T) string {
+	t.Helper()
+
+	_, priv, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatalf("failed to generate host key: %v", err)
+	}
+
+	signer, err := ssh.NewSignerFromKey(priv)
+	if err != nil {
+		t.Fatalf("failed to create signer: %v", err)
+	}
+
+	config := &ssh.ServerConfig{
+		PasswordCallback: func(ssh.ConnMetadata, []byte) (*ssh.Permissions, error) {
+			return nil, nil
+		},
+	}
+	config.AddHostKey(signer)
+
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("failed to listen: %v", err)
+	}
+
+	var mu sync.Mutex
+	var conns []net.Conn
+
+	t.Cleanup(func() {
+		_ = ln.Close()
+
+		mu.Lock()
+		defer mu.Unlock()
+		for _, conn := range conns {
+			_ = conn.Close()
+		}
+	})
+
+	go func() {
+		for {
+			conn, err := ln.Accept()
+			if err != nil {
+				return
+			}
+
+			mu.Lock()
+			conns = append(conns, conn)
+			mu.Unlock()
+
+			go func(conn net.Conn) {
+				_, _, _, err := ssh.NewServerConn(conn, config)
+				if err != nil {
+					_ = conn.Close()
+				}
+			}(conn)
+		}
+	}()
+
+	return ln.Addr().String()
+}
+
+// dialTestSSHClient connects the way dialSSH does and hands back both the
+// client and the connection it was built on.
+func dialTestSSHClient(t *testing.T, serverAddr string) (*ssh.Client, net.Conn, func()) {
+	t.Helper()
+
+	conn, err := net.DialTimeout("tcp", serverAddr, 5*time.Second)
+	if err != nil {
+		t.Fatalf("failed to dial the test ssh server: %v", err)
+	}
+
+	c, chans, reqs, err := ssh.NewClientConn(conn, serverAddr, &ssh.ClientConfig{
+		User:            "tester",
+		Auth:            []ssh.AuthMethod{ssh.Password("any")},
+		HostKeyCallback: ssh.InsecureIgnoreHostKey(),
+		Timeout:         5 * time.Second,
+	})
+	if err != nil {
+		t.Fatalf("failed to complete the ssh handshake: %v", err)
+	}
+
+	client := ssh.NewClient(c, chans, reqs)
+
+	return client, conn, func() {
+		_ = client.Close()
+	}
+}
+
+// TestSendKeepaliveGivesUpOnAnUnresponsivePeer pins the deadline itself. Without
+// one the reply is waited for until TCP stops retransmitting, which on Linux
+// takes minutes.
+func TestSendKeepaliveGivesUpOnAnUnresponsivePeer(t *testing.T) {
+	client, conn, closeClient := dialTestSSHClient(t, startMuteSSHServer(t))
+	defer closeClient()
+
+	const timeout = 300 * time.Millisecond
+
+	result := make(chan error, 1)
+	startedAt := time.Now()
+	go func() {
+		result <- sendKeepalive(client, conn, timeout)
+	}()
+
+	select {
+	case err := <-result:
+		if err == nil {
+			t.Fatal("sendKeepalive reported a peer that never answered as alive")
+		}
+		if elapsed := time.Since(startedAt); elapsed > 10*timeout {
+			t.Fatalf("sendKeepalive returned after %v, want about the %v deadline", elapsed, timeout)
+		}
+	case <-time.After(15 * time.Second):
+		t.Fatal("sendKeepalive did not return, the keepalive is waiting for TCP to give up")
+	}
+}
+
+// TestMonitorTickIsNotHeldByAnUnresponsivePeer is the same check one level up:
+// a peer that stops answering must cost the monitor one tick, not a TCP
+// retransmission timeout.
+func TestMonitorTickIsNotHeldByAnUnresponsivePeer(t *testing.T) {
+	m := newSSHTestManager(t, 1)
+	serverAddr := startMuteSSHServer(t)
+	tun, tunnel := newSSHTestTunnel(t, serverAddr)
+
+	client, conn, closeClient := dialTestSSHClient(t, serverAddr)
+	defer closeClient()
+
+	tun.clientMu.Lock()
+	tun.client = client
+	tun.clientConn = conn
+	tun.clientMu.Unlock()
+
+	stop := make(chan struct{})
+	exited := make(chan struct{})
+	go func() {
+		tun.monitorConnection(m, tunnel, stop)
+		close(exited)
+	}()
+	defer func() {
+		close(stop)
+		<-exited
+	}()
+
+	// The server accepts, so the dial succeeds and the tick reaches the
+	// keepalive. One tick to wake, plus the dial and keepalive budgets, is well
+	// inside this.
+	deadline := time.Now().Add(10 * time.Second)
+	for time.Now().Before(deadline) {
+		tun.clientMu.RLock()
+		got := tun.client
+		tun.clientMu.RUnlock()
+
+		// The monitor writes the row under tunnelMu, so reading it takes the
+		// same lock.
+		tun.tunnelMu.Lock()
+		status := tunnel.Status
+		tun.tunnelMu.Unlock()
+
+		if got == nil && status == "reconnecting" {
+			return
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+
+	t.Fatal("the monitor still holds a connection to a peer that stopped answering, " +
+		"its keepalive has no deadline and the tick is blocked")
+}
+
+// TestSendKeepaliveClearsTheDeadline checks the other half. A deadline left
+// armed on the connection kills the forwarded traffic that comes after the
+// keepalive, which is worse than the problem the deadline solves.
+func TestSendKeepaliveClearsTheDeadline(t *testing.T) {
+	serverAddr, _ := startForwardingSSHServer(t)
+
+	client, conn, closeClient := dialTestSSHClient(t, serverAddr)
+	defer closeClient()
+
+	const timeout = 200 * time.Millisecond
+
+	if err := sendKeepalive(client, conn, timeout); err != nil {
+		t.Fatalf("sendKeepalive failed against a server that answers: %v", err)
+	}
+
+	// Past the deadline the keepalive used. An armed deadline has torn the
+	// connection down by now.
+	time.Sleep(4 * timeout)
+
+	for i := 0; i < 3; i++ {
+		if _, _, err := client.SendRequest("keepalive@tunnel", true, nil); err != nil {
+			t.Fatalf("request %d over the connection failed after the keepalive: %v, "+
+				"the deadline was left armed", i, err)
+		}
+		time.Sleep(2 * timeout)
+	}
+
+	if err := conn.SetReadDeadline(time.Time{}); err != nil {
+		t.Fatalf("the connection is no longer usable after the keepalive: %v", err)
+	}
+}
+
+func TestMonitorKeepaliveTimeoutFitsInTheTick(t *testing.T) {
+	for _, monitoringIntervalSec := range []int{1, 2, 3, 5, 10, 30, 60, 300} {
+		interval := time.Duration(monitoringIntervalSec) * time.Second
+		dial := monitorDialTimeout(monitoringIntervalSec)
+		keepalive := monitorKeepaliveTimeout(monitoringIntervalSec)
+
+		if keepalive <= 0 {
+			t.Errorf("monitorKeepaliveTimeout(%d) = %v, want a positive deadline, "+
+				"a keepalive without one never gives up", monitoringIntervalSec, keepalive)
+			continue
+		}
+		if dial+keepalive >= interval {
+			t.Errorf("monitorKeepaliveTimeout(%d) = %v, with the %v dial that is %v of a %v tick, "+
+				"a check that lasts a whole tick halves the monitoring rate",
+				monitoringIntervalSec, keepalive, dial, dial+keepalive, interval)
+		}
+	}
+}
+
+func TestMonitorKeepaliveTimeoutIsPositiveForAnyInterval(t *testing.T) {
+	// The configuration rejects these, but a zero deadline is the one outcome
+	// that must not happen: SetDeadline reads it as no deadline at all.
+	for _, monitoringIntervalSec := range []int{0, -1} {
+		if got := monitorKeepaliveTimeout(monitoringIntervalSec); got <= 0 {
+			t.Errorf("monitorKeepaliveTimeout(%d) = %v, want a positive deadline",
+				monitoringIntervalSec, got)
+		}
+	}
+}
