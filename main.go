@@ -19,6 +19,7 @@ import (
 
 	"github.com/go-playground/validator/v10"
 	"github.com/jollaman999/tunnel-manager/internal/api"
+	"github.com/jollaman999/tunnel-manager/internal/auth"
 	"github.com/jollaman999/tunnel-manager/internal/config"
 	"github.com/jollaman999/tunnel-manager/internal/crypto"
 	"github.com/jollaman999/tunnel-manager/internal/database"
@@ -319,6 +320,37 @@ func checkEncryptionKey(db *gorm.DB, cipher *crypto.Cipher, logger *zap.Logger, 
 	}
 }
 
+// ensureUser creates the single account on the first startup. The initial
+// password is written to a file next to the configuration file and never to the
+// log, which goes to the console as well as to the log file, so only the path is
+// reported. The encryption key file is handled the same way.
+func ensureUser(db *gorm.DB, logger *zap.Logger, configFile string) {
+	passwordFile := auth.InitialPasswordFile(configFile)
+
+	created, err := auth.EnsureUser(db, passwordFile)
+	if err != nil {
+		// The startup stops here rather than going on with a warning. Nothing
+		// can log in while the account is missing, so an API that came up would
+		// answer nobody, and a directory that cannot be written to is a
+		// deployment question the operator has to settle once: point -config at
+		// a directory the process may write to, or give it that permission.
+		logger.Fatal("failed to set up the account. The initial password is written next to the "+
+			"configuration file, so the process has to be allowed to write to that directory",
+			zap.Error(err),
+			zap.String("initial_password_file", passwordFile))
+	}
+
+	if created {
+		logger.Info("created the account with an initial password. Read the password from the file, log in "+
+			"with it, and set a username and a password. The file is written with permission 0600 and holds "+
+			"the only copy of the password",
+			zap.String("initial_password_file", passwordFile))
+		return
+	}
+
+	logger.Info("the account is already set up")
+}
+
 type CustomValidator struct {
 	validator *validator.Validate
 }
@@ -404,6 +436,13 @@ func main() {
 	// opens none of them stops the startup here instead of letting every Host
 	// fail one SSH attempt at a time behind an API that answers normally.
 	checkEncryptionKey(db, cipher, logger, cfg.Security.KeyFile)
+
+	// The account is set up before anything is served and before any tunnel is
+	// built. The table it reads is created by the migration that initDatabase
+	// runs, and a failure here stops the startup while there is nothing to tear
+	// down. Leaving it to a later point would let the API come up with no
+	// account to authenticate against.
+	ensureUser(db, logger, *configPath)
 
 	manager, err := tunnel.NewManager(db, logger, cipher, cfg.Monitoring.IntervalSec)
 	if err != nil {

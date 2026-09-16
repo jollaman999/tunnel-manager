@@ -70,3 +70,28 @@ type Response struct {
 	Data    interface{} `json:"data,omitempty"`
 	Error   string      `json:"error,omitempty"`
 }
+
+// User is the single account the API is served behind. The row is created on
+// the first startup with no username and setup_required set, and the username
+// and the password are chosen through the API after the first login.
+type User struct {
+	ID       uint   `gorm:"primaryKey;autoIncrement" json:"id"`
+	Username string `gorm:"not null" json:"username"`
+	// The hash never leaves the process, so it is kept out of every response
+	// the same way the SSH password of a Host is.
+	PasswordHash string `gorm:"not null" json:"-"`
+	// The column is not given a gorm default. gorm leaves a field at its zero
+	// value out of an INSERT when the field carries one, which would write
+	// true on the very row that is meant to turn the flag off.
+	SetupRequired bool      `gorm:"not null" json:"setup_required"`
+	CreatedAt     time.Time `json:"created_at"`
+	UpdatedAt     time.Time `json:"updated_at"`
+}
+
+// TableName keeps the table singular. gorm pluralizes User to "users" on its
+// own, and the table holds one row. "user" is also the name of an SQL function,
+// which the mysql driver keeps apart by quoting every identifier with backticks
+// (gorm.io/driver/mysql@v1.5.7/mysql.go:290).
+func (User) TableName() string {
+	return "user"
+}

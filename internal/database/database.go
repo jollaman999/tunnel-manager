@@ -113,6 +113,7 @@ func NewDatabase(host string, port int, user, password, dbname string, logger *z
 		&models.Host{},
 		&models.ServicePort{},
 		&models.Tunnel{},
+		&models.User{},
 	)
 	if err != nil {
 		return nil, fmt.Errorf("failed to migrate database: %w", err)
