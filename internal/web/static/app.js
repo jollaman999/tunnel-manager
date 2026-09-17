@@ -776,10 +776,10 @@ function asNumber(value) {
 // the date in the language the browser is set to and would put words from that
 // language on a screen that is in English everywhere else.
 //
-// The seconds are left off. Nothing on these screens is read to the second: the
-// rows are refreshed every five seconds and the timestamps say when a row was
-// written, not how long something took. Carrying them made the column wide
-// enough to wrap onto a second line, which reads as two values.
+// The seconds are carried. The status screen asks again every five seconds, so
+// without them two rows written seconds apart read as the same moment, and a
+// timestamp that just moved cannot be told from one that is stale. What keeps
+// the column on one line is timeCell, not writing less into it.
 function formatTime(value) {
   if (typeof value !== "string" || value === "" || value.startsWith("0001-01-01")) {
     return "never";
@@ -791,7 +791,7 @@ function formatTime(value) {
   }
 
   return parsed.getFullYear() + "-" + pad(parsed.getMonth() + 1) + "-" + pad(parsed.getDate()) +
-    " " + pad(parsed.getHours()) + ":" + pad(parsed.getMinutes());
+    " " + pad(parsed.getHours()) + ":" + pad(parsed.getMinutes()) + ":" + pad(parsed.getSeconds());
 }
 
 // timeCell is a timestamp that stays on one line. Left to wrap it breaks at the
