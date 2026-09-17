@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"net"
 	"path/filepath"
 	"reflect"
 	"strings"
@@ -1008,5 +1009,50 @@ func TestRestoreAllTunnelsFailsWhenTheDesiredStateCannotBeRead(t *testing.T) {
 	}
 	if running := runningKeys(m); len(running) != 0 {
 		t.Fatalf("RestoreAllTunnels left %v running after it failed", running)
+	}
+}
+
+// TestTunnelAddressesBracketAnIPv6Host pins the bracketing an IPv6 address
+// needs. Written as "2001:db8::1:22" the port cannot be told from the last
+// group of the address, and nothing that dials can take it apart. The API has
+// accepted IPv6 all along, since the validator behind the "ip" tag takes it, so
+// what this guards is the only place that made those addresses unusable.
+func TestTunnelAddressesBracketAnIPv6Host(t *testing.T) {
+	cases := []struct {
+		name       string
+		hostIP     string
+		serviceIP  string
+		wantServer string
+		wantRemote string
+	}{
+		{"both v4", "192.0.2.1", "203.0.113.5", "192.0.2.1:22", "203.0.113.5:5432"},
+		{"both v6", "2001:db8::1", "2001:db8::25", "[2001:db8::1]:22", "[2001:db8::25]:5432"},
+		{"v6 host, v4 service", "::1", "203.0.113.5", "[::1]:22", "203.0.113.5:5432"},
+		{"v4 host, v6 service", "192.0.2.1", "::ffff:203.0.113.5", "192.0.2.1:22", "[::ffff:203.0.113.5]:5432"},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			host := &models.Host{IP: tc.hostIP, Port: 22}
+			sp := &models.ServicePort{ServiceIP: tc.serviceIP, ServicePort: 5432, LocalPort: 15432}
+
+			local, server, remote := tunnelAddresses(host, sp)
+
+			if server != tc.wantServer {
+				t.Errorf("server = %q, want %q", server, tc.wantServer)
+			}
+			if remote != tc.wantRemote {
+				t.Errorf("remote = %q, want %q", remote, tc.wantRemote)
+			}
+
+			// Whatever the addresses are, each one has to come apart again into
+			// a host and a port. That is what every dialer does with them.
+			for name, addr := range map[string]string{"local": local, "server": server, "remote": remote} {
+				_, _, err := net.SplitHostPort(addr)
+				if err != nil {
+					t.Errorf("the %s address %q cannot be split into a host and a port: %v", name, addr, err)
+				}
+			}
+		})
 	}
 }

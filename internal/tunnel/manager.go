@@ -3,6 +3,8 @@ package tunnel
 import (
 	"errors"
 	"fmt"
+	"net"
+	"strconv"
 	"sync"
 	"time"
 
@@ -101,10 +103,17 @@ func (m *Manager) storeEncryptedPassword(host *models.Host, password string) {
 // tunnelAddresses returns the local, server and remote addresses a tunnel for
 // this combination is built from. Both the tunnel and its fingerprint are built
 // from these, so the comparison sees what was connected to.
+//
+// The host and the service are joined with net.JoinHostPort rather than with a
+// format string, because an IPv6 address has colons of its own: "2001:db8::1"
+// and port 22 written plainly reads "2001:db8::1:22", which no dialer can take
+// apart. JoinHostPort puts the brackets in, giving "[2001:db8::1]:22". The
+// local address is a literal 0.0.0.0, which is what the sshd on the Host binds
+// the forwarded port to and is not an address of ours to translate.
 func tunnelAddresses(host *models.Host, sp *models.ServicePort) (local, server, remote string) {
 	return fmt.Sprintf("0.0.0.0:%d", sp.LocalPort),
-		fmt.Sprintf("%s:%d", host.IP, host.Port),
-		fmt.Sprintf("%s:%d", sp.ServiceIP, sp.ServicePort)
+		net.JoinHostPort(host.IP, strconv.Itoa(host.Port)),
+		net.JoinHostPort(sp.ServiceIP, strconv.Itoa(sp.ServicePort))
 }
 
 func (m *Manager) StartTunnel(host *models.Host, sp *models.ServicePort) error {
