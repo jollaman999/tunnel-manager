@@ -1,3 +1,17 @@
+# v2.0.2
+
+## Bug fixes:
+
+- Built-in UI:
+  - On a phone held upright the page scrolled sideways and took the heading and the navigation off screen with it. The tables carry more columns than that width fits, and nothing held them inside the page. Each table now sits in a box that scrolls on its own, so only the table moves.
+  - Below 34rem the forms put the label above the input instead of beside it. Two fixed columns added up to more than the screen is wide, which pushed every input past the right edge.
+  - The three counts on the status screen share the rows two at a time rather than running off the end. "Connected" was cut off before.
+  - Wider screens are unchanged. The new rules are inside a media query and nothing above it was touched.
+
+## Documentation:
+
+- `release.md` holds the notes of every release back to v0.0.1. It said it did and held the last two.
+
 # v2.0.1
 
 ## Bug fixes:
