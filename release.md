@@ -1,3 +1,20 @@
+# v2.1.0
+
+## Add/fix features:
+
+- IPv6:
+  - A Host or a service port may be given an IPv6 address. The API took one all along, since the validator behind the `ip` tag accepts it, and then built `2001:db8::1:22` out of the address and the port. Nothing could take that apart, because the port cannot be told from the last group of the address. The addresses are joined with `net.JoinHostPort` now, which writes `[2001:db8::1]:22`.
+  - An address carrying a zone, as in `fe80::1%eth0`, is refused. The validator has always refused it and the UI now says so before the request is sent.
+- Built-in UI:
+  - The version of the binary is shown in the bottom right corner of every screen, the login one included. It is read from the new `GET /ui/version.json`, which is answered without a session so that the login screen can show it too.
+  - The forms check what is typed before anything is sent. A port takes digits only and has to be between 1 and 65535. An IP field takes only what an address is made of and has to read as an IPv4 or an IPv6 address. What is wrong is said next to the field it is wrong in, and the request is not sent until it is right.
+  - The dates and the row buttons no longer wrap onto a second line. The timestamps carry seconds, which the status screen needs: it asks again every five seconds, and without them two rows written seconds apart read as the same moment.
+  - The tunnel state is a badge rather than a word, numeric columns line up on the right, and Delete no longer looks like the button beside it.
+
+## Bug fixes:
+
+- An IPv6 address accepted by the API produced a tunnel address no dialer could parse. See above.
+
 # v2.0.2
 
 ## Bug fixes:
