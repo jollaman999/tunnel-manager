@@ -42,6 +42,12 @@ var contentTypes = map[string]string{
 	".css":  "text/css; charset=utf-8",
 }
 
+// versionPath answers what version of the binary is serving the UI. It sits
+// under /ui/ and not under /api/, so it is reachable without a session: the
+// login screen shows the version too, and the number is on the release page of
+// a public repository either way.
+const versionPath = uiPrefix + "version.json"
+
 // RegisterRoutes puts the UI on e.
 //
 // The routes go on the echo instance itself and not on the /api group, so the
@@ -51,9 +57,17 @@ var contentTypes = map[string]string{
 // fetched from /api/**, and the session still guards those. Putting the
 // session in front of these files instead would shut the login screen behind
 // the login, leaving no way to get a session in the first place.
-func RegisterRoutes(e *echo.Echo) {
+func RegisterRoutes(e *echo.Echo, version string) {
 	e.GET("/", redirectToUI)
 	e.GET(strings.TrimSuffix(uiPrefix, "/"), redirectToUI)
+
+	// The version route is added before the wildcard so that echo matches it
+	// first. A request for it would otherwise be looked up as a file and
+	// answered with a 404, since it carries an extension.
+	e.GET(versionPath, func(c echo.Context) error {
+		return c.JSON(http.StatusOK, map[string]string{"version": version})
+	})
+
 	e.GET(uiPrefix+"*", serveAsset)
 }
 

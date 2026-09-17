@@ -19,7 +19,7 @@ import (
 // given without a session.
 func newServer() *echo.Echo {
 	e := echo.New()
-	RegisterRoutes(e)
+	RegisterRoutes(e, "test-version")
 
 	return e
 }
@@ -275,7 +275,7 @@ func TestWalkingUpStaysInsideTheEmbeddedTree(t *testing.T) {
 // carries both and the API path is asked for without a cookie.
 func TestTheAPIStaysBehindTheSession(t *testing.T) {
 	e := echo.New()
-	RegisterRoutes(e)
+	RegisterRoutes(e, "test-version")
 
 	// The handler is never reached and the session lookup fails before the
 	// account is read, so this needs no database.

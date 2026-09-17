@@ -10,6 +10,10 @@
     <link rel="stylesheet" href="/ui/style.css" />
   </head>
   <body>
+    <!-- The version sits outside #app because that element is emptied on every
+         draw. Kept inside it the number would be wiped by the first screen and
+         would have to be fetched again for each one. -->
+    <div id="versionTag"></div>
     <div id="app">Loading...</div>
     <!-- screens.js is loaded first: it holds the table of screens that app.js
          reads as soon as it runs, to draw the screen the URL asks for. -->

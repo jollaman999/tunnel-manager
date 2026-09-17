@@ -472,7 +472,7 @@ func main() {
 	// The UI is put on the instance itself and not on the group above. It is
 	// the same bytes for every client and carries no data of its own, while
 	// everything it shows comes from /api/**, which stays behind the session.
-	web.RegisterRoutes(e)
+	web.RegisterRoutes(e, version)
 
 	// A server that never comes up must not end the process on the spot. The
 	// tunnels are restored by now and their rows are in the database, and
