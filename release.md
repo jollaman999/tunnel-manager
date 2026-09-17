@@ -1,3 +1,18 @@
+# v2.0.1
+
+## Bug fixes:
+
+- Encryption key:
+  - A fresh install started by the bundled systemd unit wrote its encryption key to `/keys/tunnel-manager.key`, in the root of the filesystem. `security.key_file` is relative by default and a relative path is read against the working directory, which systemd leaves at `/`. The unit now declares a state directory and works from it, so the default resolves under `/var/lib/tunnel-manager`.
+  - The default itself is unchanged. The container relies on it together with `WORKDIR /` to land on the volume the compose file maps to `./_data/keys`.
+  - An installation already running with an explicit absolute `security.key_file` is unaffected. One that took the default under a unit of its own should check where its key actually is before upgrading, and is best given an absolute path.
+- Startup log:
+  - The path the encryption key was read from is logged as an absolute path rather than as the value that was configured. `keys/tunnel-manager.key` said nothing about which file was opened, which is how the key at `/` went unnoticed.
+
+## Documentation:
+
+- The README says where the default key file lands for each way of starting the process, and that an absolute `security.key_file` makes that table irrelevant.
+
 # v2.0.0
 
 ## Breaking changes:
