@@ -20,6 +20,10 @@ made reachable from the Host.
 | Host | `ip`, `port`, `user`, `password`, `description`, `enabled` | An SSH server Tunnel Manager logs in to with a username and a password. The password is stored encrypted. |
 | Service port | `service_ip`, `service_port`, `local_port` | The service to publish, and the port opened on every Host to reach it. |
 
+Both `ip` and `service_ip` take an IPv4 or an IPv6 address. An IPv6 address is
+written plainly, as `2001:db8::1`, and the brackets a dialer needs are put on
+where the address is used. A zone, as in `fe80::1%eth0`, is refused.
+
 Every **enabled** Host combined with every service port is one tunnel. Two
 enabled Hosts and three service ports means six tunnels.
 
@@ -283,6 +287,15 @@ directory the process starts from does not matter.
 | Service Ports | `/ui/service-ports` | One row per service port with ID, service IP, service port, local port, description and updated. Add, edit and delete. |
 | Login | `/ui/login` | Where a client without a session lands. Leave the username empty on the first sign in. It leads to the setup screen while the account still needs one. |
 
+The version of the binary is in the bottom right corner of every screen, the
+login one included.
+
+The forms check what is typed before anything is sent. A port takes digits only
+and has to be between 1 and 65535; an IP field takes only what an address is
+made of and has to read as an IPv4 or an IPv6 address. What is wrong is said
+next to the field it is wrong in, and nothing leaves the browser until it is
+right.
+
 The UI files are served without a session on purpose: they are the same bytes for
 every client and carry no data. Everything they show is fetched from `/api/**`,
 and that is what the login guards.
@@ -411,7 +424,12 @@ that is not a `GET` requires the `X-CSRF-Token` header.
 |--------|------|--------------|
 | `GET` | `/` | Redirects to `/ui/` with a `302` |
 | `GET` | `/ui` | Redirects to `/ui/` with a `302` |
+| `GET` | `/ui/version.json` | The version of the binary, as `{"version":"2.1.0"}` |
 | `GET` | `/ui/*` | Serves the UI out of the binary |
+
+`/ui/version.json` is answered without a session, like the rest of `/ui/`. The
+login screen shows the version too, and the number is on the release page of a
+public repository either way.
 
 The SSH password of a Host and the password hash of the account are left out of
 every answer.
