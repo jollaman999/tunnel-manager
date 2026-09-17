@@ -3,7 +3,10 @@
 
 body {
   margin: 0;
-  padding: 1.5rem;
+  /* The extra room at the bottom is for the version, which is fixed to the
+     corner and is out of the flow: without it the corner sits on top of the
+     last line of the page. */
+  padding: 1.5rem 1.5rem 2.75rem;
   font-family: system-ui, -apple-system, "Segoe UI", Helvetica, Arial, sans-serif;
   font-size: 15px;
   line-height: 1.5;
@@ -23,6 +26,20 @@ h1 {
   background: #ffffff;
   border: 1px solid #dcdfe4;
   border-radius: 6px;
+}
+
+/* The version is fixed to the corner of every screen, the login included. It
+   is dimmed and takes no clicks, so it is readable where it is looked for and
+   is not in the way of anything under it. */
+#versionTag {
+  position: fixed;
+  bottom: 8px;
+  right: 12px;
+  font-size: 11px;
+  color: #4a4f57;
+  opacity: 0.6;
+  z-index: 1;
+  pointer-events: none;
 }
 
 pre {
@@ -114,8 +131,32 @@ h2 {
 .field input[type="password"] {
   padding: 0.35rem 0.5rem;
   font: inherit;
+  color: inherit;
+  background: #ffffff;
   border: 1px solid #c6cbd2;
   border-radius: 4px;
+}
+
+.field input[type="text"]:focus,
+.field input[type="password"]:focus {
+  border-color: #24456b;
+  outline: 2px solid #c7d6ea;
+  outline-offset: 0;
+}
+
+/* A box that holds something the form refused is marked, so the line under it
+   is tied to the box it belongs to and not just to the row it sits in. */
+.field input.bad {
+  border-color: #b04141;
+  background: #fdf7f7;
+}
+
+.field input.bad:focus {
+  outline-color: #f0c2c2;
+}
+
+.field .problem {
+  color: #8a2f2f;
 }
 
 .field input[type="checkbox"] {
@@ -150,6 +191,22 @@ button:hover {
   background: #eef1f5;
 }
 
+button:focus-visible {
+  outline: 2px solid #24456b;
+  outline-offset: 1px;
+}
+
+button:active {
+  background: #e2e6ec;
+}
+
+button:disabled {
+  color: #8a8f97;
+  background: #f2f3f5;
+  border-color: #dcdfe4;
+  cursor: default;
+}
+
 button[type="submit"] {
   color: #ffffff;
   background: #24456b;
@@ -158,6 +215,27 @@ button[type="submit"] {
 
 button[type="submit"]:hover {
   background: #1b3652;
+}
+
+button[type="submit"]:active {
+  background: #152a40;
+}
+
+/* Delete is the one button in a row that cannot be taken back with another
+   click, so it does not look like the two next to it. */
+button.danger {
+  color: #8a2f2f;
+  border-color: #e0bcbc;
+}
+
+button.danger:hover {
+  color: #ffffff;
+  background: #8a2f2f;
+  border-color: #8a2f2f;
+}
+
+button.danger:focus-visible {
+  outline-color: #8a2f2f;
 }
 
 /* The scroller keeps a wide table inside its own box. Without it the table
@@ -175,16 +253,92 @@ table {
 
 th,
 td {
-  padding: 0.4rem 0.5rem;
+  padding: 0.45rem 0.6rem;
   text-align: left;
   border-bottom: 1px solid #e6e8eb;
-  vertical-align: top;
+  vertical-align: middle;
 }
 
 th {
-  color: #4a4f57;
+  color: #38404b;
   font-weight: 600;
   white-space: nowrap;
+  background: #eef1f5;
+  border-bottom: 1px solid #ccd2da;
+}
+
+/* The banding is what carries the eye along a row of a table this wide. */
+tbody tr:nth-child(even) {
+  background: #fafbfc;
+}
+
+tbody tr:hover {
+  background: #eef3f9;
+}
+
+tbody tr:last-child td {
+  border-bottom: 0;
+}
+
+/* Digits line up under digits, so two ports of different lengths can be
+   compared without reading them. */
+th.num,
+td.num {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+/* A timestamp and a row of buttons are each one thing. Left to wrap they break
+   at the space inside them, which reads as two values stacked in one cell. */
+.stamp {
+  white-space: nowrap;
+}
+
+td .buttons {
+  flex-wrap: nowrap;
+  white-space: nowrap;
+}
+
+/* The buttons take no more width than they need, which leaves the rest of the
+   row to the columns that carry values. */
+td.actions {
+  width: 1%;
+}
+
+/* The state of a tunnel is the column that is looked at first, so it carries
+   its colour rather than only its word. */
+.badge {
+  display: inline-block;
+  padding: 0.1rem 0.5rem;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 600;
+  white-space: nowrap;
+  border: 1px solid;
+}
+
+.badge.ok {
+  color: #1f4d2b;
+  background: #eefaf0;
+  border-color: #bfe3c8;
+}
+
+.badge.bad {
+  color: #7a1f1f;
+  background: #fdeeee;
+  border-color: #f0c2c2;
+}
+
+.badge.waiting {
+  color: #7a4a10;
+  background: #fdf4e6;
+  border-color: #f0d9ae;
+}
+
+.badge.unknown {
+  color: #4a4f57;
+  background: #f0f1f3;
+  border-color: #dcdfe4;
 }
 
 .counts {
@@ -243,7 +397,7 @@ th {
    Everything above is unchanged, so a wide screen looks as it did. */
 @media (max-width: 34rem) {
   body {
-    padding: 0;
+    padding: 0 0 2.75rem;
   }
 
   /* The card borders and the rounded corners are dropped, because at this width

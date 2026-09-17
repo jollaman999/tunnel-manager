@@ -191,12 +191,12 @@ async function drawStatus() {
       return [
         tunnel.host_id,
         tunnel.sp_id,
-        tunnel.status,
+        statusBadge(tunnel.status),
         tunnel.server,
         tunnel.local,
         tunnel.remote,
         tunnel.retry_count,
-        formatTime(tunnel.last_connected_at),
+        timeCell(tunnel.last_connected_at),
         tunnel.last_error
       ];
     });
@@ -204,11 +204,27 @@ async function drawStatus() {
     nodes.push(buildTable(
       ["Host", "Service port", "Status", "Server", "Local", "Remote", "Retries",
         "Last connected", "Last error"],
-      rows
+      rows,
+      [0, 1, 6]
     ));
   }
 
   render("Status", nodes);
+}
+
+// statusBadge is what a tunnel is, drawn so that the one row that is not
+// working is found without reading the column. The word itself is kept and is
+// whatever the server said, so a state added later still shows up; only the
+// three that are known are coloured.
+function statusBadge(status) {
+  const known = { connected: "ok", error: "bad", reconnecting: "waiting" };
+  const text = status === null || status === undefined ? "" : String(status);
+  const badge = element("span", text);
+
+  badge.className = "badge " + (known[text] === undefined ? "unknown" : known[text]);
+  badge.dataset.status = text;
+
+  return badge;
 }
 
 // countBox is one of the three numbers at the top of the status screen.
@@ -260,7 +276,8 @@ async function drawHosts() {
   } else {
     nodes.push(buildTable(
       ["ID", "IP", "Port", "User", "Description", "Enabled", "Updated", ""],
-      hosts.map(hostRow)
+      hosts.map(hostRow),
+      [0, 2]
     ));
   }
 
@@ -285,7 +302,7 @@ function hostRow(host) {
   ));
   buttons.appendChild(actionButton("Delete", "host-delete-" + host.id, function () {
     return deleteHost(host);
-  }));
+  }, "danger"));
 
   return [
     host.id,
@@ -294,9 +311,39 @@ function hostRow(host) {
     host.user,
     host.description,
     host.enabled ? "yes" : "no",
-    formatTime(host.updated_at),
+    timeCell(host.updated_at),
     buttons
   ];
+}
+
+// ipField and portField are the two kinds of box that hold something the server
+// has a rule about. They are built here rather than written out at each of the
+// five places they appear, so that the characters a box takes and the check it
+// is put through cannot drift apart between the add form and the edit form.
+//
+// The hint doubles as the example of the form that is wanted. The addresses in
+// it are the ones set aside for documentation, so neither names a real host.
+function ipField(name, label, value) {
+  return {
+    name: name,
+    label: label,
+    value: value,
+    hint: "192.0.2.10 or 2001:db8::1",
+    filter: ipCharacters,
+    check: checkIP
+  };
+}
+
+function portField(name, label, value) {
+  return {
+    name: name,
+    label: label,
+    value: value,
+    hint: "1 to 65535",
+    inputMode: "numeric",
+    filter: portCharacters,
+    check: checkPort
+  };
 }
 
 function hostCreateForm() {
@@ -305,8 +352,8 @@ function hostCreateForm() {
     legend: "Add a host",
     submitLabel: "Add",
     fields: [
-      { name: "ip", label: "IP" },
-      { name: "port", label: "SSH port", value: 22 },
+      ipField("ip", "IP"),
+      portField("port", "SSH port", 22),
       { name: "user", label: "User" },
       { name: "password", label: "Password", type: "password" },
       { name: "description", label: "Description" }
@@ -321,8 +368,8 @@ function hostEditForm(host) {
     legend: "Edit host " + host.id,
     submitLabel: "Save",
     fields: [
-      { name: "ip", label: "IP", value: host.ip },
-      { name: "port", label: "SSH port", value: host.port },
+      ipField("ip", "IP", host.ip),
+      portField("port", "SSH port", host.port),
       { name: "user", label: "User", value: host.user },
       {
         name: "password",
@@ -443,7 +490,8 @@ async function drawServicePorts() {
   } else {
     nodes.push(buildTable(
       ["ID", "Service IP", "Service port", "Local port", "Description", "Updated", ""],
-      ports.map(servicePortRow)
+      ports.map(servicePortRow),
+      [0, 2, 3]
     ));
   }
 
@@ -461,7 +509,7 @@ function servicePortRow(port) {
   }));
   buttons.appendChild(actionButton("Delete", "service-port-delete-" + port.id, function () {
     return deleteServicePort(port);
-  }));
+  }, "danger"));
 
   return [
     port.id,
@@ -469,7 +517,7 @@ function servicePortRow(port) {
     port.service_port,
     port.local_port,
     port.description,
-    formatTime(port.updated_at),
+    timeCell(port.updated_at),
     buttons
   ];
 }
@@ -480,9 +528,9 @@ function servicePortCreateForm() {
     legend: "Add a service port",
     submitLabel: "Add",
     fields: [
-      { name: "service_ip", label: "Service IP" },
-      { name: "service_port", label: "Service port" },
-      { name: "local_port", label: "Local port" },
+      ipField("service_ip", "Service IP"),
+      portField("service_port", "Service port"),
+      portField("local_port", "Local port"),
       { name: "description", label: "Description" }
     ],
     onSubmit: createServicePort
@@ -495,9 +543,9 @@ function servicePortEditForm(port) {
     legend: "Edit service port " + port.id,
     submitLabel: "Save",
     fields: [
-      { name: "service_ip", label: "Service IP", value: port.service_ip },
-      { name: "service_port", label: "Service port", value: port.service_port },
-      { name: "local_port", label: "Local port", value: port.local_port },
+      ipField("service_ip", "Service IP", port.service_ip),
+      portField("service_port", "Service port", port.service_port),
+      portField("local_port", "Local port", port.local_port),
       { name: "description", label: "Description", value: port.description }
     ],
     onSubmit: function (values) {

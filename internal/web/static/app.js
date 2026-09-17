@@ -23,6 +23,27 @@ const apiSetupPath = "/api/setup";
 const csrfCookieName = "tm_csrf";
 const csrfHeaderName = "X-CSRF-Token";
 
+// versionPath is where the number in the corner is read from. It is served from
+// under /ui/ rather than from /api/, so the login screen, which has no session
+// yet, can show it too.
+const versionPath = "/ui/version.json";
+
+// The bounds the API takes a port in. The server refuses anything outside them,
+// and the same bounds are checked here so that a typo is reported next to the
+// box it was typed in instead of after a round trip.
+const minPort = 1;
+const maxPort = 65535;
+
+// portCharacters and ipCharacters are what may not be in those boxes. They are
+// dropped as they arrive, so a value that reaches the checks below is already
+// made of characters that could be part of an answer.
+//
+// An IP box takes more than digits because an IPv6 address is written with hex
+// digits and colons. What it does not take is the rest of the alphabet, so the
+// box still refuses a hostname.
+const portCharacters = /[^0-9]/g;
+const ipCharacters = /[^0-9a-fA-F.:]/g;
+
 // currentScreen is what is drawn. An answer that arrives after the operator has
 // moved on is compared against it and dropped, so a slow call cannot draw over
 // the screen that replaced the one it was made from.
@@ -361,12 +382,21 @@ function element(tag, text) {
 // actionButton is a button that runs something. The type is set because a
 // button inside a form submits it otherwise, which would send the form of the
 // row the button sits next to.
-function actionButton(label, name, onClick) {
+//
+// variant, where a caller passes one, is how a button that does something the
+// operator cannot take back is told apart from the ones next to it that only
+// open a form or flip a flag.
+function actionButton(label, name, onClick, variant) {
   const node = document.createElement("button");
 
   node.type = "button";
   node.textContent = label;
   node.dataset.action = name;
+
+  if (variant !== undefined) {
+    node.className = variant;
+  }
+
   node.addEventListener("click", function () {
     run(onClick);
   });
@@ -376,14 +406,25 @@ function actionButton(label, name, onClick) {
 
 // buildTable draws a list. A cell is either a value, which is set as text, or a
 // node that was built by the caller.
-function buildTable(headers, rows) {
+//
+// numericColumns names the columns that hold numbers. They are set flush right
+// so that the digits of one row line up with the digits of the next, which is
+// what makes a column of ports readable at a glance.
+function buildTable(headers, rows, numericColumns) {
+  const numeric = numericColumns === undefined ? [] : numericColumns;
   const table = document.createElement("table");
   const head = document.createElement("thead");
   const headRow = document.createElement("tr");
 
-  for (const header of headers) {
-    headRow.appendChild(element("th", header));
-  }
+  headers.forEach(function (header, index) {
+    const th = element("th", header);
+
+    if (numeric.indexOf(index) !== -1) {
+      th.className = "num";
+    }
+
+    headRow.appendChild(th);
+  });
 
   head.appendChild(headRow);
   table.appendChild(head);
@@ -393,17 +434,29 @@ function buildTable(headers, rows) {
   for (const row of rows) {
     const line = document.createElement("tr");
 
-    for (const cell of row) {
+    row.forEach(function (cell, index) {
       const td = document.createElement("td");
+
+      if (numeric.indexOf(index) !== -1) {
+        td.className = "num";
+      }
 
       if (cell instanceof Node) {
         td.appendChild(cell);
+
+        // The column of buttons is as wide as its buttons and no wider, so
+        // that the columns holding values keep the rest of the width. It is
+        // marked here rather than by its position, because it is the last
+        // column on some screens and there is none at all on others.
+        if (cell.classList.contains("buttons")) {
+          td.className = "actions";
+        }
       } else {
         td.textContent = cell === null || cell === undefined ? "" : String(cell);
       }
 
       line.appendChild(td);
-    }
+    });
 
     body.appendChild(line);
   }
@@ -432,6 +485,7 @@ function buildForm(spec) {
   form.appendChild(element("h2", spec.legend));
 
   const inputs = {};
+  const problems = {};
 
   for (const field of spec.fields) {
     const row = document.createElement("div");
@@ -457,10 +511,36 @@ function buildForm(spec) {
       input.placeholder = field.hint;
     }
 
+    // The box stays a text box even where only digits belong in it. A number
+    // box is spun by the mouse wheel while it has focus, which changes a port
+    // without a keystroke, and it hands back an empty string for anything it
+    // considers malformed, which leaves nothing to say what was wrong with.
+    // The keypad a phone puts up is asked for separately.
+    if (field.inputMode !== undefined) {
+      input.setAttribute("inputmode", field.inputMode);
+    }
+
+    if (field.filter !== undefined) {
+      input.addEventListener("input", function () {
+        filterInput(input, field.filter);
+      });
+    }
+
     inputs[field.name] = input;
 
     row.appendChild(label);
     row.appendChild(input);
+
+    // What is wrong with one value is shown under the box it was typed in. The
+    // line above the screen is where a refusal of the whole call goes, and a
+    // complaint about one field reads as being about all of them up there.
+    const problem = element("small", "");
+    problem.className = "problem";
+    problem.dataset.problem = field.name;
+    problem.hidden = true;
+
+    problems[field.name] = problem;
+    row.appendChild(problem);
 
     if (field.note !== undefined) {
       row.appendChild(element("small", field.note));
@@ -507,12 +587,170 @@ function buildForm(spec) {
       values[name] = input.type === "checkbox" ? input.checked : input.value;
     }
 
+    // Nothing is sent while a value is one the server would refuse anyway.
+    // Every field is checked rather than stopping at the first that fails, so
+    // one press reports everything that has to be fixed.
+    let sound = true;
+
+    for (const field of spec.fields) {
+      const message = field.check === undefined ? "" : field.check(values[field.name]);
+      const problem = problems[field.name];
+
+      problem.textContent = message;
+      problem.hidden = message === "";
+      inputs[field.name].classList.toggle("bad", message !== "");
+
+      if (message !== "") {
+        sound = false;
+      }
+    }
+
+    if (!sound) {
+      return;
+    }
+
     run(function () {
       return spec.onSubmit(values);
     });
   });
 
   return form;
+}
+
+// filterInput drops what may not be in a box, as it is typed and as it is
+// pasted. The caret goes back to where it was less whatever was dropped ahead
+// of it, so a stray character typed in the middle of a value does not send the
+// caret to the end and scatter the rest of what is being typed.
+function filterInput(input, disallowed) {
+  const before = input.value;
+  const after = before.replace(disallowed, "");
+
+  if (after === before) {
+    return;
+  }
+
+  const caret = input.selectionStart === null ? before.length : input.selectionStart;
+  const kept = before.slice(0, caret).replace(disallowed, "").length;
+
+  input.value = after;
+  input.setSelectionRange(kept, kept);
+}
+
+// checkPort says what is wrong with a port, or "" when nothing is. The box only
+// takes digits, so what is left to catch is an empty one and a number outside
+// what the server accepts.
+function checkPort(value) {
+  const trimmed = String(value).trim();
+
+  if (trimmed === "") {
+    return "Enter a port.";
+  }
+
+  const port = Number(trimmed);
+  if (!Number.isInteger(port) || port < minPort || port > maxPort) {
+    return "The port has to be between " + minPort + " and " + maxPort + ".";
+  }
+
+  return "";
+}
+
+// checkIP says what is wrong with an address, or "" when nothing is.
+function checkIP(value) {
+  const trimmed = String(value).trim();
+
+  if (trimmed === "") {
+    return "Enter an IP address.";
+  }
+
+  if (!isIPv4(trimmed) && !isIPv6(trimmed)) {
+    return "This is not an IPv4 or an IPv6 address.";
+  }
+
+  return "";
+}
+
+// isIPv4 checks the dotted form. A part written with a leading zero is refused
+// rather than read: 010 is eight to some software and ten to other software, so
+// an address written that way does not name one host.
+function isIPv4(value) {
+  const parts = value.split(".");
+  if (parts.length !== 4) {
+    return false;
+  }
+
+  for (const part of parts) {
+    if (!/^[0-9]{1,3}$/.test(part)) {
+      return false;
+    }
+
+    if (part.length > 1 && part.startsWith("0")) {
+      return false;
+    }
+
+    if (Number(part) > 255) {
+      return false;
+    }
+  }
+
+  return true;
+}
+
+// isIPv6 checks the colon form. It is not one pattern: the run that stands for
+// the zero groups may sit anywhere and may appear once, and the last 32 bits
+// may be written as an IPv4 address. A single pattern that covers all of that
+// is longer than the rules it encodes and is read by nobody, so the address is
+// cut at the run and the groups on either side are counted instead.
+function isIPv6(value) {
+  // A zone ("fe80::1%eth0") names an interface of the machine that wrote the
+  // address down, not part of the address. The server refuses one, so does this.
+  if (value.indexOf("%") !== -1) {
+    return false;
+  }
+
+  const halves = value.split("::");
+  if (halves.length > 2) {
+    return false;
+  }
+
+  const shortened = halves.length === 2;
+
+  let groups = splitGroups(halves[0]);
+  if (shortened) {
+    groups = groups.concat(splitGroups(halves[1]));
+  }
+
+  // The last group may be an IPv4 address, which fills the 32 bits of the two
+  // groups it stands in for.
+  let count = groups.length;
+  const last = count === 0 ? "" : groups[count - 1];
+
+  if (last.indexOf(".") !== -1) {
+    if (!isIPv4(last)) {
+      return false;
+    }
+
+    groups = groups.slice(0, count - 1);
+    count += 1;
+  }
+
+  for (const group of groups) {
+    if (!/^[0-9a-fA-F]{1,4}$/.test(group)) {
+      return false;
+    }
+  }
+
+  // Without the run every group is written out, so there have to be eight of
+  // them. With it there has to be room left for the one group it stands for at
+  // the least, which is what makes a run written where nothing is missing wrong.
+  return shortened ? count <= 7 : count === 8;
+}
+
+// splitGroups cuts one side of an address into its groups. A side that is empty
+// has no groups at all, which is what the end of an address that begins or ends
+// with the run looks like. Splitting an empty string would hand back one empty
+// group instead, and that would be counted as a group that is there.
+function splitGroups(side) {
+  return side === "" ? [] : side.split(":");
 }
 
 // byteCountText says how long a password is in the unit it is measured in.
@@ -537,6 +775,11 @@ function asNumber(value) {
 // The parts are put together here rather than by toLocaleString, which writes
 // the date in the language the browser is set to and would put words from that
 // language on a screen that is in English everywhere else.
+//
+// The seconds are left off. Nothing on these screens is read to the second: the
+// rows are refreshed every five seconds and the timestamps say when a row was
+// written, not how long something took. Carrying them made the column wide
+// enough to wrap onto a second line, which reads as two values.
 function formatTime(value) {
   if (typeof value !== "string" || value === "" || value.startsWith("0001-01-01")) {
     return "never";
@@ -548,7 +791,18 @@ function formatTime(value) {
   }
 
   return parsed.getFullYear() + "-" + pad(parsed.getMonth() + 1) + "-" + pad(parsed.getDate()) +
-    " " + pad(parsed.getHours()) + ":" + pad(parsed.getMinutes()) + ":" + pad(parsed.getSeconds());
+    " " + pad(parsed.getHours()) + ":" + pad(parsed.getMinutes());
+}
+
+// timeCell is a timestamp that stays on one line. Left to wrap it breaks at the
+// space between the date and the clock, and the two halves then read as two
+// separate values stacked in one cell.
+function timeCell(value) {
+  const node = element("span", formatTime(value));
+
+  node.className = "stamp";
+
+  return node;
 }
 
 // pad keeps the columns of a timestamp the same width.
@@ -562,9 +816,31 @@ function plural(count, one, many) {
   return count === 1 ? one : many;
 }
 
+// showVersion puts what the server reports in the corner of every screen. It is
+// asked for once, outside of any screen, and a failure is swallowed on purpose:
+// the number is worth showing but nothing on the screen depends on it, and a
+// line about a missing version would sit on top of the screen the operator came
+// to use. An older server that does not answer this path leaves the corner
+// empty rather than breaking the page.
+function showVersion() {
+  fetch(versionPath, { headers: { Accept: "application/json" }, credentials: "same-origin" })
+    .then(function (response) {
+      return response.ok ? response.json() : null;
+    })
+    .then(function (payload) {
+      if (payload === null || typeof payload.version !== "string" || payload.version === "") {
+        return;
+      }
+
+      document.getElementById("versionTag").textContent = "v" + payload.version;
+    })
+    .catch(function () {});
+}
+
 window.addEventListener("popstate", function () {
   notice = null;
   showScreen(screenName());
 });
 
+showVersion();
 showScreen(screenName());
