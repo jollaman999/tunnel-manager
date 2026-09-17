@@ -160,6 +160,13 @@ button[type="submit"]:hover {
   background: #1b3652;
 }
 
+/* The scroller keeps a wide table inside its own box. Without it the table
+   pushes the page wider than the screen and everything scrolls sideways. */
+.table-scroll {
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+}
+
 table {
   width: 100%;
   border-collapse: collapse;
@@ -182,6 +189,7 @@ th {
 
 .counts {
   display: flex;
+  flex-wrap: wrap;
   gap: 0.75rem;
   margin-bottom: 1rem;
 }
@@ -228,4 +236,39 @@ th {
 .summary.empty {
   color: #6b7079;
   background: #f4f5f7;
+}
+
+/* A phone held upright is around 390px wide, which is under 24rem once the
+   padding is taken off. The rules below are what does not fit at that width.
+   Everything above is unchanged, so a wide screen looks as it did. */
+@media (max-width: 34rem) {
+  body {
+    padding: 0;
+  }
+
+  /* The card borders and the rounded corners are dropped, because at this width
+     they cost side margin that the content needs more than the frame does. */
+  #app {
+    padding: 1rem 0.875rem;
+    border-left: 0;
+    border-right: 0;
+    border-radius: 0;
+  }
+
+  /* The label sits above its input instead of beside it. Two fixed columns add
+     up to more than the screen is wide, which is what pushed the inputs off it. */
+  .field {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 0.25rem;
+  }
+
+  .field small {
+    grid-column: 1;
+  }
+
+  /* Three counts side by side do not fit. They share the row two at a time. */
+  .count {
+    flex: 1 1 8rem;
+    min-width: 0;
+  }
 }

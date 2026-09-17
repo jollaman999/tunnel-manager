@@ -410,7 +410,15 @@ function buildTable(headers, rows) {
 
   table.appendChild(body);
 
-  return table;
+  // The table is handed back inside a scroller. A table of this many columns is
+  // wider than a phone held upright, and without something to scroll it the
+  // whole page scrolls sideways instead, taking the heading and the navigation
+  // off screen with it.
+  const scroller = document.createElement("div");
+  scroller.className = "table-scroll";
+  scroller.appendChild(table);
+
+  return scroller;
 }
 
 // buildForm draws a form and hands the values to onSubmit. The values are read
