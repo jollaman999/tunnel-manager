@@ -61,3 +61,58 @@ This release changes how the API is called. A client written against v1.0.0 stop
   - The API server shuts down gracefully on SIGTERM instead of dropping requests in flight.
   - A log file that cannot be opened no longer ends the startup; logging falls back to the console.
   - Row locking on the update and delete handlers, so two requests on the same row no longer undo each other.
+
+# v1.0.0
+
+## Add/fix features:
+- Tunnel Management:
+  - Fixed issue of only listening on loopback address (127.0.0.1)
+
+# v0.1.0
+
+## Add/fix features:
+- Tunnel Management:
+  - Fixed issue where all tunnels were shown when requesting host status.
+  - Fixed issue problem where failed tunnels remained.
+- API Updates:
+  - Removed unnecessary 's' from multiple API endpoints for consistency.
+  - Renamed all instances of "VM" to "Host" for clarity.
+- Set default log path under /var/log/ for easier access and management.
+
+# v0.0.3
+
+## Add/fix features:
+- Fixed remote connection not initiating from tunnel-manager host
+- Added VM enable/disable functionality
+- Enhanced tunnel management system:
+  - Fixed duplicate tunnel additions and deletions in database
+  - Improved race condition handling of tunnels
+  - Reset tunnel connection retry count to 0, when connected
+  - Optimized tunnel restoration process
+- Improved race condition handling in VM and service port operations
+- Fixed database data duplication and indexing
+
+**Full Changelog**: https://github.com/jollaman999/tunnel-manager/compare/v0.0.2...v0.0.3
+
+# v0.0.2
+
+## Add/fix features:
+- Resolved transaction issues in VM and service port operations to ensure consistency.
+- Resolved transaction issues in tunnels, ensuring consistency.
+- Added support for saving log files with various options, including path, max_size, max_age, and compression.
+- Do not retry when authentication failed
+- Fix wrong tunnel stop issue when updating the service port
+- Various bug fixes for improved stability.
+
+**Full Changelog**: https://github.com/jollaman999/tunnel-manager/compare/v0.0.1...v0.0.2
+
+# v0.0.1
+
+## Add/fix features:
+- Add REST API for managing VMs and service ports
+- Add tunnel manager for SSH tunnel management
+- Fix transaction issues in VM and service port operations
+- Optimize VM and service port CRUD operations
+- Add unique constraint on VM IP for active records only
+
+**Full Changelog**: https://github.com/jollaman999/tunnel-manager/compare/v0.0.1...v0.0.1
