@@ -1,3 +1,36 @@
+# v3.1.0
+
+## Breaking changes:
+
+**The address to open is `https://`, not `http://`.** The API and the web UI are served over TLS from this release on, and a certificate is made on the first start if the database holds none.
+
+- A request that arrives in the clear is answered with a `307` redirect to the same address under `https`. A browser follows it. `curl` does not follow a redirect unless it is told to, so a script that calls `http://` gets the redirect itself and nothing else.
+- Nobody signs for the certificate that is generated, so a browser warns about it and `curl` refuses it with exit code `60` until the certificate is trusted or `--cacert` points at it. The Settings screen shows the certificate as PEM for that.
+- `api_https_enabled` turns this off and puts everything back in the clear. It is on by default, including for an installation that is upgraded, where the column is filled in rather than left empty.
+
+## Add/fix features:
+
+- HTTPS:
+  - The certificate and its private key live in the database beside the settings, so one file is still the whole of an installation. The private key is sealed with the same encryption key the SSH passwords use, and a database file that is taken does not carry the key in it.
+  - The generated certificate is an ECDSA P-256 certificate valid for 825 days, which is the longest a browser accepts. It covers `localhost`, the loopback addresses, the host name of the machine and the addresses of its interfaces.
+  - It is still one port. A connection is sorted by its first byte, which is `22` for a TLS handshake and a letter for an HTTP method, so nothing new has to be opened in a firewall.
+  - The sorting is done per connection and never in the accept loop. A client that connects and sends nothing holds up no one else, and is closed after ten seconds.
+  - A stored certificate that cannot be used, because it expired or because the encryption key no longer opens the private key, is replaced rather than reported as a failure that stops the start. Why it was replaced is logged, since a fingerprint that changes on its own is what a client warns about.
+- The certificate on the Settings screen:
+  - The fingerprint, the subject, the issuer, the names it covers and how long it has left, with the certificate itself as PEM to take into a trust store.
+  - **Make a new certificate** generates and installs one. **Register certificate** takes a certificate of your own as PEM, the intermediates behind it included.
+  - Neither restarts the process. The certificate is handed out per handshake, so what is installed is served from the next connection on, and the connection the button was pressed on is not dropped.
+  - What is pasted is read before it is stored. A key belonging to another certificate, a box filled with the other box's content, a key still protected by a passphrase, a certificate that ran out, and one whose extended key usage does not include `serverAuth` are each turned away by name rather than accepted and served.
+  - A certificate that is not valid yet is stored with a warning rather than refused. Two machines disagreeing about the time by a minute is ordinary, and refusing it would leave nothing to register.
+  - A replacement is logged with the fingerprint before it and the one after.
+
+## Notes:
+
+- The private key is never sent to the screen and is not in any answer the API gives.
+- The redirect is a `307` rather than a `301` or a `302`, which turn a `POST` into a `GET`, and rather than a `308`, which a browser caches: HTTPS can be turned off, and a cached permanent redirect would outlive that.
+- HTTP/2 is not offered. Nothing these screens do needs the multiplexing, and leaving it out keeps one protocol on the wire.
+- Both READMEs now carry a section on HTTPS: how to reach the server, what the browser warning is and what to check it against, how to register a certificate of your own, how to renew, and how to turn HTTPS off.
+
 # v3.0.0
 
 ## Breaking changes:
