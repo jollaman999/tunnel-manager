@@ -27,6 +27,11 @@ where the address is used. A zone, as in `fe80::1%eth0`, is refused.
 Every **enabled** Host combined with every service port is one tunnel. Two
 enabled Hosts and three service ports means six tunnels.
 
+**There is nothing to install beside the binary.** The database is a SQLite file
+the process creates itself, the settings are kept in that file and are changed on
+a screen in the browser, and the UI is compiled into the executable. No database
+server, no configuration file, no directory that has to travel next to it.
+
 ## Contents
 
 - [Requirements](#requirements)
@@ -34,20 +39,29 @@ enabled Hosts and three service ports means six tunnels.
 - [Install and run](#install-and-run)
 - [First startup and the account](#first-startup-and-the-account)
 - [The built-in UI](#the-built-in-ui)
+- [Settings](#settings)
+- [Uninstall](#uninstall)
 - [Calling the API from a script](#calling-the-api-from-a-script)
 - [API endpoints](#api-endpoints)
 - [Reading the tunnel status](#reading-the-tunnel-status)
-- [Configuration file](#configuration-file)
 - [Encryption key](#encryption-key)
 - [Running as a non-root user](#running-as-a-non-root-user)
-- [Upgrading from v1.0.0](#upgrading-from-v100)
 - [License](#license)
 
 ## Requirements
 
-- Go 1.23 or newer, to build
-- MySQL 5.7 or newer, or MariaDB 10.3 or newer
-- Docker and Docker Compose, optional
+To run a release binary: nothing. It carries the SQLite engine, the UI and
+everything else it needs.
+
+| To do this | You need |
+|------------|----------|
+| Run a release binary | Nothing else |
+| Build from source | Go 1.23 or newer |
+| Run the container | Docker and Docker Compose |
+
+The SQLite driver is a pure Go one (`github.com/glebarez/sqlite` over
+`modernc.org/sqlite`), so the binaries are built with `CGO_ENABLED=0` and need no
+C library on the machine they land on.
 
 ### Platforms
 
@@ -111,7 +125,7 @@ A pass runs at three moments:
 |------|-----|
 | At startup, before the API answers anything | The tunnels of the stored rows are up by the time the first request can ask about them |
 | Right after a `POST`, `PUT` or `DELETE` is committed | The change takes effect at once instead of waiting for the next tick |
-| Every `reconcile.interval_sec` seconds, 5 by default | Anything a failed pass left undone is tried again |
+| Every reconcile interval, 5 seconds by default | Anything a failed pass left undone is tried again |
 
 Because the answer is sent before the tunnel exists, **a write that succeeds does
 not mean the tunnel came up.** `GET /api/status` is what answers that. See
@@ -146,7 +160,7 @@ sequenceDiagram
     end
 
     Note over Host,WAS: Monitoring & Auto-reconnect
-    loop Every monitoring_interval_sec
+    loop Every monitoring interval
         Bastion->>Host: keepalive@tunnel check
         alt Connection Lost
             Bastion->>Host: Reconnect SSH Tunnel
@@ -158,70 +172,132 @@ Whether the listener on the Host really opens on `0.0.0.0` is up to the SSH
 server on the Host. When its `GatewayPorts` is off, the listener is bound to the
 loopback address whatever address was asked for, and the log says so.
 
-`monitoring.interval_sec` and `reconcile.interval_sec` are two different jobs.
-The monitor asks a tunnel that is already up whether it is still alive and
-reconnects it when it is not. The reconcile loop asks whether the right set of
-tunnels exists at all.
+The monitoring interval and the reconcile interval are two different jobs. The
+monitor asks a tunnel that is already up whether it is still alive and reconnects
+it when it is not. The reconcile loop asks whether the right set of tunnels
+exists at all.
 
 ## Install and run
 
-### With Docker Compose
+**An installation is one file.** Download the binary for your platform from the
+releases page, make it executable and start it. It creates the database file, the
+account and everything else it needs on the first startup.
 
-1. Clone the repository.
+```bash
+chmod +x tunnel-manager-linux-amd64
+./tunnel-manager-linux-amd64
+```
+
+The flags are all of them:
+
+| Flag | What it does |
+|------|--------------|
+| `-db <path>` | The database file. It holds the settings, the registered hosts and the account, and it is created, directories above it included, if it is not there |
+| `-reset-settings` | Puts every stored setting back to its default, prints what it changed and exits. See [If the server will not start](#if-the-server-will-not-start) |
+| `-version` | Prints the version and exits |
+| `-help` | Prints the flags and exits |
+
+### Where the files go
+
+**One directory holds the whole installation.** `-db` names the database file,
+and everything else this installation is made of sits in the directory that file
+is in.
+
+```text
+<the directory the database file is in>/
+    tunnel-manager.db          the settings, the hosts, the service ports, the account
+    tunnel-manager.db-wal      the write ahead log SQLite keeps beside it
+    tunnel-manager.db-shm      the shared memory file SQLite keeps beside it
+    initial-password           written on the first startup, deleted by the setup
+    keys/tunnel-manager.key    the key the SSH passwords are encrypted with
+    logs/tunnel-manager.log    the log file and the rotated files beside it
+```
+
+The key file and the log file are **settings**, not flags: they are on the
+Settings screen, and their defaults are `keys/tunnel-manager.key` and
+`logs/tunnel-manager.log`. **A relative path in a setting is read against the
+directory the database file is in, and not against the working directory.** The
+working directory is never the same twice, so a relative default read against it
+would put the key somewhere different on every host. Give a setting an absolute
+path and that path wins, which is how the key or the log can be put outside the
+installation directory on purpose.
+
+**Nothing is created in the directory the process was started from.**
+
+The log is the one thing that is a file rather than a row in that database, and
+for three reasons. The logger has to stand before the database is open, because
+opening it is the step most likely to fail and something has to be able to say
+why. The pool holds a single connection, so every log line would queue behind
+the queries the process is actually there to run. And the database reports its
+own statements through that logger, which would make writing a log line a query
+that writes a log line.
+
+Left out, `-db` is worked out from the place the platform keeps user data in.
+
+| Started | `-db` | The directory the installation lives in |
+|---------|-------|------------------------------------------|
+| No flags, Windows | Not given | `%AppData%\tunnel-manager\` |
+| No flags, macOS | Not given | `~/Library/Application Support/tunnel-manager/` |
+| No flags, Linux | Not given | `$XDG_CONFIG_HOME/tunnel-manager/`, or `~/.config/tunnel-manager/` when that variable is not set |
+| The bundled systemd unit | `/var/lib/tunnel-manager/tunnel-manager.db` | `/var/lib/tunnel-manager/` |
+| Docker Compose | `/data/tunnel-manager.db` | `/data/`, which the compose file binds to `./_data` on the host |
+
+A machine with neither `$XDG_CONFIG_HOME` nor `$HOME` has no such place, and the
+startup says so rather than inventing one:
+
+```text
+Failed to work out where the database file goes: no default location for the database file
+is available: neither $XDG_CONFIG_HOME nor $HOME are defined. Give -db an absolute path
+```
+
+The startup logs the absolute path of the database file, of the key file and of
+the log file it opened, so the log always says which files are in use.
+
+### With Docker Compose
 
 ```bash
 git clone https://github.com/jollaman999/tunnel-manager.git
 cd tunnel-manager
-```
-
-2. Edit the configuration file.
-
-```bash
-vi config/config.yaml
-```
-
-3. Start it.
-
-```bash
 docker-compose up -d
 ```
 
-The compose file mounts `./config/config.yaml` into the container as
-`/config/config.yaml`, which is the path the process reads by default. Note that
-only the **file** is mounted and not the directory around it, so the initial
-password file described below is written **inside the container** and does not
-appear on the host.
+The image starts the binary with `-db /data/tunnel-manager.db`, and the compose
+file binds `/data` to `./_data` on the host. That is what keeps the database,
+the key and the logs when the container is replaced.
 
-### Without Docker
+The initial password file is written inside that directory, so it is readable
+from the host as well:
 
-1. Clone the repository.
+```bash
+docker compose exec tunnel-manager cat /data/initial-password
+```
+
+### As a systemd service
+
+`_scripts/systemd/tunnel-manager.service` starts the binary with an absolute
+`-db`:
+
+```ini
+ExecStart=/usr/local/bin/tunnel-manager -db /var/lib/tunnel-manager/tunnel-manager.db
+StateDirectory=tunnel-manager
+```
+
+`StateDirectory=tunnel-manager` makes `/var/lib/tunnel-manager` and hands it to
+the account in `User=`, and the database, the key, the logs and the initial
+password all sit in it. The unit ships with `User=root`; see
+[Running as a non-root user](#running-as-a-non-root-user) to change that.
+
+### From source
 
 ```bash
 git clone https://github.com/jollaman999/tunnel-manager.git
 cd tunnel-manager
+make
+./tunnel-manager
 ```
 
-2. Download the dependencies.
-
-```bash
-go mod tidy
-```
-
-3. Edit the configuration file.
-
-```bash
-vi config/config.yaml
-```
-
-4. Build and run.
-
-```bash
-make run
-```
-
-`-config` names the configuration file and defaults to `config/config.yaml`,
-resolved against the working directory of the process. `-version` prints the
-version and exits.
+`make` builds the binary with `CGO_ENABLED=0`. `make release` builds one for
+every platform in the table above.
 
 ## First startup and the account
 
@@ -232,16 +308,8 @@ will not be able to log in.
 1. The first startup creates the single row of the `user` table. It has **no
    username yet** and is marked as needing setup.
 2. The initial password is written to a file named `initial-password` **in the
-   directory the configuration file is in**, with permission `0600`. It is 52
-   characters of upper case letters and digits. Where that lands depends on how
-   the process was started:
-
-   | Started with | The file is at |
-   |--------------|----------------|
-   | `-config config/config.yaml` (the default) | `config/initial-password`, next to the configuration file |
-   | The bundled systemd unit, `-config /etc/tunnel-manager/config.yaml` | `/etc/tunnel-manager/initial-password` |
-   | Docker Compose | `/config/initial-password` **inside the container**: `docker compose exec tunnel-manager cat /config/initial-password` |
-
+   directory the database file is in**, with permission `0600`. It is 52
+   characters of upper case letters and digits.
 3. **The log holds the path, never the password.** The log goes to the console
    as well as to a file that is kept and rotated, so a password written there
    would outlive the setup in places nobody is watching. The file is the only
@@ -277,15 +345,18 @@ Open `http://<address>:<port>/` in a browser. `/` answers with a redirect to
 `/ui/`, which is where the UI is served from.
 
 **There is nothing to deploy for it.** The files are compiled into the binary, so
-no directory travels next to it, no path has to be configured, and the working
-directory the process starts from does not matter.
+no directory travels next to it and no path has to be configured.
 
 | Screen | Path | What it shows and does |
 |--------|------|------------------------|
 | Status | `/ui/status` | The three counts (desired, rows, connected), a sentence about the difference between them, and one line per tunnel: Host, service port, status, server, local, remote, retries, last connected, last error. It asks again every 5 seconds. |
 | Hosts | `/ui/hosts` | One row per Host with ID, IP, port, user, description, enabled and updated. Add a Host, edit one, enable or disable one, delete one. |
 | Service Ports | `/ui/service-ports` | One row per service port with ID, service IP, service port, local port, description and updated. Add, edit and delete. |
+| Settings | `/ui/settings` | Every stored setting, what a save changed and whether it is in place, and the Uninstall at the bottom. See [Settings](#settings). |
 | Login | `/ui/login` | Where a client without a session lands. Leave the username empty on the first sign in. It leads to the setup screen while the account still needs one. |
+
+<!-- pending: the Log screen, between Service Ports and Settings. Written once it
+     is built and can be looked at. -->
 
 The version of the binary is in the bottom right corner of every screen, the
 login one included.
@@ -300,11 +371,153 @@ The UI files are served without a session on purpose: they are the same bytes fo
 every client and carry no data. Everything they show is fetched from `/api/**`,
 and that is what the login guards.
 
+## Settings
+
+**There is no configuration file.** Every setting is a column of the one
+`settings` row in the database file, and the Settings screen is where it is
+changed. The same values are readable and writable through `GET /api/settings`
+and `PUT /api/settings`.
+
+| On the screen | Field in the API | Reported as | Default | When it applies |
+|---------------|------------------|-------------|---------|-----------------|
+| API port | `api_port` | `api.port` | `8888` | At the next start |
+| Monitoring interval (seconds) | `monitoring_interval_sec` | `monitoring.interval_sec` | `5` | At the next start |
+| Reconcile interval (seconds) | `reconcile_interval_sec` | `reconcile.interval_sec` | `5` | At the next start |
+| Encryption key file | `security_key_file` | `security.key_file` | `keys/tunnel-manager.key` | At the next start |
+| Log level | `logging_level` | `logging.level` | `info` | **The moment it is saved** |
+| Log format | `logging_format` | `logging.format` | `json` | At the next start |
+| Log file | `logging_file_path` | `logging.file.path` | `logs/tunnel-manager.log` | At the next start |
+| Log size before rotation (MB) | `logging_file_max_size` | `logging.file.max_size` | `100` | At the next start |
+| Rotated files kept | `logging_file_max_backups` | `logging.file.max_backups` | `5` | At the next start |
+| Days a rotated file is kept | `logging_file_max_age` | `logging.file.max_age` | `30` | At the next start |
+| Compress rotated files | `logging_file_compress` | `logging.file.compress` | `false` | At the next start |
+
+**The log level is the one setting the running process takes on.** It reaches
+every logger that was handed out at startup, the one the database writes its
+statements through included, which is the half of `debug` it is usually turned on
+for. Everything else is stored and read at the next start; the screen says so per
+field, and the answer to a save marks each change as `now` or `restart`.
+
+A save is refused before it is stored when a value would not hold:
+
+| Setting | Rule |
+|---------|------|
+| `api_port` | 1 to 65535 |
+| `monitoring_interval_sec`, `reconcile_interval_sec` | Above zero |
+| `security_key_file` | Not empty |
+| `logging_level` | `debug`, `info`, `warn`, `error`, `dpanic`, `panic` or `fatal` |
+| `logging_format` | `json` or `console` |
+| `logging_file_max_size`, `logging_file_max_backups`, `logging_file_max_age` | Zero or more |
+
+```bash
+curl -s -b cookies.txt -X PUT "$BASE/api/settings" \
+  -H 'Content-Type: application/json' \
+  -H "X-CSRF-Token: $CSRF" \
+  -d '{"api_port":9999,"logging_level":"debug"}'
+```
+
+```json
+{
+  "success": true,
+  "data": {
+    "settings": { "api_port": 9999, "logging_level": "debug", "...": "..." },
+    "changes": [
+      { "name": "api.port", "from": "8888", "to": "9999", "applied": "restart" },
+      { "name": "logging.level", "from": "info", "to": "debug", "applied": "now" }
+    ],
+    "restart_required": true
+  }
+}
+```
+
+The body is bound onto what is stored, so a request that names some of the
+settings changes those and leaves the rest alone.
+
+### If the server will not start
+
+A setting that keeps the process from starting used to be a file you could edit.
+It is in the database now, and the screen that would change it is served by the
+server that will not start. `-reset-settings` is the way out.
+
+```bash
+./tunnel-manager -db <path> -reset-settings
+```
+
+It puts every setting back to its default, prints what it changed and exits. The
+next start runs on the defaults, and the Settings screen is reachable again. A
+stored set that does not pass the rules above says so and names this flag:
+
+```text
+fatal  failed to read the settings  {"error": "the stored settings are refused: invalid API port: 0.
+       Start with -reset-settings to put every setting back to its default"}
+```
+
+## Uninstall
+
+The bottom of the Settings screen removes this installation. It stops every
+tunnel, deletes the files the installation is made of and ends the process.
+`POST /api/uninstall` is the same thing from a script.
+
+> **Removing the encryption key cannot be undone.** The SSH password of every
+> Host is sealed with that key. A backup of the database taken beforehand does
+> not help: the passwords in it stay unreadable, and every Host has to be
+> registered again with its password on a fresh installation.
+
+| Removed | Left alone |
+|---------|------------|
+| The database file, with the `-wal` and `-shm` files SQLite keeps beside it | **The program file** |
+| The encryption key file | The service entry that starts it |
+| The initial password file, if it is still there | The directories the files were in |
+| The log file and the rotated log files beside it | |
+
+**The program file is not removed.** A running process cannot delete its own
+image on Windows, and on Unix it would stay on disk until the process ends
+anyway, which is half of a job rather than one done. Remove it by hand, along
+with the systemd unit or the compose file if this was set up as a service.
+
+The **password of the account is asked for again** and checked before anything is
+touched. A session left open on an unattended screen is otherwise one press away
+from this, and a password is the one thing a passer-by cannot supply. A wrong one
+answers `401` and stops nothing.
+
+The order matters and is fixed: the reconcile loop is stopped first, because it
+is what starts tunnels again; then the tunnels come down, so no listener is left
+behind on a remote host; then the database is closed and the files go; then the
+answer is written; and the process ends about three seconds later, so the browser
+has the time to receive it.
+
+```bash
+curl -s -b cookies.txt -X POST "$BASE/api/uninstall" \
+  -H 'Content-Type: application/json' \
+  -H "X-CSRF-Token: $CSRF" \
+  -d '{"password":"<your-password>"}'
+```
+
+```json
+{
+  "success": true,
+  "data": {
+    "removed": [
+      { "path": "/var/lib/tunnel-manager/tunnel-manager.db", "what": "the database" },
+      { "path": "/var/lib/tunnel-manager/keys/tunnel-manager.key", "what": "the encryption key" },
+      { "path": "/var/lib/tunnel-manager/logs/tunnel-manager.log", "what": "the log file" }
+    ],
+    "failed": [],
+    "exit_in_sec": 3
+  }
+}
+```
+
+A file that could not be removed is reported under `failed` with the reason and
+is left on disk for you to deal with. It does not stop the rest: on Windows the
+log file this process is writing to cannot be deleted while it is open, and a run
+that stopped there would leave the database and the key behind over the one file
+that was never going to go.
+
 ## Calling the API from a script
 
 **Every path under `/api` needs a session, and every `POST`, `PUT` and `DELETE`
-needs a CSRF token as well.** A script written against an earlier release will
-get `401` on the first call until it does the following.
+needs a CSRF token as well.**
 
 1. `POST /api/login` with the username and the password. Keep the cookies it
    sets, `tm_session` and `tm_csrf`.
@@ -315,6 +528,10 @@ get `401` on the first call until it does the following.
 CSRF stands for cross site request forgery: another site making your browser send
 a request with your cookies attached. The token defeats it because that site
 cannot read the answer of your login and cannot set the header.
+
+The server sends no `Access-Control-Allow-Origin` header at all. That is a rule
+browsers apply to pages, not a check this server performs, so `curl`, scripts and
+server to server calls are untouched; a page on another origin is not.
 
 The example below is a complete session. It uses a cookie jar file: `-c` writes
 the cookies the server sets, `-b` sends them back.
@@ -351,12 +568,13 @@ curl -s -b cookies.txt -X POST "$BASE/api/logout" -H "X-CSRF-Token: $CSRF"
 ```
 
 On the very first sign in, log in with an empty username and the initial
-password, then finish the setup before anything else:
+password, then finish the setup before anything else. `initial-password` sits in
+the directory the database file is in.
 
 ```bash
 curl -s -c cookies.txt -X POST "$BASE/api/login" \
   -H 'Content-Type: application/json' \
-  -d "{\"username\":\"\",\"password\":\"$(cat config/initial-password)\"}" > login.json
+  -d "{\"username\":\"\",\"password\":\"$(cat initial-password)\"}" > login.json
 
 CSRF=$(python3 -c 'import json; print(json.load(open("login.json"))["data"]["csrf_token"])')
 
@@ -374,6 +592,8 @@ What goes wrong, and what it looks like:
 | `403 The request carries no valid X-CSRF-Token header...` | The write carried no token, or the wrong one. Send `data.csrf_token` from the login. |
 | `403 The account setup is not finished...` | The account still has no username. Call `POST /api/setup` first. |
 | `401 Invalid username or password` | The login was refused. It does not say which of the two was wrong, on purpose. |
+| `400 The settings are refused: ...` | A setting broke one of the rules above. Nothing was stored. |
+| `401 The password does not open this account` | The uninstall carried the wrong password. Nothing was stopped and nothing was removed. |
 
 Every answer has the same shape: `{"success":true,"data":...}` or
 `{"success":false,"error":"..."}`.
@@ -417,6 +637,16 @@ that is not a `GET` requires the `X-CSRF-Token` header.
 |--------|------|--------------|
 | `GET` | `/api/status` | The counts and every tunnel |
 | `GET` | `/api/status/:hostId` | The Host and the tunnels of that Host |
+
+### Settings and uninstall
+
+| Method | Path | What it does |
+|--------|------|--------------|
+| `GET` | `/api/settings` | The stored settings |
+| `PUT` | `/api/settings` | Stores the settings in the body over the stored ones, and answers with what changed and whether a restart is needed |
+| `POST` | `/api/uninstall` | Takes `password`, removes the installation and ends the process |
+
+<!-- pending: GET /api/logs, which the Log screen reads the log file through. -->
 
 ### UI
 
@@ -490,105 +720,20 @@ mean different things.
 `GET /api/status/:hostId` answers with the same counts except `desired_tunnels`,
 plus the Host itself.
 
-## Configuration file
-
-`config/config.yaml`, complete:
-
-```yaml
-database:
-  host: tunnel-manager-db
-  port: 3306
-  user: tunnel-manager
-  password: tunnel-manager-pass
-  name: tunnel-manager
-  timeout_sec: 30
-
-api:
-  port: 8888
-
-monitoring:
-  interval_sec: 5
-
-reconcile:
-  interval_sec: 5
-
-security:
-  key_file: "keys/tunnel-manager.key"
-
-logging:
-  level: info     # debug, info, warn, error, dpanic, panic, fatal
-  format: json    # json, console
-  file:
-    path: "/var/log/tunnel-manager/tunnel-manager.log"
-    max_size: 100    # megabytes before the file is rotated
-    max_backups: 5   # rotated files to keep
-    max_age: 7       # days to keep rotated files
-    compress: true   # compress rotated files
-```
-
-| Setting | Default | Left out |
-|---------|---------|----------|
-| `database.host` | none | Startup fails: `database host is required` |
-| `database.port` | none | Startup fails: `invalid database port: 0` |
-| `database.user` | none | Startup fails: `database user is required` |
-| `database.password` | none | Startup fails: `database password is required` |
-| `database.name` | none | Startup fails: `database name is required` |
-| `database.timeout_sec` | none | Startup fails: `invalid database timeout: 0` |
-| `api.port` | none | Startup fails: `invalid API port: 0` |
-| `monitoring.interval_sec` | none | Startup fails: `invalid monitoring interval: 0` |
-| `reconcile.interval_sec` | `5` | The default applies |
-| `security.key_file` | `keys/tunnel-manager.key` | The default applies |
-| `logging.level` | `info` | The default applies |
-| `logging.format` | `json` | The default applies |
-| `logging.file.path` | `logs/tunnel-manager.log` | The default applies |
-| `logging.file.max_size` | `100` | The default applies |
-| `logging.file.max_backups` | `5` | The default applies |
-| `logging.file.max_age` | `30` | The default applies |
-| `logging.file.compress` | `false` | Rotated files are not compressed |
-
-The settings with no default are checked before anything else runs, and a value
-outside its range is refused the same way: `database.port` and `api.port` have to
-be 1 to 65535, `database.timeout_sec`, `monitoring.interval_sec` and
-`reconcile.interval_sec` have to be above zero, `logging.level` and
-`logging.format` have to be one of the values listed above, and the three
-`logging.file` numbers must not be negative.
-
-`database.timeout_sec` bounds the **wait for the database at startup**, not a
-query. The startup retries the connection once a second until this many seconds
-have passed and then gives up and exits. A single connect attempt is given 3
-seconds of its own, so that one attempt against an address that swallows packets
-cannot eat the whole budget: without that bound the kernel takes over two minutes
-to give up on the handshake.
-
-A relative path in `security.key_file` or `logging.file.path` is resolved against
-the working directory of the process, not against the configuration file. That
-directory is not the same everywhere, so the default key file lands in different
-places:
-
-| Started by | Working directory | Default key file |
-|------------|-------------------|------------------|
-| `make run` | The repository | `keys/tunnel-manager.key` in it |
-| Docker Compose | `/` | `/keys/tunnel-manager.key`, which the compose file maps to `./_data/keys` |
-| The bundled systemd unit | `/var/lib/tunnel-manager`, which the unit creates | `/var/lib/tunnel-manager/keys/tunnel-manager.key` |
-
-**Give `security.key_file` an absolute path and none of this applies.** A unit
-without the `WorkingDirectory` line the bundled one carries leaves the working
-directory at `/`, which puts the key at `/keys/tunnel-manager.key`. The startup
-logs the path it resolved to, so the log says which file was opened.
-
 ## Encryption key
 
 The SSH password of a Host is encrypted with AES-256-GCM before it is stored. The
-key is read from the file `security.key_file` names, `keys/tunnel-manager.key` by
-default. If that file does not exist, the first startup creates a 32 byte key
-with permission `0600`; if it does, it is read as it is.
+key is read from the file the **Encryption key file** setting names,
+`keys/tunnel-manager.key` by default. If that file does not exist, the first
+startup creates a 32 byte key with permission `0600`; if it does, it is read as
+it is.
 
 > **Lose the key and no stored password can be read again.** There is nothing to
 > do about it but register every Host once more. Back the key file up together
-> with the database, or the two will not match.
+> with the database file, or the two will not match.
 
 If the key file can be read by the group or by others, the startup refuses to go
-on. Narrow it with `chmod 600 keys/tunnel-manager.key` and start again.
+on. Narrow it with `chmod 600` and start again.
 
 If the key opens none of the stored passwords and at least one of them is marked
 as having been encrypted, the startup stops rather than serving an API that looks
@@ -597,56 +742,27 @@ it does not open are named in a warning, their tunnels are not built, and the
 stored values are left untouched: a password that does not open exists nowhere
 else and is gone once it is written over. Set those through the API again.
 
-With Docker Compose the container path `/keys` is bound to `./_data/keys` on the
-host, so the key survives the container being deleted and recreated. The database
-lives separately under `./_data/mariadb`, which means deleting `./_data/keys`
-alone leaves a database full of passwords nothing can read.
+A relative path in this setting is read against the directory the database file
+is in, so the default puts the key in `keys/` next to the database. An absolute
+path is left alone and is how the key is kept somewhere else, on a volume of its
+own for instance. The startup logs the absolute path of the file it opened, so
+the log says which key was read.
 
 ## Running as a non-root user
 
-The process starts without root. It logs a `not running as root` warning and two
-things are limited.
+The process starts without root. It logs a `not running as root` warning and
+raises what it can.
 
 - It tries to raise the file descriptor limit to 65535. Without root the soft
   limit can only go as high as the hard limit, and when the hard limit is lower
   it logs `max ulimit is low` and goes on. Raise the hard limit in advance if you
   run many tunnels.
-- The default log path is `/var/log/tunnel-manager/tunnel-manager.log`, which a
-  non-root user usually cannot create. This does not stop the startup: file
-  logging is turned off, the console keeps everything, and the reason is in the
-  `logging to file is disabled` warning.
-
-An `api.port` below 1024 cannot be bound by a non-root process. Use 1024 or
-above, or give the executable `CAP_NET_BIND_SERVICE`.
-
-The process also has to be allowed to **write to the directory the configuration
-file is in**, because that is where the initial password file goes on the first
-startup. A directory it cannot write to stops the startup, since an account whose
-password nobody can read is an API nobody can log in to.
-
-For systemd, `_scripts/systemd/tunnel-manager.service` ships with `User=root`.
-Change the account and let it own the log directory.
-
-```ini
-[Service]
-User=tunnel-manager
-Group=tunnel-manager
-LogsDirectory=tunnel-manager
-```
-
-`LogsDirectory=tunnel-manager` makes systemd create `/var/log/tunnel-manager`
-owned by `User=`/`Group=`, so `logging.file.path` can stay as it is. A directory
-that was already there owned by root changes owner too. The key file has to be
-readable by that account as well, so change its owner and leave the permission at
-`0600`.
-
-The container runs as root, because `Dockerfile` ends with `USER root`. To run it
-as somebody else, give the service in docker-compose.yaml a `user: "<uid>:<gid>"`
-and make the two bind mounted directories, `./_data/tunnel-manager` for the logs
-and `./_data/keys` for the key, owned by that uid on the host. If it ever ran as
-root, both are owned by root and have to be changed first. The file descriptor
-limit comes from `ulimits` in docker-compose.yaml and has nothing to do with the
-account inside the container.
+- The API port below 1024 cannot be bound by a non-root process. Use 1024 or
+  above, or give the executable `CAP_NET_BIND_SERVICE`.
+- The process has to be allowed to **write to the directory the database file is
+  in**. The initial password file goes there on the first startup, and a
+  directory it cannot write to stops the startup, since an account whose password
+  nobody can read is an API nobody can log in to.
 
 A `service_ports.local_port` below 1024 will not be opened by the sshd on the
 Host. That listener is created by the sshd and not by Tunnel Manager, so the
@@ -655,49 +771,34 @@ account Tunnel Manager runs as. As ssh(1) puts it, privileged ports are forwarde
 only for the root user. If the SSH account on the Host is not root, keep
 `local_port` at 1024 or above.
 
-## Upgrading from v1.0.0
+### Ownership and the service account
 
-Six things change for anyone calling the API.
+There is no second directory to arrange. The key and the logs default to `keys/`
+and `logs/` under the directory the database file is in, so an account that may
+write that directory has everything it needs. A log file that cannot be created
+does not stop the startup: file logging is turned off, the console keeps
+everything, and the reason is in the `logging to file is disabled` warning.
 
-| # | What changed | What the client has to do |
-|---|--------------|---------------------------|
-| 1 | Every path under `/api` requires a session | Call `POST /api/login` first and send the cookies with every request |
-| 2 | `POST`, `PUT` and `DELETE` require a CSRF token | Send `data.csrf_token` from the login answer as the `X-CSRF-Token` header |
-| 3 | `POST /api/service-port` no longer answers `500` when a tunnel cannot be built | It answers `201` once the row is stored. Check the result with `GET /api/status` |
-| 4 | A database error answers `500` where it used to answer `404` | A `404` now means the row is not there. Review anything that retries or branches on `404` |
-| 5 | A `500` body no longer repeats the database error | The body says what failed, the server log says why |
-| 6 | There is a new `user` table | `AutoMigrate` creates it at startup. Nothing to do by hand |
+For systemd, `_scripts/systemd/tunnel-manager.service` ships with `User=root`.
+Change the account and leave `StateDirectory=` alone:
 
-On top of that, the first startup after the upgrade creates the account and
-writes the initial password file. Read
-[First startup and the account](#first-startup-and-the-account) before you
-restart, or you will not be able to log in.
-
-### CORS headers are gone
-
-The server no longer sends any `Access-Control-Allow-Origin` header. The UI is
-built into the binary and served from `/ui/`, so every call it makes is
-same origin and needs no grant.
-
-This breaks **only a page in a browser calling this API from another origin**.
-CORS is a rule browsers apply to pages, not a check this server performs, so
-`curl`, scripts and server to server calls are untouched.
-
-### The local_port unique index
-
-`service_ports.local_port` has a unique index. If a database from an earlier
-release holds two rows with the same `local_port`, the migration is refused at
-startup. Check for duplicates before upgrading.
-
-```sql
-SELECT local_port, COUNT(*) FROM service_ports GROUP BY local_port HAVING COUNT(*) > 1;
+```ini
+[Service]
+User=tunnel-manager
+Group=tunnel-manager
 ```
 
-Keep one row per port listed there and delete or renumber the rest. Left alone,
-the failed migration looks like a failed database connection: the log repeats
-`attempting to connect to database...` and the process exits once
-`database.timeout_sec` has passed. The real reason is in the `error` field of
-that log line.
+`StateDirectory=tunnel-manager` makes `/var/lib/tunnel-manager` owned by
+`User=`/`Group=`, and a directory that was already there owned by root changes
+owner too. An existing key file has to be readable by that account as well, so
+change its owner and leave the permission at `0600`.
+
+The container runs as root, because `Dockerfile` ends with `USER root`. To run it
+as somebody else, give the service in docker-compose.yaml a `user: "<uid>:<gid>"`
+and make `./_data` on the host owned by that uid. If it ever ran as root, that
+directory is owned by root and has to be changed first. The file descriptor limit
+comes from `ulimits` in docker-compose.yaml and has nothing to do with the
+account inside the container.
 
 ## License
 

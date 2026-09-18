@@ -11,22 +11,18 @@ services:
         hard: 65535
     ports:
       - "8888:8888"
-    working_dir: /
-    # The database file is the whole of the installation state, so the
-    # directory it lives in is what has to outlive the container. /data is
-    # where the image puts it (Dockerfile, CMD), and the settings, the hosts
-    # and the account are all in that one file now.
+    # The database file is the whole of the installation state, and everything
+    # else this installation owns sits beside it: the encryption key, the log
+    # and the initial password are all read against the directory the database
+    # is in. One mount on that directory therefore carries all of it, and there
+    # is nothing left to mount separately.
     #
-    # /keys is the other half: security.key_file defaults to
-    # keys/tunnel-manager.key, which is read against working_dir and so lands
-    # there. That key is what the stored SSH passwords are sealed with, and one
-    # that stayed inside the container would be gone with the next build, which
-    # leaves every stored password unreadable. The setting is changed on the
-    # Settings screen; a path set there has to stay under a mounted directory.
+    # The key is what the stored SSH passwords are sealed with. One that stayed
+    # inside the container would be gone with the next build, and every stored
+    # password with it. A path set on the Settings screen has to stay under a
+    # mounted directory for the same reason.
     volumes:
-      - ./_data/db:/data
-      - ./_data/keys:/keys
-      - ./_data/logs:/logs
+      - ./_data:/data
     environment:
       - TZ=Asia/Seoul
     restart: always

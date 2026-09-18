@@ -13,15 +13,12 @@ ExecStart=/usr/local/bin/tunnel-manager -db /var/lib/tunnel-manager/tunnel-manag
 # worked out from the user configuration directory and so depends on the HOME
 # of whoever the unit runs as.
 #
-# security.key_file is relative by default, and a relative path is read against
-# the working directory. systemd leaves that at / unless it is told otherwise,
-# which puts the encryption key at /keys. StateDirectory makes
-# /var/lib/tunnel-manager and hands it to User=, and WorkingDirectory sends the
-# default there instead, next to the database. Setting security.key_file to an
-# absolute path on the Settings screen overrides this and is what a deployment
-# should prefer.
+# Everything else this installation owns is read against the directory the
+# database is in, so the key, the log and the initial password all land under
+# /var/lib/tunnel-manager without being named. StateDirectory makes that
+# directory and hands it to User=. A path set on the Settings screen to an
+# absolute one outside it is left where it points.
 StateDirectory=tunnel-manager
-WorkingDirectory=/var/lib/tunnel-manager
 
 Restart=always
 RestartSec=5
