@@ -352,11 +352,9 @@ no directory travels next to it and no path has to be configured.
 | Status | `/ui/status` | The three counts (desired, rows, connected), a sentence about the difference between them, and one line per tunnel: Host, service port, status, server, local, remote, retries, last connected, last error. It asks again every 5 seconds. |
 | Hosts | `/ui/hosts` | One row per Host with ID, IP, port, user, description, enabled and updated. Add a Host, edit one, enable or disable one, delete one. |
 | Service Ports | `/ui/service-ports` | One row per service port with ID, service IP, service port, local port, description and updated. Add, edit and delete. |
+| Logs | `/ui/logs` | The end of the log file, newest last, with a level filter and a count to show. It asks again every 5 seconds. It reads the file the process is writing now; rotated files are not shown. |
 | Settings | `/ui/settings` | Every stored setting, what a save changed and whether it is in place, and the Uninstall at the bottom. See [Settings](#settings). |
 | Login | `/ui/login` | Where a client without a session lands. Leave the username empty on the first sign in. It leads to the setup screen while the account still needs one. |
-
-<!-- pending: the Log screen, between Service Ports and Settings. Written once it
-     is built and can be looked at. -->
 
 The version of the binary is in the bottom right corner of every screen, the
 login one included.
@@ -645,8 +643,19 @@ that is not a `GET` requires the `X-CSRF-Token` header.
 | `GET` | `/api/settings` | The stored settings |
 | `PUT` | `/api/settings` | Stores the settings in the body over the stored ones, and answers with what changed and whether a restart is needed |
 | `POST` | `/api/uninstall` | Takes `password`, removes the installation and ends the process |
+| `GET` | `/api/logs` | The end of the log file. `lines` says how many, up to 2000 |
 
-<!-- pending: GET /api/logs, which the Log screen reads the log file through. -->
+The answer to `/api/logs` carries the lines and what was done to get them:
+`path` is the file it read, `requested` and `max_lines` say what was asked for
+and what the cap is, `capped` says whether the cap was the one that applied, and
+`size` and `read` are the size of the file and how much of the end of it was
+read. The file is read from the end, so `read` stays small however large the
+file is.
+
+Each line comes back split into `level`, `time`, `caller`, `message` and
+`extra`, with `raw` holding the line as it was written and `parsed` saying
+whether the split worked. A line that could not be split is still returned, with
+`parsed` false: a line that looks wrong is the one worth reading.
 
 ### UI
 
