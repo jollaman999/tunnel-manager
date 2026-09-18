@@ -663,7 +663,7 @@ whether the split worked. A line that could not be split is still returned, with
 |--------|------|--------------|
 | `GET` | `/` | Redirects to `/ui/` with a `302` |
 | `GET` | `/ui` | Redirects to `/ui/` with a `302` |
-| `GET` | `/ui/version.json` | The version of the binary, as `{"version":"2.1.0"}` |
+| `GET` | `/ui/version.json` | The version of the binary, as `{"version":"3.0.0"}` |
 | `GET` | `/ui/*` | Serves the UI out of the binary |
 
 `/ui/version.json` is answered without a session, like the rest of `/ui/`. The

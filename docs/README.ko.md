@@ -621,7 +621,7 @@ curl -s -b cookies.txt -X POST "$BASE/api/setup" \
 |--------|------|---------|
 | `GET` | `/` | `302` 로 `/ui/` 로 보냄 |
 | `GET` | `/ui` | `302` 로 `/ui/` 로 보냄 |
-| `GET` | `/ui/version.json` | 바이너리의 버전. `{"version":"2.1.0"}` |
+| `GET` | `/ui/version.json` | 바이너리의 버전. `{"version":"3.0.0"}` |
 | `GET` | `/ui/*` | 바이너리 안의 UI 를 제공 |
 
 `/ui/version.json` 은 `/ui/` 의 나머지와 마찬가지로 세션 없이 열립니다. 로그인 화면에도 버전이
