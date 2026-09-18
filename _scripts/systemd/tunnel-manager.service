@@ -5,14 +5,21 @@ After=network.target
 [Service]
 Type=simple
 User=root
-ExecStart=/usr/local/bin/tunnel-manager -config /etc/tunnel-manager/config.yaml
+ExecStart=/usr/local/bin/tunnel-manager -db /var/lib/tunnel-manager/tunnel-manager.db
 
+# The database file is the whole of this installation: the settings, the hosts
+# and the account are in it, and it is the only thing the binary has to be told
+# about. It is named absolutely here rather than left to the default, which is
+# worked out from the user configuration directory and so depends on the HOME
+# of whoever the unit runs as.
+#
 # security.key_file is relative by default, and a relative path is read against
 # the working directory. systemd leaves that at / unless it is told otherwise,
 # which puts the encryption key at /keys. StateDirectory makes
 # /var/lib/tunnel-manager and hands it to User=, and WorkingDirectory sends the
-# default there instead. Setting security.key_file to an absolute path in the
-# configuration overrides this and is what a deployment should prefer.
+# default there instead, next to the database. Setting security.key_file to an
+# absolute path on the Settings screen overrides this and is what a deployment
+# should prefer.
 StateDirectory=tunnel-manager
 WorkingDirectory=/var/lib/tunnel-manager
 

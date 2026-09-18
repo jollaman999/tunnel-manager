@@ -1,6 +1,9 @@
 .idea/
 .vscode/
 _data/
+*.db
+*.db-wal
+*.db-shm
 /keys/
 tunnel-manager
 tunnel-manager-linux-*

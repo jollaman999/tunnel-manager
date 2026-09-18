@@ -74,6 +74,49 @@ func openPathsOfThisProcess(t *testing.T) []string {
 	return paths
 }
 
+// TestDefaultDatabasePathIsUnderTheUserConfigDir covers the case the binary is
+// downloaded and started with no -db at all: the file lands where the platform
+// keeps user data, not in whatever directory the process was started from.
+func TestDefaultDatabasePathIsUnderTheUserConfigDir(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+
+	path, err := defaultDatabasePath()
+	if err != nil {
+		t.Fatalf("defaultDatabasePath: %v", err)
+	}
+
+	dir, err := os.UserConfigDir()
+	if err != nil {
+		t.Fatalf("UserConfigDir: %v", err)
+	}
+
+	want := filepath.Join(dir, "tunnel-manager", databaseFileName)
+	if path != want {
+		t.Errorf("the default database path is %q, want %q", path, want)
+	}
+}
+
+// TestDefaultDatabasePathRefusesToGuessWithoutAHome is the other half of the
+// default. With neither XDG_CONFIG_HOME nor HOME there is no place the platform
+// calls its own, and inventing one would let one startup build a database in
+// one directory and the next one build another somewhere else, so the Hosts
+// that were registered would look gone.
+func TestDefaultDatabasePathRefusesToGuessWithoutAHome(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", "")
+	t.Setenv("HOME", "")
+
+	path, err := defaultDatabasePath()
+	if err == nil {
+		t.Fatalf("defaultDatabasePath made up a path: %q", path)
+	}
+	if !strings.Contains(err.Error(), "-db") {
+		t.Errorf("error = %v, want it to name the -db flag", err)
+	}
+	if !strings.Contains(err.Error(), "absolute path") {
+		t.Errorf("error = %v, want it to ask for an absolute path", err)
+	}
+}
+
 func TestPrepareLogFileCreatesTheDirectoryAndTheFile(t *testing.T) {
 	logFile := filepath.Join(t.TempDir(), "logs", "tunnel-manager.log")
 

@@ -17,20 +17,20 @@ import (
 	gormlogger "gorm.io/gorm/logger"
 )
 
-func TestInitialPasswordFileSitsNextToTheConfigFile(t *testing.T) {
+func TestInitialPasswordFileSitsNextToTheDatabaseFile(t *testing.T) {
 	cases := []struct {
-		configFile string
-		want       string
+		databaseFile string
+		want         string
 	}{
-		{"config/config.yaml", filepath.Join("config", "initial-password")},
-		{"/etc/tunnel-manager/config.yaml", filepath.Join("/etc/tunnel-manager", "initial-password")},
-		{"config.yaml", "initial-password"},
+		{"data/tunnel-manager.db", filepath.Join("data", "initial-password")},
+		{"/var/lib/tunnel-manager/tunnel-manager.db", filepath.Join("/var/lib/tunnel-manager", "initial-password")},
+		{"tunnel-manager.db", "initial-password"},
 	}
 
 	for _, c := range cases {
-		got := InitialPasswordFile(c.configFile)
+		got := InitialPasswordFile(c.databaseFile)
 		if got != c.want {
-			t.Fatalf("the initial password file of the configuration file %q is %q, want %q", c.configFile, got, c.want)
+			t.Fatalf("the initial password file of the database file %q is %q, want %q", c.databaseFile, got, c.want)
 		}
 	}
 }

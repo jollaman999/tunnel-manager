@@ -22,7 +22,6 @@ import (
 	"github.com/go-playground/validator/v10"
 	"github.com/jollaman999/tunnel-manager/internal/api"
 	"github.com/jollaman999/tunnel-manager/internal/auth"
-	"github.com/jollaman999/tunnel-manager/internal/config"
 	"github.com/jollaman999/tunnel-manager/internal/crypto"
 	"github.com/jollaman999/tunnel-manager/internal/database"
 	"github.com/jollaman999/tunnel-manager/internal/models"
@@ -353,7 +352,7 @@ func checkEncryptionKey(db *gorm.DB, cipher *crypto.Cipher, logger *zap.Logger, 
 }
 
 // ensureUser creates the single account on the first startup. The initial
-// password is written to a file next to the configuration file and never to the
+// password is written to a file next to the database file and never to the
 // log, which goes to the console as well as to the log file, so only the path is
 // reported. The encryption key file is handled the same way.
 func ensureUser(db *gorm.DB, logger *zap.Logger, passwordFile string) {
@@ -362,10 +361,10 @@ func ensureUser(db *gorm.DB, logger *zap.Logger, passwordFile string) {
 		// The startup stops here rather than going on with a warning. Nothing
 		// can log in while the account is missing, so an API that came up would
 		// answer nobody, and a directory that cannot be written to is a
-		// deployment question the operator has to settle once: point -config at
-		// a directory the process may write to, or give it that permission.
+		// deployment question the operator has to settle once: point -db at a
+		// directory the process may write to, or give it that permission.
 		logger.Fatal("failed to set up the account. The initial password is written next to the "+
-			"configuration file, so the process has to be allowed to write to that directory",
+			"database file, so the process has to be allowed to write to that directory",
 			zap.Error(err),
 			zap.String("initial_password_file", passwordFile))
 	}
@@ -433,11 +432,61 @@ func resetStoredSettings(db *gorm.DB, logger *zap.Logger) {
 	os.Exit(0)
 }
 
+// databaseFileName is what the database file is called under the directory the
+// platform keeps user data in.
+const databaseFileName = "tunnel-manager.db"
+
+// defaultDatabasePath returns the file to use when -db does not name one. It is
+// worked out from os.UserConfigDir rather than from the working directory,
+// which differs between running from the repository, from the container and
+// from systemd, and would put a fresh empty database wherever the process
+// happened to be started.
+//
+// A missing HOME is reported rather than worked around. Inventing a location
+// would let one startup build a database in one place and the next one build
+// another somewhere else, and the Hosts that were registered would look gone.
+func defaultDatabasePath() (string, error) {
+	dir, err := os.UserConfigDir()
+	if err != nil {
+		return "", fmt.Errorf("no default location for the database file is available: %w. "+
+			"Give -db an absolute path", err)
+	}
+
+	return filepath.Join(dir, "tunnel-manager", databaseFileName), nil
+}
+
+// usage is what -help prints and what an unknown flag prints. It says where the
+// settings are because this text is the only place left that can: there is no
+// configuration file any more, and somebody who goes looking for one has
+// nothing else to read.
+func usage() {
+	out := flag.CommandLine.Output()
+
+	fmt.Fprintf(out, "tunnel-manager keeps SSH tunnels to the registered hosts up and serves the API "+
+		"and the web UI that manage them.\n\n")
+	fmt.Fprintf(out, "Usage: %s [flags]\n\n", filepath.Base(os.Args[0]))
+	fmt.Fprintf(out, "Flags:\n")
+
+	flag.PrintDefaults()
+
+	fmt.Fprintf(out, "\nThere is no configuration file. The database file is the whole of this "+
+		"installation:\nevery other setting is kept in it and is changed on the Settings screen "+
+		"of the web UI.\n")
+}
+
 func main() {
-	versionFlag := flag.Bool("version", false, "show the version and exit")
-	configPath := flag.String("config", "config/config.yaml", "path to config file")
+	flag.Usage = usage
+
+	versionFlag := flag.Bool("version", false, "print the version and exit")
+	dbPath := flag.String("db", "",
+		"path of the database file, which holds the settings, the registered hosts and the\n"+
+			"account. It is created, directories above it included, if it is not there.\n"+
+			"Left out, it is "+databaseFileName+" under the directory this platform keeps user\n"+
+			"data in (on Linux $XDG_CONFIG_HOME/tunnel-manager, or $HOME/.config/tunnel-manager).")
 	resetSettings := flag.Bool("reset-settings", false,
-		"put every stored setting back to its default and exit")
+		"put every stored setting back to its default and exit. It is the way out of a\n"+
+			"stored setting that keeps the server from starting, since the Settings screen\n"+
+			"that would change it is served by the server that will not start.")
 	flag.Parse()
 
 	if *versionFlag {
@@ -445,11 +494,17 @@ func main() {
 		os.Exit(0)
 	}
 
-	// The file holds the path of the database file and nothing else. Every
-	// other setting is read out of that database further down.
-	cfg, err := config.LoadConfig(*configPath)
-	if err != nil {
-		log.Fatalf("Failed to load config: %v", err)
+	// The path of the database file is the one thing this process has to be
+	// told. Every other setting is read out of that database further down.
+	databaseFile := *dbPath
+
+	if databaseFile == "" {
+		var err error
+
+		databaseFile, err = defaultDatabasePath()
+		if err != nil {
+			log.Fatalf("Failed to work out where the database file goes: %v", err)
+		}
 	}
 
 	// This logger exists so that the steps below have somewhere to report to.
@@ -470,10 +525,10 @@ func main() {
 	// changed by. It is held from here to the Settings handler for the same
 	// reason logLevel below is: the level is a stored setting, and a change to
 	// it has to reach a logger that is already in use.
-	db, gormLevel, err := database.NewDatabase(cfg.Database.Path, logger, bootstrapLogLevel)
+	db, gormLevel, err := database.NewDatabase(databaseFile, logger, bootstrapLogLevel)
 	if err != nil {
 		logger.Fatal("failed to open the database",
-			zap.String("path", cfg.Database.Path),
+			zap.String("path", databaseFile),
 			zap.Error(err))
 	}
 
@@ -564,9 +619,10 @@ func main() {
 	// account to authenticate against.
 	// The path is worked out once and handed to both the startup, which writes
 	// the file, and the setup, which deletes it once the account is settled. It
-	// stays beside the configuration file: that file is still there, and the
-	// directory it was read from is one the operator pointed the process at.
-	initialPasswordFile := auth.InitialPasswordFile(*configPath)
+	// sits beside the database file: that directory is where this installation
+	// keeps its data, the process already writes to it, and it exists by now
+	// since opening the database made it.
+	initialPasswordFile := auth.InitialPasswordFile(databaseFile)
 
 	ensureUser(db, logger, initialPasswordFile)
 
@@ -661,10 +717,9 @@ func main() {
 	// without a restart names.
 	uninstallHandler := api.NewUninstallHandler(db, logger, manager, stopReconcileLoop,
 		api.UninstallPaths{
-			DatabaseFile:        cfg.Database.Path,
+			DatabaseFile:        databaseFile,
 			KeyFile:             set.SecurityKeyFile,
 			InitialPasswordFile: initialPasswordFile,
-			ConfigFile:          *configPath,
 			LogFile:             set.LoggingFilePath,
 		}, endAfterUninstall)
 	g := e.Group("/api")

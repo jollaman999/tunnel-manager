@@ -12,31 +12,24 @@ services:
     ports:
       - "8888:8888"
     working_dir: /
+    # The database file is the whole of the installation state, so the
+    # directory it lives in is what has to outlive the container. /data is
+    # where the image puts it (Dockerfile, CMD), and the settings, the hosts
+    # and the account are all in that one file now.
+    #
+    # /keys is the other half: security.key_file defaults to
+    # keys/tunnel-manager.key, which is read against working_dir and so lands
+    # there. That key is what the stored SSH passwords are sealed with, and one
+    # that stayed inside the container would be gone with the next build, which
+    # leaves every stored password unreadable. The setting is changed on the
+    # Settings screen; a path set there has to stay under a mounted directory.
     volumes:
-      - ./config/config.yaml:/config/config.yaml:ro
-      - ./_data/tunnel-manager:/var/log/tunnel-manager
+      - ./_data/db:/data
       - ./_data/keys:/keys
+      - ./_data/tunnel-manager:/var/log/tunnel-manager
     environment:
       - TZ=Asia/Seoul
     restart: always
-    depends_on:
-      - tunnel-manager-db
-    networks:
-      - tunnel-network
-
-  tunnel-manager-db:
-    image: mariadb:11.6
-    ports:
-      - "3306:3306"
-    container_name: tunnel-manager-db
-    restart: always
-    environment:
-      MARIADB_USER: tunnel-manager
-      MARIADB_PASSWORD: tunnel-manager-pass
-      MARIADB_DATABASE: tunnel-manager
-      MARIADB_ROOT_PASSWORD: tunnel-manager-pass
-    volumes:
-      - ./_data/mariadb:/var/lib/mysql
     networks:
       - tunnel-network
 

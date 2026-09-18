@@ -894,7 +894,6 @@ function settingsDangerZone() {
         "The database file, along with the -wal and -shm files SQLite keeps beside it",
         "The encryption key file",
         "The initial password file, if it is still there",
-        "The configuration file",
         "The log file and the rotated log files beside it"
       ]),
       element("p",
@@ -927,8 +926,8 @@ function settingsDangerZone() {
 async function submitUninstall(values) {
   // The password box is what keeps a passing press from doing this, and the
   // question is what keeps a press that was meant for Save from doing it.
-  if (!window.confirm("Uninstall tunnel-manager? The database, the encryption key, the " +
-      "configuration and the logs are removed and the process stops.")) {
+  if (!window.confirm("Uninstall tunnel-manager? The database, the encryption key and " +
+      "the logs are removed and the process stops.")) {
     return;
   }
 

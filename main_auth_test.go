@@ -55,8 +55,8 @@ func TestEnsureUserKeepsTheInitialPasswordOutOfTheLog(t *testing.T) {
 	core, logs := observer.New(zapcore.DebugLevel)
 
 	db, _ := newAccountDB(t, 0)
-	configFile := filepath.Join(t.TempDir(), "config.yaml")
-	passwordFile := filepath.Join(filepath.Dir(configFile), "initial-password")
+	databaseFile := filepath.Join(t.TempDir(), "tunnel-manager.db")
+	passwordFile := filepath.Join(filepath.Dir(databaseFile), "initial-password")
 
 	ensureUser(db, zap.New(core), passwordFile)
 
@@ -101,8 +101,8 @@ func toText(value interface{}) string {
 // made and checks that the initial password is not among its values.
 func TestEnsureUserStoresAHashAndNotThePassword(t *testing.T) {
 	db, recorder := newAccountDB(t, 0)
-	configFile := filepath.Join(t.TempDir(), "config.yaml")
-	passwordFile := filepath.Join(filepath.Dir(configFile), "initial-password")
+	databaseFile := filepath.Join(t.TempDir(), "tunnel-manager.db")
+	passwordFile := filepath.Join(filepath.Dir(databaseFile), "initial-password")
 
 	ensureUser(db, zap.NewNop(), passwordFile)
 
@@ -161,8 +161,8 @@ func TestEnsureUserStoresAHashAndNotThePassword(t *testing.T) {
 // not replaced by one whose password the operator never saw.
 func TestEnsureUserLeavesAnAccountThatIsAlreadyThere(t *testing.T) {
 	db, recorder := newAccountDB(t, 1)
-	configFile := filepath.Join(t.TempDir(), "config.yaml")
-	passwordFile := filepath.Join(filepath.Dir(configFile), "initial-password")
+	databaseFile := filepath.Join(t.TempDir(), "tunnel-manager.db")
+	passwordFile := filepath.Join(filepath.Dir(databaseFile), "initial-password")
 
 	ensureUser(db, zap.NewNop(), passwordFile)
 

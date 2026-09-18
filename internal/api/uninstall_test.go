@@ -56,8 +56,7 @@ func newInstallation(t *testing.T) *installation {
 		paths: UninstallPaths{
 			DatabaseFile:        filepath.Join(dir, "data", "tunnel-manager.db"),
 			KeyFile:             filepath.Join(dir, "keys", "tunnel-manager.key"),
-			InitialPasswordFile: filepath.Join(dir, "config", "tunnel-manager-initial-password"),
-			ConfigFile:          filepath.Join(dir, "config", "config.yaml"),
+			InitialPasswordFile: filepath.Join(dir, "data", "initial-password"),
 			LogFile:             filepath.Join(dir, "logs", "tunnel-manager.log"),
 		},
 		rotated: []string{
@@ -76,7 +75,6 @@ func newInstallation(t *testing.T) *installation {
 	files := []string{
 		inst.paths.KeyFile,
 		inst.paths.InitialPasswordFile,
-		inst.paths.ConfigFile,
 		inst.paths.LogFile,
 	}
 
@@ -98,7 +96,6 @@ func (i *installation) installedFilePaths() []string {
 		i.paths.DatabaseFile + "-shm",
 		i.paths.KeyFile,
 		i.paths.InitialPasswordFile,
-		i.paths.ConfigFile,
 		i.paths.LogFile,
 	}
 

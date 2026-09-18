@@ -19,11 +19,16 @@ RUN cp -f /usr/share/zoneinfo/Asia/Seoul /etc/localtime
 
 WORKDIR /
 
-RUN mkdir -p /config/
-COPY --from=builder /go/src/github.com/jollaman999/tunnel-manager/config/config.yaml /config/config.yaml
 COPY --from=builder /go/src/github.com/jollaman999/tunnel-manager/tunnel-manager /tunnel-manager
 
 USER root
-CMD ["/tunnel-manager"]
+
+# -db is given here rather than left to the default. The default is worked out
+# from os.UserConfigDir, and docker sets HOME=/root, so a container started
+# without it would put the database at /root/.config/tunnel-manager inside the
+# writable layer: it would come up and work, and everything in it would be gone
+# the moment the container is replaced. /data is the path a deployment mounts
+# (docker-compose.yaml), so naming it here is what keeps the data.
+CMD ["/tunnel-manager", "-db", "/data/tunnel-manager.db"]
 
 EXPOSE 8888

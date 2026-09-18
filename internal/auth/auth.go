@@ -15,8 +15,8 @@ import (
 )
 
 // initialPasswordFileName is the name of the file the initial password is
-// written to. It sits next to the configuration file, which is the directory an
-// operator already has to reach to run the application.
+// written to. It sits next to the database file, which is the directory this
+// installation keeps its data in and the one an operator already has to reach.
 const initialPasswordFileName = "initial-password"
 
 // initialPasswordBytes is how much randomness an initial password carries.
@@ -33,12 +33,11 @@ const initialPasswordFileMode os.FileMode = 0600
 var initialPasswordEncoding = base32.StdEncoding.WithPadding(base32.NoPadding)
 
 // InitialPasswordFile returns the path the initial password is written to. It
-// is derived from the configuration file the process was started with, so the
-// file turns up in the directory the operator pointed the process at and no
-// setting has to name it. That directory exists, since the configuration was
-// read out of it.
-func InitialPasswordFile(configFile string) string {
-	return filepath.Join(filepath.Dir(configFile), initialPasswordFileName)
+// is derived from the database file the process was started with, so the file
+// turns up in the directory the operator pointed the process at and no setting
+// has to name it. That directory exists, since the database was opened in it.
+func InitialPasswordFile(databaseFile string) string {
+	return filepath.Join(filepath.Dir(databaseFile), initialPasswordFileName)
 }
 
 // GenerateInitialPassword returns a password made of initialPasswordBytes of

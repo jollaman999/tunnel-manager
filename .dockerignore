@@ -4,6 +4,9 @@ README.md
 Dockerfile
 docker-compose.yaml
 _data/
+*.db
+*.db-wal
+*.db-shm
 keys/
 .idea/
 .vscode/

@@ -54,7 +54,7 @@ type Settings struct {
 // lived there, so a deployment that drops its settings sections runs on as it
 // did. api.port and monitoring.interval_sec are the exception: they had no
 // fallback at all, since a file that left them out was refused, so the values
-// the shipped config/config.yaml carried are used. logging.file.compress had no
+// the configuration file carried before it was removed are used. logging.file.compress had no
 // fallback either and a file that left it out ran with it off, which is what
 // stands here.
 func Defaults() Settings {

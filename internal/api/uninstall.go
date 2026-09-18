@@ -62,8 +62,6 @@ type UninstallPaths struct {
 	// InitialPasswordFile is written on the first startup and removed once the
 	// account is set up, so it is usually not there any more.
 	InitialPasswordFile string
-	// ConfigFile is the file the database path was read from.
-	ConfigFile string
 	// LogFile is the file the logs are written to. The rotated ones beside it
 	// are found by their names.
 	LogFile string
@@ -323,7 +321,6 @@ func (h *UninstallHandler) installedFiles() []removedFile {
 		{Path: databaseSidecar(h.paths.DatabaseFile, "-shm"), What: "the shared memory file of the database"},
 		{Path: h.paths.KeyFile, What: "the encryption key"},
 		{Path: h.paths.InitialPasswordFile, What: "the initial password file"},
-		{Path: h.paths.ConfigFile, What: "the configuration file"},
 	}
 
 	for _, rotated := range h.rotatedLogFiles() {
