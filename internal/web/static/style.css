@@ -115,6 +115,25 @@ h2 {
   border-radius: 6px;
 }
 
+/* What cannot be taken back is set apart from the form above it, the way the
+   delete button is set apart from the two beside it. */
+.card.danger-zone {
+  background: #fdf7f7;
+  border-color: #e0bcbc;
+}
+
+.card.danger-zone h2 {
+  color: #8a2f2f;
+}
+
+.card p {
+  margin: 0 0 0.5rem;
+}
+
+.card p:last-child {
+  margin-bottom: 0;
+}
+
 .field {
   display: grid;
   grid-template-columns: 10rem minmax(0, 22rem);
@@ -128,7 +147,8 @@ h2 {
 }
 
 .field input[type="text"],
-.field input[type="password"] {
+.field input[type="password"],
+.field select {
   padding: 0.35rem 0.5rem;
   font: inherit;
   color: inherit;
@@ -138,7 +158,8 @@ h2 {
 }
 
 .field input[type="text"]:focus,
-.field input[type="password"]:focus {
+.field input[type="password"]:focus,
+.field select:focus {
   border-color: #24456b;
   outline: 2px solid #c7d6ea;
   outline-offset: 0;
@@ -146,12 +167,14 @@ h2 {
 
 /* A box that holds something the form refused is marked, so the line under it
    is tied to the box it belongs to and not just to the row it sits in. */
-.field input.bad {
+.field input.bad,
+.field select.bad {
   border-color: #b04141;
   background: #fdf7f7;
 }
 
-.field input.bad:focus {
+.field input.bad:focus,
+.field select.bad:focus {
   outline-color: #f0c2c2;
 }
 

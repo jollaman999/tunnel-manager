@@ -474,6 +474,65 @@ function buildTable(headers, rows, numericColumns) {
   return scroller;
 }
 
+// textControl is the box a value is typed into.
+//
+// It stays a text box even where only digits belong in it. A number box is spun
+// by the mouse wheel while it has focus, which changes a port without a
+// keystroke, and it hands back an empty string for anything it considers
+// malformed, which leaves nothing to say what was wrong with. The keypad a
+// phone puts up is asked for separately.
+function textControl(field) {
+  const input = document.createElement("input");
+
+  input.type = field.type === undefined ? "text" : field.type;
+
+  if (input.type === "checkbox") {
+    input.checked = Boolean(field.value);
+  } else if (field.value !== undefined && field.value !== null) {
+    input.value = String(field.value);
+  }
+
+  if (field.hint !== undefined) {
+    input.placeholder = field.hint;
+  }
+
+  if (field.inputMode !== undefined) {
+    input.setAttribute("inputmode", field.inputMode);
+  }
+
+  if (field.filter !== undefined) {
+    input.addEventListener("input", function () {
+      filterInput(input, field.filter);
+    });
+  }
+
+  return input;
+}
+
+// listControl is the field whose value is one of a set the server named. A box
+// would take anything and leave the refusal to come back from the server, while
+// a list cannot hold a value that is not on it, so there is nothing to check
+// and nothing to report under it.
+//
+// The options are built as elements with their text set as text, the rule every
+// value drawn here follows.
+function listControl(field) {
+  const select = document.createElement("select");
+
+  for (const option of field.options) {
+    const node = element("option", option);
+
+    node.value = option;
+    select.appendChild(node);
+  }
+
+  if (field.value !== undefined && field.value !== null) {
+    select.value = String(field.value);
+  }
+
+  return select;
+}
+
 // buildForm draws a form and hands the values to onSubmit. The values are read
 // out of the inputs at submit time rather than tracked on every keystroke, so
 // there is one place that knows what the form holds.
@@ -495,36 +554,10 @@ function buildForm(spec) {
     const label = element("label", field.label);
     label.htmlFor = id;
 
-    const input = document.createElement("input");
+    const input = field.options === undefined ? textControl(field) : listControl(field);
     input.id = id;
     input.name = field.name;
-    input.type = field.type === undefined ? "text" : field.type;
     input.dataset.field = field.name;
-
-    if (input.type === "checkbox") {
-      input.checked = Boolean(field.value);
-    } else if (field.value !== undefined && field.value !== null) {
-      input.value = String(field.value);
-    }
-
-    if (field.hint !== undefined) {
-      input.placeholder = field.hint;
-    }
-
-    // The box stays a text box even where only digits belong in it. A number
-    // box is spun by the mouse wheel while it has focus, which changes a port
-    // without a keystroke, and it hands back an empty string for anything it
-    // considers malformed, which leaves nothing to say what was wrong with.
-    // The keypad a phone puts up is asked for separately.
-    if (field.inputMode !== undefined) {
-      input.setAttribute("inputmode", field.inputMode);
-    }
-
-    if (field.filter !== undefined) {
-      input.addEventListener("input", function () {
-        filterInput(input, field.filter);
-      });
-    }
 
     inputs[field.name] = input;
 
@@ -649,6 +682,55 @@ function checkPort(value) {
   const port = Number(trimmed);
   if (!Number.isInteger(port) || port < minPort || port > maxPort) {
     return "The port has to be between " + minPort + " and " + maxPort + ".";
+  }
+
+  return "";
+}
+
+// checkSeconds says what is wrong with a period, or "" when nothing is. The
+// server refuses a period of zero, and a loop that is asked to run every zero
+// seconds has no period at all.
+function checkSeconds(value) {
+  const trimmed = String(value).trim();
+
+  if (trimmed === "") {
+    return "Enter a number of seconds.";
+  }
+
+  const seconds = Number(trimmed);
+  if (!Number.isInteger(seconds) || seconds < 1) {
+    return "The period has to be one second or more.";
+  }
+
+  return "";
+}
+
+// checkCount says what is wrong with one of the numbers the log rotation is
+// held to, or "" when nothing is. Zero is a value the server takes: it is how
+// the rotation is told to keep no bound at all.
+function checkCount(value) {
+  const trimmed = String(value).trim();
+
+  if (trimmed === "") {
+    return "Enter a number.";
+  }
+
+  const count = Number(trimmed);
+  if (!Number.isInteger(count) || count < 0) {
+    return "The number cannot be negative.";
+  }
+
+  return "";
+}
+
+// checkPath says what is wrong with a file path, or "" when nothing is. What
+// makes a path usable is decided by the filesystem the server runs on, so the
+// one thing checked here is the one thing that is wrong everywhere: an empty
+// box. A key file that is empty stops the next startup, and there is no
+// configuration file left to put it back in.
+function checkPath(value) {
+  if (String(value).trim() === "") {
+    return "Enter a path.";
   }
 
   return "";

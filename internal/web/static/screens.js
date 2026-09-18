@@ -17,9 +17,18 @@ const screens = {
     draw: drawServicePorts,
     enter: enterServicePorts
   },
+  settings: { label: "Settings", nav: true, draw: drawSettings, enter: enterSettings },
   login: { draw: drawLogin },
   setup: { draw: drawSetup }
 };
+
+// logLevels and logFormats are what the server takes for those two settings.
+// They are lists on the screen rather than boxes, so a value the server refuses
+// cannot be sent at all. The lists are the ones Validate holds in
+// internal/settings/settings.go, and a value added there shows up here only
+// once it is added here too.
+const logLevels = ["debug", "info", "warn", "error", "dpanic", "panic", "fatal"];
+const logFormats = ["json", "console"];
 
 // editingHostID and editingServicePortID say which row has the edit form open.
 // Only the identifier is kept: the values in the form come from the last answer
@@ -27,6 +36,13 @@ const screens = {
 // fetches ago.
 let editingHostID = null;
 let editingServicePortID = null;
+
+// settingsSaveResult is what the last save on the settings screen answered: the
+// settings it changed and whether any of them waits for a restart. It is kept
+// because the screen is drawn again from the server right after the save, and
+// what the save reported is not in that answer. It is dropped on arrival, so a
+// report from an earlier visit is never read as belonging to this one.
+let settingsSaveResult = null;
 
 // logOut ends the session and goes to the login. The cookie is dropped by the
 // server, so nothing here has to be cleared.
@@ -607,4 +623,255 @@ async function deleteServicePort(port) {
   setNotice("Service port " + port.id + " was deleted.", "info");
 
   return drawServicePorts();
+}
+
+function enterSettings() {
+  settingsSaveResult = null;
+
+  return drawSettings();
+}
+
+async function drawSettings() {
+  const set = await apiCall("GET", "/api/settings");
+
+  const nodes = [];
+
+  // What the save did sits above the form. It is the answer to the press that
+  // was just made, and the form below it is filled from the server anyway.
+  if (settingsSaveResult !== null) {
+    nodes.push(settingsChanges(settingsSaveResult));
+  }
+
+  nodes.push(settingsForm(set));
+  nodes.push(settingsRescue());
+  nodes.push(settingsDangerZone());
+
+  render("Settings", nodes);
+}
+
+// settingsForm is every setting that is stored. The boxes are checked here
+// against the rules the server holds, so a value it would refuse is reported
+// next to the box it was typed in rather than after a round trip. A value that
+// gets past this is still checked by the server: this form is a convenience,
+// not the rule.
+function settingsForm(set) {
+  return buildForm({
+    name: "settings",
+    legend: "Stored settings",
+    submitLabel: "Save",
+    fields: [
+      settingsField(portField("api_port", "API port", set.api_port),
+        "The server listens on this port. It is taken up at the next start."),
+      settingsField(secondsField("monitoring_interval_sec", "Monitoring interval (seconds)",
+        set.monitoring_interval_sec), "Taken up at the next start."),
+      settingsField(secondsField("reconcile_interval_sec", "Reconcile interval (seconds)",
+        set.reconcile_interval_sec), "Taken up at the next start."),
+      {
+        name: "security_key_file",
+        label: "Encryption key file",
+        value: set.security_key_file,
+        check: checkPath,
+        note: "The path of the file the key is kept in. The key itself is never " +
+          "shown here. Taken up at the next start."
+      },
+      {
+        name: "logging_level",
+        label: "Log level",
+        value: set.logging_level,
+        options: logLevels,
+        note: "This one takes hold the moment it is saved."
+      },
+      {
+        name: "logging_format",
+        label: "Log format",
+        value: set.logging_format,
+        options: logFormats,
+        note: "Taken up at the next start."
+      },
+      settingsField(
+        { name: "logging_file_path", label: "Log file", value: set.logging_file_path,
+          check: checkPath },
+        "Taken up at the next start."
+      ),
+      settingsField(countField("logging_file_max_size", "Log size before rotation (MB)",
+        set.logging_file_max_size), "Taken up at the next start."),
+      settingsField(countField("logging_file_max_backups", "Rotated files kept",
+        set.logging_file_max_backups), "Taken up at the next start."),
+      settingsField(countField("logging_file_max_age", "Days a rotated file is kept",
+        set.logging_file_max_age), "Taken up at the next start."),
+      {
+        name: "logging_file_compress",
+        label: "Compress rotated files",
+        type: "checkbox",
+        value: set.logging_file_compress,
+        note: "Taken up at the next start."
+      }
+    ],
+    onSubmit: saveSettings
+  });
+}
+
+// settingsField puts the note on a field built by one of the helpers above. The
+// helpers are shared with the other screens, where there is nothing to say
+// about when a value takes hold.
+function settingsField(field, note) {
+  field.note = note;
+
+  return field;
+}
+
+// secondsField and countField are the two kinds of number that are not a port.
+// A period has to be at least one second, while the numbers the log rotation is
+// held to may be zero, which is how it is told to keep no bound.
+function secondsField(name, label, value) {
+  return {
+    name: name,
+    label: label,
+    value: value,
+    hint: "seconds",
+    inputMode: "numeric",
+    filter: portCharacters,
+    check: checkSeconds
+  };
+}
+
+function countField(name, label, value) {
+  return {
+    name: name,
+    label: label,
+    value: value,
+    hint: "0 or more",
+    inputMode: "numeric",
+    filter: portCharacters,
+    check: checkCount
+  };
+}
+
+async function saveSettings(values) {
+  const body = {
+    api_port: asNumber(values.api_port),
+    monitoring_interval_sec: asNumber(values.monitoring_interval_sec),
+    reconcile_interval_sec: asNumber(values.reconcile_interval_sec),
+    security_key_file: values.security_key_file.trim(),
+    logging_level: values.logging_level,
+    logging_format: values.logging_format,
+    logging_file_path: values.logging_file_path.trim(),
+    logging_file_max_size: asNumber(values.logging_file_max_size),
+    logging_file_max_backups: asNumber(values.logging_file_max_backups),
+    logging_file_max_age: asNumber(values.logging_file_max_age),
+    logging_file_compress: values.logging_file_compress
+  };
+
+  const data = await apiCall("PUT", "/api/settings", body);
+
+  settingsSaveResult = data;
+
+  const changes = data === null || data.changes === null || data.changes === undefined
+    ? []
+    : data.changes;
+
+  if (changes.length === 0) {
+    setNotice("The settings are stored. Nothing changed.", "info");
+  } else if (data.restart_required) {
+    setNotice("The settings are stored. Some of them are taken up at the next start.", "info");
+  } else {
+    setNotice("The settings are stored and are in place.", "info");
+  }
+
+  return drawSettings();
+}
+
+// settingsChanges is what the save did. What changed is worth showing on its
+// own, because a save that stores what was already there and a save that
+// changed the port look the same on the form afterwards.
+//
+// Whether a change is in place or waits for a start is what the server said
+// about it. It is the side that puts a value into place, so a screen that
+// decided for itself would go on claiming a setting took hold after the server
+// stopped putting it there.
+function settingsChanges(result) {
+  const card = document.createElement("section");
+
+  card.className = "card";
+  card.dataset.card = "settings-saved";
+  card.appendChild(element("h2", "What the save changed"));
+
+  const changes = result === null || result.changes === null || result.changes === undefined
+    ? []
+    : result.changes;
+
+  if (changes.length === 0) {
+    card.appendChild(statusLine("Nothing changed.", "empty"));
+
+    return card;
+  }
+
+  card.appendChild(buildTable(
+    ["Setting", "From", "To", "Applied"],
+    changes.map(function (change) {
+      return [change.name, change.from, change.to, appliedBadge(change.applied)];
+    })
+  ));
+
+  if (result.restart_required) {
+    card.appendChild(statusLine(
+      "Start tunnel-manager again to run on what is marked as taken up at the next start. " +
+        "It is stored either way.",
+      "warning"
+    ));
+  } else {
+    card.appendChild(statusLine("Every change is in place.", "ok"));
+  }
+
+  return card;
+}
+
+// appliedBadge says what became of one change. A word that is not one of the
+// two known ones is shown as it came, so a server that reports a third state
+// still says something readable here.
+function appliedBadge(applied) {
+  const words = { now: "in place now", restart: "at the next start" };
+  const colours = { now: "ok", restart: "waiting" };
+  const text = applied === null || applied === undefined ? "" : String(applied);
+  const badge = element("span", words[text] === undefined ? text : words[text]);
+
+  badge.className = "badge " + (colours[text] === undefined ? "unknown" : colours[text]);
+  badge.dataset.applied = text;
+
+  return badge;
+}
+
+// settingsRescue is the way back from a stored setting that keeps the server
+// from starting. The form above refuses what the server refuses, so it should
+// not happen; it is written down because if it does happen there is no screen
+// left to read it on and no configuration file left to correct it in.
+function settingsRescue() {
+  const card = document.createElement("section");
+
+  card.className = "card";
+  card.dataset.card = "settings-rescue";
+  card.appendChild(element("h2", "If the server will not start on what is stored"));
+  card.appendChild(element("p",
+    "Start it once with -reset-settings. Every setting goes back to its default, " +
+      "what it changed is printed, and the process exits. The next start runs on " +
+      "the defaults, and this screen is reachable again."));
+
+  return card;
+}
+
+// settingsDangerZone is where what cannot be taken back goes. Uninstall belongs
+// in it and is not built yet. The section is here already so that it is at the
+// bottom of the screen and away from Save, rather than being fitted in beside
+// the form later on.
+function settingsDangerZone() {
+  const card = document.createElement("section");
+
+  card.className = "card danger-zone";
+  card.dataset.card = "settings-danger";
+  card.appendChild(element("h2", "Dangerous actions"));
+  card.appendChild(element("p",
+    "Uninstall deletes the database, the encryption key and the log files, and it " +
+      "cannot be taken back. It is not built yet and will appear here."));
+
+  return card;
 }

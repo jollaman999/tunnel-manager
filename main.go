@@ -17,7 +17,6 @@ import (
 	"time"
 
 	"gorm.io/gorm"
-	gormlogger "gorm.io/gorm/logger"
 
 	"github.com/go-playground/validator/v10"
 	"github.com/jollaman999/tunnel-manager/internal/api"
@@ -154,21 +153,6 @@ func newBootstrapLogger() (*zap.Logger, *coreSwitch) {
 	swap := newCoreSwitch(core)
 
 	return zap.New(&switchedCore{swap: swap}, zap.AddCaller()), swap
-}
-
-// gormLogLevelOf maps an application log level to the level gorm understands.
-// It repeats what internal/database applies when it opens the handle, because
-// the level that decides it is stored in the database the handle belongs to:
-// the handle exists before the level is known, so it is set again once it is.
-func gormLogLevelOf(level string) gormlogger.LogLevel {
-	switch level {
-	case "debug":
-		return gormlogger.Info
-	case "info", "warn":
-		return gormlogger.Warn
-	default:
-		return gormlogger.Error
-	}
 }
 
 // prepareLogFile makes sure the configured log file can be written to.
@@ -481,7 +465,11 @@ func main() {
 	// The database is a file, so there is nothing to wait for. A file that
 	// cannot be opened is not a problem that comes right on the next try, and
 	// retrying would only delay the message that says which path failed.
-	db, err := database.NewDatabase(cfg.Database.Path, logger, bootstrapLogLevel)
+	// gormLevel is the handle the level of the logger gorm writes through is
+	// changed by. It is held from here to the Settings handler for the same
+	// reason logLevel below is: the level is a stored setting, and a change to
+	// it has to reach a logger that is already in use.
+	db, gormLevel, err := database.NewDatabase(cfg.Database.Path, logger, bootstrapLogLevel)
 	if err != nil {
 		logger.Fatal("failed to open the database",
 			zap.String("path", cfg.Database.Path),
@@ -509,11 +497,15 @@ func main() {
 
 	loggerSwitch.set(core)
 
-	// The handle was opened at bootstrapLogLevel, since the level it should run
-	// at was inside it. Without this the stored logging.level would reach
+	// The database was opened at bootstrapLogLevel, since the level it should
+	// run at was inside it. Without this the stored logging.level would reach
 	// everything but the statements gorm reports, which is where a query that
 	// fails is named.
-	db.Logger = db.Logger.LogMode(gormLogLevelOf(set.LoggingLevel))
+	//
+	// The level goes on the handle rather than on db.Logger, so that the same
+	// handle carries every later change as well. Set through db.Logger it would
+	// be fixed here once and the Settings screen would have nothing to change.
+	gormLevel.Set(set.LoggingLevel)
 
 	logger.Info("read the settings from the database",
 		zap.String("log_level", logLevel.String()),
@@ -619,6 +611,10 @@ func main() {
 
 	h := api.NewHandler(db, manager, logger, cipher)
 	authHandler := api.NewAuthHandler(db, logger, initialPasswordFile)
+	// The level handle goes to the handler that stores the settings, so that a
+	// stored logging.level reaches the running loggers as it is saved. It is
+	// the one setting this process can take on without being started again.
+	settingsHandler := api.NewSettingsHandler(db, logger, logLevel, gormLevel)
 	g := e.Group("/api")
 
 	// The session check is put on the group before any route is added to it.
@@ -647,6 +643,9 @@ func main() {
 
 	g.GET("/status", h.GetStatus)
 	g.GET("/status/:hostId", h.GetHostStatus)
+
+	g.GET("/settings", settingsHandler.GetSettings)
+	g.PUT("/settings", settingsHandler.UpdateSettings)
 
 	// The UI is put on the instance itself and not on the group above. It is
 	// the same bytes for every client and carries no data of its own, while

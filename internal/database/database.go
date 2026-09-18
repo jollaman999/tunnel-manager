@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sync/atomic"
 	"time"
 
 	"github.com/glebarez/sqlite"
@@ -36,39 +37,112 @@ func gormLogLevel(level string) gormlogger.LogLevel {
 	}
 }
 
+// LogLevel is the level the database logger writes at while the process runs.
+//
+// It is a handle rather than a value because the level is one of the stored
+// settings: the Settings screen writes it, and the change has to reach the
+// logger that gorm is already writing through. That is the same reason zap is
+// given an AtomicLevel here, and the two are set together. Without it the level
+// would be the one the process started on, and the screen, which says the log
+// level takes hold as it is saved, would be telling the operator something that
+// is only half true: the application lines would follow and the statements gorm
+// reports, which is what "debug" is usually turned on for, would not.
+type LogLevel struct {
+	// value holds a gormlogger.LogLevel, which is an int. It is read and
+	// written atomically because the goroutine that runs a query reads it while
+	// the goroutine that serves a request to the Settings screen writes it, and
+	// those are different goroutines every time.
+	value atomic.Int32
+}
+
+// NewLogLevel returns a handle set to the level the application names.
+func NewLogLevel(level string) *LogLevel {
+	handle := &LogLevel{}
+	handle.Set(level)
+
+	return handle
+}
+
+// Set puts an application log level on the handle. It takes the same names the
+// rest of the application uses, so the one place that maps them to what gorm
+// understands stays gormLogLevel above.
+func (l *LogLevel) Set(level string) {
+	l.value.Store(int32(gormLogLevel(level)))
+}
+
+// get is what the logger reads before it writes a line.
+func (l *LogLevel) get() gormlogger.LogLevel {
+	return gormlogger.LogLevel(l.value.Load())
+}
+
 // zapGormLogger sends gorm output through zap so that the format, the log file
 // and the level are the same as for the rest of the application.
 type zapGormLogger struct {
 	logger *zap.Logger
+	// level is what this logger writes at when it is pinned to one level, and
+	// shared is the handle it follows when it is not. A logger that carries a
+	// handle reads the level off it and leaves level alone.
+	//
+	// Both are here because the two kinds of logger want different things. The
+	// one the database is opened with has to follow the stored setting, which
+	// changes while the process runs. The one LogMode hands back was asked for
+	// at a level by the caller (db.Debug() is that call), and it has to stay
+	// there: a session that asked to see its statements must not go quiet
+	// because the stored setting says "info".
 	level  gormlogger.LogLevel
+	shared *LogLevel
 }
 
+// currentLevel is what this logger writes at right now. Every branch below
+// reads it through here rather than off the struct, so that a logger following
+// the handle picks up a level that was stored a moment ago, and it is read once
+// per call so that one line is not written against two different levels.
+func (l *zapGormLogger) currentLevel() gormlogger.LogLevel {
+	if l.shared != nil {
+		return l.shared.get()
+	}
+
+	return l.level
+}
+
+// LogMode hands back a logger pinned to level and leaves this one as it was.
+// gorm calls it per session, so a logger that changed itself would drag the
+// level of one session into every other one.
+//
+// The copy drops the handle on purpose. It was asked for at a level, and
+// following the stored setting afterwards would take away the very thing the
+// caller asked for. The original keeps the handle, so what is stored still
+// reaches everything that did not ask for a level of its own.
 func (l *zapGormLogger) LogMode(level gormlogger.LogLevel) gormlogger.Interface {
 	newLogger := *l
 	newLogger.level = level
+	newLogger.shared = nil
+
 	return &newLogger
 }
 
 func (l *zapGormLogger) Info(_ context.Context, msg string, data ...interface{}) {
-	if l.level >= gormlogger.Info {
+	if l.currentLevel() >= gormlogger.Info {
 		l.logger.Info(fmt.Sprintf(msg, data...))
 	}
 }
 
 func (l *zapGormLogger) Warn(_ context.Context, msg string, data ...interface{}) {
-	if l.level >= gormlogger.Warn {
+	if l.currentLevel() >= gormlogger.Warn {
 		l.logger.Warn(fmt.Sprintf(msg, data...))
 	}
 }
 
 func (l *zapGormLogger) Error(_ context.Context, msg string, data ...interface{}) {
-	if l.level >= gormlogger.Error {
+	if l.currentLevel() >= gormlogger.Error {
 		l.logger.Error(fmt.Sprintf(msg, data...))
 	}
 }
 
 func (l *zapGormLogger) Trace(_ context.Context, begin time.Time, fc func() (string, int64), err error) {
-	if l.level <= gormlogger.Silent {
+	level := l.currentLevel()
+
+	if level <= gormlogger.Silent {
 		return
 	}
 
@@ -83,12 +157,12 @@ func (l *zapGormLogger) Trace(_ context.Context, begin time.Time, fc func() (str
 	}
 
 	switch {
-	case err != nil && l.level >= gormlogger.Error && !errors.Is(err, gormlogger.ErrRecordNotFound):
+	case err != nil && level >= gormlogger.Error && !errors.Is(err, gormlogger.ErrRecordNotFound):
 		l.logger.Error("query failed", append(fields(), zap.Error(err))...)
-	case elapsed > slowQueryThreshold && l.level >= gormlogger.Warn:
+	case elapsed > slowQueryThreshold && level >= gormlogger.Warn:
 		l.logger.Warn("slow query", append(fields(),
 			zap.Float64("slow_threshold_ms", float64(slowQueryThreshold.Nanoseconds())/1e6))...)
-	case l.level >= gormlogger.Info:
+	case level >= gormlogger.Info:
 		l.logger.Debug("query", fields()...)
 	}
 }
@@ -123,7 +197,11 @@ func sqliteDSN(path string) string {
 		path, busyTimeout.Milliseconds())
 }
 
-func NewDatabase(path string, logger *zap.Logger, logLevel string) (*gorm.DB, error) {
+// NewDatabase opens the database file and hands back the handle its logger
+// follows along with it. The caller holds that handle so that the level can be
+// put right once the stored settings are read, which is after this returns:
+// what opens the database cannot read a setting that is inside it.
+func NewDatabase(path string, logger *zap.Logger, logLevel string) (*gorm.DB, *LogLevel, error) {
 	// The path is resolved once and everything below uses the result. The
 	// configured value may be relative, and a relative path is read against the
 	// working directory, which differs between running from the repository,
@@ -131,7 +209,7 @@ func NewDatabase(path string, logger *zap.Logger, logLevel string) (*gorm.DB, er
 	// named by the absolute form.
 	absPath, err := filepath.Abs(path)
 	if err != nil {
-		return nil, fmt.Errorf("failed to resolve the database path %q: %w", path, err)
+		return nil, nil, fmt.Errorf("failed to resolve the database path %q: %w", path, err)
 	}
 
 	// SQLite creates the database file but not the directories above it, so a
@@ -139,13 +217,20 @@ func NewDatabase(path string, logger *zap.Logger, logLevel string) (*gorm.DB, er
 	// with nothing created.
 	err = os.MkdirAll(filepath.Dir(absPath), 0755)
 	if err != nil {
-		return nil, fmt.Errorf("failed to create the database directory %q: %w", filepath.Dir(absPath), err)
+		return nil, nil, fmt.Errorf("failed to create the database directory %q: %w", filepath.Dir(absPath), err)
 	}
+
+	// The level is on the handle, which the logger reads before every line, and
+	// on the logger as well. The handle is what decides while it is there; the
+	// value beside it is what the logger falls back to if it is ever built
+	// without one, and starting the process quiet would hide a failed query.
+	level := NewLogLevel(logLevel)
 
 	config := &gorm.Config{
 		Logger: &zapGormLogger{
 			logger: logger.Named("gorm"),
 			level:  gormLogLevel(logLevel),
+			shared: level,
 		},
 		NowFunc: func() time.Time {
 			return time.Now().UTC()
@@ -154,12 +239,12 @@ func NewDatabase(path string, logger *zap.Logger, logLevel string) (*gorm.DB, er
 
 	db, err := gorm.Open(sqlite.Open(sqliteDSN(absPath)), config)
 	if err != nil {
-		return nil, fmt.Errorf("failed to open the database: %w", err)
+		return nil, nil, fmt.Errorf("failed to open the database: %w", err)
 	}
 
 	sqlDB, err := db.DB()
 	if err != nil {
-		return nil, fmt.Errorf("failed to reach the connection pool: %w", err)
+		return nil, nil, fmt.Errorf("failed to reach the connection pool: %w", err)
 	}
 
 	// One connection is what puts the writes in a queue. SQLite takes one
@@ -186,10 +271,10 @@ func NewDatabase(path string, logger *zap.Logger, logLevel string) (*gorm.DB, er
 		&settings.Settings{},
 	)
 	if err != nil {
-		return nil, fmt.Errorf("failed to migrate database: %w", err)
+		return nil, nil, fmt.Errorf("failed to migrate database: %w", err)
 	}
 
 	logger.Info("opened the database", zap.String("path", absPath))
 
-	return db, nil
+	return db, level, nil
 }

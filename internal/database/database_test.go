@@ -431,7 +431,7 @@ func newTestDatabase(t *testing.T) (*gorm.DB, string) {
 	path := filepath.Join(t.TempDir(), "state", "tunnel-manager.db")
 	core, _ := observer.New(zapcore.DebugLevel)
 
-	db, err := NewDatabase(path, zap.New(core), "error")
+	db, _, err := NewDatabase(path, zap.New(core), "error")
 	if err != nil {
 		t.Fatalf("failed to open the database at %s: %v", path, err)
 	}
@@ -508,7 +508,7 @@ func TestNewDatabaseReportsTheResolvedPath(t *testing.T) {
 
 	core, logs := observer.New(zapcore.DebugLevel)
 
-	db, err := NewDatabase(filepath.Join("state", "tunnel-manager.db"), zap.New(core), "error")
+	db, _, err := NewDatabase(filepath.Join("state", "tunnel-manager.db"), zap.New(core), "error")
 	if err != nil {
 		t.Fatalf("failed to open the database: %v", err)
 	}
@@ -560,7 +560,7 @@ func TestNewDatabaseWrapsAnOpenFailure(t *testing.T) {
 
 	core, logs := observer.New(zapcore.DebugLevel)
 
-	db, err := NewDatabase(path, zap.New(core), "error")
+	db, _, err := NewDatabase(path, zap.New(core), "error")
 	if err == nil {
 		t.Fatalf("a directory produced a usable handle: %v", db)
 	}
@@ -791,4 +791,194 @@ func TestWithoutTheSingleConnectionTheWritesCollide(t *testing.T) {
 
 	t.Logf("overlap=%v errs=%v description=%q user=%q",
 		spansOverlap(spans), errs, host.Description, host.User)
+}
+
+// newObservedDatabase opens a database together with the handle its logger
+// follows and the record of what that logger writes. It is what the tests below
+// need that newTestDatabase does not hand back: the level is what is under
+// test, and it is judged by the lines that came out of a real query.
+func newObservedDatabase(t *testing.T, level string) (*gorm.DB, *LogLevel, *observer.ObservedLogs) {
+	t.Helper()
+
+	path := filepath.Join(t.TempDir(), "state", "tunnel-manager.db")
+	core, logs := observer.New(zapcore.DebugLevel)
+
+	db, handle, err := NewDatabase(path, zap.New(core), level)
+	if err != nil {
+		t.Fatalf("failed to open the database at %s: %v", path, err)
+	}
+
+	t.Cleanup(func() {
+		sqlDB, err := db.DB()
+		if err == nil {
+			_ = sqlDB.Close()
+		}
+	})
+
+	return db, handle, logs
+}
+
+// tracedStatements counts the statements that were traced, which is the line
+// the level under test decides on.
+func tracedStatements(logs *observer.ObservedLogs) int {
+	return logs.FilterMessage("query").Len()
+}
+
+// TestTheStoredLevelReachesALoggerThatIsAlreadyInUse is the whole point of the
+// handle. The logger is built once, at startup, and the level is stored later
+// from the Settings screen, so a level that only counted at build time would
+// leave the screen promising something that does not happen.
+func TestTheStoredLevelReachesALoggerThatIsAlreadyInUse(t *testing.T) {
+	core, logs := observer.New(zapcore.DebugLevel)
+	handle := NewLogLevel("info")
+	logger := &zapGormLogger{logger: zap.New(core), level: gormLogLevel("info"), shared: handle}
+
+	logger.Trace(context.Background(), time.Now(), statement("SELECT 1", 1), nil)
+	if traced := tracedStatements(logs); traced != 0 {
+		t.Fatalf("%d statements were traced at info, want none", traced)
+	}
+
+	handle.Set("debug")
+
+	logger.Trace(context.Background(), time.Now(), statement("SELECT 2", 1), nil)
+	if traced := tracedStatements(logs); traced != 1 {
+		t.Fatalf("%d statements were traced after debug was stored, want one", traced)
+	}
+
+	handle.Set("info")
+
+	logger.Trace(context.Background(), time.Now(), statement("SELECT 3", 1), nil)
+	if traced := tracedStatements(logs); traced != 1 {
+		t.Fatalf("%d statements were traced after info was stored again, want the one from before", traced)
+	}
+}
+
+// TestLogModeKeepsTheLevelItWasAskedFor is the other half of the handle. A
+// session that asked for a level (db.Debug() is that call) has to stay at it,
+// so the copy stops following the handle while the logger it was copied from
+// keeps following it.
+func TestLogModeKeepsTheLevelItWasAskedFor(t *testing.T) {
+	core, logs := observer.New(zapcore.DebugLevel)
+	handle := NewLogLevel("info")
+	original := &zapGormLogger{logger: zap.New(core), level: gormLogLevel("info"), shared: handle}
+
+	pinned, ok := original.LogMode(gormlogger.Info).(*zapGormLogger)
+	if !ok {
+		t.Fatalf("LogMode did not return a *zapGormLogger")
+	}
+
+	if pinned.shared != nil {
+		t.Fatalf("the copy still follows the handle, so the level it was asked for can be taken away")
+	}
+
+	if original.shared != handle {
+		t.Fatalf("the original stopped following the handle")
+	}
+
+	// Storing the quietest level must not silence a session that asked to see
+	// its statements.
+	handle.Set("error")
+
+	pinned.Trace(context.Background(), time.Now(), statement("SELECT 1", 1), nil)
+	if traced := tracedStatements(logs); traced != 1 {
+		t.Fatalf("%d statements were traced by the pinned copy, want one", traced)
+	}
+
+	original.Trace(context.Background(), time.Now(), statement("SELECT 2", 1), nil)
+	if traced := tracedStatements(logs); traced != 1 {
+		t.Fatalf("the original traced a statement at the stored level error")
+	}
+}
+
+// TestTheHandleChangesWhatARealQueryWrites runs the same query at both levels
+// through gorm itself. The test above builds the logger by hand, and this one
+// answers whether the handle is where gorm actually reads the level from.
+func TestTheHandleChangesWhatARealQueryWrites(t *testing.T) {
+	db, handle, logs := newObservedDatabase(t, "info")
+
+	var hosts []models.Host
+
+	err := db.Find(&hosts).Error
+	if err != nil {
+		t.Fatalf("the query failed: %v", err)
+	}
+	if traced := tracedStatements(logs); traced != 0 {
+		t.Fatalf("%d statements were traced at info, want none", traced)
+	}
+
+	handle.Set("debug")
+
+	err = db.Find(&hosts).Error
+	if err != nil {
+		t.Fatalf("the query failed: %v", err)
+	}
+
+	traced := tracedStatements(logs)
+	if traced == 0 {
+		t.Fatalf("no statement was traced after debug was stored")
+	}
+
+	handle.Set("info")
+
+	err = db.Find(&hosts).Error
+	if err != nil {
+		t.Fatalf("the query failed: %v", err)
+	}
+	if after := tracedStatements(logs); after != traced {
+		t.Fatalf("%d statements were traced after info was stored again, want the %d from before",
+			after, traced)
+	}
+}
+
+// TestTheLevelCanBeChangedWhileQueriesRun is why the level is an atomic rather
+// than a plain field. The save arrives on the goroutine that serves the request
+// while queries run on others, so the two meet on every save, and a field
+// written from one goroutine and read from another is a data race whatever the
+// values happen to be.
+//
+// The writer keeps flipping the level until the readers have run all their
+// queries, rather than flipping a fixed number of times: a loop that is over
+// before the first query is issued never overlaps with one, and a test that
+// does not overlap reports nothing. Run with -race.
+func TestTheLevelCanBeChangedWhileQueriesRun(t *testing.T) {
+	db, handle, _ := newObservedDatabase(t, "info")
+
+	const readers = 4
+	const queriesPerReader = 25
+
+	var wg sync.WaitGroup
+
+	wg.Add(readers)
+	for reader := 0; reader < readers; reader++ {
+		go func() {
+			defer wg.Done()
+
+			for query := 0; query < queriesPerReader; query++ {
+				var hosts []models.Host
+				_ = db.Find(&hosts).Error
+			}
+		}()
+	}
+
+	done := make(chan struct{})
+	written := make(chan struct{})
+
+	go func() {
+		defer close(written)
+
+		for {
+			select {
+			case <-done:
+				return
+			default:
+			}
+
+			handle.Set("debug")
+			handle.Set("info")
+		}
+	}()
+
+	wg.Wait()
+	close(done)
+	<-written
 }
