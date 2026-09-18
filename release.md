@@ -1,3 +1,39 @@
+# v3.0.0
+
+## Breaking changes:
+
+**An installation from an earlier release cannot be carried over.** There is no upgrade path and no migration tool: the storage, the configuration and the flags all changed. Register the hosts and the service ports again on a fresh installation.
+
+- There is no database server. The data lives in a SQLite file the binary opens itself, so MySQL and MariaDB are no longer needed or used.
+- **There is no configuration file.** `-config` is gone. The one thing the binary has to be told is where the database file is, and that is `-db`. Left out, it falls where the platform keeps user data.
+- Every other setting moved into the database and is changed on the Settings screen of the web UI. A configuration file that still carries the old sections is refused by name rather than ignored.
+- The initial password file is written next to the database file rather than next to the configuration file.
+- A relative `security.key_file` or `logging.file.path` is read against the directory the database is in, not against the working directory. The same setting therefore lands in the same place however the process was started.
+- The compose file no longer runs a database container, and it mounts one directory rather than three.
+
+## Add/fix features:
+
+- One binary, one directory:
+  - Running the binary with no arguments puts the database, the encryption key, the log and the initial password under the directory the platform keeps user data in. Running it from an unrelated directory leaves nothing behind there.
+  - The bundled systemd unit and the compose file name the path outright, so a service does not inherit one from whatever HOME it happens to run with.
+- Settings screen:
+  - Every stored setting is edited from the web UI. A save answers with what changed and whether each change is running now or waiting for the next start, and the screen prints that rather than deciding it.
+  - The log level takes hold at once, gorm's statement logging included. It used to be fixed when the database was opened, so asking for debug turned on everything except the statements, which are the reason to ask.
+  - A setting that would stop the next start is refused at the point of saving, since there is no longer a file to correct it in. `-reset-settings` puts everything back for whatever gets past that.
+- Logs screen:
+  - The end of the log file is readable from the UI, with a level filter and the same five second refresh the status screen uses. The file is read from the end, so a large log costs neither time nor memory.
+  - A line that cannot be parsed is shown as it was written rather than dropped.
+  - The log stays a file. The logger has to stand before the database is open, the connection pool is held to one connection, and gorm logs the queries, so a log in the database would be missing exactly when it is needed.
+- Uninstall:
+  - The Settings screen can remove the installation: it stops the tunnels, stops the reconcile loop, closes the database and takes the database with its -wal and -shm, the encryption key, the log with its rotated copies and the initial password. The program file is left where it is.
+  - It asks for the login password again, so a screen left open cannot do this with one press, and it says plainly that a backup of the database cannot be read once the key is gone.
+- The name of the program stays in view after the sign in rather than only on the way in.
+
+## Notes:
+
+- SQLite takes one writer at a time, so the writers are put in a queue by holding the pool to a single connection. A mutex around the handlers would not have reached the reconcile loop, which writes from the tunnel package.
+- The driver is pure Go, so the release binaries still cross compile for five platforms with CGO off.
+
 # v2.1.0
 
 ## Add/fix features:
