@@ -217,6 +217,14 @@ function render(title, nodes) {
 function navigation() {
   const bar = document.createElement("nav");
 
+  // The product name sits in the bar rather than in the heading, because the
+  // heading says which screen this is. Without it the name is only ever seen on
+  // the way in, and a tab left open says nothing about what it belongs to.
+  const brand = document.createElement("span");
+  brand.className = "brand";
+  brand.textContent = "Tunnel Manager";
+  bar.appendChild(brand);
+
   for (const name of Object.keys(screens)) {
     const screen = screens[name];
     if (!screen.nav) {

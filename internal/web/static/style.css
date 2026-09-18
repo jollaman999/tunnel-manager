@@ -78,6 +78,17 @@ nav a.current {
 }
 
 /* The logout sits apart from the screens, because it is not one of them. */
+/* The name is set apart from the links so that it reads as what this is rather
+   than as somewhere else to go, and the rule after it keeps the links from
+   sitting on top of it. */
+nav .brand {
+  margin-right: 0.5rem;
+  padding-right: 0.75rem;
+  color: #1c1c1c;
+  font-weight: 600;
+  border-right: 1px solid #dcdfe4;
+}
+
 nav a.logout {
   margin-left: auto;
   color: #8a2f2f;
