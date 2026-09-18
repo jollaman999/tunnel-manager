@@ -37,6 +37,7 @@ server, no configuration file, no directory that has to travel next to it.
 - [Requirements](#requirements)
 - [How it works](#how-it-works)
 - [Install and run](#install-and-run)
+- [HTTPS and the certificate](#https-and-the-certificate)
 - [First startup and the account](#first-startup-and-the-account)
 - [The built-in UI](#the-built-in-ui)
 - [Settings](#settings)
@@ -299,6 +300,129 @@ make
 `make` builds the binary with `CGO_ENABLED=0`. `make release` builds one for
 every platform in the table above.
 
+## HTTPS and the certificate
+
+**The API and the UI are served over HTTPS, with a certificate this installation
+makes for itself.** Open `https://<address>:<port>/` in a browser. The first
+startup generates the certificate and stores it in the database file, so there
+is nothing to prepare beforehand and no file to put anywhere.
+
+**It is still one port.** A request that arrives in the clear on it is answered
+with a `307` redirect to the same address under `https`, so a bookmark or a
+script that still says `http://` lands where it meant to. `307` keeps the method
+and the body, which `301` and `302` turn into a `GET`. The body of a request
+that arrived in the clear is never read: it is on the wire as it was written, and
+the client sends it again over TLS. Nothing has to be opened in a firewall that
+was not open before.
+
+| The generated certificate | |
+|---------------------------|--|
+| Made | On the first startup, and again when the stored one cannot be read or has run out |
+| Key | ECDSA on the P-256 curve |
+| Good for | 825 days |
+| Made out to | `localhost`, `127.0.0.1`, `::1`, the host name of the machine and the addresses of its interfaces |
+| Stored | In the database file, next to the settings. The private key is encrypted with the same key the SSH passwords are sealed with, so a copy of the database file alone does not carry it |
+| Signed by | Itself |
+
+The startup writes the fingerprint to the log, with the names the certificate
+covers and the day it runs out.
+
+### The browser warning
+
+**Nobody signed for this certificate, so a browser warns about it and a script
+refuses it.** That is what a certificate no authority issued looks like, and no
+setting makes the warning go away on its own.
+
+The fingerprint is what the warning is worth checking against. It is in the
+startup log, and on the Settings screen once you are in, written the way
+`openssl x509 -fingerprint -sha256` writes it: 32 bytes in upper case hex
+separated by colons. Hold what the browser shows in its certificate viewer
+against it. The same fingerprint means the connection is to this server; a
+different one means something is answering in its place.
+
+```bash
+openssl s_client -connect 127.0.0.1:8888 </dev/null 2>/dev/null \
+  | openssl x509 -noout -fingerprint -sha256
+```
+
+To be rid of the warning rather than clicking through it, take the certificate
+into the trust store of the machine you browse from. The Settings screen shows
+it as PEM for that, which is the same bytes the server hands to every client
+during the handshake. The other way out is to register a certificate of your own.
+
+`curl` refuses the certificate with exit code `60`. Point it at the certificate
+with `--cacert <file>`, or skip the check with `-k`. The example under
+[Calling the API from a script](#calling-the-api-from-a-script) sets
+`CURL_CA_BUNDLE` once instead, which every `curl` in that shell then reads.
+
+### Registering a certificate of your own
+
+**The Settings screen has two boxes, the certificate and its private key, both
+as PEM.** Paste what you were issued and press Register certificate. It is
+served from the next connection on, and the process is not restarted.
+`PUT /api/certificate` is the same thing from a script.
+
+If the issuer gave you intermediates, paste them into the same box, below the
+server certificate and in the order they were given. The server certificate goes
+first, which is the order TLS itself requires, and the chain is stored and served
+whole.
+
+The private key is stored encrypted, the same as the generated one. It is never
+shown on the screen and never sent back.
+
+What is pasted is read before it is stored, so a mistake is answered rather than
+served:
+
+| What was pasted | What happens |
+|-----------------|--------------|
+| Text with no PEM block in it | Refused, naming which of the two boxes it read that way |
+| The two boxes filled the other way round | Refused, and it says that is what it looks like |
+| A private key that is protected by a passphrase | Refused, with the `openssl pkey` line that takes the passphrase off |
+| A private key that belongs to another certificate | Refused |
+| A certificate that has run out | Refused: nothing would connect to it |
+| A certificate whose extended key usage leaves `serverAuth` out | Refused: every client refuses such a certificate from a server, and there would be no screen left to correct it from |
+| A certificate whose validity has not started yet | **Stored**, with a warning that says from when it works. Two clocks a few minutes apart are ordinary, and refusing it would make such a certificate impossible to install at all |
+
+A refusal stores nothing, so what is being served is still what was there.
+
+### Renewing the certificate
+
+**Make a new certificate** on the Settings screen replaces the one in use with
+another self-signed one. It is the same generation the first startup performs, so
+the new certificate is made out to the names and addresses this machine answers
+to **now**, which is what a machine that was given another address needs.
+`POST /api/certificate/renew` is the same thing from a script.
+
+**No restart.** The certificate is chosen per handshake, so the next connection
+is served the new one. Two things follow from a fingerprint that changed:
+
+- The page the button was pressed on is still being served the old certificate.
+  A connection that is already open keeps the one it was opened under. Load the
+  page again to see the new one.
+- Every browser and every script that was told to trust the old certificate warns
+  once more, until the new fingerprint is trusted as well.
+
+A replacement is written to the log with both fingerprints, the old and the new,
+so a fingerprint this installation changed can be told apart from one it did not.
+
+### Turning HTTPS off
+
+**Serve over HTTPS** on the Settings screen, `api_https_enabled` in the API, is
+what decides it. Like the other settings it is taken up at the next start.
+
+With it off the port speaks HTTP and nothing else. There is no certificate and no
+redirect, and everything the screens send travels as it was written, the password
+of this account and the SSH password of a Host among it. The three certificate
+calls answer `409` while it is off, because there is no certificate in use to
+read or to replace.
+
+The certificate stays in the database. Turning HTTPS on again serves the one that
+was there, with the same fingerprint it had.
+
+It can be turned off because a certificate nobody signed for gets in the way in
+some places, and an operator who cannot reach the screen cannot fix anything from
+it.
+
 ## First startup and the account
 
 **The API and the UI are behind a login.** There is one account, and it is
@@ -341,8 +465,10 @@ all of them and you log in again.
 
 ## The built-in UI
 
-Open `http://<address>:<port>/` in a browser. `/` answers with a redirect to
-`/ui/`, which is where the UI is served from.
+Open `https://<address>:<port>/` in a browser. `/` answers with a redirect to
+`/ui/`, which is where the UI is served from. The browser warns about the
+certificate the first time; see [HTTPS and the certificate](#https-and-the-certificate)
+for what to check it against.
 
 **There is nothing to deploy for it.** The files are compiled into the binary, so
 no directory travels next to it and no path has to be configured.
@@ -536,7 +662,12 @@ The example below is a complete session. It uses a cookie jar file: `-c` writes
 the cookies the server sets, `-b` sends them back.
 
 ```bash
-BASE=http://127.0.0.1:8888
+BASE=https://127.0.0.1:8888
+
+# The certificate is the self-signed one, so curl is told where to find it. The
+# Settings screen shows it as PEM; -k on every call skips the check instead.
+# See [HTTPS and the certificate](#https-and-the-certificate).
+export CURL_CA_BUNDLE=tm-cert.pem
 
 # 1. Log in. -c stores tm_session and tm_csrf in cookies.txt.
 curl -s -c cookies.txt -X POST "$BASE/api/login" \
@@ -694,7 +825,7 @@ every answer.
 ## Reading the tunnel status
 
 ```bash
-curl -s -b cookies.txt http://127.0.0.1:8888/api/status
+curl -s -b cookies.txt https://127.0.0.1:8888/api/status
 ```
 
 ```json

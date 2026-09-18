@@ -1232,6 +1232,7 @@ function certificateCard(set, certificate) {
   ]));
 
   card.appendChild(certificateValidity(view));
+  card.appendChild(certificatePEM(view));
 
   const buttons = document.createElement("div");
   buttons.className = "buttons";
@@ -1241,6 +1242,40 @@ function certificateCard(set, certificate) {
   card.appendChild(buttons);
 
   return card;
+}
+
+// certificatePEM shows the certificate the server is serving, so that it can be
+// taken into a trust store from the browser that is already looking at it. A
+// self-signed certificate is warned about until some machine trusts it, and
+// without this the only copy is in the database.
+//
+// The private key is not here and is never sent to this screen. What a client
+// receives during every handshake is the certificate alone.
+//
+// It starts folded. It is a wall of base64 that is read once and never again,
+// and the rows above are what the screen is for.
+function certificatePEM(view) {
+  const box = document.createElement("details");
+  box.className = "pem-box";
+
+  const label = document.createElement("summary");
+  label.textContent = "The certificate as PEM";
+  box.appendChild(label);
+
+  const note = document.createElement("p");
+  note.className = "note";
+  note.textContent = "Save this as a file and add it to the trust store of the " +
+    "machine you browse from, or pass it to curl with --cacert. Nothing in it is " +
+    "private: the server hands these same bytes to every client.";
+  box.appendChild(note);
+
+  const text = document.createElement("pre");
+  text.className = "pem";
+  text.textContent = view.cert_pem === null || view.cert_pem === undefined
+    ? "" : view.cert_pem;
+  box.appendChild(text);
+
+  return box;
 }
 
 // httpsSwitch is api.https_enabled. It sits here rather than among the stored

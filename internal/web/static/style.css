@@ -595,3 +595,31 @@ td.actions {
     min-width: 0;
   }
 }
+
+/* The certificate as PEM. It is folded away because it is read once, when the
+   certificate is taken into a trust store, and never after that. */
+.pem-box {
+  margin-top: 1rem;
+}
+
+.pem-box > summary {
+  cursor: pointer;
+  font-weight: 600;
+  padding: 0.25rem 0;
+}
+
+.pem-box .note {
+  margin: 0.5rem 0;
+}
+
+pre.pem {
+  /* PEM lines are 64 characters and must not be rewrapped: a line broken in the
+     middle is a file that no longer parses when it is copied out. */
+  white-space: pre;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 12px;
+  line-height: 1.45;
+  max-height: 16rem;
+  overflow: auto;
+  user-select: all;
+}
