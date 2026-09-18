@@ -12,10 +12,12 @@ import (
 	"path/filepath"
 	"reflect"
 	"strings"
+	"sync/atomic"
 	"syscall"
 	"time"
 
 	"gorm.io/gorm"
+	gormlogger "gorm.io/gorm/logger"
 
 	"github.com/go-playground/validator/v10"
 	"github.com/jollaman999/tunnel-manager/internal/api"
@@ -24,6 +26,7 @@ import (
 	"github.com/jollaman999/tunnel-manager/internal/crypto"
 	"github.com/jollaman999/tunnel-manager/internal/database"
 	"github.com/jollaman999/tunnel-manager/internal/models"
+	"github.com/jollaman999/tunnel-manager/internal/settings"
 	"github.com/jollaman999/tunnel-manager/internal/tunnel"
 	"github.com/jollaman999/tunnel-manager/internal/web"
 	"github.com/labstack/echo/v4"
@@ -45,15 +48,138 @@ const shutdownTimeout = 10 * time.Second
 // long after the API stopped answering.
 const reconcileStopTimeout = 10 * time.Second
 
+// bootstrapLogLevel is the level the startup logs at until the stored settings
+// say otherwise. The level is one of those settings, and it is read out of the
+// database, so the steps that open the database have to log at some level
+// chosen without it. "info" is the level a fresh deployment gets anyway.
+const bootstrapLogLevel = "info"
+
+// coreSwitch holds the core a logger writes through so that it can be exchanged
+// while the logger stays the same object.
+//
+// The startup needs a logger before it has any setting, because the settings
+// are in the database and opening it is the step most likely to fail. Building
+// a second logger once they are read would leave everything that was handed the
+// first one writing to the console for the life of the process, gorm among
+// them, and gorm is what reports a query that fails. So the core behind the one
+// logger is replaced instead.
+type coreSwitch struct {
+	current atomic.Pointer[zapcore.Core]
+}
+
+func newCoreSwitch(core zapcore.Core) *coreSwitch {
+	s := &coreSwitch{}
+	s.set(core)
+
+	return s
+}
+
+func (s *coreSwitch) set(core zapcore.Core) {
+	s.current.Store(&core)
+}
+
+func (s *coreSwitch) load() zapcore.Core {
+	return *s.current.Load()
+}
+
+// switchedCore is the core of a logger built on a coreSwitch. Every call reads
+// the core that is in the switch at that moment, so the exchange reaches the
+// loggers that were handed out before it.
+type switchedCore struct {
+	swap   *coreSwitch
+	fields []zapcore.Field
+}
+
+func (c *switchedCore) Enabled(level zapcore.Level) bool {
+	return c.swap.load().Enabled(level)
+}
+
+// With keeps the fields beside the switch instead of folding them into the core
+// they were added to, since that core is replaced later on and a child logger
+// built before the exchange has to write through the new one as well.
+func (c *switchedCore) With(fields []zapcore.Field) zapcore.Core {
+	joined := make([]zapcore.Field, 0, len(c.fields)+len(fields))
+	joined = append(joined, c.fields...)
+	joined = append(joined, fields...)
+
+	return &switchedCore{swap: c.swap, fields: joined}
+}
+
+func (c *switchedCore) Check(entry zapcore.Entry, checked *zapcore.CheckedEntry) *zapcore.CheckedEntry {
+	if c.Enabled(entry.Level) {
+		return checked.AddCore(entry, c)
+	}
+
+	return checked
+}
+
+func (c *switchedCore) Write(entry zapcore.Entry, fields []zapcore.Field) error {
+	core := c.swap.load()
+	if len(c.fields) > 0 {
+		core = core.With(c.fields)
+	}
+
+	return core.Write(entry, fields)
+}
+
+func (c *switchedCore) Sync() error {
+	return c.swap.load().Sync()
+}
+
+func newEncoderConfig() zapcore.EncoderConfig {
+	encoderConfig := zap.NewProductionEncoderConfig()
+	encoderConfig.TimeKey = "timestamp"
+	encoderConfig.EncodeTime = zapcore.ISO8601TimeEncoder
+
+	return encoderConfig
+}
+
+// newBootstrapLogger returns the logger the startup runs on until the settings
+// are read, together with the switch that replaces its core once they are. It
+// writes to the console and nowhere else: the log file is a setting, and the
+// step that would say where that file is is the very one this logger is there
+// to report on.
+func newBootstrapLogger() (*zap.Logger, *coreSwitch) {
+	var level zapcore.Level
+
+	// bootstrapLogLevel is a constant of this file, so it parses.
+	_ = level.UnmarshalText([]byte(bootstrapLogLevel))
+
+	core := zapcore.NewCore(
+		zapcore.NewConsoleEncoder(newEncoderConfig()),
+		zapcore.AddSync(os.Stdout),
+		level,
+	)
+
+	swap := newCoreSwitch(core)
+
+	return zap.New(&switchedCore{swap: swap}, zap.AddCaller()), swap
+}
+
+// gormLogLevelOf maps an application log level to the level gorm understands.
+// It repeats what internal/database applies when it opens the handle, because
+// the level that decides it is stored in the database the handle belongs to:
+// the handle exists before the level is known, so it is set again once it is.
+func gormLogLevelOf(level string) gormlogger.LogLevel {
+	switch level {
+	case "debug":
+		return gormlogger.Info
+	case "info", "warn":
+		return gormlogger.Warn
+	default:
+		return gormlogger.Error
+	}
+}
+
 // prepareLogFile makes sure the configured log file can be written to.
-func prepareLogFile(cfg *config.Config) error {
-	logDir := filepath.Dir(cfg.Logging.File.Path)
+func prepareLogFile(s *settings.Settings) error {
+	logDir := filepath.Dir(s.LoggingFilePath)
 	err := os.MkdirAll(logDir, 0755)
 	if err != nil {
 		return fmt.Errorf("failed to create log directory: %v", err)
 	}
 
-	logFile := cfg.Logging.File.Path
+	logFile := s.LoggingFilePath
 	file, err := os.OpenFile(logFile, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
 	if err != nil {
 		return fmt.Errorf("failed to create log file: %v", err)
@@ -70,26 +196,33 @@ func prepareLogFile(cfg *config.Config) error {
 	return nil
 }
 
-func initLogger(cfg *config.Config) (*zap.Logger, error) {
+// initLogger builds the core the process logs through from the stored settings,
+// and returns the level handle along with it. The level is held in an
+// AtomicLevel rather than fixed into the core so that a change made on the
+// Settings screen takes hold without a restart, which is what the screen says
+// about it.
+//
+// A core is returned instead of a logger because the logger already exists by
+// the time this is called: the startup built one to report on opening the
+// database, and this core is put into it.
+func initLogger(s *settings.Settings) (zapcore.Core, zap.AtomicLevel, error) {
 	// An unusable log file is not fatal. The logger falls back to the console
 	// only, but the reason has to be visible since nothing is written to the file.
-	fileErr := prepareLogFile(cfg)
+	fileErr := prepareLogFile(s)
 	if fileErr != nil {
-		log.Printf("Logging to file is disabled: %v (path: %s)", fileErr, cfg.Logging.File.Path)
+		log.Printf("Logging to file is disabled: %v (path: %s)", fileErr, s.LoggingFilePath)
 	}
 
-	var level zapcore.Level
-	err := level.UnmarshalText([]byte(cfg.Logging.Level))
+	level := zap.NewAtomicLevel()
+	err := level.UnmarshalText([]byte(s.LoggingLevel))
 	if err != nil {
-		return nil, fmt.Errorf("failed to parse log level: %v", err)
+		return nil, level, fmt.Errorf("failed to parse log level: %v", err)
 	}
 
-	encoderConfig := zap.NewProductionEncoderConfig()
-	encoderConfig.TimeKey = "timestamp"
-	encoderConfig.EncodeTime = zapcore.ISO8601TimeEncoder
+	encoderConfig := newEncoderConfig()
 
 	var encoder zapcore.Encoder
-	if cfg.Logging.Format == "json" {
+	if s.LoggingFormat == "json" {
 		encoder = zapcore.NewJSONEncoder(encoderConfig)
 	} else {
 		encoder = zapcore.NewConsoleEncoder(encoderConfig)
@@ -99,11 +232,11 @@ func initLogger(cfg *config.Config) (*zap.Logger, error) {
 
 	if fileErr == nil {
 		logWriter := &lumberjack.Logger{
-			Filename:   cfg.Logging.File.Path,
-			MaxSize:    cfg.Logging.File.MaxSize,
-			MaxBackups: cfg.Logging.File.MaxBackups,
-			MaxAge:     cfg.Logging.File.MaxAge,
-			Compress:   cfg.Logging.File.Compress,
+			Filename:   s.LoggingFilePath,
+			MaxSize:    s.LoggingFileMaxSize,
+			MaxBackups: s.LoggingFileMaxBackups,
+			MaxAge:     s.LoggingFileMaxAge,
+			Compress:   s.LoggingFileCompress,
 		}
 
 		cores = append(cores, zapcore.NewCore(
@@ -119,16 +252,16 @@ func initLogger(cfg *config.Config) (*zap.Logger, error) {
 		level,
 	))
 
-	logger := zap.New(zapcore.NewTee(cores...), zap.AddCaller())
+	core := zapcore.NewTee(cores...)
 
 	if fileErr != nil {
-		logger.Warn("logging to file is disabled",
-			zap.String("path", cfg.Logging.File.Path),
+		zap.New(core).Warn("logging to file is disabled",
+			zap.String("path", s.LoggingFilePath),
 			zap.Error(fileErr),
 			zap.String("message", "logs are written to the console only"))
 	}
 
-	return logger, nil
+	return core, level, nil
 }
 
 // storedPasswordCheck holds what the stored passwords answered when they were
@@ -278,9 +411,48 @@ func (cv *CustomValidator) Validate(i interface{}) error {
 	return cv.validator.Struct(i)
 }
 
+// resetStoredSettings puts every stored setting back to its default and ends
+// the process. It is the way out of a stored set that keeps the process from
+// starting: the settings are changed on a screen this binary serves, and a
+// setting that stops the startup leaves no screen to change it on. It exits
+// rather than going on, because the process read nothing yet and going on would
+// serve settings that were replaced a moment ago.
+func resetStoredSettings(db *gorm.DB, logger *zap.Logger) {
+	before, after, err := settings.Reset(db)
+	if err != nil {
+		logger.Fatal("failed to put the settings back to their defaults", zap.Error(err))
+	}
+
+	changes := settings.Diff(before, after)
+
+	if len(changes) == 0 {
+		logger.Info("every setting was already at its default, so nothing was changed")
+	}
+
+	for _, change := range changes {
+		if before == nil {
+			logger.Info("stored a setting that the database did not hold yet",
+				zap.String("setting", change.Name),
+				zap.String("to", change.To))
+			continue
+		}
+
+		logger.Info("put a setting back to its default",
+			zap.String("setting", change.Name),
+			zap.String("from", change.From),
+			zap.String("to", change.To))
+	}
+
+	// os.Exit runs no deferred call, so what was logged is flushed here.
+	_ = logger.Sync()
+	os.Exit(0)
+}
+
 func main() {
 	versionFlag := flag.Bool("version", false, "show the version and exit")
 	configPath := flag.String("config", "config/config.yaml", "path to config file")
+	resetSettings := flag.Bool("reset-settings", false,
+		"put every stored setting back to its default and exit")
 	flag.Parse()
 
 	if *versionFlag {
@@ -288,20 +460,68 @@ func main() {
 		os.Exit(0)
 	}
 
+	// The file holds the path of the database file and nothing else. Every
+	// other setting is read out of that database further down.
 	cfg, err := config.LoadConfig(*configPath)
 	if err != nil {
 		log.Fatalf("Failed to load config: %v", err)
 	}
 
-	logger, err := initLogger(cfg)
-	if err != nil {
-		log.Fatalf("Failed to initialize logger: %v", err)
-	}
+	// This logger exists so that the steps below have somewhere to report to.
+	// Where the logs belong is itself a setting, and the settings are in the
+	// database, so the step that opens it runs before anything is known about
+	// the logging. Its core is replaced once the settings are read.
+	logger, loggerSwitch := newBootstrapLogger()
 	defer func() {
 		_ = logger.Sync()
 	}()
 
-	logger.Info("Starting tunnel-manager...")
+	logger.Info("Starting tunnel-manager...", zap.String("version", version))
+
+	// The database is a file, so there is nothing to wait for. A file that
+	// cannot be opened is not a problem that comes right on the next try, and
+	// retrying would only delay the message that says which path failed.
+	db, err := database.NewDatabase(cfg.Database.Path, logger, bootstrapLogLevel)
+	if err != nil {
+		logger.Fatal("failed to open the database",
+			zap.String("path", cfg.Database.Path),
+			zap.Error(err))
+	}
+
+	// The reset runs before the settings are read, because the set it is there
+	// to repair is exactly the one a read refuses.
+	if *resetSettings {
+		resetStoredSettings(db, logger)
+	}
+
+	set, err := settings.Load(db)
+	if err != nil {
+		logger.Fatal("failed to read the settings", zap.Error(err))
+	}
+
+	// From here the logger is the one the settings describe. logLevel is the
+	// handle the Settings screen changes the level through, which is why the
+	// level is not fixed into the core.
+	core, logLevel, err := initLogger(set)
+	if err != nil {
+		logger.Fatal("failed to initialize the logger", zap.Error(err))
+	}
+
+	loggerSwitch.set(core)
+
+	// The handle was opened at bootstrapLogLevel, since the level it should run
+	// at was inside it. Without this the stored logging.level would reach
+	// everything but the statements gorm reports, which is where a query that
+	// fails is named.
+	db.Logger = db.Logger.LogMode(gormLogLevelOf(set.LoggingLevel))
+
+	logger.Info("read the settings from the database",
+		zap.String("log_level", logLevel.String()),
+		zap.String("log_format", set.LoggingFormat),
+		zap.String("log_file", set.LoggingFilePath),
+		zap.Int("api_port", set.APIPort),
+		zap.Int("monitoring_interval_sec", set.MonitoringIntervalSec),
+		zap.Int("reconcile_interval_sec", set.ReconcileIntervalSec))
 
 	warnIfNotPrivileged(logger)
 
@@ -309,23 +529,25 @@ func main() {
 
 	// Without the key no stored password can be read, so a key that cannot be
 	// loaded stops the startup instead of leaving every tunnel unable to connect.
-	key, err := crypto.LoadOrCreateKey(cfg.Security.KeyFile)
+	key, err := crypto.LoadOrCreateKey(set.SecurityKeyFile)
 	if err != nil {
-		log.Fatalf("Failed to load the encryption key: %v", err)
+		logger.Fatal("failed to load the encryption key",
+			zap.String("key_file", set.SecurityKeyFile),
+			zap.Error(err))
 	}
 
 	cipher, err := crypto.NewCipher(key)
 	if err != nil {
-		log.Fatalf("Failed to initialize the encryption: %v", err)
+		logger.Fatal("failed to initialize the encryption", zap.Error(err))
 	}
 	// The path is reported as an absolute one. The configured value may be
 	// relative, and a relative path is read against the working directory,
 	// which differs between running from the repository, from the container and
 	// from systemd. Logging it as it was written tells the operator nothing
 	// about which file was actually opened.
-	keyPath, err := filepath.Abs(cfg.Security.KeyFile)
+	keyPath, err := filepath.Abs(set.SecurityKeyFile)
 	if err != nil {
-		keyPath = cfg.Security.KeyFile
+		keyPath = set.SecurityKeyFile
 	}
 
 	logger.Info("loaded the encryption key", zap.String("path", keyPath))
@@ -337,18 +559,10 @@ func main() {
 	sigChan := make(chan os.Signal, 1)
 	signal.Notify(sigChan, os.Interrupt, syscall.SIGINT, syscall.SIGTERM)
 
-	// The database is a file, so there is nothing to wait for. A file that
-	// cannot be opened is not a problem that comes right on the next try, and
-	// retrying would only delay the message that says which path failed.
-	db, err := database.NewDatabase(cfg.Database.Path, logger, cfg.Logging.Level)
-	if err != nil {
-		log.Fatalf("Failed to initialize database: %v", err)
-	}
-
 	// The stored passwords are read before any tunnel is built, so a key that
 	// opens none of them stops the startup here instead of letting every Host
 	// fail one SSH attempt at a time behind an API that answers normally.
-	checkEncryptionKey(db, cipher, logger, cfg.Security.KeyFile)
+	checkEncryptionKey(db, cipher, logger, set.SecurityKeyFile)
 
 	// The account is set up before anything is served and before any tunnel is
 	// built. The table it reads is created by the migration that NewDatabase
@@ -356,14 +570,16 @@ func main() {
 	// down. Leaving it to a later point would let the API come up with no
 	// account to authenticate against.
 	// The path is worked out once and handed to both the startup, which writes
-	// the file, and the setup, which deletes it once the account is settled.
+	// the file, and the setup, which deletes it once the account is settled. It
+	// stays beside the configuration file: that file is still there, and the
+	// directory it was read from is one the operator pointed the process at.
 	initialPasswordFile := auth.InitialPasswordFile(*configPath)
 
 	ensureUser(db, logger, initialPasswordFile)
 
-	manager, err := tunnel.NewManager(db, logger, cipher, cfg.Monitoring.IntervalSec)
+	manager, err := tunnel.NewManager(db, logger, cipher, set.MonitoringIntervalSec)
 	if err != nil {
-		log.Fatalf("Failed to create tunnel manager: %v", err)
+		logger.Fatal("failed to create the tunnel manager", zap.Error(err))
 	}
 
 	// The first reconcile pass runs before anything is served, so the tunnels
@@ -384,7 +600,7 @@ func main() {
 
 	go func() {
 		defer close(reconcileDone)
-		manager.RunReconcileLoop(reconcileCtx, cfg.Reconcile.IntervalSec)
+		manager.RunReconcileLoop(reconcileCtx, set.ReconcileIntervalSec)
 	}()
 
 	e := echo.New()
@@ -443,7 +659,7 @@ func main() {
 	serverErr := make(chan error, 1)
 
 	go func() {
-		err := e.Start(fmt.Sprintf(":%d", cfg.API.Port))
+		err := e.Start(fmt.Sprintf(":%d", set.APIPort))
 		if err != nil && !errors.Is(err, http.ErrServerClosed) {
 			serverErr <- err
 		}

@@ -10,6 +10,7 @@ import (
 
 	"github.com/glebarez/sqlite"
 	"github.com/jollaman999/tunnel-manager/internal/models"
+	"github.com/jollaman999/tunnel-manager/internal/settings"
 	"go.uber.org/zap"
 	"gorm.io/gorm"
 	gormlogger "gorm.io/gorm/logger"
@@ -182,6 +183,7 @@ func NewDatabase(path string, logger *zap.Logger, logLevel string) (*gorm.DB, er
 		&models.ServicePort{},
 		&models.Tunnel{},
 		&models.User{},
+		&settings.Settings{},
 	)
 	if err != nil {
 		return nil, fmt.Errorf("failed to migrate database: %w", err)

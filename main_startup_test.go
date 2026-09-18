@@ -14,28 +14,38 @@ import (
 
 	"github.com/glebarez/sqlite"
 	"github.com/go-playground/validator/v10"
-	"github.com/jollaman999/tunnel-manager/internal/config"
 	"github.com/jollaman999/tunnel-manager/internal/crypto"
 	"github.com/jollaman999/tunnel-manager/internal/models"
+	"github.com/jollaman999/tunnel-manager/internal/settings"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
 	"go.uber.org/zap/zaptest/observer"
 	"gorm.io/gorm"
 )
 
-// newLoggingConfig returns a configuration whose logging section is filled in
-// and whose log file is the given path. Everything else is left at zero,
-// because the startup steps exercised here read nothing else.
-func newLoggingConfig(path string) *config.Config {
-	cfg := &config.Config{}
-	cfg.Logging.Level = "info"
-	cfg.Logging.Format = "json"
-	cfg.Logging.File.Path = path
-	cfg.Logging.File.MaxSize = 1
-	cfg.Logging.File.MaxBackups = 1
-	cfg.Logging.File.MaxAge = 1
+// newLoggingSettings returns settings whose logging values are filled in and
+// whose log file is the given path. Everything else is left at zero, because
+// the startup steps exercised here read nothing else.
+func newLoggingSettings(path string) *settings.Settings {
+	return &settings.Settings{
+		LoggingLevel:          "info",
+		LoggingFormat:         "json",
+		LoggingFilePath:       path,
+		LoggingFileMaxSize:    1,
+		LoggingFileMaxBackups: 1,
+		LoggingFileMaxAge:     1,
+	}
+}
 
-	return cfg
+// newLogger builds the logger initLogger describes, which is what main does
+// with the core it returns.
+func newLogger(s *settings.Settings) (*zap.Logger, error) {
+	core, _, err := initLogger(s)
+	if err != nil {
+		return nil, err
+	}
+
+	return zap.New(core), nil
 }
 
 // openPathsOfThisProcess returns the file every descriptor of this process
@@ -67,7 +77,7 @@ func openPathsOfThisProcess(t *testing.T) []string {
 func TestPrepareLogFileCreatesTheDirectoryAndTheFile(t *testing.T) {
 	logFile := filepath.Join(t.TempDir(), "logs", "tunnel-manager.log")
 
-	err := prepareLogFile(newLoggingConfig(logFile))
+	err := prepareLogFile(newLoggingSettings(logFile))
 	if err != nil {
 		t.Fatalf("failed to prepare a log file under a directory that can be created: %v", err)
 	}
@@ -91,7 +101,7 @@ func TestPrepareLogFileLeavesNoDescriptorOpenOnTheLogFile(t *testing.T) {
 
 	before := len(openPathsOfThisProcess(t))
 
-	err := prepareLogFile(newLoggingConfig(logFile))
+	err := prepareLogFile(newLoggingSettings(logFile))
 	if err != nil {
 		t.Fatalf("failed to prepare the log file: %v", err)
 	}
@@ -118,7 +128,7 @@ func TestPrepareLogFileReportsADirectoryThatCannotBeCreated(t *testing.T) {
 		t.Fatalf("failed to write the blocking file: %v", err)
 	}
 
-	err = prepareLogFile(newLoggingConfig(filepath.Join(blocking, "logs", "tunnel-manager.log")))
+	err = prepareLogFile(newLoggingSettings(filepath.Join(blocking, "logs", "tunnel-manager.log")))
 	if err == nil {
 		t.Fatal("a log directory that cannot be created was reported as prepared")
 	}
@@ -137,7 +147,7 @@ func TestPrepareLogFileReportsALogFileThatCannotBeOpened(t *testing.T) {
 		t.Fatalf("failed to create the directory that takes the place of the log file: %v", err)
 	}
 
-	err = prepareLogFile(newLoggingConfig(logFile))
+	err = prepareLogFile(newLoggingSettings(logFile))
 	if err == nil {
 		t.Fatal("a log file that cannot be opened was reported as prepared")
 	}
@@ -193,12 +203,12 @@ func TestInitLoggerFallsBackToStdoutWhenTheLogFileCannotBeOpened(t *testing.T) {
 		t.Fatalf("failed to create the directory that takes the place of the log file: %v", err)
 	}
 
-	cfg := newLoggingConfig(logFile)
+	set := newLoggingSettings(logFile)
 
 	var logger *zap.Logger
 
 	output := withStdoutCaptured(t, func() {
-		logger, err = initLogger(cfg)
+		logger, err = newLogger(set)
 		if err != nil || logger == nil {
 			return
 		}
@@ -223,7 +233,7 @@ func TestInitLoggerFallsBackToStdoutWhenTheLogFileCannotBeOpened(t *testing.T) {
 func TestInitLoggerWritesToTheLogFileWhenItCanBeOpened(t *testing.T) {
 	logFile := filepath.Join(t.TempDir(), "logs", "tunnel-manager.log")
 
-	logger, err := initLogger(newLoggingConfig(logFile))
+	logger, err := newLogger(newLoggingSettings(logFile))
 	if err != nil {
 		t.Fatalf("failed to build the logger: %v", err)
 	}
@@ -252,10 +262,10 @@ func TestInitLoggerWritesToTheLogFileWhenItCanBeOpened(t *testing.T) {
 func TestInitLoggerWritesNothingBelowTheConfiguredLevel(t *testing.T) {
 	logFile := filepath.Join(t.TempDir(), "logs", "tunnel-manager.log")
 
-	cfg := newLoggingConfig(logFile)
-	cfg.Logging.Level = "warn"
+	set := newLoggingSettings(logFile)
+	set.LoggingLevel = "warn"
 
-	logger, err := initLogger(cfg)
+	logger, err := newLogger(set)
 	if err != nil {
 		t.Fatalf("failed to build the logger: %v", err)
 	}
@@ -277,18 +287,118 @@ func TestInitLoggerWritesNothingBelowTheConfiguredLevel(t *testing.T) {
 }
 
 func TestInitLoggerRefusesALevelItCannotRead(t *testing.T) {
-	cfg := newLoggingConfig(filepath.Join(t.TempDir(), "logs", "tunnel-manager.log"))
-	cfg.Logging.Level = "chatty"
+	set := newLoggingSettings(filepath.Join(t.TempDir(), "logs", "tunnel-manager.log"))
+	set.LoggingLevel = "chatty"
 
-	logger, err := initLogger(cfg)
+	core, _, err := initLogger(set)
 	if err == nil {
 		t.Fatal("a log level that cannot be read was accepted")
 	}
-	if logger != nil {
-		t.Fatal("a logger was returned for a log level that cannot be read")
+	if core != nil {
+		t.Fatal("a core was returned for a log level that cannot be read")
 	}
 	if !strings.Contains(err.Error(), "failed to parse log level") {
 		t.Fatalf("the failure does not name the log level: %v", err)
+	}
+}
+
+// TestTheBootstrapLoggerWritesToTheConsole covers the logger the startup runs
+// on before it has read anything. Where the logs belong is a setting, and the
+// settings are in the database, so this logger is what reports a database that
+// cannot be opened.
+func TestTheBootstrapLoggerWritesToTheConsole(t *testing.T) {
+	output := withStdoutCaptured(t, func() {
+		logger, _ := newBootstrapLogger()
+		logger.Info("a line from before the settings were read")
+	})
+
+	if !strings.Contains(output, "a line from before the settings were read") {
+		t.Fatalf("the bootstrap logger wrote nothing to the console, stdout: %q", output)
+	}
+}
+
+// TestTheLoggersHandedOutBeforeTheSwapFollowIt is what the switch exists for.
+// The database handle is built with the bootstrap logger, so a second logger
+// made once the settings are read would leave gorm writing to the console for
+// the life of the process, and gorm is what reports a query that fails.
+func TestTheLoggersHandedOutBeforeTheSwapFollowIt(t *testing.T) {
+	logFile := filepath.Join(t.TempDir(), "logs", "tunnel-manager.log")
+
+	var buildErr error
+
+	withStdoutCaptured(t, func() {
+		logger, swap := newBootstrapLogger()
+
+		// A child made before the swap, which is what NewDatabase is handed.
+		child := logger.Named("gorm").With(zap.String("component", "gorm"))
+
+		logger.Info("a line from before the swap")
+
+		core, _, err := initLogger(newLoggingSettings(logFile))
+		if err != nil {
+			buildErr = err
+			return
+		}
+
+		swap.set(core)
+
+		logger.Info("a line from after the swap")
+		child.Info("a line from the child that was handed out before the swap")
+	})
+
+	if buildErr != nil {
+		t.Fatalf("failed to build the core the settings describe: %v", buildErr)
+	}
+
+	body, err := os.ReadFile(logFile)
+	if err != nil {
+		t.Fatalf("failed to read the log file: %v", err)
+	}
+
+	if strings.Contains(string(body), "a line from before the swap") {
+		t.Fatalf("a line written before the swap reached the log file, content: %q", string(body))
+	}
+	if !strings.Contains(string(body), "a line from after the swap") {
+		t.Fatalf("the logger did not follow the swap into the log file, content: %q", string(body))
+	}
+	if !strings.Contains(string(body), "a line from the child that was handed out before the swap") {
+		t.Fatalf("a child logger made before the swap did not follow it, content: %q", string(body))
+	}
+	if !strings.Contains(string(body), "\"component\":\"gorm\"") {
+		t.Fatalf("the fields of the child logger were lost in the swap, content: %q", string(body))
+	}
+}
+
+// TestTheLevelHandleChangesWhatIsWrittenWithoutARestart pins the handle the
+// Settings screen changes the log level through. The level is held in an
+// AtomicLevel rather than fixed into the core, which is what lets that one
+// setting take hold while the process runs.
+func TestTheLevelHandleChangesWhatIsWrittenWithoutARestart(t *testing.T) {
+	logFile := filepath.Join(t.TempDir(), "logs", "tunnel-manager.log")
+
+	core, level, err := initLogger(newLoggingSettings(logFile))
+	if err != nil {
+		t.Fatalf("failed to build the core: %v", err)
+	}
+
+	logger := zap.New(core)
+
+	logger.Debug("a debug line written while the level is info")
+
+	level.SetLevel(zapcore.DebugLevel)
+
+	logger.Debug("a debug line written after the level was lowered")
+
+	body, err := os.ReadFile(logFile)
+	if err != nil {
+		t.Fatalf("failed to read the log file: %v", err)
+	}
+
+	if strings.Contains(string(body), "a debug line written while the level is info") {
+		t.Fatalf("a debug line was written while the level was info, content: %q", string(body))
+	}
+	if !strings.Contains(string(body), "a debug line written after the level was lowered") {
+		t.Fatalf("the level handle did not take hold, content: %q", string(body))
 	}
 }
 

@@ -9,6 +9,11 @@ import (
 	"gopkg.in/yaml.v2"
 )
 
+// Config is the whole of the configuration file. Everything but the path of
+// the database file is stored in that database and changed on the Settings
+// screen, so this is the one setting the file still carries: the process has to
+// know where the database is before it can read anything out of it, and that
+// is the only thing it cannot look up there.
 type Config struct {
 	// Database is a file now, so a path is all it takes. The settings the
 	// MySQL setup carried are gone, and a file that still holds them is
@@ -16,38 +21,6 @@ type Config struct {
 	Database struct {
 		Path string `yaml:"path"`
 	} `yaml:"database"`
-
-	API struct {
-		Port int `yaml:"port"`
-	} `yaml:"api"`
-
-	Monitoring struct {
-		IntervalSec int `yaml:"interval_sec"`
-	} `yaml:"monitoring"`
-
-	// Reconcile is how often the tunnels that should be up are compared with
-	// the ones that are up. Monitoring.IntervalSec checks whether a tunnel
-	// that is already up is still alive, which is a different job, so the two
-	// stay separate even while they share a default.
-	Reconcile struct {
-		IntervalSec int `yaml:"interval_sec"`
-	} `yaml:"reconcile"`
-
-	Security struct {
-		KeyFile string `yaml:"key_file"`
-	} `yaml:"security"`
-
-	Logging struct {
-		Level  string `yaml:"level"`
-		Format string `yaml:"format"`
-		File   struct {
-			Path       string `yaml:"path"`
-			MaxSize    int    `yaml:"max_size"`
-			MaxBackups int    `yaml:"max_backups"`
-			MaxAge     int    `yaml:"max_age"`
-			Compress   bool   `yaml:"compress"`
-		} `yaml:"file"`
-	} `yaml:"logging"`
 }
 
 // removedDatabaseKeys are the settings the MySQL setup carried. They are kept
@@ -115,52 +88,52 @@ func checkRemovedDatabaseKeys(data []byte) error {
 		strings.Join(found, ", "))
 }
 
+// movedSections are the configuration sections that became rows of the settings
+// table. They are kept here so that a file left over from the time they lived
+// in it can be named section by section.
+var movedSections = []string{"api", "monitoring", "reconcile", "security", "logging"}
+
+// checkMovedSections refuses a configuration file that still carries the
+// settings which moved into the database. It is the same read as
+// checkRemovedDatabaseKeys and exists for the same reason: yaml.v2 drops a key
+// that matches no field without a word, so such a file would load and the
+// process would run on the stored settings while the operator edits a file that
+// nothing reads and wonders why the port never changes.
+func checkMovedSections(data []byte) error {
+	var raw yaml.MapSlice
+
+	err := yaml.Unmarshal(data, &raw)
+	if err != nil {
+		// The load already reported the parse failure against the real struct.
+		return nil
+	}
+
+	var found []string
+
+	for _, item := range raw {
+		name := fmt.Sprint(item.Key)
+		for _, moved := range movedSections {
+			if name == moved {
+				found = append(found, name)
+			}
+		}
+	}
+
+	if len(found) == 0 {
+		return nil
+	}
+
+	return fmt.Errorf("the configuration file still carries the settings sections %s. "+
+		"tunnel-manager keeps those settings in the database now and they are changed on the "+
+		"Settings screen of the web UI: remove these sections, which leaves database.path as the "+
+		"only setting the file carries. Start the binary with -reset-settings to put every stored "+
+		"setting back to its default",
+		strings.Join(found, ", "))
+}
+
 func (c *Config) Validate() error {
 	if c.Database.Path == "" {
 		return fmt.Errorf("database path is required")
-	}
-
-	if c.API.Port < 1 || c.API.Port > 65535 {
-		return fmt.Errorf("invalid API port: %d", c.API.Port)
-	}
-
-	if c.Monitoring.IntervalSec <= 0 {
-		return fmt.Errorf("invalid monitoring interval: %d", c.Monitoring.IntervalSec)
-	}
-
-	if c.Reconcile.IntervalSec <= 0 {
-		return fmt.Errorf("invalid reconcile interval: %d", c.Reconcile.IntervalSec)
-	}
-
-	validLevels := map[string]bool{
-		"debug":  true,
-		"info":   true,
-		"warn":   true,
-		"error":  true,
-		"dpanic": true,
-		"panic":  true,
-		"fatal":  true,
-	}
-	if !validLevels[c.Logging.Level] {
-		return fmt.Errorf("invalid log level: %s", c.Logging.Level)
-	}
-
-	validFormats := map[string]bool{
-		"json":    true,
-		"console": true,
-	}
-	if !validFormats[c.Logging.Format] {
-		return fmt.Errorf("invalid log format: %s", c.Logging.Format)
-	}
-
-	if c.Logging.File.MaxSize < 0 {
-		return fmt.Errorf("invalid log max size: %d", c.Logging.File.MaxSize)
-	}
-	if c.Logging.File.MaxBackups < 0 {
-		return fmt.Errorf("invalid log max backups: %d", c.Logging.File.MaxBackups)
-	}
-	if c.Logging.File.MaxAge < 0 {
-		return fmt.Errorf("invalid log max age: %d", c.Logging.File.MaxAge)
 	}
 
 	return nil
@@ -173,30 +146,6 @@ func (c *Config) setDefaults() error {
 			return err
 		}
 		c.Database.Path = path
-	}
-	if c.Reconcile.IntervalSec == 0 {
-		c.Reconcile.IntervalSec = 5
-	}
-	if c.Security.KeyFile == "" {
-		c.Security.KeyFile = "keys/tunnel-manager.key"
-	}
-	if c.Logging.Level == "" {
-		c.Logging.Level = "info"
-	}
-	if c.Logging.Format == "" {
-		c.Logging.Format = "json"
-	}
-	if c.Logging.File.Path == "" {
-		c.Logging.File.Path = "logs/tunnel-manager.log"
-	}
-	if c.Logging.File.MaxSize <= 0 {
-		c.Logging.File.MaxSize = 100
-	}
-	if c.Logging.File.MaxBackups <= 0 {
-		c.Logging.File.MaxBackups = 5
-	}
-	if c.Logging.File.MaxAge <= 0 {
-		c.Logging.File.MaxAge = 30
 	}
 
 	return nil
@@ -214,6 +163,10 @@ func LoadConfig(path string) (*Config, error) {
 	}
 
 	if err := checkRemovedDatabaseKeys(data); err != nil {
+		return nil, err
+	}
+
+	if err := checkMovedSections(data); err != nil {
 		return nil, err
 	}
 
