@@ -26,7 +26,7 @@ services:
     volumes:
       - ./_data/db:/data
       - ./_data/keys:/keys
-      - ./_data/tunnel-manager:/var/log/tunnel-manager
+      - ./_data/logs:/logs
     environment:
       - TZ=Asia/Seoul
     restart: always
