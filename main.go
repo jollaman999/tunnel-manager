@@ -735,6 +735,14 @@ func main() {
 
 	h := api.NewHandler(db, manager, logger, cipher)
 	authHandler := api.NewAuthHandler(db, logger, initialPasswordFile)
+	// The holder is what the certificate is replaced through while the process
+	// runs. It is built empty and here, above both the routes and the listener,
+	// because the handler that replaces the certificate and the listener that
+	// serves it have to be looking at the same one. It stays empty while HTTPS
+	// is off, and the handler answers with what that means rather than with a
+	// certificate nothing is serving.
+	certHolder := tlsserve.NewHolder(nil)
+	certificateHandler := api.NewCertificateHandler(db, cipher, logger, certHolder)
 	// The level handle goes to the handler that stores the settings, so that a
 	// stored logging.level reaches the running loggers as it is saved. It is
 	// the one setting this process can take on without being started again.
@@ -789,6 +797,10 @@ func main() {
 
 	g.GET("/settings", settingsHandler.GetSettings)
 	g.PUT("/settings", settingsHandler.UpdateSettings)
+
+	g.GET("/certificate", certificateHandler.GetCertificate)
+	g.POST("/certificate/renew", certificateHandler.RenewCertificate)
+	g.PUT("/certificate", certificateHandler.InstallCertificate)
 
 	g.GET("/logs", logsHandler.GetLogs)
 
@@ -859,7 +871,9 @@ func main() {
 			// echo is handed a listener that is already wrapped in TLS, which
 			// is what it does for itself in StartTLS. It keeps its own server
 			// and with it the graceful shutdown the rest of main relies on.
-			e.TLSServer.TLSConfig = tlsserve.ServerConfig(cert)
+			certHolder.Set(cert)
+
+			e.TLSServer.TLSConfig = tlsserve.ServerConfig(certHolder)
 			e.TLSListener = tls.NewListener(portSplit.TLS(), e.TLSServer.TLSConfig)
 
 			go func() {

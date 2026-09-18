@@ -353,7 +353,7 @@ no directory travels next to it and no path has to be configured.
 | Hosts | `/ui/hosts` | One row per Host with ID, IP, port, user, description, enabled and updated. Add a Host, edit one, enable or disable one, delete one. |
 | Service Ports | `/ui/service-ports` | One row per service port with ID, service IP, service port, local port, description and updated. Add, edit and delete. |
 | Logs | `/ui/logs` | The end of the log file, newest last, with a level filter and a count to show. It asks again every 5 seconds. It reads the file the process is writing now; rotated files are not shown. |
-| Settings | `/ui/settings` | Every stored setting, what a save changed and whether it is in place, and the Uninstall at the bottom. See [Settings](#settings). |
+| Settings | `/ui/settings` | Every stored setting, what a save changed and whether it is in place, the certificate being served with a button to renew it and boxes to register one of your own, and the Uninstall at the bottom. See [Settings](#settings). |
 | Login | `/ui/login` | Where a client without a session lands. Leave the username empty on the first sign in. It leads to the setup screen while the account still needs one. |
 
 The version of the binary is in the bottom right corner of every screen, the
@@ -379,6 +379,7 @@ and `PUT /api/settings`.
 | On the screen | Field in the API | Reported as | Default | When it applies |
 |---------------|------------------|-------------|---------|-----------------|
 | API port | `api_port` | `api.port` | `8888` | At the next start |
+| Serve over HTTPS | `api_https_enabled` | `api.https_enabled` | `true` | At the next start |
 | Monitoring interval (seconds) | `monitoring_interval_sec` | `monitoring.interval_sec` | `5` | At the next start |
 | Reconcile interval (seconds) | `reconcile_interval_sec` | `reconcile.interval_sec` | `5` | At the next start |
 | Encryption key file | `security_key_file` | `security.key_file` | `keys/tunnel-manager.key` | At the next start |
@@ -642,8 +643,25 @@ that is not a `GET` requires the `X-CSRF-Token` header.
 |--------|------|--------------|
 | `GET` | `/api/settings` | The stored settings |
 | `PUT` | `/api/settings` | Stores the settings in the body over the stored ones, and answers with what changed and whether a restart is needed |
+| `GET` | `/api/certificate` | The certificate being served: fingerprint, subject, issuer, the names it covers, the validity and the days left |
+| `POST` | `/api/certificate/renew` | Makes another self-signed certificate and serves it from the next connection on |
+| `PUT` | `/api/certificate` | Takes `cert_pem` and `key_pem`, stores them and serves them from the next connection on |
 | `POST` | `/api/uninstall` | Takes `password`, removes the installation and ends the process |
 | `GET` | `/api/logs` | The end of the log file. `lines` says how many, up to 2000 |
+
+The three certificate calls answer with a `409` while `api_https_enabled` is
+off, because there is no certificate in use then. Neither the answer to a
+replacement nor the answer to a read carries the private key: it is stored
+encrypted with the same key the SSH passwords are sealed with and never leaves
+the process. `cert_pem` may be a chain, with the server certificate first and
+the intermediates behind it.
+
+A replacement takes effect on the next connection and not on the ones that are
+already open: TLS settles on a certificate during the handshake and the
+connection never looks again. So the answer to a renewal arrives over the old
+certificate, and the browser goes on showing the old fingerprint until the page
+is loaded again. Both fingerprints, the old and the new, are written to the log
+when a replacement happens.
 
 The answer to `/api/logs` carries the lines and what was done to get them:
 `path` is the file it read, `requested` and `max_lines` say what was asked for

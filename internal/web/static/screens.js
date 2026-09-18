@@ -49,6 +49,23 @@ let editingServicePortID = null;
 // report from an earlier visit is never read as belonging to this one.
 let settingsSaveResult = null;
 
+// certificateDraft is what was typed into the two PEM boxes. It is kept because
+// the screen is drawn again after a registration that was refused, and a paste
+// of thirty lines that is thrown away on every refusal is one the operator has
+// to go and find again to correct a stray character in it.
+let certificateDraft = { certPEM: "", keyPEM: "" };
+
+// certificateProblem is why the last registration was refused, in the words the
+// server used. It says which of the two boxes is wrong and what about it, which
+// is the whole of what the operator has to go on.
+let certificateProblem = "";
+
+// certificateReplaceResult is what the last renewal or registration answered.
+// It is kept for the same reason settingsSaveResult is: the screen is drawn
+// again from the server right afterwards, and what the replacement said about
+// the connections that are already open is not in that answer.
+let certificateReplaceResult = null;
+
 // uninstallResult is what the uninstall answered: the files that went and the
 // ones that could not be removed. It is kept here because the screen that shows
 // it is drawn after the server has removed itself, so there is nothing left to
@@ -933,12 +950,16 @@ function logSummary(answer, read, shown) {
 
 function enterSettings() {
   settingsSaveResult = null;
+  certificateDraft = { certPEM: "", keyPEM: "" };
+  certificateProblem = "";
+  certificateReplaceResult = null;
 
   return drawSettings();
 }
 
 async function drawSettings() {
   const set = await apiCall("GET", "/api/settings");
+  const certificate = await readCertificate();
 
   const nodes = [];
 
@@ -949,10 +970,31 @@ async function drawSettings() {
   }
 
   nodes.push(settingsForm(set));
+  nodes.push(certificateCard(set, certificate));
+  nodes.push(certificateForm());
   nodes.push(settingsRescue());
   nodes.push(settingsDangerZone());
 
   render("Settings", nodes);
+}
+
+// readCertificate fetches what is being served over TLS, and turns a refusal
+// into something to show rather than letting it take the screen down.
+//
+// The one refusal that is expected is the server that came up in the clear:
+// there is no certificate then, and the toggle that decides it is on this very
+// screen. A Settings screen that would not draw at all in that state is one the
+// operator cannot use to turn HTTPS back on.
+async function readCertificate() {
+  try {
+    return { view: await apiCall("GET", "/api/certificate"), problem: "" };
+  } catch (error) {
+    if (error instanceof Redirected) {
+      throw error;
+    }
+
+    return { view: null, problem: error.message };
+  }
 }
 
 // settingsForm is every setting that is stored. The boxes are checked here
@@ -1145,6 +1187,304 @@ function appliedBadge(applied) {
   badge.dataset.applied = text;
 
   return badge;
+}
+
+// certificateCard is what is being served over TLS right now, and the two
+// things that change it: the switch that decides whether TLS is used at all,
+// and the button that makes another certificate.
+//
+// Nothing here is drawn as markup. Every value comes from a certificate that
+// somebody else may have issued, and a subject is a field an issuer fills in.
+function certificateCard(set, certificate) {
+  const card = document.createElement("section");
+
+  card.className = "card";
+  card.dataset.card = "certificate";
+  card.appendChild(element("h2", "HTTPS and the certificate"));
+  card.appendChild(httpsSwitch(set));
+
+  // What the last replacement said sits above the certificate it produced,
+  // because it is the answer to the press and the table below it is what the
+  // server is serving either way.
+  if (certificateReplaceResult !== null) {
+    card.appendChild(certificateReplacement(certificateReplaceResult));
+  }
+
+  if (certificate.view === null) {
+    card.appendChild(statusLine(certificate.problem, "warning"));
+
+    return card;
+  }
+
+  const view = certificate.view;
+  const hosts = view.hosts === null || view.hosts === undefined ? [] : view.hosts;
+
+  card.appendChild(buildTable(["What", "Value"], [
+    ["Fingerprint (SHA-256)", fingerprintValue(view.fingerprint_sha256)],
+    ["Subject", view.subject],
+    ["Issuer", view.issuer],
+    ["Signed by", view.self_signed
+      ? "Itself. A client warns about it until this certificate is trusted on that machine"
+      : "Another certificate, which the issuer above names"],
+    ["Names and addresses it covers", hosts.length === 0 ? "None" : hosts.join(", ")],
+    ["Valid from", formatTime(view.not_before)],
+    ["Valid until", formatTime(view.not_after)]
+  ]));
+
+  card.appendChild(certificateValidity(view));
+
+  const buttons = document.createElement("div");
+  buttons.className = "buttons";
+  buttons.appendChild(actionButton("Make a new certificate", "certificate-renew",
+    renewCertificate));
+
+  card.appendChild(buttons);
+
+  return card;
+}
+
+// httpsSwitch is api.https_enabled. It sits here rather than among the stored
+// settings above, because what it decides is everything else in this card: with
+// it off there is no certificate to show and no handshake to serve one in.
+//
+// It saves on its own press. Bound into the form above it would be one more
+// value in a save that is mostly about logging, and a flip of it would be lost
+// among the rest of what that save reports.
+function httpsSwitch(set) {
+  const wrap = document.createElement("div");
+
+  const row = document.createElement("div");
+  row.className = "field";
+
+  const label = element("label", "Serve over HTTPS");
+  label.htmlFor = "certificate-https";
+
+  const box = document.createElement("input");
+  box.type = "checkbox";
+  box.id = "certificate-https";
+  box.name = "api_https_enabled";
+  box.dataset.field = "api_https_enabled";
+  box.checked = Boolean(set.api_https_enabled);
+
+  row.appendChild(label);
+  row.appendChild(box);
+  row.appendChild(element("small",
+    "Taken up at the next start. With it off the API and these screens are served in the " +
+      "clear, and everything they send travels as it is, the password of this account among it."));
+
+  const buttons = document.createElement("div");
+  buttons.className = "buttons";
+  buttons.appendChild(actionButton("Save", "certificate-https-save", function () {
+    return saveHTTPS(box.checked);
+  }));
+
+  wrap.appendChild(row);
+  wrap.appendChild(buttons);
+
+  return wrap;
+}
+
+async function saveHTTPS(enabled) {
+  // Only this one setting is sent. The server binds what a request names onto
+  // what is stored and leaves the rest alone, so nothing else on the screen is
+  // written over by this press.
+  settingsSaveResult = await apiCall("PUT", "/api/settings", { api_https_enabled: enabled });
+
+  setNotice("The setting is stored. It is taken up at the next start.", "info");
+
+  return drawSettings();
+}
+
+// certificateValidity is the line that says how long is left. A certificate
+// that is running out is the one thing on this card that has to be acted on
+// before it happens, so it is not left to be worked out from the date above it.
+function certificateValidity(view) {
+  const days = view.days_remaining;
+
+  if (typeof days !== "number") {
+    return statusLine("How long this certificate has left could not be read.", "empty");
+  }
+
+  if (days < 0) {
+    return statusLine(
+      "This certificate has expired. Nothing connects to this server over HTTPS until it is " +
+        "replaced: make a new one below, or register one you were given.",
+      "warning"
+    );
+  }
+
+  if (days <= 30) {
+    return statusLine(
+      "This certificate runs out in " + days + " " + plural(days, "day", "days") +
+        ". Replace it before then, or nothing will connect over HTTPS.",
+      "warning"
+    );
+  }
+
+  return statusLine(
+    "This certificate is good for another " + days + " " + plural(days, "day", "days") + ".",
+    "ok"
+  );
+}
+
+// certificateReplacement is what the last renewal or registration said. The
+// sentence about the connections that are already open comes from the server
+// and is shown as it came: it is the answer to "I pressed it and the browser
+// still shows the old certificate", which is what happens every time.
+function certificateReplacement(result) {
+  const wrap = document.createElement("div");
+
+  if (typeof result.note === "string" && result.note !== "") {
+    wrap.appendChild(statusLine(result.note, "warning"));
+  }
+
+  if (typeof result.warning === "string" && result.warning !== "") {
+    wrap.appendChild(statusLine(result.warning, "warning"));
+  }
+
+  if (typeof result.previous_fingerprint_sha256 === "string" &&
+      result.previous_fingerprint_sha256 !== "") {
+    const line = element("p", "The fingerprint before this change was ");
+
+    line.appendChild(fingerprintValue(result.previous_fingerprint_sha256));
+    wrap.appendChild(line);
+  }
+
+  return wrap;
+}
+
+// fingerprintValue is a fingerprint set apart from the text around it. It is
+// read character by character against what a browser or openssl shows, so it
+// is not left in the face the rest of the screen is in.
+function fingerprintValue(value) {
+  const node = element("span", value === null || value === undefined ? "" : value);
+
+  node.className = "fingerprint";
+
+  return node;
+}
+
+async function renewCertificate() {
+  if (!window.confirm("Make a new certificate? Its fingerprint is a different one, so every " +
+      "browser and every script that was told to trust the current certificate warns about " +
+      "this server again until the new one is trusted as well. Connections that are open now " +
+      "are not cut.")) {
+    return;
+  }
+
+  certificateReplaceResult = await apiCall("POST", "/api/certificate/renew");
+  certificateProblem = "";
+
+  setNotice("A new certificate is in place for every connection made from now on. Reload the " +
+    "page to be served it.", "info");
+
+  return drawSettings();
+}
+
+// certificateForm is where a certificate from somewhere else is registered.
+//
+// The two are pasted rather than uploaded because what an operator holds is two
+// files on the machine they are sitting at, which is not the machine this
+// server runs on, and a paste needs nothing on either end but a clipboard.
+function certificateForm() {
+  const intro = [
+    element("p",
+      "Paste a certificate you were issued, together with its private key. Both are stored " +
+        "in the database, the key encrypted with the same key the SSH passwords are sealed " +
+        "with, and the certificate is served from the next connection on."),
+    element("p",
+      "If the issuer gave you intermediate certificates, paste them into the same box, below " +
+        "the server certificate and in the order they were given. The server certificate goes " +
+        "first.")
+  ];
+
+  // Why the last attempt was refused stays on the form, next to the boxes it is
+  // about, and not only on the line above the screen.
+  if (certificateProblem !== "") {
+    intro.push(statusLine(certificateProblem, "warning"));
+  }
+
+  return buildForm({
+    name: "certificate-install",
+    legend: "Register a certificate of your own",
+    submitLabel: "Register certificate",
+    intro: intro,
+    fields: [
+      {
+        name: "cert_pem",
+        label: "Certificate (PEM)",
+        type: "textarea",
+        value: certificateDraft.certPEM,
+        hint: "-----BEGIN CERTIFICATE-----",
+        check: checkCertificateBlock,
+        note: "The server certificate first, then any intermediates."
+      },
+      {
+        name: "key_pem",
+        label: "Private key (PEM)",
+        type: "textarea",
+        value: certificateDraft.keyPEM,
+        hint: "The key file, which begins with a BEGIN PRIVATE KEY line",
+        check: checkKeyBlock,
+        note: "Stored encrypted. It is never shown on this screen and never sent back. " +
+          "A key that is protected by a passphrase has to have it taken off first."
+      }
+    ],
+    onSubmit: installCertificate
+  });
+}
+
+// checkCertificateBlock and checkKeyBlock catch the paste that is plainly not
+// what the box is for, before a round trip. Everything else, a key that belongs
+// to another certificate among it, is for the server to decide: it is the side
+// that can actually put the two together.
+function checkCertificateBlock(value) {
+  return String(value).indexOf("-----BEGIN CERTIFICATE-----") === -1
+    ? "Paste the certificate, which starts with -----BEGIN CERTIFICATE-----."
+    : "";
+}
+
+function checkKeyBlock(value) {
+  const text = String(value);
+
+  if (text.indexOf("-----BEGIN") === -1 || text.indexOf("PRIVATE KEY-----") === -1) {
+    return "Paste the private key. Its first line is the one that says BEGIN PRIVATE KEY.";
+  }
+
+  return "";
+}
+
+async function installCertificate(values) {
+  // What was typed is kept before the call, so that a refusal comes back to a
+  // form that still holds it.
+  certificateDraft = { certPEM: values.cert_pem, keyPEM: values.key_pem };
+
+  let answer;
+
+  try {
+    answer = await apiCall("PUT", "/api/certificate", {
+      cert_pem: values.cert_pem,
+      key_pem: values.key_pem
+    });
+  } catch (error) {
+    if (error instanceof Redirected) {
+      throw error;
+    }
+
+    certificateProblem = error.message;
+    setNotice(error.message, "error");
+
+    return drawSettings();
+  }
+
+  certificateDraft = { certPEM: "", keyPEM: "" };
+  certificateProblem = "";
+  certificateReplaceResult = answer;
+
+  setNotice("The certificate is stored and is in place for every connection made from now on. " +
+    "Reload the page to be served it.", "info");
+
+  return drawSettings();
 }
 
 // settingsRescue is the way back from a stored setting that keeps the server

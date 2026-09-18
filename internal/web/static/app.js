@@ -509,6 +509,26 @@ function bulletList(items) {
 // malformed, which leaves nothing to say what was wrong with. The keypad a
 // phone puts up is asked for separately.
 function textControl(field) {
+  // A PEM block is the one value here that is many lines long. It goes in a
+  // textarea rather than in a box, because a box shows one line of a file that
+  // is thirty and gives nothing to check a paste against. The value is read the
+  // same way a box is read, since a textarea carries one too.
+  if (field.type === "textarea") {
+    const area = document.createElement("textarea");
+
+    area.rows = field.rows === undefined ? 8 : field.rows;
+
+    if (field.value !== undefined && field.value !== null) {
+      area.value = String(field.value);
+    }
+
+    if (field.hint !== undefined) {
+      area.placeholder = field.hint;
+    }
+
+    return area;
+  }
+
   const input = document.createElement("input");
 
   input.type = field.type === undefined ? "text" : field.type;

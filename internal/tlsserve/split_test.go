@@ -52,7 +52,7 @@ func newHarness(t *testing.T) *harness {
 
 	split := newSplitter(listener, zap.NewNop(), testPeekTimeout)
 
-	tlsCfg := ServerConfig(&keyPair)
+	tlsCfg := ServerConfig(NewHolder(&keyPair))
 
 	tlsServer := &http.Server{
 		Handler: http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {

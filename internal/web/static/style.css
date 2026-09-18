@@ -171,6 +171,7 @@ h2 {
 
 .field input[type="text"],
 .field input[type="password"],
+.field textarea,
 .field select {
   padding: 0.35rem 0.5rem;
   font: inherit;
@@ -180,8 +181,22 @@ h2 {
   border-radius: 4px;
 }
 
+/* A pasted PEM block is read a line at a time, and the lines are all the same
+   width, so a monospaced face is what shows at a glance that a line is missing
+   or that the paste picked up a stray character. The label goes above it: a
+   box eight lines tall next to a label centred on it reads as unlabelled. */
+.field textarea {
+  grid-column: 1 / -1;
+  width: 100%;
+  box-sizing: border-box;
+  font-family: ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
+  font-size: 12px;
+  resize: vertical;
+}
+
 .field input[type="text"]:focus,
 .field input[type="password"]:focus,
+.field textarea:focus,
 .field select:focus {
   border-color: #24456b;
   outline: 2px solid #c7d6ea;
@@ -191,12 +206,14 @@ h2 {
 /* A box that holds something the form refused is marked, so the line under it
    is tied to the box it belongs to and not just to the row it sits in. */
 .field input.bad,
+.field textarea.bad,
 .field select.bad {
   border-color: #b04141;
   background: #fdf7f7;
 }
 
 .field input.bad:focus,
+.field textarea.bad:focus,
 .field select.bad:focus {
   outline-color: #f0c2c2;
 }
@@ -301,6 +318,16 @@ button[type="submit"].danger:hover {
 button[type="submit"].danger:active {
   background: #6b1a1a;
   border-color: #6b1a1a;
+}
+
+/* A fingerprint is compared character by character against what a browser or
+   openssl shows, so it is set in a face whose characters are all the same
+   width, and it is allowed to break anywhere: 32 pairs of hex do not fit on
+   the width of a phone. */
+.fingerprint {
+  font-family: ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
+  font-size: 12px;
+  overflow-wrap: anywhere;
 }
 
 /* The scroller keeps a wide table inside its own box. Without it the table
