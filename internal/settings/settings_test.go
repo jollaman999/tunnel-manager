@@ -46,6 +46,7 @@ func TestDefaultsAreTheValuesTheConfigurationFileRanOn(t *testing.T) {
 		want interface{}
 	}{
 		{"api.port", d.APIPort, 8888},
+		{"api.https_enabled", d.APIHTTPSEnabled, true},
 		{"monitoring.interval_sec", d.MonitoringIntervalSec, 5},
 		{"reconcile.interval_sec", d.ReconcileIntervalSec, 5},
 		{"security.key_file", d.SecurityKeyFile, "keys/tunnel-manager.key"},
@@ -131,6 +132,73 @@ func TestLoadReturnsWhatWasStored(t *testing.T) {
 	}
 	if again.LoggingLevel != "debug" {
 		t.Errorf("logging.level = %q, want debug", again.LoggingLevel)
+	}
+}
+
+// TestSaveStoresHTTPSTurnedOff is the half of the column default that is easy
+// to lose. The column carries DEFAULT true so that a row written before the
+// setting existed reads as HTTPS on, and gorm leaves a field at its zero value
+// out of an INSERT when it carries such a default. A save that turned HTTPS off
+// and came back on would leave the operator with no way to reach a server whose
+// certificate their client refuses.
+func TestSaveStoresHTTPSTurnedOff(t *testing.T) {
+	db := newDB(t)
+
+	stored, err := Load(db)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if !stored.APIHTTPSEnabled {
+		t.Fatalf("a first startup stored api.https_enabled as off, want on")
+	}
+
+	stored.APIHTTPSEnabled = false
+
+	err = Save(db, stored)
+	if err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+
+	again, err := Load(db)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if again.APIHTTPSEnabled {
+		t.Fatalf("api.https_enabled came back on after it was saved off")
+	}
+}
+
+// TestARowWrittenBeforeTheHTTPSSettingReadsAsHTTPSOn covers the installation
+// that is upgraded. Its settings row was written by a version whose table had
+// no column for HTTPS, and a column added without a default would read back as
+// false and quietly leave that installation serving in the clear.
+//
+// The row that version wrote is built by dropping the column again, which is
+// what the table looked like before the migration added it.
+func TestARowWrittenBeforeTheHTTPSSettingReadsAsHTTPSOn(t *testing.T) {
+	db := newDB(t)
+
+	_, err := Load(db)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+
+	err = db.Exec("ALTER TABLE settings DROP COLUMN api_https_enabled").Error
+	if err != nil {
+		t.Fatalf("dropping the column to build a row from before it existed: %v", err)
+	}
+
+	err = db.AutoMigrate(&Settings{})
+	if err != nil {
+		t.Fatalf("migrating the column back: %v", err)
+	}
+
+	upgraded, err := Load(db)
+	if err != nil {
+		t.Fatalf("Load after the migration: %v", err)
+	}
+	if !upgraded.APIHTTPSEnabled {
+		t.Fatalf("a row written before the setting existed reads as HTTPS off, want on")
 	}
 }
 

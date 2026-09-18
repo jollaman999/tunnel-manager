@@ -31,6 +31,18 @@ type Settings struct {
 
 	APIPort int `json:"api_port"`
 
+	// APIHTTPSEnabled is what decides whether the port above is served over
+	// TLS. It is stored with a column default of true so that a database
+	// written by a version that had no such column reads back as HTTPS on:
+	// SQLite fills the rows that are already there with the default as the
+	// column is added, and an installation that is upgraded gets the same
+	// answer a fresh one does.
+	//
+	// The column is named here because the name gorm works out from the field
+	// is api_http_s_enabled: it knows HTTP as one word and leaves the S of
+	// HTTPS on its own.
+	APIHTTPSEnabled bool `gorm:"column:api_https_enabled;default:true" json:"api_https_enabled"`
+
 	MonitoringIntervalSec int `json:"monitoring_interval_sec"`
 	ReconcileIntervalSec  int `json:"reconcile_interval_sec"`
 
@@ -61,6 +73,7 @@ func Defaults() Settings {
 	return Settings{
 		ID:                    settingsID,
 		APIPort:               8888,
+		APIHTTPSEnabled:       true,
 		MonitoringIntervalSec: 5,
 		ReconcileIntervalSec:  5,
 		SecurityKeyFile:       "keys/tunnel-manager.key",
@@ -97,6 +110,12 @@ func (s *Settings) Validate() error {
 	if s.APIPort < 1 || s.APIPort > 65535 {
 		return fmt.Errorf("invalid API port: %d", s.APIPort)
 	}
+
+	// api.https_enabled carries no rule of its own. It is a bool, and both of
+	// its values start a server: one that speaks TLS and one that speaks in the
+	// clear. What could go wrong with it, a certificate that cannot be built or
+	// cannot be read back, is not a property of this set and is reported where
+	// the certificate is read.
 
 	if s.MonitoringIntervalSec <= 0 {
 		return fmt.Errorf("invalid monitoring interval: %d", s.MonitoringIntervalSec)
@@ -246,6 +265,7 @@ type value struct {
 func values(s *Settings) []value {
 	return []value{
 		{"api.port", strconv.Itoa(s.APIPort)},
+		{"api.https_enabled", strconv.FormatBool(s.APIHTTPSEnabled)},
 		{"monitoring.interval_sec", strconv.Itoa(s.MonitoringIntervalSec)},
 		{"reconcile.interval_sec", strconv.Itoa(s.ReconcileIntervalSec)},
 		{"security.key_file", s.SecurityKeyFile},

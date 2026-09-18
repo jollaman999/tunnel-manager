@@ -2,10 +2,12 @@ package main
 
 import (
 	"context"
+	"crypto/tls"
 	"errors"
 	"flag"
 	"fmt"
 	"log"
+	"net"
 	"net/http"
 	"os"
 	"os/signal"
@@ -26,6 +28,7 @@ import (
 	"github.com/jollaman999/tunnel-manager/internal/database"
 	"github.com/jollaman999/tunnel-manager/internal/models"
 	"github.com/jollaman999/tunnel-manager/internal/settings"
+	"github.com/jollaman999/tunnel-manager/internal/tlsserve"
 	"github.com/jollaman999/tunnel-manager/internal/tunnel"
 	"github.com/jollaman999/tunnel-manager/internal/web"
 	"github.com/labstack/echo/v4"
@@ -801,12 +804,96 @@ func main() {
 	// logger.Fatal would leave both behind.
 	serverErr := make(chan error, 1)
 
-	go func() {
-		err := e.Start(fmt.Sprintf(":%d", set.APIPort))
-		if err != nil && !errors.Is(err, http.ErrServerClosed) {
-			serverErr <- err
+	address := fmt.Sprintf(":%d", set.APIPort)
+
+	// While HTTPS is on there is still one port, and two servers behind it.
+	// portSplit accepts on the port and sorts the connections by their first
+	// byte: the ones that opened a TLS handshake go to echo, and everything
+	// else goes to redirectServer, which answers with the same address under
+	// https and reads no request body.
+	//
+	// Both are held here because the shutdown at the bottom of main has to take
+	// them down as well, and they are nil while HTTPS is off.
+	var portSplit *tlsserve.Splitter
+
+	var redirectServer *http.Server
+
+	if set.APIHTTPSEnabled {
+		cert, certInfo, certErr := tlsserve.LoadOrCreate(db, cipher, time.Now())
+		if certErr != nil {
+			// Carrying on in the clear is not an option here. The operator
+			// turned HTTPS on, the screens send the password of the account,
+			// and a server that quietly fell back would put it on the wire
+			// under an address that says https in nobody's browser.
+			logger.Fatal("failed to prepare the TLS certificate. Start with api.https_enabled turned "+
+				"off to serve in the clear while this is sorted out",
+				zap.Error(certErr))
 		}
-	}()
+
+		if certInfo.Created {
+			logger.Info("generated a certificate for this installation and stored it in the database. "+
+				"Nobody signed for it, so a client shows a warning until the certificate is trusted on "+
+				"that machine. The fingerprint is what to check it against",
+				zap.String("reason", certInfo.Reason),
+				zap.String("fingerprint_sha256", certInfo.Fingerprint),
+				zap.Strings("hosts", certInfo.Hosts),
+				zap.Time("not_after", certInfo.NotAfter))
+		} else {
+			logger.Info("read the certificate of this installation from the database",
+				zap.String("fingerprint_sha256", certInfo.Fingerprint),
+				zap.Strings("hosts", certInfo.Hosts),
+				zap.Time("not_after", certInfo.NotAfter))
+		}
+
+		// The port is taken here rather than inside the server, so that a port
+		// which is already in use is reported through the channel the startup
+		// below watches. That is where it was reported from before, and it is
+		// what leaves the tunnels to be taken down in order.
+		listener, listenErr := net.Listen("tcp", address)
+		if listenErr != nil {
+			serverErr <- fmt.Errorf("failed to listen on %s: %w", address, listenErr)
+		} else {
+			portSplit = tlsserve.NewSplitter(listener, logger)
+			redirectServer = tlsserve.NewRedirectServer(set.APIPort, logger)
+
+			// echo is handed a listener that is already wrapped in TLS, which
+			// is what it does for itself in StartTLS. It keeps its own server
+			// and with it the graceful shutdown the rest of main relies on.
+			e.TLSServer.TLSConfig = tlsserve.ServerConfig(cert)
+			e.TLSListener = tls.NewListener(portSplit.TLS(), e.TLSServer.TLSConfig)
+
+			go func() {
+				err := redirectServer.Serve(portSplit.Plain())
+				// A closed listener is how this server ends every time: the
+				// shutdown closes the port out from under it.
+				if err != nil && !errors.Is(err, http.ErrServerClosed) && !errors.Is(err, net.ErrClosed) {
+					logger.Error("the server that redirects plaintext requests stopped", zap.Error(err))
+				}
+			}()
+
+			go func() {
+				err := e.StartServer(e.TLSServer)
+				if err != nil && !errors.Is(err, http.ErrServerClosed) {
+					serverErr <- err
+				}
+			}()
+
+			logger.Info("serving the API and the web UI over HTTPS. A request that arrives in the clear "+
+				"on the same port is answered with a redirect to https",
+				zap.Int("port", set.APIPort))
+		}
+	} else {
+		logger.Warn("HTTPS is turned off, so the API and the web UI are served in the clear. Everything "+
+			"the screens send travels as it is, the password of the account among it",
+			zap.Int("port", set.APIPort))
+
+		go func() {
+			err := e.Start(address)
+			if err != nil && !errors.Is(err, http.ErrServerClosed) {
+				serverErr <- err
+			}
+		}()
+	}
 
 	var startErr error
 
@@ -827,6 +914,26 @@ func main() {
 	err = e.Shutdown(ctx)
 	if err != nil {
 		logger.Error("failed to shut down API server gracefully", zap.Error(err))
+	}
+
+	// The redirect server is drained the same way, so a browser that was being
+	// sent to https gets its answer rather than a reset connection.
+	if redirectServer != nil {
+		err = redirectServer.Shutdown(ctx)
+		if err != nil {
+			logger.Error("failed to shut down the redirect server gracefully", zap.Error(err))
+		}
+	}
+
+	// Closing the API server closed the port already, since the listener it was
+	// given is one side of the split. This is here for the startup that built
+	// the split and never got to serve on it, and closing what is closed costs
+	// nothing.
+	if portSplit != nil {
+		err = portSplit.Close()
+		if err != nil && !errors.Is(err, net.ErrClosed) {
+			logger.Error("failed to close the API port", zap.Error(err))
+		}
 	}
 
 	// The loop is stopped before the tunnels are, because it starts again what

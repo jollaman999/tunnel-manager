@@ -12,6 +12,7 @@ import (
 	"github.com/glebarez/sqlite"
 	"github.com/jollaman999/tunnel-manager/internal/models"
 	"github.com/jollaman999/tunnel-manager/internal/settings"
+	"github.com/jollaman999/tunnel-manager/internal/tlsserve"
 	"go.uber.org/zap"
 	"gorm.io/gorm"
 	gormlogger "gorm.io/gorm/logger"
@@ -269,6 +270,7 @@ func NewDatabase(path string, logger *zap.Logger, logLevel string) (*gorm.DB, *L
 		&models.Tunnel{},
 		&models.User{},
 		&settings.Settings{},
+		&tlsserve.Certificate{},
 	)
 	if err != nil {
 		return nil, nil, fmt.Errorf("failed to migrate database: %w", err)
