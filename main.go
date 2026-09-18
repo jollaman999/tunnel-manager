@@ -736,6 +736,12 @@ func main() {
 	// stored logging.level reaches the running loggers as it is saved. It is
 	// the one setting this process can take on without being started again.
 	settingsHandler := api.NewSettingsHandler(db, logger, logLevel, gormLevel)
+	// The log screen is handed the path this process resolved, the same one the
+	// logger above writes through. Worked out on the screen instead it would be
+	// a second place that knows what a relative logging.file.path is read
+	// against, and a path changed on the Settings screen without a restart
+	// would send the screen to a file nothing is being written to.
+	logsHandler := api.NewLogsHandler(logger, resolveInstallPath(installDir, set.LoggingFilePath))
 	// The uninstall is handed what this process holds: the manager whose
 	// tunnels have to come down, the function that stops the loop that would
 	// build them again, the database handle it closes and the paths of the
@@ -780,6 +786,8 @@ func main() {
 
 	g.GET("/settings", settingsHandler.GetSettings)
 	g.PUT("/settings", settingsHandler.UpdateSettings)
+
+	g.GET("/logs", logsHandler.GetLogs)
 
 	g.POST("/uninstall", uninstallHandler.Uninstall)
 

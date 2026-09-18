@@ -17,6 +17,7 @@ const screens = {
     draw: drawServicePorts,
     enter: enterServicePorts
   },
+  logs: { label: "Logs", nav: true, draw: drawLogs, enter: enterLogs },
   settings: { label: "Settings", nav: true, draw: drawSettings, enter: enterSettings },
   login: { draw: drawLogin },
   setup: { draw: drawSetup },
@@ -633,6 +634,301 @@ async function deleteServicePort(port) {
   setNotice("Service port " + port.id + " was deleted.", "info");
 
   return drawServicePorts();
+}
+
+// logLineCounts are the numbers of lines the screen offers to ask for. The
+// largest is the bound the server puts on one request (logsMaxLines in
+// internal/api/logs.go): a larger number would be cut down there anyway, and a
+// list offering it would be promising what it does not hand back.
+const logLineCounts = ["100", "200", "500", "1000", "2000"];
+
+// logLevelAll is the setting of the level list that hides nothing. It is not a
+// level, so it cannot collide with one the server writes.
+const logLevelAll = "all";
+
+// logLineCount and logLevelFilter are what the two lists above the log are set
+// to. They are held out here because the screen is drawn again from scratch
+// every few seconds, and a refresh has to come back the way the operator left
+// it. They are kept across visits on purpose: they are a view of the log rather
+// than state about what the server holds.
+let logLineCount = "200";
+let logLevelFilter = logLevelAll;
+
+// logAutoRefresh is what the checkbox is set to. The timer runs for as long as
+// the screen is on either way and is cleared by leaving it; what the box
+// decides is whether a tick fetches anything. Starting and stopping the timer
+// from the box instead would put a second place in charge of a timer that only
+// showScreen may clear, and a box left off while the screen was left would
+// leave the timer running.
+let logAutoRefresh = true;
+
+// enterLogs draws the screen and starts the refresh, on the period the status
+// screen runs at. The timer is stopped by showScreen when the screen is left,
+// so no tick outlives the screen it was started on and a second visit does not
+// leave a second timer behind it.
+function enterLogs() {
+  const drawn = drawLogs();
+
+  refreshTimer = window.setInterval(function () {
+    if (!logAutoRefresh) {
+      return;
+    }
+
+    run(drawLogs);
+  }, statusRefreshMs);
+
+  return drawn;
+}
+
+async function drawLogs() {
+  let answer = null;
+  let problem = null;
+
+  try {
+    answer = await apiCall("GET", "/api/logs?lines=" + encodeURIComponent(logLineCount));
+  } catch (error) {
+    if (error instanceof Redirected) {
+      throw error;
+    }
+
+    // A log that cannot be read is drawn as the reason it cannot be read, on
+    // the screen itself. Thrown on, it would become the line above the screen
+    // and the screen would be drawn again, which on this screen means asking
+    // again and failing again. The commonest reason is not a fault either: a
+    // server that could not open its log file writes to the console only, and
+    // this screen is the one place that can say so.
+    problem = error.message;
+  }
+
+  // A refresh that was in flight while the operator left must not draw over the
+  // screen they went to.
+  if (currentScreen !== "logs") {
+    return;
+  }
+
+  const nodes = [logControls(), logScope()];
+
+  if (problem !== null) {
+    nodes.push(statusLine(problem, "warning"));
+
+    render("Logs", nodes);
+
+    return;
+  }
+
+  const lines = answer === null || answer.lines === null || answer.lines === undefined
+    ? []
+    : answer.lines;
+
+  const shown = lines.filter(keepLogLine);
+
+  nodes.push(logSummary(answer, lines.length, shown.length));
+
+  if (answer.capped) {
+    nodes.push(statusLine(
+      "The read reached its byte limit before " + logLineCount + " lines were found, so " +
+        "the oldest line below is not as far back as was asked for.",
+      "warning"
+    ));
+  }
+
+  if (shown.length === 0) {
+    nodes.push(statusLine(
+      lines.length === 0
+        ? "The log file holds nothing yet."
+        : "None of the " + lines.length + " " + plural(lines.length, "line", "lines") +
+          " read is at " + logLevelFilter + " or above.",
+      "empty"
+    ));
+  } else {
+    // The server hands the lines over in the order they are in the file, oldest
+    // first, and they are turned around here. The newest line is what the
+    // screen is opened for, and at the top it is in the same place after every
+    // refresh instead of moving down as the log grows.
+    nodes.push(buildTable(["Time", "Level", "Caller", "Message"], shown.reverse().map(logRow)));
+  }
+
+  render("Logs", nodes);
+}
+
+// keepLogLine decides whether one line passes the level filter.
+//
+// A line whose level is not one the list knows is kept whatever the filter is
+// set to. That covers the lines the server could not parse, which carry no
+// level at all: they are the ones most likely to be what the screen was opened
+// for, and a filter that hid them would hide exactly what nothing else reports.
+function keepLogLine(line) {
+  if (logLevelFilter === logLevelAll) {
+    return true;
+  }
+
+  const rank = logLevels.indexOf(line.level);
+  if (rank === -1) {
+    return true;
+  }
+
+  return rank >= logLevels.indexOf(logLevelFilter);
+}
+
+// logRow is one line of the file as a row of the table.
+function logRow(line) {
+  return [logTimeCell(line.time), logLevelBadge(line), logCallerCell(line.caller),
+    logMessageCell(line)];
+}
+
+// logTimeCell is the timestamp as the line carries it. It is not reformatted:
+// the logger writes it in the time zone of the server, and rewriting it in the
+// zone of the browser would put a time on the screen that is in no log file and
+// cannot be searched for with grep.
+function logTimeCell(value) {
+  const node = element("span", value === null || value === undefined ? "" : value);
+
+  node.className = "stamp";
+
+  return node;
+}
+
+// logLevelBadge is the level of a line, coloured so that the one line that is
+// not routine is found without reading the column. A line the server could not
+// parse says that instead of being given a level it never carried.
+function logLevelBadge(line) {
+  const colours = {
+    debug: "unknown",
+    info: "note",
+    warn: "waiting",
+    error: "bad",
+    dpanic: "bad",
+    panic: "bad",
+    fatal: "bad"
+  };
+  const text = line.parsed && line.level !== "" ? line.level : "raw";
+  const badge = element("span", text);
+
+  badge.className = "badge " + (colours[text] === undefined ? "unknown" : colours[text]);
+  badge.dataset.level = text;
+
+  return badge;
+}
+
+// logCallerCell is where the line was written. It wraps rather than being held
+// on one line, so that a long package path does not decide how wide the table
+// is on a narrow screen.
+function logCallerCell(value) {
+  const node = element("span", value === null || value === undefined ? "" : value);
+
+  node.className = "log-caller";
+
+  return node;
+}
+
+// logMessageCell is what the line said, with whatever fields it carried under
+// it. A line the server could not parse is shown as it stands in the file.
+//
+// Everything here is set as text. A log line holds whatever was logged, which
+// includes what a remote host answered with, so a line carrying markup has to
+// be read as characters instead of turning into elements.
+function logMessageCell(line) {
+  const cell = document.createElement("div");
+
+  cell.className = "log-message";
+  cell.appendChild(element("span", line.parsed ? line.message : line.raw));
+
+  if (typeof line.extra === "string" && line.extra !== "") {
+    const extra = element("small", line.extra);
+
+    extra.className = "log-extra";
+    cell.appendChild(extra);
+  }
+
+  return cell;
+}
+
+// logControls is the row of lists above the log. They act as they are changed
+// rather than through a Save, because nothing they change is stored anywhere:
+// the count is what the next fetch asks for, and the level is applied to what
+// came back.
+function logControls() {
+  const row = document.createElement("div");
+
+  row.className = "log-controls";
+
+  row.appendChild(logSelect("log-lines", "Lines", logLineCounts, logLineCount,
+    function (value) {
+      logLineCount = value;
+
+      return drawLogs();
+    }));
+
+  row.appendChild(logSelect("log-level", "Level at least", [logLevelAll].concat(logLevels),
+    logLevelFilter, function (value) {
+      logLevelFilter = value;
+
+      return drawLogs();
+    }));
+
+  const auto = document.createElement("label");
+  const box = document.createElement("input");
+
+  box.type = "checkbox";
+  box.checked = logAutoRefresh;
+  box.dataset.field = "log-auto";
+  box.addEventListener("change", function () {
+    logAutoRefresh = box.checked;
+  });
+
+  auto.appendChild(box);
+  auto.appendChild(element("span", "Refresh every " + statusRefreshMs / 1000 + " seconds"));
+  row.appendChild(auto);
+
+  row.appendChild(actionButton("Refresh now", "log-refresh", drawLogs));
+
+  return row;
+}
+
+// logSelect is one list of the row above, with the label that says what it is.
+function logSelect(name, label, options, value, onChange) {
+  const wrap = document.createElement("label");
+  const select = listControl({ options: options, value: value });
+
+  select.dataset.field = name;
+  select.addEventListener("change", function () {
+    run(function () {
+      return onChange(select.value);
+    });
+  });
+
+  wrap.appendChild(element("span", label));
+  wrap.appendChild(select);
+
+  return wrap;
+}
+
+// logScope says what this screen does not show. The server reads the file the
+// logs are going into now and nothing else, so a line written before the last
+// rotation is not here, and without this nothing would say where it went.
+function logScope() {
+  const note = element("p",
+    "Only the file that is being written to now is read. The rotated files beside it are " +
+      "not shown, and neither is the console, which is where the server writes when the " +
+      "log file cannot be opened. The newest line is at the top.");
+
+  note.className = "log-scope";
+
+  return note;
+}
+
+// logSummary says what was read to draw the table.
+//
+// The two sizes are in it because they are what shows that the whole file is
+// not being pulled across: the log is allowed to reach a hundred megabytes
+// before it rotates, and what was read to fill this screen is the end of it.
+function logSummary(answer, read, shown) {
+  const counted = shown === read
+    ? "Showing " + shown + " " + plural(shown, "line", "lines")
+    : "Showing " + shown + " of the " + read + " " + plural(read, "line", "lines") + " read";
+
+  return statusLine(counted + ", from the last " + formatBytes(answer.read) + " of the " +
+    formatBytes(answer.size) + " in " + answer.path + ".", "empty");
 }
 
 function enterSettings() {

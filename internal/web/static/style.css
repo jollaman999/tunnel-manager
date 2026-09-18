@@ -395,6 +395,83 @@ td.actions {
   border-color: #dcdfe4;
 }
 
+/* The routine level of a log line. It is coloured apart from the grey of the
+   levels nothing is decided by, without taking the green that says a tunnel is
+   up: an info line reports what happened, not that all is well. */
+.badge.note {
+  color: #24456b;
+  background: #eef1f5;
+  border-color: #c6d3e2;
+}
+
+/* The lists above the log act as they are changed, so they are a row of
+   controls rather than a form with a button under it. */
+.log-controls {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.6rem 1rem;
+  align-items: center;
+  margin-bottom: 0.75rem;
+}
+
+.log-controls label {
+  display: flex;
+  gap: 0.4rem;
+  align-items: center;
+  color: #4a4f57;
+}
+
+.log-controls select {
+  padding: 0.3rem 0.4rem;
+  font: inherit;
+  color: inherit;
+  background: #ffffff;
+  border: 1px solid #c6cbd2;
+  border-radius: 4px;
+}
+
+.log-controls select:focus {
+  border-color: #24456b;
+  outline: 2px solid #c7d6ea;
+  outline-offset: 0;
+}
+
+.log-controls input[type="checkbox"] {
+  width: 1rem;
+  height: 1rem;
+}
+
+.log-scope {
+  margin: 0 0 0.75rem;
+  color: #6b7079;
+  font-size: 12px;
+}
+
+/* A log line has no length limit and carries paths, commands and whatever a
+   remote host answered with, none of which hold a space to break at. Left as
+   it is, one such line makes the table wider than the screen, and while the
+   scroller keeps the page from moving sideways, nothing of the line is readable
+   without dragging it. So the message wraps, and it wraps inside a word where
+   there is no other place to do it. */
+.log-message {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+/* What a line carried besides its message: the fields of the log entry. They
+   sit under it and are dimmed, so the message is what is read first. */
+.log-extra {
+  display: block;
+  color: #6b7079;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+
+.log-caller {
+  overflow-wrap: anywhere;
+}
+
 .counts {
   display: flex;
   flex-wrap: wrap;

@@ -931,6 +931,30 @@ function pad(value) {
   return String(value).padStart(2, "0");
 }
 
+// formatBytes writes a size the way it is read rather than as a bare count of
+// bytes. The log screen says with it how much of the file was touched to fill
+// the table next to how large the file is, and those two numbers are only worth
+// putting side by side if both can be taken in at a glance.
+function formatBytes(value) {
+  if (typeof value !== "number" || !Number.isFinite(value) || value < 0) {
+    return "?";
+  }
+
+  const units = ["bytes", "KB", "MB", "GB"];
+
+  let size = value;
+  let unit = 0;
+
+  while (size >= 1024 && unit < units.length - 1) {
+    size /= 1024;
+    unit += 1;
+  }
+
+  // Bytes are whole things and are written as they are. The larger units are
+  // divided down and keep one decimal, so that 1.4 MB is not shown as 1 MB.
+  return (unit === 0 ? String(size) : size.toFixed(1)) + " " + units[unit];
+}
+
 // plural is for the counts the status screen reports, so that one tunnel is not
 // reported as "1 tunnels".
 function plural(count, one, many) {
