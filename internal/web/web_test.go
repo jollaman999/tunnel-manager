@@ -169,7 +169,8 @@ func TestEveryScreenPathServesTheIndex(t *testing.T) {
 
 	index := get(e, uiPrefix)
 
-	for _, target := range []string{"/ui/login", "/ui/setup", "/ui/hosts", "/ui/service-ports"} {
+	for _, target := range []string{"/ui/login", "/ui/setup", "/ui/hosts", "/ui/service-ports",
+		"/ui/settings", "/ui/uninstalled"} {
 		rec := get(e, target)
 
 		if rec.Code != http.StatusOK {

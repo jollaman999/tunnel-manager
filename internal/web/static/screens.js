@@ -19,7 +19,11 @@ const screens = {
   },
   settings: { label: "Settings", nav: true, draw: drawSettings, enter: enterSettings },
   login: { draw: drawLogin },
-  setup: { draw: drawSetup }
+  setup: { draw: drawSetup },
+  // The screen after the uninstall. It is out of the navigation for the same
+  // reason the two above are, and it is the one screen that asks the server for
+  // nothing: by the time it is drawn the server is seconds away from being gone.
+  uninstalled: { draw: drawUninstalled }
 };
 
 // logLevels and logFormats are what the server takes for those two settings.
@@ -43,6 +47,12 @@ let editingServicePortID = null;
 // what the save reported is not in that answer. It is dropped on arrival, so a
 // report from an earlier visit is never read as belonging to this one.
 let settingsSaveResult = null;
+
+// uninstallResult is what the uninstall answered: the files that went and the
+// ones that could not be removed. It is kept here because the screen that shows
+// it is drawn after the server has removed itself, so there is nothing left to
+// ask for it. A reload finds it empty, and that is what the screen says then.
+let uninstallResult = null;
 
 // logOut ends the session and goes to the login. The cookie is dropped by the
 // server, so nothing here has to be cleared.
@@ -859,19 +869,141 @@ function settingsRescue() {
   return card;
 }
 
-// settingsDangerZone is where what cannot be taken back goes. Uninstall belongs
-// in it and is not built yet. The section is here already so that it is at the
-// bottom of the screen and away from Save, rather than being fitted in beside
-// the form later on.
+// settingsDangerZone is where what cannot be taken back goes. It sits at the
+// bottom of the screen and away from Save.
+//
+// The password of the account is asked for again. It is not the session that is
+// in doubt: a screen left open on an unattended desk is one press away from this
+// otherwise, and a password is the one thing a passer-by cannot supply.
 function settingsDangerZone() {
-  const card = document.createElement("section");
+  const form = buildForm({
+    name: "uninstall",
+    legend: "Dangerous actions",
+    variant: "danger-zone",
+    intro: [
+      element("p",
+        "Uninstall stops every tunnel, removes the files this installation is made of " +
+          "and ends the process. Nothing here can be taken back."),
+      element("p",
+        "Removing the encryption key is the part nothing undoes. The SSH password of " +
+          "every host is sealed with that key, so a backup of the database taken " +
+          "beforehand cannot be read once the key is gone: the passwords in it stay " +
+          "unreadable and have to be typed in again on a fresh installation."),
+      element("p", "These files are removed:"),
+      bulletList([
+        "The database file, along with the -wal and -shm files SQLite keeps beside it",
+        "The encryption key file",
+        "The initial password file, if it is still there",
+        "The configuration file",
+        "The log file and the rotated log files beside it"
+      ]),
+      element("p",
+        "The program file is left where it is. A running process cannot remove its own " +
+          "image on every system this runs on, so removing it is left to you once the " +
+          "process has stopped.")
+    ],
+    submitLabel: "Uninstall",
+    submitVariant: "danger",
+    fields: [
+      {
+        name: "password",
+        label: "Password",
+        type: "password",
+        check: function (value) {
+          return String(value) === "" ? "Enter the password of this account." : "";
+        },
+        note: "The password this account is signed in with. It is asked for again so " +
+          "that a screen left open cannot be uninstalled with one press."
+      }
+    ],
+    onSubmit: submitUninstall
+  });
 
-  card.className = "card danger-zone";
-  card.dataset.card = "settings-danger";
-  card.appendChild(element("h2", "Dangerous actions"));
-  card.appendChild(element("p",
-    "Uninstall deletes the database, the encryption key and the log files, and it " +
-      "cannot be taken back. It is not built yet and will appear here."));
+  form.dataset.card = "settings-danger";
 
-  return card;
+  return form;
+}
+
+async function submitUninstall(values) {
+  // The password box is what keeps a passing press from doing this, and the
+  // question is what keeps a press that was meant for Save from doing it.
+  if (!window.confirm("Uninstall tunnel-manager? The database, the encryption key, the " +
+      "configuration and the logs are removed and the process stops.")) {
+    return;
+  }
+
+  uninstallResult = await apiCall("POST", "/api/uninstall", { password: values.password });
+
+  // From here on nothing asks the server for anything. It removed its own files
+  // a moment ago and stops within seconds.
+  navigate("uninstalled", { text: "The installation was removed.", kind: "info" });
+}
+
+// drawUninstalled is the screen after the uninstall.
+//
+// It draws what is already in the browser and makes no call at all, because the
+// server it would call is going away as this is drawn. A reload of this path
+// does not come back, which is what the screen says: there is nothing left to
+// serve the page.
+function drawUninstalled() {
+  const nodes = [];
+
+  if (uninstallResult === null) {
+    // The path was opened without an uninstall having run in this page. Nothing
+    // can be looked up, so the screen says only what it knows.
+    nodes.push(element("p",
+      "This screen is drawn from what the uninstall answered, and this page holds no " +
+        "answer. If the uninstall ran, the server is gone and there is nothing left to ask."));
+
+    render("Uninstalled", nodes);
+
+    return;
+  }
+
+  const seconds = uninstallResult.exit_in_sec;
+
+  nodes.push(element("p",
+    "Every tunnel was stopped, the database was closed and the files below were removed. " +
+      "The process stops " +
+      (typeof seconds === "number" ? "about " + seconds + " " + plural(seconds, "second", "seconds") +
+        " after this screen appeared" : "a few seconds after this screen appeared") +
+      ". Reloading this page will not bring it back."));
+
+  nodes.push(element("p",
+    "The program file is still where it was. Remove it by hand, along with the service " +
+      "entry that starts it, if this installation was set up as a service."));
+
+  const removed = listOfFiles(uninstallResult.removed);
+
+  if (removed.length === 0) {
+    nodes.push(statusLine("No file was there to remove.", "empty"));
+  } else {
+    nodes.push(element("h2", "Removed"));
+    nodes.push(buildTable(["What", "Path"], removed.map(function (file) {
+      return [file.what, file.path];
+    })));
+  }
+
+  const failed = listOfFiles(uninstallResult.failed);
+
+  if (failed.length > 0) {
+    // These are what is left on disk. The server cannot be asked about them any
+    // more, so what it said about each one is shown as it came.
+    nodes.push(element("h2", "Left behind"));
+    nodes.push(statusLine(
+      "These could not be removed and are still on disk. Remove them by hand.",
+      "warning"
+    ));
+    nodes.push(buildTable(["What", "Path", "Why it stayed"], failed.map(function (file) {
+      return [file.what, file.path, file.error];
+    })));
+  }
+
+  render("Uninstalled", nodes);
+}
+
+// listOfFiles is one of the two lists the uninstall answered with. A list the
+// server left out arrives as undefined and is read as an empty one.
+function listOfFiles(files) {
+  return files === null || files === undefined ? [] : files;
 }

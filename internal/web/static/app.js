@@ -15,6 +15,12 @@ const statusRefreshMs = 5000;
 const apiLoginPath = "/api/login";
 const apiSetupPath = "/api/setup";
 
+// apiUninstallPath is the third call whose 401 means something else. It is the
+// password box under the uninstall being wrong, and the session it was sent
+// with is still good, so sending the operator to the login would both lose what
+// they were doing and tell them something that is not so.
+const apiUninstallPath = "/api/uninstall";
+
 // csrfCookieName and csrfHeaderName are the two ends of the CSRF check. The
 // server hands the token of the session out in a cookie it leaves readable from
 // here on purpose, and wants it back in a header, which a page on another
@@ -283,7 +289,7 @@ async function apiCall(method, path, body) {
 
   const payload = await readPayload(response);
 
-  if (response.status === 401 && path !== apiLoginPath) {
+  if (response.status === 401 && path !== apiLoginPath && path !== apiUninstallPath) {
     navigate("login", "The session has ended. Sign in again.");
 
     throw new Redirected();
@@ -474,6 +480,19 @@ function buildTable(headers, rows, numericColumns) {
   return scroller;
 }
 
+// bulletList is a list of sentences. It is a list and not one paragraph with
+// commas in it because what it is used for is a set of things that are each
+// gone or not gone on their own, and a reader counting them has to be able to.
+function bulletList(items) {
+  const list = document.createElement("ul");
+
+  for (const item of items) {
+    list.appendChild(element("li", item));
+  }
+
+  return list;
+}
+
 // textControl is the box a value is typed into.
 //
 // It stays a text box even where only digits belong in it. A number box is spun
@@ -539,9 +558,22 @@ function listControl(field) {
 function buildForm(spec) {
   const form = document.createElement("form");
 
-  form.className = "card";
+  // variant, where a caller passes one, marks a form that is not like the ones
+  // around it. It is the same word the card it would otherwise be drawn as
+  // carries, so a form and a section that say the same thing look the same.
+  form.className = spec.variant === undefined ? "card" : "card " + spec.variant;
   form.dataset.form = spec.name;
   form.appendChild(element("h2", spec.legend));
+
+  // What a form has to say before the first box goes here. A paragraph put
+  // above the form instead would be a separate card, and the sentence that
+  // says what a press cannot be taken back from belongs inside the box that
+  // holds the button.
+  if (spec.intro !== undefined) {
+    for (const node of spec.intro) {
+      form.appendChild(node);
+    }
+  }
 
   const inputs = {};
   const problems = {};
@@ -602,6 +634,13 @@ function buildForm(spec) {
   submit.type = "submit";
   submit.textContent = spec.submitLabel;
   submit.dataset.action = spec.name + "-submit";
+
+  // A submit that takes something away rather than storing it says so, the way
+  // the delete button in a row does.
+  if (spec.submitVariant !== undefined) {
+    submit.className = spec.submitVariant;
+  }
+
   buttons.appendChild(submit);
 
   if (spec.onCancel !== undefined) {

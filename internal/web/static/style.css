@@ -134,6 +134,18 @@ h2 {
   margin-bottom: 0;
 }
 
+/* A list inside a card is indented by the marker and no more. The default
+   indent of a browser is wider than the padding of the card itself, which reads
+   as the list belonging to something other than the sentence above it. */
+.card ul {
+  margin: 0 0 0.75rem;
+  padding-left: 1.25rem;
+}
+
+.card li {
+  margin-bottom: 0.2rem;
+}
+
 .field {
   display: grid;
   grid-template-columns: 10rem minmax(0, 22rem);
@@ -259,6 +271,25 @@ button.danger:hover {
 
 button.danger:focus-visible {
   outline-color: #8a2f2f;
+}
+
+/* The submit of the uninstall. The rules above paint every submit in the colour
+   Save carries, so the one press that takes the installation away is painted
+   over them rather than being left looking like the one that stores settings. */
+button[type="submit"].danger {
+  color: #ffffff;
+  background: #8a2f2f;
+  border-color: #8a2f2f;
+}
+
+button[type="submit"].danger:hover {
+  background: #7a1f1f;
+  border-color: #7a1f1f;
+}
+
+button[type="submit"].danger:active {
+  background: #6b1a1a;
+  border-color: #6b1a1a;
 }
 
 /* The scroller keeps a wide table inside its own box. Without it the table

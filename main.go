@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 	"reflect"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"syscall"
 	"time"
@@ -595,6 +596,43 @@ func main() {
 		manager.RunReconcileLoop(reconcileCtx, set.ReconcileIntervalSec)
 	}()
 
+	// stopReconcileLoop ends the loop and waits for the pass it is in to end.
+	// Both the shutdown at the bottom of main and the uninstall stop it through
+	// this one function, because both go on to stop the tunnels and a loop that
+	// is still running starts them again.
+	//
+	// The wait is given up after reconcileStopTimeout: a pass that is still
+	// dialing holds nothing that survives this process, which is on its way out
+	// either way.
+	stopReconcileLoop := func() {
+		stopReconcile()
+
+		select {
+		case <-reconcileDone:
+		case <-time.After(reconcileStopTimeout):
+			logger.Warn("the reconcile loop did not return in time, stopping the tunnels anyway",
+				zap.Duration("waited", reconcileStopTimeout))
+		}
+	}
+
+	// uninstalled is what the uninstall ends the process through. It removed
+	// the files and left the browser the seconds it needs to draw the answer by
+	// the time this is closed, and what follows is the same shutdown a signal
+	// runs, so the API is taken down in order and the logs are flushed.
+	//
+	// The close is guarded because a second uninstall would otherwise panic on
+	// a channel that is already closed. Nothing is left for it to do anyway:
+	// the first one closed the database, so it cannot even check a password.
+	uninstalled := make(chan struct{})
+
+	var uninstallOnce sync.Once
+
+	endAfterUninstall := func() {
+		uninstallOnce.Do(func() {
+			close(uninstalled)
+		})
+	}
+
 	e := echo.New()
 	e.Validator = &CustomValidator{validator: validator.New()}
 	e.Use(middleware.Logger())
@@ -615,6 +653,20 @@ func main() {
 	// stored logging.level reaches the running loggers as it is saved. It is
 	// the one setting this process can take on without being started again.
 	settingsHandler := api.NewSettingsHandler(db, logger, logLevel, gormLevel)
+	// The uninstall is handed what this process holds: the manager whose
+	// tunnels have to come down, the function that stops the loop that would
+	// build them again, the database handle it closes and the paths of the
+	// files this installation is made of. The paths are the ones the startup
+	// opened, so what goes is what was in use and not what a setting saved
+	// without a restart names.
+	uninstallHandler := api.NewUninstallHandler(db, logger, manager, stopReconcileLoop,
+		api.UninstallPaths{
+			DatabaseFile:        cfg.Database.Path,
+			KeyFile:             set.SecurityKeyFile,
+			InitialPasswordFile: initialPasswordFile,
+			ConfigFile:          *configPath,
+			LogFile:             set.LoggingFilePath,
+		}, endAfterUninstall)
 	g := e.Group("/api")
 
 	// The session check is put on the group before any route is added to it.
@@ -647,6 +699,8 @@ func main() {
 	g.GET("/settings", settingsHandler.GetSettings)
 	g.PUT("/settings", settingsHandler.UpdateSettings)
 
+	g.POST("/uninstall", uninstallHandler.Uninstall)
+
 	// The UI is put on the instance itself and not on the group above. It is
 	// the same bytes for every client and carries no data of its own, while
 	// everything it shows comes from /api/**, which stays behind the session.
@@ -669,6 +723,8 @@ func main() {
 	select {
 	case sig := <-sigChan:
 		logger.Info("Received signal, shutting down...", zap.String("signal", sig.String()))
+	case <-uninstalled:
+		logger.Info("The installation was removed, shutting down...")
 	case startErr = <-serverErr:
 		logger.Error("failed to start API server", zap.Error(startErr))
 	}
@@ -684,18 +740,9 @@ func main() {
 	}
 
 	// The loop is stopped before the tunnels are, because it starts again what
-	// is stopped while it runs. It returns once the pass it is in ends, and the
-	// wait is given up after reconcileStopTimeout: a pass that is still dialing
-	// holds nothing that survives this process, which exits as soon as the
-	// tunnels are down.
-	stopReconcile()
-
-	select {
-	case <-reconcileDone:
-	case <-time.After(reconcileStopTimeout):
-		logger.Warn("the reconcile loop did not return in time, stopping the tunnels anyway",
-			zap.Duration("waited", reconcileStopTimeout))
-	}
+	// is stopped while it runs. An uninstall stopped both already, and stopping
+	// what is stopped costs nothing.
+	stopReconcileLoop()
 
 	logger.Info("Stopping all tunnels...")
 	manager.StopAllTunnels()
