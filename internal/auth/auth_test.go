@@ -5,13 +5,14 @@ import (
 	"crypto/rand"
 	"database/sql"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
+	"github.com/glebarez/sqlite"
 	"github.com/jollaman999/tunnel-manager/internal/models"
-	"gorm.io/driver/mysql"
 	"gorm.io/gorm"
 	gormlogger "gorm.io/gorm/logger"
 )
@@ -196,6 +197,21 @@ func TestWriteInitialPasswordFileReportsADirectoryItCannotWriteTo(t *testing.T) 
 // errStub stands in for a database that answers nothing.
 var errStub = errors.New("the database is not there")
 
+// sqliteVersionDB answers the one statement the SQLite dialector runs for
+// itself: on being opened it asks the database for its version, so as to know
+// which clauses it may build. The pool below answers nothing and has no
+// database behind it, so that probe is sent to a real in-memory one instead. It
+// takes a database because a *sql.Row holds nothing exported and cannot be
+// built by hand.
+var sqliteVersionDB = func() *sql.DB {
+	db, err := sql.Open("sqlite", ":memory:")
+	if err != nil {
+		panic(fmt.Sprintf("failed to open the database the version probe is answered from: %v", err))
+	}
+
+	return db
+}()
+
 // stubConnPool is a database handle that sends nothing. Every callback that
 // would reach it is replaced below, so it only has to exist and to hand out a
 // transaction, which gorm opens around a create of its own accord.
@@ -214,7 +230,7 @@ func (p *stubConnPool) QueryContext(ctx context.Context, query string, args ...i
 }
 
 func (p *stubConnPool) QueryRowContext(ctx context.Context, query string, args ...interface{}) *sql.Row {
-	return &sql.Row{}
+	return sqliteVersionDB.QueryRowContext(ctx, query, args...)
 }
 
 func (p *stubConnPool) BeginTx(ctx context.Context, opts *sql.TxOptions) (gorm.ConnPool, error) {
@@ -238,10 +254,7 @@ type accountStub struct {
 func newAccountStub(t *testing.T, rowCount int64) *accountStub {
 	t.Helper()
 
-	db, err := gorm.Open(mysql.New(mysql.Config{
-		Conn:                      &stubConnPool{},
-		SkipInitializeWithVersion: true,
-	}), &gorm.Config{
+	db, err := gorm.Open(sqlite.Dialector{Conn: &stubConnPool{}}, &gorm.Config{
 		Logger:               gormlogger.Discard,
 		DisableAutomaticPing: true,
 	})

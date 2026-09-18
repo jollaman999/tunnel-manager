@@ -15,12 +15,12 @@ import (
 	"testing"
 	"time"
 
+	"github.com/glebarez/sqlite"
 	"github.com/jollaman999/tunnel-manager/internal/models"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
 	"go.uber.org/zap/zaptest/observer"
 	"golang.org/x/crypto/ssh"
-	"gorm.io/driver/mysql"
 	"gorm.io/gorm"
 	"gorm.io/gorm/logger"
 )
@@ -43,16 +43,13 @@ func (sshTestConnPool) QueryContext(ctx context.Context, query string, args ...i
 }
 
 func (sshTestConnPool) QueryRowContext(ctx context.Context, query string, args ...interface{}) *sql.Row {
-	return &sql.Row{}
+	return sqliteVersionDB.QueryRowContext(ctx, query, args...)
 }
 
 func newSSHTestManager(t *testing.T, monitoringIntervalSec int) *Manager {
 	t.Helper()
 
-	db, err := gorm.Open(mysql.New(mysql.Config{
-		Conn:                      sshTestConnPool{},
-		SkipInitializeWithVersion: true,
-	}), &gorm.Config{
+	db, err := gorm.Open(sqlite.Dialector{Conn: sshTestConnPool{}}, &gorm.Config{
 		Logger:               logger.Discard,
 		DisableAutomaticPing: true,
 	})

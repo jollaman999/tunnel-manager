@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	"gorm.io/driver/mysql"
+	"github.com/glebarez/sqlite"
 	"gorm.io/gorm"
 )
 
@@ -17,16 +17,15 @@ func TestUserTableNameIsSingular(t *testing.T) {
 	}
 }
 
-// newDryRunDB returns a gorm handle over the mysql dialector that builds
+// newDryRunDB returns a gorm handle over the SQLite dialector that builds
 // statements without sending them, so the SQL a model produces can be read
-// without a database.
+// without a database file. The dialector asks the database for its version as
+// it is opened, which DryRun does not cover, so the handle is pointed at an
+// in-memory one and nothing else ever reaches it.
 func newDryRunDB(t *testing.T) *gorm.DB {
 	t.Helper()
 
-	db, err := gorm.Open(mysql.New(mysql.Config{
-		DSN:                       "user:password@tcp(127.0.0.1:3306)/tunnel-manager",
-		SkipInitializeWithVersion: true,
-	}), &gorm.Config{DryRun: true, DisableAutomaticPing: true})
+	db, err := gorm.Open(sqlite.Open("file::memory:"), &gorm.Config{DryRun: true, DisableAutomaticPing: true})
 	if err != nil {
 		t.Fatalf("failed to open a dry run handle: %v", err)
 	}

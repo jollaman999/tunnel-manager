@@ -10,7 +10,6 @@ import (
 	"github.com/labstack/echo/v4"
 	"go.uber.org/zap"
 	"gorm.io/gorm"
-	"gorm.io/gorm/clause"
 )
 
 // tunnelManager is what the handlers need from the tunnel manager. They write
@@ -207,12 +206,19 @@ func (h *Handler) UpdateHost(c echo.Context) error {
 		})
 	}
 
-	// The row is read inside the transaction and locked, because what is written
-	// below is the row that is read here with a few fields replaced. Two requests
-	// on the same Host would otherwise both read the old row, and the write that
-	// lands second would put back the fields the first one changed.
+	// The row is read inside the transaction, because what is written below is
+	// the row that is read here with a few fields replaced. Two requests on the
+	// same Host would otherwise both read the old row, and the write that lands
+	// second would put back the fields the first one changed.
+	//
+	// What keeps the two apart is the single database connection that
+	// database.NewDatabase opens. SQLite takes one writer at a time, so the
+	// pool holds the second transaction until the first has committed, and the
+	// read below it sees what the first one wrote. SELECT ... FOR UPDATE used
+	// to stand here, but gorm leaves that clause out of SQLite SQL without a
+	// word and without an error, so it guarded nothing.
 	var host models.Host
-	err = tx.Clauses(clause.Locking{Strength: "UPDATE"}).First(&host, id).Error
+	err = tx.First(&host, id).Error
 	if err != nil {
 		tx.Rollback()
 		if errors.Is(err, gorm.ErrRecordNotFound) {
@@ -302,12 +308,11 @@ func (h *Handler) DeleteHost(c echo.Context) error {
 		})
 	}
 
-	// The row is read inside the transaction and locked as well, so that the
-	// answer and the delete agree: an update of the same Host either lands
-	// before the read, and is deleted with the row, or waits and finds the row
-	// gone.
+	// Read inside the transaction as in UpdateHost, so that the answer and the
+	// delete agree: an update of the same Host either lands before the read,
+	// and is deleted with the row, or waits for the pool and finds the row gone.
 	var host models.Host
-	err = tx.Clauses(clause.Locking{Strength: "UPDATE"}).First(&host, id).Error
+	err = tx.First(&host, id).Error
 	if err != nil {
 		tx.Rollback()
 		if errors.Is(err, gorm.ErrRecordNotFound) {
@@ -500,10 +505,10 @@ func (h *Handler) UpdateServicePort(c echo.Context) error {
 		})
 	}
 
-	// The row is read inside the transaction and locked, for the reason
-	// UpdateHost is: the write below carries the fields this read brought in.
+	// Read inside the transaction for the reason UpdateHost is: the write below
+	// carries the fields this read brought in.
 	var sp models.ServicePort
-	err = tx.Clauses(clause.Locking{Strength: "UPDATE"}).First(&sp, id).Error
+	err = tx.First(&sp, id).Error
 	if err != nil {
 		tx.Rollback()
 		if errors.Is(err, gorm.ErrRecordNotFound) {
@@ -570,10 +575,10 @@ func (h *Handler) DeleteServicePort(c echo.Context) error {
 		})
 	}
 
-	// Locked as in DeleteHost, so that an update of the same service port and
-	// this delete do not both act on the row they read.
+	// Read inside the transaction as in DeleteHost, so that an update of the
+	// same service port and this delete do not both act on the row they read.
 	var sp models.ServicePort
-	err = tx.Clauses(clause.Locking{Strength: "UPDATE"}).First(&sp, id).Error
+	err = tx.First(&sp, id).Error
 	if err != nil {
 		tx.Rollback()
 		if errors.Is(err, gorm.ErrRecordNotFound) {

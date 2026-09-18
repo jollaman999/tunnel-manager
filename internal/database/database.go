@@ -4,11 +4,13 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
+	"path/filepath"
 	"time"
 
+	"github.com/glebarez/sqlite"
 	"github.com/jollaman999/tunnel-manager/internal/models"
 	"go.uber.org/zap"
-	"gorm.io/driver/mysql"
 	"gorm.io/gorm"
 	gormlogger "gorm.io/gorm/logger"
 )
@@ -90,31 +92,54 @@ func (l *zapGormLogger) Trace(_ context.Context, begin time.Time, fc func() (str
 	}
 }
 
-// dialTimeout bounds a single connect attempt. Without it the dial runs until
-// the kernel gives up on the TCP handshake, which takes over two minutes
-// against an address that swallows the packets, and the startup wait in
-// initDatabase cannot end while one attempt is still inside the driver. That
-// wait retries once a second and gives up after database.timeout_sec, 30 by
-// default, so one attempt has to stay a small part of that budget: 3 seconds
-// leaves room for several attempts within the default budget while staying far
-// above the handshake on a local network, which finishes in under a
-// millisecond, so a healthy but loaded server is not cut off.
-//
-// Only the dial is bounded. readTimeout and writeTimeout are deadlines per read
-// and per write on an established connection, not per query, so a query that
-// takes longer to produce its first byte than the deadline would be broken off.
-// Nothing here needs that, and the blocked startup is a dial problem.
-const dialTimeout = 3 * time.Second
+// busyTimeout is how long a statement waits for the database file to be free
+// before it gives up with SQLITE_BUSY. SQLite refuses a busy file on the spot
+// unless it is told to wait, and the caller sees "database is locked" rather
+// than a slow request. Within this process the single connection below already
+// puts the statements in a queue, so what the wait covers is another process
+// holding the file: a second copy of tunnel-manager started by mistake, or a
+// backup reading it. Five seconds is long enough for either to let go of a
+// database that holds a few dozen rows, and short enough that a file held for
+// good is reported instead of the request hanging.
+const busyTimeout = 5 * time.Second
 
-// mysqlDSN assembles what the driver is opened with. It is kept apart from the
-// open so that the parameters can be read back without a server to connect to.
-func mysqlDSN(host string, port int, user, password, dbname string) string {
-	return fmt.Sprintf("%s:%s@tcp(%s:%d)/%s?charset=utf8mb4&parseTime=True&loc=Local&timeout=%s",
-		user, password, host, port, dbname, dialTimeout)
+// sqliteDSN assembles what the driver is opened with. It is kept apart from the
+// open so that the parameters can be read back without touching a file.
+//
+// journal_mode(WAL) is the mode this setup was measured in. A reader and the
+// writer do not shut each other out in it, which matters because the reconcile
+// loop reads the Hosts on every pass while a request is writing one, and the
+// log it writes ahead survives a process that is killed mid-write.
+//
+// Both are set through _pragma parameters, which the driver runs on every
+// connection it opens. busy_timeout has to be set that way because it is a
+// property of the connection rather than of the file. journal_mode is stored in
+// the file once, but it is written here as well so that a database file created
+// elsewhere is put into WAL on the first open rather than staying in the
+// rollback journal mode it was made with.
+func sqliteDSN(path string) string {
+	return fmt.Sprintf("%s?_pragma=journal_mode(WAL)&_pragma=busy_timeout(%d)",
+		path, busyTimeout.Milliseconds())
 }
 
-func NewDatabase(host string, port int, user, password, dbname string, logger *zap.Logger, logLevel string) (*gorm.DB, error) {
-	dsn := mysqlDSN(host, port, user, password, dbname)
+func NewDatabase(path string, logger *zap.Logger, logLevel string) (*gorm.DB, error) {
+	// The path is resolved once and everything below uses the result. The
+	// configured value may be relative, and a relative path is read against the
+	// working directory, which differs between running from the repository,
+	// from the container and from systemd, so the file that was opened is only
+	// named by the absolute form.
+	absPath, err := filepath.Abs(path)
+	if err != nil {
+		return nil, fmt.Errorf("failed to resolve the database path %q: %w", path, err)
+	}
+
+	// SQLite creates the database file but not the directories above it, so a
+	// first startup against a path that does not exist yet would fail to open
+	// with nothing created.
+	err = os.MkdirAll(filepath.Dir(absPath), 0755)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create the database directory %q: %w", filepath.Dir(absPath), err)
+	}
 
 	config := &gorm.Config{
 		Logger: &zapGormLogger{
@@ -126,10 +151,31 @@ func NewDatabase(host string, port int, user, password, dbname string, logger *z
 		},
 	}
 
-	db, err := gorm.Open(mysql.Open(dsn), config)
+	db, err := gorm.Open(sqlite.Open(sqliteDSN(absPath)), config)
 	if err != nil {
-		return nil, fmt.Errorf("failed to connect to database: %w", err)
+		return nil, fmt.Errorf("failed to open the database: %w", err)
 	}
+
+	sqlDB, err := db.DB()
+	if err != nil {
+		return nil, fmt.Errorf("failed to reach the connection pool: %w", err)
+	}
+
+	// One connection is what puts the writes in a queue. SQLite takes one
+	// writer at a time and refuses the rest, and SELECT ... FOR UPDATE, which
+	// held the write handlers apart under MySQL, is not built into SQLite SQL
+	// at all: gorm drops the clause without a word and without an error, so it
+	// protected nothing here. With a single connection every statement, from a
+	// handler or from the reconcile loop, waits its turn in the pool instead.
+	//
+	// It is done here rather than around the handlers because the handlers are
+	// not the only writers. The reconcile loop and the SSH code write rows of
+	// their own, so a lock held in the API would leave those outside it, while
+	// a pool of one has no way around it.
+	//
+	// Reads queue up with the writes, which is affordable: what is stored is a
+	// few dozen Hosts and service ports and the queries run over them.
+	sqlDB.SetMaxOpenConns(1)
 
 	err = db.AutoMigrate(
 		&models.Host{},
@@ -140,6 +186,8 @@ func NewDatabase(host string, port int, user, password, dbname string, logger *z
 	if err != nil {
 		return nil, fmt.Errorf("failed to migrate database: %w", err)
 	}
+
+	logger.Info("opened the database", zap.String("path", absPath))
 
 	return db, nil
 }

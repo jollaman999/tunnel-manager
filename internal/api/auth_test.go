@@ -16,13 +16,13 @@ import (
 	"testing"
 	"time"
 
+	"github.com/glebarez/sqlite"
 	"github.com/go-playground/validator/v10"
 	"github.com/jollaman999/tunnel-manager/internal/auth"
 	"github.com/jollaman999/tunnel-manager/internal/models"
 	"github.com/labstack/echo/v4"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zaptest/observer"
-	"gorm.io/driver/mysql"
 	"gorm.io/gorm"
 	gormlogger "gorm.io/gorm/logger"
 )
@@ -514,7 +514,10 @@ func TestTheSessionStoreIsUsedFromManyGoroutines(t *testing.T) {
 }
 
 // accountRead is one read of the account row: whether it was issued on the
-// transaction rather than on the root connection, and whether it locked the row.
+// transaction rather than on the root connection, and whether it asked for a
+// row lock. The lock is watched so that one written back in is noticed: gorm
+// leaves FOR UPDATE out of SQLite SQL without a word and without an error, so
+// it would look like a guard while guarding nothing.
 type accountRead struct {
 	inTransaction   bool
 	lockedForUpdate bool
@@ -678,7 +681,7 @@ func (p *setupRootPool) QueryContext(ctx context.Context, query string, args ...
 }
 
 func (p *setupRootPool) QueryRowContext(ctx context.Context, query string, args ...interface{}) *sql.Row {
-	return &sql.Row{}
+	return sqliteVersionDB.QueryRowContext(ctx, query, args...)
 }
 
 func (p *setupRootPool) BeginTx(ctx context.Context, opts *sql.TxOptions) (gorm.ConnPool, error) {
@@ -713,10 +716,7 @@ func newSetupFixtureAt(t *testing.T, setupRequired bool, passwordFile string) *s
 	txPool := &setupTxPool{stub: stub}
 	stub.txPool = txPool
 
-	db, err := gorm.Open(mysql.New(mysql.Config{
-		Conn:                      &setupRootPool{tx: txPool},
-		SkipInitializeWithVersion: true,
-	}), &gorm.Config{
+	db, err := gorm.Open(sqlite.Dialector{Conn: &setupRootPool{tx: txPool}}, &gorm.Config{
 		Logger:               gormlogger.Discard,
 		DisableAutomaticPing: true,
 	})
@@ -809,9 +809,11 @@ func loginBeforeTheSetup(t *testing.T, f *setupFixture) []*http.Cookie {
 }
 
 // TestSetupWritesTheAccountInOneTransaction covers the whole of the good case:
-// the row is read locked inside the transaction, the three columns go out in one
-// statement that is committed once, and the initial password file is gone
-// afterwards.
+// the row is read inside the transaction and without a row lock, the three
+// columns go out in one statement that is committed once, and the initial
+// password file is gone afterwards. What holds two setups apart is the single
+// database connection that database.NewDatabase opens, which makes the second
+// transaction wait in the pool until the first has committed.
 func TestSetupWritesTheAccountInOneTransaction(t *testing.T) {
 	f := newSetupFixture(t, true)
 	writeInitialPassword(t, f.passwordFile)
@@ -852,9 +854,11 @@ func TestSetupWritesTheAccountInOneTransaction(t *testing.T) {
 	}
 
 	last := reads[len(reads)-1]
-	if !last.inTransaction || !last.lockedForUpdate {
-		t.Errorf("the setup read the account with in_transaction = %v, locked = %v, want both true",
-			last.inTransaction, last.lockedForUpdate)
+	if !last.inTransaction {
+		t.Errorf("the setup read the account outside the transaction, so the write does not cover it")
+	}
+	if last.lockedForUpdate {
+		t.Errorf("the setup asks for a row lock that SQLite does not take")
 	}
 
 	statements := f.stub.statementsRun()

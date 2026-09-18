@@ -6,9 +6,23 @@ import (
 	"database/sql/driver"
 	"fmt"
 	"io"
+	"strings"
 	"sync"
 	"testing"
 )
+
+// sqliteVersion is what the fake driver answers the version probe with. On
+// being opened the SQLite dialector asks the database for its version, so as to
+// know which clauses it may build, and a version below 3.35 would put gorm on
+// the path that does not read the generated id back with RETURNING. The number
+// is kept above it so that the statements the fake driver is handed are the
+// ones a real database would be handed.
+const sqliteVersion = "3.41.0"
+
+// versionQuery is the statement the dialector makes for itself. It is answered
+// but not recorded: it is the driver asking after itself, not the code under
+// test writing a row.
+const versionQuery = "select sqlite_version()"
 
 // The database roundtrip of the startup is exercised against a fake sql driver
 // that records the statements instead of sending them. It answers the two
@@ -61,8 +75,20 @@ func (c *fakeConn) ExecContext(_ context.Context, query string, args []driver.Na
 }
 
 func (c *fakeConn) QueryContext(_ context.Context, query string, args []driver.NamedValue) (driver.Rows, error) {
+	if query == versionQuery {
+		return &fakeRows{columns: []string{"version"}, values: []driver.Value{sqliteVersion}}, nil
+	}
+
 	c.recorder.record(query, args)
-	// The only query the account setup makes is the count of the account table.
+
+	// An insert arrives here rather than at ExecContext, because the SQLite
+	// dialector reads the generated id back with RETURNING and that makes the
+	// statement a query.
+	if strings.Contains(query, "RETURNING") {
+		return &fakeRows{columns: []string{"id"}, values: []driver.Value{int64(1)}}, nil
+	}
+
+	// The only other query the account setup makes is the count of the table.
 	return &fakeRows{columns: []string{"count"}, values: []driver.Value{c.rowCount}}, nil
 }
 

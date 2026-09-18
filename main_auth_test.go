@@ -6,11 +6,11 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/glebarez/sqlite"
 	"github.com/jollaman999/tunnel-manager/internal/auth"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
 	"go.uber.org/zap/zaptest/observer"
-	"gorm.io/driver/mysql"
 	"gorm.io/gorm"
 )
 
@@ -22,10 +22,7 @@ func newAccountDB(t *testing.T, rowCount int64) (*gorm.DB, *statementRecorder) {
 
 	sqlDB, recorder := newRecordingDB(t, rowCount)
 
-	db, err := gorm.Open(mysql.New(mysql.Config{
-		Conn:                      sqlDB,
-		SkipInitializeWithVersion: true,
-	}), &gorm.Config{DisableAutomaticPing: true})
+	db, err := gorm.Open(sqlite.Dialector{Conn: sqlDB}, &gorm.Config{DisableAutomaticPing: true})
 	if err != nil {
 		t.Fatalf("failed to open the database handle: %v", err)
 	}

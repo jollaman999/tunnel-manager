@@ -7,14 +7,12 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"net"
 	"os"
 	"path/filepath"
 	"strings"
-	"syscall"
 	"testing"
-	"time"
 
+	"github.com/glebarez/sqlite"
 	"github.com/go-playground/validator/v10"
 	"github.com/jollaman999/tunnel-manager/internal/config"
 	"github.com/jollaman999/tunnel-manager/internal/crypto"
@@ -22,7 +20,6 @@ import (
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
 	"go.uber.org/zap/zaptest/observer"
-	"gorm.io/driver/mysql"
 	"gorm.io/gorm"
 )
 
@@ -339,7 +336,10 @@ func (c *hostConn) ExecContext(context.Context, string, []driver.NamedValue) (dr
 	return fakeResult{}, nil
 }
 
-func (c *hostConn) QueryContext(context.Context, string, []driver.NamedValue) (driver.Rows, error) {
+func (c *hostConn) QueryContext(_ context.Context, query string, _ []driver.NamedValue) (driver.Rows, error) {
+	if query == versionQuery {
+		return &fakeRows{columns: []string{"version"}, values: []driver.Value{sqliteVersion}}, nil
+	}
 	if c.readErr != nil {
 		return nil, c.readErr
 	}
@@ -368,10 +368,7 @@ func newHostDB(t *testing.T, hosts []models.Host, readErr error) *gorm.DB {
 		_ = sqlDB.Close()
 	})
 
-	db, err := gorm.Open(mysql.New(mysql.Config{
-		Conn:                      sqlDB,
-		SkipInitializeWithVersion: true,
-	}), &gorm.Config{DisableAutomaticPing: true})
+	db, err := gorm.Open(sqlite.Dialector{Conn: sqlDB}, &gorm.Config{DisableAutomaticPing: true})
 	if err != nil {
 		t.Fatalf("failed to open the database handle: %v", err)
 	}
@@ -595,110 +592,5 @@ func TestTheValidatorFallsBackToTheGoNameWhenThereIsNoJsonName(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "Unnamed") {
 		t.Fatalf("the field that carries no json tag at all was not named: %v", err)
-	}
-}
-
-// newUnreachableDatabaseConfig returns a configuration pointing at a port on
-// the loopback address that nothing listens on, so a connection attempt is
-// refused right away. A routed address would be waited on for as long as the
-// kernel retries, which no test can afford.
-func newUnreachableDatabaseConfig(t *testing.T, timeoutSec int) *config.Config {
-	t.Helper()
-
-	listener, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatalf("failed to take a port to close again: %v", err)
-	}
-
-	port := listener.Addr().(*net.TCPAddr).Port
-
-	err = listener.Close()
-	if err != nil {
-		t.Fatalf("failed to close the port again: %v", err)
-	}
-
-	cfg := newLoggingConfig(filepath.Join(t.TempDir(), "logs", "tunnel-manager.log"))
-	cfg.Database.Host = "127.0.0.1"
-	cfg.Database.Port = port
-	cfg.Database.User = "tester"
-	cfg.Database.Password = "test-password"
-	cfg.Database.Name = "tunnel_manager"
-	cfg.Database.TimeoutSec = timeoutSec
-
-	return cfg
-}
-
-// TestInitDatabaseGivesUpWhenTheDatabaseNeverAnswers pins that the wait ends by
-// itself. It keeps trying for as long as the configured timeout allows and
-// reports every attempt, so a database that is not there is named instead of
-// the process hanging with nothing in the log.
-func TestInitDatabaseGivesUpWhenTheDatabaseNeverAnswers(t *testing.T) {
-	cfg := newUnreachableDatabaseConfig(t, 2)
-	core, logs := observer.New(zapcore.DebugLevel)
-
-	started := time.Now()
-	db, err := initDatabase(cfg, zap.New(core), make(chan os.Signal, 1))
-	waited := time.Since(started)
-
-	if err == nil {
-		t.Fatal("a database that nothing listens for was reported as connected")
-	}
-	if db != nil {
-		t.Fatal("a database handle was returned although no connection was made")
-	}
-	if !strings.Contains(err.Error(), "timeout waiting for database connection") {
-		t.Fatalf("the wait ended for another reason than the timeout: %v", err)
-	}
-
-	// The wait has to last about as long as it was configured for: ending it
-	// early would give up on a database that is still starting, and ending it
-	// late would hold the process up.
-	if waited < time.Duration(cfg.Database.TimeoutSec)*time.Second {
-		t.Fatalf("the wait ended after %s, which is before the configured %d seconds",
-			waited, cfg.Database.TimeoutSec)
-	}
-
-	attempts := 0
-
-	for _, entry := range logs.All() {
-		if strings.Contains(entry.Message, "attempting to connect to database") {
-			attempts++
-		}
-	}
-
-	if attempts == 0 {
-		t.Fatalf("no attempt was reported while the database was waited for, logged: %v", logs.AllUntimed())
-	}
-}
-
-// TestInitDatabaseStopsWaitingWhenASignalArrives pins that a signal delivered
-// during the wait ends the startup. The signals are taken over before the wait,
-// so one that arrives here sits in the channel, and a wait that did not read it
-// would hold the process up until the database answers or the timeout runs out.
-func TestInitDatabaseStopsWaitingWhenASignalArrives(t *testing.T) {
-	cfg := newUnreachableDatabaseConfig(t, 60)
-	core, logs := observer.New(zapcore.DebugLevel)
-
-	sigChan := make(chan os.Signal, 1)
-	sigChan <- syscall.SIGTERM
-
-	started := time.Now()
-	db, err := initDatabase(cfg, zap.New(core), sigChan)
-	waited := time.Since(started)
-
-	if db != nil {
-		t.Fatal("a database handle was returned although the wait was cut short")
-	}
-	if err == nil {
-		t.Fatal("the wait reported no reason for ending")
-	}
-	if err != errShutdownRequested {
-		t.Fatalf("the wait ended with %v, want the shutdown that was asked for", err)
-	}
-	if waited > 5*time.Second {
-		t.Fatalf("the signal was answered after %s, which is not on the spot", waited)
-	}
-	if !loggedAtLeast(logs, zapcore.InfoLevel, "Received signal while waiting for the database") {
-		t.Fatalf("the signal that ended the wait was not logged, logged: %v", logs.AllUntimed())
 	}
 }

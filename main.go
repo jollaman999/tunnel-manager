@@ -11,7 +11,6 @@ import (
 	"os/signal"
 	"path/filepath"
 	"reflect"
-	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -45,37 +44,6 @@ const shutdownTimeout = 10 * time.Second
 // still has to start. Waiting for it without a bound would hold the process up
 // long after the API stopped answering.
 const reconcileStopTimeout = 10 * time.Second
-
-// errShutdownRequested reports that the wait for the database ended because a
-// shutdown signal arrived, not because the database answered.
-var errShutdownRequested = errors.New("shutdown requested while waiting for the database")
-
-func initDatabase(cfg *config.Config, logger *zap.Logger, sigChan <-chan os.Signal) (*gorm.DB, error) {
-	timeout := time.After(time.Duration(cfg.Database.TimeoutSec) * time.Second)
-	tick := time.Tick(1 * time.Second)
-
-	for {
-		select {
-		case sig := <-sigChan:
-			// The signals are already delivered to the channel at this point,
-			// so the wait has to read it. Leaving it to the shutdown path at
-			// the end of main would let the signal sit in the buffer and keep
-			// the process up until the database answers or the wait times out.
-			logger.Info("Received signal while waiting for the database, shutting down...", zap.String("signal", sig.String()))
-			return nil, errShutdownRequested
-		case <-timeout:
-			return nil, fmt.Errorf("timeout waiting for database connection after %s seconds", strconv.Itoa(cfg.Database.TimeoutSec))
-		case <-tick:
-			db, err := database.NewDatabase(cfg.Database.Host, cfg.Database.Port, cfg.Database.User, cfg.Database.Password, cfg.Database.Name, logger, cfg.Logging.Level)
-			if err != nil {
-				logger.Info("attempting to connect to database...", zap.String("host", cfg.Database.Host), zap.Int("port", cfg.Database.Port), zap.Error(err))
-				continue
-			}
-			logger.Info("successfully connected to database")
-			return db, nil
-		}
-	}
-}
 
 // prepareLogFile makes sure the configured log file can be written to.
 func prepareLogFile(cfg *config.Config) error {
@@ -362,23 +330,18 @@ func main() {
 
 	logger.Info("loaded the encryption key", zap.String("path", keyPath))
 
-	// The signals are taken over before the wait for the database, which runs
-	// for as long as the configured timeout allows. Until they are, the default
-	// disposition kills the process, and nothing that was set up above is torn
-	// down. One channel serves both this wait and the shutdown at the end of
-	// main: only one of the two reads it, because a signal that arrives here
-	// ends the startup.
+	// The signals are taken over before anything that has to be torn down is
+	// built, because until they are the default disposition kills the process
+	// and leaves the tunnels behind. The same channel is read by the shutdown
+	// at the end of main.
 	sigChan := make(chan os.Signal, 1)
 	signal.Notify(sigChan, os.Interrupt, syscall.SIGINT, syscall.SIGTERM)
 
-	db, err := initDatabase(cfg, logger, sigChan)
+	// The database is a file, so there is nothing to wait for. A file that
+	// cannot be opened is not a problem that comes right on the next try, and
+	// retrying would only delay the message that says which path failed.
+	db, err := database.NewDatabase(cfg.Database.Path, logger, cfg.Logging.Level)
 	if err != nil {
-		if errors.Is(err, errShutdownRequested) {
-			// No tunnel and no manager exist yet, so the logger is all there is
-			// to flush, and a shutdown that was asked for is not a failure.
-			logger.Info("Exiting tunnel-manager...")
-			return
-		}
 		log.Fatalf("Failed to initialize database: %v", err)
 	}
 
@@ -388,7 +351,7 @@ func main() {
 	checkEncryptionKey(db, cipher, logger, cfg.Security.KeyFile)
 
 	// The account is set up before anything is served and before any tunnel is
-	// built. The table it reads is created by the migration that initDatabase
+	// built. The table it reads is created by the migration that NewDatabase
 	// runs, and a failure here stops the startup while there is nothing to tear
 	// down. Leaving it to a later point would let the API come up with no
 	// account to authenticate against.

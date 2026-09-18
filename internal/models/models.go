@@ -90,8 +90,8 @@ type User struct {
 
 // TableName keeps the table singular. gorm pluralizes User to "users" on its
 // own, and the table holds one row. "user" is also the name of an SQL function,
-// which the mysql driver keeps apart by quoting every identifier with backticks
-// (gorm.io/driver/mysql@v1.5.7/mysql.go:290).
+// which the driver keeps apart by quoting every identifier with backticks
+// (github.com/glebarez/sqlite@v1.11.0/sqlite.go:146, QuoteTo).
 func (User) TableName() string {
 	return "user"
 }

@@ -13,6 +13,7 @@ import (
 	"sync"
 	"testing"
 
+	"github.com/glebarez/sqlite"
 	"github.com/go-playground/validator/v10"
 	"github.com/jollaman999/tunnel-manager/internal/crypto"
 	"github.com/jollaman999/tunnel-manager/internal/models"
@@ -21,7 +22,6 @@ import (
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
 	"go.uber.org/zap/zaptest/observer"
-	"gorm.io/driver/mysql"
 	"gorm.io/gorm"
 	"gorm.io/gorm/callbacks"
 	gormlogger "gorm.io/gorm/logger"
@@ -71,6 +71,15 @@ func (p *txConnPool) ExecContext(ctx context.Context, query string, args ...inte
 }
 
 func (p *txConnPool) QueryContext(ctx context.Context, query string, args ...interface{}) (*sql.Rows, error) {
+	// An INSERT arrives here rather than at ExecContext, because the SQLite
+	// dialector reads the generated id back with RETURNING and that makes the
+	// statement a query. The one column the clause names is handed back from a
+	// real database, since a *sql.Rows holds nothing exported and cannot be
+	// built by hand. Everything else is a read, which fails on purpose.
+	if strings.Contains(query, "RETURNING `id`") {
+		return sqliteVersionDB.QueryContext(ctx, "SELECT 1 AS id")
+	}
+
 	return nil, errQueryFailed
 }
 
@@ -97,6 +106,21 @@ func (p *txConnPool) Rollback() error {
 // rootConnPool hands out txConnPool on Begin and fails every direct statement,
 // so a query issued outside the transaction can be told apart from one issued
 // inside it.
+// sqliteVersionDB answers the one statement the SQLite dialector runs for
+// itself: on being opened it asks the database for its version, so as to know
+// which clauses it may build. The pools here answer gorm callbacks rather than
+// SQL and have no database behind them, so that probe is sent to a real
+// in-memory one instead. It takes a database because a *sql.Row holds nothing
+// exported and can only come from one.
+var sqliteVersionDB = func() *sql.DB {
+	db, err := sql.Open("sqlite", ":memory:")
+	if err != nil {
+		panic(fmt.Sprintf("failed to open the database the version probe is answered from: %v", err))
+	}
+
+	return db
+}()
+
 type rootConnPool struct {
 	tx *txConnPool
 }
@@ -114,7 +138,7 @@ func (p *rootConnPool) QueryContext(ctx context.Context, query string, args ...i
 }
 
 func (p *rootConnPool) QueryRowContext(ctx context.Context, query string, args ...interface{}) *sql.Row {
-	return &sql.Row{}
+	return sqliteVersionDB.QueryRowContext(ctx, query, args...)
 }
 
 func (p *rootConnPool) BeginTx(ctx context.Context, opts *sql.TxOptions) (gorm.ConnPool, error) {
@@ -139,10 +163,7 @@ func newTxRecordingDB(t *testing.T) (*gorm.DB, *txConnPool) {
 	t.Helper()
 
 	tx := &txConnPool{}
-	db, err := gorm.Open(mysql.New(mysql.Config{
-		Conn:                      &rootConnPool{tx: tx},
-		SkipInitializeWithVersion: true,
-	}), &gorm.Config{
+	db, err := gorm.Open(sqlite.Dialector{Conn: &rootConnPool{tx: tx}}, &gorm.Config{
 		Logger:               gormlogger.Discard,
 		DisableAutomaticPing: true,
 	})
@@ -564,17 +585,21 @@ func newReadRecordingDB(t *testing.T, notFound bool) (*gorm.DB, *txConnPool, *re
 	return db, txPool, reads
 }
 
-// TestWriteHandlersReadTheirRowLockedInsideTheTransaction pins down that a
-// handler which writes a row it has read reads it with SELECT ... FOR UPDATE on
-// the transaction that does the write. Two requests on the same row would
+// TestWriteHandlersReadTheirRowInsideTheTransaction pins down that a handler
+// which writes a row it has read reads it on the transaction that does the
+// write, with the commit still ahead. Two requests on the same row would
 // otherwise both read the old row and the later write would put back what the
 // earlier one changed.
 //
-// A stub database cannot make one request wait for the other, so what is
-// observed here is the statement: the lock is asked for, it is asked for on the
-// transaction handle, and the commit is still ahead, which is what makes the
-// lock cover the write.
-func TestWriteHandlersReadTheirRowLockedInsideTheTransaction(t *testing.T) {
+// What holds the two apart is the single database connection that
+// database.NewDatabase opens: the second transaction waits in the pool until
+// the first has committed, so the read below it sees what the first one wrote.
+// That only covers the write if the read is inside the transaction, which is
+// what is observed here. SELECT ... FOR UPDATE used to stand here as well, and
+// the statement is checked for it because gorm leaves that clause out of SQLite
+// SQL without a word and without an error, so a lock written back in would
+// protect nothing while looking as though it did.
+func TestWriteHandlersReadTheirRowInsideTheTransaction(t *testing.T) {
 	const servicePortBody = `{"service_ip":"192.0.2.2","service_port":80,"local_port":8080}`
 
 	tests := []struct {
@@ -652,14 +677,14 @@ func TestWriteHandlersReadTheirRowLockedInsideTheTransaction(t *testing.T) {
 			}
 			read := all[0]
 
-			if !strings.Contains(read.sql, "FOR UPDATE") {
-				t.Errorf("the row was read without a lock: %s", read.sql)
+			if strings.Contains(read.sql, "FOR UPDATE") {
+				t.Errorf("the read asks for a row lock that SQLite does not take: %s", read.sql)
 			}
 			if !strings.Contains(read.sql, "`"+tt.table+"`") {
 				t.Errorf("sql = %s, want a read of %s", read.sql, tt.table)
 			}
 			if !read.inTx {
-				t.Errorf("the row was read outside the transaction, so the lock covers nothing: %s", read.sql)
+				t.Errorf("the row was read outside the transaction, so the write does not cover it: %s", read.sql)
 			}
 			if read.commits != 0 {
 				t.Errorf("commits at the read = %d, want 0: the transaction that writes was already through", read.commits)
@@ -673,9 +698,9 @@ func TestWriteHandlersReadTheirRowLockedInsideTheTransaction(t *testing.T) {
 	}
 }
 
-// TestCreateHandlersLockNothing pins down the other side of it: a create has no
-// row to lock yet, and the unique indexes are what keep a duplicate out.
-func TestCreateHandlersLockNothing(t *testing.T) {
+// TestCreateHandlersReadNothingFirst pins down the other side of it: a create
+// has no row to read yet, and the unique indexes are what keep a duplicate out.
+func TestCreateHandlersReadNothingFirst(t *testing.T) {
 	tests := []struct {
 		name   string
 		target string
@@ -726,10 +751,10 @@ func TestCreateHandlersLockNothing(t *testing.T) {
 	}
 }
 
-// TestWriteHandlersRollBackWhenTheLockedRowIsGone pins down that the answer for
-// a row that is not there leaves no transaction behind. The lock is taken
-// inside one now, so the path that finds nothing has one open.
-func TestWriteHandlersRollBackWhenTheLockedRowIsGone(t *testing.T) {
+// TestWriteHandlersRollBackWhenTheRowIsGone pins down that the answer for a row
+// that is not there leaves no transaction behind. The read is made inside one,
+// so the path that finds nothing has one open.
+func TestWriteHandlersRollBackWhenTheRowIsGone(t *testing.T) {
 	const servicePortBody = `{"service_ip":"192.0.2.2","service_port":80,"local_port":8080}`
 
 	tests := []struct {
@@ -1779,7 +1804,7 @@ func TestErrPathWrappedNotFoundIsStillNotFound(t *testing.T) {
 // causeOnlyLeaks is what a failed answer must not carry. The text of the
 // database names the query, the driver and the server it ran on, and none of
 // that is the client's to act on: the cause belongs in the log alone.
-var causeOnlyLeaks = []string{errQueryFailed.Error(), "gorm", "sql:", "mysql"}
+var causeOnlyLeaks = []string{errQueryFailed.Error(), "gorm", "sql:", "sqlite"}
 
 // causeOnlyBeginFailingPool is the root pool with the start of a transaction
 // failing. It is the one failure a callback cannot stand in for, because the
@@ -1821,10 +1846,7 @@ func (p *causeOnlyCommitFailingRoot) BeginTx(ctx context.Context, opts *sql.TxOp
 func causeOnlyDB(t *testing.T, pool gorm.ConnPool) *gorm.DB {
 	t.Helper()
 
-	db, err := gorm.Open(mysql.New(mysql.Config{
-		Conn:                      pool,
-		SkipInitializeWithVersion: true,
-	}), &gorm.Config{
+	db, err := gorm.Open(sqlite.Dialector{Conn: pool}, &gorm.Config{
 		Logger:               gormlogger.Discard,
 		DisableAutomaticPing: true,
 	})

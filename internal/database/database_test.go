@@ -4,23 +4,21 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"net"
+	"os"
+	"path/filepath"
+	"sort"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
+	"github.com/glebarez/sqlite"
+	"github.com/jollaman999/tunnel-manager/internal/models"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
 	"go.uber.org/zap/zaptest/observer"
+	"gorm.io/gorm"
 	gormlogger "gorm.io/gorm/logger"
-)
-
-// The credentials below are made up. Nothing is served with them and the only
-// address they are ever pointed at is a loopback port that is already closed.
-const (
-	testUser     = "tunnel"
-	testPassword = "not-a-real-one" // hook:allow
-	testDBName   = "tunnel_manager"
 )
 
 // newTraceLogger returns a gorm logger at level together with the record of
@@ -425,95 +423,164 @@ func TestAPlainQueryIsNotTracedBelowDebug(t *testing.T) {
 	}
 }
 
-// closedPort hands back a loopback port that nothing listens on, so the connect
-// attempt is refused at once instead of waiting out a timeout.
-func closedPort(t *testing.T) int {
+// newTestDatabase opens a database under a directory of the test that does not
+// exist yet, so every test also walks the path that a first startup takes.
+func newTestDatabase(t *testing.T) (*gorm.DB, string) {
 	t.Helper()
 
-	listener, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatalf("failed to take a loopback port: %v", err)
-	}
-
-	port := listener.Addr().(*net.TCPAddr).Port
-
-	if err := listener.Close(); err != nil {
-		t.Fatalf("failed to release the loopback port: %v", err)
-	}
-
-	return port
-}
-
-// TestNewDatabaseWrapsAConnectionFailure checks the error the caller gets when
-// there is nothing to connect to. The address the driver reports comes from the
-// assembled DSN, so it also shows that the host and the port were placed in it.
-func TestNewDatabaseWrapsAConnectionFailure(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "state", "tunnel-manager.db")
 	core, _ := observer.New(zapcore.DebugLevel)
 
-	port := closedPort(t)
-
-	db, err := NewDatabase("127.0.0.1", port, testUser, testPassword, testDBName, zap.New(core), "info")
-	if err == nil {
-		t.Fatalf("a closed port produced a usable handle: %v", db)
+	db, err := NewDatabase(path, zap.New(core), "error")
+	if err != nil {
+		t.Fatalf("failed to open the database at %s: %v", path, err)
 	}
 
+	t.Cleanup(func() {
+		sqlDB, err := db.DB()
+		if err == nil {
+			_ = sqlDB.Close()
+		}
+	})
+
+	return db, path
+}
+
+// tableNames returns the tables the database holds, leaving out the ones SQLite
+// keeps for itself.
+func tableNames(t *testing.T, db *gorm.DB) []string {
+	t.Helper()
+
+	var names []string
+	err := db.Raw("SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%'").
+		Scan(&names).Error
+	if err != nil {
+		t.Fatalf("failed to read the table list: %v", err)
+	}
+
+	sort.Strings(names)
+
+	return names
+}
+
+// TestNewDatabaseBuildsTheFileUnderADirectoryThatIsNotThereYet covers the first
+// startup of a fresh install. SQLite creates the database file but not the
+// directories above it, so a path that does not exist yet would otherwise fail
+// to open with nothing created and nothing said about the directory.
+func TestNewDatabaseBuildsTheFileUnderADirectoryThatIsNotThereYet(t *testing.T) {
+	db, path := newTestDatabase(t)
+
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Fatalf("the database file was not created: %v", err)
+	}
+	if info.Size() == 0 {
+		t.Fatalf("the database file at %s is empty", path)
+	}
+
+	want := []string{"hosts", "service_ports", "tunnels", "user"}
+	got := tableNames(t, db)
+
+	if strings.Join(got, ",") != strings.Join(want, ",") {
+		t.Fatalf("the tables are %v, want %v", got, want)
+	}
+}
+
+// TestNewDatabaseReportsTheResolvedPath holds that the absolute path is what is
+// logged. A configured path may be relative, and a relative path is read against
+// the working directory, which differs between running from the repository, from
+// the container and from systemd, so the value as written names no file.
+func TestNewDatabaseReportsTheResolvedPath(t *testing.T) {
+	dir := t.TempDir()
+
+	wd, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("failed to read the working directory: %v", err)
+	}
+
+	err = os.Chdir(dir)
+	if err != nil {
+		t.Fatalf("failed to move into %s: %v", dir, err)
+	}
+	t.Cleanup(func() {
+		_ = os.Chdir(wd)
+	})
+
+	core, logs := observer.New(zapcore.DebugLevel)
+
+	db, err := NewDatabase(filepath.Join("state", "tunnel-manager.db"), zap.New(core), "error")
+	if err != nil {
+		t.Fatalf("failed to open the database: %v", err)
+	}
+	t.Cleanup(func() {
+		sqlDB, err := db.DB()
+		if err == nil {
+			_ = sqlDB.Close()
+		}
+	})
+
+	entries := logs.FilterMessage("opened the database").All()
+	if len(entries) != 1 {
+		t.Fatalf("the open was logged %d times, want once: %v", len(entries), logs.AllUntimed())
+	}
+
+	logged, ok := entries[0].ContextMap()["path"].(string)
+	if !ok {
+		t.Fatalf("the path is missing from %v", entries[0].ContextMap())
+	}
+
+	if !filepath.IsAbs(logged) {
+		t.Fatalf("the logged path %q is relative, so it names no file on its own", logged)
+	}
+
+	// The symlink is resolved on both sides because the temporary directory of
+	// a test is reached through one on macOS.
+	wantDir, err := filepath.EvalSymlinks(dir)
+	if err != nil {
+		t.Fatalf("failed to resolve %s: %v", dir, err)
+	}
+	gotDir, err := filepath.EvalSymlinks(filepath.Dir(filepath.Dir(logged)))
+	if err != nil {
+		t.Fatalf("failed to resolve %s: %v", logged, err)
+	}
+
+	if gotDir != wantDir {
+		t.Fatalf("the logged path is %q, want it under %q", logged, wantDir)
+	}
+}
+
+// TestNewDatabaseWrapsAnOpenFailure checks what the caller gets when the path
+// cannot be opened as a database. The startup has nothing to retry here, so the
+// reason has to travel back whole.
+func TestNewDatabaseWrapsAnOpenFailure(t *testing.T) {
+	// A directory is a path that exists and that SQLite cannot open as a
+	// database file, which is what an operator hits by pointing database.path
+	// at a directory.
+	path := t.TempDir()
+
+	core, logs := observer.New(zapcore.DebugLevel)
+
+	db, err := NewDatabase(path, zap.New(core), "error")
+	if err == nil {
+		t.Fatalf("a directory produced a usable handle: %v", db)
+	}
 	if db != nil {
 		t.Fatalf("a handle was returned along with the error: %v", db)
 	}
-
-	if !strings.HasPrefix(err.Error(), "failed to connect to database: ") {
-		t.Fatalf("the error is %q, want it wrapped as a connection failure", err)
+	if !strings.HasPrefix(err.Error(), "failed to open the database: ") {
+		t.Fatalf("the error is %q, want it wrapped as an open failure", err)
 	}
-
 	if errors.Unwrap(err) == nil {
 		t.Fatalf("the error %q does not carry what the driver reported", err)
 	}
 
-	address := fmt.Sprintf("127.0.0.1:%d", port)
-	if !strings.Contains(err.Error(), address) {
-		t.Fatalf("the error is %q, want the %s the DSN pointed at", err, address)
-	}
-}
-
-// TestNewDatabaseKeepsThePasswordOutOfTheError holds the DSN, password and all,
-// out of what is handed back and logged when the connection cannot be made.
-func TestNewDatabaseKeepsThePasswordOutOfTheError(t *testing.T) {
-	core, logs := observer.New(zapcore.DebugLevel)
-
-	_, err := NewDatabase("127.0.0.1", closedPort(t), testUser, testPassword, testDBName, zap.New(core), "info")
-	if err == nil {
-		t.Fatalf("a closed port produced a usable handle")
-	}
-
-	if strings.Contains(err.Error(), testPassword) {
-		t.Fatalf("the error carries the password: %q", err)
-	}
-
-	for _, entry := range logs.All() {
-		line := entry.Message + " " + fmt.Sprint(entry.ContextMap())
-		if strings.Contains(line, testPassword) {
-			t.Fatalf("a log entry carries the password: %q", line)
-		}
-	}
-}
-
-// TestNewDatabaseReportsTheFailureThroughTheGivenLogger shows that the gorm
-// logger built here is the one gorm was handed: gorm reports a failed open
-// through its own logger, and the line has to come out under the "gorm" name
-// rather than going to stderr on its own.
-func TestNewDatabaseReportsTheFailureThroughTheGivenLogger(t *testing.T) {
-	core, logs := observer.New(zapcore.DebugLevel)
-
-	_, err := NewDatabase("127.0.0.1", closedPort(t), testUser, testPassword, testDBName, zap.New(core), "error")
-	if err == nil {
-		t.Fatalf("a closed port produced a usable handle")
-	}
-
+	// gorm reports a failed open through the logger it was handed, which is the
+	// one built here, so the line has to come out under the "gorm" name rather
+	// than going to stderr on its own.
 	entries := logs.All()
 	if len(entries) == 0 {
 		t.Fatalf("the failure was not reported through the given logger")
 	}
-
 	for _, entry := range entries {
 		if entry.LoggerName != "gorm" {
 			t.Fatalf("an entry came out under %q, want %q", entry.LoggerName, "gorm")
@@ -521,74 +588,207 @@ func TestNewDatabaseReportsTheFailureThroughTheGivenLogger(t *testing.T) {
 	}
 }
 
-// blackholeAddress is reserved for documentation (TEST-NET-1, RFC 5737), so
-// nothing routes it back and a connect attempt either sits there until it is
-// cut off or is refused by the local routing table. Neither outcome depends on
-// a host being up, which is what makes it usable in a test.
-const blackholeAddress = "192.0.2.1"
+// TestTheDSNCarriesThePragmas reads the parameters back out of the assembled
+// DSN. They only reach the driver as text, so a name it does not know would be
+// dropped without a word and leave the database in the mode it was made with.
+func TestTheDSNCarriesThePragmas(t *testing.T) {
+	dsn := sqliteDSN("/var/lib/tunnel-manager/tunnel-manager.db")
 
-// TestTheDSNCarriesADialTimeout reads the parameters back out of the assembled
-// DSN. The value only reaches the driver as text, so a name the driver does not
-// know or a duration it cannot parse would be dropped without a word and leave
-// the dial unbounded again.
-func TestTheDSNCarriesADialTimeout(t *testing.T) {
-	dsn := mysqlDSN("127.0.0.1", 3306, testUser, testPassword, testDBName)
-
-	_, params, found := strings.Cut(dsn, "?")
+	path, params, found := strings.Cut(dsn, "?")
 	if !found {
 		t.Fatalf("the DSN %q carries no parameters", dsn)
 	}
-
-	var timeout string
-	for _, param := range strings.Split(params, "&") {
-		if value, ok := strings.CutPrefix(param, "timeout="); ok {
-			timeout = value
-		}
+	if path != "/var/lib/tunnel-manager/tunnel-manager.db" {
+		t.Fatalf("the DSN points at %q, want the path it was given", path)
 	}
 
-	if timeout == "" {
-		t.Fatalf("the DSN %q has no timeout parameter", dsn)
-	}
-
-	parsed, err := time.ParseDuration(timeout)
-	if err != nil {
-		t.Fatalf("the driver cannot parse the timeout %q: %v", timeout, err)
-	}
-
-	if parsed != dialTimeout {
-		t.Fatalf("the DSN asks for %s, want %s", parsed, dialTimeout)
-	}
-
-	// The parameters that were already there have to survive the addition.
-	for _, param := range []string{"charset=utf8mb4", "parseTime=True", "loc=Local"} {
+	want := []string{"_pragma=journal_mode(WAL)", fmt.Sprintf("_pragma=busy_timeout(%d)", busyTimeout.Milliseconds())}
+	for _, param := range want {
 		if !strings.Contains(params, param) {
-			t.Fatalf("the DSN %q lost %s", dsn, param)
+			t.Fatalf("the DSN %q is missing %s", dsn, param)
 		}
 	}
 }
 
-// TestNewDatabaseGivesUpOnAnUnreachableAddress is the reason the timeout is in
-// the DSN at all. An address that swallows the packets keeps the kernel
-// retrying the TCP handshake for over two minutes, and the startup wait in main
-// cannot end while one attempt is still inside the driver, so its configured
-// timeout would not hold.
-func TestNewDatabaseGivesUpOnAnUnreachableAddress(t *testing.T) {
-	core, _ := observer.New(zapcore.DebugLevel)
+// TestThePragmasReachTheConnection is the other half: the DSN carrying them
+// proves nothing unless the connection came up with them. Both are read back
+// from the open database.
+func TestThePragmasReachTheConnection(t *testing.T) {
+	db, _ := newTestDatabase(t)
 
-	start := time.Now()
-
-	_, err := NewDatabase(blackholeAddress, 3306, testUser, testPassword, testDBName, zap.New(core), "error")
-
-	elapsed := time.Since(start)
-
-	if err == nil {
-		t.Fatalf("an unreachable address produced a usable handle after %s", elapsed)
+	var journalMode string
+	err := db.Raw("PRAGMA journal_mode").Scan(&journalMode).Error
+	if err != nil {
+		t.Fatalf("failed to read the journal mode: %v", err)
+	}
+	if !strings.EqualFold(journalMode, "wal") {
+		t.Fatalf("the journal mode is %q, want wal", journalMode)
 	}
 
-	// The margin covers the dial being set up and the error travelling back
-	// out through gorm. What is being held here is the order of magnitude:
-	// seconds rather than the minutes the kernel would spend on its own.
-	if limit := dialTimeout + 2*time.Second; elapsed > limit {
-		t.Fatalf("the attempt took %s, want it given up within %s", elapsed, limit)
+	var busy int64
+	err = db.Raw("PRAGMA busy_timeout").Scan(&busy).Error
+	if err != nil {
+		t.Fatalf("failed to read the busy timeout: %v", err)
 	}
+	if busy != busyTimeout.Milliseconds() {
+		t.Fatalf("the busy timeout is %d ms, want %d", busy, busyTimeout.Milliseconds())
+	}
+}
+
+// writeSpan is when one write transaction started and when it ended.
+type writeSpan struct {
+	start time.Time
+	end   time.Time
+}
+
+// runTwoWriteTransactions sends two transactions at the same Host row at once,
+// each holding the row for hold, and reports when each of them ran and what it
+// came back with. Each one changes a field of its own, so a write that was lost
+// shows up as a field that stayed empty.
+func runTwoWriteTransactions(t *testing.T, db *gorm.DB, hold time.Duration) ([]writeSpan, []error) {
+	t.Helper()
+
+	err := db.Create(&models.Host{IP: "192.0.2.10", Port: 22, User: "root", Password: "x"}).Error
+	if err != nil {
+		t.Fatalf("failed to store the Host the writes act on: %v", err)
+	}
+
+	spans := make([]writeSpan, 2)
+	errs := make([]error, 2)
+
+	var wg sync.WaitGroup
+
+	for i := 0; i < 2; i++ {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			errs[i] = db.Transaction(func(tx *gorm.DB) error {
+				spans[i].start = time.Now()
+
+				var host models.Host
+				err := tx.First(&host, 1).Error
+				if err != nil {
+					spans[i].end = time.Now()
+					return err
+				}
+
+				// The transaction is held open on purpose, so that two of them
+				// running at once cannot be missed for want of time.
+				time.Sleep(hold)
+
+				if i == 0 {
+					host.Description = "first"
+				} else {
+					host.User = "second"
+				}
+
+				err = tx.Save(&host).Error
+				spans[i].end = time.Now()
+
+				return err
+			})
+		}(i)
+	}
+
+	wg.Wait()
+
+	return spans, errs
+}
+
+func spansOverlap(spans []writeSpan) bool {
+	return spans[0].start.Before(spans[1].end) && spans[1].start.Before(spans[0].end)
+}
+
+// TestOneConnectionPutsTheWritesInAQueue is what stands in for the row lock
+// that was removed. SQLite takes one writer at a time, and gorm leaves
+// SELECT ... FOR UPDATE out of SQLite SQL without a word, so the pool of one
+// connection that NewDatabase opens is the only thing holding two write
+// transactions apart.
+//
+// The control below shows what the same two transactions do without it: they
+// run at the same time, one of them is refused with "database is locked", and
+// the change it carried is gone.
+func TestOneConnectionPutsTheWritesInAQueue(t *testing.T) {
+	const hold = 150 * time.Millisecond
+
+	db, _ := newTestDatabase(t)
+
+	spans, errs := runTwoWriteTransactions(t, db, hold)
+
+	if spansOverlap(spans) {
+		t.Fatalf("the two write transactions ran at the same time: %v", spans)
+	}
+
+	for i, err := range errs {
+		if err != nil {
+			t.Fatalf("write %d failed: %v", i, err)
+		}
+	}
+
+	var host models.Host
+	err := db.First(&host, 1).Error
+	if err != nil {
+		t.Fatalf("failed to read the Host back: %v", err)
+	}
+
+	if host.Description != "first" {
+		t.Errorf("the description is %q, want the first write to have landed", host.Description)
+	}
+	if host.User != "second" {
+		t.Errorf("the user is %q, want the second write to have landed", host.User)
+	}
+
+	t.Logf("overlap=%v errs=%v description=%q user=%q",
+		spansOverlap(spans), errs, host.Description, host.User)
+}
+
+// TestWithoutTheSingleConnectionTheWritesCollide is the control. It opens the
+// same file with the same pragmas and leaves the pool unbounded, which is the
+// state the code would be in if SetMaxOpenConns(1) were dropped.
+func TestWithoutTheSingleConnectionTheWritesCollide(t *testing.T) {
+	const hold = 150 * time.Millisecond
+
+	path := filepath.Join(t.TempDir(), "tunnel-manager.db")
+
+	db, err := gorm.Open(sqlite.Open(sqliteDSN(path)), &gorm.Config{Logger: gormlogger.Discard})
+	if err != nil {
+		t.Fatalf("failed to open the database: %v", err)
+	}
+	t.Cleanup(func() {
+		sqlDB, err := db.DB()
+		if err == nil {
+			_ = sqlDB.Close()
+		}
+	})
+
+	err = db.AutoMigrate(&models.Host{})
+	if err != nil {
+		t.Fatalf("failed to migrate: %v", err)
+	}
+
+	spans, errs := runTwoWriteTransactions(t, db, hold)
+
+	if !spansOverlap(spans) {
+		t.Skipf("the two transactions did not run at the same time, so there was nothing to collide: %v", spans)
+	}
+
+	refused := 0
+	for _, err := range errs {
+		if err != nil && strings.Contains(err.Error(), "database is locked") {
+			refused++
+		}
+	}
+
+	if refused == 0 {
+		t.Fatalf("no write was refused although the two ran at the same time: %v", errs)
+	}
+
+	var host models.Host
+	err = db.First(&host, 1).Error
+	if err != nil {
+		t.Fatalf("failed to read the Host back: %v", err)
+	}
+
+	t.Logf("overlap=%v errs=%v description=%q user=%q",
+		spansOverlap(spans), errs, host.Description, host.User)
 }

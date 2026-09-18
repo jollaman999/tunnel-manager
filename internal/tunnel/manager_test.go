@@ -13,18 +13,33 @@ import (
 	"testing"
 	"time"
 
+	"github.com/glebarez/sqlite"
 	"github.com/jollaman999/tunnel-manager/internal/crypto"
 	"github.com/jollaman999/tunnel-manager/internal/models"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
 	"go.uber.org/zap/zaptest/observer"
-	"gorm.io/driver/mysql"
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
 	"gorm.io/gorm/logger"
 )
 
 var errConnPoolClosed = errors.New("connection pool is closed")
+
+// sqliteVersionDB answers the one statement the SQLite dialector runs for
+// itself: on being opened it asks the database for its version, so as to know
+// which clauses it may build. The pools in this package fail every statement
+// and have no database behind them, so that probe is sent to a real in-memory
+// one instead. It takes a database because a *sql.Row holds nothing exported
+// and cannot be built by hand.
+var sqliteVersionDB = func() *sql.DB {
+	db, err := sql.Open("sqlite", ":memory:")
+	if err != nil {
+		panic(fmt.Sprintf("failed to open the database the version probe is answered from: %v", err))
+	}
+
+	return db
+}()
 
 // failingConnPool makes every statement fail without touching a real database.
 type failingConnPool struct{}
@@ -42,16 +57,13 @@ func (failingConnPool) QueryContext(ctx context.Context, query string, args ...i
 }
 
 func (failingConnPool) QueryRowContext(ctx context.Context, query string, args ...interface{}) *sql.Row {
-	return &sql.Row{}
+	return sqliteVersionDB.QueryRowContext(ctx, query, args...)
 }
 
 func newFailingDB(t *testing.T) *gorm.DB {
 	t.Helper()
 
-	db, err := gorm.Open(mysql.New(mysql.Config{
-		Conn:                      failingConnPool{},
-		SkipInitializeWithVersion: true,
-	}), &gorm.Config{
+	db, err := gorm.Open(sqlite.Dialector{Conn: failingConnPool{}}, &gorm.Config{
 		Logger:               logger.Discard,
 		DisableAutomaticPing: true,
 	})

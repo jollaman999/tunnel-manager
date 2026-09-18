@@ -18,7 +18,6 @@ import (
 	"github.com/labstack/echo/v4"
 	"go.uber.org/zap"
 	"gorm.io/gorm"
-	"gorm.io/gorm/clause"
 )
 
 // The paths the session middleware lets through are matched against the request
@@ -471,12 +470,15 @@ func (h *AuthHandler) Setup(c echo.Context) error {
 		})
 	}
 
-	// The row is read inside the transaction and locked, and the flag is looked
-	// at again once it is. The middleware checked it too, but two requests can
-	// both get past the middleware, and the second one would otherwise write
-	// over the credentials the first one had just settled.
+	// The row is read inside the transaction and the flag is looked at again
+	// once it is. The middleware checked it too, but two requests can both get
+	// past the middleware, and the second one would otherwise write over the
+	// credentials the first one had just settled. The single database
+	// connection holds the second transaction until the first has committed,
+	// so this read sees the flag the first one cleared. See UpdateHost in
+	// handlers.go for why the FOR UPDATE that stood here is gone.
 	var user models.User
-	err = tx.Clauses(clause.Locking{Strength: "UPDATE"}).First(&user, userID).Error
+	err = tx.First(&user, userID).Error
 	if err != nil {
 		tx.Rollback()
 		h.logger.Error("failed to read the account", zap.Error(err))

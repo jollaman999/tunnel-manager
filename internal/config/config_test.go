@@ -8,12 +8,7 @@ import (
 )
 
 const baseConfig = `database:
-  host: 127.0.0.1
-  port: 3307
-  user: tunnel-manager
-  password: placeholder-value
-  name: tunnel-manager
-  timeout_sec: 30
+  path: /var/lib/tunnel-manager/tunnel-manager.db
 
 api:
   port: 8888
@@ -34,12 +29,7 @@ func writeConfig(t *testing.T, body string) string {
 
 func validConfig() *Config {
 	var c Config
-	c.Database.Host = "127.0.0.1"
-	c.Database.Port = 3307
-	c.Database.User = "tunnel-manager"
-	c.Database.Password = "placeholder-value"
-	c.Database.Name = "tunnel-manager"
-	c.Database.TimeoutSec = 30
+	c.Database.Path = "/var/lib/tunnel-manager/tunnel-manager.db"
 	c.API.Port = 8888
 	c.Monitoring.IntervalSec = 5
 	c.Reconcile.IntervalSec = 5
@@ -77,12 +67,7 @@ reconcile:
 
 func TestLoadConfigKeepsReconcileAndMonitoringApart(t *testing.T) {
 	path := writeConfig(t, `database:
-  host: 127.0.0.1
-  port: 3307
-  user: tunnel-manager
-  password: placeholder-value
-  name: tunnel-manager
-  timeout_sec: 30
+  path: /var/lib/tunnel-manager/tunnel-manager.db
 
 api:
   port: 8888
@@ -196,12 +181,7 @@ func TestValidateExistingFields(t *testing.T) {
 		mutate func(*Config)
 		want   string
 	}{
-		{name: "empty database host", mutate: func(c *Config) { c.Database.Host = "" }, want: "database host"},
-		{name: "database port out of range", mutate: func(c *Config) { c.Database.Port = 70000 }, want: "database port"},
-		{name: "empty database user", mutate: func(c *Config) { c.Database.User = "" }, want: "database user"},
-		{name: "empty database password", mutate: func(c *Config) { c.Database.Password = "" }, want: "database password"},
-		{name: "empty database name", mutate: func(c *Config) { c.Database.Name = "" }, want: "database name"},
-		{name: "zero database timeout", mutate: func(c *Config) { c.Database.TimeoutSec = 0 }, want: "database timeout"},
+		{name: "empty database path", mutate: func(c *Config) { c.Database.Path = "" }, want: "database path"},
 		{name: "api port out of range", mutate: func(c *Config) { c.API.Port = 0 }, want: "API port"},
 		{name: "zero monitoring interval", mutate: func(c *Config) { c.Monitoring.IntervalSec = 0 }, want: "monitoring interval"},
 		{name: "negative monitoring interval", mutate: func(c *Config) { c.Monitoring.IntervalSec = -1 }, want: "monitoring interval"},
@@ -236,5 +216,116 @@ func TestLoadConfigMissingFile(t *testing.T) {
 	_, err := LoadConfig(filepath.Join(t.TempDir(), "no-such-config.yaml"))
 	if err == nil {
 		t.Fatal("LoadConfig accepted a missing file")
+	}
+}
+
+// TestLoadConfigKeepsTheDatabasePath holds that the configured path is the one
+// that comes out, since it is the single setting the database section carries.
+func TestLoadConfigKeepsTheDatabasePath(t *testing.T) {
+	path := writeConfig(t, baseConfig)
+
+	cfg, err := LoadConfig(path)
+	if err != nil {
+		t.Fatalf("LoadConfig: %v", err)
+	}
+	if cfg.Database.Path != "/var/lib/tunnel-manager/tunnel-manager.db" {
+		t.Errorf("database path = %q, want /var/lib/tunnel-manager/tunnel-manager.db", cfg.Database.Path)
+	}
+}
+
+// TestLoadConfigRefusesTheMySQLSettings is the reason the second read of the
+// file exists. yaml.v2 drops a key that matches no field without a word, so a
+// configuration left over from the MySQL setup would load, fall back to the
+// default path and build an empty database while the operator goes on believing
+// the MySQL server is being read. Every key that is still there has to be named,
+// because naming one would send the operator back for the next one.
+func TestLoadConfigRefusesTheMySQLSettings(t *testing.T) {
+	cases := []struct {
+		name string
+		body string
+		want []string
+	}{
+		{
+			name: "host alone",
+			body: "database:\n  host: 127.0.0.1\n  path: /tmp/x.db\n\napi:\n  port: 8888\n\nmonitoring:\n  interval_sec: 5\n",
+			want: []string{"database.host"},
+		},
+		{
+			name: "the whole MySQL section",
+			body: "database:\n  host: 127.0.0.1\n  port: 3307\n  user: tunnel-manager\n  password: placeholder-value\n" +
+				"  name: tunnel-manager\n  timeout_sec: 30\n\napi:\n  port: 8888\n\nmonitoring:\n  interval_sec: 5\n",
+			want: []string{"database.host", "database.port", "database.user", "database.password",
+				"database.name", "database.timeout_sec"},
+		},
+		{
+			name: "timeout alone",
+			body: "database:\n  path: /tmp/x.db\n  timeout_sec: 30\n\napi:\n  port: 8888\n\nmonitoring:\n  interval_sec: 5\n",
+			want: []string{"database.timeout_sec"},
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			cfg, err := LoadConfig(writeConfig(t, tc.body))
+			if err == nil {
+				t.Fatalf("LoadConfig accepted a MySQL configuration: %+v", cfg)
+			}
+			for _, key := range tc.want {
+				if !strings.Contains(err.Error(), key) {
+					t.Errorf("error = %v, want it to name %s", err, key)
+				}
+			}
+			if !strings.Contains(err.Error(), "database.path") {
+				t.Errorf("error = %v, want it to say what to write instead", err)
+			}
+		})
+	}
+}
+
+// TestLoadConfigDefaultsTheDatabasePathToTheUserConfigDir covers the case the
+// binary is downloaded and run with no path configured: the file lands where
+// the platform keeps user data, not in whatever directory the process was
+// started from.
+func TestLoadConfigDefaultsTheDatabasePathToTheUserConfigDir(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+
+	path := writeConfig(t, "api:\n  port: 8888\n\nmonitoring:\n  interval_sec: 5\n")
+
+	cfg, err := LoadConfig(path)
+	if err != nil {
+		t.Fatalf("LoadConfig: %v", err)
+	}
+
+	dir, err := os.UserConfigDir()
+	if err != nil {
+		t.Fatalf("UserConfigDir: %v", err)
+	}
+
+	want := filepath.Join(dir, "tunnel-manager", "tunnel-manager.db")
+	if cfg.Database.Path != want {
+		t.Errorf("database path = %q, want %q", cfg.Database.Path, want)
+	}
+}
+
+// TestLoadConfigRefusesToGuessWithoutAHome is the other half of the default.
+// With neither XDG_CONFIG_HOME nor HOME there is no place the platform calls
+// its own, and inventing one would let one startup build a database in one
+// directory and the next one build another somewhere else, so the Hosts that
+// were registered would look gone.
+func TestLoadConfigRefusesToGuessWithoutAHome(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", "")
+	t.Setenv("HOME", "")
+
+	path := writeConfig(t, "api:\n  port: 8888\n\nmonitoring:\n  interval_sec: 5\n")
+
+	cfg, err := LoadConfig(path)
+	if err == nil {
+		t.Fatalf("LoadConfig made up a database path: %+v", cfg)
+	}
+	if !strings.Contains(err.Error(), "database.path") {
+		t.Errorf("error = %v, want it to ask for database.path", err)
+	}
+	if !strings.Contains(err.Error(), "absolute path") {
+		t.Errorf("error = %v, want it to ask for an absolute path", err)
 	}
 }
