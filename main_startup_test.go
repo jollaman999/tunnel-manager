@@ -40,7 +40,7 @@ func newLoggingSettings(path string) *settings.Settings {
 // newLogger builds the logger initLogger describes, which is what main does
 // with the core it returns.
 func newLogger(s *settings.Settings) (*zap.Logger, error) {
-	core, _, err := initLogger(s)
+	core, _, err := initLogger(s, "")
 	if err != nil {
 		return nil, err
 	}
@@ -120,7 +120,7 @@ func TestDefaultDatabasePathRefusesToGuessWithoutAHome(t *testing.T) {
 func TestPrepareLogFileCreatesTheDirectoryAndTheFile(t *testing.T) {
 	logFile := filepath.Join(t.TempDir(), "logs", "tunnel-manager.log")
 
-	err := prepareLogFile(newLoggingSettings(logFile))
+	err := prepareLogFile(newLoggingSettings(logFile), "")
 	if err != nil {
 		t.Fatalf("failed to prepare a log file under a directory that can be created: %v", err)
 	}
@@ -144,7 +144,7 @@ func TestPrepareLogFileLeavesNoDescriptorOpenOnTheLogFile(t *testing.T) {
 
 	before := len(openPathsOfThisProcess(t))
 
-	err := prepareLogFile(newLoggingSettings(logFile))
+	err := prepareLogFile(newLoggingSettings(logFile), "")
 	if err != nil {
 		t.Fatalf("failed to prepare the log file: %v", err)
 	}
@@ -171,7 +171,7 @@ func TestPrepareLogFileReportsADirectoryThatCannotBeCreated(t *testing.T) {
 		t.Fatalf("failed to write the blocking file: %v", err)
 	}
 
-	err = prepareLogFile(newLoggingSettings(filepath.Join(blocking, "logs", "tunnel-manager.log")))
+	err = prepareLogFile(newLoggingSettings(filepath.Join(blocking, "logs", "tunnel-manager.log")), "")
 	if err == nil {
 		t.Fatal("a log directory that cannot be created was reported as prepared")
 	}
@@ -190,7 +190,7 @@ func TestPrepareLogFileReportsALogFileThatCannotBeOpened(t *testing.T) {
 		t.Fatalf("failed to create the directory that takes the place of the log file: %v", err)
 	}
 
-	err = prepareLogFile(newLoggingSettings(logFile))
+	err = prepareLogFile(newLoggingSettings(logFile), "")
 	if err == nil {
 		t.Fatal("a log file that cannot be opened was reported as prepared")
 	}
@@ -333,7 +333,7 @@ func TestInitLoggerRefusesALevelItCannotRead(t *testing.T) {
 	set := newLoggingSettings(filepath.Join(t.TempDir(), "logs", "tunnel-manager.log"))
 	set.LoggingLevel = "chatty"
 
-	core, _, err := initLogger(set)
+	core, _, err := initLogger(set, "")
 	if err == nil {
 		t.Fatal("a log level that cannot be read was accepted")
 	}
@@ -377,7 +377,7 @@ func TestTheLoggersHandedOutBeforeTheSwapFollowIt(t *testing.T) {
 
 		logger.Info("a line from before the swap")
 
-		core, _, err := initLogger(newLoggingSettings(logFile))
+		core, _, err := initLogger(newLoggingSettings(logFile), "")
 		if err != nil {
 			buildErr = err
 			return
@@ -419,7 +419,7 @@ func TestTheLoggersHandedOutBeforeTheSwapFollowIt(t *testing.T) {
 func TestTheLevelHandleChangesWhatIsWrittenWithoutARestart(t *testing.T) {
 	logFile := filepath.Join(t.TempDir(), "logs", "tunnel-manager.log")
 
-	core, level, err := initLogger(newLoggingSettings(logFile))
+	core, level, err := initLogger(newLoggingSettings(logFile), "")
 	if err != nil {
 		t.Fatalf("failed to build the core: %v", err)
 	}
@@ -745,5 +745,61 @@ func TestTheValidatorFallsBackToTheGoNameWhenThereIsNoJsonName(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "Unnamed") {
 		t.Fatalf("the field that carries no json tag at all was not named: %v", err)
+	}
+}
+
+// TestARelativePathIsReadAgainstTheDatabaseDirectory pins where a stored
+// relative path lands. The working directory is not the same twice: systemd
+// leaves it at /, the container image sets it to /, and a person running the
+// binary is wherever they happened to be. Reading these against it is what put
+// the encryption key in the root of the filesystem in an earlier release.
+func TestARelativePathIsReadAgainstTheDatabaseDirectory(t *testing.T) {
+	installDir := t.TempDir()
+
+	cases := []struct {
+		name  string
+		given string
+		want  string
+	}{
+		{"the default log path", "logs/tunnel-manager.log", filepath.Join(installDir, "logs", "tunnel-manager.log")},
+		{"the default key path", "keys/tunnel-manager.key", filepath.Join(installDir, "keys", "tunnel-manager.key")},
+		{"a bare file name", "x.log", filepath.Join(installDir, "x.log")},
+		{"an absolute path is left alone", "/var/log/tunnel-manager/x.log", "/var/log/tunnel-manager/x.log"},
+		{"an empty path stays empty", "", ""},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := resolveInstallPath(installDir, tc.given)
+			if got != tc.want {
+				t.Errorf("resolveInstallPath(%q, %q) = %q, want %q", installDir, tc.given, got, tc.want)
+			}
+		})
+	}
+}
+
+// TestTheLogFileIsWrittenBesideTheDatabase runs the path through the logger
+// rather than through the helper alone, so that a caller that forgot to resolve
+// is caught as well.
+func TestTheLogFileIsWrittenBesideTheDatabase(t *testing.T) {
+	installDir := t.TempDir()
+
+	set := newLoggingSettings("logs/tunnel-manager.log")
+
+	core, _, err := initLogger(set, installDir)
+	if err != nil {
+		t.Fatalf("failed to build the logger: %v", err)
+	}
+
+	zap.New(core).Info("a line that belongs beside the database")
+
+	written := filepath.Join(installDir, "logs", "tunnel-manager.log")
+
+	body, err := os.ReadFile(written)
+	if err != nil {
+		t.Fatalf("the log file was not written beside the database: %v", err)
+	}
+	if !strings.Contains(string(body), "a line that belongs beside the database") {
+		t.Fatalf("the entry did not reach %s, its content is %q", written, string(body))
 	}
 }

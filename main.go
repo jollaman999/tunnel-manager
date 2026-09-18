@@ -155,16 +155,36 @@ func newBootstrapLogger() (*zap.Logger, *coreSwitch) {
 	return zap.New(&switchedCore{swap: swap}, zap.AddCaller()), swap
 }
 
+// resolveInstallPath reads a stored path against the directory the database
+// file is in rather than against the working directory.
+//
+// The working directory is not the same twice: systemd leaves it at / unless a
+// unit says otherwise, the container image sets it to /, and a person running
+// the binary is wherever they happened to be. A relative default read against
+// it puts the key and the log somewhere different every time, which is how an
+// earlier release wrote the encryption key into the root of the filesystem.
+//
+// The directory holding the database is what this installation is, so the key,
+// the log and the initial password all sit beside it. An absolute path is left
+// alone and wins.
+func resolveInstallPath(installDir, path string) string {
+	if path == "" || filepath.IsAbs(path) {
+		return path
+	}
+
+	return filepath.Join(installDir, path)
+}
+
 // prepareLogFile makes sure the configured log file can be written to.
-func prepareLogFile(s *settings.Settings) error {
-	logDir := filepath.Dir(s.LoggingFilePath)
+func prepareLogFile(s *settings.Settings, installDir string) error {
+	logFilePath := resolveInstallPath(installDir, s.LoggingFilePath)
+	logDir := filepath.Dir(logFilePath)
 	err := os.MkdirAll(logDir, 0755)
 	if err != nil {
 		return fmt.Errorf("failed to create log directory: %v", err)
 	}
 
-	logFile := s.LoggingFilePath
-	file, err := os.OpenFile(logFile, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
+	file, err := os.OpenFile(logFilePath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
 	if err != nil {
 		return fmt.Errorf("failed to create log file: %v", err)
 	}
@@ -189,12 +209,13 @@ func prepareLogFile(s *settings.Settings) error {
 // A core is returned instead of a logger because the logger already exists by
 // the time this is called: the startup built one to report on opening the
 // database, and this core is put into it.
-func initLogger(s *settings.Settings) (zapcore.Core, zap.AtomicLevel, error) {
+func initLogger(s *settings.Settings, installDir string) (zapcore.Core, zap.AtomicLevel, error) {
 	// An unusable log file is not fatal. The logger falls back to the console
 	// only, but the reason has to be visible since nothing is written to the file.
-	fileErr := prepareLogFile(s)
+	fileErr := prepareLogFile(s, installDir)
 	if fileErr != nil {
-		log.Printf("Logging to file is disabled: %v (path: %s)", fileErr, s.LoggingFilePath)
+		log.Printf("Logging to file is disabled: %v (path: %s)", fileErr,
+			resolveInstallPath(installDir, s.LoggingFilePath))
 	}
 
 	level := zap.NewAtomicLevel()
@@ -216,7 +237,7 @@ func initLogger(s *settings.Settings) (zapcore.Core, zap.AtomicLevel, error) {
 
 	if fileErr == nil {
 		logWriter := &lumberjack.Logger{
-			Filename:   s.LoggingFilePath,
+			Filename:   resolveInstallPath(installDir, s.LoggingFilePath),
 			MaxSize:    s.LoggingFileMaxSize,
 			MaxBackups: s.LoggingFileMaxBackups,
 			MaxAge:     s.LoggingFileMaxAge,
@@ -525,6 +546,10 @@ func main() {
 	// changed by. It is held from here to the Settings handler for the same
 	// reason logLevel below is: the level is a stored setting, and a change to
 	// it has to reach a logger that is already in use.
+	// Everything this installation owns sits beside the database file, so the
+	// directory holding it is what a stored relative path is read against.
+	installDir := filepath.Dir(databaseFile)
+
 	db, gormLevel, err := database.NewDatabase(databaseFile, logger, bootstrapLogLevel)
 	if err != nil {
 		logger.Fatal("failed to open the database",
@@ -546,7 +571,7 @@ func main() {
 	// From here the logger is the one the settings describe. logLevel is the
 	// handle the Settings screen changes the level through, which is why the
 	// level is not fixed into the core.
-	core, logLevel, err := initLogger(set)
+	core, logLevel, err := initLogger(set, installDir)
 	if err != nil {
 		logger.Fatal("failed to initialize the logger", zap.Error(err))
 	}
@@ -566,7 +591,7 @@ func main() {
 	logger.Info("read the settings from the database",
 		zap.String("log_level", logLevel.String()),
 		zap.String("log_format", set.LoggingFormat),
-		zap.String("log_file", set.LoggingFilePath),
+		zap.String("log_file", resolveInstallPath(installDir, set.LoggingFilePath)),
 		zap.Int("api_port", set.APIPort),
 		zap.Int("monitoring_interval_sec", set.MonitoringIntervalSec),
 		zap.Int("reconcile_interval_sec", set.ReconcileIntervalSec))
@@ -577,10 +602,12 @@ func main() {
 
 	// Without the key no stored password can be read, so a key that cannot be
 	// loaded stops the startup instead of leaving every tunnel unable to connect.
-	key, err := crypto.LoadOrCreateKey(set.SecurityKeyFile)
+	keyFile := resolveInstallPath(installDir, set.SecurityKeyFile)
+
+	key, err := crypto.LoadOrCreateKey(keyFile)
 	if err != nil {
 		logger.Fatal("failed to load the encryption key",
-			zap.String("key_file", set.SecurityKeyFile),
+			zap.String("key_file", keyFile),
 			zap.Error(err))
 	}
 
@@ -593,9 +620,9 @@ func main() {
 	// which differs between running from the repository, from the container and
 	// from systemd. Logging it as it was written tells the operator nothing
 	// about which file was actually opened.
-	keyPath, err := filepath.Abs(set.SecurityKeyFile)
+	keyPath, err := filepath.Abs(keyFile)
 	if err != nil {
-		keyPath = set.SecurityKeyFile
+		keyPath = keyFile
 	}
 
 	logger.Info("loaded the encryption key", zap.String("path", keyPath))
@@ -718,9 +745,9 @@ func main() {
 	uninstallHandler := api.NewUninstallHandler(db, logger, manager, stopReconcileLoop,
 		api.UninstallPaths{
 			DatabaseFile:        databaseFile,
-			KeyFile:             set.SecurityKeyFile,
+			KeyFile:             keyFile,
 			InitialPasswordFile: initialPasswordFile,
-			LogFile:             set.LoggingFilePath,
+			LogFile:             resolveInstallPath(installDir, set.LoggingFilePath),
 		}, endAfterUninstall)
 	g := e.Group("/api")
 
