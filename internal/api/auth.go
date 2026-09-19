@@ -215,21 +215,34 @@ func (s *SessionStore) Delete(token string) {
 	delete(s.sessions, token)
 }
 
-// DeleteAllExcept drops every session but the one token stands for. The setup
-// calls it: every session that is open at that point was got with the initial
-// password, and that password was written to a file anyone with a look at the
-// host could have read. The session that is doing the setup is kept, because
+// DeleteAllExcept drops every session but the one token stands for and returns
+// how many went.
+//
+// The setup calls it: every session that is open at that point was got with the
+// initial password, and that password was written to a file anyone with a look
+// at the host could have read. So does the account change, for the same reason
+// read forward: the credentials those sessions were opened with are not the
+// credentials any more. The session that is making the change is kept, because
 // throwing the operator out of the request they are in the middle of protects
 // nothing: they are the one who just chose the new password.
-func (s *SessionStore) DeleteAllExcept(token string) {
+//
+// The count is returned because the change is answered with it. A caller that
+// has nothing to say about it ignores it, and the operator being told how many
+// other clients were signed out is how they find out that it happened at all.
+func (s *SessionStore) DeleteAllExcept(token string) int {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+
+	dropped := 0
 
 	for other := range s.sessions {
 		if other != token {
 			delete(s.sessions, other)
+			dropped++
 		}
 	}
+
+	return dropped
 }
 
 // AuthHandler serves the login and the logout and guards everything else. It is

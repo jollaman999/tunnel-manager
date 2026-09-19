@@ -164,12 +164,33 @@ function drawSetup() {
         type: "password",
         countBytes: true,
         note: "The length is counted in bytes. One Hangul syllable counts as three."
-      }
+      },
+      passwordConfirmationField("password_confirmation", "New password again", "password")
     ],
     onSubmit: submitSetup
   });
 
   render("Tunnel Manager", [form]);
+}
+
+// passwordConfirmationField is the second box a new password is typed into. It
+// is checked against the box named by against, and nothing is sent until the
+// two hold the same thing.
+//
+// What is sent is the password itself, once. The server is never handed the
+// second copy: it would have nothing to learn from the same string twice, and
+// the typo this box is here for is made in this browser.
+function passwordConfirmationField(name, label, against) {
+  return {
+    name: name,
+    label: label,
+    type: "password",
+    check: function (value, values) {
+      return checkPasswordConfirmation(value, values[against]);
+    },
+    note: "Type the new password a second time. A slip at the keyboard is caught here " +
+      "rather than at the next sign in."
+  };
 }
 
 async function submitSetup(values) {
@@ -983,6 +1004,7 @@ function enterSettings() {
 async function drawSettings() {
   const set = await apiCall("GET", "/api/settings");
   const certificate = await readCertificate();
+  const account = await readAccount();
   const restart = await readRestart();
 
   const nodes = [];
@@ -996,6 +1018,7 @@ async function drawSettings() {
   nodes.push(settingsForm(set));
   nodes.push(certificateCard(set, certificate));
   nodes.push(certificateForm());
+  nodes.push(accountCard(account));
   nodes.push(settingsRescue());
   nodes.push(settingsRestart(restart));
   nodes.push(settingsDangerZone());
@@ -1013,6 +1036,22 @@ async function drawSettings() {
 async function readCertificate() {
   try {
     return { view: await apiCall("GET", "/api/certificate"), problem: "" };
+  } catch (error) {
+    if (error instanceof Redirected) {
+      throw error;
+    }
+
+    return { view: null, problem: error.message };
+  }
+}
+
+// readAccount asks what the account is called. A refusal is turned into
+// something to show for the same reason the two calls around it do it: the name
+// is what the card says above the boxes, and a screen that would not draw at
+// all without it is one the operator cannot use to change anything else either.
+async function readAccount() {
+  try {
+    return { view: await apiCall("GET", "/api/account"), problem: "" };
   } catch (error) {
     if (error instanceof Redirected) {
       throw error;
@@ -1561,6 +1600,133 @@ async function installCertificate(values) {
     "Reload the page to be served it.", "info");
 
   return drawSettings();
+}
+
+// accountCard changes the username, the password or both.
+//
+// The current password is asked for on every change, the one that only renames
+// the account included. A session left open on an unattended screen is
+// otherwise all it takes to take the account over, which is the same reason the
+// setup runs once and is not a way back here.
+function accountCard(account) {
+  const name = account.view === null ? "" : account.view.username;
+  const intro = [];
+
+  if (name === "") {
+    intro.push(statusLine("What this account is called could not be read: " + account.problem,
+      "warning"));
+  } else {
+    intro.push(element("p", "This account is called " + name + "."));
+  }
+
+  intro.push(element("p",
+    "Fill in the name, the password or both. What is left empty stays as it is."));
+  intro.push(element("p",
+    "Saving signs out every other client of this account, on this machine and on any " +
+      "other, whichever of the two was changed. This one stays signed in. A client that " +
+      "is already signed in keeps its session whatever the account is renamed to, so a " +
+      "rename that left them alone would change the name and nothing else."));
+
+  const form = buildForm({
+    name: "account",
+    legend: "Username and password",
+    submitLabel: "Save",
+    intro: intro,
+    fields: [
+      {
+        name: "username",
+        label: "New username",
+        note: "Leave it empty to keep the name above."
+      },
+      {
+        name: "current_password",
+        label: "Current password",
+        type: "password",
+        check: function (value) {
+          return String(value) === "" ? "Enter the password this account is signed in with." : "";
+        },
+        note: "The password this account is signed in with. It is asked for on every " +
+          "change, a rename included."
+      },
+      {
+        name: "new_password",
+        label: "New password",
+        type: "password",
+        countBytes: true,
+        note: "Leave it empty to keep the password. The length is counted in bytes. " +
+          "One Hangul syllable counts as three."
+      },
+      passwordConfirmationField("new_password_confirmation", "New password again", "new_password")
+    ],
+    onSubmit: saveAccount
+  });
+
+  form.dataset.card = "settings-account";
+
+  return form;
+}
+
+async function saveAccount(values) {
+  const username = values.username.trim();
+  const newPassword = values.new_password;
+
+  // A request that changes neither is refused by the server too. It is caught
+  // here so that the password that was typed in is not sent over the wire to
+  // be told that nothing was asked for.
+  if (username === "" && newPassword === "") {
+    setNotice("Fill in a new username, a new password or both.");
+
+    return drawSettings();
+  }
+
+  const body = { current_password: values.current_password };
+
+  // A value that is not changing is left out rather than sent as it is. Sending
+  // the stored name back would be a change the server refuses, and it is not
+  // what was asked for.
+  if (username !== "") {
+    body.username = username;
+  }
+
+  if (newPassword !== "") {
+    body.new_password = newPassword;
+  }
+
+  const data = await apiCall("PUT", apiAccountPath, body);
+
+  setNotice(accountOutcome(data), "info");
+
+  return drawSettings();
+}
+
+// accountOutcome says what the change did. What it says about the other clients
+// is half of it: they are signed out wherever they are, and nothing on their
+// screens says so until the next thing they press.
+function accountOutcome(data) {
+  if (data === null || data === undefined) {
+    return "The account is changed.";
+  }
+
+  const said = [];
+
+  if (data.username_changed) {
+    said.push("This account is called " + data.username + " now.");
+  }
+
+  if (data.password_changed) {
+    said.push("The password is changed. It is the one to sign in with from now on.");
+  }
+
+  const ended = data.sessions_ended;
+
+  if (ended === null || ended === undefined || ended === 0) {
+    said.push("No other client was signed in.");
+  } else {
+    said.push(plural(ended, "One other client was signed out.",
+      ended + " other clients were signed out."));
+  }
+
+  return said.join(" ");
 }
 
 // settingsRescue is the way back from a stored setting that keeps the server

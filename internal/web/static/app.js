@@ -21,6 +21,12 @@ const apiSetupPath = "/api/setup";
 // they were doing and tell them something that is not so.
 const apiUninstallPath = "/api/uninstall";
 
+// apiAccountPath is the fourth, and for the same reason: a 401 from it is the
+// current password box being wrong. The session that sent it is not only still
+// good, it is the one session the change keeps, so a move to the login would be
+// saying the opposite of what happened.
+const apiAccountPath = "/api/account";
+
 // csrfCookieName and csrfHeaderName are the two ends of the CSRF check. The
 // server hands the token of the session out in a cookie it leaves readable from
 // here on purpose, and wants it back in a header, which a page on another
@@ -297,7 +303,8 @@ async function apiCall(method, path, body) {
 
   const payload = await readPayload(response);
 
-  if (response.status === 401 && path !== apiLoginPath && path !== apiUninstallPath) {
+  if (response.status === 401 && path !== apiLoginPath && path !== apiUninstallPath &&
+      path !== apiAccountPath) {
     navigate("login", "The session has ended. Sign in again.");
 
     throw new Redirected();
@@ -693,7 +700,12 @@ function buildForm(spec) {
     let sound = true;
 
     for (const field of spec.fields) {
-      const message = field.check === undefined ? "" : field.check(values[field.name]);
+      // The check is handed the whole form as well as its own value, because
+      // one of them is about a pair: a new password and the box it is typed
+      // into a second time are only wrong together.
+      const message = field.check === undefined
+        ? ""
+        : field.check(values[field.name], values);
       const problem = problems[field.name];
 
       problem.textContent = message;
@@ -734,6 +746,18 @@ function filterInput(input, disallowed) {
 
   input.value = after;
   input.setSelectionRange(kept, kept);
+}
+
+// checkPasswordConfirmation says what is wrong with the second box a new
+// password is typed into, or "" when nothing is.
+//
+// The two are compared here and nowhere else. The server is never sent the
+// second copy: handed the same string twice it has nothing to learn from the
+// second one, and what the box is there for is a typo, which is made here.
+function checkPasswordConfirmation(value, password) {
+  return String(value) === String(password)
+    ? ""
+    : "The two do not match. Type the new password again.";
 }
 
 // checkPort says what is wrong with a port, or "" when nothing is. The box only

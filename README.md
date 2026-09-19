@@ -463,6 +463,51 @@ A session lives for 12 hours after the last request that used it, and every
 request pushes that deadline out. Sessions are kept in memory, so a restart ends
 all of them and you log in again.
 
+### Changing the username and the password
+
+The Settings screen changes both, and `PUT /api/account` is the same thing from a
+script. Send the current password together with whichever of the two is changing:
+`username`, `new_password` or both. A value that is not sent is left as it is,
+and a request that sends neither is refused, as is one that sends the value the
+account already has. The new password is held to the same 12 to 72 bytes the
+setup holds it to.
+
+**The current password is required every time**, the change that only renames the
+account included. That is what tells a change apart from a session left open on
+an unattended screen, and it is the same reason the setup cannot be run twice.
+
+**Every other session is signed out, this one excepted.** It happens whichever of
+the two was changed, the rename included: sessions point at the account rather
+than at its name, so a rename that left them alone would change what you sign in
+with and leave whoever is already signed in exactly where they were. Half the
+reason to change credentials is that somebody else may know them, so the rule is
+one rule: the credentials changed, therefore every session but the one that
+changed them is gone. The session that made the change keeps working, including
+the CSRF token it already holds, so the screen that asked for it can show what
+happened. The answer says how many other clients were signed out.
+
+A wrong current password answers `401` and changes nothing. The screen asks for
+the new password twice; the second copy never leaves the browser, because a
+server handed the same string twice learns nothing from the second one.
+
+```bash
+curl -s -b cookies.txt -X PUT "$BASE/api/account" \
+  -H "X-CSRF-Token: $CSRF" -H 'Content-Type: application/json' \
+  -d '{"current_password":"<the password now>","username":"operator"}'
+```
+
+```json
+{
+  "success": true,
+  "data": {
+    "username": "operator",
+    "username_changed": true,
+    "password_changed": false,
+    "sessions_ended": 1
+  }
+}
+```
+
 ## The built-in UI
 
 Open `https://<address>:<port>/` in a browser. `/` answers with a redirect to
@@ -789,6 +834,8 @@ that is not a `GET` requires the `X-CSRF-Token` header.
 | `POST` | `/api/login` | Takes `username` and `password`, sets the session and CSRF cookies, answers with `setup_required` and `csrf_token` |
 | `POST` | `/api/logout` | Drops the session and expires both cookies |
 | `POST` | `/api/setup` | Sets the username and the password once, on the account that still needs them |
+| `GET` | `/api/account` | What the account is called |
+| `PUT` | `/api/account` | Takes `current_password` and `username`, `new_password` or both, changes them and signs out every other session |
 
 ### Hosts
 

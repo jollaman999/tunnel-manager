@@ -807,6 +807,9 @@ func main() {
 	g.POST("/logout", authHandler.Logout)
 	g.POST("/setup", authHandler.Setup)
 
+	g.GET("/account", authHandler.GetAccount)
+	g.PUT("/account", authHandler.ChangeAccount)
+
 	g.POST("/host", h.CreateHost)
 	g.GET("/host", h.ListHosts)
 	g.GET("/host/:id", h.GetHost)
