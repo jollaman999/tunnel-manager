@@ -12,6 +12,7 @@ import (
 	"net"
 	"path/filepath"
 	"reflect"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -1584,5 +1585,79 @@ func TestHostPasswordLeavesAHostThatCarriesNoneAlone(t *testing.T) {
 	}
 	if host.Password != "" {
 		t.Fatalf("hostPassword put %q in the row of a Host that carries no password", host.Password)
+	}
+}
+
+// newTunnelCreateStubDB returns a gorm DB whose queries find nothing, which is
+// what sends FirstOrCreate down its create path, and which records the tunnel
+// row that is created there instead of writing one.
+func newTunnelCreateStubDB(t *testing.T, created *models.Tunnel) *gorm.DB {
+	t.Helper()
+
+	db := newFailingDB(t)
+
+	err := db.Callback().Query().Replace("gorm:query", func(tx *gorm.DB) {
+		tx.RowsAffected = 0
+	})
+	if err != nil {
+		t.Fatalf("failed to replace the query callback: %v", err)
+	}
+
+	err = db.Callback().Create().Replace("gorm:create", func(tx *gorm.DB) {
+		row, ok := tx.Statement.Dest.(*models.Tunnel)
+		if !ok {
+			return
+		}
+
+		*created = *row
+	})
+	if err != nil {
+		t.Fatalf("failed to replace the create callback: %v", err)
+	}
+
+	return db
+}
+
+// TestStartTunnelWritesARowThatSaysNothingWasMeasured pins what a tunnel row
+// carries before it is connected. A row that is only being started has no
+// reading of the forwarded port, and it says so rather than leaving the field
+// empty: a port that was never tried must not read like one that was.
+func TestStartTunnelWritesARowThatSaysNothingWasMeasured(t *testing.T) {
+	var created models.Tunnel
+
+	m, err := NewManager(newTunnelCreateStubDB(t, &created), zap.NewNop(), newTestCipher(t), 1)
+	if err != nil {
+		t.Fatalf("failed to create manager: %v", err)
+	}
+
+	// A port nothing listens on, so the connection the tunnel makes in the
+	// background is refused at once rather than waiting on a handshake.
+	_, port, err := net.SplitHostPort(closedPort(t))
+	if err != nil {
+		t.Fatalf("failed to read the port: %v", err)
+	}
+
+	hostPort, err := strconv.Atoi(port)
+	if err != nil {
+		t.Fatalf("failed to read the port: %v", err)
+	}
+
+	host := models.Host{ID: 1, IP: "127.0.0.1", Port: hostPort, User: "user", Password: "pass", Enabled: true}
+	sp := models.ServicePort{ID: 2, ServiceIP: "127.0.0.1", ServicePort: 3306, LocalPort: 13306}
+
+	err = m.StartTunnel(&host, &sp)
+	if err != nil {
+		t.Fatalf("StartTunnel returned an error: %v", err)
+	}
+	t.Cleanup(func() {
+		_ = m.StopTunnel(host.ID, sp.ID)
+	})
+
+	if created.ForwardReach != forwardReachUnknown {
+		t.Fatalf("the created row says forward reach %q, want %q, nothing has been measured yet",
+			created.ForwardReach, forwardReachUnknown)
+	}
+	if created.ServerBanner != "" {
+		t.Fatalf("the created row carries a banner %q before a handshake happened", created.ServerBanner)
 	}
 }

@@ -186,7 +186,10 @@ sequenceDiagram
 
 Whether the listener on the Host really opens on `0.0.0.0` is up to the SSH
 server on the Host. When its `GatewayPorts` is off, the listener is bound to the
-loopback address whatever address was asked for, and the log says so.
+loopback address whatever address was asked for, and the log says so. Once the
+tunnel is up, tunnel-manager tries the forwarded port itself and reports what it
+found, see
+[Whether the forwarded port can be reached](#whether-the-forwarded-port-can-be-reached).
 
 The monitoring interval and the reconcile interval are two different jobs. The
 monitor asks a tunnel that is already up whether it is still alive and reconnects
@@ -1146,7 +1149,9 @@ curl -s -b cookies.txt https://127.0.0.1:8888/api/status
         "last_connected_at": "0001-01-01T00:00:00Z",
         "server": "192.0.2.10:22",
         "local": "0.0.0.0:18080",
-        "remote": "198.51.100.20:8080"
+        "remote": "198.51.100.20:8080",
+        "server_banner": "",
+        "forward_reach": "unknown"
       }
     ]
   }
@@ -1182,6 +1187,31 @@ mean different things.
 | `connected` | The listener is open on the Host |
 | `reconnecting` | The connection dropped or a keepalive went unanswered, and it is being built again |
 | `error` | The attempt failed. `last_error` holds the reason |
+
+### Whether the forwarded port can be reached
+
+A tunnel that says `connected` is one the SSH connection stands for. It does not
+mean the forwarded port can be reached: the listener is opened by the **SSH
+server**, and which address it binds is that server's decision, not this one's.
+tunnel-manager asks for `0.0.0.0:<local port>`, and with OpenSSH left at its
+default of `GatewayPorts no`, or Dropbear started without `-a`, the server binds
+loopback alone. The port then answers on the Host itself and nowhere else.
+
+Two fields on every tunnel row say what is known about it.
+
+| Field | What it holds |
+|-------|---------------|
+| `server_banner` | What the SSH server called itself on the handshake, for example `SSH-2.0-OpenSSH_10.5p1 Ubuntu-1ubuntu2`. It is what says which server is in front of you, and what to change on it differs by server |
+| `forward_reach` | Whether tunnel-manager reached the forwarded port by opening a TCP connection to the Host at that port: `reachable`, `unreachable`, or `unknown` while nothing has been measured |
+
+It is measured once when the tunnel comes up and again on every reconnect, not
+on every status read: what decides it is the configuration of the SSH server,
+which does not change under a connection that stands.
+
+> **`unreachable` says where the port was not reached from, not why.** A server
+> that bound the port to loopback alone and a firewall that drops the connection
+> on the way look exactly the same from here, and a connection that never
+> arrives cannot tell them apart. Check both before changing either.
 
 `GET /api/status/:hostId` answers with the same counts except `desired_tunnels`,
 plus the Host itself. It is not paged and carries every tunnel of that Host.

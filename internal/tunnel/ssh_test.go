@@ -11,7 +11,10 @@ import (
 	"io"
 	"net"
 	"runtime"
+	"strconv"
+	"strings"
 	"sync"
+	"syscall"
 	"testing"
 	"time"
 
@@ -554,6 +557,15 @@ func newLoopbackSSHClient(t *testing.T) (*ssh.Client, func()) {
 func startForwardingSSHServer(t *testing.T) (string, func() []time.Time) {
 	t.Helper()
 
+	return startForwardingSSHServerConfirming(t, 12345)
+}
+
+// startForwardingSSHServerConfirming is startForwardingSSHServer with the port
+// it confirms for a forward chosen by the caller. That port is where the
+// forwarded port is probed, so a test about the probe needs one it owns.
+func startForwardingSSHServerConfirming(t *testing.T, confirmed uint32) (string, func() []time.Time) {
+	t.Helper()
+
 	_, priv, err := ed25519.GenerateKey(rand.Reader)
 	if err != nil {
 		t.Fatalf("failed to generate host key: %v", err)
@@ -630,7 +642,7 @@ func startForwardingSSHServer(t *testing.T) (string, func() []time.Time) {
 					}
 					if req.Type == "tcpip-forward" {
 						// The client asked for port 0, so it needs a bound port back.
-						_ = req.Reply(true, ssh.Marshal(struct{ Port uint32 }{Port: 12345}))
+						_ = req.Reply(true, ssh.Marshal(struct{ Port uint32 }{Port: confirmed}))
 						continue
 					}
 					_ = req.Reply(false, nil)
@@ -1743,5 +1755,433 @@ func TestForwardEndsWhenTheServiceConnectionIsReset(t *testing.T) {
 	// one whose peers simply close them.
 	if logs.FilterMessage("copy error").Len() == 0 {
 		t.Fatalf("a copy that failed was not logged, the entries are %v", logs.All())
+	}
+}
+
+// startBlackholeListener returns an address that neither answers a connection
+// nor refuses one, which is the case the probe timeout exists for.
+//
+// The socket listens with a backlog of one and nothing ever accepts from it, so
+// the connection made here fills the queue and every SYN after it is dropped by
+// the kernel instead of being answered. net.Listen has no way to ask for a
+// backlog, so the socket is built with the syscall package, and what a full
+// queue does is the kernel's own behaviour, so the test that uses this runs on
+// Linux alone.
+func startBlackholeListener(t *testing.T) string {
+	t.Helper()
+
+	fd, err := syscall.Socket(syscall.AF_INET, syscall.SOCK_STREAM, 0)
+	if err != nil {
+		t.Fatalf("failed to open a socket: %v", err)
+	}
+	t.Cleanup(func() {
+		_ = syscall.Close(fd)
+	})
+
+	err = syscall.Bind(fd, &syscall.SockaddrInet4{Port: 0, Addr: [4]byte{127, 0, 0, 1}})
+	if err != nil {
+		t.Fatalf("failed to bind the socket: %v", err)
+	}
+
+	err = syscall.Listen(fd, 0)
+	if err != nil {
+		t.Fatalf("failed to listen with a backlog of one: %v", err)
+	}
+
+	bound, err := syscall.Getsockname(fd)
+	if err != nil {
+		t.Fatalf("failed to read the bound address: %v", err)
+	}
+
+	sa, ok := bound.(*syscall.SockaddrInet4)
+	if !ok {
+		t.Fatalf("the bound address is %T, want an IPv4 one", bound)
+	}
+
+	addr := net.JoinHostPort("127.0.0.1", strconv.Itoa(sa.Port))
+
+	filler, err := net.DialTimeout("tcp", addr, 5*time.Second)
+	if err != nil {
+		t.Fatalf("failed to fill the accept queue: %v", err)
+	}
+	t.Cleanup(func() {
+		_ = filler.Close()
+	})
+
+	return addr
+}
+
+// closedPort returns an address nothing listens on. The port was listened on a
+// moment earlier, so it is one this machine hands out, and it is closed again
+// before it is returned.
+func closedPort(t *testing.T) string {
+	t.Helper()
+
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("failed to listen: %v", err)
+	}
+
+	addr := ln.Addr().String()
+
+	err = ln.Close()
+	if err != nil {
+		t.Fatalf("failed to close the listener: %v", err)
+	}
+
+	return addr
+}
+
+func TestProbeForwardReachAnswersFromTheHandshake(t *testing.T) {
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("failed to listen: %v", err)
+	}
+	defer func() {
+		_ = ln.Close()
+	}()
+
+	go func() {
+		for {
+			conn, err := ln.Accept()
+			if err != nil {
+				return
+			}
+			_ = conn.Close()
+		}
+	}()
+
+	reach := probeForwardReach(ln.Addr().String(), forwardProbeTimeout)
+	if reach != forwardReachable {
+		t.Fatalf("reach = %q, want %q, the port answered the handshake", reach, forwardReachable)
+	}
+
+	reach = probeForwardReach(closedPort(t), forwardProbeTimeout)
+	if reach != forwardUnreachable {
+		t.Fatalf("reach = %q, want %q, nothing listens on that port", reach, forwardUnreachable)
+	}
+}
+
+// TestProbeForwardReachClosesWhatItOpened is what keeps the probe from being a
+// socket leak of its own. It runs on the same address many times over, and a
+// probe that held what it opened would leave one connection per run on both
+// ends of it.
+func TestProbeForwardReachClosesWhatItOpened(t *testing.T) {
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("failed to listen: %v", err)
+	}
+	defer func() {
+		_ = ln.Close()
+	}()
+
+	var mu sync.Mutex
+	var open int
+	var peak int
+
+	go func() {
+		for {
+			conn, err := ln.Accept()
+			if err != nil {
+				return
+			}
+
+			go func(conn net.Conn) {
+				defer func() {
+					_ = conn.Close()
+				}()
+
+				mu.Lock()
+				open++
+				if open > peak {
+					peak = open
+				}
+				mu.Unlock()
+
+				// The probe closes as soon as the handshake stands, so this
+				// read ends at once. A probe that held the connection would
+				// sit here instead and the count would climb.
+				_, _ = conn.Read(make([]byte, 1))
+
+				mu.Lock()
+				open--
+				mu.Unlock()
+			}(conn)
+		}
+	}()
+
+	for i := 0; i < 20; i++ {
+		reach := probeForwardReach(ln.Addr().String(), forwardProbeTimeout)
+		if reach != forwardReachable {
+			t.Fatalf("probe %d: reach = %q, want %q", i, reach, forwardReachable)
+		}
+	}
+
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		mu.Lock()
+		left := open
+		mu.Unlock()
+
+		if left == 0 {
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+
+	mu.Lock()
+	left := open
+	highest := peak
+	mu.Unlock()
+
+	if left != 0 {
+		t.Fatalf("%d of the 20 probes are still open, so every probe leaves a socket behind", left)
+	}
+	if highest > 1 {
+		t.Fatalf("%d probes were open at once, so a probe outlives the one that follows it", highest)
+	}
+}
+
+// TestProbeForwardReachGivesUpOnAPortThatNeverAnswers pins the bound itself.
+// Without one, a port whose SYN is dropped rather than refused is waited on
+// until the kernel stops retransmitting, which is around two minutes on Linux,
+// and the goroutine and the socket of the probe are held for all of it. It is
+// the same reason forwardDialTimeout is bounded, one level up.
+func TestProbeForwardReachGivesUpOnAPortThatNeverAnswers(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("the silent address is a listening socket whose accept queue is full, and what a full " +
+			"queue does with a SYN is the kernel's own behaviour")
+	}
+
+	addr := startBlackholeListener(t)
+
+	const timeout = 500 * time.Millisecond
+
+	start := time.Now()
+	reach := probeForwardReach(addr, timeout)
+	held := time.Since(start)
+
+	if reach != forwardUnreachable {
+		t.Fatalf("reach = %q, want %q, the port never answered", reach, forwardUnreachable)
+	}
+	if held < timeout {
+		t.Fatalf("the probe returned after %v, inside its timeout of %v, so the address answered "+
+			"and the test measured nothing", held, timeout)
+	}
+	if held > 4*timeout {
+		t.Fatalf("the probe held for %v with a timeout of %v, so a port that drops the packet is "+
+			"waited on for as long as the kernel retries", held, timeout)
+	}
+}
+
+// TestForwardProbeTimeoutMatchesTheForwardDial keeps the two bounds one number.
+// They are the same kind of wait against the same kind of peer, and two numbers
+// to reason about is one more than there is reason for.
+func TestForwardProbeTimeoutMatchesTheForwardDial(t *testing.T) {
+	if forwardProbeTimeout != forwardDialTimeout {
+		t.Fatalf("forwardProbeTimeout = %v, forwardDialTimeout = %v, want the same bound",
+			forwardProbeTimeout, forwardDialTimeout)
+	}
+	if forwardProbeTimeout <= 0 {
+		t.Fatalf("forwardProbeTimeout = %v, so the probe is dialed with no bound at all", forwardProbeTimeout)
+	}
+}
+
+func TestForwardProbeAddressIsTheServerAtTheConfirmedPort(t *testing.T) {
+	tests := []struct {
+		name   string
+		server string
+		port   int
+		want   string
+	}{
+		{name: "IPv4", server: "192.0.2.10:22", port: 18080, want: "192.0.2.10:18080"},
+		{name: "IPv6 is bracketed", server: "[2001:db8::1]:22", port: 18080, want: "[2001:db8::1]:18080"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			server, err := net.ResolveTCPAddr("tcp", tt.server)
+			if err != nil {
+				t.Fatalf("failed to resolve %q: %v", tt.server, err)
+			}
+
+			got := forwardProbeAddress(server, tt.port)
+			if got != tt.want {
+				t.Fatalf("forwardProbeAddress = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
+// readTunnelReach reads the two readings the way the probe writes them, under
+// the lock the tunnel row is written with, so the test is not a race of its own.
+func readTunnelReach(tun *SSHTunnel, tunnel *models.Tunnel) (string, string) {
+	tun.tunnelMu.Lock()
+	defer tun.tunnelMu.Unlock()
+
+	return tunnel.ServerBanner, tunnel.ForwardReach
+}
+
+// waitTunnelReach waits until the probe has written a reading for the
+// connection that is up.
+func waitTunnelReach(t *testing.T, tun *SSHTunnel, tunnel *models.Tunnel, timeout time.Duration) string {
+	t.Helper()
+
+	deadline := time.Now().Add(timeout)
+	for time.Now().Before(deadline) {
+		_, reach := readTunnelReach(tun, tunnel)
+		if reach != forwardReachUnknown {
+			return reach
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+
+	t.Fatal("the forwarded port was never measured")
+
+	return ""
+}
+
+// TestEstablishConnectionRecordsWhatTheServerSaid pins the banner on the tunnel
+// row. It is what decides which of the things to check is shown for a port that
+// did not answer, since what opens a forwarded port differs between servers.
+func TestEstablishConnectionRecordsWhatTheServerSaid(t *testing.T) {
+	m := newSSHTestManager(t, 1)
+	serverAddr, _ := startForwardingSSHServer(t)
+	tun, tunnel := newSSHTestTunnel(t, serverAddr)
+
+	errc := make(chan error, 1)
+	go func() {
+		errc <- tun.establishConnection(m, tunnel)
+	}()
+
+	waitTunnelClient(t, tun, 10*time.Second)
+	waitTunnelReach(t, tun, tunnel, 30*time.Second)
+
+	banner, _ := readTunnelReach(tun, tunnel)
+
+	closeTunnelClient(t, tun)
+
+	select {
+	case <-errc:
+	case <-time.After(5 * time.Second):
+		t.Fatal("establishConnection did not return after the connection was closed")
+	}
+
+	if !strings.HasPrefix(banner, "SSH-2.0-") {
+		t.Fatalf("the recorded banner is %q, want what the server sent on the handshake", banner)
+	}
+}
+
+// TestEstablishConnectionMeasuresTheForwardedPort runs the two readings against
+// a port that answers and one that does not. The tunnel is connected either
+// way, which is the whole point: the reading is what tells a tunnel that can be
+// used from one that cannot.
+func TestEstablishConnectionMeasuresTheForwardedPort(t *testing.T) {
+	answering, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("failed to listen: %v", err)
+	}
+	defer func() {
+		_ = answering.Close()
+	}()
+
+	go func() {
+		for {
+			conn, err := answering.Accept()
+			if err != nil {
+				return
+			}
+			_ = conn.Close()
+		}
+	}()
+
+	_, answeringPort, err := net.SplitHostPort(answering.Addr().String())
+	if err != nil {
+		t.Fatalf("failed to read the port that answers: %v", err)
+	}
+
+	_, silentPort, err := net.SplitHostPort(closedPort(t))
+	if err != nil {
+		t.Fatalf("failed to read the port that does not answer: %v", err)
+	}
+
+	tests := []struct {
+		name string
+		port string
+		want string
+	}{
+		{name: "the forwarded port answers", port: answeringPort, want: forwardReachable},
+		{name: "the forwarded port does not", port: silentPort, want: forwardUnreachable},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			port, err := strconv.ParseUint(tt.port, 10, 32)
+			if err != nil {
+				t.Fatalf("failed to read the port: %v", err)
+			}
+
+			m := newSSHTestManager(t, 1)
+			serverAddr, _ := startForwardingSSHServerConfirming(t, uint32(port))
+			tun, tunnel := newSSHTestTunnel(t, serverAddr)
+
+			errc := make(chan error, 1)
+			go func() {
+				errc <- tun.establishConnection(m, tunnel)
+			}()
+
+			waitTunnelClient(t, tun, 10*time.Second)
+			got := waitTunnelReach(t, tun, tunnel, 30*time.Second)
+
+			closeTunnelClient(t, tun)
+
+			select {
+			case <-errc:
+			case <-time.After(5 * time.Second):
+				t.Fatal("establishConnection did not return after the connection was closed")
+			}
+
+			if got != tt.want {
+				t.Fatalf("forward reach = %q, want %q, probed at the port the server confirmed", got, tt.want)
+			}
+		})
+	}
+}
+
+// TestRecordForwardReachDropsAReadingOfAnOlderConnection pins what keeps a slow
+// probe from writing over a tunnel that reconnected under it. The probe waits
+// out its timeout, and the connection it measured may be gone by then, with a
+// probe of its own running for the one that replaced it.
+func TestRecordForwardReachDropsAReadingOfAnOlderConnection(t *testing.T) {
+	m := newSSHTestManager(t, 1)
+	serverAddr, _ := startForwardingSSHServer(t)
+	tun, tunnel := newSSHTestTunnel(t, serverAddr)
+
+	current, _, cleanup := dialTestSSHClient(t, serverAddr)
+	defer cleanup()
+
+	tun.clientMu.Lock()
+	tun.client = current
+	tun.clientMu.Unlock()
+
+	tunnel.ForwardReach = forwardReachUnknown
+
+	// A client that is not the one the tunnel holds, which is what an older
+	// connection is by the time its probe answers.
+	older, _, olderCleanup := dialTestSSHClient(t, serverAddr)
+	defer olderCleanup()
+
+	tun.recordForwardReach(m, tunnel, older, closedPort(t))
+
+	if _, reach := readTunnelReach(tun, tunnel); reach != forwardReachUnknown {
+		t.Fatalf("forward reach = %q, want %q, the reading of a connection that is gone was written "+
+			"to the row of the one that replaced it", reach, forwardReachUnknown)
+	}
+
+	tun.recordForwardReach(m, tunnel, current, closedPort(t))
+
+	if _, reach := readTunnelReach(tun, tunnel); reach != forwardUnreachable {
+		t.Fatalf("forward reach = %q, want %q, the reading of the current connection was dropped",
+			reach, forwardUnreachable)
 	}
 }

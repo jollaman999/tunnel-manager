@@ -334,6 +334,7 @@ async function drawStatus() {
         tunnel.server,
         tunnel.local,
         tunnel.remote,
+        reachBadge(tunnel.forward_reach),
         tunnel.retry_count,
         timeCell(tunnel.last_connected_at)
       ];
@@ -343,16 +344,40 @@ async function drawStatus() {
       // what is left for a column holding a sentence was measured at 144px
       // against a row that stood 183px tall. Under the row it has the width of
       // the table, and a tunnel with nothing wrong carries no line at all.
+      //
+      // What is said about a forwarded port that did not answer goes there for
+      // the same reason and is longer still, so the two share the space under
+      // the row when a tunnel has both.
+      const under = [];
+
       const failure = typeof tunnel.last_error === "string" ? tunnel.last_error : "";
-      if (failure === "") {
+      if (failure !== "") {
+        const said = element("span", failure);
+
+        said.className = "last-error";
+        under.push(said);
+      }
+
+      const advice = reachAdvice(tunnel);
+      if (advice !== null) {
+        under.push(advice);
+      }
+
+      if (under.length === 0) {
         return cells;
       }
 
-      const said = element("span", failure);
+      if (under.length === 1) {
+        return { cells: cells, under: under[0] };
+      }
 
-      said.className = "last-error";
+      const both = document.createElement("div");
 
-      return { cells: cells, under: said };
+      for (const node of under) {
+        both.appendChild(node);
+      }
+
+      return { cells: cells, under: both };
     });
 
     const controls = pageControls(page, data.total_tunnels, drawStatus);
@@ -361,10 +386,10 @@ async function drawStatus() {
     }
 
     nodes.push(buildTable(
-      ["Host", "Service port", "Status", "Server", "Local", "Remote", "Retries",
-        "Last connected"],
+      ["Host", "Service port", "Status", "Server", "Local", "Remote", "Port reached",
+        "Retries", "Last connected"],
       rows,
-      [0, 1, 6]
+      [0, 1, 7]
     ));
   }
 
@@ -384,6 +409,143 @@ function statusBadge(status) {
   badge.dataset.status = text;
 
   return badge;
+}
+
+// reachBadge is whether the forwarded port answered a connection opened by
+// tunnel-manager. The word is drawn as the server sent it, the way the status
+// beside it is, so a value added later still shows up. A row that carries none,
+// which is one written before the reading existed, reads as not measured rather
+// than as an empty cell.
+function reachBadge(reach) {
+  const said = reach === null || reach === undefined ? "" : String(reach);
+  const text = said === "" ? "unknown" : said;
+  const badge = element("span", text);
+
+  badge.className = "badge " + reachClass(text);
+  badge.dataset.reach = text;
+
+  return badge;
+}
+
+// reachClass is the colour of a reading. A port that was not reached is the one
+// row on this screen that says connected and is not usable, so it is painted
+// the way a failure is; a reading that was never taken stays grey, because
+// nothing is known about it.
+function reachClass(reach) {
+  if (reach === "reachable") {
+    return "ok";
+  }
+
+  if (reach === "unreachable") {
+    return "bad";
+  }
+
+  return "unknown";
+}
+
+// sshServerKind is which SSH server the banner names. What has to be changed to
+// open a forwarded port differs between servers, so this is what decides which
+// of the paragraphs below is shown. A banner that names neither of the two is
+// answered with "other", and nothing is then said about what to set.
+function sshServerKind(banner) {
+  const said = typeof banner === "string" ? banner.toLowerCase() : "";
+
+  if (said.indexOf("openssh") !== -1) {
+    return "openssh";
+  }
+
+  if (said.indexOf("dropbear") !== -1) {
+    return "dropbear";
+  }
+
+  return "other";
+}
+
+// probedAddress is where the forwarded port was tried from here: the machine
+// the SSH server runs on, at the port that was forwarded. The host comes out of
+// the server column and the port out of the local column, which is the pair the
+// server itself dials. Both are cut at their last colon, which is what
+// separates a port from an address that has colons of its own. A value that
+// cannot be cut that way gives nothing back, and the sentence is written
+// without an address rather than with a wrong one.
+function probedAddress(server, local) {
+  const host = server === null || server === undefined ? "" : String(server);
+  const bound = local === null || local === undefined ? "" : String(local);
+  const hostEnd = host.lastIndexOf(":");
+  const portStart = bound.lastIndexOf(":");
+
+  if (hostEnd < 1 || portStart < 0 || portStart === bound.length - 1) {
+    return "";
+  }
+
+  return host.slice(0, hostEnd) + ":" + bound.slice(portStart + 1);
+}
+
+// reachAdvice is what is said under a tunnel whose forwarded port did not
+// answer. It is drawn only for a tunnel that is connected, because that is the
+// one state the reading adds anything to: a tunnel that is not connected has
+// nothing forwarded to reach, and its own column already says so.
+//
+// It names no cause. A port the SSH server bound to loopback alone and a port a
+// firewall drops are the same silence seen from here, and saying it is the one
+// sends the operator to change a machine that may not be at fault. What is said
+// is where the port was not reached from, followed by the things to check, in
+// the order of what the server called itself.
+function reachAdvice(tunnel) {
+  if (tunnel.status !== "connected" || tunnel.forward_reach !== "unreachable") {
+    return null;
+  }
+
+  const banner = typeof tunnel.server_banner === "string" ? tunnel.server_banner : "";
+  const kind = sshServerKind(banner);
+  const tried = probedAddress(tunnel.server, tunnel.local);
+  const box = document.createElement("div");
+
+  box.className = "reach-advice";
+  box.dataset.reachAdvice = kind;
+
+  box.appendChild(element("strong", tried === ""
+    ? "Connected, but the forwarded port did not answer a connection from tunnel-manager."
+    : "Connected, but " + tried + " did not answer a connection from tunnel-manager."));
+
+  box.appendChild(element("p", "This says where the port was not reached from, not why it was not. " +
+    "Two things look the same from here and neither is ruled out: the SSH server may have bound the " +
+    "forwarded port to loopback only, or a firewall between this machine and the Host may be dropping " +
+    "the connection. Check both."));
+
+  box.appendChild(element("p", banner === ""
+    ? "The SSH server sent no version banner, so there is nothing here that says what it is."
+    : "The SSH server called itself: " + banner));
+
+  if (kind === "openssh") {
+    box.appendChild(element("p", "If it is the SSH server: OpenSSH keeps a forwarded port on loopback " +
+      "unless GatewayPorts says otherwise. This tunnel asks for 0.0.0.0, and GatewayPorts " +
+      "clientspecified in sshd_config is what allows that."));
+    box.appendChild(bulletList([
+      "Where the line goes decides whether it counts. sshd_config usually carries an Include of " +
+        "sshd_config.d/*.conf, and OpenSSH keeps the first value it reads for a setting, so a " +
+        "GatewayPorts added at the bottom is ignored when an included file already set one above it. " +
+        "Change the first GatewayPorts on that path, not the last.",
+      "Check the configuration with sshd -t before restarting, then restart the server: sshd reads its " +
+        "configuration when it starts."
+    ]));
+  } else if (kind === "dropbear") {
+    box.appendChild(element("p", "If it is the SSH server: Dropbear is told this with the -a flag on its " +
+      "command line, not by a setting in a configuration file."));
+    box.appendChild(bulletList([
+      "The flag goes where the arguments of the service are, the init script or the unit file that " +
+        "starts Dropbear, and Dropbear is restarted for it.",
+      "Dropbear has no middle value. -a opens every forwarded port to all addresses and leaving it out " +
+        "keeps them on loopback; there is nothing that lets the client choose the address, the way " +
+        "GatewayPorts clientspecified does on OpenSSH."
+    ]));
+  } else {
+    box.appendChild(element("p", "The banner names neither OpenSSH nor Dropbear, so what opens a " +
+      "forwarded port on this server is not known from here. Its own documentation is what says " +
+      "whether it has such a setting and what it is called."));
+  }
+
+  return box;
 }
 
 // countBox is one of the three numbers at the top of the status screen.

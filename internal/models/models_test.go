@@ -2,8 +2,10 @@ package models
 
 import (
 	"encoding/json"
+	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/glebarez/sqlite"
 	"gorm.io/gorm"
@@ -145,6 +147,126 @@ func TestHostPasswordColumnIsNullable(t *testing.T) {
 		}
 		if field.NotNull {
 			t.Fatalf("the %s column is NOT NULL, so a Host without one cannot be stored", name)
+		}
+	}
+}
+
+// oldTunnel is Tunnel as it stood before the forwarded port was measured. It is
+// what the tunnels table of an installation migrated by an earlier release
+// looks like, and it is what the migration test below builds its database from.
+type oldTunnel struct {
+	HostID          uint   `gorm:"primaryKey;not null"`
+	SPID            uint   `gorm:"primaryKey;not null"`
+	Status          string `gorm:"not null"`
+	LastError       string
+	RetryCount      int `gorm:"default:0"`
+	LastConnectedAt time.Time
+	Server          string `gorm:"not null"`
+	Local           string `gorm:"not null"`
+	Remote          string `gorm:"not null"`
+}
+
+func (oldTunnel) TableName() string {
+	return "tunnels"
+}
+
+// TestTunnelMigrationKeepsTheRowsThatWereThere pins that the two readings added
+// to Tunnel reach an installation that has rows already. AutoMigrate adds a
+// column to a table that is in use, and a column that is added NOT NULL with no
+// default is what breaks the rows that are there, so neither of the two carries
+// one. What a row written before them holds is nothing, which is the same thing
+// the screen and the API take for a reading that was never made.
+func TestTunnelMigrationKeepsTheRowsThatWereThere(t *testing.T) {
+	db, err := gorm.Open(sqlite.Open(filepath.Join(t.TempDir(), "tm.db")), &gorm.Config{})
+	if err != nil {
+		t.Fatalf("failed to open the database: %v", err)
+	}
+
+	err = db.AutoMigrate(&oldTunnel{})
+	if err != nil {
+		t.Fatalf("failed to build the table as it was: %v", err)
+	}
+
+	before := oldTunnel{
+		HostID:     1,
+		SPID:       2,
+		Status:     "connected",
+		LastError:  "",
+		RetryCount: 3,
+		Server:     "192.0.2.10:22",
+		Local:      "0.0.0.0:18080",
+		Remote:     "198.51.100.20:8080",
+	}
+
+	err = db.Create(&before).Error
+	if err != nil {
+		t.Fatalf("failed to write a row of the table as it was: %v", err)
+	}
+
+	err = db.AutoMigrate(&Tunnel{})
+	if err != nil {
+		t.Fatalf("failed to migrate the table: %v", err)
+	}
+
+	var after Tunnel
+	err = db.Where("host_id = ? AND sp_id = ?", before.HostID, before.SPID).First(&after).Error
+	if err != nil {
+		t.Fatalf("the row that was there before the migration cannot be read: %v", err)
+	}
+
+	if after.Status != before.Status || after.RetryCount != before.RetryCount ||
+		after.Server != before.Server || after.Local != before.Local || after.Remote != before.Remote {
+		t.Fatalf("the migration changed the row that was there: %+v", after)
+	}
+
+	if after.ServerBanner != "" || after.ForwardReach != "" {
+		t.Fatalf("a row written before the readings carries one: banner=%q reach=%q",
+			after.ServerBanner, after.ForwardReach)
+	}
+
+	after.ServerBanner = "SSH-2.0-OpenSSH_10.5p1"
+	after.ForwardReach = "unreachable"
+
+	err = db.Save(&after).Error
+	if err != nil {
+		t.Fatalf("failed to write a reading to the migrated row: %v", err)
+	}
+
+	var stored Tunnel
+	err = db.Where("host_id = ? AND sp_id = ?", before.HostID, before.SPID).First(&stored).Error
+	if err != nil {
+		t.Fatalf("failed to read the migrated row back: %v", err)
+	}
+
+	if stored.ServerBanner != after.ServerBanner || stored.ForwardReach != after.ForwardReach {
+		t.Fatalf("the readings did not survive being stored: banner=%q reach=%q",
+			stored.ServerBanner, stored.ForwardReach)
+	}
+}
+
+// TestTunnelSerializesTheForwardedPortReadings pins the two names the API
+// answers with. The status screen reads them off the tunnel rows of
+// GET /api/status, so a rename here is a screen that shows nothing.
+func TestTunnelSerializesTheForwardedPortReadings(t *testing.T) {
+	encoded, err := json.Marshal(Tunnel{
+		HostID:       1,
+		SPID:         2,
+		Status:       "connected",
+		ServerBanner: "SSH-2.0-OpenSSH_10.5p1 Ubuntu-1ubuntu2",
+		ForwardReach: "unreachable",
+	})
+	if err != nil {
+		t.Fatalf("failed to serialize: %v", err)
+	}
+
+	body := string(encoded)
+
+	for _, want := range []string{
+		`"server_banner":"SSH-2.0-OpenSSH_10.5p1 Ubuntu-1ubuntu2"`,
+		`"forward_reach":"unreachable"`,
+	} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("the serialized Tunnel is missing %s: %s", want, body)
 		}
 	}
 }

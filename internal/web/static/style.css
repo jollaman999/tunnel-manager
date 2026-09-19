@@ -482,6 +482,37 @@ tbody tr.under > td {
   overflow-wrap: break-word;
 }
 
+/* What is said under a tunnel whose forwarded port did not answer. That row
+   reads as connected in the column that is looked at first and is not usable
+   all the same, so this is the one thing under a row that carries a colour:
+   left as plain text it is read as a note about a tunnel that is working. */
+.reach-advice {
+  margin: 0.25rem 0 0.5rem;
+  padding: 0.5rem 0.75rem;
+  border-radius: 4px;
+  color: #7a4a10;
+  background: #fdf4e6;
+  border: 1px solid #f0d9ae;
+  overflow-wrap: break-word;
+}
+
+.reach-advice > strong {
+  display: block;
+}
+
+.reach-advice > p {
+  margin: 0.35rem 0 0;
+}
+
+.reach-advice > ul {
+  margin: 0.35rem 0 0;
+  padding-left: 1.2rem;
+}
+
+.reach-advice li + li {
+  margin-top: 0.25rem;
+}
+
 /* A timestamp in a table stays on one line. Broken at the space between the
    date and the clock, the two halves read as two values stacked in one cell. */
 .stamp {

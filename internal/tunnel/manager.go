@@ -397,6 +397,10 @@ func (m *Manager) StartTunnel(host *models.Host, sp *models.ServicePort) error {
 		Local:  local,
 		Server: server,
 		Remote: remote,
+		// Nothing has been measured on a tunnel that is only being started,
+		// and the row says so rather than leaving the field empty: an empty
+		// reading and one that was taken must not read alike.
+		ForwardReach: forwardReachUnknown,
 	}
 
 	t, err := NewSSHTunnel(

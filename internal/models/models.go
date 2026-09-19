@@ -56,6 +56,29 @@ type Tunnel struct {
 	Server          string    `gorm:"not null" json:"server"`
 	Local           string    `gorm:"not null" json:"local"`
 	Remote          string    `gorm:"not null" json:"remote"`
+	// ServerBanner is what the SSH server called itself on the handshake, as
+	// the library hands it over (x/crypto/ssh, sshConn.ServerVersion). It is
+	// kept because what opens a forwarded port to an address other than
+	// loopback differs by server: OpenSSH decides it with GatewayPorts in
+	// sshd_config, Dropbear with the -a flag on its command line. The value is
+	// a string the far side chose, so whatever draws it treats it as text and
+	// never as markup.
+	//
+	// It carries no "not null". The column is added to installations whose
+	// rows were written before it existed, and AutoMigrate fills those with
+	// NULL.
+	ServerBanner string `json:"server_banner"`
+	// ForwardReach is whether the forwarded port answered a TCP connection
+	// from this process, measured once per connection: "reachable",
+	// "unreachable", or "unknown" while nothing has been measured. Anything
+	// else, an empty value on a row from before the column among them, means
+	// the same as "unknown".
+	//
+	// It says where the port was not reached from and never why. A server that
+	// bound the port to loopback alone and a firewall on the way look exactly
+	// the same to a connection that does not arrive, so the two cannot be told
+	// apart from here and neither may be reported as the cause.
+	ForwardReach string `json:"forward_reach"`
 }
 
 // CreateHostRequest registers a Host. The password is no longer required on its

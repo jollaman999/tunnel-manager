@@ -3158,3 +3158,87 @@ func TestCreateHostStoresTheEnabledItWasGiven(t *testing.T) {
 		})
 	}
 }
+
+// TestGetStatusCarriesWhatWasMeasuredOfTheForwardedPort pins the two readings
+// on the tunnel rows of the status answer. A tunnel that says connected while
+// its forwarded port answers nobody is the case they are there for, and the
+// status screen reads them off this answer by these names.
+func TestGetStatusCarriesWhatWasMeasuredOfTheForwardedPort(t *testing.T) {
+	reachable := statusTunnel(1, 1, "connected")
+	reachable.ServerBanner = "SSH-2.0-OpenSSH_10.5p1 Ubuntu-1ubuntu2"
+	reachable.ForwardReach = "reachable"
+
+	unreachable := statusTunnel(1, 2, "connected")
+	unreachable.ServerBanner = "SSH-2.0-dropbear_2022.83"
+	unreachable.ForwardReach = "unreachable"
+
+	cipher := newTestCipher(t)
+	db := newRowsDB(t,
+		[]models.Host{statusHost(1, true)},
+		[]models.ServicePort{statusServicePort(1), statusServicePort(2)},
+		[]models.Tunnel{reachable, unreachable})
+
+	manager, err := tunnel.NewManager(db, zap.NewNop(), cipher, 1)
+	if err != nil {
+		t.Fatalf("failed to create manager: %v", err)
+	}
+
+	e := echo.New()
+	req := httptest.NewRequest(http.MethodGet, "/api/status", nil)
+	rec := httptest.NewRecorder()
+	c := e.NewContext(req, rec)
+
+	h := NewHandler(db, manager, zap.NewNop(), cipher)
+
+	err = h.GetStatus(c)
+	if err != nil {
+		t.Fatalf("GetStatus returned error: %v", err)
+	}
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d, body: %s", rec.Code, http.StatusOK, rec.Body.String())
+	}
+
+	var resp struct {
+		Data struct {
+			Tunnels []struct {
+				HostID       uint   `json:"host_id"`
+				SPID         uint   `json:"sp_id"`
+				ServerBanner string `json:"server_banner"`
+				ForwardReach string `json:"forward_reach"`
+			} `json:"tunnels"`
+		} `json:"data"`
+	}
+	err = json.Unmarshal(rec.Body.Bytes(), &resp)
+	if err != nil {
+		t.Fatalf("failed to read the answer: %v, body: %s", err, rec.Body.String())
+	}
+
+	if len(resp.Data.Tunnels) != 2 {
+		t.Fatalf("the answer carries %d tunnels, want 2, body: %s", len(resp.Data.Tunnels), rec.Body.String())
+	}
+
+	for _, want := range []models.Tunnel{reachable, unreachable} {
+		found := false
+
+		for _, got := range resp.Data.Tunnels {
+			if got.HostID != want.HostID || got.SPID != want.SPID {
+				continue
+			}
+
+			found = true
+
+			if got.ServerBanner != want.ServerBanner {
+				t.Fatalf("tunnel %d-%d carries the banner %q, want %q",
+					want.HostID, want.SPID, got.ServerBanner, want.ServerBanner)
+			}
+			if got.ForwardReach != want.ForwardReach {
+				t.Fatalf("tunnel %d-%d carries the reading %q, want %q",
+					want.HostID, want.SPID, got.ForwardReach, want.ForwardReach)
+			}
+		}
+
+		if !found {
+			t.Fatalf("the answer carries no tunnel %d-%d, body: %s", want.HostID, want.SPID, rec.Body.String())
+		}
+	}
+}

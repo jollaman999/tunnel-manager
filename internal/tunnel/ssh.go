@@ -268,6 +268,112 @@ const forwardIdleTimeout = time.Hour
 // being allowed for but a backend that is not answering.
 const forwardDialTimeout = 10 * time.Second
 
+// The three readings models.Tunnel.ForwardReach carries. A forwarded port is
+// reachable from here, is not, or has not been measured yet, and the third is
+// a value of its own because a port nobody has tried must not read as one that
+// was tried and answered.
+const (
+	forwardReachable    = "reachable"
+	forwardUnreachable  = "unreachable"
+	forwardReachUnknown = "unknown"
+)
+
+// forwardProbeTimeout bounds the TCP handshake of the reachability probe, and
+// it is there for the reason forwardDialTimeout above is.
+//
+// A port a firewall drops answers a SYN with nothing at all, and a dial with no
+// bound on it then waits for the kernel to stop retransmitting, which is around
+// two minutes on Linux. The probe holds a goroutine and a socket for as long as
+// it waits and it is run again on every reconnect, so an address that never
+// answers would pile those up on a tunnel that keeps dropping.
+//
+// Ten seconds is what forwardDialTimeout uses, so there is one number to reason
+// about. The SSH server was reached a moment earlier over the same network, so
+// what is being allowed for here is not a distance but a port that does not
+// answer.
+const forwardProbeTimeout = 10 * time.Second
+
+// probeForwardReach reports whether the forwarded port answers a TCP
+// connection opened from this process.
+//
+// That is the whole of what can be measured from this end. The reply to a
+// tcpip-forward request carries a port and no address, so the SSH server never
+// says which address it bound, and there is no shell on the far side to ask.
+//
+// What comes back is where the port was reached from, never why it was not.
+// A server that bound the port to loopback alone and a firewall that drops the
+// packet are the same refusal seen from here, and reporting either as the cause
+// would send the operator to fix a machine that is not the one at fault.
+//
+// The connection is closed as soon as it stands. The handshake is the whole
+// measurement, and a probe left open is a socket held for the life of the
+// tunnel, one more on every reconnect.
+func probeForwardReach(address string, timeout time.Duration) string {
+	conn, err := net.DialTimeout("tcp", address, timeout)
+	if err != nil {
+		return forwardUnreachable
+	}
+	_ = conn.Close()
+
+	return forwardReachable
+}
+
+// forwardProbeAddress is where the forwarded port is tried from here: the
+// machine the SSH server runs on, at the port the server confirmed for the
+// forward.
+//
+// It is not the address the listener reports. That one is the address that was
+// asked for, a wildcard 0.0.0.0, which is not an address to dial and would only
+// ever reach this machine.
+func forwardProbeAddress(server *net.TCPAddr, port int) string {
+	return net.JoinHostPort(server.IP.String(), strconv.Itoa(port))
+}
+
+// recordForwardReach measures the forwarded port and writes the reading to the
+// tunnel row.
+//
+// It runs beside the accept loop rather than in it. The probe waits out its
+// whole timeout against an address that drops the packet, and the loop it would
+// hold is the one that carries the forwarded traffic.
+//
+// A reading taken on a connection that is no longer the current one is dropped.
+// The tunnel reconnected while the probe was waiting, a probe of its own is
+// running for the new connection, and writing here would put the reading of a
+// connection that is gone on the row of the one that replaced it.
+func (t *SSHTunnel) recordForwardReach(m *Manager, tunnel *models.Tunnel, measured *ssh.Client, address string) {
+	reach := probeForwardReach(address, forwardProbeTimeout)
+
+	t.clientMu.RLock()
+	current := t.client
+	t.clientMu.RUnlock()
+
+	if current != measured {
+		return
+	}
+
+	// The banner is taken under the same lock the reading is written under.
+	// Read after it, it would be read while the Start loop may be writing the
+	// banner of the connection that came next.
+	t.tunnelMu.Lock()
+	tunnel.ForwardReach = reach
+	banner := tunnel.ServerBanner
+	t.saveTunnelStatus(m, tunnel)
+	t.tunnelMu.Unlock()
+
+	if reach != forwardUnreachable {
+		return
+	}
+
+	t.logger.Warn("the forwarded port did not answer a connection from here, so the tunnel is connected "+
+		"but may not be usable. The SSH server may have bound the port to loopback alone, or something "+
+		"on the way may be dropping it, and the two cannot be told apart from here",
+		zap.String("probed", address),
+		zap.String("server_banner", banner),
+		zap.String("local", t.Local.String()),
+		zap.String("server", t.Server.String()),
+		zap.String("remote", t.Remote.String()))
+}
+
 // countingReader counts what was read from src, which is how forward tells a
 // connection that is idle from one that is merely slow. The count only has to
 // change while bytes flow, so a plain atomic add is enough.
@@ -453,8 +559,17 @@ func (t *SSHTunnel) establishConnection(m *Manager, tunnel *models.Tunnel) error
 	t.clientMu.Unlock()
 
 	// Addr reports the requested address with the port the server confirmed,
-	// so only the port is known to be real here.
+	// so only the port is known to be real here. That port is what the probe
+	// below is aimed at, and it is taken out of the address the library builds
+	// (x/crypto/ssh, tcpListener.Addr). A listener that reports anything else
+	// leaves the port that was asked to be forwarded, which is the port the
+	// server confirmed in every case but a request for port 0.
 	localAddr := listener.Addr().String()
+
+	boundPort := t.Local.Port
+	if bound, ok := listener.Addr().(*net.TCPAddr); ok {
+		boundPort = bound.Port
+	}
 
 	if t.Local.IP.IsUnspecified() {
 		t.logger.Info("a wildcard local address was requested, the SSH server binds it to loopback only unless GatewayPorts is enabled",
@@ -469,6 +584,11 @@ func (t *SSHTunnel) establishConnection(m *Manager, tunnel *models.Tunnel) error
 	tunnel.RetryCount = 0
 	tunnel.LastError = ""
 	tunnel.LastConnectedAt = time.Now()
+	tunnel.ServerBanner = string(client.ServerVersion())
+	// What the last connection measured says nothing about this one, which may
+	// be to a server that was reconfigured in between, so the reading goes back
+	// to unknown until the probe below answers for the connection that is up.
+	tunnel.ForwardReach = forwardReachUnknown
 	t.saveTunnelStatus(m, tunnel)
 	t.tunnelMu.Unlock()
 
@@ -476,6 +596,12 @@ func (t *SSHTunnel) establishConnection(m *Manager, tunnel *models.Tunnel) error
 		zap.String("local", t.Local.String()),
 		zap.String("server", t.Server.String()),
 		zap.String("remote", t.Remote.String()))
+
+	// Measured here and not on every pass. What decides it is the
+	// configuration of the SSH server, which does not change under a
+	// connection that stands, while a probe per status read would be one
+	// connection per tunnel per reader.
+	go t.recordForwardReach(m, tunnel, client, forwardProbeAddress(t.Server, boundPort))
 
 	for {
 		conn, err := listener.Accept()
