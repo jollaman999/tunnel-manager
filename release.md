@@ -1,3 +1,9 @@
+# v3.4.4
+
+## Bug fixes:
+
+- A refresh still replaced the status list under a finger that was resting on it. The wait watched the scroll, which is the effect, and the cause is the finger: one that is down but has not moved yet fires no scroll event, so the page read as still and the screen was replaced under the hand that was about to drag it. A touch counts as hold of the page now, and lifting it starts the quiet time rather than ending the wait, because what a phone does when a finger leaves is carry on moving.
+
 # v3.4.3
 
 ## Bug fixes:
