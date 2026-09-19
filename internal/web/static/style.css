@@ -663,80 +663,63 @@ td.actions {
     min-width: 0;
   }
 
-}
+  /* The log is laid out as blocks rather than as a table at this width.
 
+     Four columns across a phone leave the message the width of a few words,
+     and it then runs down the screen as a tall thin column: the one thing the
+     screen is opened to read is the one thing there is no room for. Stacked,
+     the message has the whole width and what labels it sits on the line above.
 
-/* The log is laid out as blocks rather than as a table below this width.
+     The table is kept as the markup, and only its layout changes, so there is
+     one way the log is built and one place the rows come from. */
+  .log-table thead {
+    display: none;
+  }
 
-   Four columns need room the other screens do not. Measured across a row whose
-   caller is a package path and whose message is a sentence: at 568px the
-   message had 124px and the row stood 267px tall, and at 844px, which is a
-   phone held sideways, the caller had 105px and wrapped onto three lines. The
-   message is what the screen is opened to read and the caller is what it is
-   filed under, and neither survives being a column at these widths.
+  .log-table table,
+  .log-table tbody,
+  .log-table tr,
+  .log-table td {
+    display: block;
+    width: auto;
+  }
 
-   The line is drawn wider than the one the rest of the screens reshape at,
-   because that one is about a form having room for a label beside an input,
-   and this is about four columns of running text. A laptop window keeps the
-   table; a phone and a tablet do not, whichever way they are held. */
-@media (max-width: 60rem) {
-/* The log is laid out as blocks rather than as a table at this width.
+  .log-table tr {
+    padding: 0.5rem 0;
+    border-bottom: 1px solid #e6e8eb;
+  }
 
-   Four columns across a phone leave the message the width of a few words,
-   and it then runs down the screen as a tall thin column: the one thing the
-   screen is opened to read is the one thing there is no room for. Stacked,
-   the message has the whole width and what labels it sits on the line above.
+  .log-table tr:last-child {
+    border-bottom: 0;
+  }
 
-   The table is kept as the markup, and only its layout changes, so there is
-   one way the log is built and one place the rows come from. */
-.log-table thead {
-  display: none;
-}
+  .log-table td {
+    padding: 0;
+    border-bottom: 0;
+  }
 
-.log-table table,
-.log-table tbody,
-.log-table tr,
-.log-table td {
-  display: block;
-  width: auto;
-}
+  /* The time, the level and the caller are what the message is filed under.
+     They share one line above it and are dimmed, so the eye starts at the
+     message. */
+  .log-table td:nth-child(1),
+  .log-table td:nth-child(2),
+  .log-table td:nth-child(3) {
+    display: inline-block;
+    margin-right: 0.5rem;
+    font-size: 12px;
+    color: #6b7079;
+    vertical-align: middle;
+  }
 
-.log-table tr {
-  padding: 0.5rem 0;
-  border-bottom: 1px solid #e6e8eb;
-}
+  .log-table td:nth-child(3) {
+    /* The caller is the least of the three and is allowed to break, so a long
+       package path does not push the line wider than the screen. */
+    overflow-wrap: anywhere;
+  }
 
-.log-table tr:last-child {
-  border-bottom: 0;
-}
-
-.log-table td {
-  padding: 0;
-  border-bottom: 0;
-}
-
-/* The time, the level and the caller are what the message is filed under.
-   They share one line above it and are dimmed, so the eye starts at the
-   message. */
-.log-table td:nth-child(1),
-.log-table td:nth-child(2),
-.log-table td:nth-child(3) {
-  display: inline-block;
-  margin-right: 0.5rem;
-  font-size: 12px;
-  color: #6b7079;
-  vertical-align: middle;
-}
-
-.log-table td:nth-child(3) {
-  /* The caller is the least of the three and is allowed to break, so a long
-     package path does not push the line wider than the screen. */
-  overflow-wrap: anywhere;
-}
-
-.log-table td:nth-child(4) {
-  margin-top: 0.25rem;
-}
+  .log-table td:nth-child(4) {
+    margin-top: 0.25rem;
+  }
 }
 
 /* The certificate as PEM. It is folded away because it is read once, when the
