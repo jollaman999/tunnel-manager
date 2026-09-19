@@ -8,6 +8,23 @@ const uiPrefix = "/ui/";
 // pass of that loop behind what the server has done.
 const statusRefreshMs = 5000;
 
+// scrollQuietMs is how long after the last scroll a refresh of the screen
+// waits.
+//
+// A draw replaces everything under #app. render puts the position back, which
+// covers a page that is standing still, but a phone scrolls on after the finger
+// has left and a glide that is handed a new set of elements halfway through
+// does not carry on gliding: it stops where it was interrupted, which is not
+// where the reader was going.
+//
+// What the wait has to cover is the gap between two scroll events inside one
+// movement and not the movement itself: they arrive about one a frame while the
+// page is moving and stop arriving when it settles, so a few frames of quiet
+// already tell the end of a scroll from the middle of one. 400ms is many frames
+// past that and is under a tenth of the period between two refreshes, so a
+// refresh that waits for it is not meaningfully later than one that did not.
+const scrollQuietMs = 400;
+
 // apiLoginPath and apiSetupPath are the two calls whose refusals must not be
 // turned into a move to another screen. A 401 from the login is what wrong
 // credentials look like, and a 403 from the setup would send the operator to
@@ -82,6 +99,18 @@ let notice = null;
 // Kept inside the screen it would be started again on every visit and never
 // stopped, leaving one more timer running per visit.
 let refreshTimer = null;
+
+// scrolledAt is when the page last moved, and scrollRetryTimer is the refresh
+// that is waiting for it to stop moving. The timer is here beside refreshTimer
+// and for the same reason: leaving the screen has to be able to stop it, and
+// leaving is done from here.
+let scrolledAt = 0;
+let scrollRetryTimer = null;
+
+// drawnScreen is the screen the last render drew. It is what tells a refresh of
+// the screen that is up from the first draw of one that has just been moved to,
+// which are the two cases the scroll position is treated differently in.
+let drawnScreen = null;
 
 // Redirected is what an API call throws when the answer moved the operator to
 // another screen. It carries no message: the screen it lands on is the report,
@@ -169,12 +198,49 @@ function redraw() {
   run(screen.draw);
 }
 
-// stopRefresh ends the periodic redraw of the status screen.
+// stopRefresh ends the periodic redraw of the status screen, and with it the
+// tick that was waiting for the scrolling to stop. A tick left waiting would
+// come due on the screen that replaced the one it was started on.
 function stopRefresh() {
   if (refreshTimer !== null) {
     window.clearInterval(refreshTimer);
     refreshTimer = null;
   }
+
+  if (scrollRetryTimer !== null) {
+    window.clearTimeout(scrollRetryTimer);
+    scrollRetryTimer = null;
+  }
+}
+
+// scrolling reports whether the page is being scrolled at this moment.
+function scrolling() {
+  return Date.now() - scrolledAt < scrollQuietMs;
+}
+
+// refreshWhenStill takes a tick of the periodic refresh, once the page has
+// stopped moving.
+//
+// A tick that lands while it is moving is not dropped. It is held and taken as
+// soon as the scrolling stops, so a screen cannot be left standing on an old
+// answer because a finger happened to be down when the timer went off. Only one
+// tick is ever held: the ones behind it would fetch the same answer it does.
+function refreshWhenStill(draw) {
+  if (scrollRetryTimer !== null) {
+    return;
+  }
+
+  if (!scrolling()) {
+    run(draw);
+
+    return;
+  }
+
+  scrollRetryTimer = window.setTimeout(function () {
+    scrollRetryTimer = null;
+
+    refreshWhenStill(draw);
+  }, scrollQuietMs);
 }
 
 // setNotice puts a line above the screen. It is shown by the next draw, so the
@@ -205,6 +271,21 @@ function run(action) {
 function render(title, nodes) {
   const app = document.getElementById("app");
 
+  // Where the page is being read, taken before the screen goes.
+  //
+  // Emptying #app takes the height of the page down to the height of the
+  // heading for as long as it takes to build the screen again, and a page that
+  // is suddenly shorter than the position it is scrolled to is scrolled back to
+  // the top by the browser. Without this, every refresh of the status screen
+  // takes the reader back to the first row.
+  //
+  // It is put back only where the screen is the one that was up. A move to
+  // another screen starts at the top, which is where it would have started
+  // before any of this.
+  const atX = window.scrollX;
+  const atY = window.scrollY;
+  const sameScreen = drawnScreen === currentScreen;
+
   app.textContent = "";
 
   const screen = screens[currentScreen];
@@ -225,6 +306,14 @@ function render(title, nodes) {
 
   for (const node of nodes) {
     app.appendChild(typeof node === "string" ? element("p", node) : node);
+  }
+
+  drawnScreen = currentScreen;
+
+  if (sameScreen) {
+    window.scrollTo(atX, atY);
+  } else {
+    window.scrollTo(0, 0);
   }
 }
 
@@ -1203,6 +1292,12 @@ function showVersion() {
     })
     .catch(function () {});
 }
+
+// The scroll is watched for one thing: when it last happened. The listener is
+// passive, so nothing it does can hold up the scrolling it is watching.
+window.addEventListener("scroll", function () {
+  scrolledAt = Date.now();
+}, { passive: true });
 
 window.addEventListener("popstate", function () {
   notice = null;

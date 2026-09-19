@@ -558,8 +558,13 @@ td.actions {
 }
 
 /* The lists above the log act as they are changed, so they are a row of
-   controls rather than a form with a button under it. */
-.log-controls {
+   controls rather than a form with a button under it.
+
+   The row above a paged table is the same thing and is painted by the same
+   rules, so that the list of sizes on one screen is the list of sizes on the
+   others. */
+.log-controls,
+.page-controls {
   display: flex;
   flex-wrap: wrap;
   gap: 0.6rem 1rem;
@@ -567,14 +572,16 @@ td.actions {
   margin-bottom: 0.75rem;
 }
 
-.log-controls label {
+.log-controls label,
+.page-controls label {
   display: flex;
   gap: 0.4rem;
   align-items: center;
   color: #4a4f57;
 }
 
-.log-controls select {
+.log-controls select,
+.page-controls select {
   padding: 0.3rem 0.4rem;
   font: inherit;
   color: inherit;
@@ -583,7 +590,8 @@ td.actions {
   border-radius: 4px;
 }
 
-.log-controls select:focus {
+.log-controls select:focus,
+.page-controls select:focus {
   border-color: #24456b;
   outline: 2px solid #c7d6ea;
   outline-offset: 0;
@@ -592,6 +600,14 @@ td.actions {
 .log-controls input[type="checkbox"] {
   width: 1rem;
   height: 1rem;
+}
+
+/* Which page is up and which rows are on it. It is dimmed and sits after the
+   buttons, because it is read once to find out where in the list this is and
+   the buttons are what is pressed. */
+.page-where {
+  color: #6b7079;
+  font-size: 12px;
 }
 
 .log-scope {

@@ -59,6 +59,29 @@ const restartPollLimitSec = 90;
 let editingHostID = null;
 let editingServicePortID = null;
 
+// listSizes are the sizes a page of a list may be asked for in, and the first
+// of them is the size a screen starts on. They are the sizes the API takes: one
+// that is not on its list is refused there rather than brought into range, so a
+// size added here and not there is a screen asking for a page it cannot be
+// given.
+const listSizes = [10, 20, 30, 50, 100];
+
+// listPages is the page each of the three lists is on and the size it is read
+// in. They are held out here for the reason the lists above the log are: the
+// screens are drawn again from scratch on every refresh and after every action,
+// and a draw that came back on the first page would take the operator off what
+// they were reading every five seconds.
+//
+// Each screen has its own. The three lists are not the same length: the tunnels
+// are one row per Host per service port, so they run to the product of the
+// other two, and a size chosen for one list says nothing about the size wanted
+// on the next.
+const listPages = {
+  status: { number: 1, size: listSizes[0] },
+  hosts: { number: 1, size: listSizes[0] },
+  "service-ports": { number: 1, size: listSizes[0] }
+};
+
 // certificateDraft is what was typed into the two PEM boxes. It is kept because
 // the screen is drawn again after a registration that was refused, and a paste
 // of thirty lines that is thrown away on every refusal is one the operator has
@@ -236,18 +259,23 @@ async function submitSetup(values) {
 // enterStatus draws the screen and starts the refresh. The period is the one
 // the reconcile loop runs at, so a tunnel that comes up shows up within a pass
 // of it. The timer is stopped by showScreen when the screen is left.
+//
+// The page being read is not reset on the way in. It is what the operator left
+// this screen on, the same as the lists above the log, and a refresh goes to
+// the server for the page that is on the screen rather than for the first one.
 function enterStatus() {
   const drawn = drawStatus();
 
   refreshTimer = window.setInterval(function () {
-    run(drawStatus);
+    refreshWhenStill(drawStatus);
   }, statusRefreshMs);
 
   return drawn;
 }
 
 async function drawStatus() {
-  const data = await apiCall("GET", "/api/status");
+  const page = listPages.status;
+  const data = await apiCall("GET", "/api/status?" + pageQuery(page));
 
   // A refresh that was in flight while the operator left must not draw over
   // the screen they went to.
@@ -255,6 +283,11 @@ async function drawStatus() {
     return;
   }
 
+  takeListPage(page, data);
+
+  // The three counts are of every tunnel there is and not of the page below
+  // them. They are what says what the installation is doing, and a count that
+  // followed the page would read as a tunnel count that fell to ten.
   const counts = document.createElement("div");
   counts.className = "counts";
   counts.appendChild(countBox("Desired", data.desired_tunnels, "desired"));
@@ -322,6 +355,11 @@ async function drawStatus() {
       return { cells: cells, under: said };
     });
 
+    const controls = pageControls(page, data.total_tunnels, drawStatus);
+    if (controls !== null) {
+      nodes.push(controls);
+    }
+
     nodes.push(buildTable(
       ["Host", "Service port", "Status", "Server", "Local", "Remote", "Retries",
         "Last connected"],
@@ -370,6 +408,108 @@ function statusLine(text, kind) {
   return line;
 }
 
+// pageQuery is the page a list is asked for, as the query string it is asked
+// with. It goes on the first request as well as the later ones: the server has
+// a default of its own, and a request that leaves the two out is answered with
+// that default rather than with what the screen is set to.
+function pageQuery(page) {
+  return "page=" + encodeURIComponent(page.number) + "&size=" + encodeURIComponent(page.size);
+}
+
+// takeListPage moves the screen onto the page the answer was actually given
+// from, which is not always the page that was asked for. Rows are deleted while
+// a screen is open, and a request for a page that has gone is answered with the
+// last page rather than with an error. Left alone, the screen would go on
+// asking for the page that is not there on every refresh.
+function takeListPage(page, answer) {
+  if (answer === null || answer === undefined) {
+    return;
+  }
+
+  if (typeof answer.page === "number") {
+    page.number = answer.page;
+  }
+
+  if (typeof answer.size === "number") {
+    page.size = answer.size;
+  }
+}
+
+// lastPageOf is how many pages of this size the rows make. A list with nothing
+// in it is one empty page, which is what the server counts it as too.
+function lastPageOf(total, size) {
+  const pages = Math.ceil(total / size);
+
+  return pages < 1 ? 1 : pages;
+}
+
+// pageControls is the row above a table: the size the list is read in, the way
+// to the page on either side, and where in the list this page is.
+//
+// Nothing is drawn while there is nothing the row could do. A list shorter than
+// the smallest size is one page at every size, so both buttons are dead and the
+// list of sizes changes nothing, and three rows would carry a row of controls
+// that only says there are three rows. It appears as soon as one of the sizes
+// would split the list, which includes the case where the size in use does not:
+// that is the state a screen is left in by choosing a hundred, and controls
+// that took themselves away there would leave no way back to ten.
+function pageControls(page, total, draw) {
+  if (total <= listSizes[0]) {
+    return null;
+  }
+
+  const row = document.createElement("div");
+
+  row.className = "page-controls";
+
+  // The same list, built by the same function as the ones above the log, so
+  // that the two rows of controls are one thing to learn rather than two.
+  row.appendChild(logSelect("page-size", "Rows per page", listSizes, page.size,
+    function (value) {
+      page.size = Number(value);
+      // The rows move under the numbering when the size changes, so the page
+      // that was being read is no longer a place. The first page is the one
+      // page that means the same at every size.
+      page.number = 1;
+
+      return draw();
+    }));
+
+  const last = lastPageOf(total, page.size);
+
+  const previous = actionButton("Previous", "page-previous", function () {
+    page.number = page.number - 1;
+
+    return draw();
+  });
+
+  previous.disabled = page.number <= 1;
+  row.appendChild(previous);
+
+  const next = actionButton("Next", "page-next", function () {
+    page.number = page.number + 1;
+
+    return draw();
+  });
+
+  next.disabled = page.number >= last;
+  row.appendChild(next);
+
+  // Which page this is and which rows are on it. The count of pages on its own
+  // says nothing about how long the list is, and the rows are what the operator
+  // is looking for: a Host at row 74 is found by the range and not by counting
+  // pages of ten.
+  const from = (page.number - 1) * page.size + 1;
+  const to = Math.min(page.number * page.size, total);
+  const where = element("span", "Page " + page.number + " of " + last + ", rows " + from +
+    " to " + to + " of " + total);
+
+  where.className = "page-where";
+  row.appendChild(where);
+
+  return row;
+}
+
 function enterHosts() {
   editingHostID = null;
 
@@ -377,8 +517,20 @@ function enterHosts() {
 }
 
 async function drawHosts() {
-  const answer = await apiCall("GET", "/api/host");
-  const hosts = answer === null ? [] : answer;
+  const page = listPages.hosts;
+  const answer = await apiCall("GET", "/api/host?" + pageQuery(page));
+
+  takeListPage(page, answer);
+
+  // The rows of this page sit under items, and total is the whole list. The
+  // page on its own cannot say how long the list is: a short last page and a
+  // whole list look the same from here.
+  const hosts = answer === null || answer.items === null || answer.items === undefined
+    ? []
+    : answer.items;
+  const total = answer === null || typeof answer.total !== "number"
+    ? hosts.length
+    : answer.total;
 
   // The row being edited may have been deleted from somewhere else. The form
   // is dropped rather than left holding a host that no longer exists.
@@ -395,6 +547,11 @@ async function drawHosts() {
   if (hosts.length === 0) {
     nodes.push(statusLine("There are no hosts.", "empty"));
   } else {
+    const controls = pageControls(page, total, drawHosts);
+    if (controls !== null) {
+      nodes.push(controls);
+    }
+
     nodes.push(buildTable(
       ["ID", "IP", "Port", "User", "Description", "Enabled", "Updated", ""],
       hosts.map(hostRow),
@@ -667,8 +824,17 @@ function enterServicePorts() {
 }
 
 async function drawServicePorts() {
-  const answer = await apiCall("GET", "/api/service-port");
-  const ports = answer === null ? [] : answer;
+  const page = listPages["service-ports"];
+  const answer = await apiCall("GET", "/api/service-port?" + pageQuery(page));
+
+  takeListPage(page, answer);
+
+  const ports = answer === null || answer.items === null || answer.items === undefined
+    ? []
+    : answer.items;
+  const total = answer === null || typeof answer.total !== "number"
+    ? ports.length
+    : answer.total;
 
   const editing = ports.find(function (port) {
     return port.id === editingServicePortID;
@@ -685,6 +851,11 @@ async function drawServicePorts() {
   if (ports.length === 0) {
     nodes.push(statusLine("There are no service ports.", "empty"));
   } else {
+    const controls = pageControls(page, total, drawServicePorts);
+    if (controls !== null) {
+      nodes.push(controls);
+    }
+
     nodes.push(buildTable(
       ["ID", "Service IP", "Service port", "Local port", "Description", "Updated", ""],
       ports.map(servicePortRow),
@@ -844,7 +1015,7 @@ function enterLogs() {
       return;
     }
 
-    run(drawLogs);
+    refreshWhenStill(drawLogs);
   }, statusRefreshMs);
 
   return drawn;
