@@ -1,3 +1,10 @@
+# v3.2.5
+
+## Bug fixes:
+
+- The log was hard to read on a screen turned sideways, and two things were taking its width. Safari grows the text of a block when the viewport is wider than the block is, which it does to make a page built for a desktop readable on a phone; this page is built for the width it is shown at, so held upright nothing happened and turned on its side the same page had bigger letters than it asked for. It is told not to. The other was the stamp: twenty-eight characters that could not break, taking 220px of a table with three other columns to fit. The date and the time of day are on two lines now, which is half the column for the same information. Measured at 844px, a phone on its side: the message had 361px and the row stood 99px tall, and it now has 409px and the row is 78px, which is what a row is at any width.
+- The layout the log takes on a phone held upright is no longer used on wider screens. A previous release extended it to anything narrower than a laptop, which gave a phone turned sideways the layout of one held upright rather than the table a wider screen has room for.
+
 # v3.2.4
 
 ## Add/fix features:
