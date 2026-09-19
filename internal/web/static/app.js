@@ -107,6 +107,23 @@ let refreshTimer = null;
 let scrolledAt = 0;
 let scrollRetryTimer = null;
 
+// periodicDraw says the draw being built is a tick of the refresh rather than
+// something the operator asked for, and heldScreen is one such draw that is
+// finished and waiting for the page to stop moving.
+//
+// Waiting before the request is not enough on its own. A tick is let through
+// while the page is still, the answer takes a round trip to come back, and the
+// screen is replaced when it arrives: a finger that comes down in between meets
+// the swap anyway. What the reader sees is the list jumping under them, which
+// is the thing the waiting was for.
+//
+// So the draw is built either way and held at the last step, which is also the
+// only step that costs the reader anything. Nothing is fetched twice, and the
+// screen goes up the moment the page settles.
+let periodicDraw = false;
+let heldScreen = null;
+let heldScreenTimer = null;
+
 // drawnScreen is the screen the last render drew. It is what tells a refresh of
 // the screen that is up from the first draw of one that has just been moved to,
 // which are the two cases the scroll position is treated differently in.
@@ -211,6 +228,48 @@ function stopRefresh() {
     window.clearTimeout(scrollRetryTimer);
     scrollRetryTimer = null;
   }
+
+  dropHeldScreen();
+}
+
+// dropHeldScreen forgets a draw that was waiting to go up. What waits belongs
+// to the screen being left, and putting it up afterwards would draw it over the
+// one that replaced it.
+function dropHeldScreen() {
+  if (heldScreenTimer !== null) {
+    window.clearTimeout(heldScreenTimer);
+    heldScreenTimer = null;
+  }
+
+  heldScreen = null;
+}
+
+// putUpHeldScreen waits out the scrolling and then draws what was held. It asks
+// again rather than trusting one wait, because a reader who is still moving
+// when it looks is a reader it has to keep waiting for.
+function putUpHeldScreen() {
+  heldScreenTimer = window.setTimeout(function () {
+    heldScreenTimer = null;
+
+    if (heldScreen === null) {
+      return;
+    }
+
+    if (scrolling()) {
+      putUpHeldScreen();
+
+      return;
+    }
+
+    const held = heldScreen;
+
+    heldScreen = null;
+
+    // The screen it was drawn for may not be the one that is up any more.
+    if (held.screen === currentScreen) {
+      paint(held.title, held.nodes);
+    }
+  }, scrollQuietMs);
 }
 
 // scrolling reports whether the page is being scrolled at this moment.
@@ -231,7 +290,22 @@ function refreshWhenStill(draw) {
   }
 
   if (!scrolling()) {
-    run(draw);
+    periodicDraw = true;
+
+    const started = draw();
+
+    if (started !== undefined && typeof started.finally === "function") {
+      // run takes something to call, not something already running. Handed the
+      // promise itself it would be passed to then as a value, which then
+      // ignores, and a draw that failed would go to nobody.
+      run(function () {
+        return started.finally(function () {
+          periodicDraw = false;
+        });
+      });
+    } else {
+      periodicDraw = false;
+    }
 
     return;
   }
@@ -269,6 +343,30 @@ function run(action) {
 // there. The values are set as text and never as markup, so nothing that comes
 // back from the API can turn into elements.
 function render(title, nodes) {
+  // A tick of the refresh that came back while the reader is moving is held
+  // rather than put up. It is the swap itself that costs them, not the fetch,
+  // so holding it here is the last place it can be stopped and the only one
+  // that matters. A draw the operator asked for goes up whatever the page is
+  // doing: they are waiting for it.
+  if (periodicDraw && scrolling()) {
+    heldScreen = { title: title, nodes: nodes, screen: currentScreen };
+
+    if (heldScreenTimer === null) {
+      putUpHeldScreen();
+    }
+
+    return;
+  }
+
+  // Anything that is drawn now replaces whatever was waiting to be.
+  dropHeldScreen();
+
+  paint(title, nodes);
+}
+
+// paint puts a screen up. It is what render does once it has decided that now
+// is the moment, and what the held draw does when its moment comes.
+function paint(title, nodes) {
   const app = document.getElementById("app");
 
   // Where the page is being read, taken before the screen goes.
