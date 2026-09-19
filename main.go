@@ -38,7 +38,7 @@ import (
 	"gopkg.in/natefinch/lumberjack.v2"
 )
 
-const version = "3.2.4"
+const version = "3.2.5"
 
 // Maximum time to wait for in-flight HTTP requests to finish on shutdown.
 const shutdownTimeout = 10 * time.Second
