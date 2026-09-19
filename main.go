@@ -719,6 +719,27 @@ func main() {
 		})
 	}
 
+	// restarting is what the Settings screen asks for a restart through. It is
+	// the sibling of the channel above and is read by the same select, so a
+	// restart runs the very shutdown a signal runs: the API is drained, the
+	// port is released, the reconcile loop is stopped and the tunnels come
+	// down. Only once all of that has ended does this process run this program
+	// again, because the image that replaces it binds the port this one is
+	// serving on.
+	//
+	// The close is guarded for the same reason the one above is: a second press
+	// while the first restart is on its way down would panic on a channel that
+	// is already closed.
+	restarting := make(chan struct{})
+
+	var restartOnce sync.Once
+
+	endBeforeRestart := func() {
+		restartOnce.Do(func() {
+			close(restarting)
+		})
+	}
+
 	e := echo.New()
 	e.Validator = &CustomValidator{validator: validator.New()}
 	e.Use(middleware.Logger())
@@ -766,6 +787,12 @@ func main() {
 			InitialPasswordFile: initialPasswordFile,
 			LogFile:             resolveInstallPath(installDir, set.LoggingFilePath),
 		}, endAfterUninstall)
+	// The restart is handed the shutdown above and what this build can do about
+	// coming back. canReexec is asked here, in the one place that knows it is
+	// the process, rather than in the handler: the handler answers with it, and
+	// a screen that had to work it out would be guessing from the browser it
+	// runs in.
+	restartHandler := api.NewRestartHandler(logger, canReexec(), endBeforeRestart)
 	g := e.Group("/api")
 
 	// The session check is put on the group before any route is added to it.
@@ -803,6 +830,9 @@ func main() {
 	g.PUT("/certificate", certificateHandler.InstallCertificate)
 
 	g.GET("/logs", logsHandler.GetLogs)
+
+	g.GET("/restart", restartHandler.GetRestart)
+	g.POST("/restart", restartHandler.Restart)
 
 	g.POST("/uninstall", uninstallHandler.Uninstall)
 
@@ -911,11 +941,20 @@ func main() {
 
 	var startErr error
 
+	// restartAsked separates the one shutdown that is not the end of this
+	// process from the others. What follows is the same for all of them, and
+	// what it is followed by is not.
+	restartAsked := false
+
 	select {
 	case sig := <-sigChan:
 		logger.Info("Received signal, shutting down...", zap.String("signal", sig.String()))
 	case <-uninstalled:
 		logger.Info("The installation was removed, shutting down...")
+	case <-restarting:
+		restartAsked = true
+
+		logger.Info("A restart was asked for, shutting down before this program is run again...")
 	case startErr = <-serverErr:
 		logger.Error("failed to start API server", zap.Error(startErr))
 	}
@@ -957,6 +996,15 @@ func main() {
 
 	logger.Info("Stopping all tunnels...")
 	manager.StopAllTunnels()
+
+	// The restart comes last of all. Everything above it is what a signal does
+	// too, and every one of those steps is one the image that replaces this
+	// process needs to have finished: the port above all, since a listener that
+	// is still open is one the new image cannot bind.
+	if restartAsked {
+		finishRestart(logger)
+	}
+
 	logger.Info("Exiting tunnel-manager...")
 
 	if startErr != nil {
@@ -964,4 +1012,44 @@ func main() {
 		_ = logger.Sync()
 		os.Exit(1)
 	}
+}
+
+// finishRestart runs this program again in place of this process.
+//
+// It is called only once the ordered shutdown above has ended. The port is free
+// by then, which is the one thing the image that replaces this process cannot
+// do without: it binds the same port a moment later.
+//
+// A platform without exec ends here instead. The process goes down in order and
+// what starts it again, if anything does, is whatever supervises it. The screen
+// was told which of the two this is before the operator pressed anything.
+func finishRestart(logger *zap.Logger) {
+	if !canReexec() {
+		logger.Info("the restart ends with this process. This platform cannot replace the " +
+			"image of a running process, so starting this program again is left to whatever " +
+			"supervises this service")
+
+		return
+	}
+
+	logger.Info("the shutdown has ended and the port is free, so this process now runs this " +
+		"program again with the arguments and the environment it was started with")
+
+	// exec replaces the image of this process and runs no deferred call, so
+	// what has been logged is written out here. Without this the last lines of
+	// this process, the one above among them, are lost in the buffer.
+	_ = logger.Sync()
+
+	err := reexec()
+
+	// Only a failure comes back from that call. The logger is still the one of
+	// this process, since nothing was replaced.
+	logger.Error("failed to run this program again, so this process ends instead. A service "+
+		"that is supervised is started again from here; one that was started by hand is not",
+		zap.Error(err))
+
+	// The exit code says the process did not end the way it meant to, which is
+	// what a supervisor reads to decide whether to start it again.
+	_ = logger.Sync()
+	os.Exit(1)
 }

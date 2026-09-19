@@ -558,6 +558,55 @@ curl -s -b cookies.txt -X PUT "$BASE/api/settings" \
 The body is bound onto what is stored, so a request that names some of the
 settings changes those and leaves the rest alone.
 
+### Restarting the service
+
+The Settings screen has a **Restart** button, and `POST /api/restart` is the same
+thing from a script. It is what puts a stored setting that waits for a start into
+place. The API stops answering, every tunnel comes down and is built again on the
+way back, so everything going through a tunnel is cut for as long as the restart
+takes. The password of the account is not asked for, unlike the uninstall below:
+nothing here is final.
+
+The answer is written first and the process goes about three seconds later, which
+is the time the browser has to draw the screen that says the service is coming
+back. Then the shutdown runs in the order a signal runs it in: the API server is
+drained, the redirect server after it, the port is released, the reconcile loop
+is stopped and the tunnels come down. Only once all of that has ended does the
+process run the program again in place of itself, with the same arguments and the
+same environment.
+
+**It is the same process.** Unix replaces the image of a running process rather
+than starting another one, so the PID does not change, systemd and Docker see
+nothing happen, nothing is started twice and there is no second instance to fight
+over the port. The port is released before the image is replaced, because the
+program that replaces it binds that same port a moment later. Replacing the
+binary on disk and then restarting is what runs the new one: the file is read at
+that moment.
+
+**Windows has no exec.** There the restart is an ordered stop and nothing else,
+and starting the program again is left to whatever supervises the service; one
+that was started by hand does not come back. Both answers carry `comes_back` so
+that the screen can say which of the two this installation is before anything is
+pressed, and `GET /api/restart` answers that without doing anything.
+
+The sessions are held in memory, so they go with the process. The screen asks for
+the login again once the service is back.
+
+```bash
+curl -s -b cookies.txt -X POST "$BASE/api/restart" \
+  -H "X-CSRF-Token: $CSRF"
+```
+
+```json
+{
+  "success": true,
+  "data": {
+    "exit_in_sec": 3,
+    "comes_back": true
+  }
+}
+```
+
 ### If the server will not start
 
 A setting that keeps the process from starting used to be a file you could edit.
@@ -777,6 +826,8 @@ that is not a `GET` requires the `X-CSRF-Token` header.
 | `GET` | `/api/certificate` | The certificate being served: fingerprint, subject, issuer, the names it covers, the validity and the days left |
 | `POST` | `/api/certificate/renew` | Makes another self-signed certificate and serves it from the next connection on |
 | `PUT` | `/api/certificate` | Takes `cert_pem` and `key_pem`, stores them and serves them from the next connection on |
+| `GET` | `/api/restart` | What a restart would do here: how long before the service goes and whether it comes back on its own |
+| `POST` | `/api/restart` | Takes the service down in order and runs the program again in place of this process, where the platform has exec |
 | `POST` | `/api/uninstall` | Takes `password`, removes the installation and ends the process |
 | `GET` | `/api/logs` | The end of the log file. `lines` says how many, up to 2000 |
 

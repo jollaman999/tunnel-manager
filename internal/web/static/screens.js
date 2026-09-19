@@ -35,6 +35,23 @@ const screens = {
 const logLevels = ["debug", "info", "warn", "error", "dpanic", "panic", "fatal"];
 const logFormats = ["json", "console"];
 
+// restartPollEverySec is how often the page asks whether the service is back
+// after a restart, and restartPollLimitSec is how long it goes on asking.
+//
+// The limit covers what a restart is made of: the seconds the server stays up
+// so that the answer arrives, up to ten seconds of draining the requests that
+// are in flight, up to ten more for the reconcile loop to return, the tunnels
+// coming down, and then a startup that builds every tunnel before it listens,
+// where a Host that does not answer costs ten seconds of SSH timeout. Ninety
+// seconds is past all of that on an installation of a handful of Hosts.
+//
+// There is a limit at all because a page that asks forever says nothing: the
+// screen looks the same whether the service is slow to come back or is not
+// coming back, and only one of those is something to act on. Past the limit the
+// page says so and stops asking.
+const restartPollEverySec = 1;
+const restartPollLimitSec = 90;
+
 // editingHostID and editingServicePortID say which row has the edit form open.
 // Only the identifier is kept: the values in the form come from the last answer
 // the list was drawn from, so an edit form never shows a row as it was several
@@ -65,6 +82,12 @@ let certificateProblem = "";
 // again from the server right afterwards, and what the replacement said about
 // the connections that are already open is not in that answer.
 let certificateReplaceResult = null;
+
+// restartInFlight says whether a restart was asked for and the page is still
+// waiting for the service to answer again. The button is disabled while it is
+// on, because a second press asks a server that is on its way down and puts the
+// failure of that call on the screen of a restart that is going fine.
+let restartInFlight = false;
 
 // uninstallResult is what the uninstall answered: the files that went and the
 // ones that could not be removed. It is kept here because the screen that shows
@@ -960,6 +983,7 @@ function enterSettings() {
 async function drawSettings() {
   const set = await apiCall("GET", "/api/settings");
   const certificate = await readCertificate();
+  const restart = await readRestart();
 
   const nodes = [];
 
@@ -973,6 +997,7 @@ async function drawSettings() {
   nodes.push(certificateCard(set, certificate));
   nodes.push(certificateForm());
   nodes.push(settingsRescue());
+  nodes.push(settingsRestart(restart));
   nodes.push(settingsDangerZone());
 
   render("Settings", nodes);
@@ -988,6 +1013,22 @@ async function drawSettings() {
 async function readCertificate() {
   try {
     return { view: await apiCall("GET", "/api/certificate"), problem: "" };
+  } catch (error) {
+    if (error instanceof Redirected) {
+      throw error;
+    }
+
+    return { view: null, problem: error.message };
+  }
+}
+
+// readRestart asks what a restart would do here, which is what the card below
+// puts to the operator before anything is pressed. A refusal is turned into
+// something to show rather than taking the whole screen down over the one card
+// that is not the reason anybody opened it.
+async function readRestart() {
+  try {
+    return { view: await apiCall("GET", "/api/restart"), problem: "" };
   } catch (error) {
     if (error instanceof Redirected) {
       throw error;
@@ -1538,6 +1579,219 @@ function settingsRescue() {
       "the defaults, and this screen is reachable again."));
 
   return card;
+}
+
+// settingsRestart takes the service down and brings it back. It is a card of
+// its own and not part of the danger zone below, which is for what cannot be
+// taken back: this one ends with the service running again, and putting it
+// among the actions that do not would teach the operator to read past that
+// warning.
+//
+// The password of the account is not asked for here. The uninstall asks because
+// what it does is final; a question put to every press is one that stops being
+// read.
+function settingsRestart(restart) {
+  const card = document.createElement("section");
+
+  card.className = "card";
+  card.dataset.card = "settings-restart";
+  card.appendChild(element("h2", "Restart the service"));
+  card.appendChild(element("p",
+    "A restart is what puts a stored setting that waits for one into place. The API stops " +
+      "answering, every tunnel comes down and is built again afterwards, so everything going " +
+      "through a tunnel is cut for as long as the restart takes."));
+
+  if (restart.view === null) {
+    // What a restart does here could not be read, and the two cases it decides
+    // between are not the same press at all: after one the service is back by
+    // itself, after the other it stays down. Offering the button without
+    // knowing which one this is asks the operator to find out by pressing it.
+    card.appendChild(statusLine("What a restart would do could not be read, so it is not " +
+      "offered here: " + restart.problem, "warning"));
+
+    return card;
+  }
+
+  card.appendChild(element("p", restartOutcome(restart.view)));
+
+  const buttons = document.createElement("div");
+  buttons.className = "buttons";
+
+  const button = actionButton("Restart", "settings-restart", function () {
+    return submitRestart(restart.view, button);
+  });
+
+  button.disabled = restartInFlight;
+
+  buttons.appendChild(button);
+  card.appendChild(buttons);
+
+  return card;
+}
+
+// restartOutcome is the half of this that differs by platform, in the words the
+// card uses. The server says which one it is, because it is the only side that
+// knows: the browser cannot tell what the machine on the other end is running.
+function restartOutcome(view) {
+  if (view.comes_back) {
+    return "This process runs the program again in place of itself. It keeps the process it " +
+      "already is, so the service is back on the same port within seconds and nothing has to " +
+      "start it.";
+  }
+
+  return "This platform cannot replace the image of a running process, so the restart ends " +
+    "with the process stopped. Whatever supervises the service is what starts it again, and " +
+    "a service that was started by hand does not come back at all.";
+}
+
+// restartQuestion is what the operator is asked before anything happens. It
+// says what is cut either way, and on a platform that does not come back it
+// says that too, while there is still something to be done about it.
+function restartQuestion(view) {
+  const cut = "Restart tunnel-manager? Every tunnel is cut and the API stops answering while " +
+    "the service goes down and comes up again.";
+
+  if (view.comes_back) {
+    return cut + " It comes back on its own within seconds, on the same port.";
+  }
+
+  return cut + " This platform cannot start the program again by itself: bringing it back is " +
+    "left to whatever supervises this service, and if it was started by hand it does not come " +
+    "back.";
+}
+
+async function submitRestart(view, button) {
+  if (!window.confirm(restartQuestion(view))) {
+    return;
+  }
+
+  restartInFlight = true;
+  button.disabled = true;
+
+  let answer;
+
+  try {
+    answer = await apiCall("POST", "/api/restart");
+  } catch (error) {
+    // Nothing was taken down, so the card goes back to offering the press.
+    restartInFlight = false;
+    button.disabled = false;
+
+    throw error;
+  }
+
+  drawRestarting(answer, "");
+
+  let back = false;
+
+  try {
+    back = await waitForTheService(answer);
+  } finally {
+    restartInFlight = false;
+  }
+
+  // The operator may have gone to another screen while this was waiting. What
+  // is drawn there is theirs, not this.
+  if (currentScreen !== "settings") {
+    return;
+  }
+
+  if (!back) {
+    drawRestarting(answer, "The service did not answer again within " + restartPollLimitSec +
+      " seconds. Check the server.");
+
+    return;
+  }
+
+  setNotice("The service is back.", "info");
+
+  return drawSettings();
+}
+
+// drawRestarting is the screen while the service is away. It says what was
+// asked for, what it does on this platform and how long this page keeps asking,
+// so that a wait that is going normally reads as one.
+//
+// problem is empty while the waiting is still on, and holds what to do about it
+// once the page has given up.
+function drawRestarting(answer, problem) {
+  if (currentScreen !== "settings") {
+    return;
+  }
+
+  const seconds = typeof answer.exit_in_sec === "number" ? answer.exit_in_sec : 0;
+  const nodes = [];
+
+  nodes.push(element("p",
+    "The restart was asked for. The service stops answering about " + seconds + " " +
+      plural(seconds, "second", "seconds") + " after this screen appeared, every tunnel comes " +
+      "down with it and is built again on the way back."));
+
+  nodes.push(element("p", restartOutcome(answer)));
+
+  if (problem === "") {
+    nodes.push(statusLine("Waiting for the service to answer again. This page asks every " +
+      restartPollEverySec + " " + plural(restartPollEverySec, "second", "seconds") +
+      " and gives up after " + restartPollLimitSec + " seconds.", "empty"));
+  } else {
+    nodes.push(statusLine(problem, "warning"));
+    nodes.push(element("p",
+      "Nothing further happens on this page. Reload it once the service is running again."));
+  }
+
+  render("Restarting", nodes);
+}
+
+// waitForTheService asks until the service answers again or until the limit is
+// reached. It reports whether it answered.
+async function waitForTheService(answer) {
+  const goingInSec = typeof answer.exit_in_sec === "number" ? answer.exit_in_sec : 0;
+
+  // The first ask waits out the delay the server named. Asked before that it is
+  // the process that is going down which answers, and a page that took that for
+  // the one coming back would say the restart was over before it had begun.
+  await pause((goingInSec + 1) * 1000);
+
+  const until = Date.now() + restartPollLimitSec * 1000;
+
+  while (Date.now() < until) {
+    const answered = await serviceAnswers();
+
+    if (answered) {
+      return true;
+    }
+
+    await pause(restartPollEverySec * 1000);
+  }
+
+  return false;
+}
+
+// serviceAnswers is one ask. Anything that comes back from the server means it
+// is serving again, a refusal included: the sessions are held in memory and go
+// with the process that held them, so the call that finds the service back is
+// usually the one that is told the session has ended. apiCall sends the page to
+// the login for that, which is where the operator has to go anyway.
+async function serviceAnswers() {
+  try {
+    await apiCall("GET", "/api/status");
+
+    return true;
+  } catch (error) {
+    if (error instanceof Redirected) {
+      throw error;
+    }
+
+    return false;
+  }
+}
+
+// pause waits. It is what the loop above is built out of: a timer the browser
+// keeps, rather than a spin that holds the one thread this page has.
+function pause(milliseconds) {
+  return new Promise(function (resolve) {
+    window.setTimeout(resolve, milliseconds);
+  });
 }
 
 // settingsDangerZone is where what cannot be taken back goes. It sits at the
