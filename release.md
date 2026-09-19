@@ -1,3 +1,20 @@
+# v3.4.0
+
+## Breaking changes:
+
+- `GET /api/host` and `GET /api/service-port` answer with a page rather than with everything. `data` was an array and is now `{items, total, page, size}`. `GET /api/status` keeps the shape it had, with `tunnels` holding a page and `page` and `size` beside it.
+
+## Add/fix features:
+
+- The lists are handed out a page at a time. All three answered with every row they had, and the tunnels are one row per Host per service port, so twenty of each was four hundred rows in every answer and the screen was holding all of them to show ten.
+  - `page` and `size` say which page. The size is one of 10, 20, 30, 50 and 100 rather than any number, so that one request cannot ask for the lot, and a page past the end is the last page rather than an error, because a list that shrank under a screen already looking at page nine should show page eight.
+  - The counts above the status table stay counts of everything. A total that quietly became the size of a page would read as a tunnel count that dropped to ten.
+  - The screens choose the size and the page above the table, and each remembers its own choice. A list short enough to fit the smallest page carries no controls at all.
+
+## Bug fixes:
+
+- The status screen took the reader back to the first row every five seconds. Emptying the page takes its height down to the heading, and a page shorter than where it is scrolled to is scrolled back by the browser, so the position is taken before the screen is rebuilt and put back after. A page rebuilt under a finger loses the scroll whatever the position is put back to, so a refresh that comes due while the reader is scrolling now waits until they stop rather than going ahead. It waits rather than skips: it comes as soon as the scrolling ends.
+
 # v3.3.0
 
 ## Add/fix features:
