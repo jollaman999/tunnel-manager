@@ -1,3 +1,9 @@
+# v3.2.4
+
+## Add/fix features:
+
+- The Settings screen goes to the address the service comes back at, rather than naming it and leaving you to type it. A restart that puts `api.port` or `api_https_enabled` into place moves where the service answers, and the page now counts out the delay the server named for its own exit plus three seconds and opens the new address. It cannot ask first: the new address is another origin behind a certificate the browser has not been given a reason to trust, so a request to it fails whether the service is up or not. The address is a link under the countdown as well, for going sooner or for staying put, and leaving the screen stops the move.
+
 # v3.2.3
 
 ## Add/fix features:
