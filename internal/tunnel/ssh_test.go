@@ -1697,6 +1697,27 @@ func TestForwardEndsWhenTheServiceConnectionIsReset(t *testing.T) {
 
 	service := serviceConn(t, conns)
 
+	// A byte is put through before anything is broken, so that the reset below
+	// lands on a copy that is running rather than on a dial that has not come
+	// back yet.
+	//
+	// Having the service side of the connection is not enough on its own: the
+	// kernel completes the handshake and the accept hands the connection over
+	// while the Dial in forward is still returning. Resetting in that window
+	// makes forward fail at the dial, which is a different error on a different
+	// line, and this test then looks for a copy that never ran. On a loaded
+	// machine that window is wide: the test failed twenty-two times in thirty
+	// under load and not once on an idle one.
+	_, err := remoteSide.Write([]byte("request"))
+	if err != nil {
+		t.Fatalf("failed to write to the connection forward serves: %v", err)
+	}
+
+	_, err = io.ReadFull(service, make([]byte, len("request")))
+	if err != nil {
+		t.Fatalf("the service did not receive what was written to it: %v", err)
+	}
+
 	// Linger 0 makes the close send a reset, which is what a service that dies
 	// does to the connection. The copy from it then fails with an error that is
 	// not the end of the stream.
@@ -1704,7 +1725,7 @@ func TestForwardEndsWhenTheServiceConnectionIsReset(t *testing.T) {
 	if !ok {
 		t.Fatalf("the service connection is a %T, not a TCP connection", service)
 	}
-	err := tcp.SetLinger(0)
+	err = tcp.SetLinger(0)
 	if err != nil {
 		t.Fatalf("failed to set linger: %v", err)
 	}
