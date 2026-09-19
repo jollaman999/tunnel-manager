@@ -460,6 +460,19 @@ td.num {
 
 /* A timestamp and a row of buttons are each one thing. Left to wrap they break
    at the space inside them, which reads as two values stacked in one cell. */
+/* A line that belongs under a row rather than in it. It carries the whole
+   width of the table, which is the point: what goes there is a sentence. */
+tbody tr.under > td {
+  padding-top: 0;
+  border-bottom: 1px solid #e6e8eb;
+}
+
+.last-error {
+  display: block;
+  color: #8a2f2f;
+  overflow-wrap: break-word;
+}
+
 /* A timestamp in a table stays on one line. Broken at the space between the
    date and the clock, the two halves read as two values stacked in one cell. */
 .stamp {

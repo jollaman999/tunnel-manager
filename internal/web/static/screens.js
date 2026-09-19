@@ -269,7 +269,7 @@ async function drawStatus() {
     nodes.push(statusLine("There are no tunnels.", "empty"));
   } else {
     const rows = tunnels.map(function (tunnel) {
-      return [
+      const cells = [
         tunnel.host_id,
         tunnel.sp_id,
         statusBadge(tunnel.status),
@@ -277,14 +277,29 @@ async function drawStatus() {
         tunnel.local,
         tunnel.remote,
         tunnel.retry_count,
-        timeCell(tunnel.last_connected_at),
-        tunnel.last_error
+        timeCell(tunnel.last_connected_at)
       ];
+
+      // The last error goes under the row rather than in it. Eight columns of
+      // addresses and counts already ask for more width than a screen has, and
+      // what is left for a column holding a sentence was measured at 144px
+      // against a row that stood 183px tall. Under the row it has the width of
+      // the table, and a tunnel with nothing wrong carries no line at all.
+      const failure = typeof tunnel.last_error === "string" ? tunnel.last_error : "";
+      if (failure === "") {
+        return cells;
+      }
+
+      const said = element("span", failure);
+
+      said.className = "last-error";
+
+      return { cells: cells, under: said };
     });
 
     nodes.push(buildTable(
       ["Host", "Service port", "Status", "Server", "Local", "Remote", "Retries",
-        "Last connected", "Last error"],
+        "Last connected"],
       rows,
       [0, 1, 6]
     ));

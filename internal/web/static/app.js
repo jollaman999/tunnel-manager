@@ -464,9 +464,15 @@ function buildTable(headers, rows, numericColumns) {
   const body = document.createElement("tbody");
 
   for (const row of rows) {
+    // A row may carry something that belongs under it rather than in it. It is
+    // given the whole width, because what goes there is a sentence and a
+    // sentence in a column of a table this wide is a column of single words.
+    const under = row.under === undefined ? null : row.under;
+    const cells = under === null ? row : row.cells;
+
     const line = document.createElement("tr");
 
-    row.forEach(function (cell, index) {
+    cells.forEach(function (cell, index) {
       const td = document.createElement("td");
 
       if (numeric.indexOf(index) !== -1) {
@@ -491,6 +497,17 @@ function buildTable(headers, rows, numericColumns) {
     });
 
     body.appendChild(line);
+
+    if (under !== null) {
+      const detail = document.createElement("tr");
+      const cell = document.createElement("td");
+
+      detail.className = "under";
+      cell.setAttribute("colspan", String(headers.length));
+      cell.appendChild(under);
+      detail.appendChild(cell);
+      body.appendChild(detail);
+    }
   }
 
   table.appendChild(body);
