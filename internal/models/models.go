@@ -4,9 +4,14 @@ import (
 	"time"
 )
 
-// Host is an SSH endpoint. The gorm default of Enabled applies only when gorm
-// inserts the row, so a Host built in Go without reading the database has
-// Enabled false and StartTunnel skips it.
+// Host is an SSH endpoint.
+//
+// Enabled carries no database default. It used to have one, and a default on a
+// bool is a trap: gorm leaves a field out of an insert when it holds the zero
+// value and the column has a default, so a Host inserted as disabled came back
+// enabled and started connecting. Naming the column in Select does not change
+// it. Whatever inserts a Host says what Enabled is, and what an absent field
+// means is decided where absence can be told from false.
 type Host struct {
 	ID   uint   `gorm:"primaryKey;autoIncrement" json:"id"`
 	IP   string `gorm:"uniqueIndex:idx_hosts_ip;not null" json:"ip"`
@@ -26,7 +31,7 @@ type Host struct {
 	PrivateKey    string    `json:"-"`
 	KeyPassphrase string    `json:"-"`
 	Description   string    `json:"description"`
-	Enabled       bool      `gorm:"default:true" json:"enabled"`
+	Enabled       bool      `json:"enabled"`
 	CreatedAt     time.Time `json:"created_at"`
 	UpdatedAt     time.Time `json:"updated_at"`
 }
@@ -65,6 +70,10 @@ type CreateHostRequest struct {
 	PrivateKey    string `json:"private_key" validate:"omitempty"`
 	KeyPassphrase string `json:"key_passphrase" validate:"omitempty"`
 	Description   string `json:"description"`
+	// Enabled is a pointer so that a Host asked for as disabled can be told
+	// from one that did not mention it. A plain bool cannot say the difference,
+	// and the two mean different things: the second one is enabled.
+	Enabled *bool `json:"enabled"`
 }
 
 // UpdateHostRequest changes a Host. A field the request leaves out is left as

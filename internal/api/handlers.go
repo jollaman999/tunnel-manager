@@ -297,6 +297,16 @@ func (h *Handler) CreateHost(c echo.Context) error {
 		})
 	}
 
+	// A Host that does not say is enabled. Saying nothing is how every Host was
+	// registered before the field could be sent, and a Host registered to be
+	// used is the ordinary case. The field is a pointer so that a Host asked
+	// for as disabled can be told from one that did not mention it at all,
+	// which a plain bool cannot say.
+	enabled := true
+	if req.Enabled != nil {
+		enabled = *req.Enabled
+	}
+
 	host := &models.Host{
 		IP:            req.IP,
 		Port:          req.Port,
@@ -305,6 +315,7 @@ func (h *Handler) CreateHost(c echo.Context) error {
 		PrivateKey:    privateKey,
 		KeyPassphrase: keyPassphrase,
 		Description:   req.Description,
+		Enabled:       enabled,
 	}
 
 	err = tx.Create(host).Error

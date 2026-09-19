@@ -1134,3 +1134,57 @@ func TestNoSecretIsWrittenToTheLogOrTheAnswer(t *testing.T) {
 		t.Errorf("the import was not logged")
 	}
 }
+
+// TestAnImportedHostThatWasDisabledStaysDisabled pins down that a Host carried
+// in a file as disabled arrives disabled.
+//
+// It did not. The column held a database default of true, and gorm leaves a
+// field out of an insert when it holds the zero value and the column has a
+// default, so every Host in a file arrived enabled whatever the file said. A
+// Host that somebody turned off on one machine would start connecting from the
+// moment it landed on another, which is the last thing an import should do on
+// its own.
+func TestAnImportedHostThatWasDisabledStaysDisabled(t *testing.T) {
+	source := newTransferInstall(t)
+	target := newTransferInstall(t)
+
+	off := hostContent{
+		IP:          "192.0.2.30",
+		Port:        22,
+		User:        "operator",
+		Password:    "the password of the Host",
+		Description: "the Host somebody turned off",
+		Enabled:     false,
+	}
+	on := hostContent{
+		IP:          "192.0.2.31",
+		Port:        22,
+		User:        "operator",
+		Password:    "the password of the Host",
+		Description: "the Host that is in use",
+		Enabled:     true,
+	}
+
+	source.registerHost(t, off)
+	source.registerHost(t, on)
+
+	file := source.exportTunnels(t, testExportPassword)
+
+	rec := target.importTunnels(t, file, testExportPassword, false)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("the import answered %d: %s", rec.Code, rec.Body.String())
+	}
+
+	for _, want := range []hostContent{off, on} {
+		var stored models.Host
+
+		err := target.db.Where("ip = ?", want.IP).First(&stored).Error
+		if err != nil {
+			t.Fatalf("the Host %s did not arrive: %v", want.IP, err)
+		}
+		if stored.Enabled != want.Enabled {
+			t.Errorf("the Host %s arrived with enabled %v, want %v",
+				want.IP, stored.Enabled, want.Enabled)
+		}
+	}
+}

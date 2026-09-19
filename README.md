@@ -949,7 +949,7 @@ curl -s -b cookies.txt "$BASE/api/status?page=99999&size=10"
 
 | Method | Path | What it does |
 |--------|------|--------------|
-| `POST` | `/api/host` | Creates a Host |
+| `POST` | `/api/host` | Creates a Host. `enabled` is optional and a Host that does not say is enabled |
 | `GET` | `/api/host` | One page of the Hosts, oldest first. Takes `page` and `size`, see [Paging](#paging) |
 | `GET` | `/api/host/:id` | Reads one Host |
 | `PUT` | `/api/host/:id` | Updates a Host. Every field is optional; `enabled` false stops its tunnels |

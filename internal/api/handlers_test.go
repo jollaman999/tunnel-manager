@@ -3099,3 +3099,62 @@ func TestGetStatusCountsEveryTunnelAndNotThePage(t *testing.T) {
 		}
 	}
 }
+
+// TestCreateHostStoresTheEnabledItWasGiven pins down that a Host asked for as
+// disabled is stored disabled, and that one which says nothing is enabled.
+//
+// It was neither. The field was not on the create request at all, so a Host
+// could only be registered enabled, and it began connecting before anyone had
+// a chance to say otherwise. The column carried a database default of true as
+// well, which is the part worth keeping a test over: gorm leaves a field out of
+// an insert when it holds the zero value and the column has a default, so even
+// once the request carried the field, storing false stored true. Naming the
+// column in Select does not change it. The default is gone from the model and
+// the value is always written.
+func TestCreateHostStoresTheEnabledItWasGiven(t *testing.T) {
+	tests := []struct {
+		name string
+		body string
+		want bool
+	}{
+		{"a Host that says nothing", `{"ip":"192.0.2.10","port":22,"user":"operator","password":"the password of the Host"}`, true},
+		{"a Host asked for as enabled", `{"ip":"192.0.2.11","port":22,"user":"operator","password":"the password of the Host","enabled":true}`, true},
+		{"a Host asked for as disabled", `{"ip":"192.0.2.12","port":22,"user":"operator","password":"the password of the Host","enabled":false}`, false},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			f := newHostFixture(t)
+
+			rec := f.createHost(t, tc.body)
+			if rec.Code != http.StatusCreated {
+				t.Fatalf("status = %d, want %d, body: %s", rec.Code, http.StatusCreated, rec.Body.String())
+			}
+
+			var answer struct {
+				Data struct {
+					ID      uint `json:"id"`
+					Enabled bool `json:"enabled"`
+				} `json:"data"`
+			}
+			err := json.Unmarshal(rec.Body.Bytes(), &answer)
+			if err != nil {
+				t.Fatalf("failed to read the answer: %v", err)
+			}
+			if answer.Data.Enabled != tc.want {
+				t.Errorf("the answer says enabled is %v, want %v", answer.Data.Enabled, tc.want)
+			}
+
+			// What the answer says and what the row holds are two claims. The
+			// one that decides whether a tunnel is built is the row.
+			var stored models.Host
+			err = f.db.First(&stored, answer.Data.ID).Error
+			if err != nil {
+				t.Fatalf("failed to read the stored Host: %v", err)
+			}
+			if stored.Enabled != tc.want {
+				t.Errorf("the stored Host has enabled %v, want %v", stored.Enabled, tc.want)
+			}
+		})
+	}
+}

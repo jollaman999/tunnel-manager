@@ -870,7 +870,7 @@ curl -s -b cookies.txt "$BASE/api/status?page=99999&size=10"
 
 | 메서드 | 경로 | 하는 일 |
 |--------|------|---------|
-| `POST` | `/api/host` | Host 생성 |
+| `POST` | `/api/host` | Host 생성. `enabled` 는 선택이고, 안 보내면 활성으로 만듭니다 |
 | `GET` | `/api/host` | Host 한 페이지를 등록된 순서로 조회. `page` 와 `size` 를 받음, [페이징](#페이징) 참고 |
 | `GET` | `/api/host/:id` | 특정 Host 조회 |
 | `PUT` | `/api/host/:id` | Host 수정. 모든 항목이 선택이며, `enabled` 를 false 로 하면 그 Host 의 터널이 멈춤 |
