@@ -1,3 +1,11 @@
+# v3.4.1
+
+## Bug fixes:
+
+- A Host can be registered disabled. The create request had no `enabled` field, so one could only be registered enabled and began connecting before anyone could say otherwise; update had the field all along. A create that does not mention it is enabled, which is what every Host was before the field existed.
+- Underneath that was a database default of `true` on the column. gorm leaves a field out of an insert when it holds the zero value and the column has a default, so storing `false` stored `true` even once the field was there, and naming the column in a Select does not change it. The default is gone and whatever inserts a Host now says what `enabled` is.
+- The same default was reaching the import. A Host somebody had turned off on one machine arrived on another enabled and started connecting, which is the last thing an import should do by itself.
+
 # v3.4.0
 
 ## Breaking changes:
