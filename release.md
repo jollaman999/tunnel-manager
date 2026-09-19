@@ -1,3 +1,9 @@
+# v3.4.2
+
+## Bug fixes:
+
+- The built-in UI files went out with a content type and nothing else, so a browser was left to decide for itself how long they keep. A phone went on running the scripts of an earlier release after a deployment, which makes a fix measured on the server look like a fix that did nothing on the screen. They carry an entity tag now, taken from the bytes themselves, and `Cache-Control: no-cache`, which is not do not store it but ask before using what is stored: the answer is `304` with no body whenever the file has not moved.
+
 # v3.4.1
 
 ## Bug fixes:
