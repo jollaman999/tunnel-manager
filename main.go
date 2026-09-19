@@ -800,6 +800,10 @@ func main() {
 	// a screen that had to work it out would be guessing from the browser it
 	// runs in.
 	restartHandler := api.NewRestartHandler(logger, canReexec(), endBeforeRestart)
+	// The export and the import are handed the handler that serves the Hosts,
+	// because an imported Host has to be stored the way a created one is. The
+	// version goes into the file, so that a file found later says what wrote it.
+	transferHandler := api.NewTransferHandler(h, version)
 	g := e.Group("/api")
 
 	// The session check is put on the group before any route is added to it.
@@ -834,6 +838,14 @@ func main() {
 
 	g.GET("/settings", settingsHandler.GetSettings)
 	g.PUT("/settings", settingsHandler.UpdateSettings)
+
+	// The exports are POST because the password that seals the file is in the
+	// body. A password in a URL is written to the access log of this server and
+	// to the history of the browser that asked for it.
+	g.POST("/export/tunnels", transferHandler.ExportTunnels)
+	g.POST("/import/tunnels", transferHandler.ImportTunnels)
+	g.POST("/export/settings", transferHandler.ExportSettings)
+	g.POST("/import/settings", transferHandler.ImportSettings)
 
 	g.GET("/certificate", certificateHandler.GetCertificate)
 	g.POST("/certificate/renew", certificateHandler.RenewCertificate)

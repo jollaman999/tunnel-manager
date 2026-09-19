@@ -990,6 +990,69 @@ Each line comes back split into `level`, `time`, `caller`, `message` and
 whether the split worked. A line that could not be split is still returned, with
 `parsed` false: a line that looks wrong is the one worth reading.
 
+### Export and import
+
+| Method | Path | What it does |
+|--------|------|--------------|
+| `POST` | `/api/export/tunnels` | Takes `password`, answers with every Host and every service port sealed into one file |
+| `POST` | `/api/import/tunnels` | Takes `password`, `file` and `overwrite`, and writes what the file holds |
+| `POST` | `/api/export/settings` | Takes `password`, answers with the stored settings sealed into one file |
+| `POST` | `/api/import/settings` | Takes `password` and `file`, and stores the settings the file holds |
+
+These four carry a configuration from one installation to another. An export
+hands out a file and an import takes one back, so you decide where the file is
+kept and for how long, and neither installation has to reach the other.
+
+**The file holds the SSH password, the private key and the key passphrase of
+every Host in the clear.** That is what it is for: the database keeps those
+sealed with the encryption key of the machine they were stored on, and a file
+carrying them as they are stored would open on no other installation. They are
+unsealed on the way out and sealed again with the key of the installation that
+takes them in. What keeps them meanwhile is the password the whole file is
+sealed with, and nothing else, so treat an exported file as the credentials of
+every Host it names.
+
+The exports are `POST` and not `GET` because the password is in the body. In a
+URL it would be written to the access log of this server and to the history of
+the browser that asked. The password is held to the same 12 to 72 bytes the
+account password is, and it is stored nowhere: a file whose password is
+forgotten cannot be opened by anyone, this program included.
+
+An import adds what is not registered here and **skips** what is, naming in the
+answer what it skipped and why. Send the same file again with `overwrite` set to
+true to replace those rows instead; a replaced row keeps its id, so the tunnels
+of that Host reconnect rather than being built anew. Every row of the file is
+listed in the answer as `added`, `replaced` or `skipped`, which is what you read
+before deciding about an overwrite. The whole import is one transaction: a file
+that is refused half way through leaves the database exactly as it was. The
+tunnels themselves are not carried, since the reconcile loop builds them from
+the Hosts and the service ports.
+
+The settings import **stores** the settings and puts none of them onto the
+running process, `api_port` and `api_https_enabled` included. What is stored is
+what the next startup runs on, and `GET /api/settings` reports the difference in
+`pending_restart` until then, so an import cannot move the port out from under
+the request that carries it. A file whose settings do not pass the rules of the
+Settings screen is refused, and nothing is stored.
+
+A file that does not open says which of the four it is: the password is wrong,
+it is not a file this program wrote, it is damaged, or it holds the other kind.
+
+```bash
+# Export, and keep the file where you keep secrets.
+curl -s -b cookies.txt -X POST "$BASE/api/export/tunnels" \
+  -H "X-CSRF-Token: $CSRF" -H 'Content-Type: application/json' \
+  -d '{"password":"<the password that seals the file>"}' |
+jq -r '.data.file' > tunnels.tmexport
+
+# Import it on the other installation.
+jq -n --arg file "$(cat tunnels.tmexport)" \
+  '{password:"<the same password>",file:$file,overwrite:false}' |
+curl -s -b cookies.txt -X POST "$BASE/api/import/tunnels" \
+  -H "X-CSRF-Token: $CSRF" -H 'Content-Type: application/json' \
+  --data-binary @-
+```
+
 ### UI
 
 | Method | Path | What it does |

@@ -1,0 +1,1084 @@
+package api
+
+import (
+	"encoding/json"
+	"errors"
+	"net/http"
+	"strconv"
+	"strings"
+	"time"
+
+	"github.com/jollaman999/tunnel-manager/internal/crypto"
+	"github.com/jollaman999/tunnel-manager/internal/models"
+	"github.com/jollaman999/tunnel-manager/internal/settings"
+	"github.com/jollaman999/tunnel-manager/internal/tunnel"
+	"github.com/labstack/echo/v4"
+	"go.uber.org/zap"
+	"gorm.io/gorm"
+)
+
+// The four calls in this file carry a configuration from one installation to
+// another. What they move is a file: an export hands one out and an import
+// takes one back, so the operator decides where it is kept and for how long,
+// and neither installation has to reach the other.
+//
+// Every one of them is a POST, an export included. The password that seals the
+// file is in the body, and a password in a URL is written to the access log of
+// this server, to the log of anything in front of it and to the history of the
+// browser that asked. A GET would put it in all three.
+
+// transferFormatVersion is the version of the layout of transferFile. It is
+// written into every file and checked on the way back in, so that a file from a
+// later version is refused with a word about what it is rather than read as far
+// as it happens to parse. It is raised when a reader of this version would get
+// a file of the newer one wrong, not whenever a field is added: a field that is
+// only added arrives as its zero value in an older reader, which the import
+// already treats as "not named in the file".
+const transferFormatVersion = 1
+
+// transferKindTunnels and transferKindSettings name what a file holds. They are
+// what keeps the tunnel configuration from being read in as the settings of the
+// manager: the two are both JSON with a "content" object, and without a name in
+// the file an import would have nothing to refuse but the shape of what it
+// found.
+const (
+	transferKindTunnels  = "tunnels"
+	transferKindSettings = "settings"
+)
+
+// transferFile is what is sealed with the password. It carries what it holds,
+// the version of this layout, and when and by which version of tunnel-manager
+// it was written, so that a file found a year later says what it is without the
+// installation that wrote it.
+//
+// The content is kept as raw JSON and read once the kind is known. That is what
+// lets the settings be read onto the stored ones, so a file that does not name
+// a setting leaves that setting as it is, the way PUT /api/settings does.
+type transferFile struct {
+	Kind          string          `json:"kind"`
+	FormatVersion int             `json:"format_version"`
+	ExportedAt    time.Time       `json:"exported_at"`
+	ExportedBy    string          `json:"exported_by"`
+	Content       json.RawMessage `json:"content"`
+}
+
+// hostContent is one Host as it is carried in a file.
+//
+// The password, the private key and the passphrase are in the clear here. In
+// the database they are sealed with the key of the installation that stored
+// them, and that key stays on that machine, so a file carrying them as they are
+// stored would open on no other installation. They are unsealed on the way out
+// and sealed again with the key of the installation that takes them in.
+//
+// So the JSON inside the file holds the SSH password and the PEM private key of
+// every Host as text. What keeps them is the password the whole file is sealed
+// with, and nothing else. An unsealed export is the credentials of every Host,
+// which is why there is no way to ask for one.
+//
+// The id and the two timestamps are left out. They describe the rows of the
+// installation that was exported, and the import writes rows of its own.
+type hostContent struct {
+	IP            string `json:"ip"`
+	Port          int    `json:"port"`
+	User          string `json:"user"`
+	Password      string `json:"password"`
+	PrivateKey    string `json:"private_key"`
+	KeyPassphrase string `json:"key_passphrase"`
+	Description   string `json:"description"`
+	Enabled       bool   `json:"enabled"`
+}
+
+// servicePortContent is one service port as it is carried in a file. It holds
+// no secret, and the id and the timestamps are left out for the reason they are
+// left out of a Host.
+type servicePortContent struct {
+	ServiceIP   string `json:"service_ip"`
+	ServicePort int    `json:"service_port"`
+	LocalPort   int    `json:"local_port"`
+	Description string `json:"description"`
+}
+
+// tunnelsContent is the content of a file of kind tunnels.
+//
+// The tunnels table is not in it. A row there is the state of one connection of
+// this installation, which the reconcile loop writes from the Hosts and the
+// service ports; carried across, it would describe connections the other
+// installation never made.
+type tunnelsContent struct {
+	Hosts        []hostContent        `json:"hosts"`
+	ServicePorts []servicePortContent `json:"service_ports"`
+}
+
+// settingsContent is the content of a file of kind settings.
+//
+// It is spelled out rather than being settings.Settings itself, so that the row
+// id and the time the row was last written stay out of the file: both describe
+// the row this export was read from. A setting added to settings.Settings and
+// not added here would quietly not be carried, which is what
+// TestTheSettingsContentCarriesEverySetting is for.
+type settingsContent struct {
+	APIPort int `json:"api_port"`
+	// api.port and api.https_enabled are carried like every other setting. An
+	// import stores them and nothing more, so the port this process is
+	// listening on does not move under the request that is being answered; the
+	// stored value is what the next startup listens on, and until then it is
+	// reported by GET /api/settings as waiting for a restart.
+	APIHTTPSEnabled       bool   `json:"api_https_enabled"`
+	MonitoringIntervalSec int    `json:"monitoring_interval_sec"`
+	ReconcileIntervalSec  int    `json:"reconcile_interval_sec"`
+	SecurityKeyFile       string `json:"security_key_file"`
+	LoggingLevel          string `json:"logging_level"`
+	LoggingFormat         string `json:"logging_format"`
+	LoggingFilePath       string `json:"logging_file_path"`
+	LoggingFileMaxSize    int    `json:"logging_file_max_size"`
+	LoggingFileMaxBackups int    `json:"logging_file_max_backups"`
+	LoggingFileMaxAge     int    `json:"logging_file_max_age"`
+	LoggingFileCompress   bool   `json:"logging_file_compress"`
+}
+
+// settingsOf returns the settings of a set as they are carried in a file.
+func settingsOf(s *settings.Settings) settingsContent {
+	return settingsContent{
+		APIPort:               s.APIPort,
+		APIHTTPSEnabled:       s.APIHTTPSEnabled,
+		MonitoringIntervalSec: s.MonitoringIntervalSec,
+		ReconcileIntervalSec:  s.ReconcileIntervalSec,
+		SecurityKeyFile:       s.SecurityKeyFile,
+		LoggingLevel:          s.LoggingLevel,
+		LoggingFormat:         s.LoggingFormat,
+		LoggingFilePath:       s.LoggingFilePath,
+		LoggingFileMaxSize:    s.LoggingFileMaxSize,
+		LoggingFileMaxBackups: s.LoggingFileMaxBackups,
+		LoggingFileMaxAge:     s.LoggingFileMaxAge,
+		LoggingFileCompress:   s.LoggingFileCompress,
+	}
+}
+
+// applyTo puts what the file carries onto a set of settings, leaving the id and
+// the timestamp of that set alone.
+func (content *settingsContent) applyTo(s *settings.Settings) {
+	s.APIPort = content.APIPort
+	s.APIHTTPSEnabled = content.APIHTTPSEnabled
+	s.MonitoringIntervalSec = content.MonitoringIntervalSec
+	s.ReconcileIntervalSec = content.ReconcileIntervalSec
+	s.SecurityKeyFile = content.SecurityKeyFile
+	s.LoggingLevel = content.LoggingLevel
+	s.LoggingFormat = content.LoggingFormat
+	s.LoggingFilePath = content.LoggingFilePath
+	s.LoggingFileMaxSize = content.LoggingFileMaxSize
+	s.LoggingFileMaxBackups = content.LoggingFileMaxBackups
+	s.LoggingFileMaxAge = content.LoggingFileMaxAge
+	s.LoggingFileCompress = content.LoggingFileCompress
+}
+
+// exportRequest is what an export is asked for. The password seals the file and
+// is the only thing that opens it again: it is not stored anywhere, so a
+// forgotten one leaves the file unreadable.
+type exportRequest struct {
+	Password string `json:"password"`
+}
+
+// importRequest is what an import is given: the file as the export handed it
+// out, the password it was sealed with, and what to do about a row that is
+// already there.
+type importRequest struct {
+	Password  string `json:"password"`
+	File      string `json:"file"`
+	Overwrite bool   `json:"overwrite"`
+}
+
+// exportedTunnels is the answer to an export of the tunnel configuration. The
+// counts are there so that the operator can see what went into the file without
+// opening it, which takes the password.
+type exportedTunnels struct {
+	Kind         string    `json:"kind"`
+	File         string    `json:"file"`
+	ExportedAt   time.Time `json:"exported_at"`
+	Hosts        int       `json:"hosts"`
+	ServicePorts int       `json:"service_ports"`
+}
+
+// exportedSettings is the answer to an export of the settings of the manager.
+type exportedSettings struct {
+	Kind       string    `json:"kind"`
+	File       string    `json:"file"`
+	ExportedAt time.Time `json:"exported_at"`
+}
+
+// What became of one row an import found in the file. A row that was there
+// already is told from one that was written, because that is what says whether
+// running the import again with overwrite on would change anything.
+const (
+	transferAdded    = "added"
+	transferReplaced = "replaced"
+	transferSkipped  = "skipped"
+)
+
+// transferItem is one row of the file and what the import did with it. The name
+// is how the operator finds the row on the screens: the IP of a Host, and the
+// service and local port of a service port.
+type transferItem struct {
+	Kind   string `json:"kind"`
+	Name   string `json:"name"`
+	Action string `json:"action"`
+	Reason string `json:"reason,omitempty"`
+}
+
+// importedTunnels is the answer to an import of the tunnel configuration. Every
+// row of the file is in the list, the ones that were skipped included, along
+// with why it was skipped: the operator reads that and decides whether to send
+// the same file again with overwrite on.
+type importedTunnels struct {
+	Items    []transferItem `json:"items"`
+	Added    int            `json:"added"`
+	Replaced int            `json:"replaced"`
+	Skipped  int            `json:"skipped"`
+}
+
+// importedSettings is the answer to an import of the settings of the manager.
+// It carries what is stored now and what the import changed, the way a save on
+// the Settings screen does.
+//
+// RestartRequired is true whenever anything changed, because nothing here is
+// put into place on the running process. What is waiting is listed by
+// GET /api/settings, which works it out by holding the stored settings against
+// the ones this process started on.
+type importedSettings struct {
+	Settings        *settings.Settings `json:"settings"`
+	Changes         []settingsChange   `json:"changes"`
+	RestartRequired bool               `json:"restart_required"`
+}
+
+// TransferHandler serves the four calls.
+//
+// It holds the Handler that serves the Host screens rather than a database
+// handle and a cipher of its own. An import writes the rows a create writes and
+// has to seal their secrets exactly as a create seals them, so it goes through
+// the same sealPassword and sealPrivateKey: a second copy of that code here
+// would be a second place that decides what a stored Host looks like, and a
+// Host stored in any other shape is one the tunnels cannot open.
+//
+// version is the version of this binary, handed in from the startup that knows
+// it, and is written into the file so that a file says what wrote it.
+type TransferHandler struct {
+	hosts   *Handler
+	version string
+}
+
+func NewTransferHandler(hosts *Handler, version string) *TransferHandler {
+	return &TransferHandler{
+		hosts:   hosts,
+		version: version,
+	}
+}
+
+// transferRefusal is an answer that says why nothing was done. It is a value
+// rather than a written response, so that the step that found the problem can
+// hand it back through a transaction that still has to be rolled back before
+// anything is written to the client.
+type transferRefusal struct {
+	status  int
+	message string
+}
+
+func (r *transferRefusal) answer(c echo.Context) error {
+	return c.JSON(r.status, models.Response{
+		Success: false,
+		Error:   r.message,
+	})
+}
+
+func refuse(status int, message string) *transferRefusal {
+	return &transferRefusal{status: status, message: message}
+}
+
+// checkExportPassword holds the password that seals a file to the length the
+// account is held to. The file carries the SSH credentials of every Host and is
+// kept wherever the operator puts it, so it stands to be guessed at for as long
+// as it exists, which is longer than a login does.
+func checkExportPassword(password string) *transferRefusal {
+	switch {
+	case password == "":
+		return refuse(http.StatusBadRequest, "A password is required. It is what seals the file, "+
+			"and the file cannot be opened without it")
+	case len(password) < minPasswordBytes:
+		return refuse(http.StatusBadRequest, "The password must be at least "+
+			strconv.Itoa(minPasswordBytes)+" bytes long")
+	case len(password) > maxPasswordBytes:
+		return refuse(http.StatusBadRequest, "The password must be at most "+
+			strconv.Itoa(maxPasswordBytes)+" bytes long")
+	}
+
+	return nil
+}
+
+// seal builds the file and seals it with the password.
+func (h *TransferHandler) seal(kind string, content interface{}, password string,
+	exportedAt time.Time) (string, error) {
+	body, err := json.Marshal(content)
+	if err != nil {
+		return "", err
+	}
+
+	file := transferFile{
+		Kind:          kind,
+		FormatVersion: transferFormatVersion,
+		ExportedAt:    exportedAt,
+		ExportedBy:    h.version,
+		Content:       body,
+	}
+
+	plaintext, err := json.Marshal(file)
+	if err != nil {
+		return "", err
+	}
+
+	return crypto.EncryptWithPassword(string(plaintext), password)
+}
+
+// open unseals a file and reads it, and says in the answer which of the four
+// ways it failed. They are kept apart because they leave the operator with
+// different work to do: type the password again, pick another file, fetch the
+// file again because this copy is cut, or go to the other import.
+func (h *TransferHandler) open(file string, password string, want string) (*transferFile, *transferRefusal) {
+	if strings.TrimSpace(file) == "" {
+		return nil, refuse(http.StatusBadRequest, "No file was sent. Send the text an export "+
+			"answered with in the 'file' field")
+	}
+
+	plaintext, err := crypto.DecryptWithPassword(strings.TrimSpace(file), password)
+	if err != nil {
+		switch {
+		case errors.Is(err, crypto.ErrPasswordRequired):
+			return nil, refuse(http.StatusBadRequest, "A password is required. It is the one the "+
+				"file was sealed with at the installation it came from")
+		case errors.Is(err, crypto.ErrNotPasswordEncrypted):
+			return nil, refuse(http.StatusBadRequest, "This is not a file tunnel-manager exported. "+
+				"An exported file is one line of text that starts with a marker naming the format, "+
+				"and this one does not")
+		case errors.Is(err, crypto.ErrPasswordEncryptedDamaged):
+			return nil, refuse(http.StatusBadRequest, "The file is damaged. It carries the marker of "+
+				"an exported file, but the text after it was cut or altered, so no password opens it. "+
+				"Export it again")
+		case errors.Is(err, crypto.ErrWrongPassword):
+			return nil, refuse(http.StatusBadRequest, "The password does not open this file. It is the "+
+				"password that was typed at the export, not the password of this account")
+		}
+
+		// Everything above is what DecryptWithPassword reports. Anything else
+		// is a failure of this process rather than of the file, so it is logged
+		// and answered as one.
+		h.hosts.logger.Error("failed to open an exported file", zap.Error(err))
+
+		return nil, refuse(http.StatusInternalServerError, "Failed to open the file")
+	}
+
+	var read transferFile
+
+	err = json.Unmarshal([]byte(plaintext), &read)
+	if err != nil {
+		return nil, refuse(http.StatusBadRequest, "The file opened with this password but does not "+
+			"hold what an export writes. It was sealed with the password of this program by "+
+			"something else")
+	}
+
+	if read.Kind != want {
+		return nil, refuse(http.StatusBadRequest, "This file holds "+whatIsIn(read.Kind)+
+			", and this call takes "+whatIsIn(want)+". Send it to the other import")
+	}
+
+	if read.FormatVersion > transferFormatVersion {
+		return nil, refuse(http.StatusBadRequest, "The file is in format version "+
+			strconv.Itoa(read.FormatVersion)+" and this version of tunnel-manager reads up to "+
+			strconv.Itoa(transferFormatVersion)+". It was written by a newer version"+
+			exportedBy(read.ExportedBy))
+	}
+
+	if len(read.Content) == 0 {
+		return nil, refuse(http.StatusBadRequest, "The file carries no content")
+	}
+
+	return &read, nil
+}
+
+// whatIsIn names a kind the way it is said in a refusal.
+func whatIsIn(kind string) string {
+	switch kind {
+	case transferKindTunnels:
+		return "the tunnel configuration"
+	case transferKindSettings:
+		return "the settings of the manager"
+	case "":
+		return "nothing this version knows"
+	}
+
+	return "a kind this version does not know (" + kind + ")"
+}
+
+// exportedBy names the version that wrote a file, when the file says.
+func exportedBy(version string) string {
+	if version == "" {
+		return ""
+	}
+
+	return " (" + version + ")"
+}
+
+// unseal returns the plaintext of a value the database holds sealed with the
+// key of this installation. An empty value stays empty, and a value stored
+// before the secrets were sealed at all is carried as it is: ErrNotEncrypted
+// means the column holds the plaintext already.
+func (h *TransferHandler) unseal(stored string) (string, error) {
+	if stored == "" {
+		return "", nil
+	}
+
+	plaintext, err := h.hosts.cipher.Decrypt(stored)
+	if errors.Is(err, crypto.ErrNotEncrypted) {
+		return stored, nil
+	}
+	if err != nil {
+		return "", err
+	}
+
+	return plaintext, nil
+}
+
+// unsealHost returns one Host as it is carried in a file.
+//
+// The three secrets are opened with the key of this installation here, so that
+// what goes into the file is the plaintext. Left sealed, they would be bytes
+// only this machine can read, and the Hosts would arrive at the other
+// installation with credentials nothing there can use.
+func (h *TransferHandler) unsealHost(host models.Host) (hostContent, error) {
+	password, err := h.unseal(host.Password)
+	if err != nil {
+		return hostContent{}, err
+	}
+
+	privateKey, err := h.unseal(host.PrivateKey)
+	if err != nil {
+		return hostContent{}, err
+	}
+
+	keyPassphrase, err := h.unseal(host.KeyPassphrase)
+	if err != nil {
+		return hostContent{}, err
+	}
+
+	return hostContent{
+		IP:            host.IP,
+		Port:          host.Port,
+		User:          host.User,
+		Password:      password,
+		PrivateKey:    privateKey,
+		KeyPassphrase: keyPassphrase,
+		Description:   host.Description,
+		Enabled:       host.Enabled,
+	}, nil
+}
+
+// ExportTunnels hands out every Host and every service port, sealed with the
+// password in the body.
+func (h *TransferHandler) ExportTunnels(c echo.Context) error {
+	var req exportRequest
+
+	err := c.Bind(&req)
+	if err != nil {
+		return c.JSON(http.StatusBadRequest, models.Response{
+			Success: false,
+			Error:   "Invalid request body: " + err.Error(),
+		})
+	}
+
+	refused := checkExportPassword(req.Password)
+	if refused != nil {
+		return refused.answer(c)
+	}
+
+	var hosts []models.Host
+
+	err = h.hosts.db.Find(&hosts).Error
+	if err != nil {
+		h.hosts.logger.Error("failed to read the Hosts for an export", zap.Error(err))
+		return c.JSON(http.StatusInternalServerError, models.Response{
+			Success: false,
+			Error:   "Failed to read the Hosts",
+		})
+	}
+
+	var sps []models.ServicePort
+
+	err = h.hosts.db.Find(&sps).Error
+	if err != nil {
+		h.hosts.logger.Error("failed to read the service ports for an export", zap.Error(err))
+		return c.JSON(http.StatusInternalServerError, models.Response{
+			Success: false,
+			Error:   "Failed to read the service ports",
+		})
+	}
+
+	content := tunnelsContent{
+		Hosts:        make([]hostContent, 0, len(hosts)),
+		ServicePorts: make([]servicePortContent, 0, len(sps)),
+	}
+
+	for _, host := range hosts {
+		opened, err := h.unsealHost(host)
+		if err != nil {
+			// A secret that does not open with the key in use is the key file
+			// having been replaced or having come from another installation.
+			// The export is stopped rather than made with that Host left out: a
+			// file that quietly holds one Host fewer is one nobody checks.
+			h.hosts.logger.Error("a stored secret of a Host does not open with the encryption key of "+
+				"this installation, so no export was made", zap.Uint("host_id", host.ID),
+				zap.Error(err))
+
+			return c.JSON(http.StatusInternalServerError, models.Response{
+				Success: false,
+				Error: "No export was made: the stored secrets of the Host " + host.IP +
+					" do not open with the encryption key of this installation",
+			})
+		}
+
+		content.Hosts = append(content.Hosts, opened)
+	}
+
+	for _, sp := range sps {
+		content.ServicePorts = append(content.ServicePorts, servicePortContent{
+			ServiceIP:   sp.ServiceIP,
+			ServicePort: sp.ServicePort,
+			LocalPort:   sp.LocalPort,
+			Description: sp.Description,
+		})
+	}
+
+	exportedAt := time.Now()
+
+	sealed, err := h.seal(transferKindTunnels, content, req.Password, exportedAt)
+	if err != nil {
+		h.hosts.logger.Error("failed to seal the exported tunnel configuration", zap.Error(err))
+		return c.JSON(http.StatusInternalServerError, models.Response{
+			Success: false,
+			Error:   "Failed to seal the file",
+		})
+	}
+
+	// What is logged is that an export was made and how much went into it. The
+	// password and the file itself are not: the file is the credentials of
+	// every Host, and the log is kept, rotated and read by more people than
+	// hold the password.
+	h.hosts.logger.Info("exported the tunnel configuration",
+		zap.Int("hosts", len(content.Hosts)),
+		zap.Int("service_ports", len(content.ServicePorts)))
+
+	return c.JSON(http.StatusOK, models.Response{
+		Success: true,
+		Data: exportedTunnels{
+			Kind:         transferKindTunnels,
+			File:         sealed,
+			ExportedAt:   exportedAt,
+			Hosts:        len(content.Hosts),
+			ServicePorts: len(content.ServicePorts),
+		},
+	})
+}
+
+// ImportTunnels takes a file an export made and writes the Hosts and the
+// service ports in it.
+//
+// Everything happens in one transaction, and anything that stops it rolls the
+// whole of it back: a configuration that landed half way is one the operator
+// has to take apart by hand before trying again, and the row that stopped the
+// import is not always the last one.
+func (h *TransferHandler) ImportTunnels(c echo.Context) error {
+	var req importRequest
+
+	err := c.Bind(&req)
+	if err != nil {
+		return c.JSON(http.StatusBadRequest, models.Response{
+			Success: false,
+			Error:   "Invalid request body: " + err.Error(),
+		})
+	}
+
+	file, refused := h.open(req.File, req.Password, transferKindTunnels)
+	if refused != nil {
+		return refused.answer(c)
+	}
+
+	var content tunnelsContent
+
+	err = json.Unmarshal(file.Content, &content)
+	if err != nil {
+		return c.JSON(http.StatusBadRequest, models.Response{
+			Success: false,
+			Error: "The file says it holds the tunnel configuration, but the configuration in it " +
+				"cannot be read",
+		})
+	}
+
+	tx := h.hosts.db.Begin()
+
+	err = tx.Error
+	if err != nil {
+		h.hosts.logger.Error("failed to start the transaction", zap.Error(err))
+		return c.JSON(http.StatusInternalServerError, models.Response{
+			Success: false,
+			Error:   "Failed to start transaction",
+		})
+	}
+
+	items := make([]transferItem, 0, len(content.Hosts)+len(content.ServicePorts))
+
+	for _, host := range content.Hosts {
+		item, refused := h.importHost(c, tx, host, req.Overwrite)
+		if refused != nil {
+			tx.Rollback()
+			return refused.answer(c)
+		}
+
+		items = append(items, *item)
+	}
+
+	// The service ports are written after the Hosts, so that a file whose
+	// service ports are refused takes the Hosts of that same file back out with
+	// them. Which of the two comes first is otherwise of no consequence: the
+	// tunnels are built by the loop from both together, and no row of one
+	// points at a row of the other.
+	for _, sp := range content.ServicePorts {
+		item, refused := h.importServicePort(c, tx, sp, req.Overwrite)
+		if refused != nil {
+			tx.Rollback()
+			return refused.answer(c)
+		}
+
+		items = append(items, *item)
+	}
+
+	err = tx.Commit().Error
+	if err != nil {
+		h.hosts.logger.Error("failed to commit the transaction", zap.Error(err))
+		return c.JSON(http.StatusInternalServerError, models.Response{
+			Success: false,
+			Error:   "Failed to commit transaction",
+		})
+	}
+
+	answer := importedTunnels{Items: items}
+
+	for _, item := range items {
+		switch item.Action {
+		case transferAdded:
+			answer.Added++
+		case transferReplaced:
+			answer.Replaced++
+		case transferSkipped:
+			answer.Skipped++
+		}
+	}
+
+	// The loop is woken after the commit, for the reason every write handler
+	// wakes it there: a pass that runs before it reads the rows as they were.
+	h.hosts.manager.WakeReconcile()
+
+	h.hosts.logger.Info("imported a tunnel configuration",
+		zap.Bool("overwrite", req.Overwrite),
+		zap.Int("added", answer.Added),
+		zap.Int("replaced", answer.Replaced),
+		zap.Int("skipped", answer.Skipped))
+
+	return c.JSON(http.StatusOK, models.Response{
+		Success: true,
+		Data:    answer,
+	})
+}
+
+// importHost writes one Host of the file and reports what it did with it.
+//
+// It is checked here, inside the transaction, rather than in a pass of its own
+// beforehand. The refusal then names the row that stopped the import while the
+// rows before it are taken back out by the rollback, which is what makes "run
+// it again once that row is fixed" the whole of the work left.
+func (h *TransferHandler) importHost(c echo.Context, tx *gorm.DB, host hostContent,
+	overwrite bool) (*transferItem, *transferRefusal) {
+	name := host.IP
+
+	// The rules of a create are run on what the file carries, so that a file
+	// that was written by hand cannot put into the database what the screens
+	// refuse: a port out of range, or something that is not an address.
+	err := c.Validate(&models.CreateHostRequest{
+		IP:            host.IP,
+		Port:          host.Port,
+		User:          host.User,
+		Password:      host.Password,
+		PrivateKey:    host.PrivateKey,
+		KeyPassphrase: host.KeyPassphrase,
+		Description:   host.Description,
+	})
+	if err != nil {
+		return nil, refuse(http.StatusBadRequest, "Nothing was imported. The Host "+name+
+			" in the file was refused: "+err.Error())
+	}
+
+	if host.Password == "" && strings.TrimSpace(host.PrivateKey) == "" {
+		return nil, refuse(http.StatusBadRequest, "Nothing was imported. The Host "+name+
+			" in the file carries no way to log in: it has neither a private key nor a password")
+	}
+
+	var stored models.Host
+
+	err = tx.Where("ip = ?", host.IP).First(&stored).Error
+	found := err == nil
+
+	if err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
+		h.hosts.logger.Error("failed to look for a Host while importing", zap.Error(err))
+		return nil, refuse(http.StatusInternalServerError, "Nothing was imported: failed to read the Hosts")
+	}
+
+	if found && !overwrite {
+		return &transferItem{
+			Kind:   "host",
+			Name:   name,
+			Action: transferSkipped,
+			Reason: "a Host with this IP is registered here already",
+		}, nil
+	}
+
+	// Sealed with the key of this installation, which is what makes the file
+	// work across installations: the secrets came in as plaintext and are
+	// stored here the way a create on this machine stores them.
+	password, err := h.hosts.sealPassword(host.Password)
+	if err != nil {
+		h.hosts.logger.Error("failed to encrypt the password of an imported Host", zap.Error(err))
+		return nil, refuse(http.StatusInternalServerError, "Nothing was imported: failed to encrypt "+
+			"the password of the Host "+name)
+	}
+
+	privateKey, keyPassphrase, err := h.hosts.sealPrivateKey(host.PrivateKey, host.KeyPassphrase)
+	if err != nil {
+		var refusedKey *tunnel.KeyError
+		if errors.As(err, &refusedKey) {
+			return nil, refuse(http.StatusBadRequest, "Nothing was imported. The private key of the "+
+				"Host "+name+" in the file was refused: "+refusedKey.Error())
+		}
+
+		h.hosts.logger.Error("failed to encrypt the private key of an imported Host", zap.Error(err))
+
+		return nil, refuse(http.StatusInternalServerError, "Nothing was imported: failed to encrypt "+
+			"the private key of the Host "+name)
+	}
+
+	if found {
+		// The row keeps its id, so the tunnels of that Host go on pointing at
+		// it and the loop reconnects them rather than building them anew.
+		stored.Port = host.Port
+		stored.User = host.User
+		stored.Password = password
+		stored.PrivateKey = privateKey
+		stored.KeyPassphrase = keyPassphrase
+		stored.Description = host.Description
+		stored.Enabled = host.Enabled
+
+		err = tx.Save(&stored).Error
+		if err != nil {
+			h.hosts.logger.Error("failed to replace a Host while importing", zap.Error(err))
+			return nil, refuse(http.StatusInternalServerError, "Nothing was imported: failed to "+
+				"replace the Host "+name)
+		}
+
+		return &transferItem{Kind: "host", Name: name, Action: transferReplaced}, nil
+	}
+
+	created := models.Host{
+		IP:            host.IP,
+		Port:          host.Port,
+		User:          host.User,
+		Password:      password,
+		PrivateKey:    privateKey,
+		KeyPassphrase: keyPassphrase,
+		Description:   host.Description,
+		Enabled:       host.Enabled,
+	}
+
+	err = tx.Create(&created).Error
+	if err != nil {
+		h.hosts.logger.Error("failed to create a Host while importing", zap.Error(err))
+		return nil, refuse(http.StatusInternalServerError, "Nothing was imported: failed to create "+
+			"the Host "+name)
+	}
+
+	return &transferItem{Kind: "host", Name: name, Action: transferAdded}, nil
+}
+
+// importServicePort writes one service port of the file and reports what it did
+// with it.
+//
+// A service port is held by two rules, not one: the service address with its
+// port, and the local port. A row of the file can meet either of them, so both
+// are looked up.
+func (h *TransferHandler) importServicePort(c echo.Context, tx *gorm.DB, sp servicePortContent,
+	overwrite bool) (*transferItem, *transferRefusal) {
+	name := sp.ServiceIP + ":" + strconv.Itoa(sp.ServicePort) + " on " + strconv.Itoa(sp.LocalPort)
+
+	err := c.Validate(&models.CreateServicePortRequest{
+		ServiceIP:   sp.ServiceIP,
+		ServicePort: sp.ServicePort,
+		LocalPort:   sp.LocalPort,
+		Description: sp.Description,
+	})
+	if err != nil {
+		return nil, refuse(http.StatusBadRequest, "Nothing was imported. The service port "+name+
+			" in the file was refused: "+err.Error())
+	}
+
+	var onService models.ServicePort
+
+	err = tx.Where("service_ip = ? AND service_port = ?", sp.ServiceIP, sp.ServicePort).
+		First(&onService).Error
+	foundOnService := err == nil
+
+	if err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
+		h.hosts.logger.Error("failed to look for a service port while importing", zap.Error(err))
+		return nil, refuse(http.StatusInternalServerError, "Nothing was imported: failed to read the "+
+			"service ports")
+	}
+
+	var onLocal models.ServicePort
+
+	err = tx.Where("local_port = ?", sp.LocalPort).First(&onLocal).Error
+	foundOnLocal := err == nil
+
+	if err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
+		h.hosts.logger.Error("failed to look for a service port while importing", zap.Error(err))
+		return nil, refuse(http.StatusInternalServerError, "Nothing was imported: failed to read the "+
+			"service ports")
+	}
+
+	if !foundOnService && !foundOnLocal {
+		created := models.ServicePort{
+			ServiceIP:   sp.ServiceIP,
+			ServicePort: sp.ServicePort,
+			LocalPort:   sp.LocalPort,
+			Description: sp.Description,
+		}
+
+		err = tx.Create(&created).Error
+		if err != nil {
+			h.hosts.logger.Error("failed to create a service port while importing", zap.Error(err))
+			return nil, refuse(http.StatusInternalServerError, "Nothing was imported: failed to "+
+				"create the service port "+name)
+		}
+
+		return &transferItem{Kind: "service_port", Name: name, Action: transferAdded}, nil
+	}
+
+	if !overwrite {
+		reason := "the local port " + strconv.Itoa(sp.LocalPort) + " is in use here by another " +
+			"service port"
+		if foundOnService {
+			reason = "a service port for " + sp.ServiceIP + ":" + strconv.Itoa(sp.ServicePort) +
+				" is registered here already"
+		}
+
+		return &transferItem{
+			Kind:   "service_port",
+			Name:   name,
+			Action: transferSkipped,
+			Reason: reason,
+		}, nil
+	}
+
+	// Two rows can stand in the way of one row of the file: one holding the
+	// service address and another holding the local port. Replacing either of
+	// them would leave the other breaking the rule it is under, and deleting
+	// one of them is not what an overwrite was asked for, so this is refused
+	// with the two rows named and the whole import is taken back.
+	if foundOnService && foundOnLocal && onService.ID != onLocal.ID {
+		return nil, refuse(http.StatusConflict, "Nothing was imported. The service port "+name+
+			" in the file meets two rows that are registered here: "+sp.ServiceIP+":"+
+			strconv.Itoa(sp.ServicePort)+" belongs to one and the local port "+
+			strconv.Itoa(sp.LocalPort)+" to another. Delete one of the two and import again")
+	}
+
+	stored := onService
+	if !foundOnService {
+		stored = onLocal
+	}
+
+	stored.ServiceIP = sp.ServiceIP
+	stored.ServicePort = sp.ServicePort
+	stored.LocalPort = sp.LocalPort
+	stored.Description = sp.Description
+
+	err = tx.Save(&stored).Error
+	if err != nil {
+		h.hosts.logger.Error("failed to replace a service port while importing", zap.Error(err))
+		return nil, refuse(http.StatusInternalServerError, "Nothing was imported: failed to replace "+
+			"the service port "+name)
+	}
+
+	return &transferItem{Kind: "service_port", Name: name, Action: transferReplaced}, nil
+}
+
+// ExportSettings hands out the stored settings, sealed with the password in the
+// body.
+//
+// The settings hold no secret of their own, and the file is sealed all the
+// same: it is one format, one password and one thing to explain, and a second
+// format that happens not to need a password today would be the one somebody
+// puts a secret into tomorrow.
+func (h *TransferHandler) ExportSettings(c echo.Context) error {
+	var req exportRequest
+
+	err := c.Bind(&req)
+	if err != nil {
+		return c.JSON(http.StatusBadRequest, models.Response{
+			Success: false,
+			Error:   "Invalid request body: " + err.Error(),
+		})
+	}
+
+	refused := checkExportPassword(req.Password)
+	if refused != nil {
+		return refused.answer(c)
+	}
+
+	stored, err := settings.Load(h.hosts.db)
+	if err != nil {
+		h.hosts.logger.Error("failed to read the settings for an export", zap.Error(err))
+		return c.JSON(http.StatusInternalServerError, models.Response{
+			Success: false,
+			Error:   "Failed to read the settings",
+		})
+	}
+
+	exportedAt := time.Now()
+
+	sealed, err := h.seal(transferKindSettings, settingsOf(stored), req.Password, exportedAt)
+	if err != nil {
+		h.hosts.logger.Error("failed to seal the exported settings", zap.Error(err))
+		return c.JSON(http.StatusInternalServerError, models.Response{
+			Success: false,
+			Error:   "Failed to seal the file",
+		})
+	}
+
+	h.hosts.logger.Info("exported the settings of the manager")
+
+	return c.JSON(http.StatusOK, models.Response{
+		Success: true,
+		Data: exportedSettings{
+			Kind:       transferKindSettings,
+			File:       sealed,
+			ExportedAt: exportedAt,
+		},
+	})
+}
+
+// ImportSettings stores the settings a file carries.
+//
+// It stores them and nothing else: no setting is put onto the running process,
+// not even the one a save on the Settings screen puts into place. A file that
+// arrives from another installation changes the port that is being listened on,
+// the interval of the loops and where the logs go, and putting those onto a
+// process in the middle of answering the very request that carries them is how
+// an import ends with nobody able to reach the server. What is stored is what
+// the next startup runs on, and GET /api/settings reports the difference in
+// pending_restart until then.
+//
+// logging.level is the one setting that is neither put into place nor reported
+// as waiting, because a read leaves out of pending_restart the settings a save
+// normally applies at once. It takes hold at the next restart like the rest.
+func (h *TransferHandler) ImportSettings(c echo.Context) error {
+	var req importRequest
+
+	err := c.Bind(&req)
+	if err != nil {
+		return c.JSON(http.StatusBadRequest, models.Response{
+			Success: false,
+			Error:   "Invalid request body: " + err.Error(),
+		})
+	}
+
+	file, refused := h.open(req.File, req.Password, transferKindSettings)
+	if refused != nil {
+		return refused.answer(c)
+	}
+
+	stored, err := settings.Load(h.hosts.db)
+	if err != nil {
+		h.hosts.logger.Error("failed to read the settings for an import", zap.Error(err))
+		return c.JSON(http.StatusInternalServerError, models.Response{
+			Success: false,
+			Error:   "Failed to read the settings",
+		})
+	}
+
+	before := *stored
+
+	// The content is read onto the settings that are stored, so that a file
+	// that does not name a setting leaves that setting as it is. Read onto an
+	// empty set instead, every setting the file left out would arrive as a zero
+	// value and be stored as one or refused as one.
+	content := settingsOf(stored)
+
+	err = json.Unmarshal(file.Content, &content)
+	if err != nil {
+		return c.JSON(http.StatusBadRequest, models.Response{
+			Success: false,
+			Error:   "The file says it holds the settings of the manager, but the settings in it cannot be read",
+		})
+	}
+
+	updated := *stored
+	content.applyTo(&updated)
+
+	// The rules are run here as well as inside Save, so that a value they
+	// refuse is answered as a bad request while a database that could not be
+	// written to stays a 500. It is the same split UpdateSettings makes.
+	err = updated.Validate()
+	if err != nil {
+		return c.JSON(http.StatusBadRequest, models.Response{
+			Success: false,
+			Error:   "Nothing was imported. The settings in the file are refused: " + err.Error(),
+		})
+	}
+
+	err = settings.Save(h.hosts.db, &updated)
+	if err != nil {
+		h.hosts.logger.Error("failed to store the imported settings", zap.Error(err))
+		return c.JSON(http.StatusInternalServerError, models.Response{
+			Success: false,
+			Error:   "Failed to store the settings",
+		})
+	}
+
+	diff := settings.Diff(&before, &updated)
+
+	// The list is built even when it is empty, so that an import that changed
+	// nothing answers with an empty list rather than with a null the screen
+	// would have to tell from a list it failed to read.
+	changes := make([]settingsChange, 0, len(diff))
+
+	for _, change := range diff {
+		changes = append(changes, settingsChange{
+			Name:    change.Name,
+			From:    change.From,
+			To:      change.To,
+			Applied: appliedRestart,
+		})
+	}
+
+	h.hosts.logger.Info("imported the settings of the manager",
+		zap.Int("changed", len(changes)))
+
+	return c.JSON(http.StatusOK, models.Response{
+		Success: true,
+		Data: importedSettings{
+			Settings:        &updated,
+			Changes:         changes,
+			RestartRequired: len(changes) > 0,
+		},
+	})
+}
