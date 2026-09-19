@@ -1,6 +1,16 @@
 /* Everything here is served from the binary. Nothing is fetched from the
    network, so the UI works on a host that reaches nothing but this server. */
 
+/* Safari grows the text of a block when the viewport is wider than the block
+   is, which it calls text autosizing and which it does to make a desktop page
+   readable on a phone. This page is already built for the width it is shown
+   at, so the growing is not a help: held upright nothing happens, turned on its
+   side the same page suddenly has bigger letters than it asked for. */
+html {
+  -webkit-text-size-adjust: 100%;
+  text-size-adjust: 100%;
+}
+
 body {
   margin: 0;
   /* The extra room at the bottom is for the version, which is fixed to the
@@ -450,7 +460,14 @@ td.num {
 
 /* A timestamp and a row of buttons are each one thing. Left to wrap they break
    at the space inside them, which reads as two values stacked in one cell. */
+/* The stamp holds a date and a time of day, each in its own span, and each is
+   kept whole while the two are allowed to sit on separate lines. */
 .stamp {
+  white-space: normal;
+}
+
+.stamp > span {
+  display: inline-block;
   white-space: nowrap;
 }
 

@@ -921,10 +921,34 @@ function logRow(line) {
 // the logger writes it in the time zone of the server, and rewriting it in the
 // zone of the browser would put a time on the screen that is in no log file and
 // cannot be searched for with grep.
+// logTimeCell is when the line was written. The date and the time of day are
+// put on two lines rather than one.
+//
+// Written out in full on one line it is twenty-eight characters that may not
+// break, and it takes 220px of a table that has three other columns to fit. At
+// the width of a phone held sideways that left the message 256px, and the
+// message is what the screen is for. Stacked, the same column asks for about
+// half of that, and the row is no taller for it: a row whose message runs to
+// two lines has the room already, and the date is the half of this that is the
+// same on every line anyway.
 function logTimeCell(value) {
-  const node = element("span", value === null || value === undefined ? "" : value);
+  const node = document.createElement("span");
 
   node.className = "stamp";
+
+  const text = value === null || value === undefined ? "" : String(value);
+  const split = text.indexOf("T");
+
+  // Anything that is not the shape this writes is left as it stands. A line
+  // that could not be parsed carries whatever it carried.
+  if (split === -1) {
+    node.textContent = text;
+
+    return node;
+  }
+
+  node.appendChild(element("span", text.slice(0, split)));
+  node.appendChild(element("span", text.slice(split + 1)));
 
   return node;
 }
