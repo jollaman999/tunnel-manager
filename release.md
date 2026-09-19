@@ -1,3 +1,10 @@
+# v3.2.7
+
+## Bug fixes:
+
+- Last connected and Updated came apart in the middle of a timestamp. The previous release let the log break its stamp between the date and the clock by changing the class every table uses, and the other tables were relying on that class to hold them to one line, so the two halves read as two values stacked in a cell. The log has a class of its own for it now.
+- The last error of a tunnel has the width of the table rather than the ninth column of it. The other eight columns are addresses, counts and a timestamp and already ask for more width than a screen has: measured against a real SSH failure, the column had 144px on a laptop with the row standing 183px tall, and 106px and 288px on a phone. It goes under the row now, and only when there is one, where the same message has 941px on a laptop and 797px on a phone, on one line either way.
+
 # v3.2.6
 
 ## Add/fix features:
