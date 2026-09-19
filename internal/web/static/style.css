@@ -591,8 +591,16 @@ td.actions {
   overflow-wrap: anywhere;
 }
 
+/* break-word rather than anywhere. Both wrap the same way, but anywhere also
+   tells the table this column can be one character wide, and a table gives out
+   what is left over by what each column says it needs. The breaks it is
+   allowed are the ones marked after each path separator. */
 .log-caller {
-  overflow-wrap: anywhere;
+  overflow-wrap: break-word;
+}
+
+.log-caller > span {
+  white-space: nowrap;
 }
 
 .counts {

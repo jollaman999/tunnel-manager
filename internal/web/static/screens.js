@@ -978,10 +978,31 @@ function logLevelBadge(line) {
 // logCallerCell is where the line was written. It wraps rather than being held
 // on one line, so that a long package path does not decide how wide the table
 // is on a narrow screen.
+// logCallerCell is the file and line the entry was written from. It is allowed
+// to break after a path separator and nowhere else.
+//
+// Left to break wherever it liked it broke inside names, so a caller read as
+// two words that are not words. It also cost the column its width: a run of
+// text that may break anywhere has a smallest width of one character, and a
+// table hands out what is left over by what each column says it needs, so the
+// caller said it needed almost nothing and was given that.
 function logCallerCell(value) {
-  const node = element("span", value === null || value === undefined ? "" : value);
+  const node = document.createElement("span");
 
   node.className = "log-caller";
+
+  const text = value === null || value === undefined ? "" : String(value);
+  const parts = text.split("/");
+
+  for (let i = 0; i < parts.length; i += 1) {
+    const last = i === parts.length - 1;
+
+    node.appendChild(element("span", last ? parts[i] : parts[i] + "/"));
+
+    if (!last) {
+      node.appendChild(document.createElement("wbr"));
+    }
+  }
 
   return node;
 }
