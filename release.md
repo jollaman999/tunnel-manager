@@ -1,3 +1,10 @@
+# v3.2.2
+
+## Bug fixes:
+
+- Turning HTTPS on and pressing Restart left the screen waiting ninety seconds and then saying the service never came back. It had come back within seconds and on the same port: the page was loaded over http, the service answers that with a redirect to https once it is on, and the certificate behind that redirect is one nobody signed for, so the browser refuses it and the page sees nothing. The port a restart moves to was already followed and the scheme was not, which is the likelier of the two to move, because turning HTTPS on is something you do from the screen being served without it. The screen now names the address the service will answer at and stops waiting on the one it knows is being left.
+- The log was unreadable on a phone. Four columns across that width left the message a column a few words wide, running down the screen as a tall thin ribbon: measured in a 390px viewport, 58px wide and 462px tall. Below the width the rest of the screens already reshape at, a log entry is laid out as a block instead, with the time, the level and the caller on a dimmed line and the message across the whole width under it. The same measurement gives 362px wide and 63px tall. At full width the table is what it was.
+
 # v3.2.1
 
 ## Bug fixes:
