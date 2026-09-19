@@ -523,10 +523,10 @@ UI 파일은 일부러 세션 없이 제공합니다. 누구에게나 같은 바
 | Log level | `logging_level` | `logging.level` | `info` | **저장하는 즉시** |
 | Log format | `logging_format` | `logging.format` | `json` | 다음 기동부터 |
 | Log file | `logging_file_path` | `logging.file.path` | `logs/tunnel-manager.log` | 다음 기동부터 |
-| Log size before rotation (MB) | `logging_file_max_size` | `logging.file.max_size` | `100` | 다음 기동부터 |
-| Rotated files kept | `logging_file_max_backups` | `logging.file.max_backups` | `5` | 다음 기동부터 |
-| Days a rotated file is kept | `logging_file_max_age` | `logging.file.max_age` | `30` | 다음 기동부터 |
-| Compress rotated files | `logging_file_compress` | `logging.file.compress` | `true` | 다음 기동부터 |
+| Log size before it is rotated (MB) | `logging_file_max_size` | `logging.file.max_size` | `100` | 다음 기동부터 |
+| Rotated log files kept | `logging_file_max_backups` | `logging.file.max_backups` | `5` | 다음 기동부터 |
+| Days a rotated log file is kept | `logging_file_max_age` | `logging.file.max_age` | `30` | 다음 기동부터 |
+| Compress rotated log files | `logging_file_compress` | `logging.file.compress` | `true` | 다음 기동부터 |
 
 **도는 프로세스가 바로 받아들이는 설정은 로그 레벨 하나뿐입니다.** 기동할 때 만들어진 모든
 로거에 닿으며, 데이터베이스가 질의를 찍는 로거도 포함됩니다. `debug` 를 켜는 이유의 절반이

@@ -578,10 +578,10 @@ and `PUT /api/settings`.
 | Log level | `logging_level` | `logging.level` | `info` | **The moment it is saved** |
 | Log format | `logging_format` | `logging.format` | `json` | At the next start |
 | Log file | `logging_file_path` | `logging.file.path` | `logs/tunnel-manager.log` | At the next start |
-| Log size before rotation (MB) | `logging_file_max_size` | `logging.file.max_size` | `100` | At the next start |
-| Rotated files kept | `logging_file_max_backups` | `logging.file.max_backups` | `5` | At the next start |
-| Days a rotated file is kept | `logging_file_max_age` | `logging.file.max_age` | `30` | At the next start |
-| Compress rotated files | `logging_file_compress` | `logging.file.compress` | `true` | At the next start |
+| Log size before it is rotated (MB) | `logging_file_max_size` | `logging.file.max_size` | `100` | At the next start |
+| Rotated log files kept | `logging_file_max_backups` | `logging.file.max_backups` | `5` | At the next start |
+| Days a rotated log file is kept | `logging_file_max_age` | `logging.file.max_age` | `30` | At the next start |
+| Compress rotated log files | `logging_file_compress` | `logging.file.compress` | `true` | At the next start |
 
 **The log level is the one setting the running process takes on.** It reaches
 every logger that was handed out at startup, the one the database writes its

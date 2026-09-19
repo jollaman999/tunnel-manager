@@ -1273,9 +1273,15 @@ function settingsForm(set) {
       settingsField(portField("api_port", "API port", set.api_port),
         "The server listens on this port. It is taken up at the next start."),
       settingsField(secondsField("monitoring_interval_sec", "Monitoring interval (seconds)",
-        set.monitoring_interval_sec), "Taken up at the next start."),
+        set.monitoring_interval_sec),
+      "How often a tunnel that is up checks that the SSH server is still answering, and " +
+        "reconnects when it is not. Shorter notices a connection that died sooner and reaches " +
+        "the server more often. Taken up at the next start."),
       settingsField(secondsField("reconcile_interval_sec", "Reconcile interval (seconds)",
-        set.reconcile_interval_sec), "Taken up at the next start."),
+        set.reconcile_interval_sec),
+      "How often the tunnels that are running are compared with the Hosts and service ports " +
+        "that are registered. A tunnel that should exist is started, one that should not is " +
+        "stopped, and one whose settings changed is built again. Taken up at the next start."),
       {
         name: "security_key_file",
         label: "Encryption key file",
@@ -1303,15 +1309,15 @@ function settingsForm(set) {
           check: checkPath },
         pathNote(set, "The path of the file the log is written to.")
       ),
-      settingsField(countField("logging_file_max_size", "Log size before rotation (MB)",
+      settingsField(countField("logging_file_max_size", "Log size before it is rotated (MB)",
         set.logging_file_max_size), "Taken up at the next start."),
-      settingsField(countField("logging_file_max_backups", "Rotated files kept",
+      settingsField(countField("logging_file_max_backups", "Rotated log files kept",
         set.logging_file_max_backups), "Taken up at the next start."),
-      settingsField(countField("logging_file_max_age", "Days a rotated file is kept",
+      settingsField(countField("logging_file_max_age", "Days a rotated log file is kept",
         set.logging_file_max_age), "Taken up at the next start."),
       {
         name: "logging_file_compress",
-        label: "Compress rotated files",
+        label: "Compress rotated log files",
         type: "checkbox",
         value: set.logging_file_compress,
         note: "Taken up at the next start."
