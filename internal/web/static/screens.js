@@ -934,7 +934,11 @@ function logRow(line) {
 function logTimeCell(value) {
   const node = document.createElement("span");
 
-  node.className = "stamp";
+  // Its own class, not the one the other tables use. Theirs holds a timestamp
+  // to one line on purpose, because broken at the space between the date and
+  // the clock the two halves read as two values stacked in a cell. This one is
+  // meant to break, and only between those two halves.
+  node.className = "log-stamp";
 
   const text = value === null || value === undefined ? "" : String(value);
   const split = text.indexOf("T");

@@ -460,13 +460,21 @@ td.num {
 
 /* A timestamp and a row of buttons are each one thing. Left to wrap they break
    at the space inside them, which reads as two values stacked in one cell. */
-/* The stamp holds a date and a time of day, each in its own span, and each is
-   kept whole while the two are allowed to sit on separate lines. */
+/* A timestamp in a table stays on one line. Broken at the space between the
+   date and the clock, the two halves read as two values stacked in one cell. */
 .stamp {
+  white-space: nowrap;
+}
+
+/* The log is the exception, and has its own class for it. Its stamp carries a
+   date and a time of day in separate spans, each kept whole, and the two are
+   allowed onto separate lines: written out on one it is twenty-eight
+   characters that cannot break, in a table with three other columns to fit. */
+.log-stamp {
   white-space: normal;
 }
 
-.stamp > span {
+.log-stamp > span {
   display: inline-block;
   white-space: nowrap;
 }
