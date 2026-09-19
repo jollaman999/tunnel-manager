@@ -1,3 +1,9 @@
+# v3.4.3
+
+## Bug fixes:
+
+- A refresh still replaced the status list under a moving finger. Waiting before the request was not enough: the tick went out while the page was still, the answer took a round trip to come back, and the screen was replaced when it arrived, so a finger that came down in between met the swap anyway. Measured against that case, an answer 150ms out with the finger down at 50ms, the screen was replaced under it before and is not now. What was drawn is kept and goes up the moment the page settles, so nothing is fetched twice and no tick is lost. A draw the operator asked for is never held.
+
 # v3.4.2
 
 ## Bug fixes:
