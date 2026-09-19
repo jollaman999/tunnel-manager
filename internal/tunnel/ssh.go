@@ -251,6 +251,23 @@ type halfCloser interface {
 // connection cut here is one the path had already dropped.
 const forwardIdleTimeout = time.Hour
 
+// forwardDialTimeout bounds the TCP handshake with the forwarded service.
+//
+// Without one, a service that answers a SYN with nothing at all is waited on
+// for as long as the kernel retries, which is around two minutes on Linux. The
+// client that opened the tunnel connection has given up long before that, and
+// what it leaves behind is a goroutine and a socket per connection: a backend
+// that a firewall drops silently, rather than refuses, is enough to pile those
+// up. Every other dial in this package is already bounded, the SSH one by the
+// client configuration and the monitor by its own interval, and this was the
+// one that was not.
+//
+// Ten seconds is the same bound the SSH dial uses, so there is one number to
+// reason about. The forwarded service is reachable from this process by the
+// definition of what a tunnel is for, so ten seconds is not a network distance
+// being allowed for but a backend that is not answering.
+const forwardDialTimeout = 10 * time.Second
+
 // countingReader counts what was read from src, which is how forward tells a
 // connection that is idle from one that is merely slow. The count only has to
 // change while bytes flow, so a plain atomic add is enough.
@@ -286,7 +303,7 @@ func (t *SSHTunnel) forward(localConn net.Conn, idleTimeout time.Duration) {
 		_ = localConn.Close()
 	}()
 
-	remoteConn, err := net.Dial("tcp", t.Remote.String())
+	remoteConn, err := net.DialTimeout("tcp", t.Remote.String(), forwardDialTimeout)
 	if err != nil {
 		t.logger.Error("failed to dial remote service",
 			zap.String("local", t.Local.String()),
