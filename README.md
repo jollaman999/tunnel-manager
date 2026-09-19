@@ -535,7 +535,7 @@ no directory travels next to it and no path has to be configured.
 
 | Screen | Path | What it shows and does |
 |--------|------|------------------------|
-| Status | `/ui/status` | The three counts (desired, rows, connected), a sentence about the difference between them, and one line per tunnel: Host, service port, status, server, local, remote, retries, last connected, last error. It asks again every 5 seconds. |
+| Status | `/ui/status` | The three counts (desired, rows, connected), a sentence about the difference between them, and one line per tunnel: Host, service port, status, server, local, remote, retries, last connected. A tunnel with something wrong carries what went wrong on a line under it, across the whole table. It asks again every 5 seconds. |
 | Hosts | `/ui/hosts` | One row per Host with ID, IP, port, user, description, enabled and updated. Add a Host, edit one, enable or disable one, delete one. The add and edit forms have a box to paste a private key into, an area to drop the key file onto, and a box for the passphrase of a key that has one. |
 | Service Ports | `/ui/service-ports` | One row per service port with ID, service IP, service port, local port, description and updated. Add, edit and delete. |
 | Logs | `/ui/logs` | The end of the log file, newest last, with a level filter and a count to show. It asks again every 5 seconds. It reads the file the process is writing now; rotated files are not shown. |
