@@ -552,6 +552,32 @@ curl -s -b cookies.txt -X PUT "$BASE/api/settings" \
 요청 본문은 저장된 값 위에 덮이므로, 일부 항목만 적어 보내면 그것만 바뀌고 나머지는
 그대로 남습니다.
 
+조회 응답에는 저장된 설정과 함께, 지금 이 프로세스가 돌고 있지 않은 항목이 실립니다.
+
+```bash
+curl -s -b cookies.txt "$BASE/api/settings"
+```
+
+```json
+{
+  "success": true,
+  "data": {
+    "api_port": 9999,
+    "logging_level": "debug",
+    "...": "...",
+    "pending_restart": [
+      { "name": "api.port", "running": "8888", "stored": "9999" }
+    ]
+  }
+}
+```
+
+`pending_restart` 는 서버가 조회할 때마다 계산합니다. 기동할 때 읽은 설정을 저장된 설정과
+맞대어 보고, `running` 은 지금 이 프로세스가 돌고 있는 값, `stored` 는 재기동하면 올라갈
+값입니다. 클라이언트가 달라도 세션이 달라도 같은 것이 보이고, 재기동하면 따로 지우는 것
+없이 비워집니다. 돌아온 프로세스가 저장된 설정 위에서 돌기 때문입니다. 로그 레벨은 저장하는
+즉시 반영되므로 여기에 들어가지 않습니다. 저장된 값 그대로 돌고 있으면 `[]` 입니다.
+
 ### 서비스 재기동
 
 Settings 화면에 **Restart** 버튼이 있고, 스크립트에서는 `POST /api/restart` 가 같은 일을
@@ -802,7 +828,7 @@ curl -s -b cookies.txt -X POST "$BASE/api/setup" \
 
 | 메서드 | 경로 | 하는 일 |
 |--------|------|---------|
-| `GET` | `/api/settings` | 저장된 설정 조회 |
+| `GET` | `/api/settings` | 저장된 설정과, 지금 프로세스가 돌고 있지 않은 항목(`pending_restart`) 조회 |
 | `PUT` | `/api/settings` | 본문의 설정을 저장된 값 위에 덮고, 무엇이 바뀌었는지와 재기동이 필요한지를 응답 |
 | `GET` | `/api/certificate` | 지금 서비스 중인 인증서. 지문, subject, 발급자, 포함된 이름들, 유효기간, 남은 일수 |
 | `POST` | `/api/certificate/renew` | 자체 서명 인증서를 새로 만들어 다음 연결부터 서비스 |

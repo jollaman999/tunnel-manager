@@ -59,13 +59,6 @@ const restartPollLimitSec = 90;
 let editingHostID = null;
 let editingServicePortID = null;
 
-// settingsSaveResult is what the last save on the settings screen answered: the
-// settings it changed and whether any of them waits for a restart. It is kept
-// because the screen is drawn again from the server right after the save, and
-// what the save reported is not in that answer. It is dropped on arrival, so a
-// report from an earlier visit is never read as belonging to this one.
-let settingsSaveResult = null;
-
 // certificateDraft is what was typed into the two PEM boxes. It is kept because
 // the screen is drawn again after a registration that was refused, and a paste
 // of thirty lines that is thrown away on every refusal is one the operator has
@@ -78,9 +71,9 @@ let certificateDraft = { certPEM: "", keyPEM: "" };
 let certificateProblem = "";
 
 // certificateReplaceResult is what the last renewal or registration answered.
-// It is kept for the same reason settingsSaveResult is: the screen is drawn
-// again from the server right afterwards, and what the replacement said about
-// the connections that are already open is not in that answer.
+// It is kept because the screen is drawn again from the server right
+// afterwards, and what the replacement said about the connections that are
+// already open is not in that answer.
 let certificateReplaceResult = null;
 
 // restartInFlight says whether a restart was asked for and the page is still
@@ -993,7 +986,6 @@ function logSummary(answer, read, shown) {
 }
 
 function enterSettings() {
-  settingsSaveResult = null;
   certificateDraft = { certPEM: "", keyPEM: "" };
   certificateProblem = "";
   certificateReplaceResult = null;
@@ -1009,10 +1001,13 @@ async function drawSettings() {
 
   const nodes = [];
 
-  // What the save did sits above the form. It is the answer to the press that
-  // was just made, and the form below it is filled from the server anyway.
-  if (settingsSaveResult !== null) {
-    nodes.push(settingsChanges(settingsSaveResult));
+  // What is stored but not being run on sits above the form, because it is
+  // what has to be acted on before anything below it takes hold. It comes from
+  // the read rather than from the last save, so it is here whenever the screen
+  // is opened and by whoever opens it.
+  const pending = settingsPending(set);
+  if (pending !== null) {
+    nodes.push(pending);
   }
 
   nodes.push(settingsForm(set));
@@ -1020,7 +1015,7 @@ async function drawSettings() {
   nodes.push(certificateForm());
   nodes.push(accountCard(account));
   nodes.push(settingsRescue());
-  nodes.push(settingsRestart(restart));
+  nodes.push(settingsRestart(restart, pendingAPIPort(set)));
   nodes.push(settingsDangerZone());
 
   render("Settings", nodes);
@@ -1192,8 +1187,6 @@ async function saveSettings(values) {
 
   const data = await apiCall("PUT", "/api/settings", body);
 
-  settingsSaveResult = data;
-
   const changes = data === null || data.changes === null || data.changes === undefined
     ? []
     : data.changes;
@@ -1209,64 +1202,49 @@ async function saveSettings(values) {
   return drawSettings();
 }
 
-// settingsChanges is what the save did. What changed is worth showing on its
-// own, because a save that stores what was already there and a save that
-// changed the port look the same on the form afterwards.
+// settingsPending is what is stored with a value this service is not running
+// on. A save that stored one of those leaves work behind, and this is what says
+// so until it is done.
 //
-// Whether a change is in place or waits for a start is what the server said
-// about it. It is the side that puts a value into place, so a screen that
-// decided for itself would go on claiming a setting took hold after the server
-// stopped putting it there.
-function settingsChanges(result) {
+// It is drawn from the read rather than from the answer to the save. The server
+// works it out by holding the settings it read when it started against the ones
+// that are stored, so it is here on a screen opened an hour later and in a
+// second browser, and a restart empties it without anything being cleared: the
+// service comes back running on what is stored.
+//
+// Whether a setting waits for a restart at all is the server's to say. It is
+// the side that puts a value into place, so a screen that decided for itself
+// would go on listing a setting the server had started taking on.
+function settingsPending(set) {
+  const pending = set === null || set === undefined ||
+    set.pending_restart === null || set.pending_restart === undefined
+    ? []
+    : set.pending_restart;
+
+  if (pending.length === 0) {
+    return null;
+  }
+
   const card = document.createElement("section");
 
   card.className = "card";
-  card.dataset.card = "settings-saved";
-  card.appendChild(element("h2", "What the save changed"));
-
-  const changes = result === null || result.changes === null || result.changes === undefined
-    ? []
-    : result.changes;
-
-  if (changes.length === 0) {
-    card.appendChild(statusLine("Nothing changed.", "empty"));
-
-    return card;
-  }
-
+  card.dataset.card = "settings-pending";
+  card.appendChild(element("h2", "Stored, waiting for a restart"));
+  card.appendChild(element("p",
+    "These settings are stored with a value this service is not running on. It goes on " +
+      "running on what it read when it started until it is started again."));
   card.appendChild(buildTable(
-    ["Setting", "From", "To", "Applied"],
-    changes.map(function (change) {
-      return [change.name, change.from, change.to, appliedBadge(change.applied)];
+    ["Setting", "Running on", "Stored"],
+    pending.map(function (item) {
+      return [item.name, item.running, item.stored];
     })
   ));
-
-  if (result.restart_required) {
-    card.appendChild(statusLine(
-      "Start tunnel-manager again to run on what is marked as taken up at the next start. " +
-        "It is stored either way.",
-      "warning"
-    ));
-  } else {
-    card.appendChild(statusLine("Every change is in place.", "ok"));
-  }
+  card.appendChild(statusLine(
+    "Restart the service, further down this screen, is what puts them into place.",
+    "warning"
+  ));
 
   return card;
-}
-
-// appliedBadge says what became of one change. A word that is not one of the
-// two known ones is shown as it came, so a server that reports a third state
-// still says something readable here.
-function appliedBadge(applied) {
-  const words = { now: "in place now", restart: "at the next start" };
-  const colours = { now: "ok", restart: "waiting" };
-  const text = applied === null || applied === undefined ? "" : String(applied);
-  const badge = element("span", words[text] === undefined ? text : words[text]);
-
-  badge.className = "badge " + (colours[text] === undefined ? "unknown" : colours[text]);
-  badge.dataset.applied = text;
-
-  return badge;
 }
 
 // certificateCard is what is being served over TLS right now, and the two
@@ -1403,7 +1381,7 @@ async function saveHTTPS(enabled) {
   // Only this one setting is sent. The server binds what a request names onto
   // what is stored and leaves the rest alone, so nothing else on the screen is
   // written over by this press.
-  settingsSaveResult = await apiCall("PUT", "/api/settings", { api_https_enabled: enabled });
+  await apiCall("PUT", "/api/settings", { api_https_enabled: enabled });
 
   setNotice("The setting is stored. It is taken up at the next start.", "info");
 
@@ -1747,6 +1725,29 @@ function settingsRescue() {
   return card;
 }
 
+// pendingAPIPort is the port a restart would bring the service back on, when
+// that is not the port this page is talking to. It reads the same list the
+// card above the form draws, so the two cannot disagree.
+//
+// It matters for more than the wording. This page waits for the service by
+// asking the address it is already on, and a service that comes back somewhere
+// else never answers there: the wait would run to its limit and report that
+// nothing came back, while the service is up and serving on another port.
+function pendingAPIPort(set) {
+  const pending = set === null || set === undefined ? null : set.pending_restart;
+  if (pending === null || pending === undefined) {
+    return null;
+  }
+
+  for (const item of pending) {
+    if (item.name === "api.port") {
+      return item.stored;
+    }
+  }
+
+  return null;
+}
+
 // settingsRestart takes the service down and brings it back. It is a card of
 // its own and not part of the danger zone below, which is for what cannot be
 // taken back: this one ends with the service running again, and putting it
@@ -1756,7 +1757,7 @@ function settingsRescue() {
 // The password of the account is not asked for here. The uninstall asks because
 // what it does is final; a question put to every press is one that stops being
 // read.
-function settingsRestart(restart) {
+function settingsRestart(restart, newPort) {
   const card = document.createElement("section");
 
   card.className = "card";
@@ -1778,13 +1779,13 @@ function settingsRestart(restart) {
     return card;
   }
 
-  card.appendChild(element("p", restartOutcome(restart.view)));
+  card.appendChild(element("p", restartOutcome(restart.view, newPort)));
 
   const buttons = document.createElement("div");
   buttons.className = "buttons";
 
   const button = actionButton("Restart", "settings-restart", function () {
-    return submitRestart(restart.view, button);
+    return submitRestart(restart.view, button, newPort);
   });
 
   button.disabled = restartInFlight;
@@ -1798,11 +1799,23 @@ function settingsRestart(restart) {
 // restartOutcome is the half of this that differs by platform, in the words the
 // card uses. The server says which one it is, because it is the only side that
 // knows: the browser cannot tell what the machine on the other end is running.
-function restartOutcome(view) {
+function restartOutcome(view, newPort) {
+  const port = newPort === undefined ? null : newPort;
+
   if (view.comes_back) {
-    return "This process runs the program again in place of itself. It keeps the process it " +
-      "already is, so the service is back on the same port within seconds and nothing has to " +
-      "start it.";
+    const base = "This process runs the program again in place of itself. It keeps the process " +
+      "it already is, so the service is back within seconds and nothing has to start it.";
+
+    if (port === null) {
+      return base + " It answers on the same port it does now.";
+    }
+
+    // api.port is stored with a value this service is not running on, so the
+    // restart is what puts it into place. Saying "the same port" here would be
+    // wrong in exactly the case an operator is most likely to be restarting
+    // for, and the address they have to go to next is the useful part.
+    return base + " api.port is waiting for this restart, so it comes back on port " + port +
+      " and this page, which is on the old one, stops being the way to reach it.";
   }
 
   return "This platform cannot replace the image of a running process, so the restart ends " +
@@ -1813,12 +1826,21 @@ function restartOutcome(view) {
 // restartQuestion is what the operator is asked before anything happens. It
 // says what is cut either way, and on a platform that does not come back it
 // says that too, while there is still something to be done about it.
-function restartQuestion(view) {
+function restartQuestion(view, newPort) {
+  const port = newPort === undefined ? null : newPort;
   const cut = "Restart tunnel-manager? Every tunnel is cut and the API stops answering while " +
     "the service goes down and comes up again.";
 
+  const moved = port === null ? "" : " It comes back on port " + port + ", which is what is " +
+    "stored for api.port, so this page will not reach it again and you have to open the new " +
+    "address yourself.";
+
   if (view.comes_back) {
-    return cut + " It comes back on its own within seconds, on the same port.";
+    if (port === null) {
+      return cut + " It comes back on its own within seconds, on the same port.";
+    }
+
+    return cut + " It comes back on its own within seconds." + moved;
   }
 
   return cut + " This platform cannot start the program again by itself: bringing it back is " +
@@ -1826,8 +1848,8 @@ function restartQuestion(view) {
     "back.";
 }
 
-async function submitRestart(view, button) {
-  if (!window.confirm(restartQuestion(view))) {
+async function submitRestart(view, button, newPort) {
+  if (!window.confirm(restartQuestion(view, newPort))) {
     return;
   }
 
@@ -1846,12 +1868,12 @@ async function submitRestart(view, button) {
     throw error;
   }
 
-  drawRestarting(answer, "");
+  drawRestarting(answer, "", newPort);
 
   let back = false;
 
   try {
-    back = await waitForTheService(answer);
+    back = newPort === null ? await waitForTheService(answer) : false;
   } finally {
     restartInFlight = false;
   }
@@ -1862,9 +1884,15 @@ async function submitRestart(view, button) {
     return;
   }
 
+  if (newPort !== null) {
+    // The service is coming back somewhere else, so there is nothing here to
+    // wait for and nothing to report as missing.
+    return;
+  }
+
   if (!back) {
     drawRestarting(answer, "The service did not answer again within " + restartPollLimitSec +
-      " seconds. Check the server.");
+      " seconds. Check the server.", newPort);
 
     return;
   }
@@ -1880,7 +1908,7 @@ async function submitRestart(view, button) {
 //
 // problem is empty while the waiting is still on, and holds what to do about it
 // once the page has given up.
-function drawRestarting(answer, problem) {
+function drawRestarting(answer, problem, newPort) {
   if (currentScreen !== "settings") {
     return;
   }
@@ -1893,9 +1921,17 @@ function drawRestarting(answer, problem) {
       plural(seconds, "second", "seconds") + " after this screen appeared, every tunnel comes " +
       "down with it and is built again on the way back."));
 
-  nodes.push(element("p", restartOutcome(answer)));
+  nodes.push(element("p", restartOutcome(answer, newPort)));
 
-  if (problem === "") {
+  const port = newPort === undefined ? null : newPort;
+
+  if (port !== null) {
+    // Waiting would be waiting on the wrong address. This page is served from
+    // the port being left behind, so asking it again can only ever time out,
+    // and reporting that as "it did not come back" would be untrue.
+    nodes.push(statusLine("This page is not waiting, because the service is not coming back " +
+      "here. Open it on port " + port + " once it is up.", "warning"));
+  } else if (problem === "") {
     nodes.push(statusLine("Waiting for the service to answer again. This page asks every " +
       restartPollEverySec + " " + plural(restartPollEverySec, "second", "seconds") +
       " and gives up after " + restartPollLimitSec + " seconds.", "empty"));

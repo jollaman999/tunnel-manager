@@ -75,7 +75,15 @@ func newSettingsHandler(t *testing.T, db *gorm.DB) (*SettingsHandler, zap.Atomic
 	core, logs := observer.New(level)
 	gormLevel := &recordedGormLevel{}
 
-	return NewSettingsHandler(db, zap.New(core), level, gormLevel), level, gormLevel, logs
+	// The set the handler is told this process started on is what is stored at
+	// the time it is built, which is what a startup hands it. A test that wants
+	// the two apart stores something else afterwards.
+	startup, err := settings.Load(db)
+	if err != nil {
+		t.Fatalf("failed to read the settings: %v", err)
+	}
+
+	return NewSettingsHandler(db, zap.New(core), level, gormLevel, *startup), level, gormLevel, logs
 }
 
 // settingsRequest runs one call against the handler and hands back what it
@@ -370,5 +378,150 @@ func TestSaveThatChangesNothingReportsNoChange(t *testing.T) {
 	}
 	if saved.RestartRequired {
 		t.Fatalf("the answer asks for a restart though nothing changed")
+	}
+}
+
+// decodePending reads what a read says is stored but not being run on, along
+// with the answer it arrived in, so that a test can look at both.
+func decodePending(t *testing.T, rec *httptest.ResponseRecorder) ([]pendingSetting, map[string]interface{}) {
+	t.Helper()
+
+	var resp struct {
+		Success bool                   `json:"success"`
+		Data    map[string]interface{} `json:"data"`
+		Error   string                 `json:"error"`
+	}
+
+	err := json.Unmarshal(rec.Body.Bytes(), &resp)
+	if err != nil {
+		t.Fatalf("failed to read the answer: %v, body: %s", err, rec.Body.String())
+	}
+
+	if !resp.Success {
+		t.Fatalf("success = false, body: %s", rec.Body.String())
+	}
+
+	var view struct {
+		Data struct {
+			PendingRestart []pendingSetting `json:"pending_restart"`
+		} `json:"data"`
+	}
+
+	err = json.Unmarshal(rec.Body.Bytes(), &view)
+	if err != nil {
+		t.Fatalf("failed to read what waits for a restart: %v, body: %s", err, rec.Body.String())
+	}
+
+	return view.Data.PendingRestart, resp.Data
+}
+
+// TestReadReportsNothingPendingAtStartup is the state a process that was just
+// started is in: it is running on what is stored, so there is nothing to say.
+// An empty list is answered rather than none at all, because the screen tells
+// the two apart by what is in the list.
+func TestReadReportsNothingPendingAtStartup(t *testing.T) {
+	db := newSettingsDB(t)
+	h, _, _, _ := newSettingsHandler(t, db)
+
+	rec := settingsRequest(t, h, "")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d, body: %s", rec.Code, http.StatusOK, rec.Body.String())
+	}
+
+	pending, data := decodePending(t, rec)
+	if len(pending) != 0 {
+		t.Fatalf("pending = %+v, want none, body: %s", pending, rec.Body.String())
+	}
+
+	if !strings.Contains(rec.Body.String(), `"pending_restart":[]`) {
+		t.Errorf("the empty list is not in the answer as one: %s", rec.Body.String())
+	}
+
+	// The settings themselves are still where a client reads them. They sit
+	// beside what waits for a restart rather than inside a field of their own.
+	if data["api_port"] != float64(settings.Defaults().APIPort) {
+		t.Errorf("api_port = %v, want %d, body: %s", data["api_port"],
+			settings.Defaults().APIPort, rec.Body.String())
+	}
+}
+
+// TestReadReportsWhatWaitsForARestart is what the screen is drawn from after a
+// save that stored a setting this process cannot take on. It is answered by
+// every read, so a session opened later and a second browser are told it too.
+func TestReadReportsWhatWaitsForARestart(t *testing.T) {
+	db := newSettingsDB(t)
+	h, _, _, _ := newSettingsHandler(t, db)
+
+	rec := settingsRequest(t, h, `{"api_port":9100}`)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d, body: %s", rec.Code, http.StatusOK, rec.Body.String())
+	}
+
+	pending, _ := decodePending(t, settingsRequest(t, h, ""))
+
+	if len(pending) != 1 {
+		t.Fatalf("pending = %+v, want the port alone", pending)
+	}
+	if pending[0].Name != "api.port" {
+		t.Fatalf("pending = %+v, want api.port", pending[0])
+	}
+	if pending[0].Running != "8888" || pending[0].Stored != "9100" {
+		t.Fatalf("pending = %+v, want the process on 8888 and 9100 stored", pending[0])
+	}
+
+	// A second read answers the same. Nothing about it is spent by being read,
+	// which is what the answer of the save was.
+	again, _ := decodePending(t, settingsRequest(t, h, ""))
+	if len(again) != 1 || again[0] != pending[0] {
+		t.Fatalf("the second read says %+v, want %+v", again, pending)
+	}
+}
+
+// TestRestartClearsWhatWaitedForOne is the half that empties the list. A
+// handler built again over the same database is what a restart leaves behind:
+// the process comes back on the stored settings, so there is nothing left that
+// differs and nothing to clear by hand.
+func TestRestartClearsWhatWaitedForOne(t *testing.T) {
+	db := newSettingsDB(t)
+	h, _, _, _ := newSettingsHandler(t, db)
+
+	rec := settingsRequest(t, h, `{"api_port":9100,"monitoring_interval_sec":30}`)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d, body: %s", rec.Code, http.StatusOK, rec.Body.String())
+	}
+
+	pending, _ := decodePending(t, settingsRequest(t, h, ""))
+	if len(pending) != 2 {
+		t.Fatalf("pending = %+v, want the port and the monitoring period", pending)
+	}
+
+	restarted, _, _, _ := newSettingsHandler(t, db)
+
+	pending, _ = decodePending(t, settingsRequest(t, restarted, ""))
+	if len(pending) != 0 {
+		t.Fatalf("pending = %+v after a restart, want none", pending)
+	}
+}
+
+// TestSettingsInPlaceNowDoNotWaitForARestart covers the one setting this
+// process takes on as it is stored. The set this process started with still
+// holds the level it started at, so a plain comparison would report a level
+// that is already being written at and send the operator to restart for it.
+func TestSettingsInPlaceNowDoNotWaitForARestart(t *testing.T) {
+	db := newSettingsDB(t)
+	h, level, _, _ := newSettingsHandler(t, db)
+
+	rec := settingsRequest(t, h, `{"logging_level":"debug"}`)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d, body: %s", rec.Code, http.StatusOK, rec.Body.String())
+	}
+
+	if level.Level() != zapcore.DebugLevel {
+		t.Fatalf("the running level is %s after the save, want debug", level.Level())
+	}
+
+	pending, _ := decodePending(t, settingsRequest(t, h, ""))
+	if len(pending) != 0 {
+		t.Fatalf("pending = %+v, want none for a level that is in place", pending)
 	}
 }

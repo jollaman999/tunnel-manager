@@ -603,6 +603,35 @@ curl -s -b cookies.txt -X PUT "$BASE/api/settings" \
 The body is bound onto what is stored, so a request that names some of the
 settings changes those and leaves the rest alone.
 
+A read answers with the stored settings and, beside them, the ones this process
+is not running on:
+
+```bash
+curl -s -b cookies.txt "$BASE/api/settings"
+```
+
+```json
+{
+  "success": true,
+  "data": {
+    "api_port": 9999,
+    "logging_level": "debug",
+    "...": "...",
+    "pending_restart": [
+      { "name": "api.port", "running": "8888", "stored": "9999" }
+    ]
+  }
+}
+```
+
+`pending_restart` is what the server works out on every read, by holding the
+settings it read when it started against the ones that are stored: `running` is
+the value this process is on and `stored` is the one a restart would bring it
+to. It is the same for every client and for every session, and a restart empties
+it without anything being cleared, since the process comes back running on what
+is stored. The log level is never in it, because it is in place the moment it is
+saved. An installation that is running on everything it has stored gets `[]`.
+
 ### Restarting the service
 
 The Settings screen has a **Restart** button, and `POST /api/restart` is the same
@@ -868,7 +897,7 @@ that is not a `GET` requires the `X-CSRF-Token` header.
 
 | Method | Path | What it does |
 |--------|------|--------------|
-| `GET` | `/api/settings` | The stored settings |
+| `GET` | `/api/settings` | The stored settings, and in `pending_restart` the ones this process is not running on |
 | `PUT` | `/api/settings` | Stores the settings in the body over the stored ones, and answers with what changed and whether a restart is needed |
 | `GET` | `/api/certificate` | The certificate being served: fingerprint, subject, issuer, the names it covers, the validity and the days left |
 | `POST` | `/api/certificate/renew` | Makes another self-signed certificate and serves it from the next connection on |

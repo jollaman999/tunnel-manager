@@ -37,15 +37,27 @@ type SettingsHandler struct {
 	// half of "debug" an operator usually turns it on for.
 	logLevel  zap.AtomicLevel
 	gormLevel databaseLogLevel
+	// startup is the set of settings this process read as it came up. It is
+	// held rather than dropped so that a read can say which stored settings
+	// this process is not running on. Nothing else holds that: the answer to a
+	// save says it once, and a screen drawn later, or in another browser, has
+	// nothing to read it out of.
+	//
+	// It is a copy and no save writes to it, so it stays what this process was
+	// started with for as long as the process runs. A setting that is put into
+	// place as it is stored is left out of the comparison by name, so the copy
+	// standing still is not what decides whether a setting is reported.
+	startup settings.Settings
 }
 
 func NewSettingsHandler(db *gorm.DB, logger *zap.Logger, logLevel zap.AtomicLevel,
-	gormLevel databaseLogLevel) *SettingsHandler {
+	gormLevel databaseLogLevel, startup settings.Settings) *SettingsHandler {
 	return &SettingsHandler{
 		db:        db,
 		logger:    logger,
 		logLevel:  logLevel,
 		gormLevel: gormLevel,
+		startup:   startup,
 	}
 }
 
@@ -79,7 +91,27 @@ type settingsSaved struct {
 	RestartRequired bool               `json:"restart_required"`
 }
 
-// GetSettings answers with what is stored.
+// pendingSetting is one setting that is stored with a value this process is not
+// running on. running is what the process was started with and stored is what
+// it would come back on.
+type pendingSetting struct {
+	Name    string `json:"name"`
+	Running string `json:"running"`
+	Stored  string `json:"stored"`
+}
+
+// settingsView is what a read answers with. The settings are carried flat, the
+// way they were before anything stood beside them, so a client that reads a
+// setting out of this answer goes on reading it where it always was, and what
+// waits for a restart arrives in the same answer the screen is filled from.
+type settingsView struct {
+	*settings.Settings
+
+	PendingRestart []pendingSetting `json:"pending_restart"`
+}
+
+// GetSettings answers with what is stored, along with what is stored but not
+// being run on.
 func (h *SettingsHandler) GetSettings(c echo.Context) error {
 	stored, err := settings.Load(h.db)
 	if err != nil {
@@ -92,7 +124,10 @@ func (h *SettingsHandler) GetSettings(c echo.Context) error {
 
 	return c.JSON(http.StatusOK, models.Response{
 		Success: true,
-		Data:    stored,
+		Data: settingsView{
+			Settings:       stored,
+			PendingRestart: h.pendingRestart(stored),
+		},
 	})
 }
 
@@ -164,8 +199,8 @@ func (h *SettingsHandler) UpdateSettings(c echo.Context) error {
 	})
 }
 
-// applyChanges puts into place what this process can take on and reports every
-// change with what became of it.
+// appliedNowSettings is every setting this process puts into place as it is
+// stored, each along with what putting it into place means.
 //
 // logging.level is the whole of that list. The loggers were built around the
 // handle above at startup, so setting it reaches every logger that was handed
@@ -178,13 +213,20 @@ func (h *SettingsHandler) UpdateSettings(c echo.Context) error {
 // puts the value in place, and is carried to the screen in the answer. A screen
 // that held the list of its own would go on saying a setting took hold after
 // this stopped putting it into place.
+//
+// It is the one list because two answers are built from it: a save says what
+// became of each change, and a read leaves out of what waits for a restart the
+// settings that never wait for one. Decided twice, the screen could call the
+// same setting in place in one card and still waiting in another.
+var appliedNowSettings = map[string]func(h *SettingsHandler, s *settings.Settings) bool{
+	"logging.level": func(h *SettingsHandler, s *settings.Settings) bool {
+		return h.setLogLevel(s.LoggingLevel)
+	},
+}
+
+// applyChanges puts into place what this process can take on and reports every
+// change with what became of it.
 func (h *SettingsHandler) applyChanges(before *settings.Settings, after *settings.Settings) []settingsChange {
-	applied := map[string]bool{}
-
-	if before.LoggingLevel != after.LoggingLevel && h.setLogLevel(after.LoggingLevel) {
-		applied["logging.level"] = true
-	}
-
 	diff := settings.Diff(before, after)
 
 	// The list is built even when it is empty, so that a save that changed
@@ -194,7 +236,9 @@ func (h *SettingsHandler) applyChanges(before *settings.Settings, after *setting
 
 	for _, change := range diff {
 		state := appliedRestart
-		if applied[change.Name] {
+
+		put, now := appliedNowSettings[change.Name]
+		if now && put(h, after) {
 			state = appliedNow
 		}
 
@@ -207,6 +251,45 @@ func (h *SettingsHandler) applyChanges(before *settings.Settings, after *setting
 	}
 
 	return changes
+}
+
+// pendingRestart is every setting that is stored with a value this process is
+// not running on. It is what the screen says a restart is still owed for.
+//
+// It is worked out on every read rather than remembered from the save that
+// caused it, so that a session opened an hour later and a second browser are
+// told the same thing, and so that it clears itself: the process that comes
+// back from a restart reads the stored settings as the ones it runs on, and
+// there is nothing left to compare against.
+//
+// The settings above are left out. Their stored value is in place already,
+// while the set this process started with still holds the value it started
+// with, so a plain comparison would report a log level that is being written
+// at. A level the logger refused is the one case that is left out here and
+// reported as waiting by a save; it is logged where it is refused, and a level
+// that passed Validate is one zap knows.
+func (h *SettingsHandler) pendingRestart(stored *settings.Settings) []pendingSetting {
+	diff := settings.Diff(&h.startup, stored)
+
+	// The list is built even when it is empty for the same reason the changes
+	// of a save are: the screen tells an empty list from one it failed to read
+	// by what is in it, not by whether it is there.
+	pending := make([]pendingSetting, 0, len(diff))
+
+	for _, change := range diff {
+		_, now := appliedNowSettings[change.Name]
+		if now {
+			continue
+		}
+
+		pending = append(pending, pendingSetting{
+			Name:    change.Name,
+			Running: change.From,
+			Stored:  change.To,
+		})
+	}
+
+	return pending
 }
 
 // setLogLevel puts the stored level on the running loggers and reports whether

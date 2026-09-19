@@ -767,7 +767,12 @@ func main() {
 	// The level handle goes to the handler that stores the settings, so that a
 	// stored logging.level reaches the running loggers as it is saved. It is
 	// the one setting this process can take on without being started again.
-	settingsHandler := api.NewSettingsHandler(db, logger, logLevel, gormLevel)
+	//
+	// The settings this startup read go with it, so that a read can hold them
+	// against what is stored and name the settings a restart is still owed for.
+	// Dropped here, the only place that knew would be the answer to the save
+	// that stored them, which is gone as soon as the screen is left.
+	settingsHandler := api.NewSettingsHandler(db, logger, logLevel, gormLevel, *set)
 	// The log screen is handed the path this process resolved, the same one the
 	// logger above writes through. Worked out on the screen instead it would be
 	// a second place that knows what a relative logging.file.path is read
