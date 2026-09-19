@@ -875,7 +875,18 @@ async function drawLogs() {
     // first, and they are turned around here. The newest line is what the
     // screen is opened for, and at the top it is in the same place after every
     // refresh instead of moving down as the log grows.
-    nodes.push(buildTable(["Time", "Level", "Caller", "Message"], shown.reverse().map(logRow)));
+    const table = buildTable(["Time", "Level", "Caller", "Message"], shown.reverse().map(logRow));
+
+    // Marked so that a narrow screen can lay these rows out as blocks. Four
+    // columns across a phone leave the message a column a few words wide, and
+    // a log is read for its messages.
+    //
+    // buildTable hands back the scroller the table sits in, not the table, and
+    // the class is added to what it carries already rather than put in its
+    // place: table-scroll is what keeps a wide table from taking the page
+    // sideways with it, and writing over it would cost that.
+    table.classList.add("log-table");
+    nodes.push(table);
   }
 
   render("Logs", nodes);
