@@ -883,6 +883,58 @@ Every answer has the same shape: `{"success":true,"data":...}` or
 Everything under `/api` requires a session, except `POST /api/login`. Everything
 that is not a `GET` requires the `X-CSRF-Token` header.
 
+### Paging
+
+`GET /api/host`, `GET /api/service-port` and `GET /api/status` answer one page
+at a time. A list that answers with everything grows with the installation: the
+answer, the memory it is built in and the screen that holds it grow with the
+number of rows, none of which is looked at at once.
+
+| Parameter | Default | What it takes |
+|-----------|---------|---------------|
+| `page` | `1` | The page, counted from 1. Below 1 is read as 1, and a page past the last one is answered with the **last page** rather than refused |
+| `size` | `10` | How many rows a page holds. One of `10`, `20`, `30`, `50` and `100`; anything else is refused with `400` |
+
+A page past the end is not an error because rows are deleted while a screen is
+open: the page a client sits on can be gone by the time it asks again, and an
+error there would leave that screen empty where the rows that are left belong. A
+list with nothing stored is page 1 with an empty `items`.
+
+`size` is taken from that list rather than as any number, because a size a
+request can pick freely is a way to ask for every row in one answer, which is
+what the paging is here to prevent.
+
+**`/api/host` and `/api/service-port` changed shape.** `data` used to be the
+array of rows and is now an object carrying the page:
+
+```json
+{
+  "success": true,
+  "data": {
+    "items": [ "..." ],
+    "total": 25,
+    "page": 2,
+    "size": 10
+  }
+}
+```
+
+`items` is the page, `total` is how many rows there are in all, and `page` and
+`size` are what was answered, which is not always what was asked for. A client
+reading `data[0]` reads `data.items[0]` now.
+
+`/api/status` was an object already. `tunnels` is one page of the tunnel rows
+now and `page` and `size` stand beside it, while **the three counts are over
+every row and not over the page**: they say what the installation is doing, not
+what is on the page being looked at.
+
+```bash
+# The second page of twenty Hosts, and the last page of the tunnel rows: a page
+# past the end comes back as the last one, so a large number asks for it.
+curl -s -b cookies.txt "$BASE/api/host?page=2&size=20"
+curl -s -b cookies.txt "$BASE/api/status?page=99999&size=10"
+```
+
 ### Account
 
 | Method | Path | What it does |
@@ -898,7 +950,7 @@ that is not a `GET` requires the `X-CSRF-Token` header.
 | Method | Path | What it does |
 |--------|------|--------------|
 | `POST` | `/api/host` | Creates a Host |
-| `GET` | `/api/host` | Lists the Hosts |
+| `GET` | `/api/host` | One page of the Hosts, oldest first. Takes `page` and `size`, see [Paging](#paging) |
 | `GET` | `/api/host/:id` | Reads one Host |
 | `PUT` | `/api/host/:id` | Updates a Host. Every field is optional; `enabled` false stops its tunnels |
 | `DELETE` | `/api/host/:id` | Deletes a Host |
@@ -938,7 +990,7 @@ curl -s -b cookies.txt -X POST "$BASE/api/host" \
 | Method | Path | What it does |
 |--------|------|--------------|
 | `POST` | `/api/service-port` | Creates a service port |
-| `GET` | `/api/service-port` | Lists the service ports |
+| `GET` | `/api/service-port` | One page of the service ports, oldest first. Takes `page` and `size`, see [Paging](#paging) |
 | `GET` | `/api/service-port/:id` | Reads one service port |
 | `PUT` | `/api/service-port/:id` | Updates a service port. `service_ip`, `service_port` and `local_port` are all required |
 | `DELETE` | `/api/service-port/:id` | Deletes a service port |
@@ -947,8 +999,8 @@ curl -s -b cookies.txt -X POST "$BASE/api/host" \
 
 | Method | Path | What it does |
 |--------|------|--------------|
-| `GET` | `/api/status` | The counts and every tunnel |
-| `GET` | `/api/status/:hostId` | The Host and the tunnels of that Host |
+| `GET` | `/api/status` | The counts of the installation and one page of the tunnel rows. Takes `page` and `size`, see [Paging](#paging) |
+| `GET` | `/api/status/:hostId` | The Host and the tunnels of that Host. Not paged: a Host holds one tunnel per service port |
 
 ### Settings and uninstall
 
@@ -1082,6 +1134,8 @@ curl -s -b cookies.txt https://127.0.0.1:8888/api/status
     "desired_tunnels": 1,
     "total_tunnels": 1,
     "connected_tunnels": 0,
+    "page": 1,
+    "size": 10,
     "tunnels": [
       {
         "host_id": 1,
@@ -1098,6 +1152,13 @@ curl -s -b cookies.txt https://127.0.0.1:8888/api/status
   }
 }
 ```
+
+`tunnels` is one page of the rows, ordered by Host and then by service port, and
+`page` and `size` say which page of which size it is. The three counts are over
+every row: an installation of twenty-five tunnels reports twenty-five on a page
+of ten, and `connected_tunnels` counts the connected tunnels of the
+installation and not the ones that happen to be on the page. See
+[Paging](#paging).
 
 The three counts answer three different questions, and the gaps between them
 mean different things.
@@ -1123,7 +1184,7 @@ mean different things.
 | `error` | The attempt failed. `last_error` holds the reason |
 
 `GET /api/status/:hostId` answers with the same counts except `desired_tunnels`,
-plus the Host itself.
+plus the Host itself. It is not paged and carries every tunnel of that Host.
 
 ## Encryption key
 

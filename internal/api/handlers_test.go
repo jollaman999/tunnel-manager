@@ -833,41 +833,72 @@ func TestWriteHandlersRollBackWhenTheRowIsGone(t *testing.T) {
 	}
 }
 
-// newStatusStubDB answers the reads the status API makes: the hosts and the
-// service ports the desired state is built from, and the tunnel rows the
-// running tunnels are reported through. The rows are unrelated on purpose, so
-// a status over a desired state that is not reached can be set up.
-func newStatusStubDB(t *testing.T, hosts []models.Host, sps []models.ServicePort, tunnels []models.Tunnel) *gorm.DB {
+// newRowsDB returns a database of its own holding these rows. The stubs above
+// answer statements without keeping them, which is what the transaction tests
+// need and the opposite of what a list needs: a page is counted with COUNT and
+// cut out with LIMIT and OFFSET, so what the list handlers do is SQL and is
+// asked of SQLite itself.
+func newRowsDB(t *testing.T, hosts []models.Host, sps []models.ServicePort, tunnels []models.Tunnel) *gorm.DB {
 	t.Helper()
 
-	db, _ := newTxRecordingDB(t)
-
-	err := db.Callback().Query().Replace("gorm:query", func(tx *gorm.DB) {
-		switch dest := tx.Statement.Dest.(type) {
-		case *[]models.Host:
-			*dest = hosts
-			tx.RowsAffected = int64(len(hosts))
-		case *[]models.ServicePort:
-			*dest = sps
-			tx.RowsAffected = int64(len(sps))
-		case *[]models.Tunnel:
-			*dest = tunnels
-			tx.RowsAffected = int64(len(tunnels))
-		}
+	db, err := gorm.Open(sqlite.Open(filepath.Join(t.TempDir(), "tunnel-manager.db")), &gorm.Config{
+		Logger: gormlogger.Discard,
 	})
 	if err != nil {
-		t.Fatalf("failed to replace the query callback: %v", err)
+		t.Fatalf("failed to open the database: %v", err)
+	}
+
+	err = db.AutoMigrate(&models.Host{}, &models.ServicePort{}, &models.Tunnel{})
+	if err != nil {
+		t.Fatalf("failed to migrate the database: %v", err)
+	}
+
+	for _, host := range hosts {
+		// Enabled carries a default of true, and gorm writes that default in
+		// place of a field that holds a zero value, onto the row and onto the
+		// struct it was given. A Host stored as disabled comes back enabled, so
+		// what the caller asked for is kept here and written by name once the
+		// row is there, which is the one thing a disabled Host in a test is for.
+		enabled := host.Enabled
+
+		err = db.Create(&host).Error
+		if err != nil {
+			t.Fatalf("failed to store a Host: %v", err)
+		}
+
+		err = db.Model(&models.Host{}).Where("id = ?", host.ID).Update("enabled", enabled).Error
+		if err != nil {
+			t.Fatalf("failed to store whether a Host is enabled: %v", err)
+		}
+	}
+
+	for _, sp := range sps {
+		err = db.Create(&sp).Error
+		if err != nil {
+			t.Fatalf("failed to store a service port: %v", err)
+		}
+	}
+
+	for _, row := range tunnels {
+		err = db.Create(&row).Error
+		if err != nil {
+			t.Fatalf("failed to store a tunnel: %v", err)
+		}
 	}
 
 	return db
 }
 
+// statusHost is a Host with an address of its own, because the rows are stored
+// in a database now and two Hosts cannot share an IP.
 func statusHost(id uint, enabled bool) models.Host {
-	return models.Host{ID: id, IP: "192.0.2.1", Port: 22, User: "root", Enabled: enabled}
+	return models.Host{ID: id, IP: fmt.Sprintf("192.0.2.%d", id), Port: 22, User: "root", Enabled: enabled}
 }
 
+// statusServicePort is a service port that no other one collides with: the
+// service address and port are unique together, and so is the local port.
 func statusServicePort(id uint) models.ServicePort {
-	return models.ServicePort{ID: id, ServiceIP: "192.0.2.2", ServicePort: 8081, LocalPort: 18080 + int(id)}
+	return models.ServicePort{ID: id, ServiceIP: "198.51.100.10", ServicePort: 8080 + int(id), LocalPort: 18080 + int(id)}
 }
 
 func statusTunnel(hostID, spID uint, status string) models.Tunnel {
@@ -936,7 +967,7 @@ func TestGetStatusReportsTheTunnelsThatShouldBeRunning(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			cipher := newTestCipher(t)
-			db := newStatusStubDB(t, tt.hosts, tt.sps, tt.tunnels)
+			db := newRowsDB(t, tt.hosts, tt.sps, tt.tunnels)
 
 			manager, err := tunnel.NewManager(db, zap.NewNop(), cipher, 1)
 			if err != nil {
@@ -1288,11 +1319,12 @@ func TestGetServicePortAnswersTheStoredRow(t *testing.T) {
 	}
 }
 
-// TestListServicePortsAnswersEveryStoredRow pins that the list carries the rows
-// as an array, so a client that reads data[0] finds a service port there.
+// TestListServicePortsAnswersEveryStoredRow pins that the page carries the rows
+// under items, so a client that reads data.items[0] finds a service port there,
+// along with the total the pager is drawn from.
 func TestListServicePortsAnswersEveryStoredRow(t *testing.T) {
 	sps := []models.ServicePort{statusServicePort(1), statusServicePort(2)}
-	db := newStatusStubDB(t, nil, sps, nil)
+	db := newRowsDB(t, nil, sps, nil)
 
 	c, rec := getRequest(t, "/api/service-port", "", "")
 	h := NewHandler(db, &wakeRecorder{tx: &txConnPool{}}, zap.NewNop(), newTestCipher(t))
@@ -1306,8 +1338,13 @@ func TestListServicePortsAnswersEveryStoredRow(t *testing.T) {
 	}
 
 	var resp struct {
-		Success bool                 `json:"success"`
-		Data    []models.ServicePort `json:"data"`
+		Success bool `json:"success"`
+		Data    struct {
+			Items []models.ServicePort `json:"items"`
+			Total int                  `json:"total"`
+			Page  int                  `json:"page"`
+			Size  int                  `json:"size"`
+		} `json:"data"`
 	}
 	err = json.Unmarshal(rec.Body.Bytes(), &resp)
 	if err != nil {
@@ -1317,13 +1354,21 @@ func TestListServicePortsAnswersEveryStoredRow(t *testing.T) {
 		t.Fatalf("success = false, body: %s", rec.Body.String())
 	}
 
-	if len(resp.Data) != len(sps) {
-		t.Fatalf("the answer carries %d service ports, want %d, body: %s", len(resp.Data), len(sps), rec.Body.String())
+	if len(resp.Data.Items) != len(sps) {
+		t.Fatalf("the answer carries %d service ports, want %d, body: %s",
+			len(resp.Data.Items), len(sps), rec.Body.String())
 	}
 	for i, want := range sps {
-		if resp.Data[i].ID != want.ID || resp.Data[i].LocalPort != want.LocalPort {
-			t.Errorf("service port %d = %+v, want id %d and local port %d", i, resp.Data[i], want.ID, want.LocalPort)
+		if resp.Data.Items[i].ID != want.ID || resp.Data.Items[i].LocalPort != want.LocalPort {
+			t.Errorf("service port %d = %+v, want id %d and local port %d",
+				i, resp.Data.Items[i], want.ID, want.LocalPort)
 		}
+	}
+	if resp.Data.Total != len(sps) {
+		t.Errorf("total = %d, want %d", resp.Data.Total, len(sps))
+	}
+	if resp.Data.Page != 1 || resp.Data.Size != 10 {
+		t.Errorf("page = %d and size = %d, want the first page of ten", resp.Data.Page, resp.Data.Size)
 	}
 }
 
@@ -2623,6 +2668,434 @@ func TestHostAnswersNeverCarryThePrivateKey(t *testing.T) {
 			if strings.Contains(body, forbidden) {
 				t.Fatalf("the %s answer carries %q: %s", name, forbidden, body)
 			}
+		}
+	}
+}
+
+// listEndpoint is one of the lists a page is asked of. The three answer in two
+// shapes, so the names a test reads an answer by are kept here: the Hosts and
+// the service ports carry their page under items with the number of rows beside
+// it, and the status carries its page under tunnels with the counts of the
+// whole installation.
+type listEndpoint struct {
+	name     string
+	target   string
+	call     func(*Handler, echo.Context) error
+	itemsKey string
+	totalKey string
+	idKey    string
+}
+
+var listEndpoints = []listEndpoint{
+	{
+		name:     "hosts",
+		target:   "/api/host",
+		call:     (*Handler).ListHosts,
+		itemsKey: "items",
+		totalKey: "total",
+		idKey:    "id",
+	},
+	{
+		name:     "service ports",
+		target:   "/api/service-port",
+		call:     (*Handler).ListServicePorts,
+		itemsKey: "items",
+		totalKey: "total",
+		idKey:    "id",
+	},
+	{
+		name:     "tunnels",
+		target:   "/api/status",
+		call:     (*Handler).GetStatus,
+		itemsKey: "tunnels",
+		totalKey: "total_tunnels",
+		idKey:    "host_id",
+	},
+}
+
+// newListRows is a Handler over a database holding rows Hosts, rows service
+// ports and rows tunnel rows, one tunnel per Host, so that all three lists are
+// the same length and a page of any of them can be checked the same way.
+func newListRows(t *testing.T, rows int) (*gorm.DB, *tunnel.Manager) {
+	t.Helper()
+
+	hosts := make([]models.Host, 0, rows)
+	sps := make([]models.ServicePort, 0, rows)
+	tunnels := make([]models.Tunnel, 0, rows)
+
+	for id := 1; id <= rows; id++ {
+		hosts = append(hosts, statusHost(uint(id), true))
+		sps = append(sps, statusServicePort(uint(id)))
+		tunnels = append(tunnels, statusTunnel(uint(id), 1, "connected"))
+	}
+
+	db := newRowsDB(t, hosts, sps, tunnels)
+
+	manager, err := tunnel.NewManager(db, zap.NewNop(), newTestCipher(t), 1)
+	if err != nil {
+		t.Fatalf("failed to create manager: %v", err)
+	}
+
+	return db, manager
+}
+
+// answerOf sends one list request with this query string and hands back what it
+// answered.
+func answerOf(t *testing.T, db *gorm.DB, manager tunnelManager, endpoint listEndpoint,
+	query string) *httptest.ResponseRecorder {
+	t.Helper()
+
+	target := endpoint.target
+	if query != "" {
+		target += "?" + query
+	}
+
+	c, rec := getRequest(t, target, "", "")
+	h := NewHandler(db, manager, zap.NewNop(), newTestCipher(t))
+
+	err := endpoint.call(h, c)
+	if err != nil {
+		t.Fatalf("%s returned an error: %v", endpoint.name, err)
+	}
+
+	return rec
+}
+
+// pageOf reads a page out of an answer: the identifiers of the rows it carries,
+// how many rows there are in all, and which page of which size this is.
+func pageOf(t *testing.T, rec *httptest.ResponseRecorder, endpoint listEndpoint) (ids []int, total, page, size int) {
+	t.Helper()
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d, body: %s", rec.Code, http.StatusOK, rec.Body.String())
+	}
+
+	success, data := decodeResponse(t, rec)
+	if !success {
+		t.Fatalf("success = false, body: %s", rec.Body.String())
+	}
+
+	rows, ok := data[endpoint.itemsKey].([]interface{})
+	if !ok {
+		t.Fatalf("the answer carries no %s array, body: %s", endpoint.itemsKey, rec.Body.String())
+	}
+
+	ids = make([]int, 0, len(rows))
+	for _, row := range rows {
+		fields, ok := row.(map[string]interface{})
+		if !ok {
+			t.Fatalf("a row of the page is not an object, body: %s", rec.Body.String())
+		}
+
+		id, ok := fields[endpoint.idKey].(float64)
+		if !ok {
+			t.Fatalf("a row of the page carries no %s, body: %s", endpoint.idKey, rec.Body.String())
+		}
+
+		ids = append(ids, int(id))
+	}
+
+	return ids, answerNumber(t, rec, data, endpoint.totalKey),
+		answerNumber(t, rec, data, "page"), answerNumber(t, rec, data, "size")
+}
+
+// answerNumber reads one number out of the data of an answer.
+func answerNumber(t *testing.T, rec *httptest.ResponseRecorder, data map[string]interface{}, key string) int {
+	t.Helper()
+
+	value, ok := data[key].(float64)
+	if !ok {
+		t.Fatalf("%s is not a number in the answer, body: %s", key, rec.Body.String())
+	}
+
+	return int(value)
+}
+
+// TestListsAnswerTenRowsWithoutBeingAsked pins the default: a request that
+// names no size is answered with the first ten rows and says so, rather than
+// with everything that is stored.
+func TestListsAnswerTenRowsWithoutBeingAsked(t *testing.T) {
+	for _, endpoint := range listEndpoints {
+		t.Run(endpoint.name, func(t *testing.T) {
+			db, manager := newListRows(t, 25)
+
+			ids, total, page, size := pageOf(t, answerOf(t, db, manager, endpoint, ""), endpoint)
+
+			if len(ids) != 10 {
+				t.Fatalf("the page carries %d rows, want 10: %v", len(ids), ids)
+			}
+			if page != 1 || size != 10 {
+				t.Errorf("page = %d and size = %d, want the first page of ten", page, size)
+			}
+			if total != 25 {
+				t.Errorf("total = %d, want 25", total)
+			}
+		})
+	}
+}
+
+// TestListsAnswerTheSizeThatWasAskedFor pins that every size that is offered is
+// served, and served in full.
+func TestListsAnswerTheSizeThatWasAskedFor(t *testing.T) {
+	for _, endpoint := range listEndpoints {
+		for _, size := range []int{20, 30, 50, 100} {
+			t.Run(fmt.Sprintf("%s of %d", endpoint.name, size), func(t *testing.T) {
+				db, manager := newListRows(t, 100)
+
+				query := fmt.Sprintf("size=%d", size)
+				ids, total, page, answered := pageOf(t, answerOf(t, db, manager, endpoint, query), endpoint)
+
+				if len(ids) != size {
+					t.Fatalf("the page carries %d rows, want %d", len(ids), size)
+				}
+				if answered != size {
+					t.Errorf("size = %d, want %d", answered, size)
+				}
+				if page != 1 {
+					t.Errorf("page = %d, want 1", page)
+				}
+				if total != 100 {
+					t.Errorf("total = %d, want 100", total)
+				}
+			})
+		}
+	}
+}
+
+// TestListsRefuseASizeTheyDoNotServe pins that a size outside the list is
+// refused rather than served. A size a request can pick freely is a way to ask
+// for every row in one answer, which is what the paging is here to prevent, and
+// a size that is quietly rounded would hand back a page nobody asked for.
+func TestListsRefuseASizeTheyDoNotServe(t *testing.T) {
+	sizes := []string{"7", "1000", "0", "-10", "ten", ""}
+
+	for _, endpoint := range listEndpoints {
+		for _, size := range sizes {
+			t.Run(fmt.Sprintf("%s of %q", endpoint.name, size), func(t *testing.T) {
+				db, manager := newListRows(t, 25)
+
+				rec := answerOf(t, db, manager, endpoint, "size="+size)
+
+				// An empty size is the one that is not refused: a query string
+				// that carries the name and no value is a request that named no
+				// size, and it is answered with the default.
+				if size == "" {
+					if rec.Code != http.StatusOK {
+						t.Fatalf("status = %d, want %d, body: %s", rec.Code, http.StatusOK, rec.Body.String())
+					}
+
+					return
+				}
+
+				if rec.Code != http.StatusBadRequest {
+					t.Fatalf("status = %d, want %d, body: %s", rec.Code, http.StatusBadRequest, rec.Body.String())
+				}
+
+				success, _ := decodeResponse(t, rec)
+				if success {
+					t.Fatalf("success = true on a size that is not served, body: %s", rec.Body.String())
+				}
+				if !strings.Contains(rec.Body.String(), "10, 20, 30, 50, 100") {
+					t.Errorf("the refusal does not say which sizes are served: %s", rec.Body.String())
+				}
+			})
+		}
+	}
+}
+
+// TestListPagesNeitherOverlapNorSkip pins the order the pages are cut out in:
+// the pages of a list, put back together, are the rows that are stored, each of
+// them once. A list without a stated order would let one row sit on two pages
+// while another is on none.
+func TestListPagesNeitherOverlapNorSkip(t *testing.T) {
+	for _, endpoint := range listEndpoints {
+		t.Run(endpoint.name, func(t *testing.T) {
+			db, manager := newListRows(t, 25)
+
+			seen := make(map[int]int)
+			all := make([]int, 0, 25)
+
+			for _, page := range []int{1, 2, 3} {
+				query := fmt.Sprintf("page=%d&size=10", page)
+				ids, total, answered, size := pageOf(t, answerOf(t, db, manager, endpoint, query), endpoint)
+
+				want := 10
+				if page == 3 {
+					want = 5
+				}
+				if len(ids) != want {
+					t.Fatalf("page %d carries %d rows, want %d: %v", page, len(ids), want, ids)
+				}
+				if answered != page || size != 10 {
+					t.Errorf("page %d was answered as page %d of size %d", page, answered, size)
+				}
+				if total != 25 {
+					t.Errorf("total = %d on page %d, want 25", total, page)
+				}
+
+				for _, id := range ids {
+					seen[id]++
+					all = append(all, id)
+				}
+			}
+
+			if len(all) != 25 {
+				t.Fatalf("the three pages carry %d rows together, want 25: %v", len(all), all)
+			}
+			for id, times := range seen {
+				if times != 1 {
+					t.Errorf("row %d is on %d pages, want 1", id, times)
+				}
+			}
+			for id := 1; id <= 25; id++ {
+				if seen[id] != 1 {
+					t.Errorf("row %d is on no page", id)
+				}
+			}
+		})
+	}
+}
+
+// TestAPageBeyondTheLastIsTheLastPage pins that a page that is not there is
+// answered with the last one. Rows are deleted while a screen is open, so the
+// page a client is on can be gone by the time it asks again, and an error there
+// would leave that screen empty instead of showing the rows that are left.
+func TestAPageBeyondTheLastIsTheLastPage(t *testing.T) {
+	for _, endpoint := range listEndpoints {
+		t.Run(endpoint.name, func(t *testing.T) {
+			db, manager := newListRows(t, 25)
+
+			ids, total, page, size := pageOf(t, answerOf(t, db, manager, endpoint, "page=99&size=10"), endpoint)
+
+			if page != 3 {
+				t.Fatalf("page = %d, want the last page 3, body of a list of %d rows", page, total)
+			}
+			if len(ids) != 5 {
+				t.Errorf("the last page carries %d rows, want 5: %v", len(ids), ids)
+			}
+			if size != 10 || total != 25 {
+				t.Errorf("size = %d and total = %d, want 10 and 25", size, total)
+			}
+		})
+	}
+}
+
+// TestAPageBelowTheFirstIsTheFirstPage pins the other end: a page of zero or
+// below is read as page 1 rather than refused.
+func TestAPageBelowTheFirstIsTheFirstPage(t *testing.T) {
+	for _, endpoint := range listEndpoints {
+		for _, asked := range []string{"0", "-3"} {
+			t.Run(endpoint.name+" of "+asked, func(t *testing.T) {
+				db, manager := newListRows(t, 25)
+
+				ids, _, page, _ := pageOf(t, answerOf(t, db, manager, endpoint, "page="+asked), endpoint)
+
+				if page != 1 {
+					t.Fatalf("page = %d, want 1", page)
+				}
+				if len(ids) != 10 {
+					t.Errorf("the page carries %d rows, want 10", len(ids))
+				}
+			})
+		}
+	}
+}
+
+// TestAListWithNoRowsIsTheEmptyFirstPage pins what a list answers when nothing
+// is stored: an empty array, no rows in all, and the first page. A client draws
+// a list out of that array, so it is there and empty rather than null.
+func TestAListWithNoRowsIsTheEmptyFirstPage(t *testing.T) {
+	for _, endpoint := range listEndpoints {
+		t.Run(endpoint.name, func(t *testing.T) {
+			db, manager := newListRows(t, 0)
+
+			rec := answerOf(t, db, manager, endpoint, "")
+			ids, total, page, size := pageOf(t, rec, endpoint)
+
+			if len(ids) != 0 {
+				t.Fatalf("the page carries %d rows although none is stored: %v", len(ids), ids)
+			}
+			if total != 0 {
+				t.Errorf("total = %d, want 0", total)
+			}
+			if page != 1 || size != 10 {
+				t.Errorf("page = %d and size = %d, want the first page of ten", page, size)
+			}
+			if !strings.Contains(rec.Body.String(), `"`+endpoint.itemsKey+`":[]`) {
+				t.Errorf("the empty page is not an empty array: %s", rec.Body.String())
+			}
+		})
+	}
+}
+
+// TestGetStatusCountsEveryTunnelAndNotThePage is what the paging of the status
+// stands or falls on. The three counts are about the installation: a page of
+// ten out of twenty-five tunnels still says twenty-five rows and says how many
+// of all of them are connected. Counted over the page instead, the screen would
+// report the page size as the number of tunnels and call an installation with
+// nothing connected on page one entirely disconnected.
+func TestGetStatusCountsEveryTunnelAndNotThePage(t *testing.T) {
+	const rows = 25
+	const connected = 20
+
+	hosts := make([]models.Host, 0, rows)
+	tunnels := make([]models.Tunnel, 0, rows)
+
+	for id := 1; id <= rows; id++ {
+		hosts = append(hosts, statusHost(uint(id), true))
+
+		status := "connected"
+		if id > connected {
+			status = "error"
+		}
+
+		tunnels = append(tunnels, statusTunnel(uint(id), 1, status))
+	}
+
+	db := newRowsDB(t, hosts, []models.ServicePort{statusServicePort(1)}, tunnels)
+
+	manager, err := tunnel.NewManager(db, zap.NewNop(), newTestCipher(t), 1)
+	if err != nil {
+		t.Fatalf("failed to create manager: %v", err)
+	}
+
+	c, rec := getRequest(t, "/api/status?page=1&size=10", "", "")
+	h := NewHandler(db, manager, zap.NewNop(), newTestCipher(t))
+
+	err = h.GetStatus(c)
+	if err != nil {
+		t.Fatalf("GetStatus returned error: %v", err)
+	}
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d, body: %s", rec.Code, http.StatusOK, rec.Body.String())
+	}
+
+	success, data := decodeResponse(t, rec)
+	if !success {
+		t.Fatalf("success = false, body: %s", rec.Body.String())
+	}
+
+	page, ok := data["tunnels"].([]interface{})
+	if !ok {
+		t.Fatalf("the answer carries no tunnels array, body: %s", rec.Body.String())
+	}
+	if len(page) != 10 {
+		t.Fatalf("the page carries %d tunnels, want 10, body: %s", len(page), rec.Body.String())
+	}
+
+	counts := []struct {
+		key  string
+		want int
+	}{
+		{"total_tunnels", rows},
+		{"connected_tunnels", connected},
+		{"desired_tunnels", rows},
+	}
+	for _, count := range counts {
+		got := answerNumber(t, rec, data, count.key)
+		if got != count.want {
+			t.Errorf("%s = %d, want %d, which is what is stored and not the page of ten",
+				count.key, got, count.want)
 		}
 	}
 }

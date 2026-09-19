@@ -2,6 +2,7 @@ package api
 
 import (
 	"errors"
+	"fmt"
 	"net/http"
 	"strconv"
 	"strings"
@@ -44,6 +45,127 @@ func NewHandler(db *gorm.DB, manager tunnelManager, logger *zap.Logger, cipher *
 		logger:  logger,
 		cipher:  cipher,
 	}
+}
+
+// pageSizes are the sizes a list request may ask a page in. The size is taken
+// from this list rather than as any number the request carries, because a free
+// size is a way to ask for every row in one answer, which is the load the
+// paging is here to keep off the database and off the screen.
+var pageSizes = []int{10, 20, 30, 50, 100}
+
+// defaultPageSize is the size a request that names none is answered in.
+const defaultPageSize = 10
+
+// listPage is the page of a list a request asked for.
+type listPage struct {
+	number int
+	size   int
+}
+
+// offset is the row the page begins at.
+func (p listPage) offset() int {
+	return (p.number - 1) * p.size
+}
+
+// fitTo moves the page onto the rows that are there and hands back the page the
+// request is answered with.
+//
+// A page past the last one is not refused. Rows are deleted while a screen is
+// open, so the page a client sits on can be gone by the time it asks again, and
+// an error there would leave that screen with nothing where the rows that are
+// left belong. It is answered with the last page instead. A list with no rows
+// at all is page 1, which is the empty first page.
+func (p listPage) fitTo(total int64) listPage {
+	last := (total + int64(p.size) - 1) / int64(p.size)
+	if last < 1 {
+		last = 1
+	}
+
+	if int64(p.number) > last {
+		p.number = int(last)
+	}
+
+	return p
+}
+
+// listPageOf is what a list answers with. The rows of the page carry how many
+// rows there are in all and which page of which size these are, because an
+// array on its own says nothing about what is not in it and a client cannot
+// tell a short last page from the whole list.
+type listPageOf struct {
+	Items interface{} `json:"items"`
+	Total int64       `json:"total"`
+	Page  int         `json:"page"`
+	Size  int         `json:"size"`
+}
+
+// readListPage reads the page and the size off the query string of a list
+// request. A page below 1 is read as 1; what becomes of a page above the last
+// one is decided by fitTo, once the rows have been counted.
+//
+// A size that is not one of pageSizes is refused rather than brought into
+// range, and the refusal names the sizes it takes, so that no request is
+// answered with a page of a size it did not ask for.
+func readListPage(c echo.Context) (listPage, error) {
+	page := listPage{number: 1, size: defaultPageSize}
+
+	raw := c.QueryParam("page")
+	if raw != "" {
+		number, err := strconv.Atoi(raw)
+		if err != nil {
+			return listPage{}, fmt.Errorf("page is not a number: %q", raw)
+		}
+
+		if number < 1 {
+			number = 1
+		}
+
+		page.number = number
+	}
+
+	raw = c.QueryParam("size")
+	if raw != "" {
+		size, err := strconv.Atoi(raw)
+		if err != nil || !isPageSize(size) {
+			return listPage{}, fmt.Errorf("size must be one of %s, and not %q", pageSizeList(), raw)
+		}
+
+		page.size = size
+	}
+
+	return page, nil
+}
+
+// isPageSize reports whether a size is one of the sizes a page is served in.
+func isPageSize(size int) bool {
+	for _, allowed := range pageSizes {
+		if size == allowed {
+			return true
+		}
+	}
+
+	return false
+}
+
+// pageSizeList is pageSizes as the refusal above names them, built from the
+// list itself so that a size added to it is a size the message says.
+func pageSizeList() string {
+	sizes := make([]string, 0, len(pageSizes))
+	for _, size := range pageSizes {
+		sizes = append(sizes, strconv.Itoa(size))
+	}
+
+	return strings.Join(sizes, ", ")
+}
+
+// badListPage answers a page or a size the request cannot be served with. It
+// carries what is wrong with it: the request is the thing that is wrong, and
+// the client is the one that can put it right.
+func badListPage(c echo.Context, err error) error {
+	return c.JSON(http.StatusBadRequest, models.Response{
+		Success: false,
+		Error:   "The list was not read: " + err.Error(),
+	})
 }
 
 // sealPassword returns the password of a Host as it is stored. An empty
@@ -212,9 +334,35 @@ func (h *Handler) CreateHost(c echo.Context) error {
 	})
 }
 
+// ListHosts answers one page of the Hosts, in the order they were registered
+// in. The order is stated rather than left to the database, because LIMIT and
+// OFFSET cut a page out of an order: rows handed back in a different order from
+// one read to the next would put one Host on two pages and another on none. The
+// id is what that order is taken from, since it is given out once, never
+// changes, and no two Hosts share one.
 func (h *Handler) ListHosts(c echo.Context) error {
+	page, err := readListPage(c)
+	if err != nil {
+		return badListPage(c, err)
+	}
+
+	// The rows are counted by the database rather than read and measured here.
+	// Reading every row to find out how many there are is the work the paging
+	// is here to avoid.
+	var total int64
+	err = h.db.Model(&models.Host{}).Count(&total).Error
+	if err != nil {
+		h.logger.Error("failed to count the Hosts", zap.Error(err))
+		return c.JSON(http.StatusInternalServerError, models.Response{
+			Success: false,
+			Error:   "Failed to fetch Hosts",
+		})
+	}
+
+	page = page.fitTo(total)
+
 	var hosts []models.Host
-	err := h.db.Find(&hosts).Error
+	err = h.db.Order("id").Limit(page.size).Offset(page.offset()).Find(&hosts).Error
 	if err != nil {
 		h.logger.Error("failed to fetch Hosts", zap.Error(err))
 		return c.JSON(http.StatusInternalServerError, models.Response{
@@ -223,9 +371,20 @@ func (h *Handler) ListHosts(c echo.Context) error {
 		})
 	}
 
+	// A page that holds no row is an empty array and not null: a client draws a
+	// list out of it, and null is not a list.
+	if hosts == nil {
+		hosts = []models.Host{}
+	}
+
 	return c.JSON(http.StatusOK, models.Response{
 		Success: true,
-		Data:    hosts,
+		Data: listPageOf{
+			Items: hosts,
+			Total: total,
+			Page:  page.number,
+			Size:  page.size,
+		},
 	})
 }
 
@@ -536,9 +695,28 @@ func (h *Handler) CreateServicePort(c echo.Context) error {
 	})
 }
 
+// ListServicePorts answers one page of the service ports, ordered by id for the
+// reason ListHosts is.
 func (h *Handler) ListServicePorts(c echo.Context) error {
+	page, err := readListPage(c)
+	if err != nil {
+		return badListPage(c, err)
+	}
+
+	var total int64
+	err = h.db.Model(&models.ServicePort{}).Count(&total).Error
+	if err != nil {
+		h.logger.Error("failed to count the service ports", zap.Error(err))
+		return c.JSON(http.StatusInternalServerError, models.Response{
+			Success: false,
+			Error:   "Failed to fetch service ports",
+		})
+	}
+
+	page = page.fitTo(total)
+
 	var sps []models.ServicePort
-	err := h.db.Find(&sps).Error
+	err = h.db.Order("id").Limit(page.size).Offset(page.offset()).Find(&sps).Error
 	if err != nil {
 		h.logger.Error("failed to fetch service ports", zap.Error(err))
 		return c.JSON(http.StatusInternalServerError, models.Response{
@@ -547,9 +725,18 @@ func (h *Handler) ListServicePorts(c echo.Context) error {
 		})
 	}
 
+	if sps == nil {
+		sps = []models.ServicePort{}
+	}
+
 	return c.JSON(http.StatusOK, models.Response{
 		Success: true,
-		Data:    sps,
+		Data: listPageOf{
+			Items: sps,
+			Total: total,
+			Page:  page.number,
+			Size:  page.size,
+		},
 	})
 }
 
@@ -738,14 +925,23 @@ func (h *Handler) DeleteServicePort(c echo.Context) error {
 	})
 }
 
+// GetStatus answers the counts of the installation along with one page of the
+// tunnel rows.
+//
+// The three counts are over every row and not over the page. They are what the
+// status screen says the installation is doing, and counted over a page they
+// would follow the page size around: total_tunnels would read as the size of
+// the page, and a page without a connected tunnel on it would say that nothing
+// is connected while the tunnels carry traffic.
+//
+// The page itself is ordered by the two columns the row is identified by, host
+// first, so that the order is one the database states rather than one it
+// happens to return. See ListHosts for what an order that is not stated does to
+// LIMIT and OFFSET.
 func (h *Handler) GetStatus(c echo.Context) error {
-	tunnels, err := h.manager.GetAllTunnels()
+	page, err := readListPage(c)
 	if err != nil {
-		h.logger.Error("failed to fetch the tunnel status", zap.Error(err))
-		return c.JSON(http.StatusInternalServerError, models.Response{
-			Success: false,
-			Error:   "Failed to fetch tunnel status",
-		})
+		return badListPage(c, err)
 	}
 
 	// A count that is missing is an error rather than a field left out: the
@@ -760,20 +956,51 @@ func (h *Handler) GetStatus(c echo.Context) error {
 		})
 	}
 
-	var connectedTunnels int
-	for _, t := range *tunnels {
-		if t.Status == "connected" {
-			connectedTunnels++
-		}
+	var totalTunnels int64
+	err = h.db.Model(&models.Tunnel{}).Count(&totalTunnels).Error
+	if err != nil {
+		h.logger.Error("failed to count the tunnel rows", zap.Error(err))
+		return c.JSON(http.StatusInternalServerError, models.Response{
+			Success: false,
+			Error:   "Failed to fetch tunnel status",
+		})
+	}
+
+	var connectedTunnels int64
+	err = h.db.Model(&models.Tunnel{}).Where("status = ?", "connected").Count(&connectedTunnels).Error
+	if err != nil {
+		h.logger.Error("failed to count the connected tunnels", zap.Error(err))
+		return c.JSON(http.StatusInternalServerError, models.Response{
+			Success: false,
+			Error:   "Failed to fetch tunnel status",
+		})
+	}
+
+	page = page.fitTo(totalTunnels)
+
+	var tunnels []models.Tunnel
+	err = h.db.Order("host_id, sp_id").Limit(page.size).Offset(page.offset()).Find(&tunnels).Error
+	if err != nil {
+		h.logger.Error("failed to fetch the tunnel status", zap.Error(err))
+		return c.JSON(http.StatusInternalServerError, models.Response{
+			Success: false,
+			Error:   "Failed to fetch tunnel status",
+		})
+	}
+
+	if tunnels == nil {
+		tunnels = []models.Tunnel{}
 	}
 
 	return c.JSON(http.StatusOK, models.Response{
 		Success: true,
 		Data: map[string]interface{}{
 			"desired_tunnels":   desiredTunnels,
-			"total_tunnels":     len(*tunnels),
+			"total_tunnels":     totalTunnels,
 			"connected_tunnels": connectedTunnels,
 			"tunnels":           tunnels,
+			"page":              page.number,
+			"size":              page.size,
 		},
 	})
 }

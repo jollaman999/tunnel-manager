@@ -808,6 +808,54 @@ curl -s -b cookies.txt -X POST "$BASE/api/setup" \
 `POST /api/login` 을 뺀 `/api` 아래 전부가 세션을 요구합니다. `GET` 이 아닌 것은 전부
 `X-CSRF-Token` 헤더를 요구합니다.
 
+### 페이징
+
+`GET /api/host`, `GET /api/service-port`, `GET /api/status` 는 한 번에 한 페이지씩 줍니다.
+전부 돌려주는 목록은 설치본이 커지는 만큼 같이 커집니다. 응답도, 그 응답을 만드는 메모리도,
+그것을 들고 있는 화면도 행 수만큼 커지는데 그 전부를 한 번에 보지는 않습니다.
+
+| 인자 | 기본값 | 받는 값 |
+|------|--------|---------|
+| `page` | `1` | 페이지 번호이며 1부터 셉니다. 1보다 작으면 1로 읽고, 마지막 페이지를 넘어간 번호는 거부하지 않고 **마지막 페이지**로 답합니다 |
+| `size` | `10` | 한 페이지의 행 수. `10`, `20`, `30`, `50`, `100` 중 하나이며 그 밖의 값은 `400` 으로 거부합니다 |
+
+범위를 넘어간 페이지가 오류가 아닌 이유는, 화면이 열려 있는 동안에도 행이 지워지기
+때문입니다. 클라이언트가 보고 있던 페이지가 다시 물을 때는 없을 수 있고, 거기서 오류를 내면
+남아 있는 행이 있어야 할 자리에 빈 화면이 남습니다. 저장된 행이 하나도 없는 목록은 `items` 가
+빈 1페이지입니다.
+
+`size` 를 아무 수나 받지 않고 목록에서 고르게 한 이유는, 요청이 크기를 마음대로 정할 수 있으면
+한 번의 요청으로 전체 행을 가져갈 수 있기 때문입니다. 페이징이 막으려는 것이 바로 그것입니다.
+
+**`/api/host` 와 `/api/service-port` 는 응답 모양이 바뀌었습니다.** 전에는 `data` 가 행의
+배열이었고, 이제는 페이지를 담은 객체입니다.
+
+```json
+{
+  "success": true,
+  "data": {
+    "items": [ "..." ],
+    "total": 25,
+    "page": 2,
+    "size": 10
+  }
+}
+```
+
+`items` 가 그 페이지이고, `total` 은 전체 행 수이며, `page` 와 `size` 는 실제로 응답한 값이라
+요청한 값과 늘 같지는 않습니다. `data[0]` 을 읽던 클라이언트는 이제 `data.items[0]` 을 읽습니다.
+
+`/api/status` 는 원래 객체였습니다. 이제 `tunnels` 가 터널 행의 한 페이지이고 그 옆에 `page` 와
+`size` 가 붙습니다. **숫자 셋은 페이지가 아니라 전체 행을 셉니다.** 그 숫자들은 지금 보고 있는
+페이지가 아니라 설치본이 무엇을 하고 있는지를 말합니다.
+
+```bash
+# Host 를 20개씩 해서 2페이지, 그리고 터널 행의 마지막 페이지. 범위를 넘어간 페이지는
+# 마지막 페이지로 오므로 큰 수를 주면 그것을 받습니다.
+curl -s -b cookies.txt "$BASE/api/host?page=2&size=20"
+curl -s -b cookies.txt "$BASE/api/status?page=99999&size=10"
+```
+
 ### 계정
 
 | 메서드 | 경로 | 하는 일 |
@@ -823,7 +871,7 @@ curl -s -b cookies.txt -X POST "$BASE/api/setup" \
 | 메서드 | 경로 | 하는 일 |
 |--------|------|---------|
 | `POST` | `/api/host` | Host 생성 |
-| `GET` | `/api/host` | Host 목록 조회 |
+| `GET` | `/api/host` | Host 한 페이지를 등록된 순서로 조회. `page` 와 `size` 를 받음, [페이징](#페이징) 참고 |
 | `GET` | `/api/host/:id` | 특정 Host 조회 |
 | `PUT` | `/api/host/:id` | Host 수정. 모든 항목이 선택이며, `enabled` 를 false 로 하면 그 Host 의 터널이 멈춤 |
 | `DELETE` | `/api/host/:id` | Host 삭제 |
@@ -862,7 +910,7 @@ curl -s -b cookies.txt -X POST "$BASE/api/host" \
 | 메서드 | 경로 | 하는 일 |
 |--------|------|---------|
 | `POST` | `/api/service-port` | 서비스 포트 생성 |
-| `GET` | `/api/service-port` | 서비스 포트 목록 조회 |
+| `GET` | `/api/service-port` | 서비스 포트 한 페이지를 등록된 순서로 조회. `page` 와 `size` 를 받음, [페이징](#페이징) 참고 |
 | `GET` | `/api/service-port/:id` | 특정 서비스 포트 조회 |
 | `PUT` | `/api/service-port/:id` | 서비스 포트 수정. `service_ip`, `service_port`, `local_port` 가 모두 필수 |
 | `DELETE` | `/api/service-port/:id` | 서비스 포트 삭제 |
@@ -871,8 +919,8 @@ curl -s -b cookies.txt -X POST "$BASE/api/host" \
 
 | 메서드 | 경로 | 하는 일 |
 |--------|------|---------|
-| `GET` | `/api/status` | 숫자 셋과 전체 터널 |
-| `GET` | `/api/status/:hostId` | 그 Host 와 그 Host 의 터널 |
+| `GET` | `/api/status` | 설치본 전체의 숫자 셋과 터널 행 한 페이지. `page` 와 `size` 를 받음, [페이징](#페이징) 참고 |
+| `GET` | `/api/status/:hostId` | 그 Host 와 그 Host 의 터널. 페이징하지 않음. 한 Host 의 터널은 서비스 포트 수만큼입니다 |
 
 ### 설정과 제거
 
@@ -990,6 +1038,8 @@ curl -s -b cookies.txt https://127.0.0.1:8888/api/status
     "desired_tunnels": 1,
     "total_tunnels": 1,
     "connected_tunnels": 0,
+    "page": 1,
+    "size": 10,
     "tunnels": [
       {
         "host_id": 1,
@@ -1006,6 +1056,11 @@ curl -s -b cookies.txt https://127.0.0.1:8888/api/status
   }
 }
 ```
+
+`tunnels` 는 터널 행의 한 페이지이고 Host, 그 다음 서비스 포트 순으로 정렬되며, `page` 와
+`size` 가 어느 페이지를 어느 크기로 준 것인지 말합니다. 숫자 셋은 전체 행을 셉니다. 터널이
+25개인 설치본은 10개짜리 페이지를 줘도 25를 보고하고, `connected_tunnels` 도 그 페이지에
+올라온 것이 아니라 설치본 전체의 연결된 터널을 셉니다. [페이징](#페이징)을 보십시오.
 
 숫자 셋은 서로 다른 세 질문에 답하고, 그 사이의 차이도 뜻이 다릅니다.
 
@@ -1030,6 +1085,7 @@ curl -s -b cookies.txt https://127.0.0.1:8888/api/status
 | `error` | 시도가 실패함. 이유는 `last_error` 에 있음 |
 
 `GET /api/status/:hostId` 는 `desired_tunnels` 를 뺀 같은 숫자들과 그 Host 자체를 줍니다.
+이쪽은 페이징하지 않고 그 Host 의 터널을 전부 줍니다.
 
 ## 암호화 키
 
