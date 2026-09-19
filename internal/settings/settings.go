@@ -55,7 +55,12 @@ type Settings struct {
 	LoggingFileMaxSize    int    `json:"logging_file_max_size"`
 	LoggingFileMaxBackups int    `json:"logging_file_max_backups"`
 	LoggingFileMaxAge     int    `json:"logging_file_max_age"`
-	LoggingFileCompress   bool   `json:"logging_file_compress"`
+	// LoggingFileCompress is on by default. What it compresses is a log that
+	// has already been rotated, which nothing reads again except when something
+	// has gone wrong, and the text of a log is most of its size: five backups
+	// of 100MB come down to a fraction of that. The cost is paid once per
+	// rotation, on a file nobody is writing to any more.
+	LoggingFileCompress bool `gorm:"default:true" json:"logging_file_compress"`
 
 	UpdatedAt time.Time `json:"updated_at"`
 }
@@ -83,7 +88,7 @@ func Defaults() Settings {
 		LoggingFileMaxSize:    100,
 		LoggingFileMaxBackups: 5,
 		LoggingFileMaxAge:     30,
-		LoggingFileCompress:   false,
+		LoggingFileCompress:   true,
 	}
 }
 

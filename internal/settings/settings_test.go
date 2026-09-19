@@ -37,6 +37,12 @@ func newDB(t *testing.T) *gorm.DB {
 // the value the configuration file fell back to before the settings moved into
 // the database. A default that drifted here would change what a deployment runs
 // on without anybody asking for it.
+//
+// Two have been changed on purpose since, and are held to the new value rather
+// than the old one: api.https_enabled, because the screens carry a password,
+// and logging.file.compress, because what it compresses is a rotated log that
+// nothing reads again. A stored setting is not touched either way; this is what
+// an installation that has none starts on.
 func TestDefaultsAreTheValuesTheConfigurationFileRanOn(t *testing.T) {
 	d := Defaults()
 
@@ -56,7 +62,7 @@ func TestDefaultsAreTheValuesTheConfigurationFileRanOn(t *testing.T) {
 		{"logging.file.max_size", d.LoggingFileMaxSize, 100},
 		{"logging.file.max_backups", d.LoggingFileMaxBackups, 5},
 		{"logging.file.max_age", d.LoggingFileMaxAge, 30},
-		{"logging.file.compress", d.LoggingFileCompress, false},
+		{"logging.file.compress", d.LoggingFileCompress, true},
 	}
 
 	for _, tc := range cases {

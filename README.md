@@ -581,7 +581,7 @@ and `PUT /api/settings`.
 | Log size before rotation (MB) | `logging_file_max_size` | `logging.file.max_size` | `100` | At the next start |
 | Rotated files kept | `logging_file_max_backups` | `logging.file.max_backups` | `5` | At the next start |
 | Days a rotated file is kept | `logging_file_max_age` | `logging.file.max_age` | `30` | At the next start |
-| Compress rotated files | `logging_file_compress` | `logging.file.compress` | `false` | At the next start |
+| Compress rotated files | `logging_file_compress` | `logging.file.compress` | `true` | At the next start |
 
 **The log level is the one setting the running process takes on.** It reaches
 every logger that was handed out at startup, the one the database writes its
