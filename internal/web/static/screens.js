@@ -1209,6 +1209,42 @@ async function readRestart() {
 // next to the box it was typed in rather than after a round trip. A value that
 // gets past this is still checked by the server: this form is a convenience,
 // not the rule.
+// pathNote says how a stored path is read, and names the directory it is read
+// against rather than describing it: which directory that is depends on how the
+// service was started, and an operator looking at a browser cannot see it.
+//
+// The rule is the platform's own idea of an absolute path, so the sentence
+// about it has to be the platform's too. On Windows a path is absolute only
+// when it names a drive, and one that begins with a separator alone is not:
+// it is joined to the directory below like any other, which is the surprise
+// worth naming.
+function pathNote(set, whatItIs) {
+  const dir = set === null || set === undefined || typeof set.install_dir !== "string"
+    ? "" : set.install_dir;
+
+  const base = whatItIs + " Taken up at the next start.";
+
+  if (dir === "") {
+    return base;
+  }
+
+  // A drive letter and a colon is what Windows calls the start of an absolute
+  // path, and it is also how this screen can tell which platform it is looking
+  // at without being told.
+  const windows = /^[A-Za-z]:[\\/]/.test(dir);
+
+  if (windows) {
+    return base + " An absolute path is used as it stands, and on Windows that means one " +
+      "naming a drive or a share, as in " + dir + "\\logs\\tunnel-manager.log. Anything " +
+      "else is read against " + dir + ", the directory the database file is in, and that " +
+      "includes a path beginning with a single backslash, which Windows does not count as " +
+      "absolute.";
+  }
+
+  return base + " A path beginning with / is used as it stands. Anything else is read " +
+    "against " + dir + ", the directory the database file is in.";
+}
+
 function settingsForm(set) {
   return buildForm({
     name: "settings",
@@ -1226,8 +1262,8 @@ function settingsForm(set) {
         label: "Encryption key file",
         value: set.security_key_file,
         check: checkPath,
-        note: "The path of the file the key is kept in. The key itself is never " +
-          "shown here. Taken up at the next start."
+        note: pathNote(set, "The path of the file the key is kept in. The key itself is " +
+          "never shown here.")
       },
       {
         name: "logging_level",
@@ -1246,7 +1282,7 @@ function settingsForm(set) {
       settingsField(
         { name: "logging_file_path", label: "Log file", value: set.logging_file_path,
           check: checkPath },
-        "Taken up at the next start."
+        pathNote(set, "The path of the file the log is written to.")
       ),
       settingsField(countField("logging_file_max_size", "Log size before rotation (MB)",
         set.logging_file_max_size), "Taken up at the next start."),

@@ -48,16 +48,20 @@ type SettingsHandler struct {
 	// place as it is stored is left out of the comparison by name, so the copy
 	// standing still is not what decides whether a setting is reported.
 	startup settings.Settings
+	// installDir is the directory the database file is in, which is what a
+	// stored path that is not absolute is read against.
+	installDir string
 }
 
 func NewSettingsHandler(db *gorm.DB, logger *zap.Logger, logLevel zap.AtomicLevel,
-	gormLevel databaseLogLevel, startup settings.Settings) *SettingsHandler {
+	gormLevel databaseLogLevel, startup settings.Settings, installDir string) *SettingsHandler {
 	return &SettingsHandler{
-		db:        db,
-		logger:    logger,
-		logLevel:  logLevel,
-		gormLevel: gormLevel,
-		startup:   startup,
+		db:         db,
+		logger:     logger,
+		logLevel:   logLevel,
+		gormLevel:  gormLevel,
+		startup:    startup,
+		installDir: installDir,
 	}
 }
 
@@ -108,6 +112,12 @@ type settingsView struct {
 	*settings.Settings
 
 	PendingRestart []pendingSetting `json:"pending_restart"`
+
+	// InstallDir is the directory a stored path that is not absolute is read
+	// against. It is here so that the screen can say which directory that is
+	// rather than describe it, since what it is depends on how the service was
+	// started and the operator cannot see it from a browser.
+	InstallDir string `json:"install_dir"`
 }
 
 // GetSettings answers with what is stored, along with what is stored but not
@@ -127,6 +137,7 @@ func (h *SettingsHandler) GetSettings(c echo.Context) error {
 		Data: settingsView{
 			Settings:       stored,
 			PendingRestart: h.pendingRestart(stored),
+			InstallDir:     h.installDir,
 		},
 	})
 }

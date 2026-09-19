@@ -774,7 +774,7 @@ func main() {
 	// against what is stored and name the settings a restart is still owed for.
 	// Dropped here, the only place that knew would be the answer to the save
 	// that stored them, which is gone as soon as the screen is left.
-	settingsHandler := api.NewSettingsHandler(db, logger, logLevel, gormLevel, *set)
+	settingsHandler := api.NewSettingsHandler(db, logger, logLevel, gormLevel, *set, installDir)
 	// The log screen is handed the path this process resolved, the same one the
 	// logger above writes through. Worked out on the screen instead it would be
 	// a second place that knows what a relative logging.file.path is read

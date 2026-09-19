@@ -83,7 +83,7 @@ func newSettingsHandler(t *testing.T, db *gorm.DB) (*SettingsHandler, zap.Atomic
 		t.Fatalf("failed to read the settings: %v", err)
 	}
 
-	return NewSettingsHandler(db, zap.New(core), level, gormLevel, *startup), level, gormLevel, logs
+	return NewSettingsHandler(db, zap.New(core), level, gormLevel, *startup, t.TempDir()), level, gormLevel, logs
 }
 
 // settingsRequest runs one call against the handler and hands back what it
