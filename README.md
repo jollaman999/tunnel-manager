@@ -194,7 +194,7 @@ The flags are all of them:
 | Flag | What it does |
 |------|--------------|
 | `-db <path>` | The database file. It holds the settings, the registered hosts and the account, and it is created, directories above it included, if it is not there |
-| `-reset-settings` | Puts every stored setting back to its default, prints what it changed and exits. See [If the server will not start](#if-the-server-will-not-start) |
+| `-reset-settings` | Puts every stored setting back to its default, prints what it changed and exits. The registered hosts, the service ports, the account and the certificate are left as they are. See [If the server will not start](#if-the-server-will-not-start) |
 | `-version` | Prints the version and exits |
 | `-help` | Prints the flags and exits |
 
@@ -524,7 +524,7 @@ no directory travels next to it and no path has to be configured.
 | Hosts | `/ui/hosts` | One row per Host with ID, IP, port, user, description, enabled and updated. Add a Host, edit one, enable or disable one, delete one. |
 | Service Ports | `/ui/service-ports` | One row per service port with ID, service IP, service port, local port, description and updated. Add, edit and delete. |
 | Logs | `/ui/logs` | The end of the log file, newest last, with a level filter and a count to show. It asks again every 5 seconds. It reads the file the process is writing now; rotated files are not shown. |
-| Settings | `/ui/settings` | Every stored setting, what a save changed and whether it is in place, the certificate being served with a button to renew it and boxes to register one of your own, and the Uninstall at the bottom. See [Settings](#settings). |
+| Settings | `/ui/settings` | What is stored but not being run on yet, every stored setting and what a save changed, the certificate being served with a button to renew it and boxes to register one of your own, the username and the password of this account, a Restart that takes the service down and brings it back, and the Uninstall at the bottom. See [Settings](#settings). |
 | Login | `/ui/login` | Where a client without a session lands. Leave the username empty on the first sign in. It leads to the setup screen while the account still needs one. |
 
 The version of the binary is in the bottom right corner of every screen, the
@@ -692,8 +692,14 @@ server that will not start. `-reset-settings` is the way out.
 ```
 
 It puts every setting back to its default, prints what it changed and exits. The
-next start runs on the defaults, and the Settings screen is reachable again. A
-stored set that does not pass the rules above says so and names this flag:
+next start runs on the defaults, and the Settings screen is reachable again.
+
+**Only the settings go back.** The registered hosts, the service ports, the
+account and the certificate are in the same database file and are left as they
+are: nothing has to be registered again, and you log in with the password you
+already have.
+
+A stored set that does not pass the rules above says so and names this flag:
 
 ```text
 fatal  failed to read the settings  {"error": "the stored settings are refused: invalid API port: 0.

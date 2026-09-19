@@ -510,7 +510,9 @@ func main() {
 	resetSettings := flag.Bool("reset-settings", false,
 		"put every stored setting back to its default and exit. It is the way out of a\n"+
 			"stored setting that keeps the server from starting, since the Settings screen\n"+
-			"that would change it is served by the server that will not start.")
+			"that would change it is served by the server that will not start.\n"+
+			"Only the settings go back. The registered hosts, the service ports, the account\n"+
+			"and the certificate are left as they are.")
 	flag.Parse()
 
 	if *versionFlag {

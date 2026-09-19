@@ -51,12 +51,18 @@ pre {
   font-size: 13px;
 }
 
+/* The name and the links are two rows of one block. The margin that used to be
+   on the bar is here, so the space above and below the top of the page is what
+   it was when the two sat on one row. */
+.topbar {
+  margin: -0.25rem 0 1rem;
+}
+
 nav {
   display: flex;
   flex-wrap: wrap;
   gap: 0.75rem;
   align-items: center;
-  margin: -0.25rem 0 1rem;
   padding-bottom: 0.75rem;
   border-bottom: 1px solid #dcdfe4;
 }
@@ -77,18 +83,16 @@ nav a.current {
   color: #ffffff;
 }
 
-/* The logout sits apart from the screens, because it is not one of them. */
-/* The name is set apart from the links so that it reads as what this is rather
-   than as somewhere else to go, and the rule after it keeps the links from
-   sitting on top of it. */
-nav .brand {
-  margin-right: 0.5rem;
-  padding-right: 0.75rem;
+/* The name is on its own row above the links, so it reads as what this is
+   rather than as somewhere else to go. Nothing divides it from them any more:
+   the row does that. */
+.topbar .brand {
+  margin-bottom: 0.5rem;
   color: #1c1c1c;
   font-weight: 600;
-  border-right: 1px solid #dcdfe4;
 }
 
+/* The logout sits apart from the screens, because it is not one of them. */
 nav a.logout {
   margin-left: auto;
   color: #8a2f2f;
@@ -284,6 +288,26 @@ button[type="submit"]:active {
   background: #152a40;
 }
 
+/* The same paint as a submit, for the one press a card is there for that is not
+   a submit. The helper that draws those sets type="button", so a press inside a
+   form does not send it, and the selector above cannot reach it however main
+   the button is. The colours are repeated rather than joined onto the selector
+   above, because that selector is what paints every submit on these screens and
+   widening it moves all of them. */
+button.primary {
+  color: #ffffff;
+  background: #24456b;
+  border-color: #24456b;
+}
+
+button.primary:hover {
+  background: #1b3652;
+}
+
+button.primary:active {
+  background: #152a40;
+}
+
 /* Delete is the one button in a row that cannot be taken back with another
    click, so it does not look like the two next to it. */
 button.danger {
@@ -318,6 +342,15 @@ button[type="submit"].danger:hover {
 button[type="submit"].danger:active {
   background: #6b1a1a;
   border-color: #6b1a1a;
+}
+
+/* The switch and its Save are one thing, and the certificate below them is
+   another. Sitting against each other they read as one, and the Save looks as
+   if it stores the certificate as well. The gap is 1.25rem, which is what a
+   card is spaced from the next one by: the distance these screens already use
+   for "what follows is something else". */
+.https-switch {
+  margin-bottom: 1.25rem;
 }
 
 /* A fingerprint is compared character by character against what a browser or

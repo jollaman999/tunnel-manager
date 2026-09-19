@@ -217,19 +217,27 @@ function render(title, nodes) {
   }
 }
 
-// navigation is the bar the screens are reached from. The links carry an href
-// so they can be opened in a new tab, and the click is taken over so that
-// moving between screens does not fetch the page again.
+// navigation is the top of every screen: the product name on one row and the
+// links the screens are reached from on the next. The links carry an href so
+// they can be opened in a new tab, and the click is taken over so that moving
+// between screens does not fetch the page again.
+//
+// The two are separate rows because they do separate things. The name is the
+// same on every screen, and the links are how one of them is chosen; on one row
+// the name reads as the first of the places to go.
 function navigation() {
-  const bar = document.createElement("nav");
+  const top = document.createElement("div");
+  top.className = "topbar";
 
-  // The product name sits in the bar rather than in the heading, because the
-  // heading says which screen this is. Without it the name is only ever seen on
-  // the way in, and a tab left open says nothing about what it belongs to.
-  const brand = document.createElement("span");
+  // The product name sits here rather than in the heading, because the heading
+  // says which screen this is. Without it the name is only ever seen on the way
+  // in, and a tab left open says nothing about what it belongs to.
+  const brand = document.createElement("div");
   brand.className = "brand";
   brand.textContent = "Tunnel Manager";
-  bar.appendChild(brand);
+  top.appendChild(brand);
+
+  const bar = document.createElement("nav");
 
   for (const name of Object.keys(screens)) {
     const screen = screens[name];
@@ -266,7 +274,9 @@ function navigation() {
 
   bar.appendChild(out);
 
-  return bar;
+  top.appendChild(bar);
+
+  return top;
 }
 
 // apiCall is the one door to the API. The two answers that mean the operator is
@@ -404,9 +414,10 @@ function element(tag, text) {
 // button inside a form submits it otherwise, which would send the form of the
 // row the button sits next to.
 //
-// variant, where a caller passes one, is how a button that does something the
-// operator cannot take back is told apart from the ones next to it that only
-// open a form or flip a flag.
+// variant, where a caller passes one, is the class that paints the button: it
+// is how the one press a card is there for, or one that the operator cannot
+// take back, is told apart from the ones next to it that only open a form or
+// flip a flag.
 function actionButton(label, name, onClick, variant) {
   const node = document.createElement("button");
 

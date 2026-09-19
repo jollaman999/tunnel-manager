@@ -1346,6 +1346,8 @@ function certificatePEM(view) {
 function httpsSwitch(set) {
   const wrap = document.createElement("div");
 
+  wrap.className = "https-switch";
+
   const row = document.createElement("div");
   row.className = "field";
 
@@ -1367,9 +1369,12 @@ function httpsSwitch(set) {
 
   const buttons = document.createElement("div");
   buttons.className = "buttons";
+  // It is painted as the main press of this card. A button drawn by the helper
+  // is not a submit, and the colour a submit is given comes from a selector that
+  // only submits match, so it is asked for by name here.
   buttons.appendChild(actionButton("Save", "certificate-https-save", function () {
     return saveHTTPS(box.checked);
-  }));
+  }, "primary"));
 
   wrap.appendChild(row);
   wrap.appendChild(buttons);
@@ -1721,6 +1726,10 @@ function settingsRescue() {
     "Start it once with -reset-settings. Every setting goes back to its default, " +
       "what it changed is printed, and the process exits. The next start runs on " +
       "the defaults, and this screen is reachable again."));
+  card.appendChild(element("p",
+    "Only the settings go back. The registered hosts, the service ports, the account " +
+      "and the certificate are left as they are, so nothing has to be registered again " +
+      "and you log in with the password you already have."));
 
   return card;
 }
