@@ -1938,7 +1938,7 @@ function restartOutcome(view, newAddress) {
     // case an operator is most likely to be restarting for, and the address
     // they have to go to next is the useful part.
     return base + " It comes back at " + address + ", which is not where this page is, so " +
-      "this page stops being the way to reach it.";
+      "this page goes there rather than waiting here for something that is not coming.";
   }
 
   return "This platform cannot replace the image of a running process, so the restart ends " +
@@ -1955,8 +1955,8 @@ function restartQuestion(view, newAddress) {
     "the service goes down and comes up again.";
 
   const moved = address === null ? "" : " It comes back at " + address + ", which is what the " +
-    "settings waiting for this restart say, so this page will not reach it again and you have " +
-    "to open that address yourself.";
+    "settings waiting for this restart say, so this page goes there once it has had time to " +
+    "come up.";
 
   if (view.comes_back) {
     if (address === null) {
@@ -1991,12 +1991,22 @@ async function submitRestart(view, button, newAddress) {
     throw error;
   }
 
+  if (newAddress !== null) {
+    try {
+      await moveToTheNewAddress(answer, newAddress);
+    } finally {
+      restartInFlight = false;
+    }
+
+    return;
+  }
+
   drawRestarting(answer, "", newAddress);
 
   let back = false;
 
   try {
-    back = newAddress === null ? await waitForTheService(answer) : false;
+    back = await waitForTheService(answer);
   } finally {
     restartInFlight = false;
   }
@@ -2004,12 +2014,6 @@ async function submitRestart(view, button, newAddress) {
   // The operator may have gone to another screen while this was waiting. What
   // is drawn there is theirs, not this.
   if (currentScreen !== "settings") {
-    return;
-  }
-
-  if (newAddress !== null) {
-    // The service is coming back somewhere else, so there is nothing here to
-    // wait for and nothing to report as missing.
     return;
   }
 
@@ -2025,13 +2029,58 @@ async function submitRestart(view, button, newAddress) {
   return drawSettings();
 }
 
+// restartMoveGraceSec is how long the page waits before opening the address the
+// service is coming back at.
+//
+// It cannot be told by asking. The new address is another origin, and the
+// certificate behind it is one the browser has not been given a reason to
+// trust, so a request to it fails whether the service is up or not and a
+// failure says nothing. What is left is to wait out the delay the server named
+// for its own exit and then give it room to bind and serve.
+//
+// Three seconds past the exit is more than it takes: the program replaces its
+// own image, so there is no process to start, and the log of a restart has the
+// new image reading its settings within a tenth of a second of the old one
+// letting go of the port. Opening early costs a page that has to be reloaded,
+// which is what the link below it is for.
+const restartMoveGraceSec = 3;
+
+// moveToTheNewAddress counts the wait down on screen and then goes there.
+//
+// The page is left, so nothing after this runs. It is only done for an address
+// this page worked out from the settings the restart puts into place, never
+// from anything the server sent, so there is no way for an answer to steer the
+// browser somewhere of its choosing.
+async function moveToTheNewAddress(answer, address) {
+  const goingInSec = typeof answer.exit_in_sec === "number" ? answer.exit_in_sec : 0;
+
+  for (let left = goingInSec + restartMoveGraceSec; left > 0; left -= 1) {
+    // The operator may have gone to another screen. What is drawn there is
+    // theirs, and a page that moved out from under them would be taking the
+    // browser somewhere they did not ask to go.
+    if (currentScreen !== "settings") {
+      return;
+    }
+
+    drawRestarting(answer, "", address, left);
+    await pause(1000);
+  }
+
+  if (currentScreen !== "settings") {
+    return;
+  }
+
+  drawRestarting(answer, "", address, 0);
+  window.location.assign(address);
+}
+
 // drawRestarting is the screen while the service is away. It says what was
 // asked for, what it does on this platform and how long this page keeps asking,
 // so that a wait that is going normally reads as one.
 //
 // problem is empty while the waiting is still on, and holds what to do about it
 // once the page has given up.
-function drawRestarting(answer, problem, newAddress) {
+function drawRestarting(answer, problem, newAddress, secondsLeft) {
   if (currentScreen !== "settings") {
     return;
   }
@@ -2051,9 +2100,24 @@ function drawRestarting(answer, problem, newAddress) {
   if (address !== null) {
     // Waiting would be waiting on the wrong address. This page is served from
     // the one being left behind, so asking it again can only ever time out,
-    // and reporting that as "it did not come back" would be untrue.
-    nodes.push(statusLine("This page is not waiting, because the service is not coming back " +
-      "here. Open " + address + " once it is up.", "warning"));
+    // and reporting that as "it did not come back" would be untrue. It is
+    // opened rather than waited on.
+    const left = typeof secondsLeft === "number" ? secondsLeft : 0;
+
+    nodes.push(statusLine("The service is not coming back here. This page opens " + address +
+      " in " + left + " " + plural(left, "second", "seconds") + ".", "empty"));
+
+    // The link is here so that the wait can be skipped, and so that the
+    // address survives if the move does not happen: a page that moved on its
+    // own and landed on a certificate warning has still said where it went.
+    const now = document.createElement("p");
+    const link = document.createElement("a");
+
+    link.href = address;
+    link.textContent = address;
+    now.appendChild(element("span", "Or open it now: "));
+    now.appendChild(link);
+    nodes.push(now);
   } else if (problem === "") {
     nodes.push(statusLine("Waiting for the service to answer again. This page asks every " +
       restartPollEverySec + " " + plural(restartPollEverySec, "second", "seconds") +
