@@ -26,21 +26,32 @@ import (
 
 // certValidity is how long a generated certificate is good for.
 //
-// 825 days is the longest a TLS server certificate may live and still be
-// trusted by Apple platforms: a certificate issued after 1 July 2019 whose
-// validity period is longer than 825 days is refused by iOS 13 and macOS 10.15
-// and later, and that rule is applied to a certificate the operator added to
-// the trust store by hand as well, not only to one from a public authority. A
-// certificate nobody can trust is worse than a short-lived one, so the limit is
-// what is used rather than the ten years a self-signed certificate is often
-// given.
-const certValidity = 825 * 24 * time.Hour
+// The limits platforms put on this do not reach it. Apple refuses a TLS server
+// certificate issued on or after 1 September 2020 whose validity runs past 398
+// days, and the same page says the rule is for certificates that chain to a
+// root shipped with the system: "if you are using a certificate from a
+// user-added or administrator-added Root CA, this change will not affect you"
+// (support.apple.com/en-us/102028). This certificate is exactly that, and an
+// operator who does not add it is clicking past the warning instead, which
+// skips the check altogether.
+//
+// So the number is chosen for the operator rather than for a rule. Five years
+// covers the life of most installations without asking anyone to do anything,
+// and stops short of the decade that would mean never: a machine renamed or
+// readdressed in that time needs a new certificate anyway, because the names it
+// is made out to are no longer the ones it answers to. The screen says how long
+// is left and marks it when the end is near, and Make a new certificate is one
+// press.
+//
+// This used to be 825 days, on the belief that Apple applied its limit to a
+// certificate the operator had trusted by hand. It says the opposite.
+const certValidity = 5 * 365 * 24 * time.Hour
 
 // clockSkew is how far back the certificate starts. A machine whose clock is a
 // few minutes behind the one that generated it would otherwise refuse a
 // certificate that is not valid yet, which reads to the operator exactly like a
 // certificate that is broken. The validity period is measured from this earlier
-// start, so the 825 days above stay 825 days.
+// start, so the validity above stays what it says.
 const clockSkew = time.Hour
 
 // serialBits is the size of the random serial number. The CA/Browser Forum asks

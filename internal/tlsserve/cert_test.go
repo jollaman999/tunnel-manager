@@ -75,11 +75,12 @@ func TestTheCertificateCarriesTheAddressesOfThisMachine(t *testing.T) {
 	}
 }
 
-// TestTheValidityIsWithinWhatClientsAccept is the 825 days. A certificate that
-// lives longer is refused by Apple platforms even when the operator trusted it
-// by hand, so the period is held here rather than left to be discovered on
-// somebody's laptop.
-func TestTheValidityIsWithinWhatClientsAccept(t *testing.T) {
+// TestTheValidityIsWhatWasChosen holds the period to the constant and the
+// constant to a range, so that a value nobody meant cannot slip in. The upper
+// bound is not a rule any client enforces on a certificate like this one: it is
+// the point past which the number stops meaning anything to the operator, and
+// the lower bound is the point where renewing becomes a chore.
+func TestTheValidityIsWhatWasChosen(t *testing.T) {
 	now := time.Date(2026, 9, 19, 12, 0, 0, 0, time.UTC)
 
 	leaf, _ := parseGenerated(t, now)
@@ -88,9 +89,12 @@ func TestTheValidityIsWithinWhatClientsAccept(t *testing.T) {
 	if validity != certValidity {
 		t.Errorf("the certificate is valid for %v, want %v", validity, certValidity)
 	}
-	if validity > 825*24*time.Hour {
-		t.Errorf("the certificate is valid for %v, which is longer than the 825 days clients accept",
+	if validity > 10*365*24*time.Hour {
+		t.Errorf("the certificate is valid for %v, which is long enough that it says nothing",
 			validity)
+	}
+	if validity < 365*24*time.Hour {
+		t.Errorf("the certificate is valid for %v, which makes renewing it a chore", validity)
 	}
 
 	// It has to be valid at the moment it is made, on a machine whose clock is

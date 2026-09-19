@@ -195,8 +195,8 @@ func TestAKeyThatDoesNotOpenIsReplaced(t *testing.T) {
 	}
 }
 
-// TestAnExpiredCertificateIsReplaced is the startup that happens more than 825
-// days after the first one. Serving the stored certificate then would be
+// TestAnExpiredCertificateIsReplaced is the startup that happens after the
+// stored certificate has run out. Serving the stored certificate then would be
 // serving one every client refuses.
 func TestAnExpiredCertificateIsReplaced(t *testing.T) {
 	db := newDB(t)

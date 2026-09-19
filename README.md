@@ -334,7 +334,7 @@ was not open before.
 |---------------------------|--|
 | Made | On the first startup, and again when the stored one cannot be read or has run out |
 | Key | ECDSA on the P-256 curve |
-| Good for | 825 days |
+| Good for | 5 years |
 | Made out to | `localhost`, `127.0.0.1`, `::1`, the host name of the machine and the addresses of its interfaces |
 | Stored | In the database file, next to the settings. The private key is encrypted with the same key the SSH passwords are sealed with, so a copy of the database file alone does not carry it |
 | Signed by | Itself |
