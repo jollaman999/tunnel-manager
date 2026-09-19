@@ -1,3 +1,14 @@
+# v3.2.6
+
+## Add/fix features:
+
+- Rotated log files are compressed by default. What it compresses is a log that has already been rotated, which nothing reads again except when something has gone wrong, and the text of a log is most of its size: the other defaults ask for five backups of 100MB, which uncompressed is half a gigabyte of a disk that has other uses. It is what a fresh installation starts on, and an installation that already has the setting stored keeps whichever way it was left.
+- The Settings screen says what a stored path is read against, under both of the settings that are one, and names the directory rather than describing it. Which directory that is depends on how the service was started and cannot be seen from a browser, so the server sends it. On Windows the sentence is the Windows one: a path is absolute only when it names a drive or a share, and one beginning with a single backslash is not, so it is read against that directory like any other.
+
+## Bug fixes:
+
+- The Caller column of the log was narrower than what it held, and broke inside names. It was allowed to break wherever it liked, which is also what cost it the room: a run of text that may break anywhere has a smallest width of one character, and a table hands out what is left over by what each column says it needs. It breaks after a path separator now and asks for the width of the longest piece between them. Measured at 844px, a phone on its side: the column had 113px and now has 155px, with no change to how tall a row stands.
+
 # v3.2.5
 
 ## Bug fixes:
