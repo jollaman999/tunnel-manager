@@ -337,3 +337,68 @@ func TestTheStaticFilesCarryNoSecret(t *testing.T) {
 		t.Fatalf("failed to read the embedded files: %v", err)
 	}
 }
+
+// TestAssetsCarryATagAndAskToBeChecked pins down that a built-in file goes out
+// with an entity tag and with a header asking that the tag be checked.
+//
+// Neither was there. The answer carried a content type and nothing else, which
+// leaves a browser to decide for itself how long the file stays good, and what
+// it decides is its own business. A phone went on running the scripts of an
+// earlier release after a deployment, so a fix that was measured on the server
+// had no effect on the screen and looked like a fix that did not work.
+func TestAssetsCarryATagAndAskToBeChecked(t *testing.T) {
+	e := newServer()
+
+	for _, name := range []string{"/ui/app.js", "/ui/screens.js", "/ui/style.css", "/ui/"} {
+		t.Run(name, func(t *testing.T) {
+			rec := get(e, name)
+			if rec.Code != http.StatusOK {
+				t.Fatalf("status = %d, want %d", rec.Code, http.StatusOK)
+			}
+
+			tag := rec.Header().Get("ETag")
+			if tag == "" {
+				t.Fatal("the answer carries no ETag, so a browser has nothing to ask about")
+			}
+			if cache := rec.Header().Get("Cache-Control"); cache != "no-cache" {
+				t.Fatalf("Cache-Control is %q, want %q", cache, "no-cache")
+			}
+
+			// The same file asked for again with the tag it was given is a file
+			// the browser already holds.
+			req := httptest.NewRequest(http.MethodGet, name, nil)
+			req.Header.Set("If-None-Match", tag)
+
+			again := httptest.NewRecorder()
+			e.ServeHTTP(again, req)
+
+			if again.Code != http.StatusNotModified {
+				t.Fatalf("asking again with the tag answered %d, want %d",
+					again.Code, http.StatusNotModified)
+			}
+			if again.Body.Len() != 0 {
+				t.Fatalf("the answer that says nothing changed carried %d bytes of body",
+					again.Body.Len())
+			}
+		})
+	}
+}
+
+// TestTwoAssetsDoNotShareATag is what makes the tag worth having. A tag that is
+// the same for every file would have every file answered as unchanged once any
+// one of them had been fetched.
+func TestTwoAssetsDoNotShareATag(t *testing.T) {
+	e := newServer()
+
+	seen := map[string]string{}
+
+	for _, name := range []string{"/ui/app.js", "/ui/screens.js", "/ui/style.css"} {
+		tag := get(e, name).Header().Get("ETag")
+
+		if was, ok := seen[tag]; ok {
+			t.Fatalf("%s carries the tag of %s", name, was)
+		}
+
+		seen[tag] = name
+	}
+}

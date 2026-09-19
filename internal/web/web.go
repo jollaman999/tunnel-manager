@@ -2,7 +2,9 @@
 package web
 
 import (
+	"crypto/sha256"
 	"embed"
+	"encoding/hex"
 	"io/fs"
 	"net/http"
 	"path"
@@ -104,7 +106,38 @@ func serveAsset(c echo.Context) error {
 		name = indexFile
 	}
 
-	return c.Blob(http.StatusOK, contentTypeOf(name, body), body)
+	return serveBody(c, contentTypeOf(name, body), body)
+}
+
+// serveBody hands back a built-in file with an entity tag over it, and asks
+// that the tag be checked every time rather than the file be taken on trust.
+//
+// Without either header a browser is left to guess how long the file stays
+// good, and what it guesses is its own business: a screen carried on after a
+// release with the scripts of the one before it, which reads as a fix that was
+// deployed and did nothing. The files are built into the binary, so what they
+// hold is settled at build time and a hash of the bytes names that version
+// exactly.
+//
+// no-cache does not mean do not store it. It means ask before using what is
+// stored, and the answer to that question is 304 and no body whenever the file
+// has not moved, which is nearly always. The cost of being right here is one
+// conditional request per file per page load.
+func serveBody(c echo.Context, contentType string, body []byte) error {
+	sum := sha256.Sum256(body)
+	tag := `"` + hex.EncodeToString(sum[:16]) + `"`
+
+	c.Response().Header().Set("Cache-Control", "no-cache")
+	c.Response().Header().Set("ETag", tag)
+
+	// The browser is holding this very file already, so there is nothing to
+	// send it. Handing over the bytes again would be the whole saving thrown
+	// away at the last step.
+	if c.Request().Header.Get("If-None-Match") == tag {
+		return c.NoContent(http.StatusNotModified)
+	}
+
+	return c.Blob(http.StatusOK, contentType, body)
 }
 
 // assetName turns the wildcard of a /ui/ request into a name inside the
