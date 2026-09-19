@@ -44,20 +44,30 @@ type connFingerprint [sha256.Size]byte
 
 // connectionFingerprint derives the fingerprint of the settings a tunnel for
 // this combination is built from: the server, remote and local addresses, the
-// user and the password.
+// user, and every credential it logs in with.
 //
-// The password goes in as the plaintext hostPassword returns, not as the value
+// The credentials go in as the plaintext they were opened to, not as the values
 // the row holds. The stored form is sealed with a fresh nonce every time it is
 // written, so the same password would give a different fingerprint on every
 // pass and every pass would restart the tunnel.
 //
+// The private key and its passphrase are in here for the same reason the
+// password is. Without them a Host whose key is replaced keeps its tunnel on
+// the key it was built with: the save answers as though it took, and the new
+// key is not tried until something else drops the connection, which may be
+// hours later and looks like the key failing rather than the key never having
+// been used.
+//
 // Every value is written with its length in front, so that two different sets
 // of settings cannot produce the same input to the hash.
-func connectionFingerprint(host *models.Host, sp *models.ServicePort, password string) connFingerprint {
+func connectionFingerprint(host *models.Host, sp *models.ServicePort, creds hostCreds) connFingerprint {
 	local, server, remote := tunnelAddresses(host, sp)
 
 	h := sha256.New()
-	for _, value := range []string{server, remote, local, host.User, password} {
+	for _, value := range []string{
+		server, remote, local, host.User,
+		creds.password, creds.privateKey, creds.passphrase,
+	} {
 		_, _ = fmt.Fprintf(h, "%d:%s", len(value), value)
 	}
 
@@ -205,16 +215,16 @@ func (m *Manager) Reconcile() (ReconcileResult, error) {
 			continue
 		}
 
-		// A password that does not decrypt says nothing about whether the
+		// A credential that does not decrypt says nothing about whether the
 		// settings changed, and a tunnel restarted on it could not be started
-		// again. It keeps running on what it has. hostPassword logs why.
-		password, err := m.hostPassword(want.host)
+		// again. It keeps running on what it has. hostCredentials logs why.
+		creds, err := m.hostCredentials(want.host)
 		if err != nil {
 			result.Failed++
 			continue
 		}
 
-		if connectionFingerprint(want.host, want.sp, password) == current {
+		if connectionFingerprint(want.host, want.sp, creds) == current {
 			continue
 		}
 

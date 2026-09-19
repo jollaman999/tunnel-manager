@@ -1,10 +1,12 @@
 package tunnel
 
 import (
+	"crypto/x509"
 	"errors"
 	"fmt"
 	"net"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -19,6 +21,85 @@ import (
 // tunnel that was never started is not a failure, so callers that stop tunnels
 // in bulk can tell it apart with errors.Is.
 var ErrTunnelNotExist = errors.New("tunnel does not exist")
+
+// KeyError marks the refusals that are about the private key that was handed
+// in, as against a cipher that could not open a stored one or a database that
+// could not be read. The caller answers the first with a bad request carrying
+// this message, because the message is what says what to do about the key, and
+// the second with a plain failure.
+//
+// Nothing built here carries the key or the passphrase. The message names what
+// is wrong with the key, never what is in it, so it is safe to answer with and
+// safe to log.
+type KeyError struct {
+	Reason string
+}
+
+func (e *KeyError) Error() string {
+	return e.Reason
+}
+
+func keyError(format string, args ...any) error {
+	return &KeyError{Reason: fmt.Sprintf(format, args...)}
+}
+
+// ParsePrivateKey turns a PEM private key into the signer an SSH connection is
+// built with. It is exported because the key is read twice: once where a Host
+// is registered, so that a key that cannot be used is refused while the
+// operator is still looking at the box they pasted it into, and once here,
+// where the connection is made.
+//
+// The key is parsed without the passphrase first. That is what tells a key that
+// is protected by one from a key that is simply broken: the library reports the
+// first as a PassphraseMissingError, and the difference decides whether the
+// operator is asked for a passphrase or told the file is not a key. It also
+// means a passphrase sent along with a key that has none is ignored rather than
+// refused, since the library takes that combination as an error of its own.
+func ParsePrivateKey(keyPEM string, passphrase string) (ssh.Signer, error) {
+	keyPEM = strings.TrimSpace(keyPEM)
+	if keyPEM == "" {
+		return nil, keyError("no private key was given")
+	}
+
+	// The PEM is checked for its opening line before it is parsed, so that a
+	// file that is plainly not a key, a public key or a certificate among them,
+	// is answered with what it is rather than with "no key found".
+	if !strings.Contains(keyPEM, "-----BEGIN") {
+		return nil, keyError("the private key is not PEM: no -----BEGIN----- line was found in it. " +
+			"Paste the private key file itself, not the public key beside it")
+	}
+
+	// The trailing newline is put back on. A PEM block that ends without one is
+	// what a paste out of a terminal often is, and pem.Decode takes no block
+	// that does not end its last line.
+	block := []byte(keyPEM + "\n")
+
+	signer, err := ssh.ParsePrivateKey(block)
+	if err == nil {
+		return signer, nil
+	}
+
+	var locked *ssh.PassphraseMissingError
+	if !errors.As(err, &locked) {
+		return nil, keyError("the private key cannot be read: %v", err)
+	}
+
+	if passphrase == "" {
+		return nil, keyError("the private key is protected by a passphrase. " +
+			"Register it together with the passphrase that opens it")
+	}
+
+	signer, err = ssh.ParsePrivateKeyWithPassphrase(block, []byte(passphrase))
+	if err == nil {
+		return signer, nil
+	}
+
+	if errors.Is(err, x509.IncorrectPasswordError) {
+		return nil, keyError("the passphrase does not open the private key")
+	}
+
+	return nil, keyError("the private key cannot be read with the passphrase that was given: %v", err)
+}
 
 type Manager struct {
 	db                    *gorm.DB
@@ -48,7 +129,18 @@ func NewManager(db *gorm.DB, logger *zap.Logger, cipher *crypto.Cipher, monitori
 // is one that is still in the encrypted format that carried no marker. A value
 // that is encrypted but does not open with the key in use is left exactly as it
 // is and reported as an error, because overwriting it destroys the password.
+//
+// A Host that carries no password at all comes back empty and nothing is
+// written. That is the Host registered with a private key alone, and without
+// this the empty value would be taken for a password that was stored before
+// passwords were encrypted and be sealed into the row: the Host would then
+// carry a password that is the empty string, which is offered to it on every
+// connection and cannot be told from one that was chosen.
 func (m *Manager) hostPassword(host *models.Host) (string, error) {
+	if host.Password == "" {
+		return "", nil
+	}
+
 	password, err := m.cipher.Decrypt(host.Password)
 	if err == nil {
 		if !crypto.IsEncrypted(host.Password) {
@@ -100,6 +192,157 @@ func (m *Manager) storeEncryptedPassword(host *models.Host, password string) {
 		zap.String("host_ip", host.IP))
 }
 
+// hostAuth returns what to offer the Host to authenticate with, along with the
+// credentials those methods were built from, which is what the connection
+// fingerprint is taken over.
+//
+// The key comes first and the password second, which is the order the SSH
+// protocol tries them in: a method that is refused is followed by the next one.
+// A Host that carries both is therefore still reachable with its password while
+// the key that was just registered is not yet the one the Host knows, so
+// putting a key on a running installation cannot take its tunnels down.
+// hostCreds is every secret a connection to a Host is built from, opened out
+// of the row. The connection fingerprint is taken over all of them, so that a
+// Host whose key is replaced is noticed the same way one whose password is.
+type hostCreds struct {
+	password   string
+	privateKey string
+	passphrase string
+}
+
+// hostCredentials opens what the Host row holds sealed. An error means a value
+// is there and cannot be opened, which is not the same as a Host that carries
+// none: the caller leaves the tunnel on what it already has rather than taking
+// it down for a secret nobody can read.
+func (m *Manager) hostCredentials(host *models.Host) (hostCreds, error) {
+	password, err := m.hostPassword(host)
+	if err != nil {
+		return hostCreds{}, err
+	}
+
+	privateKey, err := m.hostSealed(host, "private key", host.PrivateKey)
+	if err != nil {
+		return hostCreds{}, err
+	}
+
+	passphrase, err := m.hostSealed(host, "key passphrase", host.KeyPassphrase)
+	if err != nil {
+		return hostCreds{}, err
+	}
+
+	return hostCreds{password: password, privateKey: privateKey, passphrase: passphrase}, nil
+}
+
+func (m *Manager) hostAuth(host *models.Host) ([]ssh.AuthMethod, hostCreds, error) {
+	var methods []ssh.AuthMethod
+
+	signer, keyErr := m.hostSigner(host)
+	if signer != nil {
+		methods = append(methods, ssh.PublicKeys(signer))
+	}
+
+	creds, err := m.hostCredentials(host)
+	if err != nil {
+		return nil, hostCreds{}, err
+	}
+
+	if creds.password != "" {
+		methods = append(methods, ssh.Password(creds.password))
+	}
+
+	if len(methods) == 0 {
+		// A key that could not be built is the reason there is nothing to
+		// connect with, when there was one, so that is what is reported rather
+		// than a Host that carries nothing at all.
+		if keyErr != nil {
+			return nil, hostCreds{}, keyErr
+		}
+
+		return nil, hostCreds{}, fmt.Errorf("the Host carries neither a private key nor a password (host_id=%d)", host.ID)
+	}
+
+	if keyErr != nil {
+		// The password is there, so the tunnel is made with it. hostSigner
+		// logged what is wrong with the key.
+		m.logger.Warn("connecting to the Host with its password alone, because its stored "+
+			"private key cannot be used",
+			zap.Uint("host_id", host.ID),
+			zap.String("host_ip", host.IP))
+	}
+
+	return methods, creds, nil
+}
+
+// hostSigner returns the signer built from the stored private key of the Host,
+// or nil when the Host carries no key. An error means the Host carries one that
+// cannot be used, which is not the same thing: the caller falls back to the
+// password with it and reports it only when there is no password to fall back
+// on.
+//
+// Nothing of the key reaches the log. What is written is which Host it belongs
+// to and what is wrong with it, never a line of the key itself and never the
+// passphrase.
+func (m *Manager) hostSigner(host *models.Host) (ssh.Signer, error) {
+	if host.PrivateKey == "" {
+		return nil, nil
+	}
+
+	keyPEM, err := m.hostSealed(host, "private key", host.PrivateKey)
+	if err != nil {
+		return nil, err
+	}
+
+	passphrase, err := m.hostSealed(host, "key passphrase", host.KeyPassphrase)
+	if err != nil {
+		return nil, err
+	}
+
+	signer, err := ParsePrivateKey(keyPEM, passphrase)
+	if err != nil {
+		m.logger.Error("the stored private key of the Host cannot be read",
+			zap.Uint("host_id", host.ID),
+			zap.String("host_ip", host.IP),
+			zap.Error(err))
+
+		return nil, fmt.Errorf("failed to read the stored private key of the Host (host_id=%d): %w", host.ID, err)
+	}
+
+	return signer, nil
+}
+
+// hostSealed opens a value the Host row holds sealed. An empty value stays
+// empty, because that is a Host that carries none rather than one that cannot
+// be opened.
+//
+// Unlike the password, nothing is written back here. The key and its passphrase
+// have been sealed since the day they could be registered, so there is no row
+// holding a plaintext one to migrate: a value that does not open is the wrong
+// encryption key, and overwriting it would destroy the key it holds. A value
+// that was never sealed is one somebody put into the row by hand, and it is
+// used as it stands.
+func (m *Manager) hostSealed(host *models.Host, what string, stored string) (string, error) {
+	if stored == "" {
+		return "", nil
+	}
+
+	plaintext, err := m.cipher.Decrypt(stored)
+	if err == nil {
+		return plaintext, nil
+	}
+
+	if errors.Is(err, crypto.ErrNotEncrypted) {
+		return stored, nil
+	}
+
+	m.logger.Error("the stored "+what+" of the Host does not decrypt with the encryption key in use, "+
+		"leaving it as it is. Check that the configured key file is the one it was stored with",
+		zap.Uint("host_id", host.ID),
+		zap.String("host_ip", host.IP),
+		zap.Error(err))
+
+	return "", fmt.Errorf("failed to decrypt the stored %s of the Host (host_id=%d): %w", what, host.ID, err)
+}
+
 // tunnelAddresses returns the local, server and remote addresses a tunnel for
 // this combination is built from. Both the tunnel and its fingerprint are built
 // from these, so the comparison sees what was connected to.
@@ -133,16 +376,14 @@ func (m *Manager) StartTunnel(host *models.Host, sp *models.ServicePort) error {
 		return fmt.Errorf("tunnel already exists")
 	}
 
-	password, err := m.hostPassword(host)
+	auth, creds, err := m.hostAuth(host)
 	if err != nil {
 		return err
 	}
 
 	sshConfig := &ssh.ClientConfig{
-		User: host.User,
-		Auth: []ssh.AuthMethod{
-			ssh.Password(password),
-		},
+		User:            host.User,
+		Auth:            auth,
 		HostKeyCallback: ssh.InsecureIgnoreHostKey(),
 		Timeout:         time.Second * 10,
 	}
@@ -173,7 +414,7 @@ func (m *Manager) StartTunnel(host *models.Host, sp *models.ServicePort) error {
 
 	// The settings this tunnel is connecting with, so a later pass can tell
 	// whether the ones it should have are still the same.
-	t.connFP = connectionFingerprint(host, sp, password)
+	t.connFP = connectionFingerprint(host, sp, creds)
 
 	err = m.db.Where("host_id = ? AND sp_id = ?", host.ID, sp.ID).
 		Attrs(tunnel).

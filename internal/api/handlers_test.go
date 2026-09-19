@@ -2,8 +2,11 @@ package api
 
 import (
 	"context"
+	"crypto/ed25519"
+	"crypto/rand"
 	"database/sql"
 	"encoding/json"
+	"encoding/pem"
 	"errors"
 	"fmt"
 	"net/http"
@@ -22,6 +25,7 @@ import (
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
 	"go.uber.org/zap/zaptest/observer"
+	"golang.org/x/crypto/ssh"
 	"gorm.io/gorm"
 	"gorm.io/gorm/callbacks"
 	gormlogger "gorm.io/gorm/logger"
@@ -2163,5 +2167,462 @@ func TestReadHandlersKeepTheCauseOutOfTheAnswer(t *testing.T) {
 
 			causeOnlyCheckAnswer(t, rec, logs)
 		})
+	}
+}
+
+// hostFixture is a Handler over a database of its own, so that what a request
+// stored can be read back. The stubs above answer statements without keeping
+// them, which is what the transaction tests need and the opposite of what a
+// sealed key needs: the point here is the value that landed in the row.
+type hostFixture struct {
+	e      *echo.Echo
+	h      *Handler
+	db     *gorm.DB
+	cipher *crypto.Cipher
+}
+
+func newHostFixture(t *testing.T) *hostFixture {
+	t.Helper()
+
+	db, err := gorm.Open(sqlite.Open(filepath.Join(t.TempDir(), "tunnel-manager.db")), &gorm.Config{
+		Logger: gormlogger.Discard,
+	})
+	if err != nil {
+		t.Fatalf("failed to open the database: %v", err)
+	}
+
+	err = db.AutoMigrate(&models.Host{})
+	if err != nil {
+		t.Fatalf("failed to migrate the database: %v", err)
+	}
+
+	e := echo.New()
+	e.Validator = &testValidator{validator: validator.New()}
+
+	cipher := newTestCipher(t)
+
+	return &hostFixture{
+		e:      e,
+		h:      NewHandler(db, &wakeRecorder{tx: &txConnPool{}}, zap.NewNop(), cipher),
+		db:     db,
+		cipher: cipher,
+	}
+}
+
+// call sends one request to a handler and hands back what it answered.
+func (f *hostFixture) call(t *testing.T, method, target, body, param, value string,
+	handler func(echo.Context) error) *httptest.ResponseRecorder {
+	t.Helper()
+
+	req := httptest.NewRequest(method, target, strings.NewReader(body))
+	req.Header.Set(echo.HeaderContentType, echo.MIMEApplicationJSON)
+	rec := httptest.NewRecorder()
+	c := f.e.NewContext(req, rec)
+
+	if param != "" {
+		c.SetParamNames(param)
+		c.SetParamValues(value)
+	}
+
+	err := handler(c)
+	if err != nil {
+		t.Fatalf("the handler returned an error: %v", err)
+	}
+
+	return rec
+}
+
+func (f *hostFixture) createHost(t *testing.T, body string) *httptest.ResponseRecorder {
+	t.Helper()
+
+	return f.call(t, http.MethodPost, "/api/host", body, "", "", f.h.CreateHost)
+}
+
+func (f *hostFixture) updateHost(t *testing.T, id, body string) *httptest.ResponseRecorder {
+	t.Helper()
+
+	return f.call(t, http.MethodPut, "/api/host/"+id, body, "id", id, f.h.UpdateHost)
+}
+
+// storedHostRow is the row as the database holds it, secrets and all.
+func (f *hostFixture) storedHostRow(t *testing.T, id uint) models.Host {
+	t.Helper()
+
+	var host models.Host
+
+	err := f.db.First(&host, id).Error
+	if err != nil {
+		t.Fatalf("failed to read the stored Host: %v", err)
+	}
+
+	return host
+}
+
+// hostCount is how many Hosts are stored. A refusal that still wrote a row is
+// worse than the refusal it answered with.
+func (f *hostFixture) hostCount(t *testing.T) int64 {
+	t.Helper()
+
+	var count int64
+
+	err := f.db.Model(&models.Host{}).Count(&count).Error
+	if err != nil {
+		t.Fatalf("failed to count the Hosts: %v", err)
+	}
+
+	return count
+}
+
+// testPrivateKeyPEM returns a fresh private key in PEM, protected by passphrase
+// when one is given. It is generated rather than written into the source: a PEM
+// block of a private key in a repository reads as a key that leaked, and a key
+// made here belongs to this test run alone.
+func testPrivateKeyPEM(t *testing.T, passphrase string) string {
+	t.Helper()
+
+	_, priv, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatalf("failed to generate a key: %v", err)
+	}
+
+	var block *pem.Block
+
+	if passphrase == "" {
+		block, err = ssh.MarshalPrivateKey(priv, "")
+	} else {
+		block, err = ssh.MarshalPrivateKeyWithPassphrase(priv, "", []byte(passphrase))
+	}
+	if err != nil {
+		t.Fatalf("failed to marshal the key: %v", err)
+	}
+
+	return string(pem.EncodeToMemory(block))
+}
+
+// jsonString is a value as it is written inside a request body. A PEM block is
+// many lines, and the newlines have to arrive as newlines.
+func jsonString(t *testing.T, value string) string {
+	t.Helper()
+
+	encoded, err := json.Marshal(value)
+	if err != nil {
+		t.Fatalf("failed to encode %q: %v", value, err)
+	}
+
+	return string(encoded)
+}
+
+// TestCreateHostSealsThePrivateKey is the shape of what a registered key leaves
+// behind. A database file that is copied off the machine must not carry the key
+// into every Host that trusts it, so what is in the row is the sealed form and
+// nothing of the PEM.
+func TestCreateHostSealsThePrivateKey(t *testing.T) {
+	f := newHostFixture(t)
+	keyPEM := testPrivateKeyPEM(t, "")
+
+	body := `{"ip":"192.0.2.10","port":22,"user":"operator","private_key":` +
+		jsonString(t, keyPEM) + `}`
+
+	rec := f.createHost(t, body)
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("status = %d, want %d, body: %s", rec.Code, http.StatusCreated, rec.Body.String())
+	}
+
+	host := f.storedHostRow(t, 1)
+
+	if !crypto.IsEncrypted(host.PrivateKey) {
+		t.Fatalf("the stored key does not carry the marker of an encrypted value: %q", host.PrivateKey)
+	}
+	if strings.Contains(host.PrivateKey, "BEGIN") || strings.Contains(host.PrivateKey, keyPEM) {
+		t.Fatal("the private key is in the row as it was pasted")
+	}
+
+	opened, err := f.cipher.Decrypt(host.PrivateKey)
+	if err != nil {
+		t.Fatalf("the stored key does not open with the cipher it was stored with: %v", err)
+	}
+	if opened != strings.TrimSpace(keyPEM) {
+		t.Fatal("the stored key is not the one that was registered")
+	}
+
+	// A Host registered with a key alone carries no password at all, rather
+	// than a sealed empty string, which the tunnel would offer to the Host.
+	if host.Password != "" {
+		t.Fatalf("the password of a Host registered with a key alone is %q", host.Password)
+	}
+	if host.KeyPassphrase != "" {
+		t.Fatalf("the passphrase of a key that has none is %q", host.KeyPassphrase)
+	}
+
+	// The answer is the row, so this is the second place the key could leave.
+	if strings.Contains(rec.Body.String(), "BEGIN") || strings.Contains(rec.Body.String(), "private_key") {
+		t.Fatalf("the answer carries the private key: %s", rec.Body.String())
+	}
+}
+
+func TestCreateHostSealsTheKeyPassphrase(t *testing.T) {
+	f := newHostFixture(t)
+	keyPEM := testPrivateKeyPEM(t, "the passphrase of the test")
+
+	body := `{"ip":"192.0.2.10","port":22,"user":"operator","private_key":` +
+		jsonString(t, keyPEM) + `,"key_passphrase":"the passphrase of the test"}`
+
+	rec := f.createHost(t, body)
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("status = %d, want %d, body: %s", rec.Code, http.StatusCreated, rec.Body.String())
+	}
+
+	host := f.storedHostRow(t, 1)
+
+	if !crypto.IsEncrypted(host.KeyPassphrase) {
+		t.Fatalf("the stored passphrase does not carry the marker of an encrypted value: %q",
+			host.KeyPassphrase)
+	}
+	if strings.Contains(rec.Body.String(), "the passphrase of the test") {
+		t.Fatalf("the answer carries the passphrase: %s", rec.Body.String())
+	}
+
+	opened, err := f.cipher.Decrypt(host.KeyPassphrase)
+	if err != nil {
+		t.Fatalf("the stored passphrase does not open: %v", err)
+	}
+	if opened != "the passphrase of the test" {
+		t.Fatal("the stored passphrase is not the one that was registered")
+	}
+}
+
+// TestCreateHostRefusesAHostWithNoWayIn covers the Host that could not be
+// logged in to at all. The password stopped being required when a key became
+// one of the ways in, and nothing else would have caught it.
+func TestCreateHostRefusesAHostWithNoWayIn(t *testing.T) {
+	f := newHostFixture(t)
+
+	rec := f.createHost(t, `{"ip":"192.0.2.10","port":22,"user":"operator"}`)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want %d, body: %s", rec.Code, http.StatusBadRequest, rec.Body.String())
+	}
+
+	var answer struct {
+		Error string `json:"error"`
+	}
+	err := json.Unmarshal(rec.Body.Bytes(), &answer)
+	if err != nil {
+		t.Fatalf("failed to read the answer: %v", err)
+	}
+
+	for _, want := range []string{"private key", "password"} {
+		if !strings.Contains(answer.Error, want) {
+			t.Fatalf("the refusal %q does not name %q", answer.Error, want)
+		}
+	}
+
+	if f.hostCount(t) != 0 {
+		t.Fatal("a Host was stored although the request was refused")
+	}
+}
+
+// TestCreateHostRefusesAKeyThatCannotBeUsed is the whole point of reading the
+// key where it is registered. A password is only found to be wrong by the Host
+// that refuses it, at which point the operator is looking at a tunnel that will
+// not come up; a key has a form, and what is wrong with it is said here, next
+// to the box it was pasted into.
+func TestCreateHostRefusesAKeyThatCannotBeUsed(t *testing.T) {
+	locked := testPrivateKeyPEM(t, "the passphrase of the test")
+
+	cases := []struct {
+		name       string
+		keyPEM     string
+		passphrase string
+		want       string
+	}{
+		{"not PEM", "this is not a key at all", "", "not PEM"},
+		{"a passphrase that was not given", locked, "", "protected by a passphrase"},
+		{"a passphrase that is wrong", locked, "not the passphrase", "does not open"},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			f := newHostFixture(t)
+
+			body := `{"ip":"192.0.2.10","port":22,"user":"operator","private_key":` +
+				jsonString(t, tc.keyPEM) + `,"key_passphrase":` + jsonString(t, tc.passphrase) + `}`
+
+			rec := f.createHost(t, body)
+			if rec.Code != http.StatusBadRequest {
+				t.Fatalf("status = %d, want %d, body: %s", rec.Code, http.StatusBadRequest,
+					rec.Body.String())
+			}
+
+			var answer struct {
+				Error string `json:"error"`
+			}
+			err := json.Unmarshal(rec.Body.Bytes(), &answer)
+			if err != nil {
+				t.Fatalf("failed to read the answer: %v", err)
+			}
+
+			if !strings.Contains(answer.Error, tc.want) {
+				t.Fatalf("the refusal %q does not say %q", answer.Error, tc.want)
+			}
+			if tc.passphrase != "" && strings.Contains(answer.Error, tc.passphrase) {
+				t.Fatalf("the refusal carries the passphrase: %q", answer.Error)
+			}
+			// The lines of the key itself are what must not come back. The
+			// message names the BEGIN line an operator should look for, which
+			// is a word about the form and not a line of anybody's key.
+			for _, line := range keyBodyLines(tc.keyPEM) {
+				if strings.Contains(rec.Body.String(), line) {
+					t.Fatalf("the refusal carries a line of the key: %s", rec.Body.String())
+				}
+			}
+
+			if f.hostCount(t) != 0 {
+				t.Fatal("a Host was stored although the key was refused")
+			}
+		})
+	}
+}
+
+// keyBodyLines is the base64 body of a PEM block, without the BEGIN and END
+// lines around it. Those are the lines that are the key.
+func keyBodyLines(keyPEM string) []string {
+	var body []string
+
+	for _, line := range strings.Split(keyPEM, "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" || strings.HasPrefix(line, "-----") {
+			continue
+		}
+
+		body = append(body, line)
+	}
+
+	return body
+}
+
+// TestUpdateHostKeepsTheStoredKeyWhenTheBoxIsEmpty is the rule the edit form is
+// drawn around: a key that is stored is never shown, so the box is empty every
+// time it is opened, and an empty box has to mean "leave it alone" rather than
+// "take it away". It is the password rule, applied to the key.
+func TestUpdateHostKeepsTheStoredKeyWhenTheBoxIsEmpty(t *testing.T) {
+	f := newHostFixture(t)
+	keyPEM := testPrivateKeyPEM(t, "the passphrase of the test")
+
+	rec := f.createHost(t, `{"ip":"192.0.2.10","port":22,"user":"operator","private_key":`+
+		jsonString(t, keyPEM)+`,"key_passphrase":"the passphrase of the test"}`)
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("the Host was not created: %s", rec.Body.String())
+	}
+
+	before := f.storedHostRow(t, 1)
+
+	rec = f.updateHost(t, "1", `{"description":"renamed"}`)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d, body: %s", rec.Code, http.StatusOK, rec.Body.String())
+	}
+
+	after := f.storedHostRow(t, 1)
+
+	if after.PrivateKey != before.PrivateKey {
+		t.Fatal("an update that sent no key changed the stored key")
+	}
+	if after.KeyPassphrase != before.KeyPassphrase {
+		t.Fatal("an update that sent no key changed the stored passphrase")
+	}
+	if after.Description != "renamed" {
+		t.Fatalf("the description is %q, so the update did not land", after.Description)
+	}
+}
+
+// TestUpdateHostReplacesTheKeyAndItsPassphraseTogether holds that the pair that
+// was checked is the pair that is stored. A new key left beside the passphrase
+// of the old one is a pair nothing ever checked, and it would be found out by
+// the Host refusing the connection.
+func TestUpdateHostReplacesTheKeyAndItsPassphraseTogether(t *testing.T) {
+	f := newHostFixture(t)
+	locked := testPrivateKeyPEM(t, "the passphrase of the test")
+	open := testPrivateKeyPEM(t, "")
+
+	rec := f.createHost(t, `{"ip":"192.0.2.10","port":22,"user":"operator","private_key":`+
+		jsonString(t, locked)+`,"key_passphrase":"the passphrase of the test"}`)
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("the Host was not created: %s", rec.Body.String())
+	}
+
+	rec = f.updateHost(t, "1", `{"private_key":`+jsonString(t, open)+`}`)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d, body: %s", rec.Code, http.StatusOK, rec.Body.String())
+	}
+
+	host := f.storedHostRow(t, 1)
+
+	opened, err := f.cipher.Decrypt(host.PrivateKey)
+	if err != nil {
+		t.Fatalf("the stored key does not open: %v", err)
+	}
+	if opened != strings.TrimSpace(open) {
+		t.Fatal("the stored key is not the one the update sent")
+	}
+	if host.KeyPassphrase != "" {
+		t.Fatal("the passphrase of the key that was replaced is still stored")
+	}
+}
+
+// TestUpdateHostRefusesAPassphraseOnItsOwn covers the operator who types a
+// passphrase into the edit form and leaves the key box empty. The two are only
+// right together, and a passphrase stored beside a key nothing checked it
+// against would take the Host down at the next connection instead of here.
+func TestUpdateHostRefusesAPassphraseOnItsOwn(t *testing.T) {
+	f := newHostFixture(t)
+	keyPEM := testPrivateKeyPEM(t, "the passphrase of the test")
+
+	rec := f.createHost(t, `{"ip":"192.0.2.10","port":22,"user":"operator","private_key":`+
+		jsonString(t, keyPEM)+`,"key_passphrase":"the passphrase of the test"}`)
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("the Host was not created: %s", rec.Body.String())
+	}
+
+	before := f.storedHostRow(t, 1)
+
+	rec = f.updateHost(t, "1", `{"key_passphrase":"another passphrase"}`)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want %d, body: %s", rec.Code, http.StatusBadRequest, rec.Body.String())
+	}
+
+	after := f.storedHostRow(t, 1)
+
+	if after.KeyPassphrase != before.KeyPassphrase {
+		t.Fatal("the refused request changed the stored passphrase")
+	}
+}
+
+// TestHostAnswersNeverCarryThePrivateKey covers the three ways a Host row
+// leaves the process at once. Everyone who may read a Host may make these
+// requests, and a key in the answer is a key into every machine that trusts it.
+func TestHostAnswersNeverCarryThePrivateKey(t *testing.T) {
+	f := newHostFixture(t)
+	keyPEM := testPrivateKeyPEM(t, "the passphrase of the test")
+
+	rec := f.createHost(t, `{"ip":"192.0.2.10","port":22,"user":"operator","private_key":`+
+		jsonString(t, keyPEM)+`,"key_passphrase":"the passphrase of the test","password":"fake-value-1"}`) // hook:allow
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("the Host was not created: %s", rec.Body.String())
+	}
+
+	answers := map[string]*httptest.ResponseRecorder{
+		"create": rec,
+		"list":   f.call(t, http.MethodGet, "/api/host", "", "", "", f.h.ListHosts),
+		"read":   f.call(t, http.MethodGet, "/api/host/1", "", "id", "1", f.h.GetHost),
+	}
+
+	for name, answer := range answers {
+		body := answer.Body.String()
+
+		for _, forbidden := range []string{"BEGIN", "private_key", "key_passphrase",
+			"the passphrase of the test", "fake-value-1"} { // hook:allow
+			if strings.Contains(body, forbidden) {
+				t.Fatalf("the %s answer carries %q: %s", name, forbidden, body)
+			}
+		}
 	}
 }

@@ -427,6 +427,54 @@ function portField(name, label, value) {
   };
 }
 
+// privateKeyField and keyPassphraseField are the key half of how a host is
+// logged in to. They are built here for the same reason the IP and the port
+// boxes are: the add form and the edit form have to say the same thing about
+// them, and the only difference between the two is what an empty box means.
+//
+// The key goes in a textarea with somewhere to drop a file next to it. The file
+// is read in the browser and its text is what is sent, so the key file itself
+// never leaves the machine the browser runs on.
+function privateKeyField(note) {
+  return {
+    name: "private_key",
+    label: "Private key (PEM)",
+    type: "textarea",
+    hint: "The key file, which begins with a BEGIN PRIVATE KEY line",
+    check: checkPrivateKeyBlock,
+    drop: { label: "Drop the key file here, or paste it into the box above." },
+    note: note
+  };
+}
+
+function keyPassphraseField() {
+  return {
+    name: "key_passphrase",
+    label: "Key passphrase",
+    type: "password",
+    note: "Only if the key is protected by one. It is stored encrypted, the same as the key."
+  };
+}
+
+// checkPrivateKeyBlock catches the paste that is plainly not a key before a
+// round trip. An empty box is not a problem: a host may be registered with a
+// password alone, and on the edit form an empty box keeps the stored key.
+// Whether the key parses, and whether the passphrase opens it, is for the
+// server to say.
+function checkPrivateKeyBlock(value) {
+  const text = String(value).trim();
+
+  if (text === "") {
+    return "";
+  }
+
+  if (text.indexOf("-----BEGIN") === -1) {
+    return "Paste the private key. Its first line is the one that says BEGIN PRIVATE KEY.";
+  }
+
+  return "";
+}
+
 function hostCreateForm() {
   return buildForm({
     name: "host-create",
@@ -436,7 +484,15 @@ function hostCreateForm() {
       ipField("ip", "IP"),
       portField("port", "SSH port", 22),
       { name: "user", label: "User" },
-      { name: "password", label: "Password", type: "password" },
+      privateKeyField("Stored encrypted. It is never shown on this screen and never sent back."),
+      keyPassphraseField(),
+      {
+        name: "password",
+        label: "Password",
+        type: "password",
+        note: "Leave this empty if you registered a key. A host that carries both is tried " +
+          "with the key first and falls back to the password."
+      },
       { name: "description", label: "Description" }
     ],
     onSubmit: createHost
@@ -452,6 +508,9 @@ function hostEditForm(host) {
       ipField("ip", "IP", host.ip),
       portField("port", "SSH port", host.port),
       { name: "user", label: "User", value: host.user },
+      privateKeyField("Leave this empty to keep the key that is stored. A key that is stored is " +
+        "never shown here. A key that is sent replaces the stored key and its passphrase together."),
+      keyPassphraseField(),
       {
         name: "password",
         label: "Password",
@@ -482,6 +541,14 @@ async function createHost(values) {
 
   body.password = values.password;
 
+  // The key boxes are sent only when they hold something, so that a host
+  // registered with a password alone carries no empty key.
+  const privateKey = values.private_key.trim();
+  if (privateKey !== "") {
+    body.private_key = privateKey;
+    body.key_passphrase = values.key_passphrase;
+  }
+
   await apiCall("POST", "/api/host", body);
 
   setNotice("Host " + body.ip + " was added.", "info");
@@ -508,6 +575,15 @@ async function updateHost(host, values) {
   // new password.
   if (values.password !== "") {
     body.password = values.password;
+  }
+
+  // An empty key box means the stored key stays, the same way the password box
+  // works. The passphrase rides with the key: the server checks the two
+  // together and refuses a passphrase that arrives on its own.
+  const privateKey = values.private_key.trim();
+  if (privateKey !== "") {
+    body.private_key = privateKey;
+    body.key_passphrase = values.key_passphrase;
   }
 
   await apiCall("PUT", "/api/host/" + host.id, body);

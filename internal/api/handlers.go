@@ -4,9 +4,11 @@ import (
 	"errors"
 	"net/http"
 	"strconv"
+	"strings"
 
 	"github.com/jollaman999/tunnel-manager/internal/crypto"
 	"github.com/jollaman999/tunnel-manager/internal/models"
+	"github.com/jollaman999/tunnel-manager/internal/tunnel"
 	"github.com/labstack/echo/v4"
 	"go.uber.org/zap"
 	"gorm.io/gorm"
@@ -44,6 +46,77 @@ func NewHandler(db *gorm.DB, manager tunnelManager, logger *zap.Logger, cipher *
 	}
 }
 
+// sealPassword returns the password of a Host as it is stored. An empty
+// password stays empty rather than being sealed: a Host may carry a private key
+// and no password, and a sealed empty string is a value the row holds, which
+// would have the tunnel offer an empty password to the Host.
+func (h *Handler) sealPassword(password string) (string, error) {
+	if password == "" {
+		return "", nil
+	}
+
+	return h.cipher.Encrypt(password)
+}
+
+// sealPrivateKey checks the private key and the passphrase that were handed in
+// and returns the two as they are stored. An empty key gives two empty values,
+// which is a Host registered without one.
+//
+// The key is parsed here, with the passphrase, so that what reaches the row is
+// a key that opens. What comes back for a key that does not is a
+// tunnel.KeyError naming what is wrong with it; everything else is a failure of
+// this process.
+func (h *Handler) sealPrivateKey(keyPEM string, passphrase string) (string, string, error) {
+	keyPEM = strings.TrimSpace(keyPEM)
+	if keyPEM == "" {
+		return "", "", nil
+	}
+
+	_, err := tunnel.ParsePrivateKey(keyPEM, passphrase)
+	if err != nil {
+		return "", "", err
+	}
+
+	sealedKey, err := h.cipher.Encrypt(keyPEM)
+	if err != nil {
+		return "", "", err
+	}
+
+	// The passphrase is stored only when there is one. A key that needs none
+	// leaves the column empty rather than holding a sealed empty string.
+	sealedPassphrase := ""
+	if passphrase != "" {
+		sealedPassphrase, err = h.cipher.Encrypt(passphrase)
+		if err != nil {
+			return "", "", err
+		}
+	}
+
+	return sealedKey, sealedPassphrase, nil
+}
+
+// keyRefused answers a key that was not stored. A refusal of the key itself
+// carries what is wrong with it, because that is what says which box to go back
+// to and what to do about it, and it is built from what was checked rather than
+// from anything inside this process. Everything else is answered as a failure
+// and written to the log, where the key and the passphrase never appear.
+func (h *Handler) keyRefused(c echo.Context, err error, prefix string) error {
+	var refused *tunnel.KeyError
+	if errors.As(err, &refused) {
+		return c.JSON(http.StatusBadRequest, models.Response{
+			Success: false,
+			Error:   prefix + refused.Error(),
+		})
+	}
+
+	h.logger.Error("failed to encrypt the private key of the Host", zap.Error(err))
+
+	return c.JSON(http.StatusInternalServerError, models.Response{
+		Success: false,
+		Error:   "Failed to encrypt the private key",
+	})
+}
+
 func (h *Handler) CreateHost(c echo.Context) error {
 	var req models.CreateHostRequest
 	err := c.Bind(&req)
@@ -62,13 +135,34 @@ func (h *Handler) CreateHost(c echo.Context) error {
 		})
 	}
 
-	password, err := h.cipher.Encrypt(req.Password)
+	// A Host that carries neither is one nothing can log in with. It is refused
+	// here rather than by a rule on the password field, so that the message can
+	// name both ways in and say that either will do.
+	if req.Password == "" && strings.TrimSpace(req.PrivateKey) == "" {
+		return c.JSON(http.StatusBadRequest, models.Response{
+			Success: false,
+			Error: "The Host was not created: it carries no way to log in. Give a private key, " +
+				"a password, or both",
+		})
+	}
+
+	password, err := h.sealPassword(req.Password)
 	if err != nil {
 		h.logger.Error("failed to encrypt the password of the Host", zap.Error(err))
 		return c.JSON(http.StatusInternalServerError, models.Response{
 			Success: false,
 			Error:   "Failed to encrypt the password",
 		})
+	}
+
+	// The key is read before anything is stored, so that a key that cannot be
+	// used is refused while the operator is still looking at the box they
+	// pasted it into. A password is only found to be wrong by the Host that
+	// refuses it, but a key has a form, and what is wrong with it can be said
+	// here.
+	privateKey, keyPassphrase, err := h.sealPrivateKey(req.PrivateKey, req.KeyPassphrase)
+	if err != nil {
+		return h.keyRefused(c, err, "The Host was not created: ")
 	}
 
 	tx := h.db.Begin()
@@ -82,11 +176,13 @@ func (h *Handler) CreateHost(c echo.Context) error {
 	}
 
 	host := &models.Host{
-		IP:          req.IP,
-		Port:        req.Port,
-		User:        req.User,
-		Password:    password,
-		Description: req.Description,
+		IP:            req.IP,
+		Port:          req.Port,
+		User:          req.User,
+		Password:      password,
+		PrivateKey:    privateKey,
+		KeyPassphrase: keyPassphrase,
+		Description:   req.Description,
 	}
 
 	err = tx.Create(host).Error
@@ -254,6 +350,27 @@ func (h *Handler) UpdateHost(c echo.Context) error {
 			})
 		}
 		host.Password = password
+	}
+	// An empty key box keeps the key that is stored, the way an empty password
+	// box keeps the password. A key that is sent replaces both halves at once,
+	// because the two were checked as a pair: a new key left beside the
+	// passphrase of the old one is a pair nothing checked.
+	if strings.TrimSpace(req.PrivateKey) != "" {
+		privateKey, keyPassphrase, err := h.sealPrivateKey(req.PrivateKey, req.KeyPassphrase)
+		if err != nil {
+			tx.Rollback()
+			return h.keyRefused(c, err, "The Host was not updated: ")
+		}
+
+		host.PrivateKey = privateKey
+		host.KeyPassphrase = keyPassphrase
+	} else if req.KeyPassphrase != "" {
+		tx.Rollback()
+		return c.JSON(http.StatusBadRequest, models.Response{
+			Success: false,
+			Error: "The Host was not updated: a passphrase was sent without a private key. " +
+				"The two are checked together, so send the key along with it",
+		})
 	}
 	if req.Description != "" {
 		host.Description = req.Description

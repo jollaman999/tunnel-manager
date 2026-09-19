@@ -17,7 +17,7 @@ made reachable from the Host.
 
 | What you register | Fields | What it is |
 |-------------------|--------|------------|
-| Host | `ip`, `port`, `user`, `password`, `description`, `enabled` | An SSH server Tunnel Manager logs in to with a username and a password. The password is stored encrypted. |
+| Host | `ip`, `port`, `user`, `private_key`, `key_passphrase`, `password`, `description`, `enabled` | An SSH server Tunnel Manager logs in to. It logs in with a private key, with a password, or with both; at least one of the two is required. The key, its passphrase and the password are all stored encrypted. |
 | Service port | `service_ip`, `service_port`, `local_port` | The service to publish, and the port opened on every Host to reach it. |
 
 Both `ip` and `service_ip` take an IPv4 or an IPv6 address. An IPv6 address is
@@ -26,6 +26,21 @@ where the address is used. A zone, as in `fe80::1%eth0`, is refused.
 
 Every **enabled** Host combined with every service port is one tunnel. Two
 enabled Hosts and three service ports means six tunnels.
+
+**A Host is logged in to with a key, with a password, or with both.** Send
+`private_key` as the text of a PEM private key file, and `key_passphrase` next to
+it when the key is protected by one. The key is read as it is registered, so a
+file that is not a key, a key that needs a passphrase that was not given, and a
+passphrase that does not open the key are all refused there and then instead of
+at the next connection. Where both are registered the key is offered first and
+the password is what the connection falls back to, so putting a key on a Host
+whose tunnels are running cannot take them down. A key registered while those
+tunnels are up is used the next time the connection is made.
+
+Neither the key, nor its passphrase, nor the password ever leaves the process
+again: no answer carries them, and a Host that is edited comes back with those
+boxes empty. An empty box leaves what is stored as it is, and a key that is sent
+replaces the stored key and its passphrase together.
 
 **There is nothing to install beside the binary.** The database is a SQLite file
 the process creates itself, the settings are kept in that file and are changed on
@@ -521,7 +536,7 @@ no directory travels next to it and no path has to be configured.
 | Screen | Path | What it shows and does |
 |--------|------|------------------------|
 | Status | `/ui/status` | The three counts (desired, rows, connected), a sentence about the difference between them, and one line per tunnel: Host, service port, status, server, local, remote, retries, last connected, last error. It asks again every 5 seconds. |
-| Hosts | `/ui/hosts` | One row per Host with ID, IP, port, user, description, enabled and updated. Add a Host, edit one, enable or disable one, delete one. |
+| Hosts | `/ui/hosts` | One row per Host with ID, IP, port, user, description, enabled and updated. Add a Host, edit one, enable or disable one, delete one. The add and edit forms have a box to paste a private key into, an area to drop the key file onto, and a box for the passphrase of a key that has one. |
 | Service Ports | `/ui/service-ports` | One row per service port with ID, service IP, service port, local port, description and updated. Add, edit and delete. |
 | Logs | `/ui/logs` | The end of the log file, newest last, with a level filter and a count to show. It asks again every 5 seconds. It reads the file the process is writing now; rotated files are not shown. |
 | Settings | `/ui/settings` | What is stored but not being run on yet, every stored setting and what a save changed, the certificate being served with a button to renew it and boxes to register one of your own, the username and the password of this account, a Restart that takes the service down and brings it back, and the Uninstall at the bottom. See [Settings](#settings). |
@@ -535,6 +550,12 @@ and has to be between 1 and 65535; an IP field takes only what an address is
 made of and has to read as an IPv4 or an IPv6 address. What is wrong is said
 next to the field it is wrong in, and nothing leaves the browser until it is
 right.
+
+**A key file that is dropped is read in the browser.** What is sent is the text
+of the key, exactly as a paste would be; the file itself is not uploaded, and a
+file larger than a private key ever is, or anything dropped that is not a file,
+is refused with a line under the drop area. The key can be pasted instead, which
+is what a key that is in a terminal somewhere else wants.
 
 The UI files are served without a session on purpose: they are the same bytes for
 every client and carry no data. Everything they show is fetched from `/api/**`,
@@ -881,6 +902,36 @@ that is not a `GET` requires the `X-CSRF-Token` header.
 | `GET` | `/api/host/:id` | Reads one Host |
 | `PUT` | `/api/host/:id` | Updates a Host. Every field is optional; `enabled` false stops its tunnels |
 | `DELETE` | `/api/host/:id` | Deletes a Host |
+
+The body of a create and of an update takes these fields.
+
+| Field | On create | On update |
+|-------|-----------|-----------|
+| `ip`, `port`, `user` | Required | Optional; what is left out stays as it is |
+| `private_key` | The text of a PEM private key file. Optional if a `password` is given | An empty or missing value keeps the stored key. A key that is sent replaces the stored key and its passphrase together |
+| `key_passphrase` | Required only for a key that is protected by one | Sent with the key it belongs to. On its own, without `private_key`, it is refused |
+| `password` | Optional if a `private_key` is given | An empty or missing value keeps the stored password |
+| `description`, `enabled` | Optional | Optional |
+
+A create that carries neither a key nor a password is refused, and so is a key
+that cannot be used. The refusal says which of them it is: that the value is not
+PEM, that the key is protected by a passphrase that was not sent, or that the
+passphrase does not open the key. Nothing is stored in any of those cases.
+
+**No answer ever carries `private_key`, `key_passphrase` or `password`**, this
+one included. What was stored is confirmed by the Host connecting, which the
+status says.
+
+```bash
+# A Host that is logged in to with a key. The key is sent as the text of the
+# file, so the newlines in it have to survive: this reads the file with jq.
+jq -n --arg key "$(cat ~/.ssh/id_ed25519)" \
+  '{ip:"192.0.2.10",port:22,user:"ubuntu",private_key:$key,description:"example"}' |
+curl -s -b cookies.txt -X POST "$BASE/api/host" \
+  -H 'Content-Type: application/json' \
+  -H "X-CSRF-Token: $CSRF" \
+  --data-binary @-
+```
 
 ### Service ports
 

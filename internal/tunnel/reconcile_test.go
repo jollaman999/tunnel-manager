@@ -164,7 +164,7 @@ func TestReconcileLeavesRunningTunnelsAlone(t *testing.T) {
 	// The tunnel runs with the settings the desired state holds, which is what
 	// the pass reads from its fingerprint. The stored password is plaintext, so
 	// it is the password itself.
-	tun.connFP = connectionFingerprint(&hosts[0], &sps[0], hosts[0].Password)
+	tun.connFP = connectionFingerprint(&hosts[0], &sps[0], hostCreds{password: hosts[0].Password})
 
 	result, err := m.Reconcile()
 	if err != nil {
@@ -600,7 +600,7 @@ func TestReconcileKeepsTheFingerprintOutOfTheLogs(t *testing.T) {
 	// anywhere in what was logged, in any of the forms it can be written in.
 	secrets := []string{"fake-value-1", "fake-value-2"}                 // hook:allow
 	for _, password := range []string{"fake-value-1", "fake-value-2"} { // hook:allow
-		fp := connectionFingerprint(&hosts[0], &sps[0], password)
+		fp := connectionFingerprint(&hosts[0], &sps[0], hostCreds{password: password})
 		secrets = append(secrets,
 			hex.EncodeToString(fp[:]),
 			fmt.Sprint(fp),
@@ -686,5 +686,115 @@ func TestDesiredTunnelCountReportsAFailedRead(t *testing.T) {
 	_, err = m.DesiredTunnelCount()
 	if err == nil {
 		t.Fatal("DesiredTunnelCount returned no error on a database that cannot be read")
+	}
+}
+
+// TestReconcileRestartsATunnelWhoseKeyChanged pins down that replacing the
+// private key of a Host is noticed by a pass, the same as replacing its
+// password.
+//
+// It was not, once. The fingerprint a pass compares against was taken over the
+// addresses, the user and the password alone, so a Host whose key was swapped
+// kept its tunnel on the key it was built with. The save answered as though it
+// had taken, and the new key was not tried until something else dropped the
+// connection, which reads as the key failing rather than as the key never
+// having been used.
+func TestReconcileRestartsATunnelWhoseKeyChanged(t *testing.T) {
+	cipher := newTestCipher(t)
+
+	firstPEM, _ := testPrivateKey(t, "")
+	secondPEM, _ := testPrivateKey(t, "")
+
+	sealed := func(value string) string {
+		t.Helper()
+
+		out, err := cipher.Encrypt(value)
+		if err != nil {
+			t.Fatalf("failed to seal a test value: %v", err)
+		}
+
+		return out
+	}
+
+	hosts := []models.Host{enabledHost(1, true)}
+	hosts[0].Password = ""
+	hosts[0].PrivateKey = sealed(firstPEM)
+	sps := []models.ServicePort{testServicePort(2)}
+
+	m := startedTunnelManager(t, hosts, sps, cipher, zap.NewNop())
+
+	// The same key again, sealed a second time. The stored form differs
+	// because every seal carries its own nonce, and a pass must not read that
+	// as a key that changed.
+	hosts[0].PrivateKey = sealed(firstPEM)
+
+	result, err := m.Reconcile()
+	if err != nil {
+		t.Fatalf("Reconcile returned an error: %v", err)
+	}
+	if result.Restarted != 0 {
+		t.Fatalf("resealing the same key restarted %d tunnels, want 0", result.Restarted)
+	}
+
+	hosts[0].PrivateKey = sealed(secondPEM)
+
+	result, err = m.Reconcile()
+	if err != nil {
+		t.Fatalf("Reconcile returned an error: %v", err)
+	}
+	if result.Restarted != 1 {
+		t.Fatalf("replacing the key restarted %d tunnels, want 1", result.Restarted)
+	}
+}
+
+// TestReconcileRestartsATunnelWhoseKeyPassphraseChanged is the same for the
+// passphrase. A key that is opened with a different passphrase is a different
+// credential, whatever the key bytes are.
+func TestReconcileRestartsATunnelWhoseKeyPassphraseChanged(t *testing.T) {
+	cipher := newTestCipher(t)
+
+	keyPEM, _ := testPrivateKey(t, "first-phrase") // hook:allow
+
+	sealed := func(value string) string {
+		t.Helper()
+
+		out, err := cipher.Encrypt(value)
+		if err != nil {
+			t.Fatalf("failed to seal a test value: %v", err)
+		}
+
+		return out
+	}
+
+	// The Host carries a password as well, so that the restart this is looking
+	// for succeeds: a key that no longer opens leaves the password as the way
+	// in, and a restart that failed would be counted as a failure rather than
+	// as the restart this is about.
+	hosts := []models.Host{enabledHost(1, true)}
+	hosts[0].Password = sealed("fake-value-1") // hook:allow
+	hosts[0].PrivateKey = sealed(keyPEM)
+	hosts[0].KeyPassphrase = sealed("first-phrase") // hook:allow
+	sps := []models.ServicePort{testServicePort(2)}
+
+	m := startedTunnelManager(t, hosts, sps, cipher, zap.NewNop())
+
+	hosts[0].KeyPassphrase = sealed("first-phrase") // hook:allow
+
+	result, err := m.Reconcile()
+	if err != nil {
+		t.Fatalf("Reconcile returned an error: %v", err)
+	}
+	if result.Restarted != 0 {
+		t.Fatalf("resealing the same passphrase restarted %d tunnels, want 0", result.Restarted)
+	}
+
+	hosts[0].KeyPassphrase = sealed("second-phrase") // hook:allow
+
+	result, err = m.Reconcile()
+	if err != nil {
+		t.Fatalf("Reconcile returned an error: %v", err)
+	}
+	if result.Restarted != 1 {
+		t.Fatalf("replacing the key passphrase restarted %d tunnels, want 1", result.Restarted)
 	}
 }

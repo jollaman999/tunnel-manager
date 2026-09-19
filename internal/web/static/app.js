@@ -574,6 +574,95 @@ function textControl(field) {
   return input;
 }
 
+// keyFileLimit is the largest file the drop area below reads. A private key in
+// PEM is a few kilobytes: an RSA 4096 key, the largest in common use, is about
+// 3.2 KB on disk, and one that is protected by a passphrase is a little larger
+// again. 64 KiB is far above every key there is and small enough that a file
+// dropped by mistake, an image or a log, is refused before the browser reads it
+// into the page.
+const keyFileLimit = 64 * 1024;
+
+// dropArea is the patch of the form a key file is dropped onto. What is read
+// goes into the box beside it and nowhere else: the file is read here, in the
+// browser, with FileReader, and what is sent is the text of the key, the same
+// as if it had been pasted. Nothing uploads a file.
+//
+// It sits next to the box rather than replacing it, because the two are for
+// different situations: the key file is on the machine the browser runs on and
+// can be dragged in, or it is in a terminal somewhere and gets pasted.
+function dropArea(input, spec) {
+  const zone = document.createElement("div");
+
+  zone.className = "drop-zone";
+  zone.dataset.drop = input.name;
+  zone.appendChild(element("span", spec.label));
+
+  // What went wrong with a file, and which file was read, are both said here,
+  // under the area the file was let go over.
+  const said = element("small", "");
+  said.className = "drop-said";
+  said.hidden = true;
+  zone.appendChild(said);
+
+  function say(message, bad) {
+    said.textContent = message;
+    said.hidden = false;
+    said.classList.toggle("problem", bad === true);
+  }
+
+  // A drag is only a drop if the default is prevented on the way in. The class
+  // is what says so on the screen: without it the operator is dragging a file
+  // over a page with nothing to tell them it will be taken.
+  function over(event) {
+    event.preventDefault();
+    zone.classList.add("drop-over");
+  }
+
+  zone.addEventListener("dragenter", over);
+  zone.addEventListener("dragover", over);
+  zone.addEventListener("dragleave", function () {
+    zone.classList.remove("drop-over");
+  });
+
+  zone.addEventListener("drop", function (event) {
+    event.preventDefault();
+    zone.classList.remove("drop-over");
+
+    const transfer = event.dataTransfer;
+    const files = transfer === null || transfer === undefined ? null : transfer.files;
+
+    if (files === null || files === undefined || files.length === 0) {
+      say("That is not a file. Drop the key file itself, or paste the key into the box.", true);
+
+      return;
+    }
+
+    const file = files[0];
+
+    if (file.size > keyFileLimit) {
+      say(file.name + " is " + file.size + " bytes, which is larger than a private key ever is. " +
+        "Nothing larger than " + keyFileLimit + " bytes is read.", true);
+
+      return;
+    }
+
+    const reader = new FileReader();
+
+    reader.onerror = function () {
+      say(file.name + " could not be read.", true);
+    };
+
+    reader.onload = function () {
+      input.value = String(reader.result);
+      say(file.name + " was read into the box. Check it, then save.", false);
+    };
+
+    reader.readAsText(file);
+  });
+
+  return zone;
+}
+
 // listControl is the field whose value is one of a set the server named. A box
 // would take anything and leave the refusal to come back from the server, while
 // a list cannot hold a value that is not on it, so there is nothing to check
@@ -641,6 +730,12 @@ function buildForm(spec) {
 
     row.appendChild(label);
     row.appendChild(input);
+
+    // A field that takes a file offers somewhere to drop one. It goes under
+    // the box, so what is read lands in the box the operator is looking at.
+    if (field.drop !== undefined) {
+      row.appendChild(dropArea(input, field.drop));
+    }
 
     // What is wrong with one value is shown under the box it was typed in. The
     // line above the screen is where a refusal of the whole call goes, and a

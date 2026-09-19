@@ -1,8 +1,12 @@
 package tunnel
 
 import (
+	"bytes"
 	"context"
+	"crypto/ed25519"
+	"crypto/rand"
 	"database/sql"
+	"encoding/pem"
 	"errors"
 	"fmt"
 	"net"
@@ -19,6 +23,7 @@ import (
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
 	"go.uber.org/zap/zaptest/observer"
+	"golang.org/x/crypto/ssh"
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
 	"gorm.io/gorm/logger"
@@ -1066,5 +1071,518 @@ func TestTunnelAddressesBracketAnIPv6Host(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+// testPrivateKey returns a fresh private key in PEM, protected by passphrase
+// when one is given, along with the public key that goes with it.
+//
+// The key is generated rather than written into the source. A PEM block of a
+// private key in a repository reads as a key that leaked whether it is one or
+// not, and a key that is made here belongs to this test run alone.
+func testPrivateKey(t *testing.T, passphrase string) (string, ssh.PublicKey) {
+	t.Helper()
+
+	_, priv, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatalf("failed to generate a key: %v", err)
+	}
+
+	var block *pem.Block
+
+	if passphrase == "" {
+		block, err = ssh.MarshalPrivateKey(priv, "")
+	} else {
+		block, err = ssh.MarshalPrivateKeyWithPassphrase(priv, "", []byte(passphrase))
+	}
+	if err != nil {
+		t.Fatalf("failed to marshal the key: %v", err)
+	}
+
+	signer, err := ssh.NewSignerFromKey(priv)
+	if err != nil {
+		t.Fatalf("failed to build a signer: %v", err)
+	}
+
+	return string(pem.EncodeToMemory(block)), signer.PublicKey()
+}
+
+func TestParsePrivateKeyReadsAKeyThatHasNoPassphrase(t *testing.T) {
+	keyPEM, public := testPrivateKey(t, "")
+
+	signer, err := ParsePrivateKey(keyPEM, "")
+	if err != nil {
+		t.Fatalf("ParsePrivateKey returned an error: %v", err)
+	}
+
+	if !bytes.Equal(signer.PublicKey().Marshal(), public.Marshal()) {
+		t.Fatal("ParsePrivateKey returned a signer for another key")
+	}
+}
+
+// TestParsePrivateKeyIgnoresAPassphraseTheKeyDoesNotNeed covers the operator
+// who fills both boxes for a key that is not protected. The library refuses
+// that pair on its own, and a refusal there would read as a key that is broken.
+func TestParsePrivateKeyIgnoresAPassphraseTheKeyDoesNotNeed(t *testing.T) {
+	keyPEM, public := testPrivateKey(t, "")
+
+	signer, err := ParsePrivateKey(keyPEM, "not the passphrase of anything")
+	if err != nil {
+		t.Fatalf("ParsePrivateKey returned an error: %v", err)
+	}
+
+	if !bytes.Equal(signer.PublicKey().Marshal(), public.Marshal()) {
+		t.Fatal("ParsePrivateKey returned a signer for another key")
+	}
+}
+
+func TestParsePrivateKeyReadsAKeyWithItsPassphrase(t *testing.T) {
+	keyPEM, public := testPrivateKey(t, "the passphrase of the test")
+
+	signer, err := ParsePrivateKey(keyPEM, "the passphrase of the test")
+	if err != nil {
+		t.Fatalf("ParsePrivateKey returned an error: %v", err)
+	}
+
+	if !bytes.Equal(signer.PublicKey().Marshal(), public.Marshal()) {
+		t.Fatal("ParsePrivateKey returned a signer for another key")
+	}
+}
+
+// TestParsePrivateKeyRefusalsSayWhatIsWrong is the whole of what a refusal has
+// to do: come back as a KeyError, so the API answers it as a bad request, and
+// say which of the three things went wrong, so the operator knows whether to
+// go back to the key box or to the passphrase box.
+func TestParsePrivateKeyRefusalsSayWhatIsWrong(t *testing.T) {
+	locked, _ := testPrivateKey(t, "the passphrase of the test")
+	open, _ := testPrivateKey(t, "")
+
+	cases := []struct {
+		name       string
+		keyPEM     string
+		passphrase string
+		want       string
+	}{
+		{"not PEM", "this is not a key at all", "", "not PEM"},
+		{"PEM that holds no key", "-----BEGIN NOT A KEY-----\nnonsense\n-----END NOT A KEY-----", "",
+			"cannot be read"},
+		{"a passphrase that was not given", locked, "", "protected by a passphrase"},
+		{"a passphrase that is wrong", locked, "not the passphrase", "does not open"},
+		{"no key at all", "   ", "", "no private key"},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			signer, err := ParsePrivateKey(tc.keyPEM, tc.passphrase)
+			if err == nil {
+				t.Fatal("ParsePrivateKey took a key it should have refused")
+			}
+			if signer != nil {
+				t.Fatal("ParsePrivateKey returned a signer along with the refusal")
+			}
+
+			var refused *KeyError
+			if !errors.As(err, &refused) {
+				t.Fatalf("the refusal is not a KeyError: %v", err)
+			}
+			if !strings.Contains(refused.Error(), tc.want) {
+				t.Fatalf("the refusal is %q, which does not say %q", refused.Error(), tc.want)
+			}
+			if strings.Contains(refused.Error(), tc.passphrase) && tc.passphrase != "" {
+				t.Fatalf("the refusal carries the passphrase: %q", refused.Error())
+			}
+		})
+	}
+
+	// A key that is fine is not refused by any of the above.
+	_, err := ParsePrivateKey(open, "")
+	if err != nil {
+		t.Fatalf("a key that is in order was refused: %v", err)
+	}
+}
+
+// sealedHost returns a Host whose key, passphrase and password are sealed with
+// the cipher, the way the API stores them.
+func sealedHost(t *testing.T, c *crypto.Cipher, keyPEM, passphrase, password string) *models.Host {
+	t.Helper()
+
+	seal := func(value string) string {
+		if value == "" {
+			return ""
+		}
+
+		sealed, err := c.Encrypt(value)
+		if err != nil {
+			t.Fatalf("failed to encrypt: %v", err)
+		}
+
+		return sealed
+	}
+
+	return &models.Host{
+		ID:            1,
+		IP:            "127.0.0.1",
+		Port:          22,
+		User:          "user",
+		Password:      seal(password),
+		PrivateKey:    seal(keyPEM),
+		KeyPassphrase: seal(passphrase),
+		Enabled:       true,
+	}
+}
+
+// authMethodNames is what hostAuth built, named by type. The SSH protocol
+// offers the methods in the order they are in, so the order of this list is the
+// order the Host is asked with.
+func authMethodNames(methods []ssh.AuthMethod) []string {
+	names := make([]string, 0, len(methods))
+	for _, method := range methods {
+		names = append(names, fmt.Sprintf("%T", method))
+	}
+
+	return names
+}
+
+func TestHostAuthOffersTheKeyBeforeThePassword(t *testing.T) {
+	cipher := newTestCipher(t)
+	keyPEM, _ := testPrivateKey(t, "")
+
+	m, err := NewManager(newFailingDB(t), zap.NewNop(), cipher, 1)
+	if err != nil {
+		t.Fatalf("failed to create manager: %v", err)
+	}
+
+	methods, creds, err := m.hostAuth(sealedHost(t, cipher, keyPEM, "", "s3cr3t"))
+	if err != nil {
+		t.Fatalf("hostAuth returned an error: %v", err)
+	}
+
+	names := authMethodNames(methods)
+	if len(names) != 2 {
+		t.Fatalf("hostAuth built %d methods (%v), want the key and the password", len(names), names)
+	}
+	if !strings.Contains(names[0], "publicKey") {
+		t.Fatalf("the first method is %q, want the key", names[0])
+	}
+	if !strings.Contains(names[1], "password") {
+		t.Fatalf("the second method is %q, want the password", names[1])
+	}
+	if creds.password != "s3cr3t" {
+		t.Fatal("hostAuth did not hand back the password the fingerprint is taken over")
+	}
+}
+
+func TestHostAuthOffersOnlyWhatTheHostCarries(t *testing.T) {
+	cipher := newTestCipher(t)
+	keyPEM, _ := testPrivateKey(t, "")
+
+	m, err := NewManager(newFailingDB(t), zap.NewNop(), cipher, 1)
+	if err != nil {
+		t.Fatalf("failed to create manager: %v", err)
+	}
+
+	cases := []struct {
+		name     string
+		host     *models.Host
+		wantWith string
+	}{
+		{"the key alone", sealedHost(t, cipher, keyPEM, "", ""), "publicKey"},
+		{"the password alone", sealedHost(t, cipher, "", "", "s3cr3t"), "password"},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			methods, _, err := m.hostAuth(tc.host)
+			if err != nil {
+				t.Fatalf("hostAuth returned an error: %v", err)
+			}
+
+			names := authMethodNames(methods)
+			if len(names) != 1 {
+				t.Fatalf("hostAuth built %d methods (%v), want one", len(names), names)
+			}
+			if !strings.Contains(names[0], tc.wantWith) {
+				t.Fatalf("the method is %q, want %q", names[0], tc.wantWith)
+			}
+		})
+	}
+}
+
+// TestHostAuthReportsAHostWithNothingToLogInWith is the case a Host cannot be
+// registered in any more, and could still be reached by a row written by hand.
+// It must not come out as an SSH connection that offers nothing and hangs.
+func TestHostAuthReportsAHostWithNothingToLogInWith(t *testing.T) {
+	m, err := NewManager(newFailingDB(t), zap.NewNop(), newTestCipher(t), 1)
+	if err != nil {
+		t.Fatalf("failed to create manager: %v", err)
+	}
+
+	host := &models.Host{ID: 7, IP: "127.0.0.1", Port: 22, User: "user", Enabled: true}
+
+	methods, _, err := m.hostAuth(host)
+	if err == nil {
+		t.Fatal("hostAuth built a connection for a Host that carries no way in")
+	}
+	if methods != nil {
+		t.Fatal("hostAuth returned methods along with the error")
+	}
+	if !strings.Contains(err.Error(), "neither a private key nor a password") {
+		t.Fatalf("the error does not say what is missing: %v", err)
+	}
+}
+
+// TestHostAuthFallsBackToThePasswordWhenTheKeyCannotBeRead is what keeps a
+// running installation up. A key that cannot be built is not a reason to stop
+// connecting to a Host that also carries a password.
+func TestHostAuthFallsBackToThePasswordWhenTheKeyCannotBeRead(t *testing.T) {
+	cipher := newTestCipher(t)
+
+	core, logs := observer.New(zapcore.DebugLevel)
+
+	m, err := NewManager(newFailingDB(t), zap.New(core), cipher, 1)
+	if err != nil {
+		t.Fatalf("failed to create manager: %v", err)
+	}
+
+	host := sealedHost(t, cipher, "this is not a key at all", "", "s3cr3t")
+
+	methods, creds, err := m.hostAuth(host)
+	if err != nil {
+		t.Fatalf("hostAuth returned an error: %v", err)
+	}
+
+	names := authMethodNames(methods)
+	if len(names) != 1 || !strings.Contains(names[0], "password") {
+		t.Fatalf("hostAuth built %v, want the password alone", names)
+	}
+	if creds.password != "s3cr3t" {
+		t.Fatal("hostAuth did not hand back the password")
+	}
+
+	errors := 0
+	for _, entry := range logs.All() {
+		if entry.Level >= zapcore.ErrorLevel {
+			errors++
+		}
+	}
+	if errors == 0 {
+		t.Fatal("a stored key that cannot be read was not logged")
+	}
+}
+
+// TestHostAuthReportsAKeyThatDoesNotDecrypt covers the Host that carries a key
+// and nothing else, sealed with another encryption key. There is nothing to
+// fall back on, and the row is left exactly as it is.
+func TestHostAuthReportsAKeyThatDoesNotDecrypt(t *testing.T) {
+	keyPEM, _ := testPrivateKey(t, "")
+	stored := sealedHost(t, newTestCipher(t), keyPEM, "", "")
+
+	updates := 0
+
+	m, err := NewManager(newUpdateCountingDB(t, &updates), zap.NewNop(), newTestCipher(t), 1)
+	if err != nil {
+		t.Fatalf("failed to create manager: %v", err)
+	}
+
+	sealed := stored.PrivateKey
+
+	_, _, err = m.hostAuth(stored)
+	if !errors.Is(err, crypto.ErrWrongKey) {
+		t.Fatalf("hostAuth did not report a wrong encryption key: %v", err)
+	}
+	if updates != 0 {
+		t.Fatalf("hostAuth sent %d updates to the hosts table with a wrong encryption key", updates)
+	}
+	if stored.PrivateKey != sealed {
+		t.Fatal("hostAuth changed the stored private key although the encryption key is wrong")
+	}
+}
+
+// startKeyAndPasswordSSHServer speaks SSH and records the methods it is offered
+// in the order they arrive. The key it accepts is the one that is handed in,
+// and the password it accepts is accept; anything else is refused, which is
+// what makes the client move on to the next method.
+func startKeyAndPasswordSSHServer(t *testing.T, accepted ssh.PublicKey, accept string,
+	offered *[]string, mu *sync.Mutex) string {
+	t.Helper()
+
+	_, priv, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatalf("failed to generate host key: %v", err)
+	}
+
+	signer, err := ssh.NewSignerFromKey(priv)
+	if err != nil {
+		t.Fatalf("failed to create signer: %v", err)
+	}
+
+	note := func(method string) {
+		mu.Lock()
+		*offered = append(*offered, method)
+		mu.Unlock()
+	}
+
+	config := &ssh.ServerConfig{
+		PublicKeyCallback: func(_ ssh.ConnMetadata, key ssh.PublicKey) (*ssh.Permissions, error) {
+			note("publickey")
+
+			if accepted != nil && bytes.Equal(key.Marshal(), accepted.Marshal()) {
+				return &ssh.Permissions{}, nil
+			}
+
+			return nil, errors.New("key refused")
+		},
+		PasswordCallback: func(_ ssh.ConnMetadata, password []byte) (*ssh.Permissions, error) {
+			note("password")
+
+			if accept != "" && string(password) == accept {
+				return &ssh.Permissions{}, nil
+			}
+
+			return nil, errors.New("password refused")
+		},
+	}
+	config.AddHostKey(signer)
+
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("failed to listen: %v", err)
+	}
+	t.Cleanup(func() {
+		_ = ln.Close()
+	})
+
+	go func() {
+		for {
+			conn, err := ln.Accept()
+			if err != nil {
+				return
+			}
+
+			go func(conn net.Conn) {
+				sshConn, chans, reqs, err := ssh.NewServerConn(conn, config)
+				if err != nil {
+					_ = conn.Close()
+					return
+				}
+
+				go ssh.DiscardRequests(reqs)
+				go func() {
+					for newChannel := range chans {
+						_ = newChannel.Reject(ssh.Prohibited, "nothing is served here")
+					}
+				}()
+
+				_ = sshConn.Close()
+			}(conn)
+		}
+	}()
+
+	return ln.Addr().String()
+}
+
+// TestTheHostIsAskedWithTheKeyFirst is the order as the protocol sees it rather
+// than as the slice is built. The server records what it was offered, so what
+// is pinned here is what a real sshd would have been asked with.
+func TestTheHostIsAskedWithTheKeyFirst(t *testing.T) {
+	cipher := newTestCipher(t)
+	keyPEM, public := testPrivateKey(t, "")
+
+	cases := []struct {
+		name string
+		// accepted is the key the server takes, and accept the password it
+		// takes. An empty one of either is a server that refuses it.
+		accepted ssh.PublicKey
+		accept   string
+		want     []string
+	}{
+		{"the key is taken", public, "", []string{"publickey"}},
+		{"the key is refused and the password is taken", nil, "s3cr3t", []string{"publickey", "password"}},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			var mu sync.Mutex
+			var offered []string
+
+			addr := startKeyAndPasswordSSHServer(t, tc.accepted, tc.accept, &offered, &mu)
+
+			m, err := NewManager(newFailingDB(t), zap.NewNop(), cipher, 1)
+			if err != nil {
+				t.Fatalf("failed to create manager: %v", err)
+			}
+
+			methods, _, err := m.hostAuth(sealedHost(t, cipher, keyPEM, "", "s3cr3t"))
+			if err != nil {
+				t.Fatalf("hostAuth returned an error: %v", err)
+			}
+
+			client, err := ssh.Dial("tcp", addr, &ssh.ClientConfig{
+				User:            "user",
+				Auth:            methods,
+				HostKeyCallback: ssh.InsecureIgnoreHostKey(),
+				Timeout:         10 * time.Second,
+			})
+			if err != nil {
+				t.Fatalf("the connection was not made: %v", err)
+			}
+			_ = client.Close()
+
+			mu.Lock()
+			got := append([]string(nil), offered...)
+			mu.Unlock()
+
+			// The client offers "publickey" once to ask whether the key would
+			// be taken and once to prove it, so the same method twice in a row
+			// is one attempt.
+			if !reflect.DeepEqual(dedupeAdjacent(got), tc.want) {
+				t.Fatalf("the Host was asked with %v, want %v", got, tc.want)
+			}
+		})
+	}
+}
+
+// dedupeAdjacent drops a repeat of the method just before it.
+func dedupeAdjacent(methods []string) []string {
+	out := make([]string, 0, len(methods))
+	for _, method := range methods {
+		if len(out) > 0 && out[len(out)-1] == method {
+			continue
+		}
+		out = append(out, method)
+	}
+
+	return out
+}
+
+// TestHostPasswordLeavesAHostThatCarriesNoneAlone is what keeps a Host
+// registered with a key alone from growing a password. The empty value looks
+// exactly like a password stored before passwords were encrypted, and the
+// migration would seal it into the row, after which the Host is offered an
+// empty password on every connection and nothing can tell it from one that was
+// chosen. The reconcile pass reads the password of every Host it watches, so
+// this runs on every pass.
+func TestHostPasswordLeavesAHostThatCarriesNoneAlone(t *testing.T) {
+	updates := 0
+
+	m, err := NewManager(newUpdateCountingDB(t, &updates), zap.NewNop(), newTestCipher(t), 1)
+	if err != nil {
+		t.Fatalf("failed to create manager: %v", err)
+	}
+
+	host := models.Host{ID: 1, IP: "127.0.0.1", Port: 22, User: "user", Enabled: true}
+
+	password, err := m.hostPassword(&host)
+	if err != nil {
+		t.Fatalf("hostPassword returned an error: %v", err)
+	}
+	if password != "" {
+		t.Fatalf("hostPassword returned %q for a Host that carries no password", password)
+	}
+	if updates != 0 {
+		t.Fatalf("hostPassword sent %d updates for a Host that carries no password", updates)
+	}
+	if host.Password != "" {
+		t.Fatalf("hostPassword put %q in the row of a Host that carries no password", host.Password)
 	}
 }

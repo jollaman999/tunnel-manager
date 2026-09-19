@@ -238,6 +238,41 @@ h2 {
   font-size: 12px;
 }
 
+/* Where a key file is dropped. It is drawn as an outline rather than as a box
+   with a fill, because it takes no typing and is not another field: what it is
+   is the area the file may be let go over. It spans the row under the textarea
+   it fills, the way the textarea itself does. */
+.drop-zone {
+  grid-column: 1 / -1;
+  padding: 0.6rem 0.75rem;
+  color: #6b7079;
+  font-size: 12px;
+  text-align: center;
+  background: #fbfbfc;
+  border: 1px dashed #c6cbd2;
+  border-radius: 4px;
+}
+
+/* While a file is held over it. Without this the operator is dragging a file
+   across a page that gives no sign it will be taken anywhere. */
+.drop-zone.drop-over {
+  color: #24456b;
+  background: #eef3f9;
+  border-color: #24456b;
+  border-style: solid;
+}
+
+/* What was read, or what was wrong with what was dropped. It is a block so it
+   sits under the sentence above it rather than beside it. */
+.drop-zone .drop-said {
+  display: block;
+  margin-top: 0.35rem;
+}
+
+.drop-zone .drop-said.problem {
+  color: #8a2f2f;
+}
+
 .buttons {
   display: flex;
   flex-wrap: wrap;

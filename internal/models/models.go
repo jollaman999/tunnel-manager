@@ -8,15 +8,27 @@ import (
 // inserts the row, so a Host built in Go without reading the database has
 // Enabled false and StartTunnel skips it.
 type Host struct {
-	ID          uint      `gorm:"primaryKey;autoIncrement" json:"id"`
-	IP          string    `gorm:"uniqueIndex:idx_hosts_ip;not null" json:"ip"`
-	Port        int       `gorm:"not null" json:"port"`
-	User        string    `gorm:"not null" json:"user"`
-	Password    string    `gorm:"not null" json:"-"`
-	Description string    `json:"description"`
-	Enabled     bool      `gorm:"default:true" json:"enabled"`
-	CreatedAt   time.Time `json:"created_at"`
-	UpdatedAt   time.Time `json:"updated_at"`
+	ID   uint   `gorm:"primaryKey;autoIncrement" json:"id"`
+	IP   string `gorm:"uniqueIndex:idx_hosts_ip;not null" json:"ip"`
+	Port int    `gorm:"not null" json:"port"`
+	User string `gorm:"not null" json:"user"`
+	// Password carries no "not null" because a Host may be registered with a
+	// private key and no password at all. It used to be required, from when a
+	// password was the only way in, and a Host that has only a key would have
+	// had to be given an empty string to satisfy a column that says a password
+	// is always there.
+	Password string `json:"-"`
+	// PrivateKey is the PEM private key this Host is authenticated with, sealed
+	// with crypto.Cipher the way Password is, and KeyPassphrase is what opens
+	// it when the key is protected by one. Both are kept out of every response:
+	// a key that leaves this process is a key into every machine that trusts
+	// it, and a passphrase beside it takes the protection off.
+	PrivateKey    string    `json:"-"`
+	KeyPassphrase string    `json:"-"`
+	Description   string    `json:"description"`
+	Enabled       bool      `gorm:"default:true" json:"enabled"`
+	CreatedAt     time.Time `json:"created_at"`
+	UpdatedAt     time.Time `json:"updated_at"`
 }
 
 type ServicePort struct {
@@ -41,21 +53,32 @@ type Tunnel struct {
 	Remote          string    `gorm:"not null" json:"remote"`
 }
 
+// CreateHostRequest registers a Host. The password is no longer required on its
+// own: a Host is registered with a private key, with a password, or with both,
+// and which of them is missing is decided in the handler rather than by a rule
+// on one field, so that the refusal can say what to do about it.
 type CreateHostRequest struct {
-	IP          string `json:"ip" validate:"required,ip"`
-	Port        int    `json:"port" validate:"required,min=1,max=65535"`
-	User        string `json:"user" validate:"required"`
-	Password    string `json:"password" validate:"required"`
-	Description string `json:"description"`
+	IP            string `json:"ip" validate:"required,ip"`
+	Port          int    `json:"port" validate:"required,min=1,max=65535"`
+	User          string `json:"user" validate:"required"`
+	Password      string `json:"password" validate:"omitempty"`
+	PrivateKey    string `json:"private_key" validate:"omitempty"`
+	KeyPassphrase string `json:"key_passphrase" validate:"omitempty"`
+	Description   string `json:"description"`
 }
 
+// UpdateHostRequest changes a Host. A field the request leaves out is left as
+// it is, the private key and its passphrase included: an empty box on the
+// screen keeps the key that is stored rather than taking it away.
 type UpdateHostRequest struct {
-	IP          string `json:"ip" validate:"omitempty,ip"`
-	Port        *int   `json:"port" validate:"omitempty,min=1,max=65535"`
-	User        string `json:"user" validate:"omitempty"`
-	Password    string `json:"password" validate:"omitempty"`
-	Description string `json:"description"`
-	Enabled     *bool  `json:"enabled"`
+	IP            string `json:"ip" validate:"omitempty,ip"`
+	Port          *int   `json:"port" validate:"omitempty,min=1,max=65535"`
+	User          string `json:"user" validate:"omitempty"`
+	Password      string `json:"password" validate:"omitempty"`
+	PrivateKey    string `json:"private_key" validate:"omitempty"`
+	KeyPassphrase string `json:"key_passphrase" validate:"omitempty"`
+	Description   string `json:"description"`
+	Enabled       *bool  `json:"enabled"`
 }
 
 type CreateServicePortRequest struct {

@@ -79,3 +79,72 @@ func TestUserPasswordHashIsNotSerialized(t *testing.T) {
 		t.Fatalf("the serialized User is missing the username: %s", body)
 	}
 }
+
+// TestHostSecretsAreNotSerialized is what keeps the way into every machine a
+// Host names inside the process. The private key is worth more than the
+// password beside it: a key that leaves here opens every Host that trusts it,
+// and the passphrase next to it takes off what protects it at rest.
+func TestHostSecretsAreNotSerialized(t *testing.T) {
+	// Values that are obviously not secrets, so the test says nothing about
+	// what a stored one looks like.
+	host := Host{
+		ID:            1,
+		IP:            "192.0.2.10",
+		Port:          22,
+		User:          "operator",
+		Password:      "not-a-real-password",
+		PrivateKey:    "not-a-real-key",
+		KeyPassphrase: "not-a-real-passphrase",
+		Description:   "the host of the test",
+		Enabled:       true,
+	}
+
+	encoded, err := json.Marshal(host)
+	if err != nil {
+		t.Fatalf("failed to serialize: %v", err)
+	}
+
+	body := string(encoded)
+
+	for _, name := range []string{
+		"password", "Password",
+		"private_key", "PrivateKey",
+		"key_passphrase", "KeyPassphrase",
+	} {
+		if strings.Contains(body, name) {
+			t.Fatalf("the serialized Host carries a %s field: %s", name, body)
+		}
+	}
+
+	for _, value := range []string{host.Password, host.PrivateKey, host.KeyPassphrase} {
+		if strings.Contains(body, value) {
+			t.Fatalf("the serialized Host carries a stored secret: %s", body)
+		}
+	}
+
+	if !strings.Contains(body, `"ip":"192.0.2.10"`) {
+		t.Fatalf("the serialized Host is missing the address: %s", body)
+	}
+}
+
+// TestHostPasswordColumnIsNullable pins that a Host may be stored without a
+// password. It is the one part of the schema the private key changed: the
+// column used to be NOT NULL, from when a password was the only way in, and a
+// Host that carries a key alone has none.
+func TestHostPasswordColumnIsNullable(t *testing.T) {
+	stmt := &gorm.Statement{DB: newDryRunDB(t)}
+	err := stmt.Parse(&Host{})
+	if err != nil {
+		t.Fatalf("failed to parse the Host schema: %v", err)
+	}
+
+	for _, name := range []string{"password", "private_key", "key_passphrase"} {
+		field := stmt.Schema.LookUpField(name)
+		if field == nil {
+			t.Fatalf("the Host schema has no %s column", name)
+		}
+		if field.NotNull {
+			t.Fatalf("the %s column is NOT NULL, so a Host without one cannot be stored", name)
+		}
+	}
+}

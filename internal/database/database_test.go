@@ -982,3 +982,122 @@ func TestTheLevelCanBeChangedWhileQueriesRun(t *testing.T) {
 	close(done)
 	<-written
 }
+
+// TestNewDatabaseKeepsTheHostsThatAreAlreadyStored is the migration this
+// installation is carried through when the private key columns arrive. The
+// table it is run against is the one the earlier versions built: a password
+// that is NOT NULL and no column for a key.
+//
+// What it holds is that a row written by the version before this one is still
+// there afterwards, with the password it was stored with, and that the columns
+// the key needs were added rather than the table being rebuilt empty. A
+// migration that drops a Host takes down every tunnel of that Host, and the
+// password it held exists nowhere else.
+func TestNewDatabaseKeepsTheHostsThatAreAlreadyStored(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "state", "tunnel-manager.db")
+
+	err := os.MkdirAll(filepath.Dir(path), 0755)
+	if err != nil {
+		t.Fatalf("failed to create the directory of the database: %v", err)
+	}
+
+	// The table as the version before this one created it, written out rather
+	// than migrated from an old model, because that model is gone from the
+	// source and the shape it left behind is what a running installation holds.
+	old, err := gorm.Open(sqlite.Open(path), &gorm.Config{Logger: gormlogger.Discard})
+	if err != nil {
+		t.Fatalf("failed to open the database: %v", err)
+	}
+
+	statements := []string{
+		"CREATE TABLE `hosts` (`id` integer PRIMARY KEY AUTOINCREMENT," +
+			"`ip` text NOT NULL,`port` integer NOT NULL,`user` text NOT NULL," +
+			"`password` text NOT NULL,`description` text,`enabled` numeric DEFAULT true," +
+			"`created_at` datetime,`updated_at` datetime)",
+		"CREATE UNIQUE INDEX `idx_hosts_ip` ON `hosts`(`ip`)",
+		"INSERT INTO `hosts` (`ip`,`port`,`user`,`password`,`description`,`enabled`," +
+			"`created_at`,`updated_at`) VALUES ('192.0.2.10',22,'operator'," +
+			"'tmenc:v1:the-sealed-password-of-the-test','a host of the version before'," +
+			"true,'2026-09-01 00:00:00','2026-09-01 00:00:00')",
+	}
+
+	for _, sql := range statements {
+		err = old.Exec(sql).Error
+		if err != nil {
+			t.Fatalf("failed to build the old table: %v", err)
+		}
+	}
+
+	oldDB, err := old.DB()
+	if err != nil {
+		t.Fatalf("failed to reach the connection pool: %v", err)
+	}
+	err = oldDB.Close()
+	if err != nil {
+		t.Fatalf("failed to close the old handle: %v", err)
+	}
+
+	core, _ := observer.New(zapcore.DebugLevel)
+
+	db, _, err := NewDatabase(path, zap.New(core), "error")
+	if err != nil {
+		t.Fatalf("the migration failed: %v", err)
+	}
+	t.Cleanup(func() {
+		sqlDB, err := db.DB()
+		if err == nil {
+			_ = sqlDB.Close()
+		}
+	})
+
+	var hosts []models.Host
+	err = db.Find(&hosts).Error
+	if err != nil {
+		t.Fatalf("failed to read the Hosts: %v", err)
+	}
+
+	if len(hosts) != 1 {
+		t.Fatalf("%d Hosts are stored after the migration, want the one that was there", len(hosts))
+	}
+
+	host := hosts[0]
+
+	if host.IP != "192.0.2.10" || host.User != "operator" || host.Port != 22 {
+		t.Fatalf("the stored Host came back as %+v", host)
+	}
+	if host.Password != "tmenc:v1:the-sealed-password-of-the-test" {
+		t.Fatal("the stored password of the Host did not survive the migration")
+	}
+	if !host.Enabled {
+		t.Fatal("the Host was disabled by the migration")
+	}
+	if host.PrivateKey != "" || host.KeyPassphrase != "" {
+		t.Fatal("the migration put something in the key columns of a Host that carries none")
+	}
+
+	// The new columns are there to be written, and the password may now be
+	// left out: that is the Host registered with a key alone.
+	err = db.Create(&models.Host{
+		IP:            "192.0.2.11",
+		Port:          22,
+		User:          "operator",
+		PrivateKey:    "tmenc:v1:the-sealed-key-of-the-test",
+		KeyPassphrase: "tmenc:v1:the-sealed-passphrase-of-the-test",
+		Enabled:       true,
+	}).Error
+	if err != nil {
+		t.Fatalf("a Host with a key and no password was not stored: %v", err)
+	}
+
+	var withKey models.Host
+	err = db.Where("ip = ?", "192.0.2.11").First(&withKey).Error
+	if err != nil {
+		t.Fatalf("failed to read the Host back: %v", err)
+	}
+	if withKey.PrivateKey != "tmenc:v1:the-sealed-key-of-the-test" {
+		t.Fatalf("the key came back as %q", withKey.PrivateKey)
+	}
+	if withKey.Password != "" {
+		t.Fatalf("the password of a Host that carries none came back as %q", withKey.Password)
+	}
+}
