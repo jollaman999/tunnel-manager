@@ -1,3 +1,13 @@
+# v3.2.1
+
+## Bug fixes:
+
+- The dial to the forwarded service had no bound on it, and waited for as long as the kernel retries a SYN. A backend that a firewall drops silently, rather than refuses, held a goroutine and a socket for every connection made through the tunnel for over two minutes, long after the client that opened it had given up. It is the ten seconds the SSH dial already uses. Measured against an address that swallows the handshake: the connection was given back after 135.68s before, and after 10.01s now.
+
+## Notes:
+
+- A test that checks a reset service connection is reported was racing the dial it depends on, and failed on a loaded machine: 17 runs in 20 under load, none on an idle one. It puts a byte through before breaking anything now, which fails 0 in 20 under the same load. Nothing in the program changed for it.
+
 # v3.2.0
 
 ## Add/fix features:
