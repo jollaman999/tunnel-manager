@@ -1102,7 +1102,7 @@ async function drawSettings() {
   nodes.push(certificateForm());
   nodes.push(accountCard(account));
   nodes.push(settingsRescue());
-  nodes.push(settingsRestart(restart, pendingAPIPort(set)));
+  nodes.push(settingsRestart(restart, addressAfterRestart(set)));
   nodes.push(settingsDangerZone());
 
   render("Settings", nodes);
@@ -1821,27 +1821,54 @@ function settingsRescue() {
   return card;
 }
 
-// pendingAPIPort is the port a restart would bring the service back on, when
-// that is not the port this page is talking to. It reads the same list the
-// card above the form draws, so the two cannot disagree.
+// addressAfterRestart is where the service will answer once it has restarted,
+// when that is not where this page is talking to it. It is null when the two
+// are the same. It reads the same list the card above the form draws, so the
+// two cannot disagree.
 //
 // It matters for more than the wording. This page waits for the service by
 // asking the address it is already on, and a service that comes back somewhere
-// else never answers there: the wait would run to its limit and report that
-// nothing came back, while the service is up and serving on another port.
-function pendingAPIPort(set) {
+// else never answers there: the wait runs to its limit and reports that
+// nothing came back, while the service is up and serving somewhere else.
+//
+// Two stored settings move it. api.port moves the port, and api.https_enabled
+// moves the scheme: a page loaded over http is answered with a redirect to
+// https after the restart, and the certificate that redirect leads to is one
+// nobody signed for, so the browser refuses it and the wait sees nothing. That
+// is the likelier of the two, because turning HTTPS on is a thing an operator
+// does from the screen that is served without it.
+function addressAfterRestart(set) {
   const pending = set === null || set === undefined ? null : set.pending_restart;
   if (pending === null || pending === undefined) {
     return null;
   }
 
+  let port = null;
+  let https = null;
+
   for (const item of pending) {
     if (item.name === "api.port") {
-      return item.stored;
+      port = item.stored;
+    }
+    if (item.name === "api.https_enabled") {
+      https = item.stored === "true";
     }
   }
 
-  return null;
+  if (port === null && https === null) {
+    return null;
+  }
+
+  // What is not changing is taken from the address this page is on rather than
+  // from what is stored, because that is the one this browser actually reached
+  // the service at.
+  const scheme = https === null
+    ? window.location.protocol.replace(":", "")
+    : (https ? "https" : "http");
+  const here = window.location.port === "" ? "" : window.location.port;
+  const where = port === null ? here : port;
+
+  return scheme + "://" + window.location.hostname + (where === "" ? "" : ":" + where) + "/ui/settings";
 }
 
 // settingsRestart takes the service down and brings it back. It is a card of
@@ -1853,7 +1880,7 @@ function pendingAPIPort(set) {
 // The password of the account is not asked for here. The uninstall asks because
 // what it does is final; a question put to every press is one that stops being
 // read.
-function settingsRestart(restart, newPort) {
+function settingsRestart(restart, newAddress) {
   const card = document.createElement("section");
 
   card.className = "card";
@@ -1875,13 +1902,13 @@ function settingsRestart(restart, newPort) {
     return card;
   }
 
-  card.appendChild(element("p", restartOutcome(restart.view, newPort)));
+  card.appendChild(element("p", restartOutcome(restart.view, newAddress)));
 
   const buttons = document.createElement("div");
   buttons.className = "buttons";
 
   const button = actionButton("Restart", "settings-restart", function () {
-    return submitRestart(restart.view, button, newPort);
+    return submitRestart(restart.view, button, newAddress);
   });
 
   button.disabled = restartInFlight;
@@ -1895,23 +1922,23 @@ function settingsRestart(restart, newPort) {
 // restartOutcome is the half of this that differs by platform, in the words the
 // card uses. The server says which one it is, because it is the only side that
 // knows: the browser cannot tell what the machine on the other end is running.
-function restartOutcome(view, newPort) {
-  const port = newPort === undefined ? null : newPort;
+function restartOutcome(view, newAddress) {
+  const address = newAddress === undefined ? null : newAddress;
 
   if (view.comes_back) {
     const base = "This process runs the program again in place of itself. It keeps the process " +
       "it already is, so the service is back within seconds and nothing has to start it.";
 
-    if (port === null) {
-      return base + " It answers on the same port it does now.";
+    if (address === null) {
+      return base + " It answers at the same address it does now.";
     }
 
-    // api.port is stored with a value this service is not running on, so the
-    // restart is what puts it into place. Saying "the same port" here would be
-    // wrong in exactly the case an operator is most likely to be restarting
-    // for, and the address they have to go to next is the useful part.
-    return base + " api.port is waiting for this restart, so it comes back on port " + port +
-      " and this page, which is on the old one, stops being the way to reach it.";
+    // A stored setting this restart puts into place moves where the service
+    // answers. Saying "the same address" here would be wrong in exactly the
+    // case an operator is most likely to be restarting for, and the address
+    // they have to go to next is the useful part.
+    return base + " It comes back at " + address + ", which is not where this page is, so " +
+      "this page stops being the way to reach it.";
   }
 
   return "This platform cannot replace the image of a running process, so the restart ends " +
@@ -1922,18 +1949,18 @@ function restartOutcome(view, newPort) {
 // restartQuestion is what the operator is asked before anything happens. It
 // says what is cut either way, and on a platform that does not come back it
 // says that too, while there is still something to be done about it.
-function restartQuestion(view, newPort) {
-  const port = newPort === undefined ? null : newPort;
+function restartQuestion(view, newAddress) {
+  const address = newAddress === undefined ? null : newAddress;
   const cut = "Restart tunnel-manager? Every tunnel is cut and the API stops answering while " +
     "the service goes down and comes up again.";
 
-  const moved = port === null ? "" : " It comes back on port " + port + ", which is what is " +
-    "stored for api.port, so this page will not reach it again and you have to open the new " +
-    "address yourself.";
+  const moved = address === null ? "" : " It comes back at " + address + ", which is what the " +
+    "settings waiting for this restart say, so this page will not reach it again and you have " +
+    "to open that address yourself.";
 
   if (view.comes_back) {
-    if (port === null) {
-      return cut + " It comes back on its own within seconds, on the same port.";
+    if (address === null) {
+      return cut + " It comes back on its own within seconds, at the same address.";
     }
 
     return cut + " It comes back on its own within seconds." + moved;
@@ -1944,8 +1971,8 @@ function restartQuestion(view, newPort) {
     "back.";
 }
 
-async function submitRestart(view, button, newPort) {
-  if (!window.confirm(restartQuestion(view, newPort))) {
+async function submitRestart(view, button, newAddress) {
+  if (!window.confirm(restartQuestion(view, newAddress))) {
     return;
   }
 
@@ -1964,12 +1991,12 @@ async function submitRestart(view, button, newPort) {
     throw error;
   }
 
-  drawRestarting(answer, "", newPort);
+  drawRestarting(answer, "", newAddress);
 
   let back = false;
 
   try {
-    back = newPort === null ? await waitForTheService(answer) : false;
+    back = newAddress === null ? await waitForTheService(answer) : false;
   } finally {
     restartInFlight = false;
   }
@@ -1980,7 +2007,7 @@ async function submitRestart(view, button, newPort) {
     return;
   }
 
-  if (newPort !== null) {
+  if (newAddress !== null) {
     // The service is coming back somewhere else, so there is nothing here to
     // wait for and nothing to report as missing.
     return;
@@ -1988,7 +2015,7 @@ async function submitRestart(view, button, newPort) {
 
   if (!back) {
     drawRestarting(answer, "The service did not answer again within " + restartPollLimitSec +
-      " seconds. Check the server.", newPort);
+      " seconds. Check the server.", newAddress);
 
     return;
   }
@@ -2004,7 +2031,7 @@ async function submitRestart(view, button, newPort) {
 //
 // problem is empty while the waiting is still on, and holds what to do about it
 // once the page has given up.
-function drawRestarting(answer, problem, newPort) {
+function drawRestarting(answer, problem, newAddress) {
   if (currentScreen !== "settings") {
     return;
   }
@@ -2017,16 +2044,16 @@ function drawRestarting(answer, problem, newPort) {
       plural(seconds, "second", "seconds") + " after this screen appeared, every tunnel comes " +
       "down with it and is built again on the way back."));
 
-  nodes.push(element("p", restartOutcome(answer, newPort)));
+  nodes.push(element("p", restartOutcome(answer, newAddress)));
 
-  const port = newPort === undefined ? null : newPort;
+  const address = newAddress === undefined ? null : newAddress;
 
-  if (port !== null) {
+  if (address !== null) {
     // Waiting would be waiting on the wrong address. This page is served from
-    // the port being left behind, so asking it again can only ever time out,
+    // the one being left behind, so asking it again can only ever time out,
     // and reporting that as "it did not come back" would be untrue.
     nodes.push(statusLine("This page is not waiting, because the service is not coming back " +
-      "here. Open it on port " + port + " once it is up.", "warning"));
+      "here. Open " + address + " once it is up.", "warning"));
   } else if (problem === "") {
     nodes.push(statusLine("Waiting for the service to answer again. This page asks every " +
       restartPollEverySec + " " + plural(restartPollEverySec, "second", "seconds") +
