@@ -1,3 +1,37 @@
+# v3.2.0
+
+## Add/fix features:
+
+- Restart from the Settings screen:
+  - The process runs itself again in place of itself, so it keeps the process it already is and the supervisor never sees it go. An installation that was started by hand comes back too.
+  - Windows has no such call. There the process ends and whatever supervises it takes over, and the screen says so before the button is pressed rather than after.
+  - The tunnels come down in order and the log is flushed by hand first, because a tunnel left up holds a listener open on the far side of the SSH connection and the call that replaces the image does not run deferred functions.
+  - When `api.port` is one of the settings waiting for the restart, the screen names the port the service will come back on instead of promising the one it is on. It also stops waiting, rather than asking an address it knows is being left and reporting a service that never came back.
+- The username and the password are changed from the Settings screen:
+  - Both take the current password, the same reason the setup that opens the account refuses to run twice: a session left open would otherwise be enough to take the account over.
+  - Every other session ends when either changes, the username included. A session is bound to the account rather than to the name, so renaming alone would leave whoever already holds one exactly where they were.
+  - The new password is typed twice, here and on the setup screen. The second box never leaves the browser.
+- A Host logs in with an SSH key:
+  - A Host carries a private key, with a passphrase when the key has one. Both are sealed in the row the way the password is, so what lands in the database is never the key itself, and neither is ever in an answer the API gives.
+  - The key is offered before the password, which is the order SSH tries them in. A Host that carries both stays reachable with its password while a key that was just registered is not yet the one the far end knows.
+  - What is pasted is read when it is stored rather than when something connects. A key that is not PEM, one that wants a passphrase it was not given, and a passphrase that does not open its key are each turned away by name.
+  - The key box takes a file dropped on it. It is read in the browser, so only the text is sent.
+  - A Host may now carry a key alone. `password` is no longer required.
+- What is stored but not being run on:
+  - The Settings screen shows which settings are stored with a value this service is not running on, and what each is running on meanwhile. It comes from the server rather than from the last save, so it is there whenever the screen is opened and to whoever opens it, and a restart clears it because the two become the same.
+  - A setting that takes hold at once is left out of that list by the same table the save reads.
+- `-reset-settings` says what it leaves alone. The registered hosts, the service ports, the account and the certificate are in the same file and are untouched. It is the command for a server that will not start, and half of what it did was the half nobody needed to know.
+- The Save under Serve over HTTPS is coloured like the other buttons that are the main thing on their card, and no longer sits against the certificate table below it as though it stored that too. The product name has a line of its own above the tabs.
+
+## Bug fixes:
+
+- A Host whose private key was replaced kept its tunnel on the key it was built with. The fingerprint a reconcile pass compares against was taken over the addresses, the user and the password alone, so the save answered as though it had taken and the new key went untried until something else dropped the connection. Measured against a server that accepts only the key: a key the server refuses left the tunnel connected for a minute, and now the tunnel reports the refusal within five seconds.
+- A Host registered with a key alone had its empty password sealed into the row on every reconcile pass, so it came to carry a password that is the empty string and offered it on every connection.
+
+## Notes:
+
+- The tunnel was measured under load: 33 million requests and 416GB through six tunnels at once, with no response reaching the wrong client, no data race, and no goroutine or descriptor left behind. A tunnel carries 30 to 60 percent of what the same backend serves directly. What costs that is the single write lock an SSH connection multiplexes through, which is in the SSH library rather than here, and three quarters of what this program itself spends is the read and write calls a userspace proxy is made of. Enlarging the copy buffer was measured and changed nothing.
+
 # v3.1.0
 
 ## Breaking changes:
