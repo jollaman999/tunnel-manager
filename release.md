@@ -1,3 +1,13 @@
+# v3.3.0
+
+## Add/fix features:
+
+- The configuration can be carried to another installation in a file. The Settings screen exports the tunnels (every Host and service port) and the settings of the manager, each as one line of text sealed with a password typed at the time, and imports the same. What seals it is that password and not the encryption key of the installation, because that key belongs to one machine and sending it along would only move the question of what guards it.
+  - The SSH password, the private key and the passphrase of every Host are opened with the installation key on the way out and sealed again with the installation key of wherever they land. The file therefore carries them, and the export card says so rather than softening it. Measured on two installations with different keys: the file shows nothing of the key, the user or the address in the clear, and the tunnel the second one builds from it authenticates and carries traffic.
+  - An import adds what is not there and reports what it skipped and why, or replaces when it is told to. It is one transaction, so a file refused halfway leaves nothing behind.
+  - Imported settings are stored rather than applied. `api_port` and `api_https_enabled` decide whether the screen can be reached at all and a file from another machine carries that machine's answers, so they appear as waiting for a restart where they can be read before they take hold.
+- The card at the top of the Settings screen that lists what is stored but not being run on has the Restart button in it. It used to say the restart was further down the screen and leave the reader to go and find it. It is the same press as the one down there, not a second one.
+
 # v3.2.7
 
 ## Bug fixes:
