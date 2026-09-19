@@ -124,6 +124,12 @@ let periodicDraw = false;
 let heldScreen = null;
 let heldScreenTimer = null;
 
+// fingerDown is whether a touch is on the screen right now. It is counted apart
+// from the scroll because the two are not the same thing: a finger can be down
+// for a while before the page moves, and that is the whole of the time the
+// reader is about to drag it.
+let fingerDown = false;
+
 // drawnScreen is the screen the last render drew. It is what tells a refresh of
 // the screen that is up from the first draw of one that has just been moved to,
 // which are the two cases the scroll position is treated differently in.
@@ -272,9 +278,16 @@ function putUpHeldScreen() {
   }, scrollQuietMs);
 }
 
-// scrolling reports whether the page is being scrolled at this moment.
+// scrolling reports whether the reader has hold of the page at this moment.
+//
+// A finger resting on the screen counts, and it has to. Watching the scroll
+// alone watches the effect and not the cause: a finger that is down but has not
+// moved yet fires no scroll event, so the page reads as still, the screen is
+// replaced under the hand that is about to drag it, and the drag begins on
+// something that was rebuilt a moment ago. What was reported was exactly that,
+// a refresh while touching rather than while scrolling.
 function scrolling() {
-  return Date.now() - scrolledAt < scrollQuietMs;
+  return fingerDown || Date.now() - scrolledAt < scrollQuietMs;
 }
 
 // refreshWhenStill takes a tick of the periodic refresh, once the page has
@@ -1396,6 +1409,21 @@ function showVersion() {
 window.addEventListener("scroll", function () {
   scrolledAt = Date.now();
 }, { passive: true });
+
+// A touch is watched for the same reason the scroll is, and before it: the
+// finger comes down first. Lifting it starts the quiet time rather than ending
+// the wait, because what a phone does when a finger leaves is carry on moving.
+window.addEventListener("touchstart", function () {
+  fingerDown = true;
+  scrolledAt = Date.now();
+}, { passive: true });
+
+for (const name of ["touchend", "touchcancel"]) {
+  window.addEventListener(name, function () {
+    fingerDown = false;
+    scrolledAt = Date.now();
+  }, { passive: true });
+}
 
 window.addEventListener("popstate", function () {
   notice = null;
