@@ -113,6 +113,15 @@ h2 {
   font-size: 1rem;
 }
 
+/* A heading inside a card that has one already: what the last import did sits
+   under the legend of the form the import was pressed on. It is smaller than
+   that legend, so the two read as a heading and something under it rather than
+   as two cards run together. */
+h3 {
+  margin: 0.75rem 0 0.5rem;
+  font-size: 0.9rem;
+}
+
 .notice {
   margin: 0 0 1rem;
   padding: 0.6rem 0.75rem;

@@ -76,6 +76,26 @@ let certificateProblem = "";
 // already open is not in that answer.
 let certificateReplaceResult = null;
 
+// transferDraft is what was pasted into the two import boxes. It is kept for
+// the reason the certificate boxes are kept: the screen is drawn again after an
+// import that was refused, and a file that has to be found and pasted a second
+// time to correct the one thing that was wrong is one nobody bothers to correct.
+//
+// The password typed beside it is not kept. Nothing on these screens holds a
+// password past the call it was typed for.
+let transferDraft = { tunnels: "", settings: "" };
+
+// transferProblem is why the last import of each kind was refused, in the words
+// the server used: which of the four ways the file did not open, or which row
+// of it stopped the write.
+let transferProblem = { tunnels: "", settings: "" };
+
+// transferResult is what the last import of a tunnel configuration did with
+// every row of the file. It is kept because the screen is drawn again from the
+// server right afterwards, and that answer says nothing about what was skipped
+// or why.
+let transferResult = null;
+
 // restartInFlight says whether a restart was asked for and the page is still
 // waiting for the service to answer again. The button is disabled while it is
 // on, because a second press asks a server that is on its way down and puts the
@@ -173,7 +193,10 @@ function drawSetup() {
 // What is sent is the password itself, once. The server is never handed the
 // second copy: it would have nothing to learn from the same string twice, and
 // the typo this box is here for is made in this browser.
-function passwordConfirmationField(name, label, against) {
+// note, where a caller passes one, is what the second box says about itself. A
+// password that seals a file is not caught at the next sign in but at the
+// import, which is somewhere else entirely and possibly weeks later.
+function passwordConfirmationField(name, label, against, note) {
   return {
     name: name,
     label: label,
@@ -181,8 +204,10 @@ function passwordConfirmationField(name, label, against) {
     check: function (value, values) {
       return checkPasswordConfirmation(value, values[against]);
     },
-    note: "Type the new password a second time. A slip at the keyboard is caught here " +
-      "rather than at the next sign in."
+    note: note === undefined
+      ? "Type the new password a second time. A slip at the keyboard is caught here " +
+        "rather than at the next sign in."
+      : note
   };
 }
 
@@ -1140,6 +1165,9 @@ function enterSettings() {
   certificateDraft = { certPEM: "", keyPEM: "" };
   certificateProblem = "";
   certificateReplaceResult = null;
+  transferDraft = { tunnels: "", settings: "" };
+  transferProblem = { tunnels: "", settings: "" };
+  transferResult = null;
 
   return drawSettings();
 }
@@ -1156,7 +1184,12 @@ async function drawSettings() {
   // what has to be acted on before anything below it takes hold. It comes from
   // the read rather than from the last save, so it is here whenever the screen
   // is opened and by whoever opens it.
-  const pending = settingsPending(set);
+  // The address the service comes back at is worked out once and handed to
+  // both cards that offer the restart, so the two cannot say different things
+  // about where this page goes afterwards.
+  const newAddress = addressAfterRestart(set);
+
+  const pending = settingsPending(set, restart, newAddress);
   if (pending !== null) {
     nodes.push(pending);
   }
@@ -1165,8 +1198,13 @@ async function drawSettings() {
   nodes.push(certificateCard(set, certificate));
   nodes.push(certificateForm());
   nodes.push(accountCard(account));
+  nodes.push(transferCard());
+  nodes.push(exportTunnelsForm());
+  nodes.push(importTunnelsForm());
+  nodes.push(exportSettingsForm());
+  nodes.push(importSettingsForm());
   nodes.push(settingsRescue());
-  nodes.push(settingsRestart(restart, addressAfterRestart(set)));
+  nodes.push(settingsRestart(restart, newAddress));
   nodes.push(settingsDangerZone());
 
   render("Settings", nodes);
@@ -1408,7 +1446,15 @@ async function saveSettings(values) {
 // Whether a setting waits for a restart at all is the server's to say. It is
 // the side that puts a value into place, so a screen that decided for itself
 // would go on listing a setting the server had started taking on.
-function settingsPending(set) {
+//
+// The restart is offered here as well as in its own card further down. This is
+// the card that says there is work left, and it is read at the top of a screen
+// whose bottom is several cards away: pointing at a button somewhere below is
+// asking the operator to go and find the one press this card is about. It is
+// not a second restart. The press calls submitRestart with what the card below
+// was handed, so the question, the address the page moves to afterwards and the
+// waiting are one piece of code in one place.
+function settingsPending(set, restart, newAddress) {
   const pending = set === null || set === undefined ||
     set.pending_restart === null || set.pending_restart === undefined
     ? []
@@ -1432,10 +1478,36 @@ function settingsPending(set) {
       return [item.name, item.running, item.stored];
     })
   ));
+  // What a restart would do here could not be read, and the card below does not
+  // offer the press for that reason: the two cases it decides between are not
+  // the same press at all. This button is that press, so it is left out for the
+  // same reason, and the card says where the restart is instead.
+  if (restart === undefined || restart === null || restart.view === null) {
+    card.appendChild(statusLine(
+      "Restart the service, further down this screen, is what puts them into place.",
+      "warning"
+    ));
+
+    return card;
+  }
+
   card.appendChild(statusLine(
-    "Restart the service, further down this screen, is what puts them into place.",
+    "A restart is what puts them into place. What it does on this machine, and what is cut " +
+      "while it runs, is on the Restart the service card further down this screen.",
     "warning"
   ));
+
+  const buttons = document.createElement("div");
+  buttons.className = "buttons";
+
+  const button = actionButton("Restart", "settings-pending-restart", function () {
+    return submitRestart(restart.view, button, newAddress);
+  });
+
+  button.disabled = restartInFlight;
+
+  buttons.appendChild(button);
+  card.appendChild(buttons);
 
   return card;
 }
@@ -1905,6 +1977,470 @@ function accountOutcome(data) {
   return said.join(" ");
 }
 
+// The four cards below carry this configuration to another installation, and
+// take one that arrives from somewhere else. What moves is a file: an export
+// hands one out and an import takes one back, so nothing here has to reach the
+// other installation and the file is kept wherever the operator keeps it.
+//
+// transferFileLimit is the largest file the drop areas read. An exported tunnel
+// configuration is about half again the size of the JSON it seals, and the JSON
+// is a few kilobytes per Host, most of it the private key: 4 MiB is past a
+// configuration of several hundred Hosts and small enough that a file dropped
+// by mistake is refused before the browser reads it into the page.
+const transferFileLimit = 4 * 1024 * 1024;
+
+// revokeObjectURLAfterMs is how long the URL of an exported file is left in
+// place before it is handed back. It is not handed back on the next line,
+// because a browser that has not started reading the blob by then saves nothing
+// at all, and a second is past every browser's start on a file of this size.
+const revokeObjectURLAfterMs = 1000;
+
+// transferCard says what the four below are. It is a card of its own so that
+// the pair of exports and the pair of imports read as one thing rather than as
+// four forms that happen to sit next to each other.
+function transferCard() {
+  const card = document.createElement("section");
+
+  card.className = "card";
+  card.dataset.card = "settings-transfer";
+  card.appendChild(element("h2", "Carry this configuration to another installation"));
+  card.appendChild(element("p",
+    "An export hands out a file and an import takes one back, so neither installation has to " +
+      "reach the other and you decide where the file is kept and for how long. The file is " +
+      "sealed with a password you type here; it is stored nowhere, so a file whose password is " +
+      "forgotten cannot be opened by anyone, this program included."));
+  card.appendChild(element("p",
+    "There are two kinds of file: the Hosts with their service ports, and the settings of this " +
+      "manager. An import takes only its own kind and says so rather than reading the other."));
+
+  return card;
+}
+
+// transferPasswordField is the box the password that seals a file is typed
+// into. It is held to what the account is held to, and the count under it is
+// there for the same reason it is there under a new account password: the unit
+// is bytes, and a password typed in Hangul is three of them per syllable.
+function transferPasswordField(note) {
+  return {
+    name: "password",
+    label: "Password for the file",
+    type: "password",
+    countBytes: true,
+    check: checkPasswordLength,
+    note: note
+  };
+}
+
+// transferFileField is the box an exported file is pasted into, with somewhere
+// to drop the file itself beside it. It is the arrangement the private key of a
+// Host uses, and for the same reason: the file is on the machine the browser
+// runs on and can be dragged in, or it is in a terminal somewhere and gets
+// pasted.
+function transferFileField(value) {
+  return {
+    name: "file",
+    label: "The exported file",
+    type: "textarea",
+    value: value,
+    hint: "One long line of text, which an export handed out",
+    check: function (text) {
+      return String(text).trim() === ""
+        ? "Paste the file an export handed out, or drop it onto the area below."
+        : "";
+    },
+    drop: {
+      label: "Drop the exported file here, or paste it into the box above.",
+      what: "the exported file",
+      ever: "an exported configuration",
+      limit: transferFileLimit,
+      then: "import"
+    },
+    note: "A dropped file is read in this browser and sent as text, exactly as a paste would " +
+      "be. The file itself is not uploaded."
+  };
+}
+
+// transferFilePasswordField is the password of a file that is being imported.
+// There is no second box to type it into: the password is not being chosen
+// here, and whether it is the right one is something the server answers in a
+// sentence that says so.
+function transferFilePasswordField() {
+  return {
+    name: "password",
+    label: "Password of the file",
+    type: "password",
+    check: function (value) {
+      return String(value) === ""
+        ? "Enter the password the file was sealed with at the export."
+        : "";
+    },
+    note: "The password that was typed at the export, not the password of this account."
+  };
+}
+
+function exportTunnelsForm() {
+  return buildForm({
+    name: "export-tunnels",
+    legend: "Export the tunnel configuration",
+    submitLabel: "Export",
+    intro: [
+      element("p",
+        "Every Host and every service port registered here goes into one file, which this " +
+          "browser saves. Nothing is left on the server."),
+      statusLine(
+        "The file holds the SSH password, the private key and the key passphrase of every Host " +
+          "in the clear inside it. That is what it is for: the database keeps them sealed with " +
+          "the encryption key of this machine, and a file carrying them that way would open on " +
+          "no other installation. The password you type here is the only thing keeping them, " +
+          "so whoever has the file and that password has the login of every Host it names. " +
+          "Keep it where you keep secrets.",
+        "warning"
+      )
+    ],
+    fields: [
+      transferPasswordField("It seals the file and is the only thing that opens it again. It " +
+        "is typed again at the import, and it is stored nowhere."),
+      passwordConfirmationField("password_confirmation", "Password again", "password",
+        "Type it a second time. A slip at the keyboard is caught here rather than at the " +
+          "import, where the file would not open and nothing would say why.")
+    ],
+    onSubmit: exportTunnels
+  });
+}
+
+function exportSettingsForm() {
+  return buildForm({
+    name: "export-settings",
+    legend: "Export the settings of the manager",
+    submitLabel: "Export",
+    intro: [
+      element("p",
+        "The stored settings go into one file: the API port and whether HTTPS is served, the " +
+          "two intervals, where the encryption key is kept, and everything about the log. The " +
+          "account, the certificate and the Hosts are not in it."),
+      element("p",
+        "The settings hold no password of their own, and the file is sealed all the same: it " +
+          "is one format and one thing to explain, and a second format that happens not to " +
+          "need a password today is the one somebody puts a secret into tomorrow.")
+    ],
+    fields: [
+      transferPasswordField("It seals the file and is the only thing that opens it again. It " +
+        "is typed again at the import, and it is stored nowhere."),
+      passwordConfirmationField("password_confirmation", "Password again", "password",
+        "Type it a second time. A slip at the keyboard is caught here rather than at the " +
+          "import, where the file would not open and nothing would say why.")
+    ],
+    onSubmit: exportSettings
+  });
+}
+
+function importTunnelsForm() {
+  const intro = [
+    element("p",
+      "A Host or a service port the file holds and this installation does not is added. One " +
+        "that is registered here already is skipped and named below, unless the box at the " +
+        "bottom of this card is ticked."),
+    element("p",
+      "The whole import is one write. A file that is refused half way through leaves this " +
+        "installation exactly as it was, so there is nothing to take apart by hand before " +
+        "sending a corrected file.")
+  ];
+
+  // Why the last import was refused stays on the form, next to the boxes it is
+  // about, and not only on the line above the screen.
+  if (transferProblem.tunnels !== "") {
+    intro.push(statusLine(transferProblem.tunnels, "warning"));
+  }
+
+  if (transferResult !== null) {
+    intro.push(transferItemsTable(transferResult));
+  }
+
+  return buildForm({
+    name: "import-tunnels",
+    legend: "Import a tunnel configuration",
+    submitLabel: "Import",
+    intro: intro,
+    fields: [
+      transferFileField(transferDraft.tunnels),
+      transferFilePasswordField(),
+      {
+        name: "overwrite",
+        label: "Replace what is registered here",
+        type: "checkbox",
+        value: false,
+        note: "Off unless it is ticked, so an import writes over nothing by accident. With it " +
+          "on, a Host the file names is stored as the file has it and keeps the id it has " +
+          "here, so its tunnels reconnect rather than being built anew."
+      }
+    ],
+    onSubmit: importTunnels
+  });
+}
+
+function importSettingsForm() {
+  const intro = [
+    element("p",
+      "The settings the file holds are stored, and none of them is put onto the running " +
+        "service, the API port and HTTPS included. What is stored is what the next start runs " +
+        "on, and until then it is listed at the top of this screen as waiting for a restart. " +
+        "That is what keeps a file from another machine moving the port out from under the " +
+        "screen you are reading."),
+    element("p",
+      "A setting the file does not name is left as it is here. There is nothing to tick: the " +
+        "settings are one row, so an import of them is a replacement either way.")
+  ];
+
+  if (transferProblem.settings !== "") {
+    intro.push(statusLine(transferProblem.settings, "warning"));
+  }
+
+  return buildForm({
+    name: "import-settings",
+    legend: "Import settings of a manager",
+    submitLabel: "Import",
+    intro: intro,
+    fields: [
+      transferFileField(transferDraft.settings),
+      transferFilePasswordField()
+    ],
+    onSubmit: importSettings
+  });
+}
+
+async function exportTunnels(values) {
+  const data = await apiCall("POST", "/api/export/tunnels", { password: values.password });
+  const name = handTheFileOut(data, "tunnels");
+  const hosts = countOf(data, "hosts");
+  const ports = countOf(data, "service_ports");
+
+  setNotice("The browser is saving " + name + ". It holds " + hosts + " " +
+    plural(hosts, "Host", "Hosts") + " and " + ports + " " +
+    plural(ports, "service port", "service ports") + ", with the SSH credentials of every one " +
+    "of those Hosts inside it. Keep it where you keep secrets.", "info");
+
+  // The screen is drawn again, which is what takes the password out of the box
+  // it was typed into. Nothing on the screen repeats it.
+  return drawSettings();
+}
+
+async function exportSettings(values) {
+  const data = await apiCall("POST", "/api/export/settings", { password: values.password });
+  const name = handTheFileOut(data, "settings");
+
+  setNotice("The browser is saving " + name + ". It holds the settings that are stored here.",
+    "info");
+
+  return drawSettings();
+}
+
+// countOf reads one of the counts an export answered with. A count the server
+// left out is said as none rather than as the word undefined.
+function countOf(data, name) {
+  return data === null || data === undefined || typeof data[name] !== "number" ? 0 : data[name];
+}
+
+// handTheFileOut gives the sealed file to the browser to save, and says what it
+// is called.
+//
+// The file is built here out of the text the answer carried, rather than the
+// link being pointed at the endpoint: the endpoint is a POST with the password
+// in the body, so a link to it would have to put that password in a URL, which
+// is where it must not be.
+function handTheFileOut(data, kind) {
+  const text = data === null || data === undefined || typeof data.file !== "string"
+    ? "" : data.file;
+  const name = transferFileName(kind, data === null || data === undefined
+    ? null : data.exported_at);
+
+  const blob = new Blob([text], { type: "application/octet-stream" });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+
+  link.href = url;
+  link.download = name;
+  link.click();
+
+  // The URL holds the file in memory for as long as this document lives, and
+  // this document lives until the tab is closed: these screens are drawn again
+  // in place and never load a page. Handing it back is what keeps a few exports
+  // in a row from leaving a copy of each of them behind, and what they are
+  // copies of is the credentials of every Host.
+  setTimeout(function () {
+    URL.revokeObjectURL(url);
+  }, revokeObjectURLAfterMs);
+
+  return name;
+}
+
+// transferFileName says what the file holds and when it was made, because those
+// are the two questions asked of a file found in a directory of downloads a
+// year later. The time is the one the server wrote into the file, read in the
+// time zone of this browser.
+function transferFileName(kind, exportedAt) {
+  const said = exportedAt === null || exportedAt === undefined
+    ? new Date() : new Date(exportedAt);
+  const at = isNaN(said.getTime()) ? new Date() : said;
+  const stamp = at.getFullYear() + pad(at.getMonth() + 1) + pad(at.getDate()) + "-" +
+    pad(at.getHours()) + pad(at.getMinutes()) + pad(at.getSeconds());
+
+  return "tunnel-manager-" + kind + "-" + stamp + ".tmexport";
+}
+
+async function importTunnels(values) {
+  // What was pasted is kept before the call, so that a refusal comes back to a
+  // form that still holds it.
+  transferDraft.tunnels = values.file;
+
+  let answer;
+
+  try {
+    answer = await apiCall("POST", "/api/import/tunnels", {
+      file: values.file,
+      password: values.password,
+      overwrite: values.overwrite
+    });
+  } catch (error) {
+    if (error instanceof Redirected) {
+      throw error;
+    }
+
+    transferProblem.tunnels = error.message;
+    transferResult = null;
+    setNotice(error.message, "error");
+
+    return drawSettings();
+  }
+
+  transferDraft.tunnels = "";
+  transferProblem.tunnels = "";
+  transferResult = answer;
+
+  setNotice(importOutcome(answer), "info");
+
+  return drawSettings();
+}
+
+// importOutcome is the line above the screen after an import. What became of
+// each row is in the table on the card; this is the count, and what to do about
+// what was skipped.
+function importOutcome(answer) {
+  const added = countOf(answer, "added");
+  const replaced = countOf(answer, "replaced");
+  const skipped = countOf(answer, "skipped");
+
+  if (added + replaced + skipped === 0) {
+    return "The file was read. It holds no Host and no service port.";
+  }
+
+  const said = [added + " added", replaced + " replaced", skipped + " skipped"].join(", ");
+
+  if (skipped === 0) {
+    return "The file was imported: " + said + ". The table on the card says what became of " +
+      "every row of it.";
+  }
+
+  return "The file was imported: " + said + ". What was skipped is registered here already, " +
+    "with the reason against each row in the table on the card. Tick the box and import the " +
+    "same file again to store the file's version of those rows instead.";
+}
+
+// transferItemsTable is every row of the imported file and what became of it.
+// The reason is carried for the rows that were skipped, because that is what
+// says whether importing the same file again with the box ticked would change
+// anything.
+function transferItemsTable(result) {
+  const items = result === null || result === undefined ||
+    result.items === null || result.items === undefined
+    ? [] : result.items;
+
+  const wrap = document.createElement("div");
+
+  wrap.appendChild(element("h3", "What the last import did"));
+
+  if (items.length === 0) {
+    wrap.appendChild(statusLine("That file held no Host and no service port.", "empty"));
+
+    return wrap;
+  }
+
+  wrap.appendChild(buildTable(["What", "Which one", "Done", "Why"], items.map(function (item) {
+    return [
+      transferItemKind(item.kind),
+      item.name,
+      item.action,
+      item.reason === null || item.reason === undefined ? "" : item.reason
+    ];
+  })));
+
+  return wrap;
+}
+
+// transferItemKind names what a row of the file is. A kind this version does
+// not know is shown as the server wrote it rather than as an empty cell, so a
+// file from a later version is still readable here.
+function transferItemKind(kind) {
+  if (kind === "host") {
+    return "Host";
+  }
+
+  if (kind === "service_port") {
+    return "Service port";
+  }
+
+  return kind === null || kind === undefined ? "" : String(kind);
+}
+
+async function importSettings(values) {
+  transferDraft.settings = values.file;
+
+  let answer;
+
+  try {
+    answer = await apiCall("POST", "/api/import/settings", {
+      file: values.file,
+      password: values.password
+    });
+  } catch (error) {
+    if (error instanceof Redirected) {
+      throw error;
+    }
+
+    transferProblem.settings = error.message;
+    setNotice(error.message, "error");
+
+    return drawSettings();
+  }
+
+  transferDraft.settings = "";
+  transferProblem.settings = "";
+
+  setNotice(settingsImportOutcome(answer), "info");
+
+  // The screen is drawn again from the server, and that is the point of it:
+  // what arrived is stored and is not what this service is running on, so it
+  // comes back in the card at the top of this screen, where it is read against
+  // what is running and where the restart that puts it into place is pressed.
+  return drawSettings();
+}
+
+// settingsImportOutcome says what the import stored and, above all, that
+// nothing of it is in place yet.
+function settingsImportOutcome(answer) {
+  const changes = answer === null || answer === undefined ||
+    answer.changes === null || answer.changes === undefined
+    ? [] : answer.changes;
+
+  if (changes.length === 0) {
+    return "The settings in that file are the ones stored here already. Nothing changed.";
+  }
+
+  return "The settings are stored. " + changes.length + " of them " +
+    plural(changes.length, "is", "are") + " waiting for a restart and " +
+    plural(changes.length, "is", "are") + " listed at the top of this screen, where the " +
+    "restart that puts them into place is. Nothing was put onto the running service.";
+}
+
 // settingsRescue is the way back from a stored setting that keeps the server
 // from starting. The form above refuses what the server refuses, so it should
 // not happen; it is written down because if it does happen there is no screen
@@ -2078,6 +2614,14 @@ function restartQuestion(view, newAddress) {
 }
 
 async function submitRestart(view, button, newAddress) {
+  // The press is offered in two places, and a press disables the button it came
+  // from and not the other one. Without this, the button that was not pressed
+  // asks a server that is already on its way down and puts the failure of that
+  // call on the screen of a restart that is going fine.
+  if (restartInFlight) {
+    return;
+  }
+
   if (!window.confirm(restartQuestion(view, newAddress))) {
     return;
   }

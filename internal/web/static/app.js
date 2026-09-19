@@ -46,6 +46,17 @@ const versionPath = "/ui/version.json";
 const minPort = 1;
 const maxPort = 65535;
 
+// The bounds a password is held to, in bytes. They are the ones
+// internal/api/auth.go holds the account to, and the password that seals an
+// exported file is held to the same: the file carries the SSH credentials of
+// every Host and is kept wherever it is put, so it stands to be guessed at for
+// longer than a login does.
+//
+// The unit is bytes and not characters because that is what the server counts.
+// One Hangul syllable is three of them.
+const minPasswordBytes = 12;
+const maxPasswordBytes = 72;
+
 // portCharacters and ipCharacters are what may not be in those boxes. They are
 // dropped as they arrive, so a value that reaches the checks below is already
 // made of characters that could be part of an answer.
@@ -607,7 +618,17 @@ const keyFileLimit = 64 * 1024;
 // It sits next to the box rather than replacing it, because the two are for
 // different situations: the key file is on the machine the browser runs on and
 // can be dragged in, or it is in a terminal somewhere and gets pasted.
+//
+// what, ever and limit are how the two sentences below and the size it refuses
+// are said for something other than a key: an exported configuration is dropped
+// onto one of these too, and it is a file of another size that is named another
+// way. Left out, they are the key file this was first written for.
 function dropArea(input, spec) {
+  const what = spec.what === undefined ? "the key file" : spec.what;
+  const ever = spec.ever === undefined ? "a private key" : spec.ever;
+  const limit = spec.limit === undefined ? keyFileLimit : spec.limit;
+  const then = spec.then === undefined ? "save" : spec.then;
+
   const zone = document.createElement("div");
 
   zone.className = "drop-zone";
@@ -649,16 +670,16 @@ function dropArea(input, spec) {
     const files = transfer === null || transfer === undefined ? null : transfer.files;
 
     if (files === null || files === undefined || files.length === 0) {
-      say("That is not a file. Drop the key file itself, or paste the key into the box.", true);
+      say("That is not a file. Drop " + what + " itself, or paste the text into the box.", true);
 
       return;
     }
 
     const file = files[0];
 
-    if (file.size > keyFileLimit) {
-      say(file.name + " is " + file.size + " bytes, which is larger than a private key ever is. " +
-        "Nothing larger than " + keyFileLimit + " bytes is read.", true);
+    if (file.size > limit) {
+      say(file.name + " is " + file.size + " bytes, which is larger than " + ever + " ever is. " +
+        "Nothing larger than " + limit + " bytes is read.", true);
 
       return;
     }
@@ -671,7 +692,7 @@ function dropArea(input, spec) {
 
     reader.onload = function () {
       input.value = String(reader.result);
-      say(file.name + " was read into the box. Check it, then save.", false);
+      say(file.name + " was read into the box. Check it, then " + then + ".", false);
     };
 
     reader.readAsText(file);
@@ -1051,7 +1072,33 @@ function splitGroups(side) {
 
 // byteCountText says how long a password is in the unit it is measured in.
 function byteCountText(value) {
-  return new TextEncoder().encode(value).length + " bytes (12 to 72 are accepted)";
+  return passwordBytes(value) + " bytes (" + minPasswordBytes + " to " + maxPasswordBytes +
+    " are accepted)";
+}
+
+// passwordBytes is how long a password is in the unit the server counts it in.
+function passwordBytes(value) {
+  return new TextEncoder().encode(String(value)).length;
+}
+
+// checkPasswordLength says what is wrong with the length of a password, or ""
+// when nothing is. It is the rule the server holds, checked here so that a
+// password that is a byte short is reported under the box rather than after the
+// password has been sent over the wire to be refused.
+function checkPasswordLength(value) {
+  const bytes = passwordBytes(value);
+
+  if (bytes < minPasswordBytes) {
+    return "The password has to be at least " + minPasswordBytes + " bytes. This one is " +
+      bytes + ".";
+  }
+
+  if (bytes > maxPasswordBytes) {
+    return "The password has to be at most " + maxPasswordBytes + " bytes. This one is " +
+      bytes + ".";
+  }
+
+  return "";
 }
 
 // asNumber turns what was typed into a number for the API, which takes ports as
