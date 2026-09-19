@@ -1,3 +1,13 @@
+# v3.2.3
+
+## Add/fix features:
+
+- A generated certificate is good for five years rather than 825 days. The old number was chosen on the belief that Apple applies its limit to a certificate the operator trusted by hand; it says the opposite, that the limit is for certificates chaining to a root shipped with the system and that "if you are using a certificate from a user-added or administrator-added Root CA, this change will not affect you". Nothing generated before this release changes on its own: Make a new certificate on the Settings screen is what replaces one.
+
+## Bug fixes:
+
+- The log went back to being a four-column table as soon as a phone was turned on its side, and the caller went back to being a column too narrow for a package path. Measured across such a row: at 568px the message had 124px and the row stood 267px tall, and at 844px, which is a phone on its side, the caller had 105px and wrapped onto three lines. The log keeps its stacked layout until a window is laptop wide, where at 844px the message now has 754px and the caller does not wrap. A laptop window is unchanged.
+
 # v3.2.2
 
 ## Bug fixes:
