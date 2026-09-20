@@ -20,7 +20,7 @@ flowchart LR
     subgraph here [tunnel-manager 가 실행되는 장비]
         tm[tunnel-manager]
     end
-    service[("service_ip:service_port<br/>내보낼 서비스")]
+    service[("service_ip:service_port<br/>tunnel-manager 가 접속할 수 있는 주소")]
 
     tm ==>|"1. SSH 로 접속해 포트 요청"| port
     client -->|"2. local_port 로 접속"| port
@@ -28,13 +28,13 @@ flowchart LR
     tm -->|"4. 서비스로 연결"| service
 ```
 
-설치본은 세 가지로 이루어집니다. 앞의 둘은 직접 등록하고, 셋째는 그렇게 등록하는 동안
-알아서 생깁니다. 터널은 그 셋째에서 만들어집니다.
+설치본은 세 가지로 이루어집니다. Host 와 서비스 포트는 직접 등록하고, 둘을 잇는 할당은 따로
+정하지 않으면 등록할 때 같이 만들어집니다. 터널 하나는 할당 하나에서 만들어집니다.
 
 | 구성 요소 | 무엇인가 |
 |-----------|----------|
 | Host | 접속할 SSH 서버. 주소, 포트, 사용자, 그리고 개인키나 비밀번호 |
-| 서비스 포트 | 내보낼 서비스와, 그것을 담당하는 Host 에 열 포트 |
+| 서비스 포트 | 내보낼 서비스(이 장비가 접속할 수 있는 주소면 됩니다)와, 이 서비스 포트를 담당하는 Host 에 열 포트 |
 | 할당 | 어느 Host 가 어느 서비스 포트를 담당하는지. 활성 Host 의 할당 하나가 터널 하나 |
 
 ## 하는 일
