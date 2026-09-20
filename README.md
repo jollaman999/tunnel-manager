@@ -2,11 +2,11 @@
 
 [한국어](docs/README.ko.md) · [日本語](docs/README.ja.md) · [中文](docs/README.zh.md)
 
-**Tunnel Manager publishes a service on machines that cannot reach it.** It logs
-in to those machines over SSH, has each of them open a port, and carries
-whatever arrives on that port back through the SSH connection to the service. It
-then keeps the tunnels up: one that drops is built again, and what every one of
-them is doing is on a screen in the browser.
+**Tunnel Manager publishes a service on machines that have no route to it.** It
+connects to those machines over SSH, has each of them open a port, and carries
+whatever arrives on that port back through the SSH connection to the service.
+It then keeps the tunnels up: one that drops is built again, and a screen in
+the browser shows what each of them is doing.
 
 It is one file. The database is a SQLite file it creates itself, the settings
 are in that file and are changed in the browser, and the UI and the API are
@@ -22,34 +22,36 @@ flowchart LR
     subgraph here [The machine tunnel-manager runs on]
         tm[tunnel-manager]
     end
-    service[("service_ip:service_port<br/>the service to publish")]
+    service[("service_ip:service_port<br/>any address tunnel-manager can reach")]
 
-    tm ==>|"1. logs in over SSH and asks for the port"| port
+    tm ==>|"1. connects over SSH and asks for the port"| port
     client -->|"2. connects to local_port"| port
     port -->|"3. through the SSH connection"| tm
     tm -->|"4. connects to the service"| service
 ```
 
-An installation is made of three things. You register the first two, the third
-is made for you as you do, and it is what a tunnel is built from.
+An installation is made of three things. You register a Host and a service
+port, the assignment between them is made for you unless you say otherwise, and
+one assignment is what one tunnel is built from.
 
 | Part | What it is |
 |------|------------|
-| Host | An SSH server to log in to: address, port, user, and a private key or a password |
-| Service port | The service to publish, and the port to open on the Hosts that carry it |
+| Host | An SSH server to connect to: address, port, user, and a private key or a password |
+| Service port | The service to publish, at any address this machine can reach, and the port to open on the Hosts that carry it |
 | Assignment | Which Host carries which service port. One assignment whose Host is enabled is one tunnel |
 
 ## What it does
 
 - Builds a tunnel for every assignment, watches it, and builds it again when the
   connection drops.
-- Opens the forwarded port itself once it is up and says whether it could be
-  reached, since which address the SSH server binds is that server's decision.
+- Connects to the forwarded port itself once the tunnel is up and says whether
+  it answered, since which address the SSH server binds it to is that server's
+  decision.
 - Serves the UI and the API over HTTPS, with a certificate it makes on the first
   start and one of your own once you register it.
 - Keeps the SSH passwords, the private keys and the certificate key encrypted
   with a key file of this installation.
-- Carries the whole configuration to another installation as one sealed file.
+- Carries the whole configuration to another installation as one encrypted file.
 - Shows the screens in thirteen languages, picked in the corner of the browser
   or set for the installation. The log file stays English.
 - Runs on Linux, macOS and Windows as a single binary, with no C library and no
@@ -85,7 +87,7 @@ installation signed for itself, so the browser warns about it; the fingerprint
 to check that warning against is in the startup log and on the Settings screen.
 
 Log in with an **empty username** and the password from that file, choose the
-username and the password the account keeps, and the setup deletes the file.
+username and password the account will keep, and the setup deletes the file.
 Then add a Host and a service port on their screens. The Status screen says what
 each tunnel is doing.
 
@@ -107,7 +109,7 @@ the reference below.
 | [Settings](docs/reference.md#settings) | Every setting, what it applies at, and the way back when the server will not start |
 | [API endpoints](docs/reference.md#api-endpoints) | Every call, with the login and the CSRF token a script needs |
 | [Reading the tunnel status](docs/reference.md#reading-the-tunnel-status) | The three counts, what a status means, and whether the forwarded port was reached |
-| [Encryption key](docs/reference.md#encryption-key) | What is sealed with it and what losing it costs |
+| [Encryption key](docs/reference.md#encryption-key) | What it encrypts and what losing it costs |
 | [Running as a non-root user](docs/reference.md#running-as-a-non-root-user) | The file descriptor limit, the ports, the ownership of the files |
 
 The manual inside the UI says the same as the first sections of that file. It is
