@@ -204,7 +204,7 @@ func (s *Splitter) classify(conn net.Conn) {
 		// that connects and hangs up. It is one line at debug: on a port that
 		// faces a network it happens all day and says nothing about this
 		// process.
-		s.logger.Debug("closed a connection that sent nothing to tell TLS from plain HTTP by",
+		s.logger.Debug("closed a connection that sent nothing, so it could not be told apart as TLS or plain HTTP",
 			logid.TlsservePeekTimedOut.Field(),
 			zap.String("remote_addr", conn.RemoteAddr().String()),
 			zap.Duration("waited", s.peekTimeout),

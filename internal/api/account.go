@@ -17,7 +17,7 @@ import (
 // to guess at either: a request that meant to change the username sent one, and
 // an empty new password is not a password the account would ever take.
 const accountNothingToChangeMessage = "Name a username, a new password or both. " +
-	"A request that changes neither says nothing to do"
+	"A request that names neither changes nothing"
 
 // accountWrongPasswordMessage is the answer to a change that did not bring the
 // password the account is open with. It is worded the way the uninstall words
