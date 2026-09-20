@@ -1,6 +1,6 @@
 # Tunnel Manager
 
-[한국어](docs/README.ko.md)
+[한국어](docs/README.ko.md) · [日本語](docs/README.ja.md) · [中文](docs/README.zh.md)
 
 **Tunnel Manager publishes a service on machines that cannot reach it.** It logs
 in to those machines over SSH, has each of them open a port, and carries

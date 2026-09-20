@@ -1,6 +1,6 @@
 # Tunnel Manager
 
-[English](../README.md)
+[English](../README.md) · [한국어](README.ko.md) · [中文](README.zh.md)
 
 **Tunnel Manager は、サービスに直接届かないマシンからそのサービスを使えるようにします。**
 そうしたマシンに SSH でログインし、それぞれにポートを 1 つ開かせて、そのポートに届いた

@@ -183,7 +183,7 @@ sequenceDiagram
     rect rgb(255, 255, 220)
         Note over Host,WAS: 터널 생성 단계
         Bastion->>Host: SSH 터널 생성
-        Note right of Bastion: 서비스 포트마다: -R 0.0.0.0:localPort:remoteIP:remotePort
+        Note right of Bastion: 할당된 서비스 포트마다: -R 0.0.0.0:localPort:remoteIP:remotePort
     end
 
     rect rgb(255, 255, 220)

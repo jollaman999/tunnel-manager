@@ -1,6 +1,6 @@
 # Tunnel Manager
 
-[English](../README.md)
+[English](../README.md) · [한국어](README.ko.md) · [日本語](README.ja.md)
 
 **Tunnel Manager 把一个服务发布到本来访问不到它的机器上。** 它通过 SSH 登录这些机器，让每台
 机器各开一个端口，再把送进那个端口的流量顺着 SSH 连接带回服务这边。之后它一直盯着这些隧道：断了的会

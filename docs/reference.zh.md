@@ -170,7 +170,7 @@ sequenceDiagram
     rect rgb(255, 255, 220)
         Note over Host,WAS: 建立隧道阶段
         Bastion->>Host: 创建 SSH 隧道
-        Note right of Bastion: 每个服务端口各一条：-R 0.0.0.0:localPort:remoteIP:remotePort
+        Note right of Bastion: 每个已分配的服务端口各一条：-R 0.0.0.0:localPort:remoteIP:remotePort
     end
 
     rect rgb(255, 255, 220)

@@ -201,7 +201,7 @@ sequenceDiagram
     rect rgb(255, 255, 220)
         Note over Host,WAS: Tunnel Creation Phase
         Bastion->>Host: Create SSH Tunnel
-        Note right of Bastion: For each service port:-R 0.0.0.0:localPort:remoteIP:remotePort
+        Note right of Bastion: For each assigned service port: -R 0.0.0.0:localPort:remoteIP:remotePort
     end
 
     rect rgb(255, 255, 220)

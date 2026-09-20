@@ -192,7 +192,7 @@ sequenceDiagram
     rect rgb(255, 255, 220)
         Note over Host,WAS: トンネル作成フェーズ
         Bastion->>Host: SSH トンネルを作る
-        Note right of Bastion: サービスポートごとに:-R 0.0.0.0:localPort:remoteIP:remotePort
+        Note right of Bastion: 割り当てられたサービスポートごとに: -R 0.0.0.0:localPort:remoteIP:remotePort
     end
 
     rect rgb(255, 255, 220)

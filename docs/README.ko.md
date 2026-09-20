@@ -1,6 +1,6 @@
 # Tunnel Manager
 
-[English](../README.md)
+[English](../README.md) · [日本語](README.ja.md) · [中文](README.zh.md)
 
 **Tunnel Manager 는 서비스에 닿지 못하는 장비에서 그 서비스를 쓸 수 있게 합니다.** SSH 로 그
 장비들에 로그인해 포트를 하나씩 열게 하고, 그 포트로 들어온 것을 SSH 연결에 실어 서비스까지
