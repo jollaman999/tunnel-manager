@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/jollaman999/tunnel-manager/internal/crypto"
+	"github.com/jollaman999/tunnel-manager/internal/logid"
 	"github.com/jollaman999/tunnel-manager/internal/models"
 	"go.uber.org/zap"
 	"golang.org/x/crypto/ssh"
@@ -152,6 +153,7 @@ func (m *Manager) hostPassword(host *models.Host) (string, error) {
 	if !errors.Is(err, crypto.ErrNotEncrypted) {
 		m.logger.Error("the stored password of the Host does not decrypt with the encryption key in use, "+
 			"leaving it as it is. Check that the configured key file is the one the password was stored with",
+			logid.TunnelHostPasswordUndecryptable.Field(),
 			zap.Uint("host_id", host.ID),
 			zap.String("host_ip", host.IP),
 			zap.Error(err))
@@ -171,6 +173,7 @@ func (m *Manager) storeEncryptedPassword(host *models.Host, password string) {
 	encrypted, err := m.cipher.Encrypt(password)
 	if err != nil {
 		m.logger.Warn("failed to encrypt the stored password of the Host",
+			logid.TunnelHostPasswordEncryptFailed.Field(),
 			zap.Uint("host_id", host.ID),
 			zap.String("host_ip", host.IP),
 			zap.Error(err))
@@ -180,6 +183,7 @@ func (m *Manager) storeEncryptedPassword(host *models.Host, password string) {
 	err = m.db.Model(&models.Host{}).Where("id = ?", host.ID).Update("password", encrypted).Error
 	if err != nil {
 		m.logger.Warn("failed to store the encrypted password of the Host",
+			logid.TunnelHostPasswordStoreFailed.Field(),
 			zap.Uint("host_id", host.ID),
 			zap.String("host_ip", host.IP),
 			zap.Error(err))
@@ -188,6 +192,7 @@ func (m *Manager) storeEncryptedPassword(host *models.Host, password string) {
 
 	host.Password = encrypted
 	m.logger.Info("replaced the stored password of the Host with an encrypted one",
+		logid.TunnelHostPasswordEncrypted.Field(),
 		zap.Uint("host_id", host.ID),
 		zap.String("host_ip", host.IP))
 }
@@ -266,6 +271,7 @@ func (m *Manager) hostAuth(host *models.Host) ([]ssh.AuthMethod, hostCreds, erro
 		// logged what is wrong with the key.
 		m.logger.Warn("connecting to the Host with its password alone, because its stored "+
 			"private key cannot be used",
+			logid.TunnelHostKeyUnusablePasswordUsed.Field(),
 			zap.Uint("host_id", host.ID),
 			zap.String("host_ip", host.IP))
 	}
@@ -300,6 +306,7 @@ func (m *Manager) hostSigner(host *models.Host) (ssh.Signer, error) {
 	signer, err := ParsePrivateKey(keyPEM, passphrase)
 	if err != nil {
 		m.logger.Error("the stored private key of the Host cannot be read",
+			logid.TunnelHostKeyUnreadable.Field(),
 			zap.Uint("host_id", host.ID),
 			zap.String("host_ip", host.IP),
 			zap.Error(err))
@@ -336,6 +343,8 @@ func (m *Manager) hostSealed(host *models.Host, what string, stored string) (str
 
 	m.logger.Error("the stored "+what+" of the Host does not decrypt with the encryption key in use, "+
 		"leaving it as it is. Check that the configured key file is the one it was stored with",
+		logid.TunnelHostSecretUndecryptable.Field(),
+		zap.String("secret", what),
 		zap.Uint("host_id", host.ID),
 		zap.String("host_ip", host.IP),
 		zap.Error(err))
@@ -362,6 +371,7 @@ func tunnelAddresses(host *models.Host, sp *models.ServicePort) (local, server, 
 func (m *Manager) StartTunnel(host *models.Host, sp *models.ServicePort) error {
 	if !host.Enabled {
 		m.logger.Info("skipped starting tunnel for disabled Host",
+			logid.TunnelStartSkippedHostDisabled.Field(),
 			zap.Uint("host_id", host.ID),
 			zap.String("host_ip", host.IP),
 			zap.Int("service_port", sp.ServicePort))
@@ -465,7 +475,10 @@ func (m *Manager) GetHostTunnels(hostID uint) (*[]models.Tunnel, error) {
 	var tunnels []models.Tunnel
 	err := m.db.Where("host_id = ?", hostID).Find(&tunnels).Error
 	if err != nil {
-		m.logger.Error(fmt.Sprintf("failed to fetch Host's tunnels (host_id=%d)", hostID), zap.Error(err))
+		m.logger.Error(fmt.Sprintf("failed to fetch Host's tunnels (host_id=%d)", hostID),
+			logid.TunnelHostTunnelsFetchFailed.Field(),
+			zap.Uint("host_id", hostID),
+			zap.Error(err))
 		return nil, fmt.Errorf("failed to fetch Host's tunnels (host_id=%d): %w", hostID, err)
 	}
 
@@ -479,7 +492,7 @@ func (m *Manager) GetAllTunnels() (*[]models.Tunnel, error) {
 	var tunnels []models.Tunnel
 	err := m.db.Find(&tunnels).Error
 	if err != nil {
-		m.logger.Error("failed to fetch tunnels", zap.Error(err))
+		m.logger.Error("failed to fetch tunnels", logid.TunnelTunnelsFetchFailed.Field(), zap.Error(err))
 		return nil, fmt.Errorf("failed to fetch tunnels: %w", err)
 	}
 
@@ -493,17 +506,18 @@ func (m *Manager) GetAllTunnels() (*[]models.Tunnel, error) {
 func (m *Manager) RestoreAllTunnels() error {
 	err := m.db.Where("1 = 1").Delete(&models.Tunnel{}).Error
 	if err != nil {
-		m.logger.Error("failed to reset tunnel status", zap.Error(err))
+		m.logger.Error("failed to reset tunnel status", logid.TunnelStatusResetFailed.Field(), zap.Error(err))
 		return fmt.Errorf("failed to reset tunnel status: %w", err)
 	}
 
 	result, err := m.Reconcile()
 	if err != nil {
-		m.logger.Error("failed to restore tunnels", zap.Error(err))
+		m.logger.Error("failed to restore tunnels", logid.TunnelRestoreFailed.Field(), zap.Error(err))
 		return err
 	}
 
 	m.logger.Info("restored tunnels",
+		logid.TunnelRestored.Field(),
 		zap.Int("started", result.Started),
 		zap.Int("failed", result.Failed))
 
@@ -518,6 +532,7 @@ func (m *Manager) StopAllTunnels() {
 		hostID, spID, ok := parseTunnelKey(key)
 		if !ok {
 			m.logger.Error("a running tunnel is registered under a key that cannot be read",
+				logid.TunnelKeyUnreadable.Field(),
 				zap.String("tunnel_key", key))
 			continue
 		}
@@ -526,12 +541,14 @@ func (m *Manager) StopAllTunnels() {
 		if err != nil {
 			if errors.Is(err, ErrTunnelNotExist) {
 				m.logger.Debug("no tunnel to stop",
+					logid.TunnelStopSkippedNotRunning.Field(),
 					zap.Uint("host_id", hostID),
 					zap.Uint("sp_id", spID))
 				continue
 			}
 
 			m.logger.Error("failed to stop tunnel",
+				logid.TunnelStopFailed.Field(),
 				zap.Error(err),
 				zap.Uint("host_id", hostID),
 				zap.Uint("sp_id", spID))

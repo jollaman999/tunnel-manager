@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/jollaman999/tunnel-manager/internal/logid"
 	"github.com/jollaman999/tunnel-manager/internal/models"
 	"go.uber.org/zap"
 )
@@ -236,6 +237,7 @@ func (m *Manager) Reconcile() (ReconcileResult, error) {
 			err := m.StartTunnel(want.host, want.sp)
 			if err != nil {
 				m.logger.Error("failed to start tunnel",
+					logid.TunnelStartFailed.Field(),
 					zap.Error(err),
 					zap.String("host_ip", want.host.IP),
 					zap.Int("service_port", want.sp.ServicePort))
@@ -263,6 +265,7 @@ func (m *Manager) Reconcile() (ReconcileResult, error) {
 		err = m.restartTunnel(want)
 		if err != nil {
 			m.logger.Error("failed to restart a tunnel whose connection settings changed",
+				logid.TunnelRestartFailed.Field(),
 				zap.Error(err),
 				zap.Uint("host_id", want.host.ID),
 				zap.Uint("sp_id", want.sp.ID))
@@ -282,6 +285,7 @@ func (m *Manager) Reconcile() (ReconcileResult, error) {
 		hostID, spID, ok := parseTunnelKey(key)
 		if !ok {
 			m.logger.Error("a running tunnel is registered under a key that cannot be read",
+				logid.TunnelKeyUnreadable.Field(),
 				zap.String("tunnel_key", key))
 			result.Failed++
 			continue
@@ -295,6 +299,7 @@ func (m *Manager) Reconcile() (ReconcileResult, error) {
 			}
 
 			m.logger.Error("failed to stop tunnel",
+				logid.TunnelStopFailed.Field(),
 				zap.Error(err),
 				zap.Uint("host_id", hostID),
 				zap.Uint("sp_id", spID))
@@ -346,9 +351,10 @@ func (m *Manager) RunReconcileLoop(ctx context.Context, intervalSec int) {
 
 		result, err := m.Reconcile()
 		if err != nil {
-			m.logger.Error("reconcile pass failed, waiting for the next one", zap.Error(err))
+			m.logger.Error("reconcile pass failed, waiting for the next one", logid.TunnelReconcileFailed.Field(), zap.Error(err))
 		} else if result.Started > 0 || result.Stopped > 0 || result.Restarted > 0 || result.Failed > 0 {
 			m.logger.Info("reconciled tunnels",
+				logid.TunnelReconciled.Field(),
 				zap.Int("started", result.Started),
 				zap.Int("stopped", result.Stopped),
 				zap.Int("restarted", result.Restarted),

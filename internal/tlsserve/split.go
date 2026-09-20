@@ -7,6 +7,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/jollaman999/tunnel-manager/internal/logid"
 	"go.uber.org/zap"
 )
 
@@ -156,6 +157,7 @@ func (s *Splitter) acceptLoop() {
 			}
 
 			s.logger.Warn("failed to accept a connection on the API port",
+				logid.TlsserveAcceptFailed.Field(),
 				zap.Error(err),
 				zap.Duration("retry_in", delay))
 
@@ -181,6 +183,7 @@ func (s *Splitter) classify(conn net.Conn) {
 	err := conn.SetReadDeadline(time.Now().Add(s.peekTimeout))
 	if err != nil {
 		s.logger.Debug("failed to set the deadline for reading the first byte",
+			logid.TlsservePeekDeadlineSetFailed.Field(),
 			zap.String("remote_addr", conn.RemoteAddr().String()),
 			zap.Error(err))
 		_ = conn.Close()
@@ -202,6 +205,7 @@ func (s *Splitter) classify(conn net.Conn) {
 		// faces a network it happens all day and says nothing about this
 		// process.
 		s.logger.Debug("closed a connection that sent nothing to tell TLS from plain HTTP by",
+			logid.TlsservePeekTimedOut.Field(),
 			zap.String("remote_addr", conn.RemoteAddr().String()),
 			zap.Duration("waited", s.peekTimeout),
 			zap.Error(err))
@@ -217,6 +221,7 @@ func (s *Splitter) classify(conn net.Conn) {
 	err = conn.SetReadDeadline(time.Time{})
 	if err != nil {
 		s.logger.Debug("failed to clear the deadline after reading the first byte",
+			logid.TlsservePeekDeadlineClearFailed.Field(),
 			zap.String("remote_addr", conn.RemoteAddr().String()),
 			zap.Error(err))
 		_ = conn.Close()

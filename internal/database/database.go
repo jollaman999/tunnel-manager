@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/glebarez/sqlite"
+	"github.com/jollaman999/tunnel-manager/internal/logid"
 	"github.com/jollaman999/tunnel-manager/internal/models"
 	"github.com/jollaman999/tunnel-manager/internal/settings"
 	"github.com/jollaman999/tunnel-manager/internal/tlsserve"
@@ -124,19 +125,19 @@ func (l *zapGormLogger) LogMode(level gormlogger.LogLevel) gormlogger.Interface 
 
 func (l *zapGormLogger) Info(_ context.Context, msg string, data ...interface{}) {
 	if l.currentLevel() >= gormlogger.Info {
-		l.logger.Info(fmt.Sprintf(msg, data...))
+		l.logger.Info(fmt.Sprintf(msg, data...), logid.DatabaseGormMessage.Field())
 	}
 }
 
 func (l *zapGormLogger) Warn(_ context.Context, msg string, data ...interface{}) {
 	if l.currentLevel() >= gormlogger.Warn {
-		l.logger.Warn(fmt.Sprintf(msg, data...))
+		l.logger.Warn(fmt.Sprintf(msg, data...), logid.DatabaseGormMessage.Field())
 	}
 }
 
 func (l *zapGormLogger) Error(_ context.Context, msg string, data ...interface{}) {
 	if l.currentLevel() >= gormlogger.Error {
-		l.logger.Error(fmt.Sprintf(msg, data...))
+		l.logger.Error(fmt.Sprintf(msg, data...), logid.DatabaseGormMessage.Field())
 	}
 }
 
@@ -148,9 +149,13 @@ func (l *zapGormLogger) Trace(_ context.Context, begin time.Time, fc func() (str
 	}
 
 	elapsed := time.Since(begin)
-	fields := func() []zap.Field {
+	// The ID goes in here rather than beside the message, because every branch
+	// below hands the fields on as a slice and a field written beside the
+	// message would be one argument too many for that.
+	fields := func(id logid.ID) []zap.Field {
 		sql, rows := fc()
 		return []zap.Field{
+			id.Field(),
 			zap.String("sql", sql),
 			zap.Int64("rows", rows),
 			zap.Float64("elapsed_ms", float64(elapsed.Nanoseconds())/1e6),
@@ -159,12 +164,12 @@ func (l *zapGormLogger) Trace(_ context.Context, begin time.Time, fc func() (str
 
 	switch {
 	case err != nil && level >= gormlogger.Error && !errors.Is(err, gormlogger.ErrRecordNotFound):
-		l.logger.Error("query failed", append(fields(), zap.Error(err))...)
+		l.logger.Error("query failed", append(fields(logid.DatabaseQueryFailed), zap.Error(err))...)
 	case elapsed > slowQueryThreshold && level >= gormlogger.Warn:
-		l.logger.Warn("slow query", append(fields(),
+		l.logger.Warn("slow query", append(fields(logid.DatabaseQuerySlow),
 			zap.Float64("slow_threshold_ms", float64(slowQueryThreshold.Nanoseconds())/1e6))...)
 	case level >= gormlogger.Info:
-		l.logger.Debug("query", fields()...)
+		l.logger.Debug("query", fields(logid.DatabaseQuery)...)
 	}
 }
 
@@ -251,6 +256,7 @@ func fillHostServicePorts(db *gorm.DB, logger *zap.Logger) error {
 	}
 
 	logger.Info("assigned every service port to every host, as the installation was running before they were stored",
+		logid.DatabaseServicePortsFilled.Field(),
 		zap.Int("hosts", len(hostIDs)),
 		zap.Int("service_ports", len(spIDs)),
 		zap.Int("assignments", len(assignments)))
@@ -350,7 +356,7 @@ func NewDatabase(path string, logger *zap.Logger, logLevel string) (*gorm.DB, *L
 		}
 	}
 
-	logger.Info("opened the database", zap.String("path", absPath))
+	logger.Info("opened the database", logid.DatabaseOpened.Field(), zap.String("path", absPath))
 
 	return db, level, nil
 }

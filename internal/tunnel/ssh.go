@@ -3,6 +3,7 @@ package tunnel
 import (
 	"errors"
 	"fmt"
+	"github.com/jollaman999/tunnel-manager/internal/logid"
 	"github.com/jollaman999/tunnel-manager/internal/models"
 	"go.uber.org/zap"
 	"golang.org/x/crypto/ssh"
@@ -89,7 +90,7 @@ func (t *SSHTunnel) saveTunnelStatus(m *Manager, tunnel *models.Tunnel) {
 
 	err := m.db.Save(tunnel).Error
 	if err != nil {
-		m.logger.Error("failed to update tunnel connected status", zap.Error(err))
+		m.logger.Error("failed to update tunnel connected status", logid.TunnelStatusSaveFailed.Field(), zap.Error(err))
 	}
 }
 
@@ -134,6 +135,7 @@ func (t *SSHTunnel) reconnect(m *Manager, tunnel *models.Tunnel, observed *ssh.C
 	}
 
 	t.logger.Info("closed current connection, waiting for the tunnel to be re-established",
+		logid.TunnelReconnectWaiting.Field(),
 		zap.String("local", t.Local.String()),
 		zap.String("server", t.Server.String()),
 		zap.String("remote", t.Remote.String()))
@@ -208,6 +210,7 @@ func (t *SSHTunnel) monitorConnection(m *Manager, tunnel *models.Tunnel, stop <-
 					monitorDialTimeout(m.monitoringIntervalSec))
 				if err != nil {
 					t.logger.Warn("SSH connection lost, attempting reconnection",
+						logid.TunnelServerUnreachable.Field(),
 						zap.String("local", t.Local.String()),
 						zap.String("server", t.Server.String()),
 						zap.String("remote", t.Remote.String()),
@@ -221,6 +224,7 @@ func (t *SSHTunnel) monitorConnection(m *Manager, tunnel *models.Tunnel, stop <-
 					monitorKeepaliveTimeout(m.monitoringIntervalSec))
 				if err != nil {
 					t.logger.Warn("SSH keepalive check failed, attempting reconnection",
+						logid.TunnelKeepaliveFailed.Field(),
 						zap.String("server", t.Server.String()),
 						zap.Error(err))
 					t.reconnect(m, tunnel, client)
@@ -371,6 +375,7 @@ func (t *SSHTunnel) recordForwardReach(m *Manager, tunnel *models.Tunnel, measur
 		"GatewayPorts in sshd_config for OpenSSH and the -a flag on the command line for Dropbear, and the "+
 		"server has to be restarted for a change to it. Between here and the Host it is the firewall that "+
 		"the port has to be open through",
+		logid.TunnelForwardUnreachable.Field(),
 		zap.String("probed", address),
 		zap.String("server_banner", banner),
 		zap.String("local", t.Local.String()),
@@ -416,6 +421,7 @@ func (t *SSHTunnel) forward(localConn net.Conn, idleTimeout time.Duration) {
 	remoteConn, err := net.DialTimeout("tcp", t.Remote.String(), forwardDialTimeout)
 	if err != nil {
 		t.logger.Error("failed to dial remote service",
+			logid.TunnelRemoteDialFailed.Field(),
 			zap.String("local", t.Local.String()),
 			zap.String("server", t.Server.String()),
 			zap.String("remote", t.Remote.String()),
@@ -445,7 +451,7 @@ func (t *SSHTunnel) forward(localConn net.Conn, idleTimeout time.Duration) {
 		_, err := io.Copy(dst, &countingReader{src: src, moved: &moved})
 		if err != nil && !errors.Is(err, io.EOF) {
 			if !isSelfClosed(err) {
-				t.logger.Debug("copy error", zap.Error(err))
+				t.logger.Debug("copy error", logid.TunnelForwardCopyFailed.Field(), zap.Error(err))
 			}
 
 			// The stream broke. What is left of it cannot be delivered, and
@@ -525,6 +531,7 @@ func (t *SSHTunnel) establishConnection(m *Manager, tunnel *models.Tunnel) error
 	client, clientConn, err := t.dialSSH()
 	if err != nil {
 		m.logger.Error("failed to establish SSH connection",
+			logid.TunnelSshConnectFailed.Field(),
 			zap.String("local", t.Local.String()),
 			zap.String("server", t.Server.String()),
 			zap.String("remote", t.Remote.String()), zap.Error(err))
@@ -541,6 +548,7 @@ func (t *SSHTunnel) establishConnection(m *Manager, tunnel *models.Tunnel) error
 	listener, err := client.Listen("tcp", t.Local.String())
 	if err != nil {
 		m.logger.Error("failed to start remote listener",
+			logid.TunnelRemoteListenerFailed.Field(),
 			zap.String("local", t.Local.String()),
 			zap.String("server", t.Server.String()),
 			zap.String("remote", t.Remote.String()), zap.Error(err))
@@ -581,6 +589,7 @@ func (t *SSHTunnel) establishConnection(m *Manager, tunnel *models.Tunnel) error
 			"every address or on loopback alone is not known from this line. The probe that follows says whether "+
 			"it answered, and if it did not, what to change is the setting that opens a forwarded port on the "+
 			"SSH server or the firewall on the way",
+			logid.TunnelWildcardLocalAddress.Field(),
 			zap.String("local", localAddr),
 			zap.String("server", t.Server.String()),
 			zap.String("remote", t.Remote.String()))
@@ -601,6 +610,7 @@ func (t *SSHTunnel) establishConnection(m *Manager, tunnel *models.Tunnel) error
 	t.tunnelMu.Unlock()
 
 	t.logger.Info("tunnel connected successfully",
+		logid.TunnelConnected.Field(),
 		zap.String("local", t.Local.String()),
 		zap.String("server", t.Server.String()),
 		zap.String("remote", t.Remote.String()))
@@ -616,6 +626,7 @@ func (t *SSHTunnel) establishConnection(m *Manager, tunnel *models.Tunnel) error
 		if err != nil {
 			if errors.Is(err, io.EOF) {
 				t.logger.Info("connection closed",
+					logid.TunnelConnectionClosed.Field(),
 					zap.String("local", t.Local.String()),
 					zap.String("server", t.Server.String()),
 					zap.String("remote", t.Remote.String()))
@@ -636,6 +647,7 @@ func (t *SSHTunnel) establishConnection(m *Manager, tunnel *models.Tunnel) error
 			}
 
 			m.logger.Error("listener accept error",
+				logid.TunnelListenerAcceptFailed.Field(),
 				zap.String("local", t.Local.String()),
 				zap.String("server", t.Server.String()),
 				zap.String("remote", t.Remote.String()), zap.Error(err))
@@ -679,6 +691,7 @@ func (t *SSHTunnel) waitBeforeRetry(m *Manager) bool {
 
 func (t *SSHTunnel) Start(m *Manager, tunnel *models.Tunnel) {
 	t.logger.Info("attempting to start tunnel",
+		logid.TunnelStarting.Field(),
 		zap.String("local", t.Local.String()),
 		zap.String("server", t.Server.String()),
 		zap.String("remote", t.Remote.String()))
@@ -720,6 +733,7 @@ func (t *SSHTunnel) Start(m *Manager, tunnel *models.Tunnel) {
 
 				if isAuthFailure(err) {
 					t.logger.Error("connection failed",
+						logid.TunnelConnectFailedGivingUp.Field(),
 						zap.String("local", t.Local.String()),
 						zap.String("server", t.Server.String()),
 						zap.String("remote", t.Remote.String()),
@@ -728,6 +742,8 @@ func (t *SSHTunnel) Start(m *Manager, tunnel *models.Tunnel) {
 				}
 
 				t.logger.Error("connection failed, retrying in "+strconv.Itoa(m.monitoringIntervalSec)+" seconds",
+					logid.TunnelConnectFailedRetrying.Field(),
+					zap.Int("retry_in_sec", m.monitoringIntervalSec),
 					zap.String("local", t.Local.String()),
 					zap.String("server", t.Server.String()),
 					zap.String("remote", t.Remote.String()),

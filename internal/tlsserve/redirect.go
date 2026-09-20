@@ -6,6 +6,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/jollaman999/tunnel-manager/internal/logid"
 	"go.uber.org/zap"
 )
 
@@ -59,6 +60,7 @@ func RedirectHandler(port int, logger *zap.Logger) http.Handler {
 		target := "https://" + net.JoinHostPort(host, strconv.Itoa(port)) + r.URL.RequestURI()
 
 		logger.Debug("answered a request that arrived in the clear with a redirect to https",
+			logid.TlsserveRedirectedToHttps.Field(),
 			zap.String("remote_addr", r.RemoteAddr),
 			zap.String("method", r.Method),
 			zap.String("to", target),

@@ -3,6 +3,7 @@
 package main
 
 import (
+	"github.com/jollaman999/tunnel-manager/internal/logid"
 	"go.uber.org/zap"
 )
 
@@ -21,5 +22,5 @@ func warnIfNotPrivileged(_ *zap.Logger) {}
 // handles are bounded by the memory the kernel will spend on them, and there is
 // nothing for the process to ask for at startup.
 func checkUlimit(logger *zap.Logger) {
-	logger.Debug("there is no descriptor limit to raise on this platform")
+	logger.Debug("there is no descriptor limit to raise on this platform", logid.UlimitNotApplicable.Field())
 }

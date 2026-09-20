@@ -6,6 +6,7 @@ import (
 	"os"
 	"syscall"
 
+	"github.com/jollaman999/tunnel-manager/internal/logid"
 	"go.uber.org/zap"
 )
 
@@ -18,6 +19,7 @@ func warnIfNotPrivileged(logger *zap.Logger) {
 	}
 
 	logger.Warn("not running as root",
+		logid.StartupNotRoot.Field(),
 		zap.Int("euid", os.Geteuid()),
 		zap.String("message", "operations that require root privileges may fail, such as raising the max ulimit or writing to system directories"))
 }
@@ -35,23 +37,25 @@ func checkUlimit(logger *zap.Logger) {
 
 	err := syscall.Getrlimit(syscall.RLIMIT_NOFILE, &rLimit)
 	if err != nil {
-		logger.Warn("error getting rlimit", zap.Error(err))
+		logger.Warn("error getting rlimit", logid.UlimitReadFailed.Field(), zap.Error(err))
 		return
 	}
 
 	logger.Info("current ulimit before change",
+		logid.UlimitCurrent.Field(),
 		zap.Uint64("cur", uint64(rLimit.Cur)),
 		zap.Uint64("max", uint64(rLimit.Max)))
 
 	if uint64(rLimit.Max) < desiredCur {
 		logger.Warn("max ulimit is low",
+			logid.UlimitMaxLow.Field(),
 			zap.Uint64("current", uint64(rLimit.Max)),
 			zap.Uint64("desired", desiredCur),
 			zap.String("message", "tunnel-manager recommends setting max ulimit to more than 65535 for reliable connection management. raising the max ulimit requires root privileges"))
 	}
 
 	if uint64(rLimit.Cur) >= desiredCur {
-		logger.Info("no need to change ulimit")
+		logger.Info("no need to change ulimit", logid.UlimitChangeNotNeeded.Field())
 		return
 	}
 
@@ -59,6 +63,7 @@ func checkUlimit(logger *zap.Logger) {
 	newCur := rLimit.Max
 	if newCur <= rLimit.Cur {
 		logger.Warn("cannot raise the current ulimit any further",
+			logid.UlimitRaiseNotPossible.Field(),
 			zap.Uint64("current", uint64(rLimit.Cur)),
 			zap.Uint64("max", uint64(rLimit.Max)),
 			zap.Uint64("desired", desiredCur),
@@ -74,6 +79,7 @@ func checkUlimit(logger *zap.Logger) {
 	err = syscall.Setrlimit(syscall.RLIMIT_NOFILE, &newLimit)
 	if err != nil {
 		logger.Warn("failed to change ulimit",
+			logid.UlimitChangeFailed.Field(),
 			zap.Error(err),
 			zap.Uint64("current", uint64(rLimit.Cur)),
 			zap.Uint64("max", uint64(rLimit.Max)),
@@ -82,11 +88,13 @@ func checkUlimit(logger *zap.Logger) {
 	}
 
 	logger.Info("successfully changed ulimit",
+		logid.UlimitChanged.Field(),
 		zap.Uint64("old_limit", uint64(rLimit.Cur)),
 		zap.Uint64("new_limit", uint64(newLimit.Cur)))
 
 	if uint64(newLimit.Cur) < desiredCur {
 		logger.Warn("ulimit is still lower than the desired value",
+			logid.UlimitStillLow.Field(),
 			zap.Uint64("current", uint64(newLimit.Cur)),
 			zap.Uint64("desired", desiredCur))
 	}
