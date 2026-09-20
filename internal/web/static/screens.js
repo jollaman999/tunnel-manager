@@ -753,6 +753,9 @@ function hostRow(host) {
 
     return drawHosts();
   }));
+  buttons.appendChild(actionButton("Service ports", "host-service-ports-" + host.id, function () {
+    return openHostServicePorts(host);
+  }));
   buttons.appendChild(actionButton(
     host.enabled ? "Disable" : "Enable",
     "host-toggle-" + host.id,
@@ -872,7 +875,20 @@ function hostCreateForm() {
         note: "Leave this empty if you registered a key. A host that carries both is tried " +
           "with the key first and falls back to the password."
       },
-      { name: "description", label: "Description" }
+      { name: "description", label: "Description" },
+      // Ticked to begin with, because a Host with no assignment runs no tunnel
+      // at all and carrying everything is what the API does with a request that
+      // does not mention the field. It is on the add form alone: it says what a
+      // Host starts with, and what it carries after that is changed with the
+      // Service ports button in its row.
+      {
+        name: "assign_all_service_ports",
+        label: "Assign all service ports",
+        type: "checkbox",
+        value: true,
+        note: "Every service port that is registered now is assigned to this host. Untick it " +
+          "to add the host carrying none, and pick them with the Service ports button in its row."
+      }
     ],
     onSubmit: createHost
   });
@@ -915,7 +931,8 @@ async function createHost(values) {
     ip: values.ip.trim(),
     port: asNumber(values.port),
     user: values.user.trim(),
-    description: values.description
+    description: values.description,
+    assign_all_service_ports: values.assign_all_service_ports
   };
 
   body.password = values.password;
@@ -997,6 +1014,261 @@ async function deleteHost(host) {
   setNotice("Host " + host.id + " was deleted.", "info");
 
   return drawHosts();
+}
+
+// openHostServicePorts puts up the panel that says which service ports a Host
+// carries and lets them be ticked.
+//
+// The list is served a page at a time, so what is ticked is held in two maps
+// rather than read off the boxes at the end. served is what the server said
+// about each service port on the pages that were read, and wanted holds the
+// ones the operator touched. A box is drawn from wanted where there is an entry
+// for it and from served otherwise, which is what keeps a tick made on the
+// first page while the second one is being read and after coming back.
+//
+// What is sent is the difference between the two. The panel knows nothing of
+// the pages it has not read, so a request carrying the whole set would name
+// this page alone, and every assignment outside it would be deleted by a press
+// that was meant to tick one box.
+async function openHostServicePorts(host) {
+  // The panel has a page of its own and does not touch listPages. It is opened
+  // and closed while the list behind it stays where it is, and the two lists
+  // are not the same length anyway.
+  const page = { number: 1, size: listSizes[0] };
+  const served = {};
+  const wanted = {};
+
+  const list = document.createElement("div");
+
+  list.className = "assign-list";
+  list.dataset.list = "host-service-ports";
+
+  // Why a save or a page was refused. It is shown inside the panel because the
+  // line above the screen is behind the backdrop, where the operator who
+  // pressed the button cannot read it.
+  const problem = element("p", "");
+
+  problem.className = "notice error";
+  problem.dataset.problem = "host-service-ports";
+  problem.hidden = true;
+
+  async function drawPage() {
+    const answer = await apiCall("GET",
+      "/api/host/" + host.id + "/service-port?" + pageQuery(page));
+
+    takeListPage(page, answer);
+
+    const items = answer === null || answer.items === null || answer.items === undefined
+      ? []
+      : answer.items;
+    const total = answer === null || typeof answer.total !== "number"
+      ? items.length
+      : answer.total;
+
+    // Only the list is built again. The panel around it is the one openModal
+    // put up, and nothing here writes to #app, so a draw of the screen behind
+    // the backdrop cannot take the panel down and this cannot draw over it.
+    list.textContent = "";
+
+    if (items.length === 0) {
+      list.appendChild(statusLine("There are no service ports.", "empty"));
+
+      return;
+    }
+
+    const controls = pageControls(page, total, turnPage);
+    if (controls !== null) {
+      list.appendChild(controls);
+    }
+
+    for (const item of items) {
+      served[item.id] = Boolean(item.assigned);
+
+      list.appendChild(servicePortCheck(item, served, wanted));
+    }
+  }
+
+  // drawn is the page the list on the screen was built from, and turnPage is
+  // what the controls call. A page that could not be fetched leaves the list as
+  // it was, so the numbers are put back to it: left where the press moved them,
+  // the next press would step over a page that was never read.
+  let drawn = { number: page.number, size: page.size };
+
+  function turnPage() {
+    return drawPage().then(function () {
+      drawn = { number: page.number, size: page.size };
+    }, function (error) {
+      if (error instanceof Redirected) {
+        throw error;
+      }
+
+      page.number = drawn.number;
+      page.size = drawn.size;
+
+      showPanelProblem(problem, error.message);
+    });
+  }
+
+  // The first page is fetched before the panel goes up, so that a refusal is
+  // answered with the line above the screen rather than with an empty panel.
+  await drawPage();
+
+  drawn = { number: page.number, size: page.size };
+
+  const outcome = await openModal({
+    name: "host-service-ports",
+    title: "Service ports of host " + host.id + " (" + host.ip + ")",
+    body: [
+      element("p", "Tick the service ports this host is to carry. A tick is kept while you " +
+        "read the other pages, and only what you changed is sent when you save."),
+      problem,
+      list
+    ],
+    buttons: [
+      {
+        label: "Save",
+        name: "save",
+        variant: "primary",
+        press: function (button, close) {
+          return saveHostServicePorts(host, served, wanted, button, close, problem);
+        }
+      },
+      { label: "Close", name: "close" }
+    ]
+  });
+
+  // A panel that was closed or dismissed changed nothing, and the list behind
+  // it is the list it was opened from.
+  if (outcome !== "saved" && outcome !== "unchanged") {
+    return;
+  }
+
+  return drawHosts();
+}
+
+// servicePortCheck is one service port in that panel: the box, what the service
+// port is, and which one it is.
+//
+// The row is a label with the box inside it, so the whole row is the press.
+// A checkbox on its own is a target the width of a character, which is the one
+// thing a list ticked on a phone cannot be.
+function servicePortCheck(item, served, wanted) {
+  const row = document.createElement("label");
+
+  row.className = "assign-row";
+  row.dataset.assign = String(item.id);
+
+  const box = document.createElement("input");
+
+  box.type = "checkbox";
+  box.dataset.field = "assign-" + item.id;
+  box.checked = item.id in wanted ? wanted[item.id] : served[item.id];
+  box.addEventListener("change", function () {
+    wanted[item.id] = box.checked;
+  });
+
+  const text = document.createElement("span");
+
+  text.className = "assign-text";
+  text.appendChild(element("span", item.service_ip + ":" + item.service_port +
+    " to local port " + item.local_port));
+
+  const description = item.description === undefined || item.description === null
+    ? ""
+    : String(item.description);
+  const said = element("small", description === ""
+    ? "Service port " + item.id
+    : "Service port " + item.id + ". " + description);
+
+  said.className = "assign-said";
+  text.appendChild(said);
+
+  row.appendChild(box);
+  row.appendChild(text);
+
+  return row;
+}
+
+// saveHostServicePorts sends what was ticked, as the change it is.
+//
+// A panel that was not changed sends nothing at all. The request would carry
+// two empty lists, write no row and answer that it wrote none, so the round
+// trip decides nothing; the panel closes and the list behind it is drawn again,
+// which is what a save does.
+//
+// A refusal leaves the panel up with the ticks in it. They are the operator's
+// work, several pages of it, and a panel that closed on a refusal would throw
+// that away along with the chance to put right whatever was wrong.
+async function saveHostServicePorts(host, served, wanted, button, close, problem) {
+  const add = [];
+  const remove = [];
+
+  for (const key of Object.keys(wanted)) {
+    if (wanted[key] === served[key]) {
+      continue;
+    }
+
+    if (wanted[key]) {
+      add.push(Number(key));
+    } else {
+      remove.push(Number(key));
+    }
+  }
+
+  if (add.length === 0 && remove.length === 0) {
+    setNotice("The service ports of host " + host.id + " were not changed.", "info");
+
+    close("unchanged");
+
+    return;
+  }
+
+  // The button is held down for the whole call. The panel stays up while it is
+  // in flight, which is an invitation to press again, and the second press
+  // would send the same change a second time.
+  button.disabled = true;
+  problem.hidden = true;
+
+  try {
+    const answer = await apiCall("PUT", "/api/host/" + host.id + "/service-port",
+      { add: add, remove: remove });
+
+    // The counts come from the answer, because they are counted over the rows
+    // that were written and not over the request: a service port that was
+    // already assigned is asked for again without a row being written.
+    const added = answer === null || typeof answer.added !== "number" ? add.length : answer.added;
+    const removed = answer === null || typeof answer.removed !== "number"
+      ? remove.length
+      : answer.removed;
+
+    setNotice("Host " + host.id + " was given " + added + " " +
+      plural(added, "service port", "service ports") + " and had " + removed + " taken away.",
+      "info");
+
+    close("saved");
+  } catch (error) {
+    if (error instanceof Redirected) {
+      // The session ended and the page is on its way to the login. The panel
+      // goes with the screen it was opened from.
+      close(null);
+
+      throw error;
+    }
+
+    showPanelProblem(problem, error.message);
+  } finally {
+    button.disabled = false;
+  }
+}
+
+// showPanelProblem puts a refusal inside the panel. It is brought into view
+// because the list above it may be scrolled far from the top, and the button
+// that was pressed sits at the bottom of the panel: the line would otherwise be
+// written somewhere the operator is not looking.
+function showPanelProblem(problem, message) {
+  problem.textContent = message;
+  problem.hidden = false;
+  problem.scrollIntoView({ block: "nearest" });
 }
 
 function enterServicePorts() {
@@ -1081,7 +1353,18 @@ function servicePortCreateForm() {
       ipField("service_ip", "Service IP"),
       portField("service_port", "Service port"),
       portField("local_port", "Local port"),
-      { name: "description", label: "Description" }
+      { name: "description", label: "Description" },
+      // The other half of the pair on the host form, ticked to begin with for
+      // the same reason, and on the add form alone for the same reason.
+      {
+        name: "assign_to_all_hosts",
+        label: "Assign to all hosts",
+        type: "checkbox",
+        value: true,
+        note: "Every host that is registered now carries this service port. Untick it to add " +
+          "the service port carried by none, and pick the hosts with the Service ports button " +
+          "in each host row."
+      }
     ],
     onSubmit: createServicePort
   });
@@ -1124,6 +1407,11 @@ function servicePortBody(values) {
 
 async function createServicePort(values) {
   const body = servicePortBody(values);
+
+  // The assignment rides on the registration alone, which is why it is added
+  // here rather than in servicePortBody: the edit form sends that same body,
+  // and the field means nothing to a service port that is already stored.
+  body.assign_to_all_hosts = values.assign_to_all_hosts;
 
   await apiCall("POST", "/api/service-port", body);
 
@@ -3474,6 +3762,10 @@ function manualParts() {
     "The assignment is what a tunnel is built from. One stands for every assignment whose Host " +
       "is enabled and for no other pair, so a Host with no assignment runs nothing however many " +
       "service ports are registered, and a service port assigned to no Host is carried nowhere.",
+    "Assignments are made on the Hosts screen: the Service ports button in a row opens the list " +
+      "of every service port with the ones that Host carries ticked, and a tick added or taken " +
+      "away there is what is saved. A Host and a service port are both registered carrying " +
+      "everything unless the box on the add form is unticked.",
     "Disabling a Host keeps its assignments. Its tunnels are stopped, and enabling it again " +
       "brings the same set of them back."
   ]);

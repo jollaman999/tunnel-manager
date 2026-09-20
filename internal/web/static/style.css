@@ -1117,6 +1117,56 @@ body.modal-open {
   justify-content: flex-end;
 }
 
+/* The service ports a Host may carry, one to a row, inside the panel that ticks
+   them. Each row is a label with the box in it, so the row is the target and
+   not the box: a checkbox alone is the width of a character, which is what
+   cannot be hit on a phone.
+
+   The rows are separated by a line rather than boxed. A list of thirty ticked
+   one after another reads down the panel, and a border around each of them
+   would be thirty frames to read past. */
+.assign-row {
+  display: flex;
+  gap: 0.6rem;
+  align-items: flex-start;
+  padding: 0.5rem 0.25rem;
+  border-bottom: 1px solid var(--border-soft);
+  cursor: pointer;
+}
+
+.assign-row:last-child {
+  border-bottom: 0;
+}
+
+.assign-row:hover {
+  background: var(--bg-hover);
+}
+
+.assign-row input[type="checkbox"] {
+  flex: 0 0 auto;
+  width: 1rem;
+  height: 1rem;
+  /* The box is lined up with the first line of the text beside it rather than
+     with the top of the block, which carries a second line under it. */
+  margin: 0.15rem 0 0;
+}
+
+/* What the service port is, and which one it is, stacked. The width is
+   whatever is left of the row, and a long address breaks inside itself rather
+   than pushing the row wider than the panel. */
+.assign-text {
+  display: flex;
+  flex-direction: column;
+  gap: 0.1rem;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.assign-said {
+  color: var(--text-dim);
+  font-size: 12px;
+}
+
 /* Held upright there is no room for a panel with the screen showing around it,
    so the panel is the screen. The frame goes with the room: a border and
    rounded corners against the edge of the display cost width that the content

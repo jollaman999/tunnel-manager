@@ -1101,6 +1101,11 @@ function buildForm(spec) {
 // close in the corner all mean the same thing, which is that nothing was
 // chosen.
 //
+// A button may carry a press of its own instead of a value, and then it is that
+// press which decides whether the panel goes. It is what a panel that is worked
+// in rather than answered needs, because the answer to what it sends can be a
+// refusal that the operator has to see with their work still in front of them.
+//
 // It is appended to the body and never to #app. #app is emptied by every draw,
 // the periodic refresh of the status screen included, so a panel put inside it
 // would be taken down by a tick of a screen the operator is not even looking
@@ -1149,9 +1154,23 @@ function openModal(spec) {
     buttons.className = "buttons modal-buttons";
 
     for (const button of spec.buttons === undefined ? [] : spec.buttons) {
-      buttons.appendChild(actionButton(button.label, spec.name + "-" + button.name, function () {
-        close(button.value === undefined ? button.name : button.value);
-      }, button.variant));
+      // A button that carries a press of its own decides whether the panel
+      // goes. It is handed the node it was pressed on, so that it can hold the
+      // button down while it runs, and the close, so that a press that is
+      // finished with the panel takes it away. That is what a panel the
+      // operator works in needs: a save the server refused has to leave what
+      // they entered where it is, along with the panel it is in.
+      const node = actionButton(button.label, spec.name + "-" + button.name, function () {
+        if (button.press === undefined) {
+          close(button.value === undefined ? button.name : button.value);
+
+          return;
+        }
+
+        return button.press(node, close);
+      }, button.variant);
+
+      buttons.appendChild(node);
     }
 
     panel.appendChild(buttons);
