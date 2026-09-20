@@ -377,7 +377,7 @@ was not open before.
 | Key | ECDSA on the P-256 curve |
 | Good for | 5 years |
 | Made out to | `localhost`, `127.0.0.1`, `::1`, the host name of the machine and the addresses of its interfaces |
-| Stored | In the database file, next to the settings. The private key is encrypted with the same key the SSH passwords are sealed with, so a copy of the database file alone does not carry it |
+| Stored | In the database file, next to the settings. The private key is encrypted with the same key that encrypts the SSH passwords, so a copy of the database file alone does not carry it |
 | Signed by | Itself |
 
 The startup writes the fingerprint to the log, with the names the certificate
@@ -580,7 +580,7 @@ no directory travels next to it and no path has to be configured.
 | Hosts | `/ui/hosts` | One row per Host with ID, IP, port, user, description, enabled and updated. The rows come a page at a time, ten to a page to begin with, with the size (10, 20, 30, 50 or 100) and the page chosen above the table. The choice is remembered for this screen on its own, and a list short enough to fit a page of the smallest size carries no controls at all. Add a Host, edit one, enable or disable one, delete one. The add and edit forms have a box to paste a private key into, an area to drop the key file onto, and a box for the passphrase of a key that has one, and the add form has an **Assign all service ports** tick, on by default, that says what the Host starts out carrying. **Service ports** in a row opens a panel of every service port with a tick against the ones this Host carries; only what was changed is sent when it is saved, so a tick made there leaves the pages that were not read alone. |
 | Service Ports | `/ui/service-ports` | One row per service port with ID, service IP, service port, local port, description and updated. The rows come a page at a time the same way the Hosts do, with a size and a page of their own. Add, edit and delete. The add form has an **Assign to all hosts** tick, on by default, that says which Hosts carry it from the start; which Hosts carry it after that is changed from the Hosts screen. |
 | Logs | `/ui/logs` | The end of the log file, newest last, with a level filter and a count to show. It asks again every 5 seconds. It reads the file the process is writing now; rotated files are not shown. The lines are shown in the language of the screen while the file stays English; see [The language of the screens](#the-language-of-the-screens). |
-| Settings | `/ui/settings` | What is stored but not being run on yet, with a Restart in that card that puts it into place, every stored setting and what a save changed, among them the language this installation shows a browser that has picked none, the certificate being served with a button to renew it and boxes to register one of your own, the username and the password of this account, an export of the tunnel configuration and of the settings of this manager into one sealed file each and an import that takes such a file back, a Restart that takes the service down and brings it back, and the Uninstall at the bottom. See [Settings](#settings). |
+| Settings | `/ui/settings` | What is stored but not being run on yet, with a Restart in that card that puts it into place, every stored setting and what a save changed, among them the language this installation shows a browser that has picked none, the certificate being served with a button to renew it and boxes to register one of your own, the username and the password of this account, an export of the tunnel configuration and of the settings of this manager into one encrypted file each and an import that takes such a file back, a Restart that takes the service down and brings it back, and the Uninstall at the bottom. See [Settings](#settings). |
 | Manual | `/ui/manual` | What an installation is made of, drawn and said on one screen: what this does, one tunnel end to end, Hosts and service ports and the assignments between them, what an unreached port means, the two intervals, and where the files go. It asks the server for nothing, which is what lets the login screen show the same thing. |
 | Login | `/ui/login` | Where a client without a session lands. Leave the username empty on the first sign in. It leads to the setup screen while the account still needs one. A **Manual** button opens the manual as a panel over it, without a session, because the state it is most needed in is the one where nothing works yet. |
 
@@ -874,7 +874,7 @@ tunnel, deletes the files the installation is made of and ends the process.
 `POST /api/uninstall` is the same thing from a script.
 
 > **Removing the encryption key cannot be undone.** The SSH password of every
-> Host is sealed with that key. A backup of the database taken beforehand does
+> Host is encrypted with that key. A backup of the database taken beforehand does
 > not help: the passwords in it stay unreadable, and every Host has to be
 > registered again with its password on a fresh installation.
 
@@ -1235,7 +1235,7 @@ woken once it is committed, so the tunnels follow within the moment.
 The three certificate calls answer with a `409` while `api_https_enabled` is
 off, because there is no certificate in use then. Neither the answer to a
 replacement nor the answer to a read carries the private key: it is stored
-encrypted with the same key the SSH passwords are sealed with and never leaves
+encrypted with the same key that encrypts the SSH passwords and never leaves
 the process. `cert_pem` may be a chain, with the server certificate first and
 the intermediates behind it.
 
@@ -1269,9 +1269,9 @@ shown as it was written.
 
 | Method | Path | What it does |
 |--------|------|--------------|
-| `POST` | `/api/export/tunnels` | Takes `password`, answers with every Host and every service port sealed into one file |
+| `POST` | `/api/export/tunnels` | Takes `password`, answers with every Host and every service port encrypted into one file |
 | `POST` | `/api/import/tunnels` | Takes `password`, `file` and `overwrite`, and writes what the file holds |
-| `POST` | `/api/export/settings` | Takes `password`, answers with the stored settings sealed into one file |
+| `POST` | `/api/export/settings` | Takes `password`, answers with the stored settings encrypted into one file |
 | `POST` | `/api/import/settings` | Takes `password` and `file`, and stores the settings the file holds |
 
 These four carry a configuration from one installation to another. An export
@@ -1306,14 +1306,15 @@ cleanly and leave the installation with no tunnel at all. A Host that carries
 nothing is written into the file as `[]`, which is the same distinction from the
 other side.
 
-**The file holds the SSH password, the private key and the key passphrase of
-every Host in the clear.** That is what it is for: the database keeps those
-sealed with the encryption key of the machine they were stored on, and a file
-carrying them as they are stored would open on no other installation. They are
-unsealed on the way out and sealed again with the key of the installation that
-takes them in. What keeps them meanwhile is the password the whole file is
-sealed with, and nothing else, so treat an exported file as the credentials of
-every Host it names.
+**The whole file is encrypted with the password given to the export, and that
+password is the only thing protecting it.** Inside it, the SSH password, the
+private key and the key passphrase of every Host are written in the clear. That
+is what the file is for: the database keeps those encrypted with the encryption
+key of the machine they were stored on, that key never leaves it, and a file
+carrying them in that form could be read on no other installation. They are
+decrypted on the way out and encrypted again with the key of the installation
+that takes them in. So treat an exported file as the credentials of every Host
+it names.
 
 The exports are `POST` and not `GET` because the password is in the body. In a
 URL it would be written to the access log of this server and to the history of
@@ -1345,7 +1346,7 @@ it is not a file this program wrote, it is damaged, or it holds the other kind.
 # Export, and keep the file where you keep secrets.
 curl -s -b cookies.txt -X POST "$BASE/api/export/tunnels" \
   -H "X-CSRF-Token: $CSRF" -H 'Content-Type: application/json' \
-  -d '{"password":"<the password that seals the file>"}' |
+  -d '{"password":"<the password that encrypts the file>"}' |
 jq -r '.data.file' > tunnels.tmexport
 
 # Import it on the other installation.
