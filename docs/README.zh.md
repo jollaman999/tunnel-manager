@@ -20,10 +20,10 @@ flowchart LR
     end
     service[("service_ip:service_port<br/>要发布的服务")]
 
-    tm ==>|"1 通过 SSH 登录并申请端口"| port
-    client -->|"2 连接 local_port"| port
-    port -->|"3 顺着 SSH 连接过来"| tm
-    tm -->|"4 连接服务"| service
+    tm ==>|"1. 通过 SSH 登录并申请端口"| port
+    client -->|"2. 连接 local_port"| port
+    port -->|"3. 顺着 SSH 连接过来"| tm
+    tm -->|"4. 连接服务"| service
 ```
 
 一套安装由三样东西组成。前两样由你注册，第三样在你注册时自动生成，隧道就是从它建起来的。

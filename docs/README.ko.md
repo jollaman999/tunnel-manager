@@ -22,10 +22,10 @@ flowchart LR
     end
     service[("service_ip:service_port<br/>내보낼 서비스")]
 
-    tm ==>|1 SSH 로 로그인해 포트 요청| port
-    client -->|2 local_port 로 접속| port
-    port -->|3 SSH 연결을 타고| tm
-    tm -->|4 서비스로 연결| service
+    tm ==>|"1. SSH 로 로그인해 포트 요청"| port
+    client -->|"2. local_port 로 접속"| port
+    port -->|"3. SSH 연결을 타고"| tm
+    tm -->|"4. 서비스로 연결"| service
 ```
 
 설치본은 세 가지로 이루어집니다. 앞의 둘은 직접 등록하고, 셋째는 그렇게 등록하는 동안

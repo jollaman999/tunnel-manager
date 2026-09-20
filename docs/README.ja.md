@@ -22,10 +22,10 @@ flowchart LR
     end
     service[("service_ip:service_port<br/>公開したいサービス")]
 
-    tm ==>|"1 SSH でログインしてポートを頼む"| port
-    client -->|"2 local_port につなぐ"| port
-    port -->|"3 SSH 接続を通って"| tm
-    tm -->|"4 サービスにつなぐ"| service
+    tm ==>|"1. SSH でログインしてポートを頼む"| port
+    client -->|"2. local_port につなぐ"| port
+    port -->|"3. SSH 接続を通って"| tm
+    tm -->|"4. サービスにつなぐ"| service
 ```
 
 インストールは 3 つのものからできています。はじめの 2 つは自分で登録し、3 つ目はその登録に

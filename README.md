@@ -24,10 +24,10 @@ flowchart LR
     end
     service[("service_ip:service_port<br/>the service to publish")]
 
-    tm ==>|1 logs in over SSH and asks for the port| port
-    client -->|2 connects to local_port| port
-    port -->|3 through the SSH connection| tm
-    tm -->|4 connects to the service| service
+    tm ==>|"1. logs in over SSH and asks for the port"| port
+    client -->|"2. connects to local_port"| port
+    port -->|"3. through the SSH connection"| tm
+    tm -->|"4. connects to the service"| service
 ```
 
 An installation is made of three things. You register the first two, the third
