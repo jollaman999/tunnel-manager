@@ -6,6 +6,7 @@ import (
 	"net/http/httptest"
 	"path/filepath"
 	"reflect"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -83,7 +84,8 @@ func newTransferInstall(t *testing.T) *transferInstall {
 		t.Fatalf("failed to open the database: %v", err)
 	}
 
-	err = db.AutoMigrate(&models.Host{}, &models.ServicePort{}, &settings.Settings{})
+	err = db.AutoMigrate(&models.Host{}, &models.ServicePort{}, &models.HostServicePort{},
+		&settings.Settings{})
 	if err != nil {
 		t.Fatalf("failed to migrate the database: %v", err)
 	}
@@ -1186,5 +1188,393 @@ func TestAnImportedHostThatWasDisabledStaysDisabled(t *testing.T) {
 			t.Errorf("the Host %s arrived with enabled %v, want %v",
 				want.IP, stored.Enabled, want.Enabled)
 		}
+	}
+}
+
+// assign makes a Host carry a service port, the way an installation stores it:
+// one row holding the two ids of this installation.
+func (i *transferInstall) assign(t *testing.T, hostIP string, localPort int) {
+	t.Helper()
+
+	var host models.Host
+
+	err := i.db.Where("ip = ?", hostIP).First(&host).Error
+	if err != nil {
+		t.Fatalf("the Host %s is not registered here: %v", hostIP, err)
+	}
+
+	var sp models.ServicePort
+
+	err = i.db.Where("local_port = ?", localPort).First(&sp).Error
+	if err != nil {
+		t.Fatalf("no service port is on the local port %d here: %v", localPort, err)
+	}
+
+	err = i.db.Create(&models.HostServicePort{HostID: host.ID, SPID: sp.ID}).Error
+	if err != nil {
+		t.Fatalf("failed to store the assignment: %v", err)
+	}
+}
+
+// carried is every assignment stored, as "<Host IP> carries <local port>". The
+// ids differ between two installations and say nothing to whoever reads a
+// failure, so the pairs are named by what means the same on both sides, which
+// is what the file carries them as.
+func (i *transferInstall) carried(t *testing.T) []string {
+	t.Helper()
+
+	var rows []struct {
+		IP        string
+		LocalPort int
+	}
+
+	err := i.db.Model(&models.HostServicePort{}).
+		Select("hosts.ip AS ip, service_ports.local_port AS local_port").
+		Joins("JOIN hosts ON hosts.id = host_service_ports.host_id").
+		Joins("JOIN service_ports ON service_ports.id = host_service_ports.sp_id").
+		Order("hosts.ip, service_ports.local_port").
+		Scan(&rows).Error
+	if err != nil {
+		t.Fatalf("failed to read the assignments: %v", err)
+	}
+
+	pairs := make([]string, 0, len(rows))
+	for _, row := range rows {
+		pairs = append(pairs, row.IP+" carries "+strconv.Itoa(row.LocalPort))
+	}
+
+	return pairs
+}
+
+// rewriteHosts opens a file, hands every Host in it over as the JSON object it
+// is, and seals what comes back with the same password. It is how a file no
+// version of the export writes is made: one from before the assignments were
+// stored, and one naming a service port that is not registered here.
+func rewriteHosts(t *testing.T, file string, password string, change func(host map[string]interface{})) string {
+	t.Helper()
+
+	plaintext, err := crypto.DecryptWithPassword(file, password)
+	if err != nil {
+		t.Fatalf("failed to open the file: %v", err)
+	}
+
+	var read transferFile
+
+	err = json.Unmarshal([]byte(plaintext), &read)
+	if err != nil {
+		t.Fatalf("failed to read the file: %v", err)
+	}
+
+	var content map[string]interface{}
+
+	err = json.Unmarshal(read.Content, &content)
+	if err != nil {
+		t.Fatalf("failed to read the content of the file: %v", err)
+	}
+
+	hosts, ok := content["hosts"].([]interface{})
+	if !ok {
+		t.Fatalf("the file carries no list of Hosts")
+	}
+
+	for _, entry := range hosts {
+		host, ok := entry.(map[string]interface{})
+		if !ok {
+			t.Fatalf("a Host in the file is not an object")
+		}
+
+		change(host)
+	}
+
+	body, err := json.Marshal(content)
+	if err != nil {
+		t.Fatalf("failed to write the content back: %v", err)
+	}
+
+	read.Content = body
+
+	rewritten, err := json.Marshal(read)
+	if err != nil {
+		t.Fatalf("failed to write the file back: %v", err)
+	}
+
+	sealed, err := crypto.EncryptWithPassword(string(rewritten), password)
+	if err != nil {
+		t.Fatalf("failed to seal the file again: %v", err)
+	}
+
+	return sealed
+}
+
+// threeServicePorts is what the assignment tests hold: three service ports, so
+// that a Host carrying some of them is told from a Host carrying all of them.
+func threeServicePorts(t *testing.T, install *transferInstall) {
+	t.Helper()
+
+	for _, sp := range []servicePortContent{
+		{ServiceIP: "192.0.2.20", ServicePort: 80, LocalPort: 18080, Description: "the first service"},
+		{ServiceIP: "192.0.2.21", ServicePort: 443, LocalPort: 18081, Description: "the second service"},
+		{ServiceIP: "192.0.2.22", ServicePort: 5432, LocalPort: 18082, Description: "the third service"},
+	} {
+		install.registerServicePort(t, sp)
+	}
+}
+
+// partlyAssigned is an installation with two Hosts, three service ports and
+// four of the six assignments: neither Host carries everything and neither
+// carries nothing, so a file that dropped the assignments and one that filled
+// them in both fail here.
+func partlyAssigned(t *testing.T) *transferInstall {
+	t.Helper()
+
+	source := newTransferInstall(t)
+
+	withKey, withPassword := twoHosts(t)
+	source.registerHost(t, withKey)
+	source.registerHost(t, withPassword)
+	threeServicePorts(t, source)
+
+	source.assign(t, withKey.IP, 18080)
+	source.assign(t, withKey.IP, 18081)
+	source.assign(t, withPassword.IP, 18081)
+	source.assign(t, withPassword.IP, 18082)
+
+	return source
+}
+
+// fourPairs is what partlyAssigned holds, and what an installation that took
+// its file in has to hold as well.
+var fourPairs = []string{
+	"192.0.2.10 carries 18080",
+	"192.0.2.10 carries 18081",
+	"192.0.2.11 carries 18081",
+	"192.0.2.11 carries 18082",
+}
+
+// everyPair is all six: both Hosts carrying all three service ports.
+var everyPair = []string{
+	"192.0.2.10 carries 18080",
+	"192.0.2.10 carries 18081",
+	"192.0.2.10 carries 18082",
+	"192.0.2.11 carries 18080",
+	"192.0.2.11 carries 18081",
+	"192.0.2.11 carries 18082",
+}
+
+// TestTheServicePortsAHostCarriesCrossToAnotherInstallation is what the
+// assignments are in the file for. Which service ports a Host carries is what
+// the operator set up, so an installation that took the file in and runs
+// something else is one that has to be set up by hand all over again.
+func TestTheServicePortsAHostCarriesCrossToAnotherInstallation(t *testing.T) {
+	source := partlyAssigned(t)
+	target := newTransferInstall(t)
+
+	if !reflect.DeepEqual(source.carried(t), fourPairs) {
+		t.Fatalf("the installation that is exported carries %v, want %v", source.carried(t), fourPairs)
+	}
+
+	file := source.exportTunnels(t, testExportPassword)
+
+	// The two installations must not share a key, for the reason the test that
+	// moves the secrets across says: with one key the trip is not made.
+	sealedHere, err := source.cipher.Encrypt("a value")
+	if err != nil {
+		t.Fatalf("failed to seal a value: %v", err)
+	}
+
+	_, err = target.cipher.Decrypt(sealedHere)
+	if err == nil {
+		t.Fatalf("the two installations were built with the same encryption key")
+	}
+
+	rec := target.importTunnels(t, file, testExportPassword, false)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("the import answered %d: %s", rec.Code, rec.Body.String())
+	}
+
+	if !reflect.DeepEqual(target.carried(t), fourPairs) {
+		t.Fatalf("the installation that took the file in carries %v, want %v",
+			target.carried(t), fourPairs)
+	}
+
+	// What the file names them by is the other half of it. Carried as the ids
+	// of the source, the pairs above would still be four and would point at
+	// whatever holds those ids here.
+	opened, err := crypto.DecryptWithPassword(file, testExportPassword)
+	if err != nil {
+		t.Fatalf("the file does not open: %v", err)
+	}
+
+	if !strings.Contains(opened, `"assigned_local_ports":[18080,18081]`) {
+		t.Errorf("the file does not name the assignments by their local port: %s", opened)
+	}
+
+	if strings.Contains(opened, `"sp_id"`) || strings.Contains(opened, `"host_id"`) {
+		t.Errorf("the file carries the row ids of the installation it came from: %s", opened)
+	}
+}
+
+// TestAFileFromBeforeTheAssignmentsWereStoredCarriesEverything is the one that
+// keeps an upgrade from taking every tunnel down. A file exported before the
+// assignments existed does not name them, and what it meant is what every
+// installation ran on then: every Host carries every service port. Read as "the
+// Host carries nothing", such a file imports without a word and leaves the
+// installation with no tunnel at all.
+func TestAFileFromBeforeTheAssignmentsWereStoredCarriesEverything(t *testing.T) {
+	source := partlyAssigned(t)
+	target := newTransferInstall(t)
+
+	older := rewriteHosts(t, source.exportTunnels(t, testExportPassword), testExportPassword,
+		func(host map[string]interface{}) {
+			delete(host, "assigned_local_ports")
+		})
+
+	rec := target.importTunnels(t, older, testExportPassword, false)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("the import answered %d: %s", rec.Code, rec.Body.String())
+	}
+
+	if !reflect.DeepEqual(target.carried(t), everyPair) {
+		t.Fatalf("a file that does not name the assignments left the installation carrying %v, want %v",
+			target.carried(t), everyPair)
+	}
+}
+
+// TestAHostThatIsCarriedAsCarryingNothingCarriesNothing is the other side of
+// the test above, and the two are what the difference between an absent field
+// and an empty list is for. The operator who took every service port off a Host
+// asked for that, and an import that filled them back in would undo it.
+func TestAHostThatIsCarriedAsCarryingNothingCarriesNothing(t *testing.T) {
+	source := partlyAssigned(t)
+	target := newTransferInstall(t)
+
+	emptied := rewriteHosts(t, source.exportTunnels(t, testExportPassword), testExportPassword,
+		func(host map[string]interface{}) {
+			host["assigned_local_ports"] = []interface{}{}
+		})
+
+	rec := target.importTunnels(t, emptied, testExportPassword, false)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("the import answered %d: %s", rec.Code, rec.Body.String())
+	}
+
+	if len(target.carried(t)) != 0 {
+		t.Fatalf("a file whose Hosts carry nothing left the installation carrying %v",
+			target.carried(t))
+	}
+
+	// The Hosts and the service ports themselves came across all the same. An
+	// empty list is about what a Host carries and about nothing else.
+	if target.count(t, &models.Host{}) != 2 || target.count(t, &models.ServicePort{}) != 3 {
+		t.Fatalf("the file left %d Hosts and %d service ports, want 2 and 3",
+			target.count(t, &models.Host{}), target.count(t, &models.ServicePort{}))
+	}
+}
+
+// TestAnAssignmentToAServicePortThatIsNotHereIsSkipped pins what is done with a
+// local port the file names and this installation does not hold: the assignment
+// is left out and said so in the answer, and the rest of the file is imported.
+// It is not refused, because the Hosts and the service ports that are fine
+// would go down with it, and it is not passed over in silence, because then
+// nobody would know which Host came up carrying less than the file said.
+func TestAnAssignmentToAServicePortThatIsNotHereIsSkipped(t *testing.T) {
+	source := partlyAssigned(t)
+	target := newTransferInstall(t)
+
+	// The service port on 19999 is in no file and in neither installation, so
+	// the import has nothing to point the assignment at.
+	withOne := rewriteHosts(t, source.exportTunnels(t, testExportPassword), testExportPassword,
+		func(host map[string]interface{}) {
+			ports, ok := host["assigned_local_ports"].([]interface{})
+			if !ok {
+				t.Fatalf("the exported file does not name the assignments of a Host")
+			}
+
+			host["assigned_local_ports"] = append(ports, float64(19999))
+		})
+
+	rec := target.importTunnels(t, withOne, testExportPassword, false)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("the import answered %d: %s", rec.Code, rec.Body.String())
+	}
+
+	var imported importedTunnels
+
+	decodeTransfer(t, rec).into(t, &imported)
+
+	if !reflect.DeepEqual(target.carried(t), fourPairs) {
+		t.Fatalf("the installation carries %v, want the four pairs the file could be followed on: %v",
+			target.carried(t), fourPairs)
+	}
+
+	skipped := make([]string, 0, len(imported.Items))
+
+	for _, item := range imported.Items {
+		if item.Kind != "assignment" {
+			continue
+		}
+
+		if item.Action != transferSkipped || item.Reason == "" {
+			t.Errorf("the assignment %q was reported as %q with the reason %q",
+				item.Name, item.Action, item.Reason)
+		}
+
+		skipped = append(skipped, item.Name)
+	}
+
+	want := []string{"192.0.2.10 carries 19999", "192.0.2.11 carries 19999"}
+	if !reflect.DeepEqual(skipped, want) {
+		t.Fatalf("the import reported the assignments %v as skipped, want %v", skipped, want)
+	}
+
+	if imported.Skipped != 2 {
+		t.Errorf("the import counted %d skipped, want the 2 assignments it could not follow",
+			imported.Skipped)
+	}
+}
+
+// TestTheAssignmentsOfASkippedHostAreLeftAlone holds the assignments to the
+// rule the rest of the import is under. A Host that is registered here already
+// is skipped without an overwrite, and what it carries is part of that Host: an
+// import that left the Host as it was and moved what it carries under it would
+// be a change nobody asked for.
+func TestTheAssignmentsOfASkippedHostAreLeftAlone(t *testing.T) {
+	source := partlyAssigned(t)
+	target := newTransferInstall(t)
+
+	withKey, _ := twoHosts(t)
+	target.registerHost(t, withKey)
+	threeServicePorts(t, target)
+	target.assign(t, withKey.IP, 18082)
+
+	file := source.exportTunnels(t, testExportPassword)
+
+	rec := target.importTunnels(t, file, testExportPassword, false)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("the import answered %d: %s", rec.Code, rec.Body.String())
+	}
+
+	// The Host that was skipped goes on carrying the one service port it was
+	// given here, and the Host the file brought in carries what the file says.
+	want := []string{
+		"192.0.2.10 carries 18082",
+		"192.0.2.11 carries 18081",
+		"192.0.2.11 carries 18082",
+	}
+
+	if !reflect.DeepEqual(target.carried(t), want) {
+		t.Fatalf("after the import the installation carries %v, want %v", target.carried(t), want)
+	}
+
+	// With the overwrite the Host is written, and then what it carries is what
+	// the file says rather than the two sets put together.
+	rec = target.importTunnels(t, file, testExportPassword, true)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("the import with overwrite answered %d: %s", rec.Code, rec.Body.String())
+	}
+
+	if !reflect.DeepEqual(target.carried(t), fourPairs) {
+		t.Fatalf("after the overwrite the installation carries %v, want %v",
+			target.carried(t), fourPairs)
 	}
 }

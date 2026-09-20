@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -86,6 +87,31 @@ type hostContent struct {
 	KeyPassphrase string `json:"key_passphrase"`
 	Description   string `json:"description"`
 	Enabled       bool   `json:"enabled"`
+	// AssignedLocalPorts is which service ports this Host carries, named by
+	// their local port rather than by the id of the row. The ids belong to the
+	// installation the file came from, so a file carrying them would point at
+	// whatever happens to hold those ids here. The local port is unique across
+	// the service ports of an installation (models.ServicePort, the
+	// idx_service_local_port index), which is what makes it a name that means
+	// the same on both sides.
+	//
+	// nil and an empty list mean different things, and the difference is what a
+	// file written before the assignments were stored turns on:
+	//
+	//	no field, or null  this Host carries every service port in the file
+	//	[]                 this Host carries none of them
+	//
+	// Every Host carrying every service port is what an installation ran on
+	// before the assignments were a row of their own, so it is what a file from
+	// then meant without saying it. Read as "carries none", such a file would
+	// import cleanly and leave the installation with no tunnel at all.
+	//
+	// encoding/json is what tells the two apart. An absent field and a null
+	// both leave the field at nil, while "[]" sets it to a slice of length zero
+	// that is not nil. The export therefore never writes nil: a Host that
+	// carries nothing goes into the file as "[]", because a nil slice marshals
+	// to null, which reads back as the file not naming the assignments at all.
+	AssignedLocalPorts []int `json:"assigned_local_ports"`
 }
 
 // servicePortContent is one service port as it is carried in a file. It holds
@@ -104,6 +130,11 @@ type servicePortContent struct {
 // this installation, which the reconcile loop writes from the Hosts and the
 // service ports; carried across, it would describe connections the other
 // installation never made.
+//
+// The assignments are in it, on each Host, and they are held to the other side
+// of that same rule: which service ports a Host is to carry is what the
+// operator asked for rather than what this installation made of it, so an
+// installation that does not carry it across comes up running something else.
 type tunnelsContent struct {
 	Hosts        []hostContent        `json:"hosts"`
 	ServicePorts []servicePortContent `json:"service_ports"`
@@ -478,6 +509,48 @@ func (h *TransferHandler) unsealHost(host models.Host) (hostContent, error) {
 	}, nil
 }
 
+// assignedLocalPortsByHost reads the assignments and returns, for each Host id,
+// the local ports of the service ports that Host carries. The service ports are
+// handed in rather than read again, since the export has them already and the
+// two reads have to agree on what is stored.
+//
+// An assignment whose service port is not among them is left out. It points at
+// a row that is not there, so there is no local port to write it as, and an id
+// carried across would name a different service port at the other installation.
+//
+// The lists are sorted, so that exporting the same configuration twice gives
+// the same file rather than whatever order the rows came back in.
+func assignedLocalPortsByHost(db *gorm.DB, sps []models.ServicePort) (map[uint][]int, error) {
+	var assignments []models.HostServicePort
+
+	err := db.Find(&assignments).Error
+	if err != nil {
+		return nil, err
+	}
+
+	localPortOf := make(map[uint]int, len(sps))
+	for _, sp := range sps {
+		localPortOf[sp.ID] = sp.LocalPort
+	}
+
+	byHost := make(map[uint][]int)
+
+	for _, assignment := range assignments {
+		localPort, known := localPortOf[assignment.SPID]
+		if !known {
+			continue
+		}
+
+		byHost[assignment.HostID] = append(byHost[assignment.HostID], localPort)
+	}
+
+	for _, localPorts := range byHost {
+		sort.Ints(localPorts)
+	}
+
+	return byHost, nil
+}
+
 // ExportTunnels hands out every Host and every service port, sealed with the
 // password in the body.
 func (h *TransferHandler) ExportTunnels(c echo.Context) error {
@@ -518,6 +591,15 @@ func (h *TransferHandler) ExportTunnels(c echo.Context) error {
 		})
 	}
 
+	assigned, err := assignedLocalPortsByHost(h.hosts.db, sps)
+	if err != nil {
+		h.hosts.logger.Error("failed to read the service port assignments for an export", zap.Error(err))
+		return c.JSON(http.StatusInternalServerError, models.Response{
+			Success: false,
+			Error:   "Failed to read the service port assignments",
+		})
+	}
+
 	content := tunnelsContent{
 		Hosts:        make([]hostContent, 0, len(hosts)),
 		ServicePorts: make([]servicePortContent, 0, len(sps)),
@@ -539,6 +621,13 @@ func (h *TransferHandler) ExportTunnels(c echo.Context) error {
 				Error: "No export was made: the stored secrets of the Host " + host.IP +
 					" do not open with the encryption key of this installation",
 			})
+		}
+
+		// A Host that carries nothing is written as an empty list and never as
+		// nil, which is the difference the import reads: see hostContent.
+		opened.AssignedLocalPorts = assigned[host.ID]
+		if opened.AssignedLocalPorts == nil {
+			opened.AssignedLocalPorts = []int{}
 		}
 
 		content.Hosts = append(content.Hosts, opened)
@@ -631,11 +720,20 @@ func (h *TransferHandler) ImportTunnels(c echo.Context) error {
 
 	items := make([]transferItem, 0, len(content.Hosts)+len(content.ServicePorts))
 
+	// The Hosts whose assignments this import is to write: the ones it wrote.
+	// A Host that was skipped is one that was registered here before this file
+	// arrived, and what it carries was not asked to be replaced either.
+	written := make([]hostContent, 0, len(content.Hosts))
+
 	for _, host := range content.Hosts {
 		item, refused := h.importHost(c, tx, host, req.Overwrite)
 		if refused != nil {
 			tx.Rollback()
 			return refused.answer(c)
+		}
+
+		if item.Action != transferSkipped {
+			written = append(written, host)
 		}
 
 		items = append(items, *item)
@@ -654,6 +752,20 @@ func (h *TransferHandler) ImportTunnels(c echo.Context) error {
 		}
 
 		items = append(items, *item)
+	}
+
+	// The assignments are written last, after both tables are in place. They
+	// point at rows of both, and a service port of the file is created in the
+	// loop above, so anything earlier would be looking for rows this same
+	// import has not written yet.
+	for _, host := range written {
+		more, refused := h.importAssignments(tx, host, content)
+		if refused != nil {
+			tx.Rollback()
+			return refused.answer(c)
+		}
+
+		items = append(items, more...)
 	}
 
 	err = tx.Commit().Error
@@ -919,6 +1031,101 @@ func (h *TransferHandler) importServicePort(c echo.Context, tx *gorm.DB, sp serv
 	}
 
 	return &transferItem{Kind: "service_port", Name: name, Action: transferReplaced}, nil
+}
+
+// importAssignments makes one Host of the file carry the service ports the file
+// says it carries, and reports the ones it could not.
+//
+// What is stored for that Host is replaced rather than added to: the file says
+// which service ports the Host carries, not which ones to add, so a Host the
+// import wrote is left carrying what the file names and nothing besides. Only
+// the Hosts this import wrote are touched, so the assignments of a Host that
+// was skipped stay as they are.
+//
+// A local port the file names and this installation does not hold is left out
+// with a word about it, and the rest of the import stands. It is how a file
+// arrives whose service port was skipped for being registered here under
+// another local port, and refusing the whole file for it would take across
+// neither the Hosts nor the service ports that were fine, over an assignment
+// the operator fixes by adding the service port and importing again. What is
+// not done is passing over it in silence: every one of them is in the answer as
+// a skipped item, with the Host and the local port named.
+func (h *TransferHandler) importAssignments(tx *gorm.DB, host hostContent,
+	content tunnelsContent) ([]transferItem, *transferRefusal) {
+	var stored models.Host
+
+	err := tx.Where("ip = ?", host.IP).First(&stored).Error
+	if err != nil {
+		h.hosts.logger.Error("failed to read back a Host while importing its assignments", zap.Error(err))
+		return nil, refuse(http.StatusInternalServerError, "Nothing was imported: failed to read the "+
+			"Host "+host.IP)
+	}
+
+	wanted := host.AssignedLocalPorts
+	if wanted == nil {
+		// The file does not name them, which is a file written before they were
+		// stored at all. Every Host carried every service port then, so that is
+		// what it is taken to say: the service ports of that same file, which
+		// are all the ones the installation it came from had.
+		wanted = make([]int, 0, len(content.ServicePorts))
+		for _, sp := range content.ServicePorts {
+			wanted = append(wanted, sp.LocalPort)
+		}
+	}
+
+	err = tx.Where("host_id = ?", stored.ID).Delete(&models.HostServicePort{}).Error
+	if err != nil {
+		h.hosts.logger.Error("failed to clear the assignments of a Host while importing", zap.Error(err))
+		return nil, refuse(http.StatusInternalServerError, "Nothing was imported: failed to replace the "+
+			"service ports the Host "+host.IP+" carries")
+	}
+
+	items := make([]transferItem, 0)
+	// A hand-written file can name the same local port twice, and the pair of
+	// columns is the primary key, so the second write of it would fail.
+	assigned := make(map[uint]bool, len(wanted))
+
+	for _, localPort := range wanted {
+		name := host.IP + " carries " + strconv.Itoa(localPort)
+
+		var sp models.ServicePort
+
+		err = tx.Where("local_port = ?", localPort).First(&sp).Error
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			items = append(items, transferItem{
+				Kind:   "assignment",
+				Name:   name,
+				Action: transferSkipped,
+				Reason: "no service port on the local port " + strconv.Itoa(localPort) +
+					" is registered here, so there is nothing for the Host to carry",
+			})
+
+			continue
+		}
+
+		if err != nil {
+			h.hosts.logger.Error("failed to look for a service port while importing an assignment",
+				zap.Error(err))
+
+			return nil, refuse(http.StatusInternalServerError, "Nothing was imported: failed to read "+
+				"the service ports")
+		}
+
+		if assigned[sp.ID] {
+			continue
+		}
+
+		assigned[sp.ID] = true
+
+		err = tx.Create(&models.HostServicePort{HostID: stored.ID, SPID: sp.ID}).Error
+		if err != nil {
+			h.hosts.logger.Error("failed to store an assignment while importing", zap.Error(err))
+			return nil, refuse(http.StatusInternalServerError, "Nothing was imported: failed to store "+
+				"the service ports the Host "+host.IP+" carries")
+		}
+	}
+
+	return items, nil
 }
 
 // ExportSettings hands out the stored settings, sealed with the password in the
