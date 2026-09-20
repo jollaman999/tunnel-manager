@@ -3631,10 +3631,202 @@ function manualOneTunnel() {
     t("manual.step-service.text")));
 
   return manualCard("one-tunnel", t("manual.one-tunnel.title"), [
+    manualTopology(),
     flow,
     t("manual.one-tunnel-dials.text"),
-    t("manual.one-tunnel-columns.text")
+    t("manual.one-tunnel-columns.text"),
+    manualExample()
   ]);
+}
+
+// The example every part of the drawing is labelled with. One Host, one service
+// port, and the numbers stay the same on the drawing, in the list under it and
+// in the command at the end, so the reader can follow one port from box to box.
+// The addresses are the documentation ranges, so they name no real machine.
+const manualExampleHost = "203.0.113.10";
+const manualExampleUser = "deploy";
+const manualExampleService = "127.0.0.1:8080";
+const manualExampleLocalPort = "18080";
+
+// manualTopology is the drawing of the machines: the Host with its SSH server
+// and the port that is opened on it, this machine with tunnel-manager and the
+// service, a client on the far side, and the four legs the traffic takes,
+// numbered in the order they happen.
+//
+// It is an SVG rather than boxes because the point of it is where the machines
+// are and which way each connection is opened, and boxes in a row cannot show
+// that the client and tunnel-manager both go to the Host and neither goes to
+// the other. The words inside it are kept to names and addresses, because a
+// line of SVG text does not wrap, and what each leg does is said in the list
+// under the drawing, which does. On a narrow screen it scrolls sideways rather
+// than shrinking until the addresses cannot be read.
+function manualTopology() {
+  const wrap = document.createElement("div");
+
+  wrap.className = "topology";
+  // Addresses and the numbers read left to right whatever the page does, and
+  // the drawing is laid out for that reading.
+  wrap.dir = "ltr";
+
+  const svg = svgElement("svg", {
+    viewBox: "0 0 800 320",
+    role: "img",
+    "aria-label": t("manual.diagram.aria")
+  });
+
+  const defs = svgElement("defs");
+  const marker = svgElement("marker", {
+    id: "topology-arrow",
+    viewBox: "0 0 10 10",
+    refX: "9",
+    refY: "5",
+    markerWidth: "7",
+    markerHeight: "7",
+    orient: "auto-start-reverse"
+  });
+
+  marker.appendChild(svgElement("path", { d: "M 0 0 L 10 5 L 0 10 z", class: "topology-head" }));
+  defs.appendChild(marker);
+  svg.appendChild(defs);
+
+  // The two machines, drawn as the frames the boxes sit in.
+  svg.appendChild(topologyFrame(200, 30, 230, 250, t("manual.diagram-host.label") + " " +
+    manualExampleHost));
+  svg.appendChild(topologyFrame(480, 30, 300, 250, t("manual.diagram-here.label")));
+
+  // What is on each machine.
+  svg.appendChild(topologyBox(20, 120, 140, 60, t("manual.diagram-client.label"), ""));
+  svg.appendChild(topologyBox(225, 75, 180, 60, t("manual.diagram-sshd.label"), ":22"));
+  svg.appendChild(topologyBox(225, 190, 180, 60, t("manual.diagram-listener.label"),
+    "0.0.0.0:" + manualExampleLocalPort));
+  svg.appendChild(topologyBox(505, 75, 150, 60, "tunnel-manager", ""));
+  svg.appendChild(topologyBox(610, 190, 150, 60, t("manual.diagram-service.label"),
+    manualExampleService));
+
+  // 1. tunnel-manager opens the SSH connection, so the arrow starts at it.
+  svg.appendChild(topologyLeg("M 505 105 L 405 105", 1, 455, 105, "topology-ssh"));
+  // 2. A client connects to the port on the Host.
+  svg.appendChild(topologyLeg("M 160 150 L 190 150 L 190 220 L 225 220", 2, 190, 185, ""));
+  // 3. That connection runs back down the SSH connection to tunnel-manager.
+  svg.appendChild(topologyLeg("M 405 220 L 560 220 L 560 135", 3, 480, 220, "topology-back"));
+  // 4. tunnel-manager connects to the service.
+  svg.appendChild(topologyLeg("M 655 105 L 685 105 L 685 190", 4, 685, 148, ""));
+
+  wrap.appendChild(svg);
+
+  return wrap;
+}
+
+// svgElement is element for the SVG namespace, which createElement does not
+// put a tag in, so an svg made with it draws nothing.
+function svgElement(tag, attributes) {
+  const node = document.createElementNS("http://www.w3.org/2000/svg", tag);
+
+  for (const name of Object.keys(attributes || {})) {
+    node.setAttribute(name, attributes[name]);
+  }
+
+  return node;
+}
+
+// topologyFrame is the outline of one machine, with its name along the top
+// edge. The name sits outside the frame, above it, so a long one in another
+// language runs past the edge rather than being cut by it.
+function topologyFrame(x, y, width, height, title) {
+  const group = svgElement("g", { class: "topology-frame" });
+
+  group.appendChild(svgElement("rect", { x, y, width, height, rx: "8" }));
+
+  const label = svgElement("text", { x: x + 12, y: y - 8, class: "topology-frame-title" });
+
+  label.textContent = title;
+  group.appendChild(label);
+
+  return group;
+}
+
+// topologyBox is one thing on a machine: its name, and under it the address or
+// the port it is at, where it has one.
+function topologyBox(x, y, width, height, title, address) {
+  const group = svgElement("g", { class: "topology-box" });
+
+  group.appendChild(svgElement("rect", { x, y, width, height, rx: "6" }));
+
+  const name = svgElement("text", {
+    x: x + width / 2,
+    y: address === "" ? y + height / 2 + 5 : y + 24,
+    class: "topology-box-title"
+  });
+
+  name.textContent = title;
+  group.appendChild(name);
+
+  if (address !== "") {
+    const where = svgElement("text", { x: x + width / 2, y: y + 45, class: "topology-box-address" });
+
+    where.textContent = address;
+    group.appendChild(where);
+  }
+
+  return group;
+}
+
+// topologyLeg is one connection: the line it takes, with its arrowhead at the
+// end it is opened towards, and the number of the step it is in a circle on the
+// line.
+function topologyLeg(path, step, cx, cy, variant) {
+  const group = svgElement("g", { class: ("topology-leg " + variant).trim() });
+
+  group.appendChild(svgElement("path", { d: path, "marker-end": "url(#topology-arrow)" }));
+  group.appendChild(svgElement("circle", { cx, cy, r: "11" }));
+
+  const number = svgElement("text", { x: cx, y: cy + 4, class: "topology-step" });
+
+  number.textContent = String(step);
+  group.appendChild(number);
+
+  return group;
+}
+
+// manualExample is the drawing in words: the same Host, port and service, the
+// four legs in the order they are numbered, and the ssh command that would open
+// the same tunnel by hand, for the reader who knows that command already.
+function manualExample() {
+  const example = document.createElement("div");
+
+  example.dataset.example = "tunnel";
+  const names = {
+    host: manualExampleHost,
+    user: manualExampleUser,
+    service: manualExampleService,
+    local_port: manualExampleLocalPort
+  };
+
+  example.appendChild(element("p", t("manual.example-intro.text", names)));
+
+  const steps = document.createElement("ol");
+
+  // The four keys are written out because the check that every key in the
+  // catalog is asked for by some script reads the scripts for them as written.
+  steps.appendChild(element("li", t("manual.example-step-1.text", names)));
+  steps.appendChild(element("li", t("manual.example-step-2.text", names)));
+  steps.appendChild(element("li", t("manual.example-step-3.text", names)));
+  steps.appendChild(element("li", t("manual.example-step-4.text", names)));
+  example.appendChild(steps);
+  example.appendChild(element("p", t("manual.example-command.text")));
+
+  const command = element("code", "ssh -N -R 0.0.0.0:" + manualExampleLocalPort + ":" +
+    manualExampleService + " " + manualExampleUser + "@" + manualExampleHost);
+
+  const block = element("pre");
+
+  // A command reads left to right whatever the page does, and it starts at
+  // the left edge of its box rather than being set against the right one.
+  block.dir = "ltr";
+  block.appendChild(command);
+  example.appendChild(block);
+
+  return example;
 }
 
 // manualFlowStep is one box of the drawing. The number is in the text of the

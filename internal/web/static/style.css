@@ -953,6 +953,107 @@ td.actions {
   transform: scaleX(-1);
 }
 
+/* The drawing of the machines on the manual. It is one width, the one it was
+   drawn at, and on a narrow screen it is scrolled sideways rather than shrunk:
+   an address that has shrunk below the size of the text around it is one the
+   reader cannot check against the list under the drawing. */
+.topology {
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+  margin: 0 0 0.75rem;
+}
+
+.topology > svg {
+  display: block;
+  width: 100%;
+  min-width: 40rem;
+  height: auto;
+  /* A frame title that runs past the right edge in a long language is still
+     drawn, rather than cut at the edge of the drawing. */
+  overflow: visible;
+  font-family: inherit;
+}
+
+.topology-frame > rect {
+  fill: none;
+  stroke: var(--border-strong);
+  stroke-width: 1.5;
+  stroke-dasharray: 6 4;
+}
+
+.topology-frame-title {
+  fill: var(--text-muted);
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.topology-box > rect {
+  fill: var(--bg-sunken);
+  stroke: var(--border);
+  stroke-width: 1.5;
+}
+
+.topology-box-title {
+  fill: var(--text);
+  font-size: 13px;
+  font-weight: 600;
+  text-anchor: middle;
+}
+
+.topology-box-address {
+  fill: var(--text-muted);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 12px;
+  text-anchor: middle;
+}
+
+.topology-leg > path {
+  fill: none;
+  stroke: var(--text-dim);
+  stroke-width: 1.5;
+}
+
+/* The SSH connection is the one tunnel-manager opens and everything else
+   runs inside, so it is the heavy line. */
+.topology-ssh > path {
+  stroke: var(--accent);
+  stroke-width: 3;
+}
+
+/* The way back to tunnel-manager is inside that connection, not a second one,
+   so it is dashed. */
+.topology-back > path {
+  stroke-dasharray: 5 4;
+}
+
+.topology-head {
+  fill: var(--text-dim);
+}
+
+.topology-ssh .topology-head {
+  fill: var(--accent);
+}
+
+.topology-leg > circle {
+  fill: var(--accent);
+}
+
+.topology-step {
+  fill: var(--text-on-accent);
+  font-size: 12px;
+  font-weight: 600;
+  text-anchor: middle;
+}
+
+/* The command that opens the same tunnel by hand. It is one line and is
+   scrolled rather than wrapped, so it can be copied as it stands. */
+[data-example] > pre {
+  margin: 0.5rem 0 0;
+  white-space: pre;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 13px;
+}
+
 /* A phone held upright is around 390px wide, which is under 24rem once the
    padding is taken off. The rules below are what does not fit at that width.
    Everything above is unchanged, so a wide screen looks as it did. */

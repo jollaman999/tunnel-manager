@@ -1,6 +1,7 @@
 package web
 
 import (
+	"bytes"
 	"encoding/json"
 	"io/fs"
 	"net/http"
@@ -231,6 +232,8 @@ func TestThePageNamesItsAssetsAbsolutely(t *testing.T) {
 // reaches this server and nothing else. A script or a stylesheet pulled from
 // somewhere else would leave the screens blank there, and it would hand a third
 // party the page the SSH passwords are typed into.
+const svgNamespace = "http://www.w3.org/2000/svg"
+
 func TestNothingIsFetchedFromTheNetwork(t *testing.T) {
 	external := regexp.MustCompile(`(?i)(https?:)?//[a-z0-9.-]+\.[a-z]{2,}`)
 
@@ -247,6 +250,11 @@ func TestNothingIsFetchedFromTheNetwork(t *testing.T) {
 		if err != nil {
 			return err
 		}
+
+		// The SVG namespace is the one address that is not one. It is the name
+		// the drawing on the manual is made under, handed to createElementNS,
+		// and nothing is ever fetched from it.
+		body = bytes.ReplaceAll(body, []byte(svgNamespace), nil)
 
 		if match := external.Find(body); match != nil {
 			t.Errorf("%s names something outside this server: %q", name, match)
