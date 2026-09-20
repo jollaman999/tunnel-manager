@@ -50,6 +50,8 @@ is made for you as you do, and it is what a tunnel is built from.
 - Keeps the SSH passwords, the private keys and the certificate key encrypted
   with a key file of this installation.
 - Carries the whole configuration to another installation as one sealed file.
+- Shows the screens in thirteen languages, picked in the corner of the browser
+  or set for the installation. The log file stays English.
 - Runs on Linux, macOS and Windows as a single binary, with no C library and no
   database server behind it.
 
@@ -99,7 +101,7 @@ the reference below.
 | [Install and run](docs/reference.md#install-and-run) | The flags, where the files go, Docker Compose, systemd, from source |
 | [HTTPS and the certificate](docs/reference.md#https-and-the-certificate) | The browser warning, registering a certificate of your own, renewing, turning HTTPS off |
 | [First startup and the account](docs/reference.md#first-startup-and-the-account) | The initial password, the setup, changing the credentials |
-| [The built-in UI](docs/reference.md#the-built-in-ui) | What each screen shows and does |
+| [The built-in UI](docs/reference.md#the-built-in-ui) | What each screen shows and does, and the languages it comes in |
 | [Settings](docs/reference.md#settings) | Every setting, what it applies at, and the way back when the server will not start |
 | [API endpoints](docs/reference.md#api-endpoints) | Every call, with the login and the CSRF token a script needs |
 | [Reading the tunnel status](docs/reference.md#reading-the-tunnel-status) | The three counts, what a status means, and whether the forwarded port was reached |

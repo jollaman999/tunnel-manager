@@ -579,8 +579,8 @@ no directory travels next to it and no path has to be configured.
 | Status | `/ui/status` | The three counts (desired, rows, connected), a sentence about the difference between them, and one line per tunnel: Host, service port, status, server, local, remote, port reached, retries, last connected. A tunnel with something wrong carries what went wrong on a line under it, across the whole table, and a tunnel whose forwarded port was not reached carries there what to change on the SSH server it named and what else to check. The tunnel rows come a page at a time, ten to a page to begin with, with the size and the page chosen above the table; the three counts stay counts of every tunnel and not of the page. It asks again every 5 seconds and comes back on the page being read. |
 | Hosts | `/ui/hosts` | One row per Host with ID, IP, port, user, description, enabled and updated. The rows come a page at a time, ten to a page to begin with, with the size (10, 20, 30, 50 or 100) and the page chosen above the table. The choice is remembered for this screen on its own, and a list short enough to fit a page of the smallest size carries no controls at all. Add a Host, edit one, enable or disable one, delete one. The add and edit forms have a box to paste a private key into, an area to drop the key file onto, and a box for the passphrase of a key that has one, and the add form has an **Assign all service ports** tick, on by default, that says what the Host starts out carrying. **Service ports** in a row opens a panel of every service port with a tick against the ones this Host carries; only what was changed is sent when it is saved, so a tick made there leaves the pages that were not read alone. |
 | Service Ports | `/ui/service-ports` | One row per service port with ID, service IP, service port, local port, description and updated. The rows come a page at a time the same way the Hosts do, with a size and a page of their own. Add, edit and delete. The add form has an **Assign to all hosts** tick, on by default, that says which Hosts carry it from the start; which Hosts carry it after that is changed from the Hosts screen. |
-| Logs | `/ui/logs` | The end of the log file, newest last, with a level filter and a count to show. It asks again every 5 seconds. It reads the file the process is writing now; rotated files are not shown. |
-| Settings | `/ui/settings` | What is stored but not being run on yet, with a Restart in that card that puts it into place, every stored setting and what a save changed, the certificate being served with a button to renew it and boxes to register one of your own, the username and the password of this account, an export of the tunnel configuration and of the settings of this manager into one sealed file each and an import that takes such a file back, a Restart that takes the service down and brings it back, and the Uninstall at the bottom. See [Settings](#settings). |
+| Logs | `/ui/logs` | The end of the log file, newest last, with a level filter and a count to show. It asks again every 5 seconds. It reads the file the process is writing now; rotated files are not shown. The lines are shown in the language of the screen while the file stays English; see [The language of the screens](#the-language-of-the-screens). |
+| Settings | `/ui/settings` | What is stored but not being run on yet, with a Restart in that card that puts it into place, every stored setting and what a save changed, among them the language this installation shows a browser that has picked none, the certificate being served with a button to renew it and boxes to register one of your own, the username and the password of this account, an export of the tunnel configuration and of the settings of this manager into one sealed file each and an import that takes such a file back, a Restart that takes the service down and brings it back, and the Uninstall at the bottom. See [Settings](#settings). |
 | Manual | `/ui/manual` | What an installation is made of, drawn and said on one screen: what this does, one tunnel end to end, Hosts and service ports and the assignments between them, what an unreached port means, the two intervals, and where the files go. It asks the server for nothing, which is what lets the login screen show the same thing. |
 | Login | `/ui/login` | Where a client without a session lands. Leave the username empty on the first sign in. It leads to the setup screen while the account still needs one. A **Manual** button opens the manual as a panel over it, without a session, because the state it is most needed in is the one where nothing works yet. |
 
@@ -594,6 +594,16 @@ screen is open is followed without the page being loaded again. A press is kept
 in the local storage of that browser under `tm_theme` and is never sent
 anywhere: which theme a screen is read in belongs to the screen and not to the
 installation, and two people reading the same server may want different ones.
+
+**The screens come in thirteen languages**, and the switch is the list in the
+top right corner of every screen, beside the theme switch, the login one
+included. Each language is listed under its own name: English, 한국어, 日本語,
+中文, Español, Français, Deutsch, Português (Brasil), Русский, العربية, हिन्दी,
+Tiếng Việt and ไทย. Arabic is written right to left, and the whole page turns
+round with it. Which language a browser that has picked none is shown is a
+setting of the installation; see
+[The language of the screens](#the-language-of-the-screens) for that and for
+the order in which the language is settled.
 
 The forms check what is typed before anything is sent. A port takes digits only
 and has to be between 1 and 65535; an IP field takes only what an address is
@@ -610,6 +620,77 @@ is what a key that is in a terminal somewhere else wants.
 The UI files are served without a session on purpose: they are the same bytes for
 every client and carry no data. Everything they show is fetched from `/api/**`,
 and that is what the login guards.
+
+### The language of the screens
+
+The language a screen is drawn in is settled in this order, and the first
+answer that is there wins:
+
+1. **What was picked in the corner of this browser.** The pick is kept in the
+   local storage of that browser under `tm_lang`, as the theme is, and is never
+   sent anywhere.
+2. **What the installation was set to show**: the `ui_default_language`
+   setting, on the Settings screen. It is what everybody who has said nothing
+   is shown, and it is read once there is a session.
+3. **What the browser asks for**, matched against the thirteen. A tag is
+   matched whole first, so a browser set to `pt-BR` gets the Brazilian catalog,
+   and then by its language alone, so one set to `pt-PT` gets that same catalog
+   rather than English.
+4. English.
+
+A pick in the corner wins over the setting on purpose. The setting is what an
+installation shows to somebody who has said nothing about it, and somebody who
+has picked a language has said something, on the very screen they are reading.
+
+**The login screen does not follow the setting.** Reading a setting needs a
+session and the login screen has none, so it is drawn in what this browser
+picked or, failing that, in what the browser asks for. That is how it is meant
+to work and not something to report: the setting takes hold the moment the
+login succeeds, without the page being loaded again, and again the moment it is
+saved.
+
+The codes are `en`, `ko`, `ja`, `zh`, `es`, `fr`, `de`, `pt-BR`, `ru`, `ar`,
+`hi`, `vi` and `th`, and they are what `ui_default_language` takes; see
+[Settings](#settings).
+
+**What is translated is everything the screens say**, what the server answers
+included. A refusal comes with a code in `error_code` and the values of its
+sentence in `error_args`, and the screen draws the sentence for that code in
+its own language, while `error` stays the English sentence it always was. A log
+line comes with a `log_id`, and the Logs screen draws the sentence for that
+identifier out of the fields of the line. **The log file itself stays
+English.** It is what a `grep` runs over and what a support request carries,
+and a file that followed the screen would be written in whatever language was
+picked last. See [Calling the API from a script](#calling-the-api-from-a-script)
+for the shape of a refusal and [Settings and uninstall](#settings-and-uninstall)
+for the shape of a log line.
+
+Each language is one catalog, served out of the binary as
+`/ui/lang/<code>.json`, so an installation on a host that reaches nothing else
+still has all thirteen. Every catalog carries the same keys, one per sentence
+the screens can show, and a key a language has no words for is drawn in English
+rather than left blank. The page fetches the catalog of the language in use and
+the English one, and nothing else.
+
+**Adding a language** is one catalog and four lists of codes, and a test holds
+the five together, so a code added to one place and not to the others fails
+the build rather than the page:
+
+| Where | What |
+|-------|------|
+| `internal/web/static/lang/<code>.json` | The catalog, with every key of `en.json` |
+| `internal/web/static/app.js`, `languages` | The code, the name the language calls itself, and whether it runs right to left |
+| `internal/web/static/index.html`, `codes` and `rightToLeft` | The same two lists, read in the head before `app.js` is fetched |
+| `internal/settings/settings.go`, `uiLanguages` | What `ui_default_language` is held against |
+| `internal/web/web_test.go`, `catalogCodes` | The list the tests compare the other four with |
+
+**What the translations do not do yet.** A count comes in two forms, one and
+many, which is how English works and not how Russian or Arabic does, and each
+catalog is worded to get by with the two. In Arabic a path that begins with `/`
+can be drawn with that slash away from the rest of it: it is how a browser lays
+left to right text into a right to left line, and the path itself is whole. And
+none of the catalogs has been read by a native speaker yet, so a sentence that
+reads oddly is worth a report.
 
 ## Settings
 
@@ -632,12 +713,19 @@ and `PUT /api/settings`.
 | Rotated log files kept | `logging_file_max_backups` | `logging.file.max_backups` | `5` | At the next start |
 | Days a rotated log file is kept | `logging_file_max_age` | `logging.file.max_age` | `30` | At the next start |
 | Compress rotated log files | `logging_file_compress` | `logging.file.compress` | `true` | At the next start |
+| Language this installation is shown in | `ui_default_language` | `ui.default_language` | empty, which names none | **The moment it is saved** |
 
-**The log level is the one setting the running process takes on.** It reaches
-every logger that was handed out at startup, the one the database writes its
-statements through included, which is the half of `debug` it is usually turned on
-for. Everything else is stored and read at the next start; the screen says so per
-field, and the answer to a save marks each change as `now` or `restart`.
+**The log level and the language are the two settings that take hold as they
+are saved.** The level reaches every logger that was handed out at startup, the
+one the database writes its statements through included, which is the half of
+`debug` it is usually turned on for. The language is never read by this process
+at all: the browser reads it, out of the answer to the save that stored it and
+out of every read after that, so there is nothing a restart could put into
+place. An empty language is a value and not a gap: it says this installation
+names none, and a browser is shown what it asks for, which is what every browser
+was shown before the setting existed. Everything else is stored and read at the
+next start; the screen says so per field, and the answer to a save marks each
+change as `now` or `restart`.
 
 A save is refused before it is stored when a value would not hold:
 
@@ -649,6 +737,7 @@ A save is refused before it is stored when a value would not hold:
 | `logging_level` | `debug`, `info`, `warn`, `error`, `dpanic`, `panic` or `fatal` |
 | `logging_format` | `json` or `console` |
 | `logging_file_max_size`, `logging_file_max_backups`, `logging_file_max_age` | Zero or more |
+| `ui_default_language` | Empty, or one of `en`, `ko`, `ja`, `zh`, `es`, `fr`, `de`, `pt-BR`, `ru`, `ar`, `hi`, `vi` and `th`, written exactly so: `EN` and `ko-KR` are refused |
 
 ```bash
 curl -s -b cookies.txt -X PUT "$BASE/api/settings" \
@@ -700,8 +789,9 @@ settings it read when it started against the ones that are stored: `running` is
 the value this process is on and `stored` is the one a restart would bring it
 to. It is the same for every client and for every session, and a restart empties
 it without anything being cleared, since the process comes back running on what
-is stored. The log level is never in it, because it is in place the moment it is
-saved. An installation that is running on everything it has stored gets `[]`.
+is stored. Neither the log level nor the language is ever in it, because both
+are in place the moment they are saved. An installation that is running on
+everything it has stored gets `[]`.
 
 ### Restarting the service
 
@@ -926,7 +1016,22 @@ What goes wrong, and what it looks like:
 | `401 The password does not open this account` | The uninstall carried the wrong password. Nothing was stopped and nothing was removed. |
 
 Every answer has the same shape: `{"success":true,"data":...}` or
-`{"success":false,"error":"..."}`.
+`{"success":false,"error":"..."}`. An answer that says no carries two fields
+more: `error_code` names the refusal, and `error_args` holds the values its
+sentence was written with, under the names the sentence uses, and is left out
+when there are none. `error` is the English sentence whatever language the
+screen is in, so a script that has been reading it goes on working; the code is
+what the screen translates, and what a script should match on rather than the
+words.
+
+```json
+{
+  "success": false,
+  "error": "No such service port: 99",
+  "error_code": "assignment.service_port.not_found",
+  "error_args": { "ids": "99" }
+}
+```
 
 ## API endpoints
 
@@ -1152,6 +1257,13 @@ Each line comes back split into `level`, `time`, `caller`, `message` and
 whether the split worked. A line that could not be split is still returned, with
 `parsed` false: a line that looks wrong is the one worth reading.
 
+`message` is the English sentence the file holds, and among the fields in
+`extra` is `log_id`, the name of the line, as `tunnel.connected`: it is what the
+Logs screen looks up to show the line in its own language, with the values taken
+from the other fields of the same line. A line written by a version that had no
+names, or by something else that wrote into the file, carries no `log_id` and is
+shown as it was written.
+
 ### Export and import
 
 | Method | Path | What it does |
@@ -1250,6 +1362,7 @@ curl -s -b cookies.txt -X POST "$BASE/api/import/tunnels" \
 | `GET` | `/` | Redirects to `/ui/` with a `302` |
 | `GET` | `/ui` | Redirects to `/ui/` with a `302` |
 | `GET` | `/ui/version.json` | The version of the binary, as `{"version":"3.0.0"}` |
+| `GET` | `/ui/lang/<code>.json` | The catalog of one language, `en` to `th`; see [The language of the screens](#the-language-of-the-screens) |
 | `GET` | `/ui/*` | Serves the UI out of the binary |
 
 `/ui/version.json` is answered without a session, like the rest of `/ui/`. The
