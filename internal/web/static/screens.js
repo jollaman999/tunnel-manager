@@ -138,9 +138,12 @@ let restartInFlight = false;
 let uninstallResult = null;
 
 // logOut ends the session and goes to the login. The cookie is dropped by the
-// server, so nothing here has to be cleared.
+// server, so nothing here has to be cleared but the language the session gave
+// access to: the login is drawn in what the browser asks for, as it is in a
+// tab that has never signed in.
 async function logOut() {
   await apiCall("POST", "/api/logout");
+  await forgetInstallationLang();
 
   navigate("login", { text: t("login.signed-out.notice"), kind: "info" });
 }
@@ -399,7 +402,7 @@ async function drawStatus() {
       return { cells: cells, under: both };
     });
 
-    const controls = pageControls(page, data.total_tunnels, drawStatus);
+    const controls = pageControls("status", page, data.total_tunnels, drawStatus);
     if (controls !== null) {
       nodes.push(controls);
     }
@@ -426,7 +429,11 @@ function statusBadge(status) {
   const text = status === null || status === undefined ? "" : String(status);
   const badge = element("span", text);
 
-  badge.className = "badge " + (known[text] === undefined ? "unknown" : known[text]);
+  // Asked of the table itself and not of what every object inherits, so that a
+  // status the server names "constructor" is coloured as unknown rather than
+  // with the name of a function.
+  badge.className = "badge " +
+    (Object.prototype.hasOwnProperty.call(known, text) ? known[text] : "unknown");
   badge.dataset.status = text;
 
   return badge;
@@ -623,7 +630,12 @@ function lastPageOf(total, size) {
 // would split the list, which includes the case where the size in use does not:
 // that is the state a screen is left in by choosing a hundred, and controls
 // that took themselves away there would leave no way back to ten.
-function pageControls(page, total, draw) {
+//
+// name is what the controls are named by, so that the row over a list and the
+// row inside a panel opened over it are not two buttons of the same name in
+// one document. Each works either way, since each holds its own draw, but
+// anything that finds a button by its name would find the wrong one.
+function pageControls(name, page, total, draw) {
   if (total <= listSizes[0]) {
     return null;
   }
@@ -634,7 +646,7 @@ function pageControls(page, total, draw) {
 
   // The same list, built by the same function as the ones above the log, so
   // that the two rows of controls are one thing to learn rather than two.
-  row.appendChild(logSelect("page-size", t("list.page-size.label"), listSizes, page.size,
+  row.appendChild(logSelect(name + "-page-size", t("list.page-size.label"), listSizes, page.size,
     function (value) {
       page.size = Number(value);
       // The rows move under the numbering when the size changes, so the page
@@ -647,7 +659,7 @@ function pageControls(page, total, draw) {
 
   const last = lastPageOf(total, page.size);
 
-  const previous = actionButton(t("list.previous.button"), "page-previous", function () {
+  const previous = actionButton(t("list.previous.button"), name + "-page-previous", function () {
     page.number = page.number - 1;
 
     return draw();
@@ -656,7 +668,7 @@ function pageControls(page, total, draw) {
   previous.disabled = page.number <= 1;
   row.appendChild(previous);
 
-  const next = actionButton(t("list.next.button"), "page-next", function () {
+  const next = actionButton(t("list.next.button"), name + "-page-next", function () {
     page.number = page.number + 1;
 
     return draw();
@@ -717,7 +729,7 @@ async function drawHosts() {
   if (hosts.length === 0) {
     nodes.push(statusLine(t("hosts.none.empty"), "empty"));
   } else {
-    const controls = pageControls(page, total, drawHosts);
+    const controls = pageControls("hosts", page, total, drawHosts);
     if (controls !== null) {
       nodes.push(controls);
     }
@@ -1064,7 +1076,7 @@ async function openHostServicePorts(host) {
       return;
     }
 
-    const controls = pageControls(page, total, turnPage);
+    const controls = pageControls("host-service-ports", page, total, turnPage);
     if (controls !== null) {
       list.appendChild(controls);
     }
@@ -1291,7 +1303,7 @@ async function drawServicePorts() {
   if (ports.length === 0) {
     nodes.push(statusLine(t("service-ports.none.empty"), "empty"));
   } else {
-    const controls = pageControls(page, total, drawServicePorts);
+    const controls = pageControls("service-ports", page, total, drawServicePorts);
     if (controls !== null) {
       nodes.push(controls);
     }
@@ -1604,6 +1616,13 @@ function logTimeCell(value) {
   // the clock the two halves read as two values stacked in a cell. This one is
   // meant to break, and only between those two halves.
   node.className = "log-stamp";
+
+  // The two halves are laid out in the direction of the page, and on a page
+  // that reads right to left that puts the clock before the date. A timestamp
+  // reads left to right whatever the page does, and it says so for itself
+  // rather than being joined into one run, since the break between the two
+  // halves is the point of the two spans.
+  node.dir = "ltr";
 
   const text = value === null || value === undefined ? "" : String(value);
   const split = text.indexOf("T");

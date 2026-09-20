@@ -587,8 +587,14 @@ func TestCatalogKeysFollowTheNamingRule(t *testing.T) {
 // English is the one catalog that is never missing anything: a key in a
 // translation that English has never heard of is a typo, and it would be drawn
 // as the name of the key.
+//
+// A part of a one/many pair that English has not written, a -few next to a
+// pair it has, is the one key a translation may hold on its own. It is read
+// through plural, which falls back to the many key of the pair where the part
+// is missing, so there is an English sentence under it all the same.
 func TestEveryCatalogFallsBackToEnglish(t *testing.T) {
 	base := readCatalog(t, baseCatalog)
+	variants := pluralKeys(scriptKeys(t))
 
 	for _, code := range catalogCodes {
 		if code == baseCatalog {
@@ -596,7 +602,7 @@ func TestEveryCatalogFallsBackToEnglish(t *testing.T) {
 		}
 
 		for key := range readCatalog(t, code) {
-			if _, ok := base[key]; !ok {
+			if _, ok := base[key]; !ok && !variants[key] {
 				t.Errorf("%s catalog: %q is in no English catalog to fall back to", code, key)
 			}
 		}
@@ -761,10 +767,54 @@ func scriptKeys(t *testing.T) map[string]bool {
 	return keys
 }
 
+// pluralParts is every part a count can fall in, as Intl.PluralRules names
+// them. The scripts write out the keys of two of them, one and many, and
+// plural in app.js puts the other four together at run time from those two.
+var pluralParts = []string{"zero", "one", "two", "few", "many", "other"}
+
+// pluralKeys is every key plural can put together from the pairs the scripts
+// name: for each pair that reads P-one-S and P-many-S, the same key with each
+// of the six parts written in. None of the four the scripts do not write out
+// has to be in a catalog, since plural falls back to many and then to one, but
+// a catalog that holds one of them is holding a key that is asked for.
+func pluralKeys(keys map[string]bool) map[string]bool {
+	out := map[string]bool{}
+
+	for one := range keys {
+		for at := strings.Index(one, "-one"); at >= 0; at = next(one, "-one", at) {
+			head, tail := one[:at], one[at+len("-one"):]
+
+			if !keys[head+"-many"+tail] {
+				continue
+			}
+
+			for _, part := range pluralParts {
+				out[head+"-"+part+tail] = true
+			}
+		}
+	}
+
+	return out
+}
+
+// next is the index of the occurrence of sub in s after at, or -1.
+func next(s, sub string, at int) int {
+	found := strings.Index(s[at+1:], sub)
+	if found < 0 {
+		return -1
+	}
+
+	return at + 1 + found
+}
+
 // TestEveryKeyTheScriptsNameIsInEnglish is the wider half of the check above.
 // A key that is picked between before it is looked up would be handed back as
 // its own name on the screen, exactly as a missing t("...") key would, and
 // nothing else would catch it.
+//
+// The keys plural puts together are not held to this. Those fall back to a
+// key the scripts do write out, so a part no catalog has written is not a
+// name on the screen; what has to be in English is the pair itself.
 func TestEveryKeyTheScriptsNameIsInEnglish(t *testing.T) {
 	base := readCatalog(t, baseCatalog)
 	keys := scriptKeys(t)
@@ -780,6 +830,14 @@ func TestEveryKeyTheScriptsNameIsInEnglish(t *testing.T) {
 			t.Errorf("the scripts name %q, which the English catalog has not got", key)
 		}
 	}
+
+	variants := pluralKeys(keys)
+
+	t.Logf("keys plural can put together from those: %d", len(variants))
+
+	if len(variants) == 0 {
+		t.Fatalf("the scripts name no one/many pair at all, so nothing here reads plural's keys")
+	}
 }
 
 // TestEveryEnglishKeyIsAskedFor is the other direction, and it is what keeps
@@ -794,12 +852,18 @@ func TestEveryKeyTheScriptsNameIsInEnglish(t *testing.T) {
 // those to something is the list the server keeps, which is where generatedKeys
 // reads them from, so a key under one of the two prefixes that stands for no
 // code and no identifier is still caught here.
+//
+// The keys plural puts together from a one/many pair are counted as asked for
+// as well. None of them is written out in a script, and none has to be in the
+// catalog, but a catalog that holds a -few key next to a pair is holding one
+// plural asks for the moment a count falls in that part.
 func TestEveryEnglishKeyIsAskedFor(t *testing.T) {
 	keys := scriptKeys(t)
 	generated := generatedKeys(t)
+	variants := pluralKeys(keys)
 
 	for key := range readCatalog(t, baseCatalog) {
-		if !keys[key] && !generated[key] {
+		if !keys[key] && !generated[key] && !variants[key] {
 			t.Errorf("the English catalog holds %q, which no script asks for", key)
 		}
 	}

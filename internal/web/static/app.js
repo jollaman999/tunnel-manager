@@ -637,6 +637,11 @@ async function apiCall(method, path, body) {
 
   if (response.status === 401 && path !== apiLoginPath && path !== apiUninstallPath &&
       path !== apiAccountPath) {
+    // The session is gone, so the login screen that follows is drawn for a
+    // reader with no session, in the language the browser asks for and not
+    // the one the installation names. The notice is picked after the switch
+    // so that it comes in the same language as the screen it sits on.
+    await forgetInstallationLang();
     navigate("login", t("api.session-ended.error"));
 
     throw new Redirected();
@@ -1898,10 +1903,21 @@ function formatTime(value) {
 // timeCell is a timestamp that stays on one line. Left to wrap it breaks at the
 // space between the date and the clock, and the two halves then read as two
 // separate values stacked in one cell.
+//
+// It is told to read left to right on its own, because on a page that reads
+// the other way the date and the clock are two runs of digits with a space
+// between them, and the space takes the direction of the page: the clock is
+// then drawn first and the date after it. The word for never is left to the
+// page, since it is a word in the language of the page.
 function timeCell(value) {
-  const node = element("span", formatTime(value));
+  const text = formatTime(value);
+  const node = element("span", text);
 
   node.className = "stamp";
+
+  if (text !== t("common.never.text")) {
+    node.dir = "ltr";
+  }
 
   return node;
 }
@@ -1936,10 +1952,71 @@ function formatBytes(value) {
   return (unit === 0 ? String(size) : size.toFixed(1)) + " " + units[unit];
 }
 
-// plural is for the counts the status screen reports, so that one tunnel is not
-// reported as "1 tunnels".
+// plural picks the key a count is read with, so that one tunnel is not
+// reported as "1 tunnels". The two keys handed in are the English pair, and
+// they differ in the one part that says which of the two they are.
+//
+// Which part a count falls in is the language's to say and not English's:
+// French reads zero the way it reads one, Russian reads two and five apart, and
+// Arabic has six parts. The browser is asked which part the count is in, and
+// the catalog is asked for a key with that part written where the pair writes
+// one and many. A language that has written no such key is read with its many
+// key, which is what its translators wrote for every count but one, and the
+// one key is the last resort. A -few key added to a catalog later is picked up
+// from then on without anything here changing.
+//
+// The key is looked for in the language first and in English after, so that a
+// language which has both of the pair is read with its own many key rather
+// than with a part English has written and it has not.
+//
+// A browser without Intl.PluralRules reads every count the English way.
 function plural(count, one, many) {
-  return count === 1 ? one : many;
+  const part = pluralPart(count);
+
+  if (part === null) {
+    return count === 1 ? one : many;
+  }
+
+  // The keys are the same up to the part and the same after it, so the head is
+  // where they stop agreeing. A pair that is not shaped that way is read the
+  // English way, since there is no place in it to write another part.
+  let head = 0;
+
+  while (head < one.length && head < many.length && one[head] === many[head]) {
+    head += 1;
+  }
+
+  if (one.slice(head, head + 3) !== "one" || many.slice(head, head + 4) !== "many" ||
+      one.slice(head + 3) !== many.slice(head + 4)) {
+    return part === "one" ? one : many;
+  }
+
+  const wanted = [one.slice(0, head) + part + one.slice(head + 3), many, one];
+
+  for (const table of [texts, baseTexts]) {
+    for (const key of wanted) {
+      if (entry(table, key) !== null) {
+        return key;
+      }
+    }
+  }
+
+  return many;
+}
+
+// pluralPart is which of the parts of the language a count is in: zero, one,
+// two, few, many or other, as the browser works it out for the language the
+// page is in. It is null where the browser cannot say.
+function pluralPart(count) {
+  if (typeof Intl === "undefined" || typeof Intl.PluralRules !== "function") {
+    return null;
+  }
+
+  try {
+    return new Intl.PluralRules(currentLang()).select(count);
+  } catch (error) {
+    return null;
+  }
 }
 
 // showVersion puts what the server reports in the corner of every screen. It is
@@ -2322,6 +2399,23 @@ async function followInstallationLang() {
   const was = currentLang();
 
   await loadInstallationLang();
+
+  const now = currentLang();
+
+  if (now !== was) {
+    await applyLang(now);
+  }
+}
+
+// forgetInstallationLang drops the setting when the session it was read
+// through ends, and draws the page in the language that is left: what was
+// picked here, then what the browser asks for. The login screen is settled by
+// those two alone, and a tab that has just signed out is drawn the way a new
+// tab would be rather than staying in the language of the installation.
+async function forgetInstallationLang() {
+  const was = currentLang();
+
+  installationLang = null;
 
   const now = currentLang();
 
