@@ -545,6 +545,11 @@ function reachAdvice(tunnel) {
       "whether it has such a setting and what it is called."));
   }
 
+  box.appendChild(element("p", "If it is the firewall: the port has to be open through whatever sits " +
+    "between this machine and the Host, which may be a firewall on the Host itself, a security group, " +
+    "or something on the way. A port the SSH server did open is still not reached while that is closed, " +
+    "so this is worth checking even after the server has been changed."));
+
   return box;
 }
 

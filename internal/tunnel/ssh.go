@@ -366,7 +366,11 @@ func (t *SSHTunnel) recordForwardReach(m *Manager, tunnel *models.Tunnel, measur
 
 	t.logger.Warn("the forwarded port did not answer a connection from here, so the tunnel is connected "+
 		"but may not be usable. The SSH server may have bound the port to loopback alone, or something "+
-		"on the way may be dropping it, and the two cannot be told apart from here",
+		"on the way may be dropping it, and the two cannot be told apart from here, so check both. On the "+
+		"SSH server it is the setting that opens a forwarded port to addresses other than loopback, "+
+		"GatewayPorts in sshd_config for OpenSSH and the -a flag on the command line for Dropbear, and the "+
+		"server has to be restarted for a change to it. Between here and the Host it is the firewall that "+
+		"the port has to be open through",
 		zap.String("probed", address),
 		zap.String("server_banner", banner),
 		zap.String("local", t.Local.String()),
@@ -575,7 +579,8 @@ func (t *SSHTunnel) establishConnection(m *Manager, tunnel *models.Tunnel) error
 		t.logger.Info("a wildcard local address was requested, and the address here is the one that was asked for: "+
 			"the SSH server opens the listener and never says which address it bound, so whether the port is on "+
 			"every address or on loopback alone is not known from this line. The probe that follows says whether "+
-			"it answered",
+			"it answered, and if it did not, what to change is the setting that opens a forwarded port on the "+
+			"SSH server or the firewall on the way",
 			zap.String("local", localAddr),
 			zap.String("server", t.Server.String()),
 			zap.String("remote", t.Remote.String()))
