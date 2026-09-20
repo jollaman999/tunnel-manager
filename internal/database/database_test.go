@@ -478,7 +478,7 @@ func TestNewDatabaseBuildsTheFileUnderADirectoryThatIsNotThereYet(t *testing.T) 
 		t.Fatalf("the database file at %s is empty", path)
 	}
 
-	want := []string{"hosts", "service_ports", "settings", "tls_certificates", "tunnels", "user"}
+	want := []string{"host_service_ports", "hosts", "service_ports", "settings", "tls_certificates", "tunnels", "user"}
 	got := tableNames(t, db)
 
 	if strings.Join(got, ",") != strings.Join(want, ",") {
@@ -1099,5 +1099,294 @@ func TestNewDatabaseKeepsTheHostsThatAreAlreadyStored(t *testing.T) {
 	}
 	if withKey.Password != "" {
 		t.Fatalf("the password of a Host that carries none came back as %q", withKey.Password)
+	}
+}
+
+// newDatabaseFromBefore builds the database of an installation that ran before
+// the assignments were stored: the Hosts and the service ports are there and
+// the table that pairs them is not. It is written through the models rather
+// than by hand because those two tables are unchanged by this migration, and
+// what the test is about is the table that is missing.
+func newDatabaseFromBefore(t *testing.T, hosts []models.Host, servicePorts []models.ServicePort) string {
+	t.Helper()
+
+	path := filepath.Join(t.TempDir(), "state", "tunnel-manager.db")
+
+	err := os.MkdirAll(filepath.Dir(path), 0755)
+	if err != nil {
+		t.Fatalf("failed to create the directory of the database: %v", err)
+	}
+
+	old, err := gorm.Open(sqlite.Open(path), &gorm.Config{Logger: gormlogger.Discard})
+	if err != nil {
+		t.Fatalf("failed to open the database: %v", err)
+	}
+
+	err = old.AutoMigrate(&models.Host{}, &models.ServicePort{}, &models.Tunnel{})
+	if err != nil {
+		t.Fatalf("failed to build the tables as they were: %v", err)
+	}
+
+	for i := range hosts {
+		err = old.Create(&hosts[i]).Error
+		if err != nil {
+			t.Fatalf("failed to store the Host %s: %v", hosts[i].IP, err)
+		}
+	}
+
+	for i := range servicePorts {
+		err = old.Create(&servicePorts[i]).Error
+		if err != nil {
+			t.Fatalf("failed to store the service port %d: %v", servicePorts[i].LocalPort, err)
+		}
+	}
+
+	sqlDB, err := old.DB()
+	if err != nil {
+		t.Fatalf("failed to reach the connection pool: %v", err)
+	}
+	err = sqlDB.Close()
+	if err != nil {
+		t.Fatalf("failed to close the old handle: %v", err)
+	}
+
+	return path
+}
+
+// openAndClose runs a startup against path and closes the handle again, so that
+// a test can open the same file more than once the way restarting does.
+func openAndClose(t *testing.T, path string) {
+	t.Helper()
+
+	core, _ := observer.New(zapcore.DebugLevel)
+
+	db, _, err := NewDatabase(path, zap.New(core), "error")
+	if err != nil {
+		t.Fatalf("the startup against %s failed: %v", path, err)
+	}
+
+	sqlDB, err := db.DB()
+	if err != nil {
+		t.Fatalf("failed to reach the connection pool: %v", err)
+	}
+	err = sqlDB.Close()
+	if err != nil {
+		t.Fatalf("failed to close the handle: %v", err)
+	}
+}
+
+// storedAssignments returns the pairs the database holds, read with SQL rather
+// than through the model so that the test says what is in the table.
+func storedAssignments(t *testing.T, db *gorm.DB) []string {
+	t.Helper()
+
+	var pairs []string
+	err := db.Raw("SELECT host_id || ':' || sp_id FROM host_service_ports ORDER BY host_id, sp_id").
+		Scan(&pairs).Error
+	if err != nil {
+		t.Fatalf("failed to read the assignments: %v", err)
+	}
+
+	return pairs
+}
+
+// TestTheFirstStartupAssignsEveryServicePortToEveryHost covers the upgrade of
+// an installation that is running. Every Host carried every service port
+// before the assignments were stored anywhere, so a table left empty would be
+// read as "no Host carries anything" and would take every tunnel down.
+func TestTheFirstStartupAssignsEveryServicePortToEveryHost(t *testing.T) {
+	path := newDatabaseFromBefore(t,
+		[]models.Host{
+			{IP: "192.0.2.10", Port: 22, User: "operator", Enabled: true},
+			// The second Host is disabled on purpose. Whether a Host runs
+			// tunnels is decided where they are reconciled, and one left
+			// without assignments here would come back from being enabled
+			// with no tunnels at all.
+			{IP: "192.0.2.11", Port: 22, User: "operator", Enabled: false},
+		},
+		[]models.ServicePort{
+			{ServiceIP: "198.51.100.20", ServicePort: 8080, LocalPort: 18080},
+			{ServiceIP: "198.51.100.20", ServicePort: 8081, LocalPort: 18081},
+			{ServiceIP: "198.51.100.21", ServicePort: 8080, LocalPort: 18082},
+		},
+	)
+
+	core, _ := observer.New(zapcore.DebugLevel)
+
+	db, _, err := NewDatabase(path, zap.New(core), "error")
+	if err != nil {
+		t.Fatalf("the migration failed: %v", err)
+	}
+	t.Cleanup(func() {
+		sqlDB, err := db.DB()
+		if err == nil {
+			_ = sqlDB.Close()
+		}
+	})
+
+	want := []string{"1:1", "1:2", "1:3", "2:1", "2:2", "2:3"}
+	got := storedAssignments(t, db)
+
+	if strings.Join(got, ",") != strings.Join(want, ",") {
+		t.Fatalf("the assignments are %v, want %v", got, want)
+	}
+}
+
+// TestALaterStartupDoesNotPutBackARemovedAssignment is the other half of it.
+// The table is filled once, on the startup that creates it, because filling it
+// on every startup would undo what the operator took away, which is the whole
+// of what the table is for.
+func TestALaterStartupDoesNotPutBackARemovedAssignment(t *testing.T) {
+	path := newDatabaseFromBefore(t,
+		[]models.Host{
+			{IP: "192.0.2.10", Port: 22, User: "operator", Enabled: true},
+			{IP: "192.0.2.11", Port: 22, User: "operator", Enabled: true},
+		},
+		[]models.ServicePort{
+			{ServiceIP: "198.51.100.20", ServicePort: 8080, LocalPort: 18080},
+			{ServiceIP: "198.51.100.20", ServicePort: 8081, LocalPort: 18081},
+			{ServiceIP: "198.51.100.21", ServicePort: 8080, LocalPort: 18082},
+		},
+	)
+
+	openAndClose(t, path)
+
+	removing, err := gorm.Open(sqlite.Open(path), &gorm.Config{Logger: gormlogger.Discard})
+	if err != nil {
+		t.Fatalf("failed to open the database: %v", err)
+	}
+
+	err = removing.Exec("DELETE FROM host_service_ports WHERE host_id = 1 AND sp_id = 2").Error
+	if err != nil {
+		t.Fatalf("failed to remove an assignment: %v", err)
+	}
+
+	removingDB, err := removing.DB()
+	if err != nil {
+		t.Fatalf("failed to reach the connection pool: %v", err)
+	}
+	err = removingDB.Close()
+	if err != nil {
+		t.Fatalf("failed to close the handle: %v", err)
+	}
+
+	core, _ := observer.New(zapcore.DebugLevel)
+
+	db, _, err := NewDatabase(path, zap.New(core), "error")
+	if err != nil {
+		t.Fatalf("the second startup failed: %v", err)
+	}
+	t.Cleanup(func() {
+		sqlDB, err := db.DB()
+		if err == nil {
+			_ = sqlDB.Close()
+		}
+	})
+
+	want := []string{"1:1", "1:3", "2:1", "2:2", "2:3"}
+	got := storedAssignments(t, db)
+
+	if strings.Join(got, ",") != strings.Join(want, ",") {
+		t.Fatalf("the assignments are %v, want %v", got, want)
+	}
+}
+
+// TestAFreshInstallIsAssignedNothingAndSaysNothing holds the startup of an
+// install that has neither a Host nor a service port. There is nothing to
+// assign, and nothing to report about having assigned it.
+func TestAFreshInstallIsAssignedNothingAndSaysNothing(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "state", "tunnel-manager.db")
+	core, logs := observer.New(zapcore.DebugLevel)
+
+	db, _, err := NewDatabase(path, zap.New(core), "error")
+	if err != nil {
+		t.Fatalf("the first startup of a fresh install failed: %v", err)
+	}
+	t.Cleanup(func() {
+		sqlDB, err := db.DB()
+		if err == nil {
+			_ = sqlDB.Close()
+		}
+	})
+
+	if pairs := storedAssignments(t, db); len(pairs) != 0 {
+		t.Fatalf("a fresh install was given the assignments %v", pairs)
+	}
+
+	for _, entry := range logs.All() {
+		if entry.Level >= zapcore.WarnLevel {
+			t.Fatalf("the startup of a fresh install wrote %s: %s", entry.Level, entry.Message)
+		}
+		if strings.Contains(entry.Message, "assigned") {
+			t.Fatalf("the startup of a fresh install reported an assignment: %s", entry.Message)
+		}
+	}
+}
+
+// TestTheAssignmentsAreWrittenInBatches holds that the rows do not go in one at
+// a time. An installation stores every Host against every service port, so the
+// rows multiply, and a statement per row is what that turns into on the very
+// startup an upgrade is waiting on.
+func TestTheAssignmentsAreWrittenInBatches(t *testing.T) {
+	var hosts []models.Host
+	for i := 0; i < 20; i++ {
+		hosts = append(hosts, models.Host{
+			IP:      fmt.Sprintf("192.0.2.%d", i+10),
+			Port:    22,
+			User:    "operator",
+			Enabled: true,
+		})
+	}
+
+	var servicePorts []models.ServicePort
+	for i := 0; i < 20; i++ {
+		servicePorts = append(servicePorts, models.ServicePort{
+			ServiceIP:   "198.51.100.20",
+			ServicePort: 8080 + i,
+			LocalPort:   18080 + i,
+		})
+	}
+
+	path := newDatabaseFromBefore(t, hosts, servicePorts)
+	core, logs := observer.New(zapcore.DebugLevel)
+
+	db, _, err := NewDatabase(path, zap.New(core), "debug")
+	if err != nil {
+		t.Fatalf("the migration failed: %v", err)
+	}
+	t.Cleanup(func() {
+		sqlDB, err := db.DB()
+		if err == nil {
+			_ = sqlDB.Close()
+		}
+	})
+
+	var count int64
+	err = db.Model(&models.HostServicePort{}).Count(&count).Error
+	if err != nil {
+		t.Fatalf("failed to count the assignments: %v", err)
+	}
+	if count != 400 {
+		t.Fatalf("%d assignments are stored, want 400", count)
+	}
+
+	inserts := 0
+	for _, entry := range logs.All() {
+		sql, ok := entry.ContextMap()["sql"].(string)
+		if ok && strings.Contains(sql, "INSERT INTO `host_service_ports`") {
+			inserts++
+		}
+	}
+
+	if inserts == 0 {
+		t.Fatal("no insert into the assignment table was traced")
+	}
+
+	// 400 rows at assignmentBatchSize a statement. The test names the number
+	// the size gives rather than a loose bound, so that a change to the size
+	// is a change to be looked at.
+	want := (400 + assignmentBatchSize - 1) / assignmentBatchSize
+	if inserts != want {
+		t.Fatalf("the 400 assignments took %d statements, want %d", inserts, want)
 	}
 }

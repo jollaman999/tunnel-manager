@@ -46,6 +46,25 @@ type ServicePort struct {
 	UpdatedAt   time.Time `json:"updated_at"`
 }
 
+// HostServicePort is one assignment: this Host is to carry this service port.
+// The pair is the whole of the row, so the two columns are the primary key
+// together, the way they are on Tunnel below, and the database itself refuses
+// to hold the same assignment twice.
+//
+// The row says nothing about whether the Host is enabled. Assigning a service
+// port and running a tunnel for it are different questions, and the second one
+// is answered where the tunnels are reconciled: a Host that is disabled keeps
+// its assignments so that enabling it again brings its tunnels back rather than
+// leaving it with none.
+type HostServicePort struct {
+	HostID uint `gorm:"primaryKey;not null" json:"host_id"`
+	SPID   uint `gorm:"primaryKey;not null" json:"sp_id"`
+	// CreatedAt records when the assignment was made. There is no UpdatedAt
+	// beside it because an assignment has nothing to change: both of its
+	// columns are the key, so it is written or it is removed.
+	CreatedAt time.Time `json:"created_at"`
+}
+
 type Tunnel struct {
 	HostID          uint      `gorm:"primaryKey;not null" json:"host_id"`
 	SPID            uint      `gorm:"primaryKey;not null" json:"sp_id"`

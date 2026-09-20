@@ -198,6 +198,66 @@ func sqliteDSN(path string) string {
 		path, busyTimeout.Milliseconds())
 }
 
+// assignmentBatchSize is how many assignments go into one INSERT. Writing them
+// a row at a time would be one statement per pair, and the pairs multiply:
+// every Host of an installation against every service port of it. SQLite also
+// binds a limited number of parameters per statement, so they cannot all go in
+// one either, and this size is well inside that limit at three parameters a
+// row.
+const assignmentBatchSize = 200
+
+// fillHostServicePorts writes the assignment an installation was already
+// running on: every service port on every Host. Until the table existed that
+// combination was not stored anywhere, it was what the reconcile loop assumed,
+// so an upgrade that left the table empty would be read as "no Host carries
+// anything" and would take every tunnel down.
+//
+// It is called on the startup that creates the table and on no other. Running
+// it again on a later startup would put back the assignments the operator has
+// since removed, which is the whole of what the table is for.
+//
+// A Host that is disabled is filled in as well. Which Hosts run tunnels is
+// decided where they are reconciled, and a Host left without assignments here
+// would come back from being enabled with no tunnels at all.
+func fillHostServicePorts(db *gorm.DB, logger *zap.Logger) error {
+	var hostIDs []uint
+	err := db.Model(&models.Host{}).Pluck("id", &hostIDs).Error
+	if err != nil {
+		return fmt.Errorf("failed to read the hosts to assign the service ports to: %w", err)
+	}
+
+	var spIDs []uint
+	err = db.Model(&models.ServicePort{}).Pluck("id", &spIDs).Error
+	if err != nil {
+		return fmt.Errorf("failed to read the service ports to assign: %w", err)
+	}
+
+	// A fresh install has neither, and there is nothing to say about it. The
+	// assignments of what does not exist yet are made as it is created.
+	if len(hostIDs) == 0 || len(spIDs) == 0 {
+		return nil
+	}
+
+	assignments := make([]models.HostServicePort, 0, len(hostIDs)*len(spIDs))
+	for _, hostID := range hostIDs {
+		for _, spID := range spIDs {
+			assignments = append(assignments, models.HostServicePort{HostID: hostID, SPID: spID})
+		}
+	}
+
+	err = db.CreateInBatches(assignments, assignmentBatchSize).Error
+	if err != nil {
+		return fmt.Errorf("failed to store the service port assignments: %w", err)
+	}
+
+	logger.Info("assigned every service port to every host, as the installation was running before they were stored",
+		zap.Int("hosts", len(hostIDs)),
+		zap.Int("service_ports", len(spIDs)),
+		zap.Int("assignments", len(assignments)))
+
+	return nil
+}
+
 // NewDatabase opens the database file and hands back the handle its logger
 // follows along with it. The caller holds that handle so that the level can be
 // put right once the stored settings are read, which is after this returns:
@@ -264,9 +324,16 @@ func NewDatabase(path string, logger *zap.Logger, logLevel string) (*gorm.DB, *L
 	// few dozen Hosts and service ports and the queries run over them.
 	sqlDB.SetMaxOpenConns(1)
 
+	// Whether the assignments are already stored is asked before AutoMigrate
+	// runs, because afterwards the answer is yes on every startup: AutoMigrate
+	// creates the table and says nothing about having done so. What the answer
+	// decides is below.
+	hadAssignments := db.Migrator().HasTable(&models.HostServicePort{})
+
 	err = db.AutoMigrate(
 		&models.Host{},
 		&models.ServicePort{},
+		&models.HostServicePort{},
 		&models.Tunnel{},
 		&models.User{},
 		&settings.Settings{},
@@ -274,6 +341,13 @@ func NewDatabase(path string, logger *zap.Logger, logLevel string) (*gorm.DB, *L
 	)
 	if err != nil {
 		return nil, nil, fmt.Errorf("failed to migrate database: %w", err)
+	}
+
+	if !hadAssignments {
+		err = fillHostServicePorts(db, logger)
+		if err != nil {
+			return nil, nil, err
+		}
 	}
 
 	logger.Info("opened the database", zap.String("path", absPath))

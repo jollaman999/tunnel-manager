@@ -270,3 +270,55 @@ func TestTunnelSerializesTheForwardedPortReadings(t *testing.T) {
 		}
 	}
 }
+
+// TestHostServicePortHoldsOnePairOnce pins that the two columns are the primary
+// key together rather than one of them being it. The table is a set of pairs,
+// and a key on HostID alone would let the second service port of a Host
+// overwrite the first one while the same pair could be stored twice.
+func TestHostServicePortHoldsOnePairOnce(t *testing.T) {
+	db, err := gorm.Open(sqlite.Open(filepath.Join(t.TempDir(), "tm.db")), &gorm.Config{})
+	if err != nil {
+		t.Fatalf("failed to open the database: %v", err)
+	}
+
+	err = db.AutoMigrate(&HostServicePort{})
+	if err != nil {
+		t.Fatalf("failed to build the table: %v", err)
+	}
+
+	// The same Host with two service ports, and the same service port on two
+	// Hosts. Neither is a repeat of a pair, so both belong in the table.
+	for _, pair := range []HostServicePort{
+		{HostID: 1, SPID: 1},
+		{HostID: 1, SPID: 2},
+		{HostID: 2, SPID: 1},
+	} {
+		err = db.Create(&pair).Error
+		if err != nil {
+			t.Fatalf("host %d with service port %d was refused: %v", pair.HostID, pair.SPID, err)
+		}
+	}
+
+	var count int64
+	err = db.Model(&HostServicePort{}).Count(&count).Error
+	if err != nil {
+		t.Fatalf("failed to count the assignments: %v", err)
+	}
+	if count != 3 {
+		t.Fatalf("%d assignments are stored, want the 3 that were written", count)
+	}
+
+	err = db.Create(&HostServicePort{HostID: 1, SPID: 2}).Error
+	if err == nil {
+		t.Fatal("the same pair was stored twice")
+	}
+
+	var stored HostServicePort
+	err = db.Where("host_id = ? AND sp_id = ?", 1, 2).First(&stored).Error
+	if err != nil {
+		t.Fatalf("failed to read an assignment back: %v", err)
+	}
+	if stored.CreatedAt.IsZero() {
+		t.Fatal("the assignment was stored without the time it was made")
+	}
+}
