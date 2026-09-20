@@ -1,3 +1,36 @@
+# v3.5.0
+
+## Add/fix features:
+
+- Which Host carries which service port is a choice now. Every Host used to carry every service port, with nothing to say otherwise, so a service port that belonged on one machine was opened on all of them. An assignment is one row, one Host and one service port, and a tunnel is built for an assignment whose Host is enabled and for nothing else.
+  - The Hosts screen has a Service ports button on every row that opens a panel with the service ports listed a page at a time, ticked where the Host carries them. Saving sends what changed and not the whole set: the list is paged, so the screen never holds all of it, and sending everything it could see would have unassigned every page it could not.
+  - Registering a service port assigns it to every Host, and registering a Host gives it every service port, unless the box on the form is unticked. Both boxes start ticked, so a request that says nothing about assignments is answered the way it always was.
+  - `GET /api/host/:id/service-port` lists the service ports with whether the Host carries each, paged like the other lists. `PUT` takes `{"add": [ids], "remove": [ids]}` and refuses an id that is not stored or that is named on both sides, and refuses the whole change rather than half of it.
+  - An export carries the assignments as `assigned_local_ports` on each Host, named by local port rather than by row id, because the id belongs to the installation the file came from. A file written before this release names none, and is read as every Host carrying every service port, which is what it meant when it was written.
+- The Status screen says whether the forwarded port can be reached. A tunnel that reads `connected` is one whose SSH connection stands; which address the SSH server bound the forwarded port to is that server's decision, and with `GatewayPorts` at its default the port answers on the Host alone. Once a tunnel is up, tunnel-manager opens a TCP connection to the Host at that port itself, once, and the row carries `forward_reach` as `reachable`, `unreachable` or `unknown`, and `server_banner` as what the SSH server called itself.
+  - A port that was not reached is drawn as a failure, since the tunnel is up and not usable, with what to look at under the row. The advice is by server: `GatewayPorts clientspecified` in `sshd_config` for OpenSSH, with the note that an `Include` earlier in the file wins over a line added at the bottom, and the `-a` flag for Dropbear, which has no equivalent of `clientspecified`. It names no cause. A server that bound loopback alone and a firewall on the way look the same from here, so the screen says to check both.
+- The screens come in thirteen languages: English, Korean, Japanese, Chinese, Spanish, French, German, Brazilian Portuguese, Russian, Arabic, Hindi, Vietnamese and Thai. Arabic is written right to left and the whole page turns round with it.
+  - A switch in the corner picks the language for that browser, and the Settings screen has `ui_default_language` for the installation. A browser that has picked one keeps it; one that has not is shown the installation's language, then the one the browser asks for, then English. The login screen is drawn before there is a session to read the settings with, so it follows the browser alone, on purpose.
+  - What the server says is translated too. A refusal carries `error_code` and `error_args` beside the English `error` it always had, a line of the log carries `log_id` beside its English `msg`, and the strings an answer carries by name, such as the note after a certificate is replaced, come with a code. The log file is written in English as before; only the screen translates it, so it can still be searched and a line written by an older version shows as it was.
+  - The catalogs are in the binary and nothing is fetched from the network. A language is one file of 738 keys, and a key a language lacks falls back to English.
+- The screens have a light and a dark theme, with a switch in the corner. A browser that has never pressed it follows what the operating system prefers, and the theme is put on the page before it is first painted so a dark page is never shown light first.
+- A Manual tab explains what the program is made of: how one tunnel is built, what a Host, a service port and an assignment are, how far the forwarded port is open, what the two intervals do and where a path in a setting points. The login screen opens the same text in a panel for somebody who cannot sign in yet.
+
+## Bug fixes:
+
+- The log line written when a wildcard local address is requested said the SSH server binds it to loopback unless `GatewayPorts` is enabled. It cannot know that, and it was wrong for `clientspecified`, which opens the port on every address as asked. It says now that the address in the line is the one that was requested, and leaves the answer to the probe that follows.
+
+## Documentation:
+
+- The README is an introduction: what the program does, one diagram, how to start it and where to read more. Everything it held is in `docs/reference.md`, with nothing left out, and both come in Korean, Japanese and Chinese beside English. The four are kept to the same headings, tables and API rows.
+
+## Notes:
+
+- An installation upgraded to this release keeps every tunnel it had. The assignment table is filled with every Host against every service port on the first start that creates it, and on no later start, so an assignment the operator removes afterwards stays removed.
+- The plural forms in the catalog are the two English has, one and many. Russian has three and Arabic has five, and the translations of those two are written so as not to count where the form would have to change. A number that is zero is treated as many, which French would put in the singular.
+- In Arabic, a path that begins with `/` is drawn with that slash on the wrong side of it. That is how a browser lays out left to right text on a right to left line, and the catalog cannot change it.
+- None of the twelve translations has been read by a native speaker.
+
 # v3.4.4
 
 ## Bug fixes:
