@@ -18,6 +18,8 @@
 
 ## Bug fixes:
 
+- A timestamp in a table came out back to front on a right to left page, the clock before the date. The date and the clock are left to right text on their own, and the space between them took the direction of the page. The cell is marked left to right now, and nothing changes on a left to right page.
+- Signing out left the login screen in the language of the installation rather than the one the browser asks for, which is what a new visitor sees. What was known about the installation is forgotten on the way out, and on a session that ended on its own.
 - The log line written when a wildcard local address is requested said the SSH server binds it to loopback unless `GatewayPorts` is enabled. It cannot know that, and it was wrong for `clientspecified`, which opens the port on every address as asked. It says now that the address in the line is the one that was requested, and leaves the answer to the probe that follows.
 
 ## Documentation:
@@ -27,7 +29,7 @@
 ## Notes:
 
 - An installation upgraded to this release keeps every tunnel it had. The assignment table is filled with every Host against every service port on the first start that creates it, and on no later start, so an assignment the operator removes afterwards stays removed.
-- The plural forms in the catalog are the two English has, one and many. Russian has three and Arabic has five, and the translations of those two are written so as not to count where the form would have to change. A number that is zero is treated as many, which French would put in the singular.
+- The plural form of a sentence is chosen by the rules of the language being shown, so French puts zero in the singular as it does. The catalogs carry the two forms English has, one and many, and a language whose rules name more, Russian with three and Arabic with five, falls back to many for the ones it has no sentence for; the translations of those two are written so as not to count where the form would have to change, and a sentence added under the missing form is used from then on.
 - In Arabic, a path that begins with `/` is drawn with that slash on the wrong side of it. That is how a browser lays out left to right text on a right to left line, and the catalog cannot change it.
 - None of the twelve translations has been read by a native speaker.
 
