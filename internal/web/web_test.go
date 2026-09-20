@@ -11,6 +11,7 @@ import (
 	"testing"
 
 	"github.com/jollaman999/tunnel-manager/internal/api"
+	"github.com/jollaman999/tunnel-manager/internal/settings"
 	"github.com/labstack/echo/v4"
 	"go.uber.org/zap"
 )
@@ -678,6 +679,42 @@ func TestPlaceholdersAreNamedAndKnown(t *testing.T) {
 					t.Errorf("%s catalog: %q holds {%s}, which the English string has not got", code, key, name)
 				}
 			}
+		}
+	}
+}
+
+// TestTheServerAndTheUIAgreeOnTheLanguages is the fourth list held against the
+// other three. The settings hold a default language for the installation, and
+// the value they take has to be a code the UI is actually drawn in: one that is
+// stored and has no catalog behind it draws the page in the names of its keys
+// for every browser that has picked nothing, and one the UI offers and the
+// server refuses is a language an operator can pick and cannot save.
+//
+// It sits here rather than in internal/settings because this is where the UI
+// files are. They are embedded in this package, so this is the one place the
+// list the server keeps, the list app.js offers, the list index.html reads
+// before app.js is fetched, and the catalog files themselves can all be laid
+// side by side. internal/settings knows nothing of where those files live, and
+// a list read out of the thing it is checking would agree with it whatever it
+// said.
+func TestTheServerAndTheUIAgreeOnTheLanguages(t *testing.T) {
+	served := settings.Languages()
+
+	t.Logf("the settings take: %v", served)
+
+	// The order is compared too, not only the membership. The UI offers the
+	// languages in this order and matches a browser language against them in
+	// it, so a list that holds the same codes in another order is two lists
+	// that have to be read separately to be understood.
+	if got, want := strings.Join(served, " "), strings.Join(catalogCodes, " "); got != want {
+		t.Fatalf("the settings take %s, the UI is drawn in %s", got, want)
+	}
+
+	// And each of them against the file the words come out of, so that a code
+	// added to every list at once and never translated is caught as well.
+	for _, code := range served {
+		if len(readCatalog(t, code)) == 0 {
+			t.Errorf("the settings take %s, which no catalog holds any words for", code)
 		}
 	}
 }

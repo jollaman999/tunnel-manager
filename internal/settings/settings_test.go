@@ -1,6 +1,7 @@
 package settings
 
 import (
+	"errors"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -43,6 +44,11 @@ func newDB(t *testing.T) *gorm.DB {
 // and logging.file.compress, because what it compresses is a rotated log that
 // nothing reads again. A stored setting is not touched either way; this is what
 // an installation that has none starts on.
+//
+// ui.default_language was never in the configuration file, and it is held to
+// the empty string: an installation that has said nothing about a language
+// leaves every browser reading the screen in the language that browser asks
+// for, which is what they all did before the setting existed.
 func TestDefaultsAreTheValuesTheConfigurationFileRanOn(t *testing.T) {
 	d := Defaults()
 
@@ -63,6 +69,7 @@ func TestDefaultsAreTheValuesTheConfigurationFileRanOn(t *testing.T) {
 		{"logging.file.max_backups", d.LoggingFileMaxBackups, 5},
 		{"logging.file.max_age", d.LoggingFileMaxAge, 30},
 		{"logging.file.compress", d.LoggingFileCompress, true},
+		{"ui.default_language", d.UIDefaultLanguage, ""},
 	}
 
 	for _, tc := range cases {
@@ -259,6 +266,13 @@ func TestValidateRejects(t *testing.T) {
 		{"negative log max size", func(s *Settings) { s.LoggingFileMaxSize = -1 }, "log max size"},
 		{"negative log max backups", func(s *Settings) { s.LoggingFileMaxBackups = -1 }, "log max backups"},
 		{"negative log max age", func(s *Settings) { s.LoggingFileMaxAge = -1 }, "log max age"},
+		{"unknown language", func(s *Settings) { s.UIDefaultLanguage = "xx" }, "UI language"},
+		// The two near misses. A code is stored as it is written, so the one
+		// that is spelled in capitals and the one that carries a region the UI
+		// has no catalog for are refused rather than quietly turned into
+		// something else.
+		{"language in capitals", func(s *Settings) { s.UIDefaultLanguage = "EN" }, "UI language"},
+		{"language with a region", func(s *Settings) { s.UIDefaultLanguage = "ko-KR" }, "UI language"},
 	}
 
 	for _, tc := range cases {
@@ -274,6 +288,152 @@ func TestValidateRejects(t *testing.T) {
 				t.Errorf("error = %v, want it to mention %q", err, tc.want)
 			}
 		})
+	}
+}
+
+// TestEveryLanguageTheUIOffersCanBeStored walks the list this package holds and
+// stores each of them. A code that is offered by the UI and refused here is a
+// language an operator can pick on the screen and cannot save.
+func TestEveryLanguageTheUIOffersCanBeStored(t *testing.T) {
+	db := newDB(t)
+
+	for _, code := range Languages() {
+		stored, err := Load(db)
+		if err != nil {
+			t.Fatalf("Load: %v", err)
+		}
+
+		stored.UIDefaultLanguage = code
+
+		err = Save(db, stored)
+		if err != nil {
+			t.Fatalf("Save of the %s language: %v", code, err)
+		}
+
+		again, err := Load(db)
+		if err != nil {
+			t.Fatalf("Load after saving %s: %v", code, err)
+		}
+		if again.UIDefaultLanguage != code {
+			t.Errorf("ui.default_language came back as %q after %q was saved", again.UIDefaultLanguage, code)
+		}
+	}
+}
+
+// TestNoLanguageIsAValueOfItsOwn is the half of the setting that is easy to
+// lose. The empty string is this installation naming no language rather than a
+// setting that was got wrong, so it has to pass the rules and it has to survive
+// a save: refused or turned into "en" on the way through, every browser that
+// has picked nothing would be shown English instead of what it asks for.
+func TestNoLanguageIsAValueOfItsOwn(t *testing.T) {
+	db := newDB(t)
+
+	stored, err := Load(db)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if stored.UIDefaultLanguage != "" {
+		t.Fatalf("a first startup stored ui.default_language as %q, want no language at all",
+			stored.UIDefaultLanguage)
+	}
+
+	stored.UIDefaultLanguage = "ko"
+
+	err = Save(db, stored)
+	if err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+
+	stored.UIDefaultLanguage = ""
+
+	err = Save(db, stored)
+	if err != nil {
+		t.Fatalf("Save of no language at all: %v", err)
+	}
+
+	again, err := Load(db)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if again.UIDefaultLanguage != "" {
+		t.Fatalf("ui.default_language came back as %q after it was cleared", again.UIDefaultLanguage)
+	}
+}
+
+// TestAnUnsupportedLanguageIsRefusedUnderItsOwnError is what lets the API
+// answer this one refusal with a code of its own and the list of languages in
+// it. Wrapped rather than reported as a sentence, so the handler does not have
+// to read the English text to know which rule said no.
+func TestAnUnsupportedLanguageIsRefusedUnderItsOwnError(t *testing.T) {
+	s := Defaults()
+	s.UIDefaultLanguage = "xx"
+
+	err := s.Validate()
+	if err == nil {
+		t.Fatal("Validate accepted a language no catalog is shipped for")
+	}
+	if !errors.Is(err, ErrLanguageUnsupported) {
+		t.Fatalf("error = %v, want it to wrap ErrLanguageUnsupported", err)
+	}
+	if !strings.Contains(err.Error(), "xx") {
+		t.Errorf("error = %v, want it to name the language that was refused", err)
+	}
+
+	// Every other refusal has to stay tellable from this one, or the handler
+	// would answer a bad port with the sentence about languages.
+	broken := Defaults()
+	broken.APIPort = 0
+
+	if err := broken.Validate(); errors.Is(err, ErrLanguageUnsupported) {
+		t.Errorf("a refused API port reads as an unsupported language: %v", err)
+	}
+}
+
+// TestARowWrittenBeforeTheLanguageSettingReadsAsNoLanguage covers the
+// installation that is upgraded, the way the HTTPS test above does. The column
+// is added by the migration and the rows that are already there are filled with
+// NULL, which has to read back as the empty string and not stop the startup.
+//
+// The name of the column is written out here on purpose: gorm works it out from
+// the field, and a name that is not what this says would be a column added
+// beside the stored one, leaving the setting behind at every upgrade.
+func TestARowWrittenBeforeTheLanguageSettingReadsAsNoLanguage(t *testing.T) {
+	db := newDB(t)
+
+	stored, err := Load(db)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+
+	stored.LoggingLevel = "debug"
+
+	err = Save(db, stored)
+	if err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+
+	err = db.Exec("ALTER TABLE settings DROP COLUMN ui_default_language").Error
+	if err != nil {
+		t.Fatalf("dropping the column to build a row from before it existed: %v", err)
+	}
+
+	err = db.AutoMigrate(&Settings{})
+	if err != nil {
+		t.Fatalf("migrating the column back: %v", err)
+	}
+
+	upgraded, err := Load(db)
+	if err != nil {
+		t.Fatalf("Load after the migration: %v", err)
+	}
+	if upgraded.UIDefaultLanguage != "" {
+		t.Fatalf("a row written before the setting existed reads as %q, want no language",
+			upgraded.UIDefaultLanguage)
+	}
+
+	// The settings that were stored before the column existed are still there.
+	if upgraded.LoggingLevel != "debug" {
+		t.Fatalf("logging.level is %q after the migration, want the stored debug", upgraded.LoggingLevel)
 	}
 }
 

@@ -525,3 +525,146 @@ func TestSettingsInPlaceNowDoNotWaitForARestart(t *testing.T) {
 		t.Fatalf("pending = %+v, want none for a level that is in place", pending)
 	}
 }
+
+// TestEveryLanguageTheUIOffersIsSavedAndReadBack walks the languages the server
+// takes and puts each one through the two calls the screen makes. A code the
+// list holds and the save refuses is a language an operator can pick and cannot
+// keep.
+func TestEveryLanguageTheUIOffersIsSavedAndReadBack(t *testing.T) {
+	db := newSettingsDB(t)
+	h, _, _, _ := newSettingsHandler(t, db)
+
+	for _, code := range settings.Languages() {
+		rec := settingsRequest(t, h, `{"ui_default_language":"`+code+`"}`)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("saving %s: status = %d, want %d, body: %s",
+				code, rec.Code, http.StatusOK, rec.Body.String())
+		}
+
+		saved := decodeSaved(t, rec)
+		if saved.Settings.UIDefaultLanguage != code {
+			t.Errorf("saving %s answered with %q", code, saved.Settings.UIDefaultLanguage)
+		}
+		if saved.RestartRequired {
+			t.Errorf("saving %s asks for a restart", code)
+		}
+
+		_, data := decodePending(t, settingsRequest(t, h, ""))
+		if data["ui_default_language"] != code {
+			t.Errorf("the read after saving %s answers with %v", code, data["ui_default_language"])
+		}
+	}
+}
+
+// TestSavingNoLanguageIsAllowed is the value that clears the setting. It is not
+// a language that was got wrong but the installation naming none, and a browser
+// that has picked nothing then reads the screen in the language it asks for.
+func TestSavingNoLanguageIsAllowed(t *testing.T) {
+	db := newSettingsDB(t)
+	h, _, _, _ := newSettingsHandler(t, db)
+
+	if rec := settingsRequest(t, h, `{"ui_default_language":"ko"}`); rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d, body: %s", rec.Code, http.StatusOK, rec.Body.String())
+	}
+
+	rec := settingsRequest(t, h, `{"ui_default_language":""}`)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d, body: %s", rec.Code, http.StatusOK, rec.Body.String())
+	}
+
+	stored, err := settings.Load(db)
+	if err != nil {
+		t.Fatalf("failed to read the settings: %v", err)
+	}
+	if stored.UIDefaultLanguage != "" {
+		t.Fatalf("ui.default_language = %q after it was cleared, want nothing", stored.UIDefaultLanguage)
+	}
+}
+
+// TestSaveRefusesALanguageWithNoCatalog is the rule that keeps the screens
+// readable. A stored code nothing is translated into would draw the page in the
+// names of its keys for every browser that has picked nothing.
+//
+// The refusal carries a code of its own and the list of languages beside it, so
+// that a screen can say no in the language it is already running in and show
+// what it would take instead.
+func TestSaveRefusesALanguageWithNoCatalog(t *testing.T) {
+	for _, code := range []string{"xx", "EN", "ko-KR", "en-US", "klingon"} {
+		t.Run(code, func(t *testing.T) {
+			db := newSettingsDB(t)
+			h, _, _, _ := newSettingsHandler(t, db)
+
+			rec := settingsRequest(t, h, `{"ui_default_language":"`+code+`"}`)
+			if rec.Code != http.StatusBadRequest {
+				t.Fatalf("status = %d, want %d, body: %s", rec.Code, http.StatusBadRequest, rec.Body.String())
+			}
+
+			var body struct {
+				Error string            `json:"error"`
+				Code  string            `json:"error_code"`
+				Args  map[string]string `json:"error_args"`
+			}
+
+			if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+				t.Fatalf("failed to read the answer: %v, body: %s", err, rec.Body.String())
+			}
+
+			if body.Code != string(errSettingsLanguageUnsupported) {
+				t.Errorf("error_code = %q, want %q", body.Code, errSettingsLanguageUnsupported)
+			}
+			if body.Args["language"] != code {
+				t.Errorf("error_args.language = %q, want %q", body.Args["language"], code)
+			}
+			if !strings.Contains(body.Args["languages"], "pt-BR") {
+				t.Errorf("error_args.languages = %q, want the languages that would be taken",
+					body.Args["languages"])
+			}
+			if !strings.Contains(body.Error, code) {
+				t.Errorf("the sentence does not name what was refused: %q", body.Error)
+			}
+
+			stored, err := settings.Load(db)
+			if err != nil {
+				t.Fatalf("failed to read the settings: %v", err)
+			}
+			if stored.UIDefaultLanguage != "" {
+				t.Fatalf("ui.default_language = %q after a refused save", stored.UIDefaultLanguage)
+			}
+		})
+	}
+}
+
+// TestTheLanguageDoesNotWaitForARestart is the answer to whether this setting
+// is one the process has to come back for. It is not: nothing in this process
+// reads it, and the browser reads it out of the same answer every read gives.
+// Reported as waiting, the screen would carry a notice that a restart would not
+// clear anything, because there is nothing to clear.
+func TestTheLanguageDoesNotWaitForARestart(t *testing.T) {
+	db := newSettingsDB(t)
+	h, _, _, _ := newSettingsHandler(t, db)
+
+	rec := settingsRequest(t, h, `{"ui_default_language":"ja"}`)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d, body: %s", rec.Code, http.StatusOK, rec.Body.String())
+	}
+
+	saved := decodeSaved(t, rec)
+	if saved.RestartRequired {
+		t.Fatalf("the save asks for a restart: %+v", saved.Changes)
+	}
+
+	if len(saved.Changes) != 1 {
+		t.Fatalf("the save reported %d changes, want one: %+v", len(saved.Changes), saved.Changes)
+	}
+	if saved.Changes[0].Name != "ui.default_language" {
+		t.Fatalf("the save reported %q, want ui.default_language", saved.Changes[0].Name)
+	}
+	if saved.Changes[0].Applied != appliedNow {
+		t.Fatalf("the language was reported as %q, want %q", saved.Changes[0].Applied, appliedNow)
+	}
+
+	pending, _ := decodePending(t, settingsRequest(t, h, ""))
+	if len(pending) != 0 {
+		t.Fatalf("pending = %+v, want none for a language that is in place", pending)
+	}
+}

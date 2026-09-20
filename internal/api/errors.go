@@ -113,9 +113,10 @@ const (
 	errStatusDesiredCountFailed errorCode = "status.desired_count_failed"
 	errStatusFetchFailed        errorCode = "status.fetch_failed"
 
-	errSettingsReadFailed  errorCode = "settings.read_failed"
-	errSettingsStoreFailed errorCode = "settings.store_failed"
-	errSettingsRefused     errorCode = "settings.refused"
+	errSettingsReadFailed          errorCode = "settings.read_failed"
+	errSettingsStoreFailed         errorCode = "settings.store_failed"
+	errSettingsRefused             errorCode = "settings.refused"
+	errSettingsLanguageUnsupported errorCode = "settings.ui_language.unsupported"
 
 	errCertificateHTTPSOff       errorCode = "certificate.https_off"
 	errCertificateServedUnread   errorCode = "certificate.served.read_failed"
@@ -278,6 +279,10 @@ var errorMessages = map[errorCode]string{
 	errSettingsReadFailed:  "Failed to read the settings",
 	errSettingsStoreFailed: "Failed to store the settings",
 	errSettingsRefused:     "The settings are refused: {reason}",
+	// The one rule of the settings that is raised under a code of its own. A
+	// screen showing it has to list the languages that would be taken, and a
+	// list arriving inside {reason} as English prose is one it cannot use.
+	errSettingsLanguageUnsupported: "The settings are refused: {language} is not a language this installation is drawn in. Use one of {languages}, or leave it empty to show each browser the language it asks for",
 
 	// The TLS certificate this installation serves with.
 	errCertificateHTTPSOff:       "No certificate is in use, because HTTPS is turned off. Turn on \"Serve over HTTPS\" and start tunnel-manager again",

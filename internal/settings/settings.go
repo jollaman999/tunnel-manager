@@ -62,6 +62,31 @@ type Settings struct {
 	// rotation, on a file nobody is writing to any more.
 	LoggingFileCompress bool `gorm:"default:true" json:"logging_file_compress"`
 
+	// UIDefaultLanguage is the language a browser that has picked none of its
+	// own is shown. A browser that has picked one keeps it: the pick belongs to
+	// the person reading the screen, and this is what the installation shows
+	// everybody else.
+	//
+	// It is empty by default, and empty is a value rather than a gap: it means
+	// this installation names no language, so a browser falls back to the one
+	// it asks for, which is what every browser did before this setting existed.
+	// Defaulting it to "en" would read the same way to Go and mean something
+	// else entirely on screen, turning a Korean browser English at the upgrade
+	// that added the column. The two cases have to be told apart, so the
+	// absence is spelled as the absence.
+	//
+	// That is also what a row written before the column existed reads back as.
+	// The column carries no default, so SQLite fills such a row with NULL and
+	// gorm reads NULL into a string as the empty one: an installation that is
+	// upgraded names no language, which is the same answer a fresh one gives.
+	//
+	// The column is named here for the reason the HTTPS one is: the name gorm
+	// works out from the field is uidefault_language, because it knows UI as
+	// one word and then runs it into what follows. Every other column is words
+	// divided by underscores, and this one would be the exception nobody
+	// remembers when they come to write it in a query.
+	UIDefaultLanguage string `gorm:"column:ui_default_language" json:"ui_default_language"`
+
 	UpdatedAt time.Time `json:"updated_at"`
 }
 
@@ -74,6 +99,12 @@ type Settings struct {
 // the configuration file carried before it was removed are used. logging.file.compress had no
 // fallback either and a file that left it out ran with it off, which is what
 // stands here.
+//
+// ui.default_language was never in the configuration file at all. It is written
+// out as the empty string rather than left to the zero value, because the empty
+// string is the choice here and not a field nobody filled in: it is what keeps
+// an installation that is upgraded showing each browser the language that
+// browser asks for.
 func Defaults() Settings {
 	return Settings{
 		ID:                    settingsID,
@@ -89,6 +120,7 @@ func Defaults() Settings {
 		LoggingFileMaxBackups: 5,
 		LoggingFileMaxAge:     30,
 		LoggingFileCompress:   true,
+		UIDefaultLanguage:     "",
 	}
 }
 
@@ -106,6 +138,45 @@ var validFormats = map[string]bool{
 	"json":    true,
 	"console": true,
 }
+
+// uiLanguages is every language the UI is drawn in, in the order it offers
+// them. It is the list a stored ui.default_language is held against: a code
+// that is not on it is a code no catalog is shipped for, and storing it would
+// leave every browser that has picked nothing looking at a screen drawn in the
+// name of its keys.
+//
+// The list is written here and not read from the UI files, because this package
+// is under no obligation to know where those files live and a list taken from
+// the thing it checks would agree with it whatever it said. It is the fourth
+// place the languages are named, after app.js, index.html and the catalogs
+// themselves, and internal/web is where a test holds all four together.
+var uiLanguages = []string{"en", "ko", "ja", "zh", "es", "fr", "de", "pt-BR", "ru", "ar", "hi", "vi", "th"}
+
+var validLanguages = func() map[string]bool {
+	known := make(map[string]bool, len(uiLanguages))
+	for _, code := range uiLanguages {
+		known[code] = true
+	}
+
+	return known
+}()
+
+// Languages returns the languages the UI is drawn in, in the order it offers
+// them. The copy is handed out rather than the list itself, so that a caller
+// which sorts or appends to what it is given does not decide what this package
+// accepts.
+func Languages() []string {
+	codes := make([]string, len(uiLanguages))
+	copy(codes, uiLanguages)
+
+	return codes
+}
+
+// ErrLanguageUnsupported is what a ui.default_language that names no catalog is
+// refused with. It is a value rather than a sentence built on the spot, so that
+// the API can tell this refusal from every other thing Validate says no to and
+// answer it under a code of its own, with the list of languages in it.
+var ErrLanguageUnsupported = errors.New("invalid UI language")
 
 // Validate holds the rules the configuration file was checked against before
 // the settings moved into the database. They matter more here than they did
@@ -153,6 +224,18 @@ func (s *Settings) Validate() error {
 	}
 	if s.LoggingFileMaxAge < 0 {
 		return fmt.Errorf("invalid log max age: %d", s.LoggingFileMaxAge)
+	}
+
+	// The empty language passes, because it is not a language that was got
+	// wrong but this installation naming none: a browser then reads the screen
+	// in the language it asks for. Everything else has to be a code a catalog
+	// is shipped for, and the comparison is exact. A code is matched against
+	// what the browser asks for in lowercase by the UI, but what is stored here
+	// is the code itself, so "EN" and "ko-KR" are refused rather than repaired:
+	// a setting repaired on the way in is one the screen goes on showing as the
+	// operator typed it while the server holds something else.
+	if s.UIDefaultLanguage != "" && !validLanguages[s.UIDefaultLanguage] {
+		return fmt.Errorf("%w: %s", ErrLanguageUnsupported, s.UIDefaultLanguage)
 	}
 
 	return nil
@@ -281,6 +364,7 @@ func values(s *Settings) []value {
 		{"logging.file.max_backups", strconv.Itoa(s.LoggingFileMaxBackups)},
 		{"logging.file.max_age", strconv.Itoa(s.LoggingFileMaxAge)},
 		{"logging.file.compress", strconv.FormatBool(s.LoggingFileCompress)},
+		{"ui.default_language", s.UIDefaultLanguage},
 	}
 }
 

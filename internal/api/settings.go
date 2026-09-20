@@ -1,7 +1,9 @@
 package api
 
 import (
+	"errors"
 	"net/http"
+	"strings"
 
 	"github.com/jollaman999/tunnel-manager/internal/models"
 	"github.com/jollaman999/tunnel-manager/internal/settings"
@@ -167,6 +169,17 @@ func (h *SettingsHandler) UpdateSettings(c echo.Context) error {
 	// on only one of them.
 	err = updated.Validate()
 	if err != nil {
+		// The language is the one rule whose refusal is answered under a code
+		// of its own, because a screen that says no to it has to list what it
+		// would say yes to. The rest arrive as a sentence in {reason}: there is
+		// nothing for a screen to do with a port number but repeat it.
+		if errors.Is(err, settings.ErrLanguageUnsupported) {
+			return failure(c, http.StatusBadRequest, errSettingsLanguageUnsupported, errorArgs{
+				"language":  updated.UIDefaultLanguage,
+				"languages": strings.Join(settings.Languages(), ", "),
+			})
+		}
+
 		return failure(c, http.StatusBadRequest, errSettingsRefused, errorArgs{"reason": err.Error()})
 	}
 
@@ -198,12 +211,12 @@ func (h *SettingsHandler) UpdateSettings(c echo.Context) error {
 // appliedNowSettings is every setting this process puts into place as it is
 // stored, each along with what putting it into place means.
 //
-// logging.level is the whole of that list. The loggers were built around the
-// handle above at startup, so setting it reaches every logger that was handed
-// out, including the one gorm writes through. The periods of the monitoring and
-// the reconcile loops are read once by the loops that run on them and the port
-// is read once by the server that listens on it, so those are stored and wait
-// for a restart.
+// logging.level and ui.default_language are the list. The loggers were built
+// around the handle above at startup, so setting the level reaches every logger
+// that was handed out, including the one gorm writes through. The periods of
+// the monitoring and the reconcile loops are read once by the loops that run on
+// them and the port is read once by the server that listens on it, so those are
+// stored and wait for a restart.
 //
 // Which setting belongs in that list is decided here, next to the code that
 // puts the value in place, and is carried to the screen in the answer. A screen
@@ -217,6 +230,15 @@ func (h *SettingsHandler) UpdateSettings(c echo.Context) error {
 var appliedNowSettings = map[string]func(h *SettingsHandler, s *settings.Settings) bool{
 	"logging.level": func(h *SettingsHandler, s *settings.Settings) bool {
 		return h.setLogLevel(s.LoggingLevel)
+	},
+	// The language has nothing to put into place. This process never reads it:
+	// it is read by the browser, out of the answer to the very request that
+	// stored it and out of every read after that, so the next screen that is
+	// drawn is already drawn in it. Left out of this list it would be reported
+	// as waiting for a restart that would change nothing, and the screen would
+	// carry that notice until somebody restarted the service to clear it.
+	"ui.default_language": func(h *SettingsHandler, s *settings.Settings) bool {
+		return true
 	},
 }
 

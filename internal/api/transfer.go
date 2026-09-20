@@ -165,6 +165,10 @@ type settingsContent struct {
 	LoggingFileMaxBackups int    `json:"logging_file_max_backups"`
 	LoggingFileMaxAge     int    `json:"logging_file_max_age"`
 	LoggingFileCompress   bool   `json:"logging_file_compress"`
+	// UIDefaultLanguage travels with the rest. It names a language rather
+	// than a machine, so it means the same on the installation that takes the
+	// file in, and an empty value carries across as the empty value it is.
+	UIDefaultLanguage string `json:"ui_default_language"`
 }
 
 // settingsOf returns the settings of a set as they are carried in a file.
@@ -182,6 +186,7 @@ func settingsOf(s *settings.Settings) settingsContent {
 		LoggingFileMaxBackups: s.LoggingFileMaxBackups,
 		LoggingFileMaxAge:     s.LoggingFileMaxAge,
 		LoggingFileCompress:   s.LoggingFileCompress,
+		UIDefaultLanguage:     s.UIDefaultLanguage,
 	}
 }
 
@@ -200,6 +205,7 @@ func (content *settingsContent) applyTo(s *settings.Settings) {
 	s.LoggingFileMaxBackups = content.LoggingFileMaxBackups
 	s.LoggingFileMaxAge = content.LoggingFileMaxAge
 	s.LoggingFileCompress = content.LoggingFileCompress
+	s.UIDefaultLanguage = content.UIDefaultLanguage
 }
 
 // exportRequest is what an export is asked for. The password seals the file and
