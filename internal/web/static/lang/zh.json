@@ -735,5 +735,18 @@
   "uninstalled.stopped-one.text": "每条隧道都已停止，数据库已关闭，下面的文件已删除。这个页面出现后大约 {seconds} 秒，进程就会停止。重新加载这个页面不会恢复它。",
   "uninstalled.stopped-soon.text": "每条隧道都已停止，数据库已关闭，下面的文件已删除。这个页面出现后几秒，进程就会停止。重新加载这个页面不会恢复它。",
   "uninstalled.what.column": "项目",
-  "uninstalled.why.column": "未删除的原因"
+  "uninstalled.why.column": "未删除的原因",
+  "manual.diagram-client.label": "客户端",
+  "manual.diagram-here.label": "tunnel-manager 所在的机器",
+  "manual.diagram-host.label": "Host",
+  "manual.diagram-listener.label": "本地端口",
+  "manual.diagram-service.label": "服务",
+  "manual.diagram-sshd.label": "SSH 服务器",
+  "manual.diagram.aria": "一条隧道的示意图：tunnel-manager 向 Host 建立 SSH 连接，客户端连接 Host 上打开的端口，该连接通过 SSH 连接传回来，再由 tunnel-manager 连接服务",
+  "manual.example-command.text": "同一条隧道，在这台机器上用 ssh 命令手动建立的话，就是：",
+  "manual.example-intro.text": "假设有一台地址为 {host} 的 Host，注册的用户是 {user}，还有一个服务端口，它的服务 IP 和服务端口是 {service}，本地端口是 {local_port}。图上的数字就是下面四步：",
+  "manual.example-step-1.text": "tunnel-manager 向 {host} 的 22 端口建立 SSH 连接，以 {user} 登录。这是两台机器之间唯一建立的连接，而且是从这里发起的：Host 不会反向连接，所以这台机器上不需要任何可访问的端口。",
+  "manual.example-step-2.text": "通过这条连接，Host 上的 SSH 服务器在 Host 上打开 {local_port} 端口。任何能访问 Host 的客户端都可以连接 {host}:{local_port}。",
+  "manual.example-step-3.text": "这条连接通过同一条 SSH 连接传回 tunnel-manager。",
+  "manual.example-step-4.text": "tunnel-manager 在自己的机器上连接 {service}，并转发流量。客户端和服务在通信，但双方都不知道对方的地址。"
 }
