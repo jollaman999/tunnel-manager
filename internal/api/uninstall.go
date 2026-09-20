@@ -119,6 +119,9 @@ type uninstallRequest struct {
 type removedFile struct {
 	Path string `json:"path"`
 	What string `json:"what"`
+	// WhatCode names What, so that a screen says it in the language it is
+	// drawn in instead of showing the English above.
+	WhatCode textCode `json:"what_code"`
 	// Error is filled in only for a file that could not be removed.
 	Error string `json:"error,omitempty"`
 }
@@ -300,6 +303,17 @@ func (h *UninstallHandler) removeFiles() uninstallResult {
 	return result
 }
 
+// The names of the files the uninstall removes, as the answer says them.
+const (
+	textUninstallDatabase        textCode = "uninstall.file.database"
+	textUninstallDatabaseWAL     textCode = "uninstall.file.database_wal"
+	textUninstallDatabaseSHM     textCode = "uninstall.file.database_shm"
+	textUninstallEncryptionKey   textCode = "uninstall.file.encryption_key"
+	textUninstallInitialPassword textCode = "uninstall.file.initial_password"
+	textUninstallRotatedLog      textCode = "uninstall.file.rotated_log"
+	textUninstallLog             textCode = "uninstall.file.log"
+)
+
 // installedFiles is every file that goes, in the order it goes.
 //
 // The executable is not among them. Windows does not let a running process
@@ -311,22 +325,22 @@ func (h *UninstallHandler) removeFiles() uninstallResult {
 // removed it is the one that fails.
 func (h *UninstallHandler) installedFiles() []removedFile {
 	files := []removedFile{
-		{Path: h.paths.DatabaseFile, What: "the database"},
+		{Path: h.paths.DatabaseFile, What: "the database", WhatCode: textUninstallDatabase},
 		// The two files SQLite keeps beside the database in WAL mode. The
 		// database is in that mode (internal/database/database.go, sqliteDSN),
 		// so removing the file alone would leave these behind, and a -wal still
 		// holds the rows that were written last.
-		{Path: databaseSidecar(h.paths.DatabaseFile, "-wal"), What: "the write ahead log of the database"},
-		{Path: databaseSidecar(h.paths.DatabaseFile, "-shm"), What: "the shared memory file of the database"},
-		{Path: h.paths.KeyFile, What: "the encryption key"},
-		{Path: h.paths.InitialPasswordFile, What: "the initial password file"},
+		{Path: databaseSidecar(h.paths.DatabaseFile, "-wal"), What: "the write ahead log of the database", WhatCode: textUninstallDatabaseWAL},
+		{Path: databaseSidecar(h.paths.DatabaseFile, "-shm"), What: "the shared memory file of the database", WhatCode: textUninstallDatabaseSHM},
+		{Path: h.paths.KeyFile, What: "the encryption key", WhatCode: textUninstallEncryptionKey},
+		{Path: h.paths.InitialPasswordFile, What: "the initial password file", WhatCode: textUninstallInitialPassword},
 	}
 
 	for _, rotated := range h.rotatedLogFiles() {
-		files = append(files, removedFile{Path: rotated, What: "a rotated log file"})
+		files = append(files, removedFile{Path: rotated, What: "a rotated log file", WhatCode: textUninstallRotatedLog})
 	}
 
-	files = append(files, removedFile{Path: h.paths.LogFile, What: "the log file"})
+	files = append(files, removedFile{Path: h.paths.LogFile, What: "the log file", WhatCode: textUninstallLog})
 
 	// A path that was never configured names nothing, and os.Remove("") reports
 	// a failure the screen would show as a file that could not be removed.

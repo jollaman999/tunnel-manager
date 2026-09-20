@@ -45,6 +45,14 @@ func NewCertificateHandler(db *gorm.DB, cipher *crypto.Cipher, logger *zap.Logge
 	}
 }
 
+// The two strings the certificate answers carry: the note every replacement
+// comes back with, and the one thing that can be wrong with a certificate that
+// was stored anyway.
+const (
+	textCertificateReplaced    textCode = "certificate.replaced"
+	textCertificateNotValidYet textCode = "certificate.not_valid_yet"
+)
+
 // certificateReplacedNote is what a replacement answers with, and it is here
 // rather than left to the screen because it is a property of TLS and not of one
 // client: a handshake settles on a certificate once and the connection never
@@ -85,10 +93,19 @@ type certificateReplaced struct {
 	Certificate         certificateView `json:"certificate"`
 	PreviousFingerprint string          `json:"previous_fingerprint_sha256"`
 	Note                string          `json:"note"`
+	// NoteCode names the note, so that a screen says it in the language it is
+	// drawn in instead of showing the English above.
+	NoteCode textCode `json:"note_code"`
 	// Warning is what is wrong with a certificate that was stored anyway, or ""
 	// when there is nothing to say. Install fills it for a certificate whose
 	// validity has not started yet.
 	Warning string `json:"warning,omitempty"`
+	// WarningCode names that warning and WarningArgs holds the value written
+	// into it. Both are left out where there is no warning, and the code is
+	// left out for a warning this file has no name for, which is the case the
+	// screen shows the English sentence for.
+	WarningCode textCode `json:"warning_code,omitempty"`
+	WarningArgs textArgs `json:"warning_args,omitempty"`
 }
 
 // certificateInstall is the body of the manual registration. The two are sent
@@ -230,15 +247,41 @@ func (h *CertificateHandler) replaced(c echo.Context, previous *tls.Certificate,
 			zap.String("warning", info.Warning))
 	}
 
+	warningCode, warningArgs := certificateWarning(info, now)
+
 	return c.JSON(http.StatusOK, models.Response{
 		Success: true,
 		Data: certificateReplaced{
 			Certificate:         viewOf(keyPair, leaf, now),
 			PreviousFingerprint: previousFingerprint,
 			Note:                certificateReplacedNote,
+			NoteCode:            textCertificateReplaced,
 			Warning:             info.Warning,
+			WarningCode:         warningCode,
+			WarningArgs:         warningArgs,
 		},
 	})
+}
+
+// certificateWarning names the warning an install came back with.
+//
+// tlsserve writes the English of it and does not name it, so the name is worked
+// out here from what it warned about: the one certificate it stores and warns
+// over is one whose validity has not started yet, and the time it starts at is
+// on the Info beside the warning. A warning this does not recognise is left
+// unnamed rather than named wrongly, and the screen shows the English for it.
+func certificateWarning(info *tlsserve.Info, now time.Time) (textCode, textArgs) {
+	if info.Warning == "" {
+		return "", nil
+	}
+
+	if now.Before(info.NotBefore) {
+		return textCertificateNotValidYet, textArgs{
+			"not_before": info.NotBefore.UTC().Format(time.RFC3339),
+		}
+	}
+
+	return "", nil
 }
 
 // noCertificate is the answer while nothing is being served over TLS. It is a

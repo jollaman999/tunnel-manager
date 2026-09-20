@@ -824,6 +824,99 @@ func TestEveryWayOfNotOpeningAFileIsAnsweredApart(t *testing.T) {
 	}
 }
 
+// TestAWrongKindNamesBothKinds reads the values of the wrong-kind refusal. The
+// two phrases in it are the server's own English, so each is carried with a
+// code beside it under which a screen says it in its own language, and the
+// kind a file names that this version has no phrase for is carried as it is.
+func TestAWrongKindNamesBothKinds(t *testing.T) {
+	source := newTransferInstall(t)
+	target := newTransferInstall(t)
+
+	settingsFile := source.exportSettings(t, testExportPassword)
+
+	rec := target.importTunnels(t, settingsFile, testExportPassword, false)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("the tunnel import took a settings file: %d %s", rec.Code, rec.Body.String())
+	}
+
+	var body struct {
+		Error string            `json:"error"`
+		Code  string            `json:"error_code"`
+		Args  map[string]string `json:"error_args"`
+	}
+
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatalf("the refusal is not JSON: %v", err)
+	}
+
+	if body.Code != string(errImportFileWrongKind) {
+		t.Fatalf("the refusal is %q, want %q", body.Code, errImportFileWrongKind)
+	}
+
+	want := map[string]string{
+		"found":       "the settings of the manager",
+		"found_code":  string(textImportKindSettings),
+		"wanted":      "the tunnel configuration",
+		"wanted_code": string(textImportKindTunnels),
+	}
+
+	if !reflect.DeepEqual(body.Args, want) {
+		t.Errorf("the refusal carries %v, want %v", body.Args, want)
+	}
+
+	if !strings.Contains(body.Error, want["found"]) || !strings.Contains(body.Error, want["wanted"]) {
+		t.Errorf("the English sentence %q no longer says what it did", body.Error)
+	}
+
+	// A kind this version has no phrase for is said with the kind itself, so
+	// the kind travels on its own beside the code of the phrase.
+	found, code := whatIsIn("something-else")
+	if code != textImportKindUnknown || !strings.Contains(found, "(something-else)") {
+		t.Errorf("an unknown kind is said as %q under %q", found, code)
+	}
+
+	found, code = whatIsIn("")
+	if code != textImportKindNone || found == "" {
+		t.Errorf("no kind at all is said as %q under %q", found, code)
+	}
+}
+
+// TestAnUnknownKindCarriesTheKind seals a file of a kind this version does not
+// know and reads the refusal, which is the one path that writes "kind" into
+// the values.
+func TestAnUnknownKindCarriesTheKind(t *testing.T) {
+	source := newTransferInstall(t)
+
+	file, err := source.handler.seal("somebody-elses-kind", tunnelsContent{}, testExportPassword, time.Now())
+	if err != nil {
+		t.Fatalf("failed to seal a file: %v", err)
+	}
+
+	rec := source.importTunnels(t, file, testExportPassword, false)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("the import took a file of an unknown kind: %d %s", rec.Code, rec.Body.String())
+	}
+
+	var body struct {
+		Error string            `json:"error"`
+		Args  map[string]string `json:"error_args"`
+	}
+
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatalf("the refusal is not JSON: %v", err)
+	}
+
+	if body.Args["found_code"] != string(textImportKindUnknown) {
+		t.Errorf("the file is named %q, want %q", body.Args["found_code"], textImportKindUnknown)
+	}
+	if body.Args["kind"] != "somebody-elses-kind" {
+		t.Errorf("the kind the file names is carried as %q", body.Args["kind"])
+	}
+	if !strings.Contains(body.Error, "(somebody-elses-kind)") {
+		t.Errorf("the English sentence %q does not name the kind", body.Error)
+	}
+}
+
 // exportSettings runs the settings export and hands back the sealed file.
 func (i *transferInstall) exportSettings(t *testing.T, password string) string {
 	t.Helper()

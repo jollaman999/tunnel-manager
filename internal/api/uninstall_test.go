@@ -426,6 +426,39 @@ func TestUninstallSaysHowLongTheProcessStaysUp(t *testing.T) {
 // TestTheDatabaseSidecarsAreNamedAfterTheDatabaseFile pins how the two files
 // SQLite keeps beside the database are found. Nothing configures them, so the
 // only thing that puts them on the list is this rule.
+// TestEveryFileOfTheInstallationIsNamedByCode holds what the uninstall answers
+// with to the names a screen says them by. The English stays, and every entry
+// carries a code beside it, so that no cell of the table on the last screen
+// reads in English on a page drawn in another language.
+func TestEveryFileOfTheInstallationIsNamedByCode(t *testing.T) {
+	inst := newInstallation(t)
+	h, _, _, _ := newUninstallHandler(t, inst)
+
+	files := h.installedFiles()
+	if len(files) == 0 {
+		t.Fatal("the installation names no file at all")
+	}
+
+	seen := map[textCode]string{}
+
+	for _, file := range files {
+		if file.What == "" {
+			t.Errorf("%s is named by nothing in English", file.Path)
+		}
+		if file.WhatCode == "" {
+			t.Errorf("%s (%s) is named by no code", file.Path, file.What)
+		}
+
+		// One code stands for one English name. The rotated log files share
+		// both, which is what makes them one entry in the catalog.
+		if already, ok := seen[file.WhatCode]; ok && already != file.What {
+			t.Errorf("%q names both %q and %q", file.WhatCode, already, file.What)
+		}
+
+		seen[file.WhatCode] = file.What
+	}
+}
+
 func TestTheDatabaseSidecarsAreNamedAfterTheDatabaseFile(t *testing.T) {
 	h := &UninstallHandler{paths: UninstallPaths{DatabaseFile: filepath.Join("data", "tm.db")}}
 

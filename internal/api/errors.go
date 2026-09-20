@@ -39,6 +39,28 @@ type errorCode string
 // that puts the path before the reason cannot be served by a list.
 type errorArgs map[string]string
 
+// textCode names a string the server sends that is not a refusal: a sentence an
+// answer carries, or the name of a thing the screen puts in a cell of its own.
+// It is what a screen translates from, the way an errorCode is for an answer
+// that says no and a logid.ID is for a line of the log.
+//
+// The English stays in the answer beside it. A script that reads this API has
+// nothing but the English to go on, and a screen that has never heard of a code
+// shows the English the answer carries, which is what a screen from before a
+// code existed meets from a server that sends it.
+//
+// The name reads the way an errorCode does: lowercase ASCII in dot separated
+// segments, the first of which is what the string belongs to. The codes
+// themselves are declared beside the thing that sends them, because each of
+// them goes out from one place and nowhere else; what holds them together is
+// this kind, which is what the test over the catalogs reads them by.
+type textCode string
+
+// textArgs are the values written into one of those strings, handed over under
+// their own names for the reason errorArgs are: the order English puts them in
+// is a fact about English and not about the thing being said.
+type textArgs map[string]string
+
 // errorCodeUnspecified is what goes out when a refusal reaches this file with a
 // code no message is registered for. It never appears while the table below and
 // the call sites agree, and the test that walks the package catches a call site
@@ -411,6 +433,33 @@ func refuse(status int, code errorCode, args ...errorArgs) *refusal {
 	}
 
 	return &refusal{status: status, code: code, args: values}
+}
+
+// named marks the values of the refusal that are themselves strings the server
+// names. Such a value is handed over twice: as the English written into the
+// sentence, under the name the sentence asks for, and as a textCode under that
+// name with "_code" on the end. A screen that knows the code says the value in
+// its own language, and one that does not shows the English beside it, the
+// way it does for a code it has no sentence for. values is what the phrases
+// behind those codes are written with, handed over under the names they use.
+//
+// They are added here rather than written at the call site so that what the
+// call site hands over stays exactly what the sentence asks for, which is what
+// the test over the call sites holds it to.
+func (r *refusal) named(codes map[string]textCode, values textArgs) *refusal {
+	if r.args == nil {
+		r.args = errorArgs{}
+	}
+
+	for name, code := range codes {
+		r.args[name+"_code"] = string(code)
+	}
+
+	for name, value := range values {
+		r.args[name] = value
+	}
+
+	return r
 }
 
 // answer writes the refusal out.

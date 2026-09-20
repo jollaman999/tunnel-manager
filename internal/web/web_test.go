@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"path/filepath"
 	"regexp"
 	"sort"
 	"strings"
@@ -804,15 +805,18 @@ func TestEveryEnglishKeyIsAskedFor(t *testing.T) {
 	}
 }
 
-// The two kinds of key a script builds rather than writes out. The prefix says
-// which of the two a key belongs to, so the three groups the catalog holds -
-// the words of the screens, the refusals and the log lines - can be told apart
-// by name alone, and the role at the end is the one the naming rule asks for.
+// The three kinds of key a script builds rather than writes out. The prefix
+// says which of the three a key belongs to, so the four groups the catalog
+// holds - the words of the screens, the refusals, the log lines and the strings
+// an answer names - can be told apart by name alone, and the role at the end is
+// the one the naming rule asks for.
 const (
 	refusalKeyPrefix = "error."
 	refusalKeyRole   = ".error"
 	logKeyPrefix     = "log."
 	logKeyRole       = ".text"
+	answerKeyPrefix  = "answer."
+	answerKeyRole    = ".text"
 )
 
 // untranslatedLogID is the one log line that has no sentence in the catalog.
@@ -828,13 +832,19 @@ const untranslatedLogID = "database.gorm_message"
 // text, so there is nothing to translate and it is left out of the catalog.
 const unnamedRefusalCode = "unspecified"
 
-// The two lists the server keeps, read out of the files that hold them. They
-// are read as text rather than imported because both are unexported: what is
-// wanted here is the set of names, and the names are the whole of what those
-// two declarations are.
+// The three lists the server keeps, read out of the files that hold them.
+// They are read as text rather than imported because all of them are
+// unexported: what is wanted here is the set of names, and the names are the
+// whole of what those declarations are.
+//
+// The refusals and the log lines are each declared in one file. The strings an
+// answer names are declared beside the thing that sends them, one file per
+// screen, and what holds them together is their kind, textCode, which is what
+// they are read by here.
 var (
 	refusalCodeDeclaration = regexp.MustCompile(`errorCode = "([a-z0-9_.]+)"`)
 	logIDDeclaration       = regexp.MustCompile(`(?m)^\t[A-Za-z]+\s+ID = "([a-z0-9_.]+)"$`)
+	textCodeDeclaration    = regexp.MustCompile(`textCode = "([a-z0-9_.]+)"`)
 )
 
 // namedIn reads one source file of another package and hands back what the
@@ -889,6 +899,41 @@ func logIDs(t *testing.T) []string {
 	return namedIn(t, "../logid/logid.go", logIDDeclaration)
 }
 
+// textCodes is every code an answer names a string by. The declarations are
+// spread over the files of the api package, so every file of it that is not a
+// test is read, and a file that declares none is not a fault: most do not.
+func textCodes(t *testing.T) []string {
+	t.Helper()
+
+	paths, err := filepath.Glob("../api/*.go")
+	if err != nil {
+		t.Fatalf("failed to list the files of the api package: %v", err)
+	}
+
+	var codes []string
+
+	for _, path := range paths {
+		if strings.HasSuffix(path, "_test.go") {
+			continue
+		}
+
+		body, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatalf("failed to read %s: %v", path, err)
+		}
+
+		for _, match := range textCodeDeclaration.FindAllStringSubmatch(string(body), -1) {
+			codes = append(codes, match[1])
+		}
+	}
+
+	if len(codes) == 0 {
+		t.Fatalf("the api package declares no textCode, so nothing holds the answers to the catalog")
+	}
+
+	return codes
+}
+
 // generatedKeys is every key a script looks a server string up under.
 func generatedKeys(t *testing.T) map[string]bool {
 	t.Helper()
@@ -907,6 +952,10 @@ func generatedKeys(t *testing.T) map[string]bool {
 		keys[logKeyPrefix+id+logKeyRole] = true
 	}
 
+	for _, code := range textCodes(t) {
+		keys[answerKeyPrefix+code+answerKeyRole] = true
+	}
+
 	return keys
 }
 
@@ -914,20 +963,33 @@ func generatedKeys(t *testing.T) map[string]bool {
 // that no scan of the scripts can do.
 //
 // A refusal the catalog has no sentence for is shown as the English sentence
-// the answer carries, and a log line with no sentence is shown as the English
-// message out of the file. Neither is a blank screen, which is why this is one
-// test rather than a rule the UI enforces at run time; but both are a screen in
-// one language with a sentence in another, and a code added to the server
-// without a sentence here would go unnoticed until somebody reading the screen
-// in their own language met an English paragraph in the middle of it.
+// the answer carries, a log line with no sentence is shown as the English
+// message out of the file, and a string an answer names without a sentence
+// here is shown as the English beside the name. None is a blank screen, which
+// is why this is one test rather than a rule the UI enforces at run time; but
+// all three are a screen in one language with a sentence in another, and a
+// code added to the server without a sentence here would go unnoticed until
+// somebody reading the screen in their own language met an English paragraph
+// in the middle of it.
 func TestEverySentenceTheServerCanSendIsInEnglish(t *testing.T) {
 	base := readCatalog(t, baseCatalog)
 
 	codes := refusalCodes(t)
 	ids := logIDs(t)
+	named := textCodes(t)
 
 	t.Logf("refusals the server can raise: %d", len(codes))
 	t.Logf("identifiers a log line can carry: %d", len(ids))
+	t.Logf("strings an answer can name: %d", len(named))
+
+	for _, code := range named {
+		key := answerKeyPrefix + code + answerKeyRole
+
+		if _, ok := base[key]; !ok {
+			t.Errorf("the server names the string %q, which the English catalog has no %q for",
+				code, key)
+		}
+	}
 
 	for _, code := range codes {
 		key := refusalKeyPrefix + code + refusalKeyRole

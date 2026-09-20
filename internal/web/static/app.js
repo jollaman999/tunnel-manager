@@ -778,6 +778,69 @@ function refusalText(payload) {
 
   const values = payload.error_args;
 
+  return t(key, namedValues(values !== null && typeof values === "object" ? values : {}));
+}
+
+// codeSuffix is what the server puts on the end of the name of a value, or of a
+// field, to carry the code of the string beside it: "what" and "what_code".
+const codeSuffix = "_code";
+
+// namedValues is the values of a refusal with the ones the server named said in
+// the language of the page.
+//
+// A value that is itself a phrase of the server's, the name of a kind of file
+// say, arrives twice: as the English written into the sentence, under the name
+// the sentence asks for, and as a code under that name with "_code" on the end.
+// The phrase behind the code is looked up the way any named string is, and is
+// written with the same values, so a phrase that asks for one of them by name
+// finds it. Where no catalog knows the code the English stays, which is what a
+// refusal from a newer server reads as on this screen.
+function namedValues(values) {
+  const said = {};
+
+  for (const name of Object.keys(values)) {
+    said[name] = values[name];
+  }
+
+  for (const name of Object.keys(values)) {
+    if (!name.endsWith(codeSuffix)) {
+      continue;
+    }
+
+    const of = name.slice(0, -codeSuffix.length);
+
+    if (Object.prototype.hasOwnProperty.call(values, of)) {
+      said[of] = serverText(values[of], values[name], values);
+    }
+  }
+
+  return said;
+}
+
+// serverTextKey is where a string the server names is kept: the sentence an
+// answer carries beside its English, or the name of a thing the screen puts in
+// a cell of its own. The answer carries the code next to the English, under
+// the name of the English field with "_code" on the end.
+function serverTextKey(code) {
+  return "answer." + code + ".text";
+}
+
+// serverText is what a named string of the server reads as in the language of
+// the page. It is the English the answer carries where the answer names
+// nothing, which a server from before the codes does not, and where no catalog
+// has heard of the code, which is what this screen meets from a newer server.
+// The values are written in by t, as the values of a refusal are.
+function serverText(english, code, values) {
+  if (typeof code !== "string" || code === "") {
+    return english;
+  }
+
+  const key = serverTextKey(code);
+
+  if (entry(texts, key) === null && entry(baseTexts, key) === null) {
+    return english;
+  }
+
   return t(key, values !== null && typeof values === "object" ? values : {});
 }
 

@@ -309,6 +309,90 @@ func TestRenewPutsTheNewCertificateInFrontOfTheNextClient(t *testing.T) {
 	}
 }
 
+// TestAReplacementNamesWhatItSays reads the two strings a replacement carries
+// beside their English: the note every replacement comes back with, and the
+// warning an install of a certificate whose validity has not started yet comes
+// back with. A screen says both in its own language from the name, and the
+// English stays where it was for everything else that reads the answer.
+func TestAReplacementNamesWhatItSays(t *testing.T) {
+	h, _, _, _, _ := newCertificateHandler(t)
+
+	rec := certificateRequest(t, h, http.MethodPost, "")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("the renewal answered %d, want 200. Body: %s", rec.Code, rec.Body.String())
+	}
+
+	_, _, data := decodeCertificateAnswer(t, rec)
+
+	if data["note"] != certificateReplacedNote {
+		t.Errorf("the renewal carries the note %q, want the English as it always was", data["note"])
+	}
+	if data["note_code"] != string(textCertificateReplaced) {
+		t.Errorf("the renewal names its note %v, want %q", data["note_code"], textCertificateReplaced)
+	}
+	if _, there := data["warning"]; there {
+		t.Errorf("the renewal carries a warning, and there is nothing wrong: %v", data["warning"])
+	}
+	if _, there := data["warning_code"]; there {
+		t.Errorf("the renewal names a warning it does not carry: %v", data["warning_code"])
+	}
+
+	now := time.Now()
+	early := pairFrom(t, &x509.Certificate{
+		Subject:     pkix.Name{CommonName: "tunnel-manager.example"},
+		NotBefore:   now.Add(time.Hour),
+		NotAfter:    now.Add(90 * 24 * time.Hour),
+		ExtKeyUsage: []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
+		DNSNames:    []string{"tunnel-manager.example"},
+	})
+
+	rec = certificateRequest(t, h, http.MethodPut,
+		`{"cert_pem":`+quote(early.certPEM)+`,"key_pem":`+quote(early.keyPEM)+`}`)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("the install answered %d, want 200. Body: %s", rec.Code, rec.Body.String())
+	}
+
+	_, _, data = decodeCertificateAnswer(t, rec)
+
+	warning, _ := data["warning"].(string)
+	if !strings.Contains(warning, "not valid until") {
+		t.Fatalf("the install of a certificate that is not valid yet carries the warning %q", warning)
+	}
+	if data["warning_code"] != string(textCertificateNotValidYet) {
+		t.Errorf("the install names its warning %v, want %q", data["warning_code"],
+			textCertificateNotValidYet)
+	}
+
+	args, _ := data["warning_args"].(map[string]any)
+
+	notBefore, _ := args["not_before"].(string)
+	if notBefore == "" || !strings.Contains(warning, notBefore) {
+		t.Errorf("the warning is written with %q, and its values carry not_before %q", warning, notBefore)
+	}
+}
+
+// TestAWarningWithNoNameIsLeftUnnamed is the case certificateWarning refuses to
+// guess at: a warning tlsserve wrote about something other than the start of
+// the validity. Naming it wrongly would put a sentence about the clock in
+// front of an operator whose problem is something else.
+func TestAWarningWithNoNameIsLeftUnnamed(t *testing.T) {
+	now := time.Now()
+
+	code, args := certificateWarning(&tlsserve.Info{
+		NotBefore: now.Add(-time.Hour),
+		Warning:   "something this version has no name for",
+	}, now)
+
+	if code != "" || args != nil {
+		t.Errorf("a warning about something else was named %q with %v", code, args)
+	}
+
+	code, args = certificateWarning(&tlsserve.Info{NotBefore: now.Add(-time.Hour)}, now)
+	if code != "" || args != nil {
+		t.Errorf("no warning at all was named %q with %v", code, args)
+	}
+}
+
 // TestInstallServesThePairThatWasSentAndSealsTheKey is the manual registration
 // seen from the API: what is served afterwards is what was sent, and what is in
 // the database is the key under encryption.

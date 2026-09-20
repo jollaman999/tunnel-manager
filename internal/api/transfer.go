@@ -389,7 +389,19 @@ func (h *TransferHandler) open(file string, password string, want string) (*tran
 	}
 
 	if read.Kind != want {
-		return nil, refuse(http.StatusBadRequest, errImportFileWrongKind, errorArgs{"found": whatIsIn(read.Kind), "wanted": whatIsIn(want)})
+		found, foundCode := whatIsIn(read.Kind)
+		wanted, wantedCode := whatIsIn(want)
+
+		// The kind the file names is handed over on its own for the one code
+		// whose phrase says it. It is the value of a field of the file, not a
+		// sentence, so there is nothing to translate in it.
+		values := textArgs(nil)
+		if foundCode == textImportKindUnknown {
+			values = textArgs{"kind": read.Kind}
+		}
+
+		return nil, refuse(http.StatusBadRequest, errImportFileWrongKind, errorArgs{"found": found, "wanted": wanted}).
+			named(map[string]textCode{"found": foundCode, "wanted": wantedCode}, values)
 	}
 
 	if read.FormatVersion > transferFormatVersion {
@@ -421,18 +433,29 @@ func (h *TransferHandler) open(file string, password string, want string) (*tran
 	return &read, nil
 }
 
-// whatIsIn names a kind the way it is said in a refusal.
-func whatIsIn(kind string) string {
+// The four things a file can hold, as a refusal says them. The last one is the
+// phrase for a kind this version has no name for, and it is written with the
+// kind the file names under "kind".
+const (
+	textImportKindTunnels  textCode = "import.kind.tunnels"
+	textImportKindSettings textCode = "import.kind.settings"
+	textImportKindNone     textCode = "import.kind.none"
+	textImportKindUnknown  textCode = "import.kind.unknown"
+)
+
+// whatIsIn names a kind the way it is said in a refusal, in English and by
+// code.
+func whatIsIn(kind string) (string, textCode) {
 	switch kind {
 	case transferKindTunnels:
-		return "the tunnel configuration"
+		return "the tunnel configuration", textImportKindTunnels
 	case transferKindSettings:
-		return "the settings of the manager"
+		return "the settings of the manager", textImportKindSettings
 	case "":
-		return "nothing this version knows"
+		return "nothing this version knows", textImportKindNone
 	}
 
-	return "a kind this version does not know (" + kind + ")"
+	return "a kind this version does not know (" + kind + ")", textImportKindUnknown
 }
 
 // exportedBy names the version that wrote a file, when the file says.

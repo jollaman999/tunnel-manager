@@ -2331,18 +2331,20 @@ function certificateValidity(view) {
 }
 
 // certificateReplacement is what the last renewal or registration said. The
-// sentence about the connections that are already open comes from the server
-// and is shown as it came: it is the answer to "I pressed it and the browser
-// still shows the old certificate", which is what happens every time.
+// sentence about the connections that are already open comes from the server,
+// named so that it is said in the language of the page: it is the answer to "I
+// pressed it and the browser still shows the old certificate", which is what
+// happens every time.
 function certificateReplacement(result) {
   const wrap = document.createElement("div");
 
   if (typeof result.note === "string" && result.note !== "") {
-    wrap.appendChild(statusLine(result.note, "warning"));
+    wrap.appendChild(statusLine(serverText(result.note, result.note_code, null), "warning"));
   }
 
   if (typeof result.warning === "string" && result.warning !== "") {
-    wrap.appendChild(statusLine(result.warning, "warning"));
+    wrap.appendChild(statusLine(
+      serverText(result.warning, result.warning_code, result.warning_args), "warning"));
   }
 
   if (typeof result.previous_fingerprint_sha256 === "string" &&
@@ -3478,7 +3480,7 @@ function drawUninstalled() {
     nodes.push(element("h2", t("uninstalled.removed.title")));
     nodes.push(buildTable([t("uninstalled.what.column"), t("uninstalled.path.column")],
       removed.map(function (file) {
-        return [file.what, file.path];
+        return [serverText(file.what, file.what_code, null), file.path];
       })));
   }
 
@@ -3491,7 +3493,7 @@ function drawUninstalled() {
     nodes.push(statusLine(t("uninstalled.left.notice"), "warning"));
     nodes.push(buildTable([t("uninstalled.what.column"), t("uninstalled.path.column"),
       t("uninstalled.why.column")], failed.map(function (file) {
-        return [file.what, file.path, file.error];
+        return [serverText(file.what, file.what_code, null), file.path, file.error];
       })));
   }
 
