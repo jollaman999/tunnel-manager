@@ -1878,6 +1878,11 @@ func TestProbeForwardReachClosesWhatItOpened(t *testing.T) {
 	var mu sync.Mutex
 	var open int
 	var peak int
+	// done counts the connections the listener has finished with. The probe
+	// returns before its close reaches the far side, so the return is not a
+	// point at which the listener is known to have seen anything. Counting
+	// what it has finished gives the test such a point.
+	var done int
 
 	go func() {
 		for {
@@ -1905,28 +1910,35 @@ func TestProbeForwardReachClosesWhatItOpened(t *testing.T) {
 
 				mu.Lock()
 				open--
+				done++
 				mu.Unlock()
 			}(conn)
 		}
 	}()
 
+	// The probes are run one at a time, and the next one waits for the side
+	// that accepted the last to have let go of it.
+	//
+	// The count is kept by the listener, and it is lowered when the read ends,
+	// which is when the close of the probe arrives. That arrival is not the
+	// return of probeForwardReach: the probe has already returned by the time
+	// the FIN is delivered. Started back to back, a probe would be counted
+	// while the one before it was still being let go of, and the peak would
+	// read as two without a single socket having been held.
+	//
+	// Waiting here is what makes a peak above one mean what it says. A probe
+	// that kept its connection leaves the read of the listener blocked, the
+	// listener never finishes with it, and the wait below runs out and says so.
 	for i := 0; i < 20; i++ {
 		reach := probeForwardReach(ln.Addr().String(), forwardProbeTimeout)
 		if reach != forwardReachable {
 			t.Fatalf("probe %d: reach = %q, want %q", i, reach, forwardReachable)
 		}
-	}
 
-	deadline := time.Now().Add(5 * time.Second)
-	for time.Now().Before(deadline) {
-		mu.Lock()
-		left := open
-		mu.Unlock()
-
-		if left == 0 {
-			break
+		if !waitForFinished(&mu, &done, i+1, 5*time.Second) {
+			t.Fatalf("probe %d returned, but the listener had not finished with the connection it "+
+				"opened five seconds later, so the probe does not close what it opens", i)
 		}
-		time.Sleep(10 * time.Millisecond)
 	}
 
 	mu.Lock()
@@ -1939,6 +1951,29 @@ func TestProbeForwardReachClosesWhatItOpened(t *testing.T) {
 	}
 	if highest > 1 {
 		t.Fatalf("%d probes were open at once, so a probe outlives the one that follows it", highest)
+	}
+}
+
+// waitForFinished waits for the counter to reach want and says whether it did
+// inside the time given. The counter is read under the lock it is written
+// under, and the wait is bounded so that a connection the listener never
+// finishes with fails the test rather than hanging it.
+func waitForFinished(mu *sync.Mutex, done *int, want int, within time.Duration) bool {
+	deadline := time.Now().Add(within)
+	for {
+		mu.Lock()
+		reached := *done
+		mu.Unlock()
+
+		if reached >= want {
+			return true
+		}
+
+		if !time.Now().Before(deadline) {
+			return false
+		}
+
+		time.Sleep(time.Millisecond)
 	}
 }
 
