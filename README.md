@@ -71,7 +71,9 @@ writes where the password of that account is:
 
 ```text
 created the account with an initial password. Read the password from the file, log in with it,
-and set a username and a password  {"initial_password_file": "<dir>/initial-password"}
+and set a username and a password. The file is written with permission 0600 and holds the only
+copy of the password  {"log_id": "account.created_with_initial_password",
+"initial_password_file": "<dir>/initial-password"}
 ```
 
 ```bash
