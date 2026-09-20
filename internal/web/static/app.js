@@ -52,6 +52,14 @@ const apiAccountPath = "/api/account";
 const csrfCookieName = "tm_csrf";
 const csrfHeaderName = "X-CSRF-Token";
 
+// themeKey is where the theme the operator picked is kept, and index.html holds
+// the same string: it is read there, in the head, so the first paint is already
+// in the right colour. It is a key of the local storage of the one browser and
+// is never sent anywhere. Which theme a screen is read in belongs to the screen
+// it is read on and not to the account it is read with, and a browser that
+// refuses to keep it loses nothing but the pick.
+const themeKey = "tm_theme";
+
 // versionPath is where the number in the corner is read from. It is served from
 // under /ui/ rather than from /api/, so the login screen, which has no session
 // yet, can show it too.
@@ -1646,6 +1654,104 @@ function showVersion() {
     .catch(function () {});
 }
 
+// storedTheme is what was picked on this browser, or null where nothing was.
+// The read is inside the try and not only the write: a browser that has storage
+// turned off throws on the access itself, and a page that let that through
+// would stop before it drew anything.
+function storedTheme() {
+  let picked = null;
+
+  try {
+    picked = window.localStorage.getItem(themeKey);
+  } catch (error) {
+    return null;
+  }
+
+  return picked === "light" || picked === "dark" ? picked : null;
+}
+
+// rememberTheme keeps the pick for the next visit. A browser that will not keep
+// it is not an error to report: the screen is already in the theme that was
+// asked for, and what is lost is only that the next page starts from what the
+// browser prefers rather than from what was pressed here.
+function rememberTheme(name) {
+  try {
+    window.localStorage.setItem(themeKey, name);
+  } catch (error) {
+    return;
+  }
+}
+
+// preferredTheme is what the browser is set to, which is what is used until the
+// operator says otherwise.
+function preferredTheme() {
+  if (window.matchMedia === undefined) {
+    return "light";
+  }
+
+  return window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+}
+
+// currentTheme is what the page is in now. It is read off <html>, which is the
+// one place the theme is held: the stylesheet paints from that attribute.
+function currentTheme() {
+  return document.documentElement.getAttribute("data-theme") === "dark" ? "dark" : "light";
+}
+
+// applyTheme paints the page in a theme and tells the switch what the next
+// press would do. The label names where a press goes rather than where the page
+// is, because that is what the operator is deciding.
+function applyTheme(name) {
+  document.documentElement.setAttribute("data-theme", name);
+
+  const button = document.getElementById("themeToggle");
+  if (button === null) {
+    return;
+  }
+
+  const next = name === "dark" ? "light" : "dark";
+
+  button.textContent = next === "dark" ? "Dark" : "Light";
+  button.setAttribute("aria-label", "Switch to the " + next + " theme");
+  button.hidden = false;
+}
+
+// setUpTheme puts the switch to work. The theme is worked out again here rather
+// than taken off <html>, so the page is right even where the head script did
+// not run, and the browser is followed for as long as nothing has been picked:
+// an operator who never pressed the switch gets the change they made to their
+// system without having to load the page again.
+function setUpTheme() {
+  const picked = storedTheme();
+
+  applyTheme(picked === null ? preferredTheme() : picked);
+
+  const button = document.getElementById("themeToggle");
+  if (button !== null) {
+    button.addEventListener("click", function () {
+      const next = currentTheme() === "dark" ? "light" : "dark";
+
+      applyTheme(next);
+      rememberTheme(next);
+    });
+  }
+
+  if (window.matchMedia === undefined) {
+    return;
+  }
+
+  const watched = window.matchMedia("(prefers-color-scheme: dark)");
+  if (watched.addEventListener === undefined) {
+    return;
+  }
+
+  watched.addEventListener("change", function () {
+    if (storedTheme() === null) {
+      applyTheme(preferredTheme());
+    }
+  });
+}
+
 // The scroll is watched for one thing: when it last happened. The listener is
 // passive, so nothing it does can hold up the scrolling it is watching.
 window.addEventListener("scroll", function () {
@@ -1672,5 +1778,6 @@ window.addEventListener("popstate", function () {
   showScreen(screenName());
 });
 
+setUpTheme();
 showVersion();
 showScreen(screenName());

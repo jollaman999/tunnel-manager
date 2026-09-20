@@ -8,12 +8,44 @@
          is answered with, and a relative path would be resolved against that
          path instead of against /ui/. -->
     <link rel="stylesheet" href="/ui/style.css" />
+    <!-- The theme is put on <html> here, in the head, and not by app.js at the
+         end of the body: the body has not been parsed yet, so nothing has been
+         painted and a dark page is never shown light first. The key and the two
+         names are the ones app.js reads and writes.
+
+         Reading the storage is what a browser with it turned off throws on, so
+         the read is guarded and a throw leaves the choice to what the browser
+         prefers. -->
+    <script>
+      (function () {
+        var picked = null;
+
+        try {
+          picked = window.localStorage.getItem("tm_theme");
+        } catch (error) {
+          picked = null;
+        }
+
+        if (picked !== "light" && picked !== "dark") {
+          picked = window.matchMedia !== undefined &&
+            window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+        }
+
+        document.documentElement.setAttribute("data-theme", picked);
+      })();
+    </script>
   </head>
   <body>
     <!-- The version sits outside #app because that element is emptied on every
          draw. Kept inside it the number would be wiped by the first screen and
          would have to be fetched again for each one. -->
     <div id="versionTag"></div>
+    <!-- The theme switch is outside #app for the same reason the version is,
+         and it is on every screen because it is outside: a button drawn inside
+         a screen would be gone from the login, which draws no navigation. It
+         carries no label until app.js has put one on it, so what is shown is
+         never a press that does nothing. -->
+    <button id="themeToggle" type="button" hidden></button>
     <div id="app">Loading...</div>
     <!-- screens.js is loaded first: it holds the table of screens that app.js
          reads as soon as it runs, to draw the screen the URL asks for. -->

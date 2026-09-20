@@ -1,6 +1,117 @@
 /* Everything here is served from the binary. Nothing is fetched from the
    network, so the UI works on a host that reaches nothing but this server. */
 
+/* The colours of the page, named by what they are for rather than by what they
+   look like. A rule below names one of these and never a colour of its own, so
+   the same rule paints both themes and there is one place a colour is chosen.
+
+   The dark set is the same list of names with other values, under the attribute
+   that index.html puts on <html> before anything is drawn. A name that says
+   "grey" would be a lie in one of the two sets; a name that says "the dimmed
+   text" is true in both. */
+:root {
+  color-scheme: light;
+
+  /* Surfaces, from the paper the page is on up to what is laid on top of it. */
+  --bg-page: #f6f7f9;
+  --bg-surface: #ffffff;
+  --bg-raised: #fbfcfd;
+  --bg-sunken: #f0f1f3;
+  --bg-hover: #eef1f5;
+  --bg-active: #e2e6ec;
+
+  /* Text, from what is read first down to what is only glanced at. */
+  --text: #1c1c1c;
+  --text-muted: #4a4f57;
+  --text-dim: #646971;
+  --text-disabled: #8a8f97;
+  --text-on-accent: #ffffff;
+
+  /* Lines: what frames a card, what frames a control, what parts two rows. */
+  --border: #dcdfe4;
+  --border-strong: #c6cbd2;
+  --border-soft: #e6e8eb;
+
+  /* The one colour the UI carries: links, the screen that is up, the press that
+     stores what was typed, and the ring around whatever has the focus. */
+  --accent: #24456b;
+  --accent-hover: #1b3652;
+  --accent-active: #152a40;
+  --accent-ring: #c7d6ea;
+
+  /* What went wrong, and what cannot be taken back. */
+  --danger: #8a2f2f;
+  --danger-strong: #7a1f1f;
+  --danger-active: #6b1a1a;
+  --danger-bg: #fdeeee;
+  --danger-bg-soft: #fdf7f7;
+  --danger-border: #e0bcbc;
+
+  /* Something is not as it should be, but nothing failed. */
+  --warn: #7a4a10;
+  --warn-bg: #fdf4e6;
+  --warn-border: #f0d9ae;
+
+  /* It is as it should be. */
+  --ok: #1f4d2b;
+  --ok-bg: #eefaf0;
+  --ok-border: #bfe3c8;
+
+  /* The sheet a panel is opened over, and what a panel casts on the page. */
+  --overlay: rgba(28, 28, 28, 0.45);
+  --shadow: rgba(28, 28, 28, 0.2);
+}
+
+/* The same names in the dark. The reds, ambers and greens are chosen again for
+   this background rather than carried over: a red mixed to sit on white paper
+   goes muddy on a dark surface, and the pale fills behind those words become
+   dark tints of the same hue. Every pair of text and its background below is
+   at least 4.5:1. */
+[data-theme="dark"] {
+  color-scheme: dark;
+
+  --bg-page: #15171b;
+  --bg-surface: #1d2025;
+  --bg-raised: #22262c;
+  --bg-sunken: #282c33;
+  --bg-hover: #2f343c;
+  --bg-active: #3a4049;
+
+  --text: #e8eaed;
+  --text-muted: #b6bcc6;
+  --text-dim: #9ba1ac;
+  --text-disabled: #6f757f;
+  /* The accent is a light blue here, so what is written on it is dark. */
+  --text-on-accent: #11151a;
+
+  --border: #343a43;
+  --border-strong: #464d58;
+  --border-soft: #2b3038;
+
+  --accent: #7aa7e0;
+  --accent-hover: #93b8e8;
+  --accent-active: #a9c7ee;
+  --accent-ring: #4d6f9f;
+
+  --danger: #ef9a9a;
+  --danger-strong: #ffb4b4;
+  --danger-active: #ffd0d0;
+  --danger-bg: #3a2023;
+  --danger-bg-soft: #2a1d1f;
+  --danger-border: #6e3a3a;
+
+  --warn: #e8b465;
+  --warn-bg: #3a2e18;
+  --warn-border: #6b5327;
+
+  --ok: #8fd6a2;
+  --ok-bg: #18301f;
+  --ok-border: #2f5c3c;
+
+  --overlay: rgba(0, 0, 0, 0.6);
+  --shadow: rgba(0, 0, 0, 0.5);
+}
+
 /* Safari grows the text of a block when the viewport is wider than the block
    is, which it calls text autosizing and which it does to make a desktop page
    readable on a phone. This page is already built for the width it is shown
@@ -20,8 +131,8 @@ body {
   font-family: system-ui, -apple-system, "Segoe UI", Helvetica, Arial, sans-serif;
   font-size: 15px;
   line-height: 1.5;
-  color: #1c1c1c;
-  background: #f6f7f9;
+  color: var(--text);
+  background: var(--bg-page);
 }
 
 h1 {
@@ -33,8 +144,8 @@ h1 {
   max-width: 60rem;
   margin: 0 auto;
   padding: 1.25rem;
-  background: #ffffff;
-  border: 1px solid #dcdfe4;
+  background: var(--bg-surface);
+  border: 1px solid var(--border);
   border-radius: 6px;
 }
 
@@ -46,17 +157,37 @@ h1 {
   bottom: 8px;
   right: 12px;
   font-size: 11px;
-  color: #4a4f57;
+  color: var(--text-muted);
   opacity: 0.6;
   z-index: 1;
   pointer-events: none;
+}
+
+/* The switch between the two themes. It is fixed to the top of every screen,
+   the login included, because it belongs to the browser rather than to what is
+   on the screen, and because the screens themselves are redrawn out from under
+   it. The far corner is where the version is, at the other end of the page, so
+   the two fixed things never meet.
+
+   It sits at the same depth as the version, which is under a panel: while a
+   choice is up, the theme is not what is being decided. The button is painted
+   by the rules every other button is painted by; only where it sits and how
+   small it is are said here. */
+#themeToggle {
+  position: fixed;
+  top: 8px;
+  right: 12px;
+  z-index: 1;
+  padding: 0.15rem 0.5rem;
+  font-size: 12px;
+  color: var(--text-muted);
 }
 
 pre {
   margin: 0;
   padding: 0.75rem;
   overflow-x: auto;
-  background: #f0f1f3;
+  background: var(--bg-sunken);
   border-radius: 4px;
   font-size: 13px;
 }
@@ -74,23 +205,23 @@ nav {
   gap: 0.75rem;
   align-items: center;
   padding-bottom: 0.75rem;
-  border-bottom: 1px solid #dcdfe4;
+  border-bottom: 1px solid var(--border);
 }
 
 nav a {
-  color: #24456b;
+  color: var(--accent);
   text-decoration: none;
   padding: 0.2rem 0.5rem;
   border-radius: 4px;
 }
 
 nav a:hover {
-  background: #eef1f5;
+  background: var(--bg-hover);
 }
 
 nav a.current {
-  background: #24456b;
-  color: #ffffff;
+  background: var(--accent);
+  color: var(--text-on-accent);
 }
 
 /* The name is on its own row above the links, so it reads as what this is
@@ -98,14 +229,14 @@ nav a.current {
    the row does that. */
 .topbar .brand {
   margin-bottom: 0.5rem;
-  color: #1c1c1c;
+  color: var(--text);
   font-weight: 600;
 }
 
 /* The logout sits apart from the screens, because it is not one of them. */
 nav a.logout {
   margin-left: auto;
-  color: #8a2f2f;
+  color: var(--danger);
 }
 
 h2 {
@@ -130,34 +261,34 @@ h3 {
 }
 
 .notice.error {
-  color: #7a1f1f;
-  background: #fdeeee;
-  border-color: #f0c2c2;
+  color: var(--danger-strong);
+  background: var(--danger-bg);
+  border-color: var(--danger-border);
 }
 
 .notice.info {
-  color: #1f4d2b;
-  background: #eefaf0;
-  border-color: #bfe3c8;
+  color: var(--ok);
+  background: var(--ok-bg);
+  border-color: var(--ok-border);
 }
 
 .card {
   margin: 0 0 1.25rem;
   padding: 1rem;
-  background: #fbfcfd;
-  border: 1px solid #dcdfe4;
+  background: var(--bg-raised);
+  border: 1px solid var(--border);
   border-radius: 6px;
 }
 
 /* What cannot be taken back is set apart from the form above it, the way the
    delete button is set apart from the two beside it. */
 .card.danger-zone {
-  background: #fdf7f7;
-  border-color: #e0bcbc;
+  background: var(--danger-bg-soft);
+  border-color: var(--danger-border);
 }
 
 .card.danger-zone h2 {
-  color: #8a2f2f;
+  color: var(--danger);
 }
 
 .card p {
@@ -189,7 +320,7 @@ h3 {
 }
 
 .field label {
-  color: #4a4f57;
+  color: var(--text-muted);
 }
 
 .field input[type="text"],
@@ -199,8 +330,8 @@ h3 {
   padding: 0.35rem 0.5rem;
   font: inherit;
   color: inherit;
-  background: #ffffff;
-  border: 1px solid #c6cbd2;
+  background: var(--bg-surface);
+  border: 1px solid var(--border-strong);
   border-radius: 4px;
 }
 
@@ -221,8 +352,8 @@ h3 {
 .field input[type="password"]:focus,
 .field textarea:focus,
 .field select:focus {
-  border-color: #24456b;
-  outline: 2px solid #c7d6ea;
+  border-color: var(--accent);
+  outline: 2px solid var(--accent-ring);
   outline-offset: 0;
 }
 
@@ -231,18 +362,18 @@ h3 {
 .field input.bad,
 .field textarea.bad,
 .field select.bad {
-  border-color: #b04141;
-  background: #fdf7f7;
+  border-color: var(--danger);
+  background: var(--danger-bg-soft);
 }
 
 .field input.bad:focus,
 .field textarea.bad:focus,
 .field select.bad:focus {
-  outline-color: #f0c2c2;
+  outline-color: var(--danger-border);
 }
 
 .field .problem {
-  color: #8a2f2f;
+  color: var(--danger);
 }
 
 .field input[type="checkbox"] {
@@ -253,7 +384,7 @@ h3 {
 
 .field small {
   grid-column: 2;
-  color: #6b7079;
+  color: var(--text-dim);
   font-size: 12px;
 }
 
@@ -264,20 +395,20 @@ h3 {
 .drop-zone {
   grid-column: 1 / -1;
   padding: 0.6rem 0.75rem;
-  color: #6b7079;
+  color: var(--text-dim);
   font-size: 12px;
   text-align: center;
-  background: #fbfbfc;
-  border: 1px dashed #c6cbd2;
+  background: var(--bg-raised);
+  border: 1px dashed var(--border-strong);
   border-radius: 4px;
 }
 
 /* While a file is held over it. Without this the operator is dragging a file
    across a page that gives no sign it will be taken anywhere. */
 .drop-zone.drop-over {
-  color: #24456b;
-  background: #eef3f9;
-  border-color: #24456b;
+  color: var(--accent);
+  background: var(--bg-hover);
+  border-color: var(--accent);
   border-style: solid;
 }
 
@@ -289,7 +420,7 @@ h3 {
 }
 
 .drop-zone .drop-said.problem {
-  color: #8a2f2f;
+  color: var(--danger);
 }
 
 .buttons {
@@ -301,45 +432,45 @@ h3 {
 button {
   padding: 0.35rem 0.8rem;
   font: inherit;
-  color: #1c1c1c;
-  background: #ffffff;
-  border: 1px solid #c6cbd2;
+  color: var(--text);
+  background: var(--bg-surface);
+  border: 1px solid var(--border-strong);
   border-radius: 4px;
   cursor: pointer;
 }
 
 button:hover {
-  background: #eef1f5;
+  background: var(--bg-hover);
 }
 
 button:focus-visible {
-  outline: 2px solid #24456b;
+  outline: 2px solid var(--accent);
   outline-offset: 1px;
 }
 
 button:active {
-  background: #e2e6ec;
+  background: var(--bg-active);
 }
 
 button:disabled {
-  color: #8a8f97;
-  background: #f2f3f5;
-  border-color: #dcdfe4;
+  color: var(--text-disabled);
+  background: var(--bg-sunken);
+  border-color: var(--border);
   cursor: default;
 }
 
 button[type="submit"] {
-  color: #ffffff;
-  background: #24456b;
-  border-color: #24456b;
+  color: var(--text-on-accent);
+  background: var(--accent);
+  border-color: var(--accent);
 }
 
 button[type="submit"]:hover {
-  background: #1b3652;
+  background: var(--accent-hover);
 }
 
 button[type="submit"]:active {
-  background: #152a40;
+  background: var(--accent-active);
 }
 
 /* The same paint as a submit, for the one press a card is there for that is not
@@ -349,53 +480,53 @@ button[type="submit"]:active {
    above, because that selector is what paints every submit on these screens and
    widening it moves all of them. */
 button.primary {
-  color: #ffffff;
-  background: #24456b;
-  border-color: #24456b;
+  color: var(--text-on-accent);
+  background: var(--accent);
+  border-color: var(--accent);
 }
 
 button.primary:hover {
-  background: #1b3652;
+  background: var(--accent-hover);
 }
 
 button.primary:active {
-  background: #152a40;
+  background: var(--accent-active);
 }
 
 /* Delete is the one button in a row that cannot be taken back with another
    click, so it does not look like the two next to it. */
 button.danger {
-  color: #8a2f2f;
-  border-color: #e0bcbc;
+  color: var(--danger);
+  border-color: var(--danger-border);
 }
 
 button.danger:hover {
-  color: #ffffff;
-  background: #8a2f2f;
-  border-color: #8a2f2f;
+  color: var(--text-on-accent);
+  background: var(--danger);
+  border-color: var(--danger);
 }
 
 button.danger:focus-visible {
-  outline-color: #8a2f2f;
+  outline-color: var(--danger);
 }
 
 /* The submit of the uninstall. The rules above paint every submit in the colour
    Save carries, so the one press that takes the installation away is painted
    over them rather than being left looking like the one that stores settings. */
 button[type="submit"].danger {
-  color: #ffffff;
-  background: #8a2f2f;
-  border-color: #8a2f2f;
+  color: var(--text-on-accent);
+  background: var(--danger);
+  border-color: var(--danger);
 }
 
 button[type="submit"].danger:hover {
-  background: #7a1f1f;
-  border-color: #7a1f1f;
+  background: var(--danger-strong);
+  border-color: var(--danger-strong);
 }
 
 button[type="submit"].danger:active {
-  background: #6b1a1a;
-  border-color: #6b1a1a;
+  background: var(--danger-active);
+  border-color: var(--danger-active);
 }
 
 /* The switch and its Save are one thing, and the certificate below them is
@@ -434,25 +565,25 @@ th,
 td {
   padding: 0.45rem 0.6rem;
   text-align: left;
-  border-bottom: 1px solid #e6e8eb;
+  border-bottom: 1px solid var(--border-soft);
   vertical-align: middle;
 }
 
 th {
-  color: #38404b;
+  color: var(--text-muted);
   font-weight: 600;
   white-space: nowrap;
-  background: #eef1f5;
-  border-bottom: 1px solid #ccd2da;
+  background: var(--bg-hover);
+  border-bottom: 1px solid var(--border-strong);
 }
 
 /* The banding is what carries the eye along a row of a table this wide. */
 tbody tr:nth-child(even) {
-  background: #fafbfc;
+  background: var(--bg-raised);
 }
 
 tbody tr:hover {
-  background: #eef3f9;
+  background: var(--bg-hover);
 }
 
 tbody tr:last-child td {
@@ -473,12 +604,12 @@ td.num {
    width of the table, which is the point: what goes there is a sentence. */
 tbody tr.under > td {
   padding-top: 0;
-  border-bottom: 1px solid #e6e8eb;
+  border-bottom: 1px solid var(--border-soft);
 }
 
 .last-error {
   display: block;
-  color: #8a2f2f;
+  color: var(--danger);
   overflow-wrap: break-word;
 }
 
@@ -490,9 +621,9 @@ tbody tr.under > td {
   margin: 0.25rem 0 0.5rem;
   padding: 0.5rem 0.75rem;
   border-radius: 4px;
-  color: #7a4a10;
-  background: #fdf4e6;
-  border: 1px solid #f0d9ae;
+  color: var(--warn);
+  background: var(--warn-bg);
+  border: 1px solid var(--warn-border);
   overflow-wrap: break-word;
 }
 
@@ -556,36 +687,36 @@ td.actions {
 }
 
 .badge.ok {
-  color: #1f4d2b;
-  background: #eefaf0;
-  border-color: #bfe3c8;
+  color: var(--ok);
+  background: var(--ok-bg);
+  border-color: var(--ok-border);
 }
 
 .badge.bad {
-  color: #7a1f1f;
-  background: #fdeeee;
-  border-color: #f0c2c2;
+  color: var(--danger-strong);
+  background: var(--danger-bg);
+  border-color: var(--danger-border);
 }
 
 .badge.waiting {
-  color: #7a4a10;
-  background: #fdf4e6;
-  border-color: #f0d9ae;
+  color: var(--warn);
+  background: var(--warn-bg);
+  border-color: var(--warn-border);
 }
 
 .badge.unknown {
-  color: #4a4f57;
-  background: #f0f1f3;
-  border-color: #dcdfe4;
+  color: var(--text-muted);
+  background: var(--bg-sunken);
+  border-color: var(--border);
 }
 
 /* The routine level of a log line. It is coloured apart from the grey of the
    levels nothing is decided by, without taking the green that says a tunnel is
    up: an info line reports what happened, not that all is well. */
 .badge.note {
-  color: #24456b;
-  background: #eef1f5;
-  border-color: #c6d3e2;
+  color: var(--accent);
+  background: var(--bg-hover);
+  border-color: var(--accent-ring);
 }
 
 /* The lists above the log act as they are changed, so they are a row of
@@ -608,7 +739,7 @@ td.actions {
   display: flex;
   gap: 0.4rem;
   align-items: center;
-  color: #4a4f57;
+  color: var(--text-muted);
 }
 
 .log-controls select,
@@ -616,15 +747,15 @@ td.actions {
   padding: 0.3rem 0.4rem;
   font: inherit;
   color: inherit;
-  background: #ffffff;
-  border: 1px solid #c6cbd2;
+  background: var(--bg-surface);
+  border: 1px solid var(--border-strong);
   border-radius: 4px;
 }
 
 .log-controls select:focus,
 .page-controls select:focus {
-  border-color: #24456b;
-  outline: 2px solid #c7d6ea;
+  border-color: var(--accent);
+  outline: 2px solid var(--accent-ring);
   outline-offset: 0;
 }
 
@@ -637,13 +768,13 @@ td.actions {
    buttons, because it is read once to find out where in the list this is and
    the buttons are what is pressed. */
 .page-where {
-  color: #6b7079;
+  color: var(--text-dim);
   font-size: 12px;
 }
 
 .log-scope {
   margin: 0 0 0.75rem;
-  color: #6b7079;
+  color: var(--text-dim);
   font-size: 12px;
 }
 
@@ -662,7 +793,7 @@ td.actions {
    sit under it and are dimmed, so the message is what is read first. */
 .log-extra {
   display: block;
-  color: #6b7079;
+  color: var(--text-dim);
   font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
   font-size: 12px;
   overflow-wrap: anywhere;
@@ -692,7 +823,7 @@ td.actions {
   flex-direction: column;
   min-width: 7rem;
   padding: 0.6rem 0.75rem;
-  background: #f0f3f7;
+  background: var(--bg-sunken);
   border-radius: 6px;
 }
 
@@ -702,7 +833,7 @@ td.actions {
 }
 
 .count small {
-  color: #4a4f57;
+  color: var(--text-muted);
   font-size: 12px;
 }
 
@@ -715,20 +846,20 @@ td.actions {
 /* The gap between the three counts is what the screen is for, so the sentence
    that names it is coloured and the one that says there is no gap is not. */
 .summary.warning {
-  color: #7a4a10;
-  background: #fdf4e6;
-  border: 1px solid #f0d9ae;
+  color: var(--warn);
+  background: var(--warn-bg);
+  border: 1px solid var(--warn-border);
 }
 
 .summary.ok {
-  color: #1f4d2b;
-  background: #eefaf0;
-  border: 1px solid #bfe3c8;
+  color: var(--ok);
+  background: var(--ok-bg);
+  border: 1px solid var(--ok-border);
 }
 
 .summary.empty {
-  color: #6b7079;
-  background: #f4f5f7;
+  color: var(--text-dim);
+  background: var(--bg-sunken);
 }
 
 /* A phone held upright is around 390px wide, which is under 24rem once the
@@ -788,7 +919,7 @@ td.actions {
 
   .log-table tr {
     padding: 0.5rem 0;
-    border-bottom: 1px solid #e6e8eb;
+    border-bottom: 1px solid var(--border-soft);
   }
 
   .log-table tr:last-child {
@@ -809,7 +940,7 @@ td.actions {
     display: inline-block;
     margin-right: 0.5rem;
     font-size: 12px;
-    color: #6b7079;
+    color: var(--text-dim);
     vertical-align: middle;
   }
 
@@ -866,7 +997,7 @@ pre.pem {
   align-items: center;
   justify-content: center;
   padding: 1.5rem;
-  background: rgba(28, 28, 28, 0.45);
+  background: var(--overlay);
 }
 
 /* The page is held still while a panel is up. Without it the wheel over the
@@ -886,14 +1017,14 @@ body.modal-open {
   max-height: 100%;
   box-sizing: border-box;
   padding: 1.25rem;
-  background: #ffffff;
-  border: 1px solid #dcdfe4;
+  background: var(--bg-surface);
+  border: 1px solid var(--border);
   border-radius: 6px;
-  box-shadow: 0 8px 24px rgba(28, 28, 28, 0.2);
+  box-shadow: 0 8px 24px var(--shadow);
 }
 
 .modal-panel:focus-visible {
-  outline: 2px solid #24456b;
+  outline: 2px solid var(--accent);
   outline-offset: 2px;
 }
 
