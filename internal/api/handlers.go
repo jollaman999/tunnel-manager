@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"sort"
 	"strconv"
 	"strings"
 
@@ -965,6 +966,377 @@ func (h *Handler) DeleteServicePort(c echo.Context) error {
 		Success: true,
 		Data:    "Service port deleted successfully",
 	})
+}
+
+// hostServicePortItem is one row of the list the assignment screen of a Host
+// draws: a service port, with whether this Host is assigned to carry it. The
+// service ports that are not assigned are carried as well, because a list of
+// the assigned ones alone leaves the screen with nothing to offer as the next
+// assignment.
+type hostServicePortItem struct {
+	models.ServicePort
+	Assigned bool `json:"assigned"`
+}
+
+// ListHostServicePorts answers one page of the service ports with the
+// assignments of one Host laid over them.
+//
+// The page is taken over the service ports and not over the assignments, and
+// ordered by id as ListServicePorts is, so that a row sits on the same page of
+// both lists whether this Host carries it or not.
+func (h *Handler) ListHostServicePorts(c echo.Context) error {
+	id, err := strconv.ParseUint(c.Param("id"), 10, 32)
+	if err != nil {
+		return c.JSON(http.StatusBadRequest, models.Response{
+			Success: false,
+			Error:   "Invalid Host ID: " + err.Error(),
+		})
+	}
+
+	page, err := readListPage(c)
+	if err != nil {
+		return badListPage(c, err)
+	}
+
+	// The Host is read first, so that a request naming one that is not there is
+	// answered as such. Without this read the answer would be every service
+	// port with nothing assigned, which is what a Host that carries none looks
+	// like, and the screen could not tell the two apart.
+	var host models.Host
+	err = h.db.First(&host, id).Error
+	if err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return c.JSON(http.StatusNotFound, models.Response{
+				Success: false,
+				Error:   "Host not found",
+			})
+		}
+		h.logger.Error("failed to fetch Host", zap.Error(err))
+		return c.JSON(http.StatusInternalServerError, models.Response{
+			Success: false,
+			Error:   "Failed to fetch Host",
+		})
+	}
+
+	var total int64
+	err = h.db.Model(&models.ServicePort{}).Count(&total).Error
+	if err != nil {
+		h.logger.Error("failed to count the service ports", zap.Error(err))
+		return c.JSON(http.StatusInternalServerError, models.Response{
+			Success: false,
+			Error:   "Failed to fetch service ports",
+		})
+	}
+
+	page = page.fitTo(total)
+
+	var sps []models.ServicePort
+	err = h.db.Order("id").Limit(page.size).Offset(page.offset()).Find(&sps).Error
+	if err != nil {
+		h.logger.Error("failed to fetch service ports", zap.Error(err))
+		return c.JSON(http.StatusInternalServerError, models.Response{
+			Success: false,
+			Error:   "Failed to fetch service ports",
+		})
+	}
+
+	// Only the assignments of the rows on this page are read. The table holds a
+	// row per Host and service port, and the page says nothing about the ones
+	// it does not carry, so reading the rest is work no answer is built from.
+	ids := make([]uint, 0, len(sps))
+	for _, sp := range sps {
+		ids = append(ids, sp.ID)
+	}
+
+	assigned := make(map[uint]bool, len(ids))
+	if len(ids) > 0 {
+		var spIDs []uint
+		err = h.db.Model(&models.HostServicePort{}).
+			Where("host_id = ? AND sp_id IN ?", host.ID, ids).Pluck("sp_id", &spIDs).Error
+		if err != nil {
+			h.logger.Error("failed to fetch the service port assignments of a Host",
+				zap.Error(err), zap.Uint64("host_id", id))
+			return c.JSON(http.StatusInternalServerError, models.Response{
+				Success: false,
+				Error:   "Failed to fetch service ports",
+			})
+		}
+
+		for _, spID := range spIDs {
+			assigned[spID] = true
+		}
+	}
+
+	// An empty page is an array and not null, for the reason ListHosts says.
+	items := make([]hostServicePortItem, 0, len(sps))
+	for _, sp := range sps {
+		items = append(items, hostServicePortItem{ServicePort: sp, Assigned: assigned[sp.ID]})
+	}
+
+	return c.JSON(http.StatusOK, models.Response{
+		Success: true,
+		Data: listPageOf{
+			Items: items,
+			Total: total,
+			Page:  page.number,
+			Size:  page.size,
+		},
+	})
+}
+
+// hostServicePortChange is the change a request makes to the assignments of one
+// Host: the service ports to give it, and the ones to take away.
+//
+// It is a change and not the whole set of service ports the Host is to carry,
+// and that is the point of the shape. The list it is made from is served a page
+// at a time, so a screen holds one page and knows nothing of the rows on the
+// pages it has not read. A whole set sent from there would name what is on that
+// page alone, and every assignment outside it would be deleted by a request
+// that was meant to tick one box. A change can only say what was touched.
+type hostServicePortChange struct {
+	Add    []uint `json:"add"`
+	Remove []uint `json:"remove"`
+}
+
+// hostServicePortChanged is what the change did: how many assignments it wrote
+// and how many it removed. The two are counted over the rows and not over the
+// request, because a service port already assigned is asked for again without
+// being written, and one that is not assigned is removed without a row going.
+type hostServicePortChanged struct {
+	Added   int `json:"added"`
+	Removed int `json:"removed"`
+}
+
+// UpdateHostServicePorts adds and removes assignments of one Host.
+//
+// The whole of the change lands or none of it does. The reconcile loop reads
+// these rows to decide which tunnels to run, so a change that landed in part
+// would leave the installation carrying traffic over a set of tunnels that no
+// request asked for, and nothing later would put it right.
+func (h *Handler) UpdateHostServicePorts(c echo.Context) error {
+	id, err := strconv.ParseUint(c.Param("id"), 10, 32)
+	if err != nil {
+		return c.JSON(http.StatusBadRequest, models.Response{
+			Success: false,
+			Error:   "Invalid Host ID: " + err.Error(),
+		})
+	}
+
+	// The body is read before the transaction is opened, for the reason
+	// UpdateHost gives: reading it waits on the client, and the transaction
+	// holds a lock until it is committed.
+	var req hostServicePortChange
+	err = c.Bind(&req)
+	if err != nil {
+		return c.JSON(http.StatusBadRequest, models.Response{
+			Success: false,
+			Error:   "Invalid request body: " + err.Error(),
+		})
+	}
+
+	add := sortedIDs(req.Add)
+	remove := sortedIDs(req.Remove)
+
+	// A service port named on both sides is refused rather than settled here.
+	// Which of the two would win is a guess at what the request meant, and what
+	// it decides is whether a tunnel to that service runs.
+	both := idsIn(add, remove)
+	if len(both) > 0 {
+		return c.JSON(http.StatusBadRequest, models.Response{
+			Success: false,
+			Error:   "The change names the same service port to add and to remove: " + idList(both),
+		})
+	}
+
+	tx := h.db.Begin()
+	err = tx.Error
+	if err != nil {
+		h.logger.Error("failed to start the transaction", zap.Error(err))
+		return c.JSON(http.StatusInternalServerError, models.Response{
+			Success: false,
+			Error:   "Failed to start transaction",
+		})
+	}
+
+	// Read inside the transaction as in UpdateHost: the rows written below name
+	// this Host, and a Host deleted between the read and them would be left
+	// with assignments after it is gone.
+	var host models.Host
+	err = tx.First(&host, id).Error
+	if err != nil {
+		tx.Rollback()
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return c.JSON(http.StatusNotFound, models.Response{
+				Success: false,
+				Error:   "Host not found",
+			})
+		}
+		h.logger.Error("failed to fetch Host", zap.Error(err))
+		return c.JSON(http.StatusInternalServerError, models.Response{
+			Success: false,
+			Error:   "Failed to fetch Host",
+		})
+	}
+
+	// Every service port to be added is looked for before anything is written,
+	// inside the same transaction, so that a request naming one that is not
+	// stored changes nothing rather than landing the ones that were read first.
+	// The refusal says which identifiers they are: the request is the thing
+	// that is wrong and the client is the one that can put it right.
+	if len(add) > 0 {
+		var stored []uint
+		err = tx.Model(&models.ServicePort{}).Where("id IN ?", add).Pluck("id", &stored).Error
+		if err != nil {
+			tx.Rollback()
+			h.logger.Error("failed to fetch service ports", zap.Error(err))
+			return c.JSON(http.StatusInternalServerError, models.Response{
+				Success: false,
+				Error:   "Failed to fetch service ports",
+			})
+		}
+
+		missing := idsNotIn(add, stored)
+		if len(missing) > 0 {
+			tx.Rollback()
+			return c.JSON(http.StatusBadRequest, models.Response{
+				Success: false,
+				Error:   "No such service port: " + idList(missing),
+			})
+		}
+	}
+
+	// An assignment that is already there is left where it is rather than
+	// refused. The screen sends what it was told to change, and a box that was
+	// ticked while the request was on its way is the state it asked for.
+	added := 0
+	if len(add) > 0 {
+		var carried []uint
+		err = tx.Model(&models.HostServicePort{}).
+			Where("host_id = ? AND sp_id IN ?", host.ID, add).Pluck("sp_id", &carried).Error
+		if err != nil {
+			tx.Rollback()
+			h.logger.Error("failed to fetch the service port assignments of a Host",
+				zap.Error(err), zap.Uint64("host_id", id))
+			return c.JSON(http.StatusInternalServerError, models.Response{
+				Success: false,
+				Error:   "Failed to update the service ports of the Host",
+			})
+		}
+
+		for _, spID := range idsNotIn(add, carried) {
+			err = tx.Create(&models.HostServicePort{HostID: host.ID, SPID: spID}).Error
+			if err != nil {
+				tx.Rollback()
+				h.logger.Error("failed to assign a service port to a Host",
+					zap.Error(err), zap.Uint64("host_id", id), zap.Uint("service_port_id", spID))
+				return c.JSON(http.StatusInternalServerError, models.Response{
+					Success: false,
+					Error:   "Failed to update the service ports of the Host",
+				})
+			}
+
+			added++
+		}
+	}
+
+	// A service port that is not assigned is removed without a row going, and
+	// that is not an error either: the state the request asked for is the state
+	// it is left in.
+	removed := 0
+	if len(remove) > 0 {
+		result := tx.Where("host_id = ? AND sp_id IN ?", host.ID, remove).Delete(&models.HostServicePort{})
+		if result.Error != nil {
+			tx.Rollback()
+			h.logger.Error("failed to remove the service ports of a Host",
+				zap.Error(result.Error), zap.Uint64("host_id", id))
+			return c.JSON(http.StatusInternalServerError, models.Response{
+				Success: false,
+				Error:   "Failed to update the service ports of the Host",
+			})
+		}
+
+		removed = int(result.RowsAffected)
+	}
+
+	err = tx.Commit().Error
+	if err != nil {
+		h.logger.Error("failed to commit the transaction", zap.Error(err))
+		return c.JSON(http.StatusInternalServerError, models.Response{
+			Success: false,
+			Error:   "Failed to commit transaction",
+		})
+	}
+
+	// The loop is woken once the transaction is committed, as everywhere here,
+	// and only when a row was written: a change that left the table as it was
+	// leaves the tunnels the loop wants as they were, so there is nothing for a
+	// pass to do about it.
+	if added > 0 || removed > 0 {
+		h.manager.WakeReconcile()
+	}
+
+	return c.JSON(http.StatusOK, models.Response{
+		Success: true,
+		Data:    hostServicePortChanged{Added: added, Removed: removed},
+	})
+}
+
+// sortedIDs is the identifiers of a list, each of them once and in order, so
+// that what is written and what a refusal names do not follow the order the
+// request happened to be written in.
+func sortedIDs(ids []uint) []uint {
+	seen := make(map[uint]bool, len(ids))
+	unique := make([]uint, 0, len(ids))
+
+	for _, id := range ids {
+		if seen[id] {
+			continue
+		}
+
+		seen[id] = true
+		unique = append(unique, id)
+	}
+
+	sort.Slice(unique, func(i, j int) bool { return unique[i] < unique[j] })
+
+	return unique
+}
+
+// idsIn is the identifiers of ids that are in other, in the order of ids.
+func idsIn(ids, other []uint) []uint {
+	return idsOf(ids, other, true)
+}
+
+// idsNotIn is the identifiers of ids that are not in other, in the order of ids.
+func idsNotIn(ids, other []uint) []uint {
+	return idsOf(ids, other, false)
+}
+
+// idsOf is the identifiers of ids whose being in other is what is wanted.
+func idsOf(ids, other []uint, wanted bool) []uint {
+	in := make(map[uint]bool, len(other))
+	for _, id := range other {
+		in[id] = true
+	}
+
+	found := make([]uint, 0, len(ids))
+	for _, id := range ids {
+		if in[id] == wanted {
+			found = append(found, id)
+		}
+	}
+
+	return found
+}
+
+// idList is identifiers as a refusal names them.
+func idList(ids []uint) string {
+	text := make([]string, 0, len(ids))
+	for _, id := range ids {
+		text = append(text, strconv.FormatUint(uint64(id), 10))
+	}
+
+	return strings.Join(text, ", ")
 }
 
 // GetStatus answers the counts of the installation along with one page of the

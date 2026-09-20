@@ -3409,3 +3409,371 @@ func TestDeleteHandlersLeaveTheAssignmentsWhenTheRowIsGone(t *testing.T) {
 		})
 	}
 }
+
+// newAssignmentDB is a database holding these Hosts and service ports with
+// these assignments alone, given as "host-serviceport" pairs. newRowsDB assigns
+// every service port to every Host, which is the state a fresh installation is
+// migrated into, and a test of the assignments has to say which rows are there.
+func newAssignmentDB(t *testing.T, hosts []models.Host, sps []models.ServicePort, pairs ...[2]uint) *gorm.DB {
+	t.Helper()
+
+	db := newRowsDB(t, hosts, sps, nil)
+
+	err := db.Where("1 = 1").Delete(&models.HostServicePort{}).Error
+	if err != nil {
+		t.Fatalf("failed to clear the assignments: %v", err)
+	}
+
+	for _, pair := range pairs {
+		err = db.Create(&models.HostServicePort{HostID: pair[0], SPID: pair[1]}).Error
+		if err != nil {
+			t.Fatalf("failed to store an assignment: %v", err)
+		}
+	}
+
+	return db
+}
+
+// hostServicePortRequest builds one request to the service ports of a Host, the
+// way echo hands it to a handler.
+func hostServicePortRequest(t *testing.T, method, target, id, body string) (echo.Context, *httptest.ResponseRecorder) {
+	t.Helper()
+
+	e := echo.New()
+	e.Validator = &testValidator{validator: validator.New()}
+	req := httptest.NewRequest(method, target, strings.NewReader(body))
+	req.Header.Set(echo.HeaderContentType, echo.MIMEApplicationJSON)
+	rec := httptest.NewRecorder()
+	c := e.NewContext(req, rec)
+
+	c.SetParamNames("id")
+	c.SetParamValues(id)
+
+	return c, rec
+}
+
+// hostServicePortPage reads a page of the service ports of a Host: the
+// identifiers on it, which of them the Host carries, and which page of which
+// size of how many rows this is.
+func hostServicePortPage(t *testing.T, rec *httptest.ResponseRecorder) (ids []int, assigned map[int]bool,
+	total, page, size int) {
+	t.Helper()
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d, body: %s", rec.Code, http.StatusOK, rec.Body.String())
+	}
+
+	success, data := decodeResponse(t, rec)
+	if !success {
+		t.Fatalf("success = false, body: %s", rec.Body.String())
+	}
+
+	rows, ok := data["items"].([]interface{})
+	if !ok {
+		t.Fatalf("the answer carries no items array, body: %s", rec.Body.String())
+	}
+
+	ids = make([]int, 0, len(rows))
+	assigned = make(map[int]bool, len(rows))
+
+	for _, row := range rows {
+		fields, ok := row.(map[string]interface{})
+		if !ok {
+			t.Fatalf("a row of the page is not an object, body: %s", rec.Body.String())
+		}
+
+		id, ok := fields["id"].(float64)
+		if !ok {
+			t.Fatalf("a row of the page carries no id, body: %s", rec.Body.String())
+		}
+
+		carried, ok := fields["assigned"].(bool)
+		if !ok {
+			t.Fatalf("a row of the page does not say whether it is assigned, body: %s", rec.Body.String())
+		}
+
+		ids = append(ids, int(id))
+		assigned[int(id)] = carried
+	}
+
+	return ids, assigned, answerNumber(t, rec, data, "total"),
+		answerNumber(t, rec, data, "page"), answerNumber(t, rec, data, "size")
+}
+
+// TestListHostServicePortsCarriesTheOnesTheHostDoesNotHave pins the shape the
+// assignment screen is drawn from: every service port of the page, each saying
+// whether this Host carries it. A list of the assigned ones alone would leave
+// the screen with no row to offer as the next assignment.
+func TestListHostServicePortsCarriesTheOnesTheHostDoesNotHave(t *testing.T) {
+	hosts := []models.Host{statusHost(1, true), statusHost(2, true)}
+	sps := []models.ServicePort{statusServicePort(1), statusServicePort(2), statusServicePort(3)}
+
+	db := newAssignmentDB(t, hosts, sps, [2]uint{1, 2}, [2]uint{2, 3})
+
+	h := NewHandler(db, &wakeRecorder{tx: &txConnPool{}}, zap.NewNop(), newTestCipher(t))
+
+	c, rec := getRequest(t, "/api/host/1/service-port", "id", "1")
+
+	err := h.ListHostServicePorts(c)
+	if err != nil {
+		t.Fatalf("ListHostServicePorts returned an error: %v", err)
+	}
+
+	ids, assigned, total, page, size := hostServicePortPage(t, rec)
+
+	if fmt.Sprint(ids) != "[1 2 3]" {
+		t.Fatalf("the page carries %v, want every service port", ids)
+	}
+	if assigned[1] || !assigned[2] || assigned[3] {
+		t.Fatalf("the page says %v is assigned, want the one the Host carries", assigned)
+	}
+	if total != 3 || page != 1 || size != 10 {
+		t.Errorf("total = %d, page = %d and size = %d, want 3 rows on the first page of ten", total, page, size)
+	}
+}
+
+// TestListHostServicePortsPagesOverTheServicePorts pins that the list is paged
+// over the service ports themselves: the second page carries the rows the first
+// one does not, and the assignments follow the rows onto it.
+func TestListHostServicePortsPagesOverTheServicePorts(t *testing.T) {
+	hosts := []models.Host{statusHost(1, true)}
+
+	sps := make([]models.ServicePort, 0, 12)
+	for id := 1; id <= 12; id++ {
+		sps = append(sps, statusServicePort(uint(id)))
+	}
+
+	db := newAssignmentDB(t, hosts, sps, [2]uint{1, 1}, [2]uint{1, 12})
+
+	h := NewHandler(db, &wakeRecorder{tx: &txConnPool{}}, zap.NewNop(), newTestCipher(t))
+
+	c, rec := getRequest(t, "/api/host/1/service-port?page=1", "id", "1")
+
+	err := h.ListHostServicePorts(c)
+	if err != nil {
+		t.Fatalf("ListHostServicePorts returned an error: %v", err)
+	}
+
+	first, firstAssigned, total, page, size := hostServicePortPage(t, rec)
+
+	if fmt.Sprint(first) != "[1 2 3 4 5 6 7 8 9 10]" {
+		t.Fatalf("the first page carries %v, want the first ten service ports", first)
+	}
+	if !firstAssigned[1] || firstAssigned[2] {
+		t.Errorf("the first page says %v is assigned, want the one the Host carries", firstAssigned)
+	}
+	if total != 12 || page != 1 || size != 10 {
+		t.Errorf("total = %d, page = %d and size = %d, want 12 rows on the first page of ten", total, page, size)
+	}
+
+	c, rec = getRequest(t, "/api/host/1/service-port?page=2", "id", "1")
+
+	err = h.ListHostServicePorts(c)
+	if err != nil {
+		t.Fatalf("ListHostServicePorts returned an error: %v", err)
+	}
+
+	second, secondAssigned, total, page, size := hostServicePortPage(t, rec)
+
+	if fmt.Sprint(second) != "[11 12]" {
+		t.Fatalf("the second page carries %v, want the rows the first one does not", second)
+	}
+	if secondAssigned[11] || !secondAssigned[12] {
+		t.Errorf("the second page says %v is assigned, want the one the Host carries", secondAssigned)
+	}
+	if total != 12 || page != 2 || size != 10 {
+		t.Errorf("total = %d, page = %d and size = %d, want 12 rows on the second page of ten", total, page, size)
+	}
+}
+
+// TestUpdateHostServicePortsWritesTheChangeItWasGiven pins that the change is
+// what it says: the named service ports are added, the named one is removed,
+// and the assignments of another Host are left alone.
+func TestUpdateHostServicePortsWritesTheChangeItWasGiven(t *testing.T) {
+	hosts := []models.Host{statusHost(1, true), statusHost(2, true)}
+	sps := []models.ServicePort{statusServicePort(1), statusServicePort(2), statusServicePort(3)}
+
+	db := newAssignmentDB(t, hosts, sps, [2]uint{1, 2}, [2]uint{2, 2})
+
+	manager := &wakeRecorder{tx: &txConnPool{}}
+	h := NewHandler(db, manager, zap.NewNop(), newTestCipher(t))
+
+	c, rec := hostServicePortRequest(t, http.MethodPut, "/api/host/1/service-port", "1",
+		`{"add":[1,3],"remove":[2]}`)
+
+	err := h.UpdateHostServicePorts(c)
+	if err != nil {
+		t.Fatalf("UpdateHostServicePorts returned an error: %v", err)
+	}
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d, body: %s", rec.Code, http.StatusOK, rec.Body.String())
+	}
+
+	after := storedAssignments(t, db)
+	if strings.Join(after, ",") != "1-1,1-3,2-2" {
+		t.Fatalf("the assignments after the change are %v, want the two that were added and the other Host", after)
+	}
+
+	_, data := decodeResponse(t, rec)
+	if answerNumber(t, rec, data, "added") != 2 || answerNumber(t, rec, data, "removed") != 1 {
+		t.Errorf("the answer reports %v, want two added and one removed", data)
+	}
+
+	wakes, _ := manager.counts()
+	if wakes != 1 {
+		t.Errorf("reconcile wake-ups = %d, want 1: the tunnels follow the assignments", wakes)
+	}
+}
+
+// TestUpdateHostServicePortsRefusesAServicePortThatIsNotStored pins that a
+// change naming a service port that is not there lands no part of itself. The
+// identifier that is stored is named first on purpose: written before the one
+// that is missing is read, it would be an assignment nobody asked for and
+// nothing later would take it back.
+func TestUpdateHostServicePortsRefusesAServicePortThatIsNotStored(t *testing.T) {
+	hosts := []models.Host{statusHost(1, true)}
+	sps := []models.ServicePort{statusServicePort(1), statusServicePort(2)}
+
+	db := newAssignmentDB(t, hosts, sps, [2]uint{1, 2})
+
+	manager := &wakeRecorder{tx: &txConnPool{}}
+	h := NewHandler(db, manager, zap.NewNop(), newTestCipher(t))
+
+	c, rec := hostServicePortRequest(t, http.MethodPut, "/api/host/1/service-port", "1",
+		`{"add":[1,99],"remove":[2]}`)
+
+	err := h.UpdateHostServicePorts(c)
+	if err != nil {
+		t.Fatalf("UpdateHostServicePorts returned an error: %v", err)
+	}
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want %d, body: %s", rec.Code, http.StatusBadRequest, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "99") {
+		t.Errorf("the refusal does not say which service port is not there, body: %s", rec.Body.String())
+	}
+
+	after := storedAssignments(t, db)
+	if strings.Join(after, ",") != "1-2" {
+		t.Fatalf("the assignments after the refusal are %v, want the stored one and nothing else", after)
+	}
+
+	wakes, _ := manager.counts()
+	if wakes != 0 {
+		t.Errorf("reconcile wake-ups = %d, want 0: nothing was written", wakes)
+	}
+}
+
+// TestUpdateHostServicePortsRefusesAServicePortOnBothSides pins that a service
+// port named to be added and to be removed is refused. Which of the two would
+// win is a guess at what the request meant, and what it decides is whether a
+// tunnel runs.
+func TestUpdateHostServicePortsRefusesAServicePortOnBothSides(t *testing.T) {
+	hosts := []models.Host{statusHost(1, true)}
+	sps := []models.ServicePort{statusServicePort(1), statusServicePort(2)}
+
+	db := newAssignmentDB(t, hosts, sps, [2]uint{1, 2})
+
+	h := NewHandler(db, &wakeRecorder{tx: &txConnPool{}}, zap.NewNop(), newTestCipher(t))
+
+	c, rec := hostServicePortRequest(t, http.MethodPut, "/api/host/1/service-port", "1",
+		`{"add":[1,2],"remove":[2]}`)
+
+	err := h.UpdateHostServicePorts(c)
+	if err != nil {
+		t.Fatalf("UpdateHostServicePorts returned an error: %v", err)
+	}
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want %d, body: %s", rec.Code, http.StatusBadRequest, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "2") {
+		t.Errorf("the refusal does not say which service port is on both sides, body: %s", rec.Body.String())
+	}
+
+	after := storedAssignments(t, db)
+	if strings.Join(after, ",") != "1-2" {
+		t.Fatalf("the assignments after the refusal are %v, want the stored one and nothing else", after)
+	}
+}
+
+// TestUpdateHostServicePortsTakesAChangeThatChangesNothing pins the three ways
+// a change asks for the state that is already there: an empty change, an
+// assignment that is already made, and one that is already gone. None of them
+// is an error, and none of them touches a row.
+func TestUpdateHostServicePortsTakesAChangeThatChangesNothing(t *testing.T) {
+	tests := []struct {
+		name string
+		body string
+	}{
+		{name: "nothing on either side", body: `{}`},
+		{name: "both sides empty", body: `{"add":[],"remove":[]}`},
+		{name: "a service port that is already assigned", body: `{"add":[2]}`},
+		{name: "a service port that is not assigned", body: `{"remove":[1]}`},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			hosts := []models.Host{statusHost(1, true)}
+			sps := []models.ServicePort{statusServicePort(1), statusServicePort(2)}
+
+			db := newAssignmentDB(t, hosts, sps, [2]uint{1, 2})
+
+			h := NewHandler(db, &wakeRecorder{tx: &txConnPool{}}, zap.NewNop(), newTestCipher(t))
+
+			c, rec := hostServicePortRequest(t, http.MethodPut, "/api/host/1/service-port", "1", tt.body)
+
+			err := h.UpdateHostServicePorts(c)
+			if err != nil {
+				t.Fatalf("UpdateHostServicePorts returned an error: %v", err)
+			}
+			if rec.Code != http.StatusOK {
+				t.Fatalf("status = %d, want %d, body: %s", rec.Code, http.StatusOK, rec.Body.String())
+			}
+
+			after := storedAssignments(t, db)
+			if strings.Join(after, ",") != "1-2" {
+				t.Fatalf("the assignments after the change are %v, want the stored one", after)
+			}
+		})
+	}
+}
+
+// TestHostServicePortHandlersAnswerNotFoundForAHostThatIsGone pins that both
+// ends are about one Host. The list would otherwise answer every service port
+// as assigned to nothing, which is what a Host that carries none looks like,
+// and the change would write assignments naming a Host that is not there.
+func TestHostServicePortHandlersAnswerNotFoundForAHostThatIsGone(t *testing.T) {
+	hosts := []models.Host{statusHost(1, true)}
+	sps := []models.ServicePort{statusServicePort(1)}
+
+	db := newAssignmentDB(t, hosts, sps, [2]uint{1, 1})
+
+	h := NewHandler(db, &wakeRecorder{tx: &txConnPool{}}, zap.NewNop(), newTestCipher(t))
+
+	c, rec := getRequest(t, "/api/host/9/service-port", "id", "9")
+
+	err := h.ListHostServicePorts(c)
+	if err != nil {
+		t.Fatalf("ListHostServicePorts returned an error: %v", err)
+	}
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("the list answered %d for a Host that is not stored, want %d, body: %s",
+			rec.Code, http.StatusNotFound, rec.Body.String())
+	}
+
+	c, rec = hostServicePortRequest(t, http.MethodPut, "/api/host/9/service-port", "9", `{"add":[1]}`)
+
+	err = h.UpdateHostServicePorts(c)
+	if err != nil {
+		t.Fatalf("UpdateHostServicePorts returned an error: %v", err)
+	}
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("the change answered %d for a Host that is not stored, want %d, body: %s",
+			rec.Code, http.StatusNotFound, rec.Body.String())
+	}
+
+	after := storedAssignments(t, db)
+	if strings.Join(after, ",") != "1-1" {
+		t.Fatalf("the assignments after the change are %v, want the stored one", after)
+	}
+}

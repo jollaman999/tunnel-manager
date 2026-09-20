@@ -827,6 +827,12 @@ func main() {
 	g.PUT("/host/:id", h.UpdateHost)
 	g.DELETE("/host/:id", h.DeleteHost)
 
+	// The service ports a Host carries are read and changed under the Host, on
+	// the group that carries the session check, because an assignment decides
+	// which tunnels this installation runs.
+	g.GET("/host/:id/service-port", h.ListHostServicePorts)
+	g.PUT("/host/:id/service-port", h.UpdateHostServicePorts)
+
 	g.POST("/service-port", h.CreateServicePort)
 	g.GET("/service-port", h.ListServicePorts)
 	g.GET("/service-port/:id", h.GetServicePort)
