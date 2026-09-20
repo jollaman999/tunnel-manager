@@ -718,3 +718,68 @@ func TestTheServerAndTheUIAgreeOnTheLanguages(t *testing.T) {
 		}
 	}
 }
+
+// keyShaped is a string literal in a script that reads as a catalog key. It is
+// the same shape catalogKey holds a key to, anchored so that a sentence which
+// happens to contain a dotted word is not taken for one.
+var keyShaped = regexp.MustCompile(`^[a-z][a-z0-9]*(?:-[a-z0-9]+)*(?:\.[a-z][a-z0-9]*(?:-[a-z0-9]+)*)+` +
+	`\.(?:title|label|hint|button|link|column|option|empty|notice|confirm|error|aria|text)$`)
+
+// scriptKeys is every key the two scripts name, however they name it.
+//
+// It is not only the t("...") calls. A sentence that reads differently for one
+// and for many is two keys picked between before either is looked up, and the
+// navigation holds the key of each screen rather than its words, so neither of
+// those is inside a t( and neither would be seen by a scan that looked only
+// there.
+func scriptKeys(t *testing.T) map[string]bool {
+	t.Helper()
+
+	literal := regexp.MustCompile(`"([^"\\\n]*)"`)
+	keys := map[string]bool{}
+
+	for _, name := range []string{"app.js", "screens.js"} {
+		for _, found := range literal.FindAllStringSubmatch(readStatic(t, name), -1) {
+			if keyShaped.MatchString(found[1]) {
+				keys[found[1]] = true
+			}
+		}
+	}
+
+	return keys
+}
+
+// TestEveryKeyTheScriptsNameIsInEnglish is the wider half of the check above.
+// A key that is picked between before it is looked up would be handed back as
+// its own name on the screen, exactly as a missing t("...") key would, and
+// nothing else would catch it.
+func TestEveryKeyTheScriptsNameIsInEnglish(t *testing.T) {
+	base := readCatalog(t, baseCatalog)
+	keys := scriptKeys(t)
+
+	t.Logf("keys named in the scripts: %d", len(keys))
+
+	if len(keys) == 0 {
+		t.Fatalf("the scripts name no key at all, so this test checks nothing")
+	}
+
+	for key := range keys {
+		if _, ok := base[key]; !ok {
+			t.Errorf("the scripts name %q, which the English catalog has not got", key)
+		}
+	}
+}
+
+// TestEveryEnglishKeyIsAskedFor is the other direction, and it is what keeps
+// the catalog from growing a tail. A key no screen asks for is a string that
+// costs thirteen translations and reaches nobody, and it is also what a key
+// renamed in the scripts and not in the catalog leaves behind.
+func TestEveryEnglishKeyIsAskedFor(t *testing.T) {
+	keys := scriptKeys(t)
+
+	for key := range readCatalog(t, baseCatalog) {
+		if !keys[key] {
+			t.Errorf("the English catalog holds %q, which no script asks for", key)
+		}
+	}
+}

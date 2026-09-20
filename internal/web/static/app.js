@@ -286,7 +286,7 @@ function showScreen(name) {
 
   const screen = screens[name];
   if (screen === undefined) {
-    navigate("status", "There is no screen at " + window.location.pathname, true);
+    navigate("status", t("app.no-screen.error", { path: window.location.pathname }), true);
 
     return;
   }
@@ -534,7 +534,7 @@ function navigation() {
   // in, and a tab left open says nothing about what it belongs to.
   const brand = document.createElement("div");
   brand.className = "brand";
-  brand.textContent = "Tunnel Manager";
+  brand.textContent = t("common.brand.text");
   top.appendChild(brand);
 
   const bar = document.createElement("nav");
@@ -547,7 +547,7 @@ function navigation() {
 
     const anchor = document.createElement("a");
     anchor.href = screenPath(name);
-    anchor.textContent = screen.label;
+    anchor.textContent = t(screen.label);
     anchor.dataset.screen = name;
 
     if (name === currentScreen) {
@@ -608,14 +608,14 @@ async function apiCall(method, path, body) {
   try {
     response = await fetch(path, options);
   } catch (error) {
-    throw new ApiError("Cannot reach the server: " + error.message);
+    throw new ApiError(t("api.unreachable.error", { reason: error.message }));
   }
 
   const payload = await readPayload(response);
 
   if (response.status === 401 && path !== apiLoginPath && path !== apiUninstallPath &&
       path !== apiAccountPath) {
-    navigate("login", "The session has ended. Sign in again.");
+    navigate("login", t("api.session-ended.error"));
 
     throw new Redirected();
   }
@@ -624,7 +624,7 @@ async function apiCall(method, path, body) {
   // 403s, if any are ever added, stay errors and are shown as they came.
   if (response.status === 403 && path !== apiSetupPath &&
       errorOf(payload, response).toLowerCase().indexOf("setup") !== -1) {
-    navigate("setup", "Finish setting up the account first.", false);
+    navigate("setup", t("api.setup-first.error"), false);
 
     throw new Redirected();
   }
@@ -695,7 +695,7 @@ function errorOf(payload, response) {
     }
   }
 
-  return "The server answered " + response.status + " " + response.statusText;
+  return t("api.status.error", { status: response.status, said: response.statusText });
 }
 
 // element builds a node with text in it. The text is set as text, which is the
@@ -913,10 +913,10 @@ const keyFileLimit = 64 * 1024;
 // onto one of these too, and it is a file of another size that is named another
 // way. Left out, they are the key file this was first written for.
 function dropArea(input, spec) {
-  const what = spec.what === undefined ? "the key file" : spec.what;
-  const ever = spec.ever === undefined ? "a private key" : spec.ever;
+  const what = spec.what === undefined ? t("form.drop-key.text") : spec.what;
+  const ever = spec.ever === undefined ? t("form.drop-key-ever.text") : spec.ever;
   const limit = spec.limit === undefined ? keyFileLimit : spec.limit;
-  const then = spec.then === undefined ? "save" : spec.then;
+  const then = spec.then === undefined ? t("form.drop-then-save.text") : spec.then;
 
   const zone = document.createElement("div");
 
@@ -959,7 +959,7 @@ function dropArea(input, spec) {
     const files = transfer === null || transfer === undefined ? null : transfer.files;
 
     if (files === null || files === undefined || files.length === 0) {
-      say("That is not a file. Drop " + what + " itself, or paste the text into the box.", true);
+      say(t("form.drop-not-file.error", { what: what }), true);
 
       return;
     }
@@ -967,8 +967,8 @@ function dropArea(input, spec) {
     const file = files[0];
 
     if (file.size > limit) {
-      say(file.name + " is " + file.size + " bytes, which is larger than " + ever + " ever is. " +
-        "Nothing larger than " + limit + " bytes is read.", true);
+      say(t("form.drop-too-large.error",
+        { name: file.name, size: file.size, ever: ever, limit: limit }), true);
 
       return;
     }
@@ -976,12 +976,12 @@ function dropArea(input, spec) {
     const reader = new FileReader();
 
     reader.onerror = function () {
-      say(file.name + " could not be read.", true);
+      say(t("form.drop-unreadable.error", { name: file.name }), true);
     };
 
     reader.onload = function () {
       input.value = String(reader.result);
-      say(file.name + " was read into the box. Check it, then " + then + ".", false);
+      say(t("form.drop-read.text", { name: file.name, then: then }), false);
     };
 
     reader.readAsText(file);
@@ -995,15 +995,23 @@ function dropArea(input, spec) {
 // a list cannot hold a value that is not on it, so there is nothing to check
 // and nothing to report under it.
 //
+// An option is either the value itself, which is what a list of settings the
+// server named looks like, or a pair: the value the server knows it by and the
+// word the screen says it in. The pair is what a value this UI made up needs,
+// since that one is a word to be translated and the value behind it is not.
+//
 // The options are built as elements with their text set as text, the rule every
 // value drawn here follows.
 function listControl(field) {
   const select = document.createElement("select");
 
   for (const option of field.options) {
-    const node = element("option", option);
+    const said = option !== null && typeof option === "object"
+      ? option
+      : { value: option, text: option };
+    const node = element("option", said.text);
 
-    node.value = option;
+    node.value = said.value;
     select.appendChild(node);
   }
 
@@ -1112,7 +1120,7 @@ function buildForm(spec) {
   buttons.appendChild(submit);
 
   if (spec.onCancel !== undefined) {
-    buttons.appendChild(actionButton("Cancel", spec.name + "-cancel", spec.onCancel));
+    buttons.appendChild(actionButton(t("common.cancel.button"), spec.name + "-cancel", spec.onCancel));
   }
 
   form.appendChild(buttons);
@@ -1441,7 +1449,7 @@ function filterInput(input, disallowed) {
 function checkPasswordConfirmation(value, password) {
   return String(value) === String(password)
     ? ""
-    : "The two do not match. Type the new password again.";
+    : t("form.password-mismatch.error");
 }
 
 // checkPort says what is wrong with a port, or "" when nothing is. The box only
@@ -1451,12 +1459,12 @@ function checkPort(value) {
   const trimmed = String(value).trim();
 
   if (trimmed === "") {
-    return "Enter a port.";
+    return t("form.port-empty.error");
   }
 
   const port = Number(trimmed);
   if (!Number.isInteger(port) || port < minPort || port > maxPort) {
-    return "The port has to be between " + minPort + " and " + maxPort + ".";
+    return t("form.port-range.error", { least: minPort, most: maxPort });
   }
 
   return "";
@@ -1469,12 +1477,12 @@ function checkSeconds(value) {
   const trimmed = String(value).trim();
 
   if (trimmed === "") {
-    return "Enter a number of seconds.";
+    return t("form.seconds-empty.error");
   }
 
   const seconds = Number(trimmed);
   if (!Number.isInteger(seconds) || seconds < 1) {
-    return "The period has to be one second or more.";
+    return t("form.seconds-min.error");
   }
 
   return "";
@@ -1487,12 +1495,12 @@ function checkCount(value) {
   const trimmed = String(value).trim();
 
   if (trimmed === "") {
-    return "Enter a number.";
+    return t("form.count-empty.error");
   }
 
   const count = Number(trimmed);
   if (!Number.isInteger(count) || count < 0) {
-    return "The number cannot be negative.";
+    return t("form.count-negative.error");
   }
 
   return "";
@@ -1505,7 +1513,7 @@ function checkCount(value) {
 // configuration file left to put it back in.
 function checkPath(value) {
   if (String(value).trim() === "") {
-    return "Enter a path.";
+    return t("form.path-empty.error");
   }
 
   return "";
@@ -1516,11 +1524,11 @@ function checkIP(value) {
   const trimmed = String(value).trim();
 
   if (trimmed === "") {
-    return "Enter an IP address.";
+    return t("form.ip-empty.error");
   }
 
   if (!isIPv4(trimmed) && !isIPv6(trimmed)) {
-    return "This is not an IPv4 or an IPv6 address.";
+    return t("form.ip-shape.error");
   }
 
   return "";
@@ -1612,8 +1620,11 @@ function splitGroups(side) {
 
 // byteCountText says how long a password is in the unit it is measured in.
 function byteCountText(value) {
-  return passwordBytes(value) + " bytes (" + minPasswordBytes + " to " + maxPasswordBytes +
-    " are accepted)";
+  return t("form.password-bytes.hint", {
+    bytes: passwordBytes(value),
+    least: minPasswordBytes,
+    most: maxPasswordBytes
+  });
 }
 
 // passwordBytes is how long a password is in the unit the server counts it in.
@@ -1629,13 +1640,11 @@ function checkPasswordLength(value) {
   const bytes = passwordBytes(value);
 
   if (bytes < minPasswordBytes) {
-    return "The password has to be at least " + minPasswordBytes + " bytes. This one is " +
-      bytes + ".";
+    return t("form.password-short.error", { least: minPasswordBytes, bytes: bytes });
   }
 
   if (bytes > maxPasswordBytes) {
-    return "The password has to be at most " + maxPasswordBytes + " bytes. This one is " +
-      bytes + ".";
+    return t("form.password-long.error", { most: maxPasswordBytes, bytes: bytes });
   }
 
   return "";
@@ -1665,7 +1674,7 @@ function asNumber(value) {
 // the column on one line is timeCell, not writing less into it.
 function formatTime(value) {
   if (typeof value !== "string" || value === "" || value.startsWith("0001-01-01")) {
-    return "never";
+    return t("common.never.text");
   }
 
   const parsed = new Date(value);
@@ -1702,7 +1711,8 @@ function formatBytes(value) {
     return "?";
   }
 
-  const units = ["bytes", "KB", "MB", "GB"];
+  const units = [t("common.unit-bytes.text"), t("common.unit-kb.text"),
+    t("common.unit-mb.text"), t("common.unit-gb.text")];
 
   let size = value;
   let unit = 0;

@@ -1,7 +1,8 @@
 "use strict";
 
-// The screens of the UI. The key is the path under /ui/, the label is what the
-// navigation says, and nav marks the screens that are reached from it: the
+// The screens of the UI. The key is the path under /ui/, the label is the
+// catalog key the navigation is drawn from, and nav marks the screens that are
+// reached from it: the
 // login and the setup are left out because they are what a client without a
 // session or without a finished account is sent to, not places to go on a whim.
 //
@@ -9,21 +10,21 @@
 // arrival: it is where a screen resets what it was left in and starts a timer,
 // neither of which may happen again on every redraw.
 const screens = {
-  status: { label: "Status", nav: true, draw: drawStatus, enter: enterStatus },
-  hosts: { label: "Hosts", nav: true, draw: drawHosts, enter: enterHosts },
+  status: { label: "nav.status.link", nav: true, draw: drawStatus, enter: enterStatus },
+  hosts: { label: "nav.hosts.link", nav: true, draw: drawHosts, enter: enterHosts },
   "service-ports": {
-    label: "Service Ports",
+    label: "nav.service-ports.link",
     nav: true,
     draw: drawServicePorts,
     enter: enterServicePorts
   },
-  logs: { label: "Logs", nav: true, draw: drawLogs, enter: enterLogs },
-  settings: { label: "Settings", nav: true, draw: drawSettings, enter: enterSettings },
+  logs: { label: "nav.logs.link", nav: true, draw: drawLogs, enter: enterLogs },
+  settings: { label: "nav.settings.link", nav: true, draw: drawSettings, enter: enterSettings },
   // The manual is the other screen that asks the server for nothing. What is on
   // it is true of every installation, so there is nothing to fetch, and that is
   // what lets the login put the same thing in a panel for somebody who has no
   // session yet.
-  manual: { label: "Manual", nav: true, draw: drawManual },
+  manual: { label: "nav.manual.link", nav: true, draw: drawManual },
   login: { draw: drawLogin },
   setup: { draw: drawSetup },
   // The screen after the uninstall. It is out of the navigation for the same
@@ -141,7 +142,7 @@ let uninstallResult = null;
 async function logOut() {
   await apiCall("POST", "/api/logout");
 
-  navigate("login", { text: "You are signed out.", kind: "info" });
+  navigate("login", { text: t("login.signed-out.notice"), kind: "info" });
 }
 
 // drawLogin is the screen a client without a session lands on.
@@ -153,15 +154,15 @@ async function logOut() {
 function drawLogin() {
   const form = buildForm({
     name: "login",
-    legend: "Sign in",
-    submitLabel: "Sign in",
+    legend: t("login.form.title"),
+    submitLabel: t("login.submit.button"),
     fields: [
       {
         name: "username",
-        label: "Username",
-        note: "Leave this empty on the first sign in, before the account is set up."
+        label: t("login.username.label"),
+        note: t("login.username.hint")
       },
-      { name: "password", label: "Password", type: "password" }
+      { name: "password", label: t("login.password.label"), type: "password" }
     ],
     onSubmit: submitLogin
   });
@@ -174,9 +175,9 @@ function drawLogin() {
   const help = document.createElement("div");
 
   help.className = "buttons";
-  help.appendChild(actionButton("Manual", "open-manual", openManualPanel));
+  help.appendChild(actionButton(t("manual.open.button"), "open-manual", openManualPanel));
 
-  render("Tunnel Manager", [form, help]);
+  render(t("common.brand.text"), [form, help]);
 }
 
 async function submitLogin(values) {
@@ -189,7 +190,7 @@ async function submitLogin(values) {
   // is in that state is refused everywhere but at the setup.
   if (data !== null && data.setup_required) {
     navigate("setup", {
-      text: "Choose a username and a password for this installation.",
+      text: t("setup.needed.notice"),
       kind: "info"
     });
 
@@ -205,23 +206,24 @@ async function submitLogin(values) {
 function drawSetup() {
   const form = buildForm({
     name: "setup",
-    legend: "Set up the account",
-    submitLabel: "Save",
+    legend: t("setup.form.title"),
+    submitLabel: t("common.save.button"),
     fields: [
-      { name: "username", label: "Username" },
+      { name: "username", label: t("setup.username.label") },
       {
         name: "password",
-        label: "New password",
+        label: t("setup.password.label"),
         type: "password",
         countBytes: true,
-        note: "The length is counted in bytes. One Hangul syllable counts as three."
+        note: t("setup.password.hint")
       },
-      passwordConfirmationField("password_confirmation", "New password again", "password")
+      passwordConfirmationField("password_confirmation", t("setup.password-again.label"),
+        "password")
     ],
     onSubmit: submitSetup
   });
 
-  render("Tunnel Manager", [form]);
+  render(t("common.brand.text"), [form]);
 }
 
 // passwordConfirmationField is the second box a new password is typed into. It
@@ -242,10 +244,7 @@ function passwordConfirmationField(name, label, against, note) {
     check: function (value, values) {
       return checkPasswordConfirmation(value, values[against]);
     },
-    note: note === undefined
-      ? "Type the new password a second time. A slip at the keyboard is caught here " +
-        "rather than at the next sign in."
-      : note
+    note: note === undefined ? t("form.password-again.hint") : note
   };
 }
 
@@ -268,7 +267,7 @@ async function submitSetup(values) {
     throw error;
   }
 
-  navigate("status", { text: "The account is set up.", kind: "info" });
+  navigate("status", { text: t("setup.done.notice"), kind: "info" });
 }
 
 // enterStatus draws the screen and starts the refresh. The period is the one
@@ -305,9 +304,9 @@ async function drawStatus() {
   // followed the page would read as a tunnel count that fell to ten.
   const counts = document.createElement("div");
   counts.className = "counts";
-  counts.appendChild(countBox("Desired", data.desired_tunnels, "desired"));
-  counts.appendChild(countBox("Rows", data.total_tunnels, "total"));
-  counts.appendChild(countBox("Connected", data.connected_tunnels, "connected"));
+  counts.appendChild(countBox(t("status.desired.label"), data.desired_tunnels, "desired"));
+  counts.appendChild(countBox(t("status.rows.label"), data.total_tunnels, "total"));
+  counts.appendChild(countBox(t("status.connected.label"), data.connected_tunnels, "connected"));
 
   const nodes = [counts];
 
@@ -317,8 +316,8 @@ async function drawStatus() {
   const missing = data.desired_tunnels - data.total_tunnels;
   if (missing > 0) {
     nodes.push(statusLine(
-      missing + " " + plural(missing, "tunnel that should", "tunnels that should") +
-        " be running " + plural(missing, "has", "have") + " no row yet.",
+      t(plural(missing, "status.missing-one.notice", "status.missing-many.notice"),
+        { count: missing }),
       "warning"
     ));
   }
@@ -326,20 +325,19 @@ async function drawStatus() {
   const down = data.total_tunnels - data.connected_tunnels;
   if (down > 0) {
     nodes.push(statusLine(
-      down + " " + plural(down, "tunnel has a row but is", "tunnels have rows but are") +
-        " not connected.",
+      t(plural(down, "status.down-one.notice", "status.down-many.notice"), { count: down }),
       "warning"
     ));
   }
 
   if (missing === 0 && down === 0) {
-    nodes.push(statusLine("Every tunnel that should be running is connected.", "ok"));
+    nodes.push(statusLine(t("status.all-connected.notice"), "ok"));
   }
 
   const tunnels = data.tunnels === null || data.tunnels === undefined ? [] : data.tunnels;
 
   if (tunnels.length === 0) {
-    nodes.push(statusLine("There are no tunnels.", "empty"));
+    nodes.push(statusLine(t("status.no-tunnels.empty"), "empty"));
   } else {
     const rows = tunnels.map(function (tunnel) {
       const cells = [
@@ -401,14 +399,16 @@ async function drawStatus() {
     }
 
     nodes.push(buildTable(
-      ["Host", "Service port", "Status", "Server", "Local", "Remote", "Port reached",
-        "Retries", "Last connected"],
+      [t("status.host.column"), t("status.service-port.column"), t("status.status.column"),
+        t("status.server.column"), t("status.local.column"), t("status.remote.column"),
+        t("status.port-reached.column"), t("status.retries.column"),
+        t("status.last-connected.column")],
       rows,
       [0, 1, 7]
     ));
   }
 
-  render("Status", nodes);
+  render(t("status.screen.title"), nodes);
 }
 
 // statusBadge is what a tunnel is, drawn so that the one row that is not
@@ -520,50 +520,32 @@ function reachAdvice(tunnel) {
   box.dataset.reachAdvice = kind;
 
   box.appendChild(element("strong", tried === ""
-    ? "Connected, but the forwarded port did not answer a connection from tunnel-manager."
-    : "Connected, but " + tried + " did not answer a connection from tunnel-manager."));
+    ? t("status.reach-anywhere.text")
+    : t("status.reach-address.text", { address: tried })));
 
-  box.appendChild(element("p", "This says where the port was not reached from, not why it was not. " +
-    "Two things look the same from here and neither is ruled out: the SSH server may have bound the " +
-    "forwarded port to loopback only, or a firewall between this machine and the Host may be dropping " +
-    "the connection. Check both."));
+  box.appendChild(element("p", t("status.reach-cause.text")));
 
   box.appendChild(element("p", banner === ""
-    ? "The SSH server sent no version banner, so there is nothing here that says what it is."
-    : "The SSH server called itself: " + banner));
+    ? t("status.reach-no-banner.text")
+    : t("status.reach-banner.text", { banner: banner })));
 
   if (kind === "openssh") {
-    box.appendChild(element("p", "If it is the SSH server: OpenSSH keeps a forwarded port on loopback " +
-      "unless GatewayPorts says otherwise. This tunnel asks for 0.0.0.0, and GatewayPorts " +
-      "clientspecified in sshd_config is what allows that."));
+    box.appendChild(element("p", t("status.reach-openssh.text")));
     box.appendChild(bulletList([
-      "Where the line goes decides whether it counts. sshd_config usually carries an Include of " +
-        "sshd_config.d/*.conf, and OpenSSH keeps the first value it reads for a setting, so a " +
-        "GatewayPorts added at the bottom is ignored when an included file already set one above it. " +
-        "Change the first GatewayPorts on that path, not the last.",
-      "Check the configuration with sshd -t before restarting, then restart the server: sshd reads its " +
-        "configuration when it starts."
+      t("status.reach-openssh-order.text"),
+      t("status.reach-openssh-restart.text")
     ]));
   } else if (kind === "dropbear") {
-    box.appendChild(element("p", "If it is the SSH server: Dropbear is told this with the -a flag on its " +
-      "command line, not by a setting in a configuration file."));
+    box.appendChild(element("p", t("status.reach-dropbear.text")));
     box.appendChild(bulletList([
-      "The flag goes where the arguments of the service are, the init script or the unit file that " +
-        "starts Dropbear, and Dropbear is restarted for it.",
-      "Dropbear has no middle value. -a opens every forwarded port to all addresses and leaving it out " +
-        "keeps them on loopback; there is nothing that lets the client choose the address, the way " +
-        "GatewayPorts clientspecified does on OpenSSH."
+      t("status.reach-dropbear-flag.text"),
+      t("status.reach-dropbear-all.text")
     ]));
   } else {
-    box.appendChild(element("p", "The banner names neither OpenSSH nor Dropbear, so what opens a " +
-      "forwarded port on this server is not known from here. Its own documentation is what says " +
-      "whether it has such a setting and what it is called."));
+    box.appendChild(element("p", t("status.reach-other.text")));
   }
 
-  box.appendChild(element("p", "If it is the firewall: the port has to be open through whatever sits " +
-    "between this machine and the Host, which may be a firewall on the Host itself, a security group, " +
-    "or something on the way. A port the SSH server did open is still not reached while that is closed, " +
-    "so this is worth checking even after the server has been changed."));
+  box.appendChild(element("p", t("status.reach-firewall.text")));
 
   return box;
 }
@@ -646,7 +628,7 @@ function pageControls(page, total, draw) {
 
   // The same list, built by the same function as the ones above the log, so
   // that the two rows of controls are one thing to learn rather than two.
-  row.appendChild(logSelect("page-size", "Rows per page", listSizes, page.size,
+  row.appendChild(logSelect("page-size", t("list.page-size.label"), listSizes, page.size,
     function (value) {
       page.size = Number(value);
       // The rows move under the numbering when the size changes, so the page
@@ -659,7 +641,7 @@ function pageControls(page, total, draw) {
 
   const last = lastPageOf(total, page.size);
 
-  const previous = actionButton("Previous", "page-previous", function () {
+  const previous = actionButton(t("list.previous.button"), "page-previous", function () {
     page.number = page.number - 1;
 
     return draw();
@@ -668,7 +650,7 @@ function pageControls(page, total, draw) {
   previous.disabled = page.number <= 1;
   row.appendChild(previous);
 
-  const next = actionButton("Next", "page-next", function () {
+  const next = actionButton(t("list.next.button"), "page-next", function () {
     page.number = page.number + 1;
 
     return draw();
@@ -683,8 +665,8 @@ function pageControls(page, total, draw) {
   // pages of ten.
   const from = (page.number - 1) * page.size + 1;
   const to = Math.min(page.number * page.size, total);
-  const where = element("span", "Page " + page.number + " of " + last + ", rows " + from +
-    " to " + to + " of " + total);
+  const where = element("span", t("list.where.text",
+    { page: page.number, last: last, from: from, to: to, total: total }));
 
   where.className = "page-where";
   row.appendChild(where);
@@ -727,7 +709,7 @@ async function drawHosts() {
   const nodes = [editing === undefined ? hostCreateForm() : hostEditForm(editing)];
 
   if (hosts.length === 0) {
-    nodes.push(statusLine("There are no hosts.", "empty"));
+    nodes.push(statusLine(t("hosts.none.empty"), "empty"));
   } else {
     const controls = pageControls(page, total, drawHosts);
     if (controls !== null) {
@@ -735,35 +717,37 @@ async function drawHosts() {
     }
 
     nodes.push(buildTable(
-      ["ID", "IP", "Port", "User", "Description", "Enabled", "Updated", ""],
+      [t("hosts.id.column"), t("hosts.ip.column"), t("hosts.port.column"),
+        t("hosts.user.column"), t("hosts.description.column"), t("hosts.enabled.column"),
+        t("hosts.updated.column"), ""],
       hosts.map(hostRow),
       [0, 2]
     ));
   }
 
-  render("Hosts", nodes);
+  render(t("hosts.screen.title"), nodes);
 }
 
 function hostRow(host) {
   const buttons = document.createElement("div");
 
   buttons.className = "buttons";
-  buttons.appendChild(actionButton("Edit", "host-edit-" + host.id, function () {
+  buttons.appendChild(actionButton(t("common.edit.button"), "host-edit-" + host.id, function () {
     editingHostID = host.id;
 
     return drawHosts();
   }));
-  buttons.appendChild(actionButton("Service ports", "host-service-ports-" + host.id, function () {
+  buttons.appendChild(actionButton(t("hosts.service-ports.button"), "host-service-ports-" + host.id, function () {
     return openHostServicePorts(host);
   }));
   buttons.appendChild(actionButton(
-    host.enabled ? "Disable" : "Enable",
+    host.enabled ? t("hosts.disable.button") : t("hosts.enable.button"),
     "host-toggle-" + host.id,
     function () {
       return toggleHost(host);
     }
   ));
-  buttons.appendChild(actionButton("Delete", "host-delete-" + host.id, function () {
+  buttons.appendChild(actionButton(t("common.delete.button"), "host-delete-" + host.id, function () {
     return deleteHost(host);
   }, "danger"));
 
@@ -773,7 +757,7 @@ function hostRow(host) {
     host.port,
     host.user,
     host.description,
-    host.enabled ? "yes" : "no",
+    host.enabled ? t("common.yes.text") : t("common.no.text"),
     timeCell(host.updated_at),
     buttons
   ];
@@ -791,7 +775,7 @@ function ipField(name, label, value) {
     name: name,
     label: label,
     value: value,
-    hint: "192.0.2.10 or 2001:db8::1",
+    hint: t("form.ip-example.hint"),
     filter: ipCharacters,
     check: checkIP
   };
@@ -802,7 +786,7 @@ function portField(name, label, value) {
     name: name,
     label: label,
     value: value,
-    hint: "1 to 65535",
+    hint: t("form.port-example.hint"),
     inputMode: "numeric",
     filter: portCharacters,
     check: checkPort
@@ -820,11 +804,11 @@ function portField(name, label, value) {
 function privateKeyField(note) {
   return {
     name: "private_key",
-    label: "Private key (PEM)",
+    label: t("form.private-key.label"),
     type: "textarea",
-    hint: "The key file, which begins with a BEGIN PRIVATE KEY line",
+    hint: t("form.private-key-example.hint"),
     check: checkPrivateKeyBlock,
-    drop: { label: "Drop the key file here, or paste it into the box above." },
+    drop: { label: t("form.drop-key.label") },
     note: note
   };
 }
@@ -832,9 +816,9 @@ function privateKeyField(note) {
 function keyPassphraseField() {
   return {
     name: "key_passphrase",
-    label: "Key passphrase",
+    label: t("form.key-passphrase.label"),
     type: "password",
-    note: "Only if the key is protected by one. It is stored encrypted, the same as the key."
+    note: t("form.key-passphrase.hint")
   };
 }
 
@@ -851,7 +835,7 @@ function checkPrivateKeyBlock(value) {
   }
 
   if (text.indexOf("-----BEGIN") === -1) {
-    return "Paste the private key. Its first line is the one that says BEGIN PRIVATE KEY.";
+    return t("form.private-key.error");
   }
 
   return "";
@@ -860,22 +844,21 @@ function checkPrivateKeyBlock(value) {
 function hostCreateForm() {
   return buildForm({
     name: "host-create",
-    legend: "Add a host",
-    submitLabel: "Add",
+    legend: t("hosts.add.title"),
+    submitLabel: t("common.add.button"),
     fields: [
-      ipField("ip", "IP"),
-      portField("port", "SSH port", 22),
-      { name: "user", label: "User" },
-      privateKeyField("Stored encrypted. It is never shown on this screen and never sent back."),
+      ipField("ip", t("hosts.ip.label")),
+      portField("port", t("hosts.ssh-port.label"), 22),
+      { name: "user", label: t("hosts.user.label") },
+      privateKeyField(t("hosts.key-add.hint")),
       keyPassphraseField(),
       {
         name: "password",
-        label: "Password",
+        label: t("hosts.password.label"),
         type: "password",
-        note: "Leave this empty if you registered a key. A host that carries both is tried " +
-          "with the key first and falls back to the password."
+        note: t("hosts.password-add.hint")
       },
-      { name: "description", label: "Description" },
+      { name: "description", label: t("hosts.description.label") },
       // Ticked to begin with, because a Host with no assignment runs no tunnel
       // at all and carrying everything is what the API does with a request that
       // does not mention the field. It is on the add form alone: it says what a
@@ -883,11 +866,10 @@ function hostCreateForm() {
       // Service ports button in its row.
       {
         name: "assign_all_service_ports",
-        label: "Assign all service ports",
+        label: t("hosts.assign-all.label"),
         type: "checkbox",
         value: true,
-        note: "Every service port that is registered now is assigned to this host. Untick it " +
-          "to add the host carrying none, and pick them with the Service ports button in its row."
+        note: t("hosts.assign-all.hint")
       }
     ],
     onSubmit: createHost
@@ -897,23 +879,22 @@ function hostCreateForm() {
 function hostEditForm(host) {
   return buildForm({
     name: "host-edit",
-    legend: "Edit host " + host.id,
-    submitLabel: "Save",
+    legend: t("hosts.edit.title", { id: host.id }),
+    submitLabel: t("common.save.button"),
     fields: [
-      ipField("ip", "IP", host.ip),
-      portField("port", "SSH port", host.port),
-      { name: "user", label: "User", value: host.user },
-      privateKeyField("Leave this empty to keep the key that is stored. A key that is stored is " +
-        "never shown here. A key that is sent replaces the stored key and its passphrase together."),
+      ipField("ip", t("hosts.ip.label"), host.ip),
+      portField("port", t("hosts.ssh-port.label"), host.port),
+      { name: "user", label: t("hosts.user.label"), value: host.user },
+      privateKeyField(t("hosts.key-edit.hint")),
       keyPassphraseField(),
       {
         name: "password",
-        label: "Password",
+        label: t("hosts.password.label"),
         type: "password",
-        note: "Leave this empty to keep the password that is stored."
+        note: t("hosts.password-edit.hint")
       },
-      { name: "description", label: "Description", value: host.description },
-      { name: "enabled", label: "Enabled", type: "checkbox", value: host.enabled }
+      { name: "description", label: t("hosts.description.label"), value: host.description },
+      { name: "enabled", label: t("hosts.enabled.label"), type: "checkbox", value: host.enabled }
     ],
     onSubmit: function (values) {
       return updateHost(host, values);
@@ -947,7 +928,7 @@ async function createHost(values) {
 
   await apiCall("POST", "/api/host", body);
 
-  setNotice("Host " + body.ip + " was added.", "info");
+  setNotice(t("hosts.added.notice", { ip: body.ip }), "info");
 
   return drawHosts();
 }
@@ -985,7 +966,7 @@ async function updateHost(host, values) {
   await apiCall("PUT", "/api/host/" + host.id, body);
 
   editingHostID = null;
-  setNotice("Host " + host.id + " was updated.", "info");
+  setNotice(t("hosts.updated.notice", { id: host.id }), "info");
 
   return drawHosts();
 }
@@ -993,7 +974,8 @@ async function updateHost(host, values) {
 async function toggleHost(host) {
   await apiCall("PUT", "/api/host/" + host.id, { enabled: !host.enabled });
 
-  setNotice("Host " + host.id + " is now " + (host.enabled ? "disabled" : "enabled") + ".", "info");
+  setNotice(t(host.enabled ? "hosts.now-disabled.notice" : "hosts.now-enabled.notice",
+    { id: host.id }), "info");
 
   return drawHosts();
 }
@@ -1001,7 +983,7 @@ async function toggleHost(host) {
 async function deleteHost(host) {
   // Deleting a host takes its tunnels down with it, which is not something the
   // operator can take back with another click.
-  if (!window.confirm("Delete host " + host.id + " (" + host.ip + ")?")) {
+  if (!window.confirm(t("hosts.delete.confirm", { id: host.id, ip: host.ip }))) {
     return;
   }
 
@@ -1011,7 +993,7 @@ async function deleteHost(host) {
     editingHostID = null;
   }
 
-  setNotice("Host " + host.id + " was deleted.", "info");
+  setNotice(t("hosts.deleted.notice", { id: host.id }), "info");
 
   return drawHosts();
 }
@@ -1071,7 +1053,7 @@ async function openHostServicePorts(host) {
     list.textContent = "";
 
     if (items.length === 0) {
-      list.appendChild(statusLine("There are no service ports.", "empty"));
+      list.appendChild(statusLine(t("service-ports.none.empty"), "empty"));
 
       return;
     }
@@ -1117,23 +1099,22 @@ async function openHostServicePorts(host) {
 
   const outcome = await openModal({
     name: "host-service-ports",
-    title: "Service ports of host " + host.id + " (" + host.ip + ")",
+    title: t("hosts.assign.title", { id: host.id, ip: host.ip }),
     body: [
-      element("p", "Tick the service ports this host is to carry. A tick is kept while you " +
-        "read the other pages, and only what you changed is sent when you save."),
+      element("p", t("hosts.assign.text")),
       problem,
       list
     ],
     buttons: [
       {
-        label: "Save",
+        label: t("common.save.button"),
         name: "save",
         variant: "primary",
         press: function (button, close) {
           return saveHostServicePorts(host, served, wanted, button, close, problem);
         }
       },
-      { label: "Close", name: "close" }
+      { label: t("common.close.button"), name: "close" }
     ]
   });
 
@@ -1170,15 +1151,15 @@ function servicePortCheck(item, served, wanted) {
   const text = document.createElement("span");
 
   text.className = "assign-text";
-  text.appendChild(element("span", item.service_ip + ":" + item.service_port +
-    " to local port " + item.local_port));
+  text.appendChild(element("span", t("hosts.assign-row.text",
+    { ip: item.service_ip, port: item.service_port, local: item.local_port })));
 
   const description = item.description === undefined || item.description === null
     ? ""
     : String(item.description);
   const said = element("small", description === ""
-    ? "Service port " + item.id
-    : "Service port " + item.id + ". " + description);
+    ? t("hosts.assign-said.text", { id: item.id })
+    : t("hosts.assign-said-description.text", { id: item.id, description: description }));
 
   said.className = "assign-said";
   text.appendChild(said);
@@ -1216,7 +1197,7 @@ async function saveHostServicePorts(host, served, wanted, button, close, problem
   }
 
   if (add.length === 0 && remove.length === 0) {
-    setNotice("The service ports of host " + host.id + " were not changed.", "info");
+    setNotice(t("hosts.assign-unchanged.notice", { id: host.id }), "info");
 
     close("unchanged");
 
@@ -1241,9 +1222,8 @@ async function saveHostServicePorts(host, served, wanted, button, close, problem
       ? remove.length
       : answer.removed;
 
-    setNotice("Host " + host.id + " was given " + added + " " +
-      plural(added, "service port", "service ports") + " and had " + removed + " taken away.",
-      "info");
+    setNotice(t(plural(added, "hosts.assign-saved-one.notice", "hosts.assign-saved-many.notice"),
+      { id: host.id, added: added, removed: removed }), "info");
 
     close("saved");
   } catch (error) {
@@ -1303,7 +1283,7 @@ async function drawServicePorts() {
   ];
 
   if (ports.length === 0) {
-    nodes.push(statusLine("There are no service ports.", "empty"));
+    nodes.push(statusLine(t("service-ports.none.empty"), "empty"));
   } else {
     const controls = pageControls(page, total, drawServicePorts);
     if (controls !== null) {
@@ -1311,25 +1291,27 @@ async function drawServicePorts() {
     }
 
     nodes.push(buildTable(
-      ["ID", "Service IP", "Service port", "Local port", "Description", "Updated", ""],
+      [t("service-ports.id.column"), t("service-ports.service-ip.column"),
+        t("service-ports.service-port.column"), t("service-ports.local-port.column"),
+        t("service-ports.description.column"), t("service-ports.updated.column"), ""],
       ports.map(servicePortRow),
       [0, 2, 3]
     ));
   }
 
-  render("Service Ports", nodes);
+  render(t("service-ports.screen.title"), nodes);
 }
 
 function servicePortRow(port) {
   const buttons = document.createElement("div");
 
   buttons.className = "buttons";
-  buttons.appendChild(actionButton("Edit", "service-port-edit-" + port.id, function () {
+  buttons.appendChild(actionButton(t("common.edit.button"), "service-port-edit-" + port.id, function () {
     editingServicePortID = port.id;
 
     return drawServicePorts();
   }));
-  buttons.appendChild(actionButton("Delete", "service-port-delete-" + port.id, function () {
+  buttons.appendChild(actionButton(t("common.delete.button"), "service-port-delete-" + port.id, function () {
     return deleteServicePort(port);
   }, "danger"));
 
@@ -1347,23 +1329,21 @@ function servicePortRow(port) {
 function servicePortCreateForm() {
   return buildForm({
     name: "service-port-create",
-    legend: "Add a service port",
-    submitLabel: "Add",
+    legend: t("service-ports.add.title"),
+    submitLabel: t("common.add.button"),
     fields: [
-      ipField("service_ip", "Service IP"),
-      portField("service_port", "Service port"),
-      portField("local_port", "Local port"),
-      { name: "description", label: "Description" },
+      ipField("service_ip", t("service-ports.service-ip.label")),
+      portField("service_port", t("service-ports.service-port.label")),
+      portField("local_port", t("service-ports.local-port.label")),
+      { name: "description", label: t("service-ports.description.label") },
       // The other half of the pair on the host form, ticked to begin with for
       // the same reason, and on the add form alone for the same reason.
       {
         name: "assign_to_all_hosts",
-        label: "Assign to all hosts",
+        label: t("service-ports.assign-all.label"),
         type: "checkbox",
         value: true,
-        note: "Every host that is registered now carries this service port. Untick it to add " +
-          "the service port carried by none, and pick the hosts with the Service ports button " +
-          "in each host row."
+        note: t("service-ports.assign-all.hint")
       }
     ],
     onSubmit: createServicePort
@@ -1373,13 +1353,13 @@ function servicePortCreateForm() {
 function servicePortEditForm(port) {
   return buildForm({
     name: "service-port-edit",
-    legend: "Edit service port " + port.id,
-    submitLabel: "Save",
+    legend: t("service-ports.edit.title", { id: port.id }),
+    submitLabel: t("common.save.button"),
     fields: [
-      ipField("service_ip", "Service IP", port.service_ip),
-      portField("service_port", "Service port", port.service_port),
-      portField("local_port", "Local port", port.local_port),
-      { name: "description", label: "Description", value: port.description }
+      ipField("service_ip", t("service-ports.service-ip.label"), port.service_ip),
+      portField("service_port", t("service-ports.service-port.label"), port.service_port),
+      portField("local_port", t("service-ports.local-port.label"), port.local_port),
+      { name: "description", label: t("service-ports.description.label"), value: port.description }
     ],
     onSubmit: function (values) {
       return updateServicePort(port, values);
@@ -1415,7 +1395,8 @@ async function createServicePort(values) {
 
   await apiCall("POST", "/api/service-port", body);
 
-  setNotice("Service port " + body.service_ip + ":" + body.service_port + " was added.", "info");
+  setNotice(t("service-ports.added.notice",
+    { ip: body.service_ip, port: body.service_port }), "info");
 
   return drawServicePorts();
 }
@@ -1424,15 +1405,15 @@ async function updateServicePort(port, values) {
   await apiCall("PUT", "/api/service-port/" + port.id, servicePortBody(values));
 
   editingServicePortID = null;
-  setNotice("Service port " + port.id + " was updated.", "info");
+  setNotice(t("service-ports.updated.notice", { id: port.id }), "info");
 
   return drawServicePorts();
 }
 
 async function deleteServicePort(port) {
   // The tunnels that carry this service port go down with it.
-  if (!window.confirm("Delete service port " + port.id + " (" + port.service_ip + ":" +
-      port.service_port + ")?")) {
+  if (!window.confirm(t("service-ports.delete.confirm",
+      { id: port.id, ip: port.service_ip, port: port.service_port }))) {
     return;
   }
 
@@ -1442,7 +1423,7 @@ async function deleteServicePort(port) {
     editingServicePortID = null;
   }
 
-  setNotice("Service port " + port.id + " was deleted.", "info");
+  setNotice(t("service-ports.deleted.notice", { id: port.id }), "info");
 
   return drawServicePorts();
 }
@@ -1522,7 +1503,7 @@ async function drawLogs() {
   if (problem !== null) {
     nodes.push(statusLine(problem, "warning"));
 
-    render("Logs", nodes);
+    render(t("logs.screen.title"), nodes);
 
     return;
   }
@@ -1536,19 +1517,15 @@ async function drawLogs() {
   nodes.push(logSummary(answer, lines.length, shown.length));
 
   if (answer.capped) {
-    nodes.push(statusLine(
-      "The read reached its byte limit before " + logLineCount + " lines were found, so " +
-        "the oldest line below is not as far back as was asked for.",
-      "warning"
-    ));
+    nodes.push(statusLine(t("logs.capped.notice", { lines: logLineCount }), "warning"));
   }
 
   if (shown.length === 0) {
     nodes.push(statusLine(
       lines.length === 0
-        ? "The log file holds nothing yet."
-        : "None of the " + lines.length + " " + plural(lines.length, "line", "lines") +
-          " read is at " + logLevelFilter + " or above.",
+        ? t("logs.empty.empty")
+        : t(plural(lines.length, "logs.none-at-level-one.empty", "logs.none-at-level-many.empty"),
+          { count: lines.length, level: logLevelFilter }),
       "empty"
     ));
   } else {
@@ -1556,7 +1533,8 @@ async function drawLogs() {
     // first, and they are turned around here. The newest line is what the
     // screen is opened for, and at the top it is in the same place after every
     // refresh instead of moving down as the log grows.
-    const table = buildTable(["Time", "Level", "Caller", "Message"], shown.reverse().map(logRow));
+    const table = buildTable([t("logs.time.column"), t("logs.level.column"),
+      t("logs.caller.column"), t("logs.message.column")], shown.reverse().map(logRow));
 
     // Marked so that a narrow screen can lay these rows out as blocks. Four
     // columns across a phone leave the message a column a few words wide, and
@@ -1570,7 +1548,7 @@ async function drawLogs() {
     nodes.push(table);
   }
 
-  render("Logs", nodes);
+  render(t("logs.screen.title"), nodes);
 }
 
 // keepLogLine decides whether one line passes the level filter.
@@ -1723,14 +1701,15 @@ function logControls() {
 
   row.className = "log-controls";
 
-  row.appendChild(logSelect("log-lines", "Lines", logLineCounts, logLineCount,
+  row.appendChild(logSelect("log-lines", t("logs.lines.label"), logLineCounts, logLineCount,
     function (value) {
       logLineCount = value;
 
       return drawLogs();
     }));
 
-  row.appendChild(logSelect("log-level", "Level at least", [logLevelAll].concat(logLevels),
+  row.appendChild(logSelect("log-level", t("logs.level.label"),
+    [{ value: logLevelAll, text: t("logs.level-all.option") }].concat(logLevels),
     logLevelFilter, function (value) {
       logLevelFilter = value;
 
@@ -1748,10 +1727,10 @@ function logControls() {
   });
 
   auto.appendChild(box);
-  auto.appendChild(element("span", "Refresh every " + statusRefreshMs / 1000 + " seconds"));
+  auto.appendChild(element("span", t("logs.auto.label", { seconds: statusRefreshMs / 1000 })));
   row.appendChild(auto);
 
-  row.appendChild(actionButton("Refresh now", "log-refresh", drawLogs));
+  row.appendChild(actionButton(t("logs.refresh.button"), "log-refresh", drawLogs));
 
   return row;
 }
@@ -1778,10 +1757,7 @@ function logSelect(name, label, options, value, onChange) {
 // logs are going into now and nothing else, so a line written before the last
 // rotation is not here, and without this nothing would say where it went.
 function logScope() {
-  const note = element("p",
-    "Only the file that is being written to now is read. The rotated files beside it are " +
-      "not shown, and neither is the console, which is where the server writes when the " +
-      "log file cannot be opened. The newest line is at the top.");
+  const note = element("p", t("logs.scope.text"));
 
   note.className = "log-scope";
 
@@ -1794,12 +1770,17 @@ function logScope() {
 // not being pulled across: the log is allowed to reach a hundred megabytes
 // before it rotates, and what was read to fill this screen is the end of it.
 function logSummary(answer, read, shown) {
-  const counted = shown === read
-    ? "Showing " + shown + " " + plural(shown, "line", "lines")
-    : "Showing " + shown + " of the " + read + " " + plural(read, "line", "lines") + " read";
+  const key = shown === read
+    ? plural(shown, "logs.summary-one.empty", "logs.summary-many.empty")
+    : plural(read, "logs.summary-of-one.empty", "logs.summary-of-many.empty");
 
-  return statusLine(counted + ", from the last " + formatBytes(answer.read) + " of the " +
-    formatBytes(answer.size) + " in " + answer.path + ".", "empty");
+  return statusLine(t(key, {
+    shown: shown,
+    total: read,
+    read: formatBytes(answer.read),
+    size: formatBytes(answer.size),
+    path: answer.path
+  }), "empty");
 }
 
 function enterSettings() {
@@ -1848,7 +1829,7 @@ async function drawSettings() {
   nodes.push(settingsRestart(restart, newAddress));
   nodes.push(settingsDangerZone());
 
-  render("Settings", nodes);
+  render(t("settings.screen.title"), nodes);
 }
 
 // readCertificate fetches what is being served over TLS, and turns a refusal
@@ -1920,10 +1901,8 @@ function pathNote(set, whatItIs) {
   const dir = set === null || set === undefined || typeof set.install_dir !== "string"
     ? "" : set.install_dir;
 
-  const base = whatItIs + " Taken up at the next start.";
-
   if (dir === "") {
-    return base;
+    return t("settings.path-base.hint", { what: whatItIs });
   }
 
   // A drive letter and a colon is what Windows calls the start of an absolute
@@ -1932,74 +1911,62 @@ function pathNote(set, whatItIs) {
   const windows = /^[A-Za-z]:[\\/]/.test(dir);
 
   if (windows) {
-    return base + " An absolute path is used as it stands, and on Windows that means one " +
-      "naming a drive or a share, as in " + dir + "\\logs\\tunnel-manager.log. Anything " +
-      "else is read against " + dir + ", the directory the database file is in, and that " +
-      "includes a path beginning with a single backslash, which Windows does not count as " +
-      "absolute.";
+    return t("settings.path-windows.hint", { what: whatItIs, dir: dir });
   }
 
-  return base + " A path beginning with / is used as it stands. Anything else is read " +
-    "against " + dir + ", the directory the database file is in.";
+  return t("settings.path-unix.hint", { what: whatItIs, dir: dir });
 }
 
 function settingsForm(set) {
   return buildForm({
     name: "settings",
-    legend: "Stored settings",
-    submitLabel: "Save",
+    legend: t("settings.form.title"),
+    submitLabel: t("common.save.button"),
     fields: [
-      settingsField(portField("api_port", "API port", set.api_port),
-        "The server listens on this port. It is taken up at the next start."),
-      settingsField(secondsField("monitoring_interval_sec", "Monitoring interval (seconds)",
-        set.monitoring_interval_sec),
-      "How often a tunnel that is up checks that the SSH server is still answering, and " +
-        "reconnects when it is not. Shorter notices a connection that died sooner and reaches " +
-        "the server more often. Taken up at the next start."),
-      settingsField(secondsField("reconcile_interval_sec", "Reconcile interval (seconds)",
-        set.reconcile_interval_sec),
-      "How often the tunnels that are running are compared with the Hosts and service ports " +
-        "that are registered. A tunnel that should exist is started, one that should not is " +
-        "stopped, and one whose settings changed is built again. Taken up at the next start."),
+      settingsField(portField("api_port", t("settings.api-port.label"), set.api_port),
+        t("settings.api-port.hint")),
+      settingsField(secondsField("monitoring_interval_sec", t("settings.monitoring.label"),
+        set.monitoring_interval_sec), t("settings.monitoring.hint")),
+      settingsField(secondsField("reconcile_interval_sec", t("settings.reconcile.label"),
+        set.reconcile_interval_sec), t("settings.reconcile.hint")),
       {
         name: "security_key_file",
-        label: "Encryption key file",
+        label: t("settings.key-file.label"),
         value: set.security_key_file,
         check: checkPath,
-        note: pathNote(set, "The path of the file the key is kept in. The key itself is " +
-          "never shown here.")
+        note: pathNote(set, t("settings.key-file.hint"))
       },
       {
         name: "logging_level",
-        label: "Log level",
+        label: t("settings.log-level.label"),
         value: set.logging_level,
         options: logLevels,
-        note: "This one takes hold the moment it is saved."
+        note: t("settings.log-level.hint")
       },
       {
         name: "logging_format",
-        label: "Log format",
+        label: t("settings.log-format.label"),
         value: set.logging_format,
         options: logFormats,
-        note: "Taken up at the next start."
+        note: t("settings.next-start.hint")
       },
       settingsField(
-        { name: "logging_file_path", label: "Log file", value: set.logging_file_path,
-          check: checkPath },
-        pathNote(set, "The path of the file the log is written to.")
+        { name: "logging_file_path", label: t("settings.log-file.label"),
+          value: set.logging_file_path, check: checkPath },
+        pathNote(set, t("settings.log-file.hint"))
       ),
-      settingsField(countField("logging_file_max_size", "Log size before it is rotated (MB)",
-        set.logging_file_max_size), "Taken up at the next start."),
-      settingsField(countField("logging_file_max_backups", "Rotated log files kept",
-        set.logging_file_max_backups), "Taken up at the next start."),
-      settingsField(countField("logging_file_max_age", "Days a rotated log file is kept",
-        set.logging_file_max_age), "Taken up at the next start."),
+      settingsField(countField("logging_file_max_size", t("settings.log-size.label"),
+        set.logging_file_max_size), t("settings.next-start.hint")),
+      settingsField(countField("logging_file_max_backups", t("settings.log-backups.label"),
+        set.logging_file_max_backups), t("settings.next-start.hint")),
+      settingsField(countField("logging_file_max_age", t("settings.log-age.label"),
+        set.logging_file_max_age), t("settings.next-start.hint")),
       {
         name: "logging_file_compress",
-        label: "Compress rotated log files",
+        label: t("settings.log-compress.label"),
         type: "checkbox",
         value: set.logging_file_compress,
-        note: "Taken up at the next start."
+        note: t("settings.next-start.hint")
       }
     ],
     onSubmit: saveSettings
@@ -2023,7 +1990,7 @@ function secondsField(name, label, value) {
     name: name,
     label: label,
     value: value,
-    hint: "seconds",
+    hint: t("form.seconds-example.hint"),
     inputMode: "numeric",
     filter: portCharacters,
     check: checkSeconds
@@ -2035,7 +2002,7 @@ function countField(name, label, value) {
     name: name,
     label: label,
     value: value,
-    hint: "0 or more",
+    hint: t("form.count-example.hint"),
     inputMode: "numeric",
     filter: portCharacters,
     check: checkCount
@@ -2064,11 +2031,11 @@ async function saveSettings(values) {
     : data.changes;
 
   if (changes.length === 0) {
-    setNotice("The settings are stored. Nothing changed.", "info");
+    setNotice(t("settings.saved-nothing.notice"), "info");
   } else if (data.restart_required) {
-    setNotice("The settings are stored. Some of them are taken up at the next start.", "info");
+    setNotice(t("settings.saved-next-start.notice"), "info");
   } else {
-    setNotice("The settings are stored and are in place.", "info");
+    setNotice(t("settings.saved.notice"), "info");
   }
 
   return drawSettings();
@@ -2109,12 +2076,11 @@ function settingsPending(set, restart, newAddress) {
 
   card.className = "card";
   card.dataset.card = "settings-pending";
-  card.appendChild(element("h2", "Stored, waiting for a restart"));
-  card.appendChild(element("p",
-    "These settings are stored with a value this service is not running on. It goes on " +
-      "running on what it read when it started until it is started again."));
+  card.appendChild(element("h2", t("settings.pending.title")));
+  card.appendChild(element("p", t("settings.pending.text")));
   card.appendChild(buildTable(
-    ["Setting", "Running on", "Stored"],
+    [t("settings.pending-name.column"), t("settings.pending-running.column"),
+      t("settings.pending-stored.column")],
     pending.map(function (item) {
       return [item.name, item.running, item.stored];
     })
@@ -2124,24 +2090,17 @@ function settingsPending(set, restart, newAddress) {
   // the same press at all. This button is that press, so it is left out for the
   // same reason, and the card says where the restart is instead.
   if (restart === undefined || restart === null || restart.view === null) {
-    card.appendChild(statusLine(
-      "Restart the service, further down this screen, is what puts them into place.",
-      "warning"
-    ));
+    card.appendChild(statusLine(t("settings.pending-where.notice"), "warning"));
 
     return card;
   }
 
-  card.appendChild(statusLine(
-    "A restart is what puts them into place. What it does on this machine, and what is cut " +
-      "while it runs, is on the Restart the service card further down this screen.",
-    "warning"
-  ));
+  card.appendChild(statusLine(t("settings.pending-restart.notice"), "warning"));
 
   const buttons = document.createElement("div");
   buttons.className = "buttons";
 
-  const button = actionButton("Restart", "settings-pending-restart", function () {
+  const button = actionButton(t("settings.restart.button"), "settings-pending-restart", function () {
     return submitRestart(restart.view, button, newAddress);
   });
 
@@ -2164,7 +2123,7 @@ function certificateCard(set, certificate) {
 
   card.className = "card";
   card.dataset.card = "certificate";
-  card.appendChild(element("h2", "HTTPS and the certificate"));
+  card.appendChild(element("h2", t("certificate.card.title")));
   card.appendChild(httpsSwitch(set));
 
   // What the last replacement said sits above the certificate it produced,
@@ -2183,16 +2142,17 @@ function certificateCard(set, certificate) {
   const view = certificate.view;
   const hosts = view.hosts === null || view.hosts === undefined ? [] : view.hosts;
 
-  card.appendChild(buildTable(["What", "Value"], [
-    ["Fingerprint (SHA-256)", fingerprintValue(view.fingerprint_sha256)],
-    ["Subject", view.subject],
-    ["Issuer", view.issuer],
-    ["Signed by", view.self_signed
-      ? "Itself. A client warns about it until this certificate is trusted on that machine"
-      : "Another certificate, which the issuer above names"],
-    ["Names and addresses it covers", hosts.length === 0 ? "None" : hosts.join(", ")],
-    ["Valid from", formatTime(view.not_before)],
-    ["Valid until", formatTime(view.not_after)]
+  card.appendChild(buildTable([t("certificate.what.column"), t("certificate.value.column")], [
+    [t("certificate.fingerprint.label"), fingerprintValue(view.fingerprint_sha256)],
+    [t("certificate.subject.label"), view.subject],
+    [t("certificate.issuer.label"), view.issuer],
+    [t("certificate.signed-by.label"), view.self_signed
+      ? t("certificate.self-signed.text")
+      : t("certificate.other-signed.text")],
+    [t("certificate.covers.label"),
+      hosts.length === 0 ? t("certificate.no-hosts.text") : hosts.join(", ")],
+    [t("certificate.valid-from.label"), formatTime(view.not_before)],
+    [t("certificate.valid-until.label"), formatTime(view.not_after)]
   ]));
 
   card.appendChild(certificateValidity(view));
@@ -2200,7 +2160,7 @@ function certificateCard(set, certificate) {
 
   const buttons = document.createElement("div");
   buttons.className = "buttons";
-  buttons.appendChild(actionButton("Make a new certificate", "certificate-renew",
+  buttons.appendChild(actionButton(t("certificate.renew.button"), "certificate-renew",
     renewCertificate));
 
   card.appendChild(buttons);
@@ -2223,14 +2183,12 @@ function certificatePEM(view) {
   box.className = "pem-box";
 
   const label = document.createElement("summary");
-  label.textContent = "The certificate as PEM";
+  label.textContent = t("certificate.pem.label");
   box.appendChild(label);
 
   const note = document.createElement("p");
   note.className = "note";
-  note.textContent = "Save this as a file and add it to the trust store of the " +
-    "machine you browse from, or pass it to curl with --cacert. Nothing in it is " +
-    "private: the server hands these same bytes to every client.";
+  note.textContent = t("certificate.pem.hint");
   box.appendChild(note);
 
   const text = document.createElement("pre");
@@ -2257,7 +2215,7 @@ function httpsSwitch(set) {
   const row = document.createElement("div");
   row.className = "field";
 
-  const label = element("label", "Serve over HTTPS");
+  const label = element("label", t("certificate.https.label"));
   label.htmlFor = "certificate-https";
 
   const box = document.createElement("input");
@@ -2269,16 +2227,14 @@ function httpsSwitch(set) {
 
   row.appendChild(label);
   row.appendChild(box);
-  row.appendChild(element("small",
-    "Taken up at the next start. With it off the API and these screens are served in the " +
-      "clear, and everything they send travels as it is, the password of this account among it."));
+  row.appendChild(element("small", t("certificate.https.hint")));
 
   const buttons = document.createElement("div");
   buttons.className = "buttons";
   // It is painted as the main press of this card. A button drawn by the helper
   // is not a submit, and the colour a submit is given comes from a selector that
   // only submits match, so it is asked for by name here.
-  buttons.appendChild(actionButton("Save", "certificate-https-save", function () {
+  buttons.appendChild(actionButton(t("common.save.button"), "certificate-https-save", function () {
     return saveHTTPS(box.checked);
   }, "primary"));
 
@@ -2294,7 +2250,7 @@ async function saveHTTPS(enabled) {
   // written over by this press.
   await apiCall("PUT", "/api/settings", { api_https_enabled: enabled });
 
-  setNotice("The setting is stored. It is taken up at the next start.", "info");
+  setNotice(t("certificate.https-saved.notice"), "info");
 
   return drawSettings();
 }
@@ -2306,27 +2262,24 @@ function certificateValidity(view) {
   const days = view.days_remaining;
 
   if (typeof days !== "number") {
-    return statusLine("How long this certificate has left could not be read.", "empty");
+    return statusLine(t("certificate.unknown-days.empty"), "empty");
   }
 
   if (days < 0) {
-    return statusLine(
-      "This certificate has expired. Nothing connects to this server over HTTPS until it is " +
-        "replaced: make a new one below, or register one you were given.",
-      "warning"
-    );
+    return statusLine(t("certificate.expired.notice"), "warning");
   }
 
   if (days <= 30) {
     return statusLine(
-      "This certificate runs out in " + days + " " + plural(days, "day", "days") +
-        ". Replace it before then, or nothing will connect over HTTPS.",
+      t(plural(days, "certificate.expiring-one.notice", "certificate.expiring-many.notice"),
+        { days: days }),
       "warning"
     );
   }
 
   return statusLine(
-    "This certificate is good for another " + days + " " + plural(days, "day", "days") + ".",
+    t(plural(days, "certificate.good-one.notice", "certificate.good-many.notice"),
+      { days: days }),
     "ok"
   );
 }
@@ -2348,7 +2301,7 @@ function certificateReplacement(result) {
 
   if (typeof result.previous_fingerprint_sha256 === "string" &&
       result.previous_fingerprint_sha256 !== "") {
-    const line = element("p", "The fingerprint before this change was ");
+    const line = element("p", t("certificate.previous.text"));
 
     line.appendChild(fingerprintValue(result.previous_fingerprint_sha256));
     wrap.appendChild(line);
@@ -2369,18 +2322,14 @@ function fingerprintValue(value) {
 }
 
 async function renewCertificate() {
-  if (!window.confirm("Make a new certificate? Its fingerprint is a different one, so every " +
-      "browser and every script that was told to trust the current certificate warns about " +
-      "this server again until the new one is trusted as well. Connections that are open now " +
-      "are not cut.")) {
+  if (!window.confirm(t("certificate.renew.confirm"))) {
     return;
   }
 
   certificateReplaceResult = await apiCall("POST", "/api/certificate/renew");
   certificateProblem = "";
 
-  setNotice("A new certificate is in place for every connection made from now on. Reload the " +
-    "page to be served it.", "info");
+  setNotice(t("certificate.renewed.notice"), "info");
 
   return drawSettings();
 }
@@ -2392,14 +2341,8 @@ async function renewCertificate() {
 // server runs on, and a paste needs nothing on either end but a clipboard.
 function certificateForm() {
   const intro = [
-    element("p",
-      "Paste a certificate you were issued, together with its private key. Both are stored " +
-        "in the database, the key encrypted with the same key the SSH passwords are sealed " +
-        "with, and the certificate is served from the next connection on."),
-    element("p",
-      "If the issuer gave you intermediate certificates, paste them into the same box, below " +
-        "the server certificate and in the order they were given. The server certificate goes " +
-        "first.")
+    element("p", t("certificate.install-intro.text")),
+    element("p", t("certificate.install-chain.text"))
   ];
 
   // Why the last attempt was refused stays on the form, next to the boxes it is
@@ -2410,28 +2353,27 @@ function certificateForm() {
 
   return buildForm({
     name: "certificate-install",
-    legend: "Register a certificate of your own",
-    submitLabel: "Register certificate",
+    legend: t("certificate.install.title"),
+    submitLabel: t("certificate.install.button"),
     intro: intro,
     fields: [
       {
         name: "cert_pem",
-        label: "Certificate (PEM)",
+        label: t("certificate.cert.label"),
         type: "textarea",
         value: certificateDraft.certPEM,
         hint: "-----BEGIN CERTIFICATE-----",
         check: checkCertificateBlock,
-        note: "The server certificate first, then any intermediates."
+        note: t("certificate.cert.hint")
       },
       {
         name: "key_pem",
-        label: "Private key (PEM)",
+        label: t("form.private-key.label"),
         type: "textarea",
         value: certificateDraft.keyPEM,
-        hint: "The key file, which begins with a BEGIN PRIVATE KEY line",
+        hint: t("form.private-key-example.hint"),
         check: checkKeyBlock,
-        note: "Stored encrypted. It is never shown on this screen and never sent back. " +
-          "A key that is protected by a passphrase has to have it taken off first."
+        note: t("certificate.key.hint")
       }
     ],
     onSubmit: installCertificate
@@ -2444,7 +2386,7 @@ function certificateForm() {
 // that can actually put the two together.
 function checkCertificateBlock(value) {
   return String(value).indexOf("-----BEGIN CERTIFICATE-----") === -1
-    ? "Paste the certificate, which starts with -----BEGIN CERTIFICATE-----."
+    ? t("certificate.cert.error")
     : "";
 }
 
@@ -2452,7 +2394,7 @@ function checkKeyBlock(value) {
   const text = String(value);
 
   if (text.indexOf("-----BEGIN") === -1 || text.indexOf("PRIVATE KEY-----") === -1) {
-    return "Paste the private key. Its first line is the one that says BEGIN PRIVATE KEY.";
+    return t("form.private-key.error");
   }
 
   return "";
@@ -2485,8 +2427,7 @@ async function installCertificate(values) {
   certificateProblem = "";
   certificateReplaceResult = answer;
 
-  setNotice("The certificate is stored and is in place for every connection made from now on. " +
-    "Reload the page to be served it.", "info");
+  setNotice(t("certificate.installed.notice"), "info");
 
   return drawSettings();
 }
@@ -2502,50 +2443,43 @@ function accountCard(account) {
   const intro = [];
 
   if (name === "") {
-    intro.push(statusLine("What this account is called could not be read: " + account.problem,
-      "warning"));
+    intro.push(statusLine(t("account.unknown.notice", { reason: account.problem }), "warning"));
   } else {
-    intro.push(element("p", "This account is called " + name + "."));
+    intro.push(element("p", t("account.name.text", { name: name })));
   }
 
-  intro.push(element("p",
-    "Fill in the name, the password or both. What is left empty stays as it is."));
-  intro.push(element("p",
-    "Saving signs out every other client of this account, on this machine and on any " +
-      "other, whichever of the two was changed. This one stays signed in. A client that " +
-      "is already signed in keeps its session whatever the account is renamed to, so a " +
-      "rename that left them alone would change the name and nothing else."));
+  intro.push(element("p", t("account.fill.text")));
+  intro.push(element("p", t("account.sign-out.text")));
 
   const form = buildForm({
     name: "account",
-    legend: "Username and password",
-    submitLabel: "Save",
+    legend: t("account.form.title"),
+    submitLabel: t("common.save.button"),
     intro: intro,
     fields: [
       {
         name: "username",
-        label: "New username",
-        note: "Leave it empty to keep the name above."
+        label: t("account.username.label"),
+        note: t("account.username.hint")
       },
       {
         name: "current_password",
-        label: "Current password",
+        label: t("account.current.label"),
         type: "password",
         check: function (value) {
-          return String(value) === "" ? "Enter the password this account is signed in with." : "";
+          return String(value) === "" ? t("account.current.error") : "";
         },
-        note: "The password this account is signed in with. It is asked for on every " +
-          "change, a rename included."
+        note: t("account.current.hint")
       },
       {
         name: "new_password",
-        label: "New password",
+        label: t("account.password.label"),
         type: "password",
         countBytes: true,
-        note: "Leave it empty to keep the password. The length is counted in bytes. " +
-          "One Hangul syllable counts as three."
+        note: t("account.password.hint")
       },
-      passwordConfirmationField("new_password_confirmation", "New password again", "new_password")
+      passwordConfirmationField("new_password_confirmation", t("setup.password-again.label"),
+        "new_password")
     ],
     onSubmit: saveAccount
   });
@@ -2563,7 +2497,7 @@ async function saveAccount(values) {
   // here so that the password that was typed in is not sent over the wire to
   // be told that nothing was asked for.
   if (username === "" && newPassword === "") {
-    setNotice("Fill in a new username, a new password or both.");
+    setNotice(t("account.nothing.error"));
 
     return drawSettings();
   }
@@ -2593,26 +2527,26 @@ async function saveAccount(values) {
 // screens says so until the next thing they press.
 function accountOutcome(data) {
   if (data === null || data === undefined) {
-    return "The account is changed.";
+    return t("account.changed.notice");
   }
 
   const said = [];
 
   if (data.username_changed) {
-    said.push("This account is called " + data.username + " now.");
+    said.push(t("account.renamed.notice", { name: data.username }));
   }
 
   if (data.password_changed) {
-    said.push("The password is changed. It is the one to sign in with from now on.");
+    said.push(t("account.password-changed.notice"));
   }
 
   const ended = data.sessions_ended;
 
   if (ended === null || ended === undefined || ended === 0) {
-    said.push("No other client was signed in.");
+    said.push(t("account.none-signed-out.notice"));
   } else {
-    said.push(plural(ended, "One other client was signed out.",
-      ended + " other clients were signed out."));
+    said.push(t(plural(ended, "account.signed-out-one.notice", "account.signed-out-many.notice"),
+      { count: ended }));
   }
 
   return said.join(" ");
@@ -2644,15 +2578,9 @@ function transferCard() {
 
   card.className = "card";
   card.dataset.card = "settings-transfer";
-  card.appendChild(element("h2", "Carry this configuration to another installation"));
-  card.appendChild(element("p",
-    "An export hands out a file and an import takes one back, so neither installation has to " +
-      "reach the other and you decide where the file is kept and for how long. The file is " +
-      "sealed with a password you type here; it is stored nowhere, so a file whose password is " +
-      "forgotten cannot be opened by anyone, this program included."));
-  card.appendChild(element("p",
-    "There are two kinds of file: the Hosts with their service ports, and the settings of this " +
-      "manager. An import takes only its own kind and says so rather than reading the other."));
+  card.appendChild(element("h2", t("transfer.card.title")));
+  card.appendChild(element("p", t("transfer.card.text")));
+  card.appendChild(element("p", t("transfer.kinds.text")));
 
   return card;
 }
@@ -2664,7 +2592,7 @@ function transferCard() {
 function transferPasswordField(note) {
   return {
     name: "password",
-    label: "Password for the file",
+    label: t("transfer.password.label"),
     type: "password",
     countBytes: true,
     check: checkPasswordLength,
@@ -2680,24 +2608,21 @@ function transferPasswordField(note) {
 function transferFileField(value) {
   return {
     name: "file",
-    label: "The exported file",
+    label: t("transfer.file.label"),
     type: "textarea",
     value: value,
-    hint: "One long line of text, which an export handed out",
+    hint: t("transfer.file-example.hint"),
     check: function (text) {
-      return String(text).trim() === ""
-        ? "Paste the file an export handed out, or drop it onto the area below."
-        : "";
+      return String(text).trim() === "" ? t("transfer.file.error") : "";
     },
     drop: {
-      label: "Drop the exported file here, or paste it into the box above.",
-      what: "the exported file",
-      ever: "an exported configuration",
+      label: t("transfer.drop.label"),
+      what: t("transfer.drop-what.text"),
+      ever: t("transfer.drop-ever.text"),
       limit: transferFileLimit,
-      then: "import"
+      then: t("transfer.drop-then.text")
     },
-    note: "A dropped file is read in this browser and sent as text, exactly as a paste would " +
-      "be. The file itself is not uploaded."
+    note: t("transfer.file.hint")
   };
 }
 
@@ -2708,42 +2633,28 @@ function transferFileField(value) {
 function transferFilePasswordField() {
   return {
     name: "password",
-    label: "Password of the file",
+    label: t("transfer.file-password.label"),
     type: "password",
     check: function (value) {
-      return String(value) === ""
-        ? "Enter the password the file was sealed with at the export."
-        : "";
+      return String(value) === "" ? t("transfer.file-password.error") : "";
     },
-    note: "The password that was typed at the export, not the password of this account."
+    note: t("transfer.file-password.hint")
   };
 }
 
 function exportTunnelsForm() {
   return buildForm({
     name: "export-tunnels",
-    legend: "Export the tunnel configuration",
-    submitLabel: "Export",
+    legend: t("transfer.export-tunnels.title"),
+    submitLabel: t("transfer.export.button"),
     intro: [
-      element("p",
-        "Every Host and every service port registered here goes into one file, which this " +
-          "browser saves. Nothing is left on the server."),
-      statusLine(
-        "The file holds the SSH password, the private key and the key passphrase of every Host " +
-          "in the clear inside it. That is what it is for: the database keeps them sealed with " +
-          "the encryption key of this machine, and a file carrying them that way would open on " +
-          "no other installation. The password you type here is the only thing keeping them, " +
-          "so whoever has the file and that password has the login of every Host it names. " +
-          "Keep it where you keep secrets.",
-        "warning"
-      )
+      element("p", t("transfer.export-tunnels.text")),
+      statusLine(t("transfer.export-tunnels.notice"), "warning")
     ],
     fields: [
-      transferPasswordField("It seals the file and is the only thing that opens it again. It " +
-        "is typed again at the import, and it is stored nowhere."),
-      passwordConfirmationField("password_confirmation", "Password again", "password",
-        "Type it a second time. A slip at the keyboard is caught here rather than at the " +
-          "import, where the file would not open and nothing would say why.")
+      transferPasswordField(t("transfer.password.hint")),
+      passwordConfirmationField("password_confirmation", t("transfer.password-again.label"),
+        "password", t("transfer.password-again.hint"))
     ],
     onSubmit: exportTunnels
   });
@@ -2752,24 +2663,16 @@ function exportTunnelsForm() {
 function exportSettingsForm() {
   return buildForm({
     name: "export-settings",
-    legend: "Export the settings of the manager",
-    submitLabel: "Export",
+    legend: t("transfer.export-settings.title"),
+    submitLabel: t("transfer.export.button"),
     intro: [
-      element("p",
-        "The stored settings go into one file: the API port and whether HTTPS is served, the " +
-          "two intervals, where the encryption key is kept, and everything about the log. The " +
-          "account, the certificate and the Hosts are not in it."),
-      element("p",
-        "The settings hold no password of their own, and the file is sealed all the same: it " +
-          "is one format and one thing to explain, and a second format that happens not to " +
-          "need a password today is the one somebody puts a secret into tomorrow.")
+      element("p", t("transfer.export-settings.text")),
+      element("p", t("transfer.export-settings-sealed.text"))
     ],
     fields: [
-      transferPasswordField("It seals the file and is the only thing that opens it again. It " +
-        "is typed again at the import, and it is stored nowhere."),
-      passwordConfirmationField("password_confirmation", "Password again", "password",
-        "Type it a second time. A slip at the keyboard is caught here rather than at the " +
-          "import, where the file would not open and nothing would say why.")
+      transferPasswordField(t("transfer.password.hint")),
+      passwordConfirmationField("password_confirmation", t("transfer.password-again.label"),
+        "password", t("transfer.password-again.hint"))
     ],
     onSubmit: exportSettings
   });
@@ -2777,14 +2680,8 @@ function exportSettingsForm() {
 
 function importTunnelsForm() {
   const intro = [
-    element("p",
-      "A Host or a service port the file holds and this installation does not is added. One " +
-        "that is registered here already is skipped and named below, unless the box at the " +
-        "bottom of this card is ticked."),
-    element("p",
-      "The whole import is one write. A file that is refused half way through leaves this " +
-        "installation exactly as it was, so there is nothing to take apart by hand before " +
-        "sending a corrected file.")
+    element("p", t("transfer.import-tunnels.text")),
+    element("p", t("transfer.import-atomic.text"))
   ];
 
   // Why the last import was refused stays on the form, next to the boxes it is
@@ -2799,20 +2696,18 @@ function importTunnelsForm() {
 
   return buildForm({
     name: "import-tunnels",
-    legend: "Import a tunnel configuration",
-    submitLabel: "Import",
+    legend: t("transfer.import-tunnels.title"),
+    submitLabel: t("transfer.import.button"),
     intro: intro,
     fields: [
       transferFileField(transferDraft.tunnels),
       transferFilePasswordField(),
       {
         name: "overwrite",
-        label: "Replace what is registered here",
+        label: t("transfer.overwrite.label"),
         type: "checkbox",
         value: false,
-        note: "Off unless it is ticked, so an import writes over nothing by accident. With it " +
-          "on, a Host the file names is stored as the file has it and keeps the id it has " +
-          "here, so its tunnels reconnect rather than being built anew."
+        note: t("transfer.overwrite.hint")
       }
     ],
     onSubmit: importTunnels
@@ -2821,15 +2716,8 @@ function importTunnelsForm() {
 
 function importSettingsForm() {
   const intro = [
-    element("p",
-      "The settings the file holds are stored, and none of them is put onto the running " +
-        "service, the API port and HTTPS included. What is stored is what the next start runs " +
-        "on, and until then it is listed at the top of this screen as waiting for a restart. " +
-        "That is what keeps a file from another machine moving the port out from under the " +
-        "screen you are reading."),
-    element("p",
-      "A setting the file does not name is left as it is here. There is nothing to tick: the " +
-        "settings are one row, so an import of them is a replacement either way.")
+    element("p", t("transfer.import-settings.text")),
+    element("p", t("transfer.import-settings-one-row.text"))
   ];
 
   if (transferProblem.settings !== "") {
@@ -2838,8 +2726,8 @@ function importSettingsForm() {
 
   return buildForm({
     name: "import-settings",
-    legend: "Import settings of a manager",
-    submitLabel: "Import",
+    legend: t("transfer.import-settings.title"),
+    submitLabel: t("transfer.import.button"),
     intro: intro,
     fields: [
       transferFileField(transferDraft.settings),
@@ -2855,10 +2743,12 @@ async function exportTunnels(values) {
   const hosts = countOf(data, "hosts");
   const ports = countOf(data, "service_ports");
 
-  setNotice("The browser is saving " + name + ". It holds " + hosts + " " +
-    plural(hosts, "Host", "Hosts") + " and " + ports + " " +
-    plural(ports, "service port", "service ports") + ", with the SSH credentials of every one " +
-    "of those Hosts inside it. Keep it where you keep secrets.", "info");
+  setNotice(t(plural(hosts,
+    plural(ports, "transfer.exported-host-one-port-one.notice",
+      "transfer.exported-host-one-port-many.notice"),
+    plural(ports, "transfer.exported-host-many-port-one.notice",
+      "transfer.exported-host-many-port-many.notice")),
+    { name: name, hosts: hosts, ports: ports }), "info");
 
   // The screen is drawn again, which is what takes the password out of the box
   // it was typed into. Nothing on the screen repeats it.
@@ -2869,8 +2759,7 @@ async function exportSettings(values) {
   const data = await apiCall("POST", "/api/export/settings", { password: values.password });
   const name = handTheFileOut(data, "settings");
 
-  setNotice("The browser is saving " + name + ". It holds the settings that are stored here.",
-    "info");
+  setNotice(t("transfer.exported-settings.notice", { name: name }), "info");
 
   return drawSettings();
 }
@@ -2971,19 +2860,16 @@ function importOutcome(answer) {
   const skipped = countOf(answer, "skipped");
 
   if (added + replaced + skipped === 0) {
-    return "The file was read. It holds no Host and no service port.";
+    return t("transfer.import-empty.notice");
   }
 
-  const said = [added + " added", replaced + " replaced", skipped + " skipped"].join(", ");
+  const counts = { added: added, replaced: replaced, skipped: skipped };
 
   if (skipped === 0) {
-    return "The file was imported: " + said + ". The table on the card says what became of " +
-      "every row of it.";
+    return t("transfer.imported.notice", counts);
   }
 
-  return "The file was imported: " + said + ". What was skipped is registered here already, " +
-    "with the reason against each row in the table on the card. Tick the box and import the " +
-    "same file again to store the file's version of those rows instead.";
+  return t("transfer.imported-skipped.notice", counts);
 }
 
 // transferItemsTable is every row of the imported file and what became of it.
@@ -2997,22 +2883,24 @@ function transferItemsTable(result) {
 
   const wrap = document.createElement("div");
 
-  wrap.appendChild(element("h3", "What the last import did"));
+  wrap.appendChild(element("h3", t("transfer.items.title")));
 
   if (items.length === 0) {
-    wrap.appendChild(statusLine("That file held no Host and no service port.", "empty"));
+    wrap.appendChild(statusLine(t("transfer.items-none.empty"), "empty"));
 
     return wrap;
   }
 
-  wrap.appendChild(buildTable(["What", "Which one", "Done", "Why"], items.map(function (item) {
-    return [
-      transferItemKind(item.kind),
-      item.name,
-      item.action,
-      item.reason === null || item.reason === undefined ? "" : item.reason
-    ];
-  })));
+  wrap.appendChild(buildTable([t("transfer.item-kind.column"), t("transfer.item-name.column"),
+    t("transfer.item-action.column"), t("transfer.item-reason.column")],
+    items.map(function (item) {
+      return [
+        transferItemKind(item.kind),
+        item.name,
+        item.action,
+        item.reason === null || item.reason === undefined ? "" : item.reason
+      ];
+    })));
 
   return wrap;
 }
@@ -3022,11 +2910,11 @@ function transferItemsTable(result) {
 // file from a later version is still readable here.
 function transferItemKind(kind) {
   if (kind === "host") {
-    return "Host";
+    return t("transfer.kind-host.text");
   }
 
   if (kind === "service_port") {
-    return "Service port";
+    return t("transfer.kind-service-port.text");
   }
 
   return kind === null || kind === undefined ? "" : String(kind);
@@ -3073,13 +2961,11 @@ function settingsImportOutcome(answer) {
     ? [] : answer.changes;
 
   if (changes.length === 0) {
-    return "The settings in that file are the ones stored here already. Nothing changed.";
+    return t("transfer.settings-unchanged.notice");
   }
 
-  return "The settings are stored. " + changes.length + " of them " +
-    plural(changes.length, "is", "are") + " waiting for a restart and " +
-    plural(changes.length, "is", "are") + " listed at the top of this screen, where the " +
-    "restart that puts them into place is. Nothing was put onto the running service.";
+  return t(plural(changes.length, "transfer.settings-stored-one.notice",
+    "transfer.settings-stored-many.notice"), { count: changes.length });
 }
 
 // settingsRescue is the way back from a stored setting that keeps the server
@@ -3091,15 +2977,9 @@ function settingsRescue() {
 
   card.className = "card";
   card.dataset.card = "settings-rescue";
-  card.appendChild(element("h2", "If the server will not start on what is stored"));
-  card.appendChild(element("p",
-    "Start it once with -reset-settings. Every setting goes back to its default, " +
-      "what it changed is printed, and the process exits. The next start runs on " +
-      "the defaults, and this screen is reachable again."));
-  card.appendChild(element("p",
-    "Only the settings go back. The registered hosts, the service ports, the account " +
-      "and the certificate are left as they are, so nothing has to be registered again " +
-      "and you log in with the password you already have."));
+  card.appendChild(element("h2", t("settings.rescue.title")));
+  card.appendChild(element("p", t("settings.rescue.text")));
+  card.appendChild(element("p", t("settings.rescue-kept.text")));
 
   return card;
 }
@@ -3168,19 +3048,16 @@ function settingsRestart(restart, newAddress) {
 
   card.className = "card";
   card.dataset.card = "settings-restart";
-  card.appendChild(element("h2", "Restart the service"));
-  card.appendChild(element("p",
-    "A restart is what puts a stored setting that waits for one into place. The API stops " +
-      "answering, every tunnel comes down and is built again afterwards, so everything going " +
-      "through a tunnel is cut for as long as the restart takes."));
+  card.appendChild(element("h2", t("restart.card.title")));
+  card.appendChild(element("p", t("restart.card.text")));
 
   if (restart.view === null) {
     // What a restart does here could not be read, and the two cases it decides
     // between are not the same press at all: after one the service is back by
     // itself, after the other it stays down. Offering the button without
     // knowing which one this is asks the operator to find out by pressing it.
-    card.appendChild(statusLine("What a restart would do could not be read, so it is not " +
-      "offered here: " + restart.problem, "warning"));
+    card.appendChild(statusLine(t("restart.unknown.notice", { reason: restart.problem }),
+      "warning"));
 
     return card;
   }
@@ -3190,7 +3067,7 @@ function settingsRestart(restart, newAddress) {
   const buttons = document.createElement("div");
   buttons.className = "buttons";
 
-  const button = actionButton("Restart", "settings-restart", function () {
+  const button = actionButton(t("settings.restart.button"), "settings-restart", function () {
     return submitRestart(restart.view, button, newAddress);
   });
 
@@ -3209,24 +3086,18 @@ function restartOutcome(view, newAddress) {
   const address = newAddress === undefined ? null : newAddress;
 
   if (view.comes_back) {
-    const base = "This process runs the program again in place of itself. It keeps the process " +
-      "it already is, so the service is back within seconds and nothing has to start it.";
-
     if (address === null) {
-      return base + " It answers at the same address it does now.";
+      return t("restart.in-place-same.text");
     }
 
     // A stored setting this restart puts into place moves where the service
     // answers. Saying "the same address" here would be wrong in exactly the
     // case an operator is most likely to be restarting for, and the address
     // they have to go to next is the useful part.
-    return base + " It comes back at " + address + ", which is not where this page is, so " +
-      "this page goes there rather than waiting here for something that is not coming.";
+    return t("restart.in-place-moved.text", { address: address });
   }
 
-  return "This platform cannot replace the image of a running process, so the restart ends " +
-    "with the process stopped. Whatever supervises the service is what starts it again, and " +
-    "a service that was started by hand does not come back at all.";
+  return t("restart.stops.text");
 }
 
 // restartQuestion is what the operator is asked before anything happens. It
@@ -3234,24 +3105,16 @@ function restartOutcome(view, newAddress) {
 // says that too, while there is still something to be done about it.
 function restartQuestion(view, newAddress) {
   const address = newAddress === undefined ? null : newAddress;
-  const cut = "Restart tunnel-manager? Every tunnel is cut and the API stops answering while " +
-    "the service goes down and comes up again.";
-
-  const moved = address === null ? "" : " It comes back at " + address + ", which is what the " +
-    "settings waiting for this restart say, so this page goes there once it has had time to " +
-    "come up.";
 
   if (view.comes_back) {
     if (address === null) {
-      return cut + " It comes back on its own within seconds, at the same address.";
+      return t("restart.ask-same.confirm");
     }
 
-    return cut + " It comes back on its own within seconds." + moved;
+    return t("restart.ask-moved.confirm", { address: address });
   }
 
-  return cut + " This platform cannot start the program again by itself: bringing it back is " +
-    "left to whatever supervises this service, and if it was started by hand it does not come " +
-    "back.";
+  return t("restart.ask-stops.confirm");
 }
 
 async function submitRestart(view, button, newAddress) {
@@ -3309,13 +3172,13 @@ async function submitRestart(view, button, newAddress) {
   }
 
   if (!back) {
-    drawRestarting(answer, "The service did not answer again within " + restartPollLimitSec +
-      " seconds. Check the server.", newAddress);
+    drawRestarting(answer, t("restart.gave-up.notice", { seconds: restartPollLimitSec }),
+      newAddress);
 
     return;
   }
 
-  setNotice("The service is back.", "info");
+  setNotice(t("restart.back.notice"), "info");
 
   return drawSettings();
 }
@@ -3380,9 +3243,8 @@ function drawRestarting(answer, problem, newAddress, secondsLeft) {
   const nodes = [];
 
   nodes.push(element("p",
-    "The restart was asked for. The service stops answering about " + seconds + " " +
-      plural(seconds, "second", "seconds") + " after this screen appeared, every tunnel comes " +
-      "down with it and is built again on the way back."));
+    t(plural(seconds, "restart.asked-one.text", "restart.asked-many.text"),
+      { seconds: seconds })));
 
   nodes.push(element("p", restartOutcome(answer, newAddress)));
 
@@ -3395,8 +3257,10 @@ function drawRestarting(answer, problem, newAddress, secondsLeft) {
     // opened rather than waited on.
     const left = typeof secondsLeft === "number" ? secondsLeft : 0;
 
-    nodes.push(statusLine("The service is not coming back here. This page opens " + address +
-      " in " + left + " " + plural(left, "second", "seconds") + ".", "empty"));
+    nodes.push(statusLine(
+      t(plural(left, "restart.moving-one.empty", "restart.moving-many.empty"),
+        { address: address, seconds: left }),
+      "empty"));
 
     // The link is here so that the wait can be skipped, and so that the
     // address survives if the move does not happen: a page that moved on its
@@ -3406,20 +3270,20 @@ function drawRestarting(answer, problem, newAddress, secondsLeft) {
 
     link.href = address;
     link.textContent = address;
-    now.appendChild(element("span", "Or open it now: "));
+    now.appendChild(element("span", t("restart.open-now.text")));
     now.appendChild(link);
     nodes.push(now);
   } else if (problem === "") {
-    nodes.push(statusLine("Waiting for the service to answer again. This page asks every " +
-      restartPollEverySec + " " + plural(restartPollEverySec, "second", "seconds") +
-      " and gives up after " + restartPollLimitSec + " seconds.", "empty"));
+    nodes.push(statusLine(
+      t(plural(restartPollEverySec, "restart.waiting-one.empty", "restart.waiting-many.empty"),
+        { every: restartPollEverySec, limit: restartPollLimitSec }),
+      "empty"));
   } else {
     nodes.push(statusLine(problem, "warning"));
-    nodes.push(element("p",
-      "Nothing further happens on this page. Reload it once the service is running again."));
+    nodes.push(element("p", t("restart.stuck.text")));
   }
 
-  render("Restarting", nodes);
+  render(t("restart.screen.title"), nodes);
 }
 
 // waitForTheService asks until the service answers again or until the limit is
@@ -3483,41 +3347,31 @@ function pause(milliseconds) {
 function settingsDangerZone() {
   const form = buildForm({
     name: "uninstall",
-    legend: "Dangerous actions",
+    legend: t("uninstall.form.title"),
     variant: "danger-zone",
     intro: [
-      element("p",
-        "Uninstall stops every tunnel, removes the files this installation is made of " +
-          "and ends the process. Nothing here can be taken back."),
-      element("p",
-        "Removing the encryption key is the part nothing undoes. The SSH password of " +
-          "every host is sealed with that key, so a backup of the database taken " +
-          "beforehand cannot be read once the key is gone: the passwords in it stay " +
-          "unreadable and have to be typed in again on a fresh installation."),
-      element("p", "These files are removed:"),
+      element("p", t("uninstall.intro.text")),
+      element("p", t("uninstall.key.text")),
+      element("p", t("uninstall.files.text")),
       bulletList([
-        "The database file, along with the -wal and -shm files SQLite keeps beside it",
-        "The encryption key file",
-        "The initial password file, if it is still there",
-        "The log file and the rotated log files beside it"
+        t("uninstall.file-database.text"),
+        t("uninstall.file-key.text"),
+        t("uninstall.file-initial-password.text"),
+        t("uninstall.file-logs.text")
       ]),
-      element("p",
-        "The program file is left where it is. A running process cannot remove its own " +
-          "image on every system this runs on, so removing it is left to you once the " +
-          "process has stopped.")
+      element("p", t("uninstall.program.text"))
     ],
-    submitLabel: "Uninstall",
+    submitLabel: t("uninstall.submit.button"),
     submitVariant: "danger",
     fields: [
       {
         name: "password",
-        label: "Password",
+        label: t("uninstall.password.label"),
         type: "password",
         check: function (value) {
-          return String(value) === "" ? "Enter the password of this account." : "";
+          return String(value) === "" ? t("uninstall.password.error") : "";
         },
-        note: "The password this account is signed in with. It is asked for again so " +
-          "that a screen left open cannot be uninstalled with one press."
+        note: t("uninstall.password.hint")
       }
     ],
     onSubmit: submitUninstall
@@ -3531,8 +3385,7 @@ function settingsDangerZone() {
 async function submitUninstall(values) {
   // The password box is what keeps a passing press from doing this, and the
   // question is what keeps a press that was meant for Save from doing it.
-  if (!window.confirm("Uninstall tunnel-manager? The database, the encryption key and " +
-      "the logs are removed and the process stops.")) {
+  if (!window.confirm(t("uninstall.ask.confirm"))) {
     return;
   }
 
@@ -3540,7 +3393,7 @@ async function submitUninstall(values) {
 
   // From here on nothing asks the server for anything. It removed its own files
   // a moment ago and stops within seconds.
-  navigate("uninstalled", { text: "The installation was removed.", kind: "info" });
+  navigate("uninstalled", { text: t("uninstall.done.notice"), kind: "info" });
 }
 
 // drawUninstalled is the screen after the uninstall.
@@ -3555,37 +3408,32 @@ function drawUninstalled() {
   if (uninstallResult === null) {
     // The path was opened without an uninstall having run in this page. Nothing
     // can be looked up, so the screen says only what it knows.
-    nodes.push(element("p",
-      "This screen is drawn from what the uninstall answered, and this page holds no " +
-        "answer. If the uninstall ran, the server is gone and there is nothing left to ask."));
+    nodes.push(element("p", t("uninstalled.no-answer.text")));
 
-    render("Uninstalled", nodes);
+    render(t("uninstalled.screen.title"), nodes);
 
     return;
   }
 
   const seconds = uninstallResult.exit_in_sec;
 
-  nodes.push(element("p",
-    "Every tunnel was stopped, the database was closed and the files below were removed. " +
-      "The process stops " +
-      (typeof seconds === "number" ? "about " + seconds + " " + plural(seconds, "second", "seconds") +
-        " after this screen appeared" : "a few seconds after this screen appeared") +
-      ". Reloading this page will not bring it back."));
+  nodes.push(element("p", typeof seconds === "number"
+    ? t(plural(seconds, "uninstalled.stopped-one.text", "uninstalled.stopped-many.text"),
+      { seconds: seconds })
+    : t("uninstalled.stopped-soon.text")));
 
-  nodes.push(element("p",
-    "The program file is still where it was. Remove it by hand, along with the service " +
-      "entry that starts it, if this installation was set up as a service."));
+  nodes.push(element("p", t("uninstalled.program.text")));
 
   const removed = listOfFiles(uninstallResult.removed);
 
   if (removed.length === 0) {
-    nodes.push(statusLine("No file was there to remove.", "empty"));
+    nodes.push(statusLine(t("uninstalled.none.empty"), "empty"));
   } else {
-    nodes.push(element("h2", "Removed"));
-    nodes.push(buildTable(["What", "Path"], removed.map(function (file) {
-      return [file.what, file.path];
-    })));
+    nodes.push(element("h2", t("uninstalled.removed.title")));
+    nodes.push(buildTable([t("uninstalled.what.column"), t("uninstalled.path.column")],
+      removed.map(function (file) {
+        return [file.what, file.path];
+      })));
   }
 
   const failed = listOfFiles(uninstallResult.failed);
@@ -3593,17 +3441,15 @@ function drawUninstalled() {
   if (failed.length > 0) {
     // These are what is left on disk. The server cannot be asked about them any
     // more, so what it said about each one is shown as it came.
-    nodes.push(element("h2", "Left behind"));
-    nodes.push(statusLine(
-      "These could not be removed and are still on disk. Remove them by hand.",
-      "warning"
-    ));
-    nodes.push(buildTable(["What", "Path", "Why it stayed"], failed.map(function (file) {
-      return [file.what, file.path, file.error];
-    })));
+    nodes.push(element("h2", t("uninstalled.left.title")));
+    nodes.push(statusLine(t("uninstalled.left.notice"), "warning"));
+    nodes.push(buildTable([t("uninstalled.what.column"), t("uninstalled.path.column"),
+      t("uninstalled.why.column")], failed.map(function (file) {
+        return [file.what, file.path, file.error];
+      })));
   }
 
-  render("Uninstalled", nodes);
+  render(t("uninstalled.screen.title"), nodes);
 }
 
 // listOfFiles is one of the two lists the uninstall answered with. A list the
@@ -3620,7 +3466,7 @@ function listOfFiles(files) {
 // date, which is also what lets the login show the same thing to a client that
 // has no session yet.
 function drawManual() {
-  render("Manual", manualNodes());
+  render(t("manual.screen.title"), manualNodes());
 }
 
 // openManualPanel puts the manual over the screen that asked for it. The login
@@ -3629,9 +3475,9 @@ function drawManual() {
 function openManualPanel() {
   return openModal({
     name: "manual",
-    title: "Manual",
+    title: t("manual.screen.title"),
     body: manualNodes(),
-    buttons: [{ label: "Close", name: "close" }]
+    buttons: [{ label: t("common.close.button"), name: "close" }]
   });
 }
 
@@ -3671,12 +3517,9 @@ function manualCard(name, heading, parts) {
 }
 
 function manualWhatItDoes() {
-  return manualCard("what-it-does", "What this does", [
-    "tunnel-manager keeps a set of SSH tunnels standing. Each one opens a port on a Host you " +
-      "registered here, and whatever connects to that port is carried to a service that " +
-      "tunnel-manager dials on its behalf.",
-    "Nothing of this is installed on the Host. What runs there is the SSH server it already " +
-      "has, and tunnel-manager signs in to it the way a person at a terminal would."
+  return manualCard("what-it-does", t("manual.what-it-does.title"), [
+    t("manual.what-it-does-keeps.text"),
+    t("manual.what-it-does-nothing.text")
   ]);
 }
 
@@ -3692,28 +3535,18 @@ function manualOneTunnel() {
   flow.className = "flow";
   flow.dataset.flow = "tunnel";
 
-  flow.appendChild(manualFlowStep(1, "tunnel-manager",
-    "Opens an SSH connection out to the Host and signs in as the user registered for it, " +
-      "with the key or the password stored beside it."));
+  flow.appendChild(manualFlowStep(1, t("manual.step-manager.title"),
+    t("manual.step-manager.text")));
   flow.appendChild(manualFlowArrow());
-  flow.appendChild(manualFlowStep(2, "The Host",
-    "Over that connection the SSH server of the Host is asked to open a listener on the Host " +
-      "itself, at the local port of the service port. It stands for as long as the connection " +
-      "does."));
+  flow.appendChild(manualFlowStep(2, t("manual.step-host.title"), t("manual.step-host.text")));
   flow.appendChild(manualFlowArrow());
-  flow.appendChild(manualFlowStep(3, "The service",
-    "Whatever connects to that port on the Host is carried back down the same SSH connection, " +
-      "and tunnel-manager dials the service and passes it on."));
+  flow.appendChild(manualFlowStep(3, t("manual.step-service.title"),
+    t("manual.step-service.text")));
 
-  return manualCard("one-tunnel", "How one tunnel is built", [
+  return manualCard("one-tunnel", t("manual.one-tunnel.title"), [
     flow,
-    "tunnel-manager is the end that dials. It opens the SSH connection to the Host and the " +
-      "Host never opens one to it, so nothing has to be opened towards this machine for a " +
-      "tunnel to stand. The traffic then runs the other way down that connection, from the " +
-      "Host to the service.",
-    "The three addresses of one tunnel are the three columns of the Status screen: Server is " +
-      "the Host that was dialled, Local is the port opened over there, and Remote is the " +
-      "service this end passes the traffic to."
+    t("manual.one-tunnel-dials.text"),
+    t("manual.one-tunnel-columns.text")
   ]);
 }
 
@@ -3747,93 +3580,48 @@ function manualFlowArrow() {
 }
 
 function manualParts() {
-  return manualCard("parts", "Hosts, service ports and assignments", [
-    "Three things are stored, and a tunnel needs all three.",
+  return manualCard("parts", t("manual.parts.title"), [
+    t("manual.parts-three.text"),
     bulletList([
-      "A Host is an SSH endpoint: its address, its SSH port, the user to sign in as, and the " +
-        "private key or the password to sign in with. It carries a switch of its own, and a " +
-        "Host that is not enabled runs no tunnels.",
-      "A service port is both ends of one forward: the Service IP and the Service port are " +
-        "what tunnel-manager dials at this end, and the Local port is the port the listener " +
-        "is opened on over on the Host.",
-      "An assignment is one Host paired with one service port. It says that this Host is to " +
-        "carry this service port."
+      t("manual.parts-host.text"),
+      t("manual.parts-service-port.text"),
+      t("manual.parts-assignment.text")
     ]),
-    "The assignment is what a tunnel is built from. One stands for every assignment whose Host " +
-      "is enabled and for no other pair, so a Host with no assignment runs nothing however many " +
-      "service ports are registered, and a service port assigned to no Host is carried nowhere.",
-    "Assignments are made on the Hosts screen: the Service ports button in a row opens the list " +
-      "of every service port with the ones that Host carries ticked, and a tick added or taken " +
-      "away there is what is saved. A Host and a service port are both registered carrying " +
-      "everything unless the box on the add form is unticked.",
-    "Disabling a Host keeps its assignments. Its tunnels are stopped, and enabling it again " +
-      "brings the same set of them back."
+    t("manual.parts-built-from.text"),
+    t("manual.parts-where.text"),
+    t("manual.parts-disabling.text")
   ]);
 }
 
 function manualReach() {
-  return manualCard("reach", "How far the forwarded port is open", [
-    "The listener on the Host is opened by the SSH server of the Host and not by " +
-      "tunnel-manager. tunnel-manager asks for 0.0.0.0, which is every address of that " +
-      "machine, and which address is really bound is that server's decision: OpenSSH left at " +
-      "its default of GatewayPorts no, and Dropbear started without -a, bind loopback alone, " +
-      "and the port then answers on the Host itself and nowhere else.",
-    "The Port reached column of the Status screen is what came of trying it. Once a tunnel is " +
-      "up, tunnel-manager opens a TCP connection to the Host at that port and reports whether " +
-      "it answered: reachable, unreachable, or unknown while nothing has been measured. It is " +
-      "measured when the tunnel comes up and again on every reconnect, rather than on every " +
-      "reading of the screen, because what decides it is the configuration of the SSH server " +
-      "and that does not change under a connection that stands.",
-    "unreachable says where the port was not reached from, not why it was not. A server that " +
-      "bound the port to loopback alone and a firewall dropping the connection on the way look " +
-      "exactly the same from here, and a connection that never arrives cannot tell them apart. " +
-      "Check both before changing either. The Status screen writes what to look at under the " +
-      "row, and names the SSH server out of the banner it sent on the handshake."
+  return manualCard("reach", t("manual.reach.title"), [
+    t("manual.reach-listener.text"),
+    t("manual.reach-column.text"),
+    t("manual.reach-unreachable.text")
   ]);
 }
 
 function manualPeriods() {
-  return manualCard("periods", "The monitoring period and the reconcile period", [
-    "Two periods are on the Settings screen, five seconds each to begin with, and they do " +
-      "different jobs.",
+  return manualCard("periods", t("manual.periods.title"), [
+    t("manual.periods-two.text"),
     bulletList([
-      "The monitoring interval is how often a tunnel that is already up is checked. " +
-        "tunnel-manager reaches the SSH server of the Host and asks whether the connection is " +
-        "still answering, and builds it again when it is not. Shorter notices a connection " +
-        "that died sooner and reaches the Host more often.",
-      "The reconcile interval is how often the tunnels that are running are compared with what " +
-        "is stored. One that should be running and is not is started, one that should not be " +
-        "is stopped, and one whose settings changed is stopped and started again with the new " +
-        "ones."
+      t("manual.periods-monitoring.text"),
+      t("manual.periods-reconcile.text")
     ]),
-    "A reconcile pass also runs at the startup, before the API answers anything, and again " +
-      "right after a change is stored, so adding a Host or an assignment takes effect at once " +
-      "rather than at the next tick. The period is what tries again whatever a failed pass left " +
-      "undone.",
-    "Because the answer to a change is sent before the tunnel exists, a change that was stored " +
-      "does not mean the tunnel came up. The Status screen is what answers that.",
-    "Both are taken up at the next start, the way nearly every setting is. The log level is the " +
-      "one that takes hold the moment it is saved."
+    t("manual.periods-startup.text"),
+    t("manual.periods-answer.text"),
+    t("manual.periods-next-start.text")
   ]);
 }
 
 function manualPaths() {
-  return manualCard("paths", "Where a path in a setting points", [
-    "Two settings hold a path, the encryption key file and the log file, and both are read the " +
-      "same way.",
+  return manualCard("paths", t("manual.paths.title"), [
+    t("manual.paths-two.text"),
     bulletList([
-      "A path that begins with / is used as it stands.",
-      "Anything else is read against the directory the database file is in, which is the " +
-        "directory this whole installation lives in. It is never read against the directory " +
-        "the process was started from: that is not the same twice, so a relative path read " +
-        "against it would put the key or the log somewhere different on every start."
+      t("manual.paths-absolute.text"),
+      t("manual.paths-relative.text")
     ]),
-    "On Windows a path counts as absolute only when it names a drive or a share, as in " +
-      "C:\\tunnel-manager\\logs\\tunnel-manager.log. One that begins with a single backslash " +
-      "does not count, and is read against the installation directory like any other relative " +
-      "path.",
-    "The startup writes the absolute path of the database file, of the key file and of the log " +
-      "file it opened into the log, so the log always says which files are in use. The Settings " +
-      "screen names that directory under each of the two boxes."
+    t("manual.paths-windows.text"),
+    t("manual.paths-startup.text")
   ]);
 }
