@@ -240,6 +240,20 @@ func (h *Handler) keyRefused(c echo.Context, err error, prefix string) error {
 	})
 }
 
+// wantsAssignments is what a create request asked about the assignments it
+// makes. A request that did not mention the field asks for them: every Host
+// carried every service port before the assignments were rows of their own, a
+// row with none runs no tunnel, and a client written before the field existed
+// sends nothing. The field is a pointer so that "no assignments" can be told
+// from "did not say", which is the whole of why it is one.
+func wantsAssignments(asked *bool) bool {
+	if asked == nil {
+		return true
+	}
+
+	return *asked
+}
+
 func (h *Handler) CreateHost(c echo.Context) error {
 	var req models.CreateHostRequest
 	err := c.Bind(&req)
@@ -327,6 +341,40 @@ func (h *Handler) CreateHost(c echo.Context) error {
 			Success: false,
 			Error:   "Failed to create Host",
 		})
+	}
+
+	// The assignments are written in the transaction that wrote the Host, so
+	// that the two land together. A Host stored without them is one that shows
+	// on the screen and carries nothing, and nothing later would notice.
+	//
+	// The service ports are read inside the transaction as well, for the reason
+	// the update handlers read their row there: what is assigned is what is
+	// stored at the moment the Host is written.
+	if wantsAssignments(req.AssignAllServicePorts) {
+		var spIDs []uint
+
+		err = tx.Model(&models.ServicePort{}).Pluck("id", &spIDs).Error
+		if err != nil {
+			tx.Rollback()
+			h.logger.Error("failed to read the service ports to assign to a new Host", zap.Error(err))
+			return c.JSON(http.StatusInternalServerError, models.Response{
+				Success: false,
+				Error:   "The Host was not created: failed to read the service ports",
+			})
+		}
+
+		for _, spID := range spIDs {
+			err = tx.Create(&models.HostServicePort{HostID: host.ID, SPID: spID}).Error
+			if err != nil {
+				tx.Rollback()
+				h.logger.Error("failed to assign a service port to a new Host",
+					zap.Error(err), zap.Uint("host_id", host.ID), zap.Uint("service_port_id", spID))
+				return c.JSON(http.StatusInternalServerError, models.Response{
+					Success: false,
+					Error:   "The Host was not created: failed to store the service ports it carries",
+				})
+			}
+		}
 	}
 
 	err = tx.Commit().Error
@@ -702,6 +750,40 @@ func (h *Handler) CreateServicePort(c echo.Context) error {
 			Success: false,
 			Error:   "Failed to create service port",
 		})
+	}
+
+	// The other half of what CreateHost does, and in the transaction that wrote
+	// the row for the same reason: a service port stored with no Host carrying
+	// it is one nothing forwards.
+	//
+	// A Host that is disabled is assigned it too. Which Hosts run tunnels is
+	// decided where they are reconciled, and a Host skipped here would come
+	// back from being enabled without this service port.
+	if wantsAssignments(req.AssignToAllHosts) {
+		var hostIDs []uint
+
+		err = tx.Model(&models.Host{}).Pluck("id", &hostIDs).Error
+		if err != nil {
+			tx.Rollback()
+			h.logger.Error("failed to read the Hosts to assign a new service port to", zap.Error(err))
+			return c.JSON(http.StatusInternalServerError, models.Response{
+				Success: false,
+				Error:   "The service port was not created: failed to read the Hosts",
+			})
+		}
+
+		for _, hostID := range hostIDs {
+			err = tx.Create(&models.HostServicePort{HostID: hostID, SPID: sp.ID}).Error
+			if err != nil {
+				tx.Rollback()
+				h.logger.Error("failed to assign a new service port to a Host",
+					zap.Error(err), zap.Uint("host_id", hostID), zap.Uint("service_port_id", sp.ID))
+				return c.JSON(http.StatusInternalServerError, models.Response{
+					Success: false,
+					Error:   "The service port was not created: failed to store the Hosts that carry it",
+				})
+			}
+		}
 	}
 
 	err = tx.Commit().Error

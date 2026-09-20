@@ -322,3 +322,54 @@ func TestHostServicePortHoldsOnePairOnce(t *testing.T) {
 		t.Fatal("the assignment was stored without the time it was made")
 	}
 }
+
+// TestCreateRequestsTellAnAbsentAssignmentFromFalse is why the two assignment
+// fields are pointers. A request that asks for no assignments and one that does
+// not mention them mean opposite things: the first is a row that carries
+// nothing on purpose, the second is every client written before the field
+// existed, and what those clients ran assigned everything. On a plain bool both
+// arrive as false and the second would quietly be given the first one's answer,
+// which is the trap the Enabled field on Host was already caught in.
+func TestCreateRequestsTellAnAbsentAssignmentFromFalse(t *testing.T) {
+	const noField = `{"ip":"192.0.2.10","port":22,"user":"operator"}`
+
+	var host CreateHostRequest
+
+	err := json.Unmarshal([]byte(noField), &host)
+	if err != nil {
+		t.Fatalf("failed to read the request: %v", err)
+	}
+	if host.AssignAllServicePorts != nil {
+		t.Fatalf("a Host that says nothing about the assignments arrives as %v, which cannot be told "+
+			"from one that asked for none", *host.AssignAllServicePorts)
+	}
+
+	err = json.Unmarshal([]byte(`{"assign_all_service_ports":false}`), &host)
+	if err != nil {
+		t.Fatalf("failed to read the request: %v", err)
+	}
+	if host.AssignAllServicePorts == nil || *host.AssignAllServicePorts {
+		t.Fatalf("a Host that asked for no assignments arrives as %v, want a stored false",
+			host.AssignAllServicePorts)
+	}
+
+	var sp CreateServicePortRequest
+
+	err = json.Unmarshal([]byte(`{"service_ip":"198.51.100.10","service_port":80,"local_port":8080}`), &sp)
+	if err != nil {
+		t.Fatalf("failed to read the request: %v", err)
+	}
+	if sp.AssignToAllHosts != nil {
+		t.Fatalf("a service port that says nothing about the assignments arrives as %v, which cannot "+
+			"be told from one that asked for none", *sp.AssignToAllHosts)
+	}
+
+	err = json.Unmarshal([]byte(`{"assign_to_all_hosts":false}`), &sp)
+	if err != nil {
+		t.Fatalf("failed to read the request: %v", err)
+	}
+	if sp.AssignToAllHosts == nil || *sp.AssignToAllHosts {
+		t.Fatalf("a service port that asked for no assignments arrives as %v, want a stored false",
+			sp.AssignToAllHosts)
+	}
+}

@@ -714,26 +714,37 @@ func TestWriteHandlersReadTheirRowInsideTheTransaction(t *testing.T) {
 	}
 }
 
-// TestCreateHandlersReadNothingFirst pins down the other side of it: a create
-// has no row to read yet, and the unique indexes are what keep a duplicate out.
-func TestCreateHandlersReadNothingFirst(t *testing.T) {
+// TestCreateHandlersReadOnlyWhatTheyAssign pins down the other side of it: a
+// create has no row of its own to read yet, and the unique indexes are what
+// keep a duplicate out. The one read it makes is of the other table, which is
+// where the assignments the new row is written with come from, and it is made
+// on the transaction that writes them with the commit still ahead. Read outside
+// it, a Host deleted in between would be assigned a service port after it was
+// gone.
+func TestCreateHandlersReadOnlyWhatTheyAssign(t *testing.T) {
 	tests := []struct {
-		name   string
-		target string
-		body   string
-		call   func(*Handler, echo.Context) error
+		name     string
+		target   string
+		body     string
+		assigned string
+		own      string
+		call     func(*Handler, echo.Context) error
 	}{
 		{
-			name:   "create host",
-			target: "/api/host",
-			body:   `{"ip":"192.0.2.1","port":22,"user":"root","password":"fake-value-1"}`, // hook:allow
-			call:   (*Handler).CreateHost,
+			name:     "create host",
+			target:   "/api/host",
+			body:     `{"ip":"192.0.2.1","port":22,"user":"root","password":"fake-value-1"}`, // hook:allow
+			assigned: "service_ports",
+			own:      "hosts",
+			call:     (*Handler).CreateHost,
 		},
 		{
-			name:   "create service port",
-			target: "/api/service-port",
-			body:   `{"service_ip":"192.0.2.2","service_port":80,"local_port":8080}`,
-			call:   (*Handler).CreateServicePort,
+			name:     "create service port",
+			target:   "/api/service-port",
+			body:     `{"service_ip":"192.0.2.2","service_port":80,"local_port":8080}`,
+			assigned: "hosts",
+			own:      "service_ports",
+			call:     (*Handler).CreateServicePort,
 		},
 	}
 
@@ -760,8 +771,22 @@ func TestCreateHandlersReadNothingFirst(t *testing.T) {
 			}
 
 			all := reads.all()
-			if len(all) != 0 {
-				t.Fatalf("reads = %d, want 0: %v", len(all), all)
+			if len(all) != 1 {
+				t.Fatalf("reads = %d, want the one read of %s: %v", len(all), tt.assigned, all)
+			}
+			read := all[0]
+
+			if strings.Contains(read.sql, "`"+tt.own+"`") {
+				t.Errorf("the create reads the table it writes to: %s", read.sql)
+			}
+			if !strings.Contains(read.sql, "`"+tt.assigned+"`") {
+				t.Errorf("sql = %s, want a read of %s", read.sql, tt.assigned)
+			}
+			if !read.inTx {
+				t.Errorf("the rows to assign were read outside the transaction that writes: %s", read.sql)
+			}
+			if read.commits != 0 {
+				t.Errorf("commits at the read = %d, want 0: the transaction that writes was already through", read.commits)
 			}
 		})
 	}
@@ -2261,7 +2286,10 @@ func newHostFixture(t *testing.T) *hostFixture {
 		t.Fatalf("failed to open the database: %v", err)
 	}
 
-	err = db.AutoMigrate(&models.Host{})
+	// The service ports and the assignments are built as well, because
+	// registering a Host assigns it the service ports that are stored and so
+	// reads one table and writes the other.
+	err = db.AutoMigrate(&models.Host{}, &models.ServicePort{}, &models.HostServicePort{})
 	if err != nil {
 		t.Fatalf("failed to migrate the database: %v", err)
 	}
@@ -3775,5 +3803,218 @@ func TestHostServicePortHandlersAnswerNotFoundForAHostThatIsGone(t *testing.T) {
 	after := storedAssignments(t, db)
 	if strings.Join(after, ",") != "1-1" {
 		t.Fatalf("the assignments after the change are %v, want the stored one", after)
+	}
+}
+
+// createRequest builds one create request for a handler, the way deleteRequest
+// builds a delete.
+func createRequest(t *testing.T, target, body string) (echo.Context, *httptest.ResponseRecorder) {
+	t.Helper()
+
+	e := echo.New()
+	e.Validator = &testValidator{validator: validator.New()}
+	req := httptest.NewRequest(http.MethodPost, target, strings.NewReader(body))
+	req.Header.Set(echo.HeaderContentType, echo.MIMEApplicationJSON)
+	rec := httptest.NewRecorder()
+
+	return e.NewContext(req, rec), rec
+}
+
+// TestCreateHostAssignsTheServicePortsThatAreStored pins down what a newly
+// registered Host carries. Nothing wrote the assignments of a Host created
+// through the API, so it was stored with none and the reconcile loop, which
+// reads those rows, built no tunnel for it at all: the Host was on the screen
+// and forwarded nothing.
+//
+// A request that does not mention the field is the case that matters most.
+// That is what every client written before the field existed sends, and what
+// it asked for is the whole installation: every service port on the new Host.
+func TestCreateHostAssignsTheServicePortsThatAreStored(t *testing.T) {
+	const address = `"ip":"192.0.2.50","port":22,"user":"root","password":"fake-value-1"` // hook:allow
+
+	tests := []struct {
+		name string
+		body string
+		want string
+	}{
+		{"a Host that says nothing", `{` + address + `}`, "3-1,3-2"},
+		{"a Host that asks for them", `{` + address + `,"assign_all_service_ports":true}`, "3-1,3-2"},
+		{"a Host that asks for none", `{` + address + `,"assign_all_service_ports":false}`, ""},
+		// A Host that is disabled is assigned them all the same. Enabling it
+		// later is meant to bring its tunnels up, and one stored with no
+		// assignment would come back carrying nothing.
+		{"a Host that is disabled", `{` + address + `,"enabled":false}`, "3-1,3-2"},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			hosts := []models.Host{statusHost(1, true), statusHost(2, true)}
+			sps := []models.ServicePort{statusServicePort(1), statusServicePort(2)}
+
+			db := newAssignmentDB(t, hosts, sps)
+			manager := &wakeRecorder{tx: &txConnPool{}}
+
+			h := NewHandler(db, manager, zap.NewNop(), newTestCipher(t))
+
+			c, rec := createRequest(t, "/api/host", tc.body)
+
+			err := h.CreateHost(c)
+			if err != nil {
+				t.Fatalf("CreateHost returned an error: %v", err)
+			}
+			if rec.Code != http.StatusCreated {
+				t.Fatalf("status = %d, want %d, body: %s", rec.Code, http.StatusCreated, rec.Body.String())
+			}
+
+			after := storedAssignments(t, db)
+			if strings.Join(after, ",") != tc.want {
+				t.Fatalf("the assignments after the create are %v, want %q", after, tc.want)
+			}
+
+			// The loop is woken once, by the wake-up the create already sent.
+			// A second one would be a pass over rows nothing changed in
+			// between.
+			wakes, _ := manager.counts()
+			if wakes != 1 {
+				t.Errorf("reconcile wake-ups = %d, want 1", wakes)
+			}
+		})
+	}
+}
+
+// TestCreateServicePortAssignsItToTheHostsThatAreStored is the other half: a
+// service port registered while Hosts are stored is carried by them, so that
+// the tunnels to it are built without anyone opening a second screen.
+func TestCreateServicePortAssignsItToTheHostsThatAreStored(t *testing.T) {
+	const address = `"service_ip":"198.51.100.20","service_port":9090,"local_port":19090`
+
+	tests := []struct {
+		name string
+		body string
+		want string
+	}{
+		{"a service port that says nothing", `{` + address + `}`, "1-2,2-2"},
+		{"a service port that asks for them", `{` + address + `,"assign_to_all_hosts":true}`, "1-2,2-2"},
+		{"a service port that asks for none", `{` + address + `,"assign_to_all_hosts":false}`, ""},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			// The second Host is disabled, and is assigned the service port
+			// like the first: what a Host carries and what it is running are
+			// different questions.
+			hosts := []models.Host{statusHost(1, true), statusHost(2, false)}
+			sps := []models.ServicePort{statusServicePort(1)}
+
+			db := newAssignmentDB(t, hosts, sps)
+			manager := &wakeRecorder{tx: &txConnPool{}}
+
+			h := NewHandler(db, manager, zap.NewNop(), newTestCipher(t))
+
+			c, rec := createRequest(t, "/api/service-port", tc.body)
+
+			err := h.CreateServicePort(c)
+			if err != nil {
+				t.Fatalf("CreateServicePort returned an error: %v", err)
+			}
+			if rec.Code != http.StatusCreated {
+				t.Fatalf("status = %d, want %d, body: %s", rec.Code, http.StatusCreated, rec.Body.String())
+			}
+
+			after := storedAssignments(t, db)
+			if strings.Join(after, ",") != tc.want {
+				t.Fatalf("the assignments after the create are %v, want %q", after, tc.want)
+			}
+
+			wakes, _ := manager.counts()
+			if wakes != 1 {
+				t.Errorf("reconcile wake-ups = %d, want 1", wakes)
+			}
+		})
+	}
+}
+
+// TestCreateHandlersLeaveNoRowWhenTheAssignmentsFail pins down that the row and
+// its assignments land together. A Host stored without the assignments that
+// were asked for is one the screen shows and no tunnel is built for, and
+// nothing later would put it right, so the answer that reports the failure has
+// to leave the table as it was.
+//
+// The write is made to fail by taking the assignment table away: the row is
+// written, and the insert that follows it finds no table to go in.
+func TestCreateHandlersLeaveNoRowWhenTheAssignmentsFail(t *testing.T) {
+	tests := []struct {
+		name   string
+		target string
+		body   string
+		count  func(*gorm.DB) *gorm.DB
+		call   func(*Handler, echo.Context) error
+	}{
+		{
+			name:   "create host",
+			target: "/api/host",
+			body:   `{"ip":"192.0.2.50","port":22,"user":"root","password":"fake-value-1"}`, // hook:allow
+			count:  func(db *gorm.DB) *gorm.DB { return db.Model(&models.Host{}) },
+			call:   (*Handler).CreateHost,
+		},
+		{
+			name:   "create service port",
+			target: "/api/service-port",
+			body:   `{"service_ip":"198.51.100.20","service_port":9090,"local_port":19090}`,
+			count:  func(db *gorm.DB) *gorm.DB { return db.Model(&models.ServicePort{}) },
+			call:   (*Handler).CreateServicePort,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			hosts := []models.Host{statusHost(1, true)}
+			sps := []models.ServicePort{statusServicePort(1)}
+
+			db := newAssignmentDB(t, hosts, sps, [2]uint{1, 1})
+			manager := &wakeRecorder{tx: &txConnPool{}}
+
+			err := db.Migrator().DropTable(&models.HostServicePort{})
+			if err != nil {
+				t.Fatalf("failed to take the assignment table away: %v", err)
+			}
+
+			var before int64
+
+			err = tt.count(db).Count(&before).Error
+			if err != nil {
+				t.Fatalf("failed to count the rows: %v", err)
+			}
+
+			h := NewHandler(db, manager, zap.NewNop(), newTestCipher(t))
+
+			c, rec := createRequest(t, tt.target, tt.body)
+
+			err = tt.call(h, c)
+			if err != nil {
+				t.Fatalf("the handler returned an error: %v", err)
+			}
+			if rec.Code != http.StatusInternalServerError {
+				t.Fatalf("status = %d, want %d, body: %s", rec.Code, http.StatusInternalServerError,
+					rec.Body.String())
+			}
+
+			var after int64
+
+			err = tt.count(db).Count(&after).Error
+			if err != nil {
+				t.Fatalf("failed to count the rows: %v", err)
+			}
+			if after != before {
+				t.Fatalf("%d rows are stored after the refusal, want the %d that were there: the row "+
+					"was kept without the assignments it was asked for", after, before)
+			}
+
+			// Nothing was stored, so there is nothing for a pass to do.
+			wakes, _ := manager.counts()
+			if wakes != 0 {
+				t.Errorf("reconcile wake-ups = %d, want 0", wakes)
+			}
+		})
 	}
 }

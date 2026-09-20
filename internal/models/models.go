@@ -116,6 +116,16 @@ type CreateHostRequest struct {
 	// from one that did not mention it. A plain bool cannot say the difference,
 	// and the two mean different things: the second one is enabled.
 	Enabled *bool `json:"enabled"`
+	// AssignAllServicePorts is whether the Host is to carry every service port
+	// that is stored when it is registered. A Host with no assignment runs no
+	// tunnel at all, and carrying everything is what an installation did before
+	// the assignments were rows of their own, so a request that does not
+	// mention the field is answered that way.
+	//
+	// It is a pointer for the reason Enabled is: a request asking for a Host
+	// with no assignments has to be told apart from one that says nothing, and
+	// on a plain bool the two arrive the same.
+	AssignAllServicePorts *bool `json:"assign_all_service_ports"`
 }
 
 // UpdateHostRequest changes a Host. A field the request leaves out is left as
@@ -137,6 +147,11 @@ type CreateServicePortRequest struct {
 	ServicePort int    `json:"service_port" validate:"required,min=1,max=65535"`
 	LocalPort   int    `json:"local_port" validate:"required,min=1,max=65535"`
 	Description string `json:"description"`
+	// AssignToAllHosts is whether every stored Host is to carry this service
+	// port from the moment it is registered. It is a pointer, and a request
+	// that leaves it out asks for the assignments, for the reasons given on
+	// CreateHostRequest.AssignAllServicePorts above.
+	AssignToAllHosts *bool `json:"assign_to_all_hosts"`
 }
 
 type Response struct {
