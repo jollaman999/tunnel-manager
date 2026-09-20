@@ -10,6 +10,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/jollaman999/tunnel-manager/internal/logid"
 	"github.com/jollaman999/tunnel-manager/internal/models"
 	"github.com/labstack/echo/v4"
 	"go.uber.org/zap"
@@ -160,6 +161,7 @@ func (h *LogsHandler) GetLogs(c echo.Context) error {
 		}
 
 		h.logger.Error("failed to read the log file",
+			logid.LoggingFileReadFailed.Field(),
 			zap.String("path", h.path),
 			zap.Error(err))
 

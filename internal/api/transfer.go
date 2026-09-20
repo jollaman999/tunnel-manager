@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/jollaman999/tunnel-manager/internal/crypto"
+	"github.com/jollaman999/tunnel-manager/internal/logid"
 	"github.com/jollaman999/tunnel-manager/internal/models"
 	"github.com/jollaman999/tunnel-manager/internal/settings"
 	"github.com/jollaman999/tunnel-manager/internal/tunnel"
@@ -375,7 +376,7 @@ func (h *TransferHandler) open(file string, password string, want string) (*tran
 		// Everything above is what DecryptWithPassword reports. Anything else
 		// is a failure of this process rather than of the file, so it is logged
 		// and answered as one.
-		h.hosts.logger.Error("failed to open an exported file", zap.Error(err))
+		h.hosts.logger.Error("failed to open an exported file", logid.TransferExportedFileOpenFailed.Field(), zap.Error(err))
 
 		return nil, refuse(http.StatusInternalServerError, errImportFileOpenFailed)
 	}
@@ -558,7 +559,7 @@ func (h *TransferHandler) ExportTunnels(c echo.Context) error {
 
 	err = h.hosts.db.Find(&hosts).Error
 	if err != nil {
-		h.hosts.logger.Error("failed to read the Hosts for an export", zap.Error(err))
+		h.hosts.logger.Error("failed to read the Hosts for an export", logid.TransferHostsReadFailed.Field(), zap.Error(err))
 		return failure(c, http.StatusInternalServerError, errExportHostsReadFailed)
 	}
 
@@ -566,13 +567,17 @@ func (h *TransferHandler) ExportTunnels(c echo.Context) error {
 
 	err = h.hosts.db.Find(&sps).Error
 	if err != nil {
-		h.hosts.logger.Error("failed to read the service ports for an export", zap.Error(err))
+		h.hosts.logger.Error("failed to read the service ports for an export",
+			logid.TransferServicePortsReadFailed.Field(),
+			zap.Error(err))
 		return failure(c, http.StatusInternalServerError, errExportServicePortsRead)
 	}
 
 	assigned, err := assignedLocalPortsByHost(h.hosts.db, sps)
 	if err != nil {
-		h.hosts.logger.Error("failed to read the service port assignments for an export", zap.Error(err))
+		h.hosts.logger.Error("failed to read the service port assignments for an export",
+			logid.TransferAssignmentsReadFailed.Field(),
+			zap.Error(err))
 		return failure(c, http.StatusInternalServerError, errExportAssignmentsRead)
 	}
 
@@ -589,7 +594,8 @@ func (h *TransferHandler) ExportTunnels(c echo.Context) error {
 			// The export is stopped rather than made with that Host left out: a
 			// file that quietly holds one Host fewer is one nobody checks.
 			h.hosts.logger.Error("a stored secret of a Host does not open with the encryption key of "+
-				"this installation, so no export was made", zap.Uint("host_id", host.ID),
+				"this installation, so no export was made",
+				logid.TransferHostSecretDoesNotOpen.Field(), zap.Uint("host_id", host.ID),
 				zap.Error(err))
 
 			return failure(c, http.StatusInternalServerError, errExportHostSecretsSealed, errorArgs{"host": host.IP})
@@ -618,7 +624,9 @@ func (h *TransferHandler) ExportTunnels(c echo.Context) error {
 
 	sealed, err := h.seal(transferKindTunnels, content, req.Password, exportedAt)
 	if err != nil {
-		h.hosts.logger.Error("failed to seal the exported tunnel configuration", zap.Error(err))
+		h.hosts.logger.Error("failed to seal the exported tunnel configuration",
+			logid.TransferExportSealFailed.Field(),
+			zap.Error(err))
 		return failure(c, http.StatusInternalServerError, errExportSealFailed)
 	}
 
@@ -627,6 +635,7 @@ func (h *TransferHandler) ExportTunnels(c echo.Context) error {
 	// every Host, and the log is kept, rotated and read by more people than
 	// hold the password.
 	h.hosts.logger.Info("exported the tunnel configuration",
+		logid.TransferExported.Field(),
 		zap.Int("hosts", len(content.Hosts)),
 		zap.Int("service_ports", len(content.ServicePorts)))
 
@@ -673,7 +682,7 @@ func (h *TransferHandler) ImportTunnels(c echo.Context) error {
 
 	err = tx.Error
 	if err != nil {
-		h.hosts.logger.Error("failed to start the transaction", zap.Error(err))
+		h.hosts.logger.Error("failed to start the transaction", logid.DatabaseTransactionStartFailed.Field(), zap.Error(err))
 		return failure(c, http.StatusInternalServerError, errTransactionBeginFailed)
 	}
 
@@ -729,7 +738,9 @@ func (h *TransferHandler) ImportTunnels(c echo.Context) error {
 
 	err = tx.Commit().Error
 	if err != nil {
-		h.hosts.logger.Error("failed to commit the transaction", zap.Error(err))
+		h.hosts.logger.Error("failed to commit the transaction",
+			logid.DatabaseTransactionCommitFailed.Field(),
+			zap.Error(err))
 		return failure(c, http.StatusInternalServerError, errTransactionCommitFailed)
 	}
 
@@ -751,6 +762,7 @@ func (h *TransferHandler) ImportTunnels(c echo.Context) error {
 	h.hosts.manager.WakeReconcile()
 
 	h.hosts.logger.Info("imported a tunnel configuration",
+		logid.TransferImported.Field(),
 		zap.Bool("overwrite", req.Overwrite),
 		zap.Int("added", answer.Added),
 		zap.Int("replaced", answer.Replaced),
@@ -798,7 +810,9 @@ func (h *TransferHandler) importHost(c echo.Context, tx *gorm.DB, host hostConte
 	found := err == nil
 
 	if err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
-		h.hosts.logger.Error("failed to look for a Host while importing", zap.Error(err))
+		h.hosts.logger.Error("failed to look for a Host while importing",
+			logid.TransferHostLookupFailed.Field(),
+			zap.Error(err))
 		return nil, refuse(http.StatusInternalServerError, errImportHostsReadFailed)
 	}
 
@@ -816,7 +830,9 @@ func (h *TransferHandler) importHost(c echo.Context, tx *gorm.DB, host hostConte
 	// stored here the way a create on this machine stores them.
 	password, err := h.hosts.sealPassword(host.Password)
 	if err != nil {
-		h.hosts.logger.Error("failed to encrypt the password of an imported Host", zap.Error(err))
+		h.hosts.logger.Error("failed to encrypt the password of an imported Host",
+			logid.TransferHostPasswordEncryptFailed.Field(),
+			zap.Error(err))
 		return nil, refuse(http.StatusInternalServerError, errImportHostPasswordEncrypt, errorArgs{"host": name})
 	}
 
@@ -827,7 +843,9 @@ func (h *TransferHandler) importHost(c echo.Context, tx *gorm.DB, host hostConte
 			return nil, refuse(http.StatusBadRequest, errImportHostKeyRefused, errorArgs{"host": name, "reason": refusedKey.Error()})
 		}
 
-		h.hosts.logger.Error("failed to encrypt the private key of an imported Host", zap.Error(err))
+		h.hosts.logger.Error("failed to encrypt the private key of an imported Host",
+			logid.TransferHostPrivateKeyEncryptFailed.Field(),
+			zap.Error(err))
 
 		return nil, refuse(http.StatusInternalServerError, errImportHostKeyEncrypt, errorArgs{"host": name})
 	}
@@ -845,7 +863,9 @@ func (h *TransferHandler) importHost(c echo.Context, tx *gorm.DB, host hostConte
 
 		err = tx.Save(&stored).Error
 		if err != nil {
-			h.hosts.logger.Error("failed to replace a Host while importing", zap.Error(err))
+			h.hosts.logger.Error("failed to replace a Host while importing",
+				logid.TransferHostReplaceFailed.Field(),
+				zap.Error(err))
 			return nil, refuse(http.StatusInternalServerError, errImportHostReplaceFailed, errorArgs{"host": name})
 		}
 
@@ -865,7 +885,9 @@ func (h *TransferHandler) importHost(c echo.Context, tx *gorm.DB, host hostConte
 
 	err = tx.Create(&created).Error
 	if err != nil {
-		h.hosts.logger.Error("failed to create a Host while importing", zap.Error(err))
+		h.hosts.logger.Error("failed to create a Host while importing",
+			logid.TransferHostCreateFailed.Field(),
+			zap.Error(err))
 		return nil, refuse(http.StatusInternalServerError, errImportHostCreateFailed, errorArgs{"host": name})
 	}
 
@@ -899,7 +921,9 @@ func (h *TransferHandler) importServicePort(c echo.Context, tx *gorm.DB, sp serv
 	foundOnService := err == nil
 
 	if err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
-		h.hosts.logger.Error("failed to look for a service port while importing", zap.Error(err))
+		h.hosts.logger.Error("failed to look for a service port while importing",
+			logid.TransferServicePortLookupFailed.Field(),
+			zap.Error(err))
 		return nil, refuse(http.StatusInternalServerError, errImportServicePortsReadFailed)
 	}
 
@@ -909,7 +933,9 @@ func (h *TransferHandler) importServicePort(c echo.Context, tx *gorm.DB, sp serv
 	foundOnLocal := err == nil
 
 	if err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
-		h.hosts.logger.Error("failed to look for a service port while importing", zap.Error(err))
+		h.hosts.logger.Error("failed to look for a service port while importing",
+			logid.TransferServicePortLookupFailed.Field(),
+			zap.Error(err))
 		return nil, refuse(http.StatusInternalServerError, errImportServicePortsReadFailed)
 	}
 
@@ -923,7 +949,9 @@ func (h *TransferHandler) importServicePort(c echo.Context, tx *gorm.DB, sp serv
 
 		err = tx.Create(&created).Error
 		if err != nil {
-			h.hosts.logger.Error("failed to create a service port while importing", zap.Error(err))
+			h.hosts.logger.Error("failed to create a service port while importing",
+				logid.TransferServicePortCreateFailed.Field(),
+				zap.Error(err))
 			return nil, refuse(http.StatusInternalServerError, errImportServicePortCreate, errorArgs{"service_port": name})
 		}
 
@@ -969,7 +997,9 @@ func (h *TransferHandler) importServicePort(c echo.Context, tx *gorm.DB, sp serv
 
 	err = tx.Save(&stored).Error
 	if err != nil {
-		h.hosts.logger.Error("failed to replace a service port while importing", zap.Error(err))
+		h.hosts.logger.Error("failed to replace a service port while importing",
+			logid.TransferServicePortReplaceFailed.Field(),
+			zap.Error(err))
 		return nil, refuse(http.StatusInternalServerError, errImportServicePortReplace, errorArgs{"service_port": name})
 	}
 
@@ -999,7 +1029,9 @@ func (h *TransferHandler) importAssignments(tx *gorm.DB, host hostContent,
 
 	err := tx.Where("ip = ?", host.IP).First(&stored).Error
 	if err != nil {
-		h.hosts.logger.Error("failed to read back a Host while importing its assignments", zap.Error(err))
+		h.hosts.logger.Error("failed to read back a Host while importing its assignments",
+			logid.TransferHostReadBackFailed.Field(),
+			zap.Error(err))
 		return nil, refuse(http.StatusInternalServerError, errImportAssignmentsHostRead, errorArgs{"host": host.IP})
 	}
 
@@ -1017,7 +1049,9 @@ func (h *TransferHandler) importAssignments(tx *gorm.DB, host hostContent,
 
 	err = tx.Where("host_id = ?", stored.ID).Delete(&models.HostServicePort{}).Error
 	if err != nil {
-		h.hosts.logger.Error("failed to clear the assignments of a Host while importing", zap.Error(err))
+		h.hosts.logger.Error("failed to clear the assignments of a Host while importing",
+			logid.TransferHostAssignmentsClearFailed.Field(),
+			zap.Error(err))
 		return nil, refuse(http.StatusInternalServerError, errImportAssignmentsClearFailed, errorArgs{"host": host.IP})
 	}
 
@@ -1046,6 +1080,7 @@ func (h *TransferHandler) importAssignments(tx *gorm.DB, host hostContent,
 
 		if err != nil {
 			h.hosts.logger.Error("failed to look for a service port while importing an assignment",
+				logid.TransferAssignmentServicePortLookupFailed.Field(),
 				zap.Error(err))
 
 			return nil, refuse(http.StatusInternalServerError, errImportServicePortsReadFailed)
@@ -1059,7 +1094,9 @@ func (h *TransferHandler) importAssignments(tx *gorm.DB, host hostContent,
 
 		err = tx.Create(&models.HostServicePort{HostID: stored.ID, SPID: sp.ID}).Error
 		if err != nil {
-			h.hosts.logger.Error("failed to store an assignment while importing", zap.Error(err))
+			h.hosts.logger.Error("failed to store an assignment while importing",
+				logid.TransferAssignmentStoreFailed.Field(),
+				zap.Error(err))
 			return nil, refuse(http.StatusInternalServerError, errImportAssignmentsStoreFailed, errorArgs{"host": host.IP})
 		}
 	}
@@ -1089,7 +1126,9 @@ func (h *TransferHandler) ExportSettings(c echo.Context) error {
 
 	stored, err := settings.Load(h.hosts.db)
 	if err != nil {
-		h.hosts.logger.Error("failed to read the settings for an export", zap.Error(err))
+		h.hosts.logger.Error("failed to read the settings for an export",
+			logid.TransferSettingsReadForExportFailed.Field(),
+			zap.Error(err))
 		return failure(c, http.StatusInternalServerError, errSettingsReadFailed)
 	}
 
@@ -1097,11 +1136,11 @@ func (h *TransferHandler) ExportSettings(c echo.Context) error {
 
 	sealed, err := h.seal(transferKindSettings, settingsOf(stored), req.Password, exportedAt)
 	if err != nil {
-		h.hosts.logger.Error("failed to seal the exported settings", zap.Error(err))
+		h.hosts.logger.Error("failed to seal the exported settings", logid.TransferSettingsSealFailed.Field(), zap.Error(err))
 		return failure(c, http.StatusInternalServerError, errExportSealFailed)
 	}
 
-	h.hosts.logger.Info("exported the settings of the manager")
+	h.hosts.logger.Info("exported the settings of the manager", logid.TransferSettingsExported.Field())
 
 	return c.JSON(http.StatusOK, models.Response{
 		Success: true,
@@ -1142,7 +1181,9 @@ func (h *TransferHandler) ImportSettings(c echo.Context) error {
 
 	stored, err := settings.Load(h.hosts.db)
 	if err != nil {
-		h.hosts.logger.Error("failed to read the settings for an import", zap.Error(err))
+		h.hosts.logger.Error("failed to read the settings for an import",
+			logid.TransferSettingsReadForImportFailed.Field(),
+			zap.Error(err))
 		return failure(c, http.StatusInternalServerError, errSettingsReadFailed)
 	}
 
@@ -1172,7 +1213,9 @@ func (h *TransferHandler) ImportSettings(c echo.Context) error {
 
 	err = settings.Save(h.hosts.db, &updated)
 	if err != nil {
-		h.hosts.logger.Error("failed to store the imported settings", zap.Error(err))
+		h.hosts.logger.Error("failed to store the imported settings",
+			logid.TransferSettingsStoreFailed.Field(),
+			zap.Error(err))
 		return failure(c, http.StatusInternalServerError, errSettingsStoreFailed)
 	}
 
@@ -1193,6 +1236,7 @@ func (h *TransferHandler) ImportSettings(c echo.Context) error {
 	}
 
 	h.hosts.logger.Info("imported the settings of the manager",
+		logid.TransferSettingsImported.Field(),
 		zap.Int("changed", len(changes)))
 
 	return c.JSON(http.StatusOK, models.Response{

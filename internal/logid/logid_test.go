@@ -19,11 +19,9 @@ import (
 //
 // A path that ends in a separator covers the directory under it. Take an entry
 // away as its lines are done: what is left here is exactly what the Logs screen
-// cannot translate yet.
-var notYetCarryingIDs = []string{
-	"main.go",
-	"internal/api/",
-}
+// cannot translate yet. It is empty, so every line of this application carries
+// an ID.
+var notYetCarryingIDs = []string{}
 
 // logMethods are the calls that write a line.
 var logMethods = map[string]bool{
@@ -233,8 +231,8 @@ func TestEveryLogLineCarriesAnID(t *testing.T) {
 	// The floor is there so that this cannot pass by finding nothing. A rule
 	// above that stopped recognising a logger would leave every line unchecked
 	// and the test green, which reads exactly like every line carrying an ID.
-	// The number is what the first batch attached, and it only goes up.
-	const checkedAtLeast = 61
+	// The number is what this application logs today, and it only goes up.
+	const checkedAtLeast = 232
 
 	if checked < checkedAtLeast {
 		t.Fatalf("only %d log lines were found, want at least %d: the rules that recognise a "+

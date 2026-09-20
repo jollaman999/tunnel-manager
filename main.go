@@ -26,6 +26,7 @@ import (
 	"github.com/jollaman999/tunnel-manager/internal/auth"
 	"github.com/jollaman999/tunnel-manager/internal/crypto"
 	"github.com/jollaman999/tunnel-manager/internal/database"
+	"github.com/jollaman999/tunnel-manager/internal/logid"
 	"github.com/jollaman999/tunnel-manager/internal/models"
 	"github.com/jollaman999/tunnel-manager/internal/settings"
 	"github.com/jollaman999/tunnel-manager/internal/tlsserve"
@@ -264,6 +265,7 @@ func initLogger(s *settings.Settings, installDir string) (zapcore.Core, zap.Atom
 
 	if fileErr != nil {
 		zap.New(core).Warn("logging to file is disabled",
+			logid.LoggingToFileDisabled.Field(),
 			zap.String("path", s.LoggingFilePath),
 			zap.Error(fileErr),
 			zap.String("message", "logs are written to the console only"))
@@ -335,7 +337,9 @@ func checkEncryptionKey(db *gorm.DB, cipher *crypto.Cipher, logger *zap.Logger, 
 	if err != nil {
 		// A read that fails says nothing about the key, and restoring the
 		// tunnels reports the same failure, so the startup goes on.
-		logger.Warn("failed to read the Hosts to check the encryption key against", zap.Error(err))
+		logger.Warn("failed to read the Hosts to check the encryption key against",
+			logid.EncryptionKeyCheckHostsReadFailed.Field(),
+			zap.Error(err))
 		return
 	}
 
@@ -346,6 +350,7 @@ func checkEncryptionKey(db *gorm.DB, cipher *crypto.Cipher, logger *zap.Logger, 
 			"they were encrypted with. Put the key file that the passwords were stored with back in place, "+
 			"or set the password of every Host again through the API. Starting against another key is "+
 			"refused because no tunnel could be built and no stored password could be read",
+			logid.EncryptionKeyOpensNoStoredPassword.Field(),
 			zap.String("key_file", keyFile),
 			zap.Int("hosts", len(hosts)),
 			zap.Int("hosts_that_do_not_open", len(check.hostsThatDoNotOpen)),
@@ -358,6 +363,7 @@ func checkEncryptionKey(db *gorm.DB, cipher *crypto.Cipher, logger *zap.Logger, 
 		logger.Warn("the stored password of these Hosts does not open with the encryption key in use, so no "+
 			"tunnel is built for them. Set their password again through the API. The stored value is left as "+
 			"it is, because a password that does not open exists nowhere else and is gone once it is written over",
+			logid.EncryptionStoredPasswordDoesNotOpen.Field(),
 			zap.String("key_file", keyFile),
 			zap.Int("hosts_that_do_not_open", len(check.hostsThatDoNotOpen)),
 			zap.Uints("host_ids_that_do_not_open", check.hostsThatDoNotOpen),
@@ -367,10 +373,12 @@ func checkEncryptionKey(db *gorm.DB, cipher *crypto.Cipher, logger *zap.Logger, 
 	switch {
 	case check.decrypted > 0:
 		logger.Info("the encryption key opens the stored passwords",
+			logid.EncryptionKeyOpensStoredPasswords.Field(),
 			zap.String("key_file", keyFile),
 			zap.Int("hosts_that_open", check.decrypted))
 	case len(check.hostsThatDoNotOpen) == 0:
 		logger.Info("no stored password is encrypted, so there is nothing to check the encryption key against",
+			logid.EncryptionNoStoredPasswordEncrypted.Field(),
 			zap.Int("hosts", len(hosts)))
 	}
 }
@@ -389,6 +397,7 @@ func ensureUser(db *gorm.DB, logger *zap.Logger, passwordFile string) {
 		// directory the process may write to, or give it that permission.
 		logger.Fatal("failed to set up the account. The initial password is written next to the "+
 			"database file, so the process has to be allowed to write to that directory",
+			logid.AccountInitialSetupFailed.Field(),
 			zap.Error(err),
 			zap.String("initial_password_file", passwordFile))
 	}
@@ -397,11 +406,12 @@ func ensureUser(db *gorm.DB, logger *zap.Logger, passwordFile string) {
 		logger.Info("created the account with an initial password. Read the password from the file, log in "+
 			"with it, and set a username and a password. The file is written with permission 0600 and holds "+
 			"the only copy of the password",
+			logid.AccountCreatedWithInitialPassword.Field(),
 			zap.String("initial_password_file", passwordFile))
 		return
 	}
 
-	logger.Info("the account is already set up")
+	logger.Info("the account is already set up", logid.AccountAlreadySetUp.Field())
 }
 
 type CustomValidator struct {
@@ -428,24 +438,27 @@ func (cv *CustomValidator) Validate(i interface{}) error {
 func resetStoredSettings(db *gorm.DB, logger *zap.Logger) {
 	before, after, err := settings.Reset(db)
 	if err != nil {
-		logger.Fatal("failed to put the settings back to their defaults", zap.Error(err))
+		logger.Fatal("failed to put the settings back to their defaults", logid.SettingsResetFailed.Field(), zap.Error(err))
 	}
 
 	changes := settings.Diff(before, after)
 
 	if len(changes) == 0 {
-		logger.Info("every setting was already at its default, so nothing was changed")
+		logger.Info("every setting was already at its default, so nothing was changed",
+			logid.SettingsAlreadyAtDefault.Field())
 	}
 
 	for _, change := range changes {
 		if before == nil {
 			logger.Info("stored a setting that the database did not hold yet",
+				logid.SettingsMissingSettingStored.Field(),
 				zap.String("setting", change.Name),
 				zap.String("to", change.To))
 			continue
 		}
 
 		logger.Info("put a setting back to its default",
+			logid.SettingsSettingPutBackToDefault.Field(),
 			zap.String("setting", change.Name),
 			zap.String("from", change.From),
 			zap.String("to", change.To))
@@ -542,7 +555,7 @@ func main() {
 		_ = logger.Sync()
 	}()
 
-	logger.Info("Starting tunnel-manager...", zap.String("version", version))
+	logger.Info("Starting tunnel-manager...", logid.StartupStarting.Field(), zap.String("version", version))
 
 	// The database is a file, so there is nothing to wait for. A file that
 	// cannot be opened is not a problem that comes right on the next try, and
@@ -558,6 +571,7 @@ func main() {
 	db, gormLevel, err := database.NewDatabase(databaseFile, logger, bootstrapLogLevel)
 	if err != nil {
 		logger.Fatal("failed to open the database",
+			logid.DatabaseOpenFailed.Field(),
 			zap.String("path", databaseFile),
 			zap.Error(err))
 	}
@@ -570,7 +584,7 @@ func main() {
 
 	set, err := settings.Load(db)
 	if err != nil {
-		logger.Fatal("failed to read the settings", zap.Error(err))
+		logger.Fatal("failed to read the settings", logid.SettingsReadFailed.Field(), zap.Error(err))
 	}
 
 	// From here the logger is the one the settings describe. logLevel is the
@@ -578,7 +592,7 @@ func main() {
 	// level is not fixed into the core.
 	core, logLevel, err := initLogger(set, installDir)
 	if err != nil {
-		logger.Fatal("failed to initialize the logger", zap.Error(err))
+		logger.Fatal("failed to initialize the logger", logid.LoggingInitFailed.Field(), zap.Error(err))
 	}
 
 	loggerSwitch.set(core)
@@ -594,6 +608,7 @@ func main() {
 	gormLevel.Set(set.LoggingLevel)
 
 	logger.Info("read the settings from the database",
+		logid.SettingsRead.Field(),
 		zap.String("log_level", logLevel.String()),
 		zap.String("log_format", set.LoggingFormat),
 		zap.String("log_file", resolveInstallPath(installDir, set.LoggingFilePath)),
@@ -612,13 +627,14 @@ func main() {
 	key, err := crypto.LoadOrCreateKey(keyFile)
 	if err != nil {
 		logger.Fatal("failed to load the encryption key",
+			logid.EncryptionKeyLoadFailed.Field(),
 			zap.String("key_file", keyFile),
 			zap.Error(err))
 	}
 
 	cipher, err := crypto.NewCipher(key)
 	if err != nil {
-		logger.Fatal("failed to initialize the encryption", zap.Error(err))
+		logger.Fatal("failed to initialize the encryption", logid.EncryptionInitFailed.Field(), zap.Error(err))
 	}
 	// The path is reported as an absolute one. The configured value may be
 	// relative, and a relative path is read against the working directory,
@@ -630,7 +646,7 @@ func main() {
 		keyPath = keyFile
 	}
 
-	logger.Info("loaded the encryption key", zap.String("path", keyPath))
+	logger.Info("loaded the encryption key", logid.EncryptionKeyLoaded.Field(), zap.String("path", keyPath))
 
 	// The signals are taken over before anything that has to be torn down is
 	// built, because until they are the default disposition kills the process
@@ -660,16 +676,16 @@ func main() {
 
 	manager, err := tunnel.NewManager(db, logger, cipher, set.MonitoringIntervalSec)
 	if err != nil {
-		logger.Fatal("failed to create the tunnel manager", zap.Error(err))
+		logger.Fatal("failed to create the tunnel manager", logid.TunnelManagerCreateFailed.Field(), zap.Error(err))
 	}
 
 	// The first reconcile pass runs before anything is served, so the tunnels
 	// of the rows that are already stored are up by the time the first request
 	// can ask about them.
-	logger.Info("Restoring all tunnels...")
+	logger.Info("Restoring all tunnels...", logid.TunnelRestoreStarting.Field())
 	err = manager.RestoreAllTunnels()
 	if err != nil {
-		logger.Error("failed to restore tunnels", zap.Error(err))
+		logger.Error("failed to restore tunnels", logid.TunnelRestoreFailed.Field(), zap.Error(err))
 	}
 
 	// From here on the loop is the only thing that starts and stops tunnels. The
@@ -699,6 +715,7 @@ func main() {
 		case <-reconcileDone:
 		case <-time.After(reconcileStopTimeout):
 			logger.Warn("the reconcile loop did not return in time, stopping the tunnels anyway",
+				logid.TunnelReconcileStopTimedOut.Field(),
 				zap.Duration("waited", reconcileStopTimeout))
 		}
 	}
@@ -897,6 +914,7 @@ func main() {
 			// under an address that says https in nobody's browser.
 			logger.Fatal("failed to prepare the TLS certificate. Start with api.https_enabled turned "+
 				"off to serve in the clear while this is sorted out",
+				logid.CertificatePrepareFailed.Field(),
 				zap.Error(certErr))
 		}
 
@@ -904,12 +922,14 @@ func main() {
 			logger.Info("generated a certificate for this installation and stored it in the database. "+
 				"Nobody signed for it, so a client shows a warning until the certificate is trusted on "+
 				"that machine. The fingerprint is what to check it against",
+				logid.CertificateGenerated.Field(),
 				zap.String("reason", certInfo.Reason),
 				zap.String("fingerprint_sha256", certInfo.Fingerprint),
 				zap.Strings("hosts", certInfo.Hosts),
 				zap.Time("not_after", certInfo.NotAfter))
 		} else {
 			logger.Info("read the certificate of this installation from the database",
+				logid.CertificateReadFromDatabase.Field(),
 				zap.String("fingerprint_sha256", certInfo.Fingerprint),
 				zap.Strings("hosts", certInfo.Hosts),
 				zap.Time("not_after", certInfo.NotAfter))
@@ -939,7 +959,9 @@ func main() {
 				// A closed listener is how this server ends every time: the
 				// shutdown closes the port out from under it.
 				if err != nil && !errors.Is(err, http.ErrServerClosed) && !errors.Is(err, net.ErrClosed) {
-					logger.Error("the server that redirects plaintext requests stopped", zap.Error(err))
+					logger.Error("the server that redirects plaintext requests stopped",
+						logid.ApiServerRedirectServerStopped.Field(),
+						zap.Error(err))
 				}
 			}()
 
@@ -952,11 +974,13 @@ func main() {
 
 			logger.Info("serving the API and the web UI over HTTPS. A request that arrives in the clear "+
 				"on the same port is answered with a redirect to https",
+				logid.ApiServerServingHttps.Field(),
 				zap.Int("port", set.APIPort))
 		}
 	} else {
 		logger.Warn("HTTPS is turned off, so the API and the web UI are served in the clear. Everything "+
 			"the screens send travels as it is, the password of the account among it",
+			logid.ApiServerServingPlain.Field(),
 			zap.Int("port", set.APIPort))
 
 		go func() {
@@ -976,15 +1000,18 @@ func main() {
 
 	select {
 	case sig := <-sigChan:
-		logger.Info("Received signal, shutting down...", zap.String("signal", sig.String()))
+		logger.Info("Received signal, shutting down...",
+			logid.ShutdownSignalReceived.Field(),
+			zap.String("signal", sig.String()))
 	case <-uninstalled:
-		logger.Info("The installation was removed, shutting down...")
+		logger.Info("The installation was removed, shutting down...", logid.ShutdownUninstalled.Field())
 	case <-restarting:
 		restartAsked = true
 
-		logger.Info("A restart was asked for, shutting down before this program is run again...")
+		logger.Info("A restart was asked for, shutting down before this program is run again...",
+			logid.ShutdownRestartAsked.Field())
 	case startErr = <-serverErr:
-		logger.Error("failed to start API server", zap.Error(startErr))
+		logger.Error("failed to start API server", logid.ApiServerStartFailed.Field(), zap.Error(startErr))
 	}
 
 	// The API server goes down first so that no request observes tunnels
@@ -994,7 +1021,7 @@ func main() {
 	defer cancel()
 	err = e.Shutdown(ctx)
 	if err != nil {
-		logger.Error("failed to shut down API server gracefully", zap.Error(err))
+		logger.Error("failed to shut down API server gracefully", logid.ApiServerShutdownFailed.Field(), zap.Error(err))
 	}
 
 	// The redirect server is drained the same way, so a browser that was being
@@ -1002,7 +1029,9 @@ func main() {
 	if redirectServer != nil {
 		err = redirectServer.Shutdown(ctx)
 		if err != nil {
-			logger.Error("failed to shut down the redirect server gracefully", zap.Error(err))
+			logger.Error("failed to shut down the redirect server gracefully",
+				logid.ApiServerRedirectShutdownFailed.Field(),
+				zap.Error(err))
 		}
 	}
 
@@ -1013,7 +1042,7 @@ func main() {
 	if portSplit != nil {
 		err = portSplit.Close()
 		if err != nil && !errors.Is(err, net.ErrClosed) {
-			logger.Error("failed to close the API port", zap.Error(err))
+			logger.Error("failed to close the API port", logid.ApiServerPortCloseFailed.Field(), zap.Error(err))
 		}
 	}
 
@@ -1022,7 +1051,7 @@ func main() {
 	// what is stopped costs nothing.
 	stopReconcileLoop()
 
-	logger.Info("Stopping all tunnels...")
+	logger.Info("Stopping all tunnels...", logid.ShutdownStoppingTunnels.Field())
 	manager.StopAllTunnels()
 
 	// The restart comes last of all. Everything above it is what a signal does
@@ -1033,7 +1062,7 @@ func main() {
 		finishRestart(logger)
 	}
 
-	logger.Info("Exiting tunnel-manager...")
+	logger.Info("Exiting tunnel-manager...", logid.ShutdownExiting.Field())
 
 	if startErr != nil {
 		// os.Exit does not run the deferred Sync, so the logs are flushed here.
@@ -1053,15 +1082,17 @@ func main() {
 // was told which of the two this is before the operator pressed anything.
 func finishRestart(logger *zap.Logger) {
 	if !canReexec() {
-		logger.Info("the restart ends with this process. This platform cannot replace the " +
-			"image of a running process, so starting this program again is left to whatever " +
-			"supervises this service")
+		logger.Info("the restart ends with this process. This platform cannot replace the "+
+			"image of a running process, so starting this program again is left to whatever "+
+			"supervises this service",
+			logid.RestartEndsWithThisProcess.Field())
 
 		return
 	}
 
-	logger.Info("the shutdown has ended and the port is free, so this process now runs this " +
-		"program again with the arguments and the environment it was started with")
+	logger.Info("the shutdown has ended and the port is free, so this process now runs this "+
+		"program again with the arguments and the environment it was started with",
+		logid.RestartRunningAgain.Field())
 
 	// exec replaces the image of this process and runs no deferred call, so
 	// what has been logged is written out here. Without this the last lines of
@@ -1074,6 +1105,7 @@ func finishRestart(logger *zap.Logger) {
 	// this process, since nothing was replaced.
 	logger.Error("failed to run this program again, so this process ends instead. A service "+
 		"that is supervised is started again from here; one that was started by hand is not",
+		logid.RestartExecFailed.Field(),
 		zap.Error(err))
 
 	// The exit code says the process did not end the way it meant to, which is

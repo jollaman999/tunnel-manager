@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/jollaman999/tunnel-manager/internal/auth"
+	"github.com/jollaman999/tunnel-manager/internal/logid"
 	"github.com/jollaman999/tunnel-manager/internal/models"
 	"github.com/labstack/echo/v4"
 	"go.uber.org/zap"
@@ -153,7 +154,7 @@ func (h *UninstallHandler) Uninstall(c echo.Context) error {
 	if !ok {
 		// The middleware is what puts it there, so getting here means the route
 		// was hung somewhere the middleware does not cover.
-		h.logger.Error("the uninstall was reached with no account on the context")
+		h.logger.Error("the uninstall was reached with no account on the context", logid.UninstallNoAccountOnContext.Field())
 		return failure(c, http.StatusInternalServerError, errAccountReadFailed)
 	}
 
@@ -161,7 +162,7 @@ func (h *UninstallHandler) Uninstall(c echo.Context) error {
 
 	err = h.db.First(&user, userID).Error
 	if err != nil {
-		h.logger.Error("failed to read the account", zap.Error(err))
+		h.logger.Error("failed to read the account", logid.AccountReadFailed.Field(), zap.Error(err))
 		return failure(c, http.StatusInternalServerError, errAccountReadFailed)
 	}
 
@@ -169,14 +170,16 @@ func (h *UninstallHandler) Uninstall(c echo.Context) error {
 		// Nothing has been touched at this point, and the log says so: an
 		// operator reading it later has to be able to tell an uninstall that
 		// was refused from one that ran.
-		h.logger.Warn("the uninstall was asked for with a password that does not open the account, " +
-			"so nothing was stopped and nothing was removed")
+		h.logger.Warn("the uninstall was asked for with a password that does not open the account, "+
+			"so nothing was stopped and nothing was removed",
+			logid.UninstallPasswordWrong.Field())
 
 		return failure(c, http.StatusUnauthorized, errUninstallPasswordWrong)
 	}
 
-	h.logger.Warn("the uninstall was asked for and the password opens the account. The tunnels are " +
-		"stopped, the files of this installation are removed and the process ends")
+	h.logger.Warn("the uninstall was asked for and the password opens the account. The tunnels are "+
+		"stopped, the files of this installation are removed and the process ends",
+		logid.UninstallStarting.Field())
 
 	// The loop goes first. It is the only thing that starts tunnels, and it
 	// builds again whatever is stopped while it runs, so stopping the tunnels
@@ -189,14 +192,15 @@ func (h *UninstallHandler) Uninstall(c echo.Context) error {
 	// to is removed a moment later, but the console the service writes to keeps
 	// it, and the order in it is what tells a tunnel that was stopped from one
 	// that went down with the process.
-	h.logger.Info("stopped the reconcile loop, so nothing starts a tunnel again")
+	h.logger.Info("stopped the reconcile loop, so nothing starts a tunnel again",
+		logid.UninstallReconcileLoopStopped.Field())
 
 	// The tunnels are taken down before any file goes, so that no listener is
 	// left behind on a remote host. A process that exits closes its connections,
 	// but it is the manager that knows what it opened.
 	h.manager.StopAllTunnels()
 
-	h.logger.Info("stopped every tunnel")
+	h.logger.Info("stopped every tunnel", logid.UninstallTunnelsStopped.Field())
 
 	h.closeDatabase()
 
@@ -212,7 +216,9 @@ func (h *UninstallHandler) Uninstall(c echo.Context) error {
 	if err != nil {
 		// The files are gone either way. A process left running on an
 		// installation that no longer exists serves nothing, so it still ends.
-		h.logger.Error("failed to write the answer of the uninstall", zap.Error(err))
+		h.logger.Error("failed to write the answer of the uninstall",
+			logid.UninstallAnswerWriteFailed.Field(),
+			zap.Error(err))
 	}
 
 	time.AfterFunc(h.exitAfter, h.exit)
@@ -229,7 +235,9 @@ func (h *UninstallHandler) Uninstall(c echo.Context) error {
 func (h *UninstallHandler) closeDatabase() {
 	sqlDB, err := h.db.DB()
 	if err != nil {
-		h.logger.Error("failed to reach the database handle to close it", zap.Error(err))
+		h.logger.Error("failed to reach the database handle to close it",
+			logid.UninstallDatabaseHandleUnreachable.Field(),
+			zap.Error(err))
 		return
 	}
 
@@ -237,11 +245,11 @@ func (h *UninstallHandler) closeDatabase() {
 	if err != nil {
 		// The files are removed anyway. A handle that did not close holds
 		// nothing this process needs any more, and it goes with the process.
-		h.logger.Error("failed to close the database", zap.Error(err))
+		h.logger.Error("failed to close the database", logid.UninstallDatabaseCloseFailed.Field(), zap.Error(err))
 		return
 	}
 
-	h.logger.Info("closed the database")
+	h.logger.Info("closed the database", logid.UninstallDatabaseClosed.Field())
 }
 
 // removeFiles deletes everything this installation is made of and reports what
@@ -263,6 +271,7 @@ func (h *UninstallHandler) removeFiles() uninstallResult {
 		switch {
 		case err == nil:
 			h.logger.Info("removed a file of the installation",
+				logid.UninstallFileRemoved.Field(),
 				zap.String("what", file.What),
 				zap.String("path", file.Path))
 
@@ -273,10 +282,12 @@ func (h *UninstallHandler) removeFiles() uninstallResult {
 			// itself as the connection closes, so this is the usual case for
 			// several of these and is not worth an entry on the screen.
 			h.logger.Debug("a file of the installation was not there",
+				logid.UninstallFileNotThere.Field(),
 				zap.String("what", file.What),
 				zap.String("path", file.Path))
 		default:
 			h.logger.Error("failed to remove a file of the installation",
+				logid.UninstallFileRemoveFailed.Field(),
 				zap.String("what", file.What),
 				zap.String("path", file.Path),
 				zap.Error(err))
@@ -366,6 +377,7 @@ func (h *UninstallHandler) rotatedLogFiles() []string {
 		// The log file itself is removed on its own below, so a directory that
 		// cannot be read costs the rotated files and nothing else.
 		h.logger.Error("failed to read the log directory, so the rotated log files are left behind",
+			logid.UninstallLogDirectoryReadFailed.Field(),
 			zap.String("directory", dir),
 			zap.Error(err))
 

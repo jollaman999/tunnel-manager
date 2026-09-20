@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/jollaman999/tunnel-manager/internal/crypto"
+	"github.com/jollaman999/tunnel-manager/internal/logid"
 	"github.com/jollaman999/tunnel-manager/internal/models"
 	"github.com/jollaman999/tunnel-manager/internal/tlsserve"
 	"github.com/labstack/echo/v4"
@@ -107,7 +108,9 @@ func (h *CertificateHandler) GetCertificate(c echo.Context) error {
 
 	leaf, err := leafOf(current)
 	if err != nil {
-		h.logger.Error("the certificate being served cannot be parsed", zap.Error(err))
+		h.logger.Error("the certificate being served cannot be parsed",
+			logid.CertificateServedUnparsable.Field(),
+			zap.Error(err))
 
 		return failure(c, http.StatusInternalServerError, errCertificateServedUnread)
 	}
@@ -130,7 +133,7 @@ func (h *CertificateHandler) RenewCertificate(c echo.Context) error {
 
 	keyPair, info, err := tlsserve.Renew(h.db, h.cipher, now)
 	if err != nil {
-		h.logger.Error("failed to make a new certificate", zap.Error(err))
+		h.logger.Error("failed to make a new certificate", logid.CertificateCreateFailed.Field(), zap.Error(err))
 
 		return failure(c, http.StatusInternalServerError, errCertificateRenewFailed)
 	}
@@ -165,7 +168,7 @@ func (h *CertificateHandler) InstallCertificate(c echo.Context) error {
 			return failure(c, http.StatusBadRequest, errCertificateInstallRefused, errorArgs{"reason": refused.Error()})
 		}
 
-		h.logger.Error("failed to store the certificate that was sent", zap.Error(err))
+		h.logger.Error("failed to store the certificate that was sent", logid.CertificateStoreFailed.Field(), zap.Error(err))
 
 		return failure(c, http.StatusInternalServerError, errCertificateStoreFailed)
 	}
@@ -191,6 +194,7 @@ func (h *CertificateHandler) replaced(c echo.Context, previous *tls.Certificate,
 		// and putting it in front of the clients would leave the operator with
 		// a replacement they were not told about.
 		h.logger.Error("the new certificate cannot be parsed and was not put in place",
+			logid.CertificateNewUnparsable.Field(),
 			zap.Error(err))
 
 		return failure(c, http.StatusInternalServerError, errCertificateReadBackFailed)
@@ -211,6 +215,7 @@ func (h *CertificateHandler) replaced(c echo.Context, previous *tls.Certificate,
 	h.logger.Info("the TLS certificate of this installation was replaced from the Settings screen. "+
 		"Connections that were already open keep the old one; every new connection is served the "+
 		"new one",
+		logid.CertificateReplaced.Field(),
 		zap.String("how", how),
 		zap.String("previous_fingerprint_sha256", previousFingerprint),
 		zap.String("fingerprint_sha256", info.Fingerprint),
@@ -220,6 +225,7 @@ func (h *CertificateHandler) replaced(c echo.Context, previous *tls.Certificate,
 
 	if info.Warning != "" {
 		h.logger.Warn("the certificate that was installed is not usable yet",
+			logid.CertificateNotUsableYet.Field(),
 			zap.String("fingerprint_sha256", info.Fingerprint),
 			zap.String("warning", info.Warning))
 	}

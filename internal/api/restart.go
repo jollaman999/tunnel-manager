@@ -4,6 +4,7 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/jollaman999/tunnel-manager/internal/logid"
 	"github.com/jollaman999/tunnel-manager/internal/models"
 	"github.com/labstack/echo/v4"
 	"go.uber.org/zap"
@@ -92,6 +93,7 @@ func (h *RestartHandler) GetRestart(c echo.Context) error {
 func (h *RestartHandler) Restart(c echo.Context) error {
 	h.logger.Warn("a restart was asked for on the Settings screen. The API stops answering, "+
 		"every tunnel comes down and this program runs again",
+		logid.RestartAsked.Field(),
 		zap.Duration("in", h.restartAfter),
 		zap.Bool("comes_back", h.comesBack))
 
@@ -106,7 +108,7 @@ func (h *RestartHandler) Restart(c echo.Context) error {
 		// allowed to ask, and nothing about this failure says the service
 		// should stay as it is; what is lost is the screen that would have
 		// said so.
-		h.logger.Error("failed to write the answer of the restart", zap.Error(err))
+		h.logger.Error("failed to write the answer of the restart", logid.RestartAnswerWriteFailed.Field(), zap.Error(err))
 	}
 
 	time.AfterFunc(h.restartAfter, h.restart)

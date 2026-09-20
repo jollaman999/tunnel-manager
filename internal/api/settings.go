@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"strings"
 
+	"github.com/jollaman999/tunnel-manager/internal/logid"
 	"github.com/jollaman999/tunnel-manager/internal/models"
 	"github.com/jollaman999/tunnel-manager/internal/settings"
 	"github.com/labstack/echo/v4"
@@ -127,7 +128,7 @@ type settingsView struct {
 func (h *SettingsHandler) GetSettings(c echo.Context) error {
 	stored, err := settings.Load(h.db)
 	if err != nil {
-		h.logger.Error("failed to read the settings", zap.Error(err))
+		h.logger.Error("failed to read the settings", logid.SettingsReadFailed.Field(), zap.Error(err))
 		return failure(c, http.StatusInternalServerError, errSettingsReadFailed)
 	}
 
@@ -146,7 +147,7 @@ func (h *SettingsHandler) GetSettings(c echo.Context) error {
 func (h *SettingsHandler) UpdateSettings(c echo.Context) error {
 	stored, err := settings.Load(h.db)
 	if err != nil {
-		h.logger.Error("failed to read the settings", zap.Error(err))
+		h.logger.Error("failed to read the settings", logid.SettingsReadFailed.Field(), zap.Error(err))
 		return failure(c, http.StatusInternalServerError, errSettingsReadFailed)
 	}
 
@@ -185,7 +186,7 @@ func (h *SettingsHandler) UpdateSettings(c echo.Context) error {
 
 	err = settings.Save(h.db, &updated)
 	if err != nil {
-		h.logger.Error("failed to store the settings", zap.Error(err))
+		h.logger.Error("failed to store the settings", logid.SettingsStoreFailed.Field(), zap.Error(err))
 		return failure(c, http.StatusInternalServerError, errSettingsStoreFailed)
 	}
 
@@ -322,6 +323,7 @@ func (h *SettingsHandler) setLogLevel(level string) bool {
 	parsed, err := zapcore.ParseLevel(level)
 	if err != nil {
 		h.logger.Error("the stored log level is not one the logger knows",
+			logid.SettingsLogLevelUnknown.Field(),
 			zap.String("level", level),
 			zap.Error(err))
 

@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/jollaman999/tunnel-manager/internal/auth"
+	"github.com/jollaman999/tunnel-manager/internal/logid"
 	"github.com/jollaman999/tunnel-manager/internal/models"
 	"github.com/labstack/echo/v4"
 	"go.uber.org/zap"
@@ -83,13 +84,14 @@ func (h *AuthHandler) GetAccount(c echo.Context) error {
 	if !ok {
 		// The middleware is what puts it there, so getting here means the route
 		// was hung somewhere the middleware does not cover.
-		h.logger.Error("the account read was reached with no account on the context")
+		h.logger.Error("the account read was reached with no account on the context",
+			logid.AccountReadNoAccountOnContext.Field())
 		return failure(c, http.StatusInternalServerError, errAccountReadFailed)
 	}
 
 	user, err := h.readUser(userID)
 	if err != nil {
-		h.logger.Error("failed to read the account", zap.Error(err))
+		h.logger.Error("failed to read the account", logid.AccountReadFailed.Field(), zap.Error(err))
 		return failure(c, http.StatusInternalServerError, errAccountReadFailed)
 	}
 
@@ -155,13 +157,14 @@ func (h *AuthHandler) ChangeAccount(c echo.Context) error {
 	if !ok {
 		// The middleware is what puts it there, so getting here means the route
 		// was hung somewhere the middleware does not cover.
-		h.logger.Error("the account change was reached with no account on the context")
+		h.logger.Error("the account change was reached with no account on the context",
+			logid.AccountChangeNoAccountOnContext.Field())
 		return failure(c, http.StatusInternalServerError, errAccountReadFailed)
 	}
 
 	user, err := h.readUser(userID)
 	if err != nil {
-		h.logger.Error("failed to read the account", zap.Error(err))
+		h.logger.Error("failed to read the account", logid.AccountReadFailed.Field(), zap.Error(err))
 		return failure(c, http.StatusInternalServerError, errAccountReadFailed)
 	}
 
@@ -171,8 +174,9 @@ func (h *AuthHandler) ChangeAccount(c echo.Context) error {
 		// ran. Neither password is in the line. The log goes to the console as
 		// well as to a file that is kept and rotated, so a credential written
 		// there outlives every screen it was typed on.
-		h.logger.Warn("the account was asked to be changed with a password that does not open " +
-			"it, so nothing was changed and no session was ended")
+		h.logger.Warn("the account was asked to be changed with a password that does not open "+
+			"it, so nothing was changed and no session was ended",
+			logid.AccountChangePasswordWrong.Field())
 
 		return failure(c, http.StatusUnauthorized, errAccountPasswordWrong)
 	}
@@ -202,7 +206,7 @@ func (h *AuthHandler) ChangeAccount(c echo.Context) error {
 	if changePassword {
 		hash, hashErr := auth.HashPassword(req.NewPassword)
 		if hashErr != nil {
-			h.logger.Error("failed to hash the password", zap.Error(hashErr))
+			h.logger.Error("failed to hash the password", logid.AccountPasswordHashFailed.Field(), zap.Error(hashErr))
 			return failure(c, http.StatusInternalServerError, errAccountHashFailed)
 		}
 
@@ -211,7 +215,7 @@ func (h *AuthHandler) ChangeAccount(c echo.Context) error {
 
 	err = h.db.Save(user).Error
 	if err != nil {
-		h.logger.Error("failed to store the changed account", zap.Error(err))
+		h.logger.Error("failed to store the changed account", logid.AccountStoreFailed.Field(), zap.Error(err))
 		return failure(c, http.StatusInternalServerError, errAccountStoreFailed)
 	}
 
@@ -246,6 +250,7 @@ func (h *AuthHandler) ChangeAccount(c echo.Context) error {
 	// half of what opens this account, which is why the login refuses to say
 	// which half of a guess was right.
 	h.logger.Info("the credentials of the account were changed, so every other session was ended",
+		logid.AccountCredentialsChanged.Field(),
 		zap.Bool("username_changed", changeUsername),
 		zap.Bool("password_changed", changePassword),
 		zap.Int("sessions_ended", ended))

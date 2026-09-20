@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/jollaman999/tunnel-manager/internal/auth"
+	"github.com/jollaman999/tunnel-manager/internal/logid"
 	"github.com/jollaman999/tunnel-manager/internal/models"
 	"github.com/labstack/echo/v4"
 	"go.uber.org/zap"
@@ -334,7 +335,7 @@ func (h *AuthHandler) Login(c echo.Context) error {
 
 	user, err := h.readUser()
 	if err != nil {
-		h.logger.Error("failed to read the account", zap.Error(err))
+		h.logger.Error("failed to read the account", logid.AccountReadFailed.Field(), zap.Error(err))
 		return failure(c, http.StatusInternalServerError, errAccountReadFailed)
 	}
 
@@ -353,7 +354,7 @@ func (h *AuthHandler) Login(c echo.Context) error {
 
 	token, csrfToken, err := h.sessions.Create(user.ID)
 	if err != nil {
-		h.logger.Error("failed to create a session", zap.Error(err))
+		h.logger.Error("failed to create a session", logid.AccountSessionCreateFailed.Field(), zap.Error(err))
 		return failure(c, http.StatusInternalServerError, errAuthSessionCreateFailed)
 	}
 
@@ -417,7 +418,7 @@ func (h *AuthHandler) Setup(c echo.Context) error {
 	// purpose, and the row is locked for as long as the transaction is open.
 	hash, err := auth.HashPassword(req.Password)
 	if err != nil {
-		h.logger.Error("failed to hash the password", zap.Error(err))
+		h.logger.Error("failed to hash the password", logid.AccountPasswordHashFailed.Field(), zap.Error(err))
 		return failure(c, http.StatusInternalServerError, errAccountHashFailed)
 	}
 
@@ -425,14 +426,14 @@ func (h *AuthHandler) Setup(c echo.Context) error {
 	if !ok {
 		// The middleware is what puts it there, so getting here means the route
 		// was hung somewhere the middleware does not cover.
-		h.logger.Error("the setup was reached with no account on the context")
+		h.logger.Error("the setup was reached with no account on the context", logid.AccountSetupNoAccountOnContext.Field())
 		return failure(c, http.StatusInternalServerError, errAccountReadFailed)
 	}
 
 	tx := h.db.Begin()
 	err = tx.Error
 	if err != nil {
-		h.logger.Error("failed to start the transaction", zap.Error(err))
+		h.logger.Error("failed to start the transaction", logid.DatabaseTransactionStartFailed.Field(), zap.Error(err))
 		return failure(c, http.StatusInternalServerError, errTransactionBeginFailed)
 	}
 
@@ -447,7 +448,7 @@ func (h *AuthHandler) Setup(c echo.Context) error {
 	err = tx.First(&user, userID).Error
 	if err != nil {
 		tx.Rollback()
-		h.logger.Error("failed to read the account", zap.Error(err))
+		h.logger.Error("failed to read the account", logid.AccountReadFailed.Field(), zap.Error(err))
 		return failure(c, http.StatusInternalServerError, errAccountReadFailed)
 	}
 
@@ -463,13 +464,13 @@ func (h *AuthHandler) Setup(c echo.Context) error {
 	err = tx.Save(&user).Error
 	if err != nil {
 		tx.Rollback()
-		h.logger.Error("failed to set up the account", zap.Error(err))
+		h.logger.Error("failed to set up the account", logid.AccountSetupFailed.Field(), zap.Error(err))
 		return failure(c, http.StatusInternalServerError, errAuthSetupFailed)
 	}
 
 	err = tx.Commit().Error
 	if err != nil {
-		h.logger.Error("failed to commit the account setup", zap.Error(err))
+		h.logger.Error("failed to commit the account setup", logid.AccountSetupCommitFailed.Field(), zap.Error(err))
 		return failure(c, http.StatusInternalServerError, errTransactionCommitFailed)
 	}
 
@@ -514,6 +515,7 @@ func (h *AuthHandler) removeInitialPasswordFile() {
 	h.logger.Error("failed to remove the initial password file. The account is set up and the "+
 		"password in the file no longer opens it, but the file is still there and has to be "+
 		"removed by hand",
+		logid.AccountInitialPasswordFileRemoveFailed.Field(),
 		zap.Error(err),
 		zap.String("initial_password_file", h.initialPasswordFile))
 }
@@ -584,7 +586,7 @@ func (h *AuthHandler) RequireSession() echo.MiddlewareFunc {
 			// holds is the one from before.
 			user, err := h.readUser(userID)
 			if err != nil {
-				h.logger.Error("failed to read the account", zap.Error(err))
+				h.logger.Error("failed to read the account", logid.AccountReadFailed.Field(), zap.Error(err))
 				return failure(c, http.StatusInternalServerError, errAccountReadFailed)
 			}
 
