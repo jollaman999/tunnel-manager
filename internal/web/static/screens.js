@@ -19,6 +19,11 @@ const screens = {
   },
   logs: { label: "Logs", nav: true, draw: drawLogs, enter: enterLogs },
   settings: { label: "Settings", nav: true, draw: drawSettings, enter: enterSettings },
+  // The manual is the other screen that asks the server for nothing. What is on
+  // it is true of every installation, so there is nothing to fetch, and that is
+  // what lets the login put the same thing in a panel for somebody who has no
+  // session yet.
+  manual: { label: "Manual", nav: true, draw: drawManual },
   login: { draw: drawLogin },
   setup: { draw: drawSetup },
   // The screen after the uninstall. It is out of the navigation for the same
@@ -161,7 +166,17 @@ function drawLogin() {
     onSubmit: submitLogin
   });
 
-  render("Tunnel Manager", [form]);
+  // The manual is reachable from here, with no session, because the state an
+  // operator most needs it in is the one where nothing works yet. It opens as a
+  // panel over this screen instead of moving to the screen that carries it:
+  // there is no getting to that screen without signing in, and a move would
+  // throw away whatever is half typed into the form above.
+  const help = document.createElement("div");
+
+  help.className = "buttons";
+  help.appendChild(actionButton("Manual", "open-manual", openManualPanel));
+
+  render("Tunnel Manager", [form, help]);
 }
 
 async function submitLogin(values) {
@@ -3307,4 +3322,226 @@ function drawUninstalled() {
 // server left out arrives as undefined and is read as an empty one.
 function listOfFiles(files) {
   return files === null || files === undefined ? [] : files;
+}
+
+// drawManual is the manual: what an installation is made of and how a tunnel
+// comes to stand, for somebody who has just switched this on.
+//
+// It asks the server for nothing. Everything on it is true of every
+// installation, so there is nothing to fetch and nothing that can be out of
+// date, which is also what lets the login show the same thing to a client that
+// has no session yet.
+function drawManual() {
+  render("Manual", manualNodes());
+}
+
+// openManualPanel puts the manual over the screen that asked for it. The login
+// is what asks: a panel is laid over #app rather than drawn into it, so the
+// form underneath keeps what was typed into it.
+function openManualPanel() {
+  return openModal({
+    name: "manual",
+    title: "Manual",
+    body: manualNodes(),
+    buttons: [{ label: "Close", name: "close" }]
+  });
+}
+
+// manualNodes is what the manual says, as the nodes it is drawn from. The
+// screen and the panel both call it, so there is one copy of the words and the
+// two cannot drift apart.
+//
+// The nodes are built again on every call rather than built once and kept. A
+// node is in one place at a time, so a list handed to both would leave whichever
+// drew last holding it and the other holding nothing.
+function manualNodes() {
+  return [
+    manualWhatItDoes(),
+    manualOneTunnel(),
+    manualParts(),
+    manualReach(),
+    manualPeriods(),
+    manualPaths()
+  ];
+}
+
+// manualCard is one section of the manual: a heading, and under it whatever the
+// section is made of. A string is a paragraph, which is most of it; the rest are
+// the lists and the drawing, which the caller builds.
+function manualCard(name, heading, parts) {
+  const card = document.createElement("div");
+
+  card.className = "card";
+  card.dataset.card = "manual-" + name;
+  card.appendChild(element("h2", heading));
+
+  for (const part of parts) {
+    card.appendChild(typeof part === "string" ? element("p", part) : part);
+  }
+
+  return card;
+}
+
+function manualWhatItDoes() {
+  return manualCard("what-it-does", "What this does", [
+    "tunnel-manager keeps a set of SSH tunnels standing. Each one opens a port on a Host you " +
+      "registered here, and whatever connects to that port is carried to a service that " +
+      "tunnel-manager dials on its behalf.",
+    "Nothing of this is installed on the Host. What runs there is the SSH server it already " +
+      "has, and tunnel-manager signs in to it the way a person at a terminal would."
+  ]);
+}
+
+// manualOneTunnel is the drawing and what is said around it.
+//
+// It is boxes and not a picture. These screens are read on a phone as often as
+// on a desk, and a drawing has one width it was made for: narrowed, it either
+// shrinks until the labels cannot be read or takes the page sideways with it.
+// Boxes stack instead, which is what the rest of this page does at that width.
+function manualOneTunnel() {
+  const flow = document.createElement("div");
+
+  flow.className = "flow";
+  flow.dataset.flow = "tunnel";
+
+  flow.appendChild(manualFlowStep(1, "tunnel-manager",
+    "Opens an SSH connection out to the Host and signs in as the user registered for it, " +
+      "with the key or the password stored beside it."));
+  flow.appendChild(manualFlowArrow());
+  flow.appendChild(manualFlowStep(2, "The Host",
+    "Over that connection the SSH server of the Host is asked to open a listener on the Host " +
+      "itself, at the local port of the service port. It stands for as long as the connection " +
+      "does."));
+  flow.appendChild(manualFlowArrow());
+  flow.appendChild(manualFlowStep(3, "The service",
+    "Whatever connects to that port on the Host is carried back down the same SSH connection, " +
+      "and tunnel-manager dials the service and passes it on."));
+
+  return manualCard("one-tunnel", "How one tunnel is built", [
+    flow,
+    "tunnel-manager is the end that dials. It opens the SSH connection to the Host and the " +
+      "Host never opens one to it, so nothing has to be opened towards this machine for a " +
+      "tunnel to stand. The traffic then runs the other way down that connection, from the " +
+      "Host to the service.",
+    "The three addresses of one tunnel are the three columns of the Status screen: Server is " +
+      "the Host that was dialled, Local is the port opened over there, and Remote is the " +
+      "service this end passes the traffic to."
+  ]);
+}
+
+// manualFlowStep is one box of the drawing. The number is in the text of the
+// box rather than in a marker beside it, so the order is still readable when
+// the boxes stack and the arrows between them turn.
+function manualFlowStep(step, title, text) {
+  const box = document.createElement("div");
+
+  box.className = "flow-step";
+  box.dataset.flowStep = String(step);
+  box.appendChild(element("strong", step + ". " + title));
+  box.appendChild(element("span", text));
+
+  return box;
+}
+
+// manualFlowArrow is what sits between two boxes. It points along the row and
+// is turned a quarter turn by the stylesheet where the boxes stack, so it
+// points the way the reading goes at either width.
+//
+// It is kept from screen readers. The numbered boxes carry the order already,
+// and read out it is one more character between two paragraphs.
+function manualFlowArrow() {
+  const arrow = element("span", "\u2192");
+
+  arrow.className = "flow-arrow";
+  arrow.setAttribute("aria-hidden", "true");
+
+  return arrow;
+}
+
+function manualParts() {
+  return manualCard("parts", "Hosts, service ports and assignments", [
+    "Three things are stored, and a tunnel needs all three.",
+    bulletList([
+      "A Host is an SSH endpoint: its address, its SSH port, the user to sign in as, and the " +
+        "private key or the password to sign in with. It carries a switch of its own, and a " +
+        "Host that is not enabled runs no tunnels.",
+      "A service port is both ends of one forward: the Service IP and the Service port are " +
+        "what tunnel-manager dials at this end, and the Local port is the port the listener " +
+        "is opened on over on the Host.",
+      "An assignment is one Host paired with one service port. It says that this Host is to " +
+        "carry this service port."
+    ]),
+    "The assignment is what a tunnel is built from. One stands for every assignment whose Host " +
+      "is enabled and for no other pair, so a Host with no assignment runs nothing however many " +
+      "service ports are registered, and a service port assigned to no Host is carried nowhere.",
+    "Disabling a Host keeps its assignments. Its tunnels are stopped, and enabling it again " +
+      "brings the same set of them back."
+  ]);
+}
+
+function manualReach() {
+  return manualCard("reach", "How far the forwarded port is open", [
+    "The listener on the Host is opened by the SSH server of the Host and not by " +
+      "tunnel-manager. tunnel-manager asks for 0.0.0.0, which is every address of that " +
+      "machine, and which address is really bound is that server's decision: OpenSSH left at " +
+      "its default of GatewayPorts no, and Dropbear started without -a, bind loopback alone, " +
+      "and the port then answers on the Host itself and nowhere else.",
+    "The Port reached column of the Status screen is what came of trying it. Once a tunnel is " +
+      "up, tunnel-manager opens a TCP connection to the Host at that port and reports whether " +
+      "it answered: reachable, unreachable, or unknown while nothing has been measured. It is " +
+      "measured when the tunnel comes up and again on every reconnect, rather than on every " +
+      "reading of the screen, because what decides it is the configuration of the SSH server " +
+      "and that does not change under a connection that stands.",
+    "unreachable says where the port was not reached from, not why it was not. A server that " +
+      "bound the port to loopback alone and a firewall dropping the connection on the way look " +
+      "exactly the same from here, and a connection that never arrives cannot tell them apart. " +
+      "Check both before changing either. The Status screen writes what to look at under the " +
+      "row, and names the SSH server out of the banner it sent on the handshake."
+  ]);
+}
+
+function manualPeriods() {
+  return manualCard("periods", "The monitoring period and the reconcile period", [
+    "Two periods are on the Settings screen, five seconds each to begin with, and they do " +
+      "different jobs.",
+    bulletList([
+      "The monitoring interval is how often a tunnel that is already up is checked. " +
+        "tunnel-manager reaches the SSH server of the Host and asks whether the connection is " +
+        "still answering, and builds it again when it is not. Shorter notices a connection " +
+        "that died sooner and reaches the Host more often.",
+      "The reconcile interval is how often the tunnels that are running are compared with what " +
+        "is stored. One that should be running and is not is started, one that should not be " +
+        "is stopped, and one whose settings changed is stopped and started again with the new " +
+        "ones."
+    ]),
+    "A reconcile pass also runs at the startup, before the API answers anything, and again " +
+      "right after a change is stored, so adding a Host or an assignment takes effect at once " +
+      "rather than at the next tick. The period is what tries again whatever a failed pass left " +
+      "undone.",
+    "Because the answer to a change is sent before the tunnel exists, a change that was stored " +
+      "does not mean the tunnel came up. The Status screen is what answers that.",
+    "Both are taken up at the next start, the way nearly every setting is. The log level is the " +
+      "one that takes hold the moment it is saved."
+  ]);
+}
+
+function manualPaths() {
+  return manualCard("paths", "Where a path in a setting points", [
+    "Two settings hold a path, the encryption key file and the log file, and both are read the " +
+      "same way.",
+    bulletList([
+      "A path that begins with / is used as it stands.",
+      "Anything else is read against the directory the database file is in, which is the " +
+        "directory this whole installation lives in. It is never read against the directory " +
+        "the process was started from: that is not the same twice, so a relative path read " +
+        "against it would put the key or the log somewhere different on every start."
+    ]),
+    "On Windows a path counts as absolute only when it names a drive or a share, as in " +
+      "C:\\tunnel-manager\\logs\\tunnel-manager.log. One that begins with a single backslash " +
+      "does not count, and is read against the installation directory like any other relative " +
+      "path.",
+    "The startup writes the absolute path of the database file, of the key file and of the log " +
+      "file it opened into the log, so the log always says which files are in use. The Settings " +
+      "screen names that directory under each of the two boxes."
+  ]);
 }

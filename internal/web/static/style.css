@@ -862,6 +862,55 @@ td.actions {
   background: var(--bg-sunken);
 }
 
+/* The drawing on the manual: the three moves one tunnel is made of, as boxes
+   in a row with an arrow between them.
+
+   They are boxes and not a picture because a picture has one width it was drawn
+   for. Narrowed past that it either shrinks until its labels cannot be read or
+   pushes the page sideways, and these screens are read on a phone. Boxes are
+   laid out by the same rules as everything else here, so at the width where the
+   rest of the page folds they fold with it. */
+.flow {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: stretch;
+  gap: 0.5rem;
+  margin: 0 0 0.75rem;
+}
+
+.flow-step {
+  /* Each box takes an equal share of what is left after the arrows, and none of
+     them is held wider than the row: a box that may not shrink is what sends a
+     row of three past the edge of a phone. */
+  flex: 1 1 0;
+  min-width: 0;
+  padding: 0.6rem 0.75rem;
+  background: var(--bg-sunken);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+}
+
+.flow-step > strong {
+  display: block;
+  margin-bottom: 0.25rem;
+}
+
+.flow-step > span {
+  display: block;
+  color: var(--text-muted);
+  font-size: 13px;
+}
+
+/* The arrow between two boxes. It takes only the width of the character, so the
+   boxes have the rest of the row. */
+.flow-arrow {
+  flex: 0 0 auto;
+  align-self: center;
+  color: var(--text-dim);
+  font-size: 1.1rem;
+  line-height: 1;
+}
+
 /* A phone held upright is around 390px wide, which is under 24rem once the
    padding is taken off. The rules below are what does not fit at that width.
    Everything above is unchanged, so a wide screen looks as it did. */
@@ -952,6 +1001,20 @@ td.actions {
 
   .log-table td:nth-child(4) {
     margin-top: 0.25rem;
+  }
+
+  /* Three boxes of prose side by side leave each of them a column a few words
+     wide, so the drawing is read down the screen instead of across it. */
+  .flow {
+    flex-direction: column;
+  }
+
+  /* The arrow is turned to point the way the reading now goes. It is the same
+     character rather than a second one, so there is one arrow to keep. */
+  .flow-arrow {
+    align-self: flex-start;
+    margin-left: 1rem;
+    transform: rotate(90deg);
   }
 }
 
