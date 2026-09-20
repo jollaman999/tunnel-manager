@@ -1,0 +1,8 @@
+{
+  "common.version.text": "バージョン {version}",
+  "lang.pick.aria": "言語",
+  "nav.logout.link": "ログアウト",
+  "theme.dark.label": "ダーク",
+  "theme.light.label": "ライト",
+  "theme.switch.aria": "{theme}テーマに切り替える"
+}

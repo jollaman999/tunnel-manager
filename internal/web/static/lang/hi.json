@@ -1,0 +1,8 @@
+{
+  "common.version.text": "संस्करण {version}",
+  "lang.pick.aria": "भाषा",
+  "nav.logout.link": "लॉग आउट",
+  "theme.dark.label": "गहरा",
+  "theme.light.label": "हल्का",
+  "theme.switch.aria": "{theme} थीम पर जाएँ"
+}

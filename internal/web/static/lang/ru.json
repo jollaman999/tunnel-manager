@@ -1,0 +1,8 @@
+{
+  "common.version.text": "вер. {version}",
+  "lang.pick.aria": "Язык",
+  "nav.logout.link": "Выйти",
+  "theme.dark.label": "Тёмная",
+  "theme.light.label": "Светлая",
+  "theme.switch.aria": "Переключить на {theme} тему"
+}

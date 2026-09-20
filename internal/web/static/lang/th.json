@@ -1,0 +1,8 @@
+{
+  "common.version.text": "เวอร์ชัน {version}",
+  "lang.pick.aria": "ภาษา",
+  "nav.logout.link": "ออกจากระบบ",
+  "theme.dark.label": "มืด",
+  "theme.light.label": "สว่าง",
+  "theme.switch.aria": "เปลี่ยนเป็นธีม{theme}"
+}

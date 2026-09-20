@@ -1,0 +1,8 @@
+{
+  "common.version.text": "v{version}",
+  "lang.pick.aria": "Sprache",
+  "nav.logout.link": "Abmelden",
+  "theme.dark.label": "Dunkel",
+  "theme.light.label": "Hell",
+  "theme.switch.aria": "Zu {theme} wechseln"
+}

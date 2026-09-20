@@ -1,6 +1,7 @@
 package web
 
 import (
+	"encoding/json"
 	"io/fs"
 	"net/http"
 	"net/http/httptest"
@@ -61,6 +62,12 @@ func TestEmbeddedFilesArePresent(t *testing.T) {
 	t.Logf("embedded files: %v", names)
 
 	want := []string{"static/app.js", "static/index.html", "static/screens.js", "static/style.css"}
+	for _, code := range catalogCodes {
+		want = append(want, "static/lang/"+code+".json")
+	}
+
+	sort.Strings(want)
+
 	if strings.Join(names, " ") != strings.Join(want, " ") {
 		t.Fatalf("embedded files = %v, want %v", names, want)
 	}
@@ -122,6 +129,8 @@ func TestAssetsAreServedWithTheirType(t *testing.T) {
 		{target: "/ui/app.js", contentType: "text/javascript"},
 		{target: "/ui/screens.js", contentType: "text/javascript"},
 		{target: "/ui/style.css", contentType: "text/css"},
+		{target: "/ui/lang/en.json", contentType: "application/json"},
+		{target: "/ui/lang/pt-BR.json", contentType: "application/json"},
 	}
 
 	e := newServer()
@@ -400,5 +409,275 @@ func TestTwoAssetsDoNotShareATag(t *testing.T) {
 		}
 
 		seen[tag] = name
+	}
+}
+
+// catalogCodes is the thirteen languages the UI is drawn in, in the order
+// app.js lists them. It is written out here rather than read from app.js so
+// that the tests below have something to compare that file against: a list
+// taken from the file it is checking would agree with it whatever it said.
+var catalogCodes = []string{"en", "ko", "ja", "zh", "es", "fr", "de", "pt-BR", "ru", "ar", "hi", "vi", "th"}
+
+// baseCatalog is the language every other one falls back to, key by key. It has
+// to be complete, and the tests below are what hold it to that.
+const baseCatalog = "en"
+
+// catalogKey is the shape a key has to have: an area, at least one part naming
+// the thing, and a role at the end saying what kind of string it is.
+//
+// The role is a closed list on purpose. Eight hundred keys written by six
+// different pieces of work will only stay findable if "the word on a button"
+// is always spelled the same way, and a name that has to end in one of
+// thirteen words cannot drift into ".btn" in one file and ".buttonText" in
+// another.
+var catalogKey = regexp.MustCompile(
+	`^[a-z][a-z0-9]*(?:-[a-z0-9]+)*(?:\.[a-z][a-z0-9]*(?:-[a-z0-9]+)*)+` +
+		`\.(?:title|label|hint|button|link|column|option|empty|notice|confirm|error|aria|text)$`)
+
+// readCatalog reads one language file and hands back what is in it. A catalog
+// is flat, so an entry that is not a string is a file that has been edited into
+// a shape the UI cannot read, and that is reported here rather than as a blank
+// on a screen.
+func readCatalog(t *testing.T, code string) map[string]string {
+	t.Helper()
+
+	body, err := fs.ReadFile(staticFS, "static/lang/"+code+".json")
+	if err != nil {
+		t.Fatalf("failed to read the %s catalog: %v", code, err)
+	}
+
+	var raw map[string]json.RawMessage
+	if err := json.Unmarshal(body, &raw); err != nil {
+		t.Fatalf("the %s catalog is not a flat object: %v", code, err)
+	}
+
+	table := make(map[string]string, len(raw))
+
+	for key, value := range raw {
+		var text string
+		if err := json.Unmarshal(value, &text); err != nil {
+			t.Fatalf("%s catalog: %q is not a string but %s", code, key, value)
+		}
+
+		table[key] = text
+	}
+
+	return table
+}
+
+// readStatic reads one UI file as text.
+func readStatic(t *testing.T, name string) string {
+	t.Helper()
+
+	body, err := fs.ReadFile(staticFS, "static/"+name)
+	if err != nil {
+		t.Fatalf("failed to read %s: %v", name, err)
+	}
+
+	return string(body)
+}
+
+// TestEveryLanguageHasACatalog is what makes the list in the corner of the
+// screen true. A code that is offered with no file behind it is a pick that
+// draws the page in English and says it is in something else.
+func TestEveryLanguageHasACatalog(t *testing.T) {
+	e := newServer()
+
+	for _, code := range catalogCodes {
+		target := "/ui/lang/" + code + ".json"
+
+		rec := get(e, target)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("GET %s = %d, want %d", target, rec.Code, http.StatusOK)
+		}
+
+		if len(readCatalog(t, code)) == 0 {
+			t.Fatalf("the %s catalog holds nothing", code)
+		}
+	}
+}
+
+// TestThePageAndTheScriptAgreeOnTheLanguages compares the two lists of codes.
+//
+// index.html settles the language in the head, before app.js has been fetched,
+// so it holds the list a second time. That is the one duplication this
+// arrangement costs, and this is what keeps it from costing anything: a
+// language added to one file and not the other fails here instead of being a
+// code the page picks and the script has never heard of.
+func TestThePageAndTheScriptAgreeOnTheLanguages(t *testing.T) {
+	page := readStatic(t, indexFile)
+	script := readStatic(t, "app.js")
+
+	// The page: var codes = [...] and var rightToLeft = [...].
+	pageList := func(name string) []string {
+		found := regexp.MustCompile(`var ` + name + ` = \[([^\]]*)\]`).FindStringSubmatch(page)
+		if found == nil {
+			t.Fatalf("%s names no %s", indexFile, name)
+		}
+
+		return regexp.MustCompile(`"([^"]+)"`).FindAllString(found[1], -1)
+	}
+
+	// The script: one line per language, each carrying its code and whether it
+	// is written right to left.
+	entries := regexp.MustCompile(`\{ code: "([^"]+)", name: "[^"]*", rtl: (true|false) \}`).
+		FindAllStringSubmatch(script, -1)
+	if len(entries) == 0 {
+		t.Fatalf("app.js lists no languages in the shape this test reads")
+	}
+
+	var codes, rightToLeft []string
+
+	for _, entry := range entries {
+		codes = append(codes, `"`+entry[1]+`"`)
+
+		if entry[2] == "true" {
+			rightToLeft = append(rightToLeft, `"`+entry[1]+`"`)
+		}
+	}
+
+	t.Logf("app.js codes: %v", codes)
+	t.Logf("app.js right to left: %v", rightToLeft)
+
+	if got, want := strings.Join(pageList("codes"), " "), strings.Join(codes, " "); got != want {
+		t.Fatalf("%s codes = %s, app.js = %s", indexFile, got, want)
+	}
+
+	if got, want := strings.Join(pageList("rightToLeft"), " "), strings.Join(rightToLeft, " "); got != want {
+		t.Fatalf("%s right to left = %s, app.js = %s", indexFile, got, want)
+	}
+
+	// And both of them against what this file says the languages are, so that a
+	// language dropped from both at once is still caught.
+	var want []string
+	for _, code := range catalogCodes {
+		want = append(want, `"`+code+`"`)
+	}
+
+	if got := strings.Join(codes, " "); got != strings.Join(want, " ") {
+		t.Fatalf("app.js codes = %s, want %s", got, strings.Join(want, " "))
+	}
+}
+
+// TestCatalogKeysFollowTheNamingRule holds every catalog to one way of naming a
+// string. There are eight hundred of them to come, written by several separate
+// pieces of work, and a key that cannot be guessed at from what it names is a
+// key that gets written a second time under another name.
+func TestCatalogKeysFollowTheNamingRule(t *testing.T) {
+	for _, code := range catalogCodes {
+		for key := range readCatalog(t, code) {
+			if !catalogKey.MatchString(key) {
+				t.Errorf("%s catalog: %q does not read as <area>.<thing>.<role>", code, key)
+			}
+		}
+	}
+}
+
+// TestEveryCatalogFallsBackToEnglish is the other half of the fallback. A key
+// the chosen language is missing is drawn in English, which only works while
+// English is the one catalog that is never missing anything: a key in a
+// translation that English has never heard of is a typo, and it would be drawn
+// as the name of the key.
+func TestEveryCatalogFallsBackToEnglish(t *testing.T) {
+	base := readCatalog(t, baseCatalog)
+
+	for _, code := range catalogCodes {
+		if code == baseCatalog {
+			continue
+		}
+
+		for key := range readCatalog(t, code) {
+			if _, ok := base[key]; !ok {
+				t.Errorf("%s catalog: %q is in no English catalog to fall back to", code, key)
+			}
+		}
+	}
+}
+
+// TestEveryKeyTheUIAsksForIsInEnglish is what keeps the name of a key off the
+// screen. t hands back the key it was given where neither catalog has it, which
+// is on purpose and is meant never to happen: this is what makes sure of it,
+// for every t("...") in the scripts.
+func TestEveryKeyTheUIAsksForIsInEnglish(t *testing.T) {
+	base := readCatalog(t, baseCatalog)
+	asked := regexp.MustCompile(`\bt\("([^"]+)"`)
+
+	var seen int
+
+	for _, name := range []string{"app.js", "screens.js"} {
+		for _, use := range asked.FindAllStringSubmatch(readStatic(t, name), -1) {
+			seen++
+
+			if _, ok := base[use[1]]; !ok {
+				t.Errorf("%s asks for %q, which the English catalog has not got", name, use[1])
+			}
+		}
+	}
+
+	t.Logf("keys asked for in the scripts: %d", seen)
+
+	if seen == 0 {
+		t.Fatalf("the scripts ask for no key at all, so this test checks nothing")
+	}
+}
+
+// TestCatalogValuesCarryNoMarkup keeps a translation from being a way into the
+// page. Every value is put on screen with textContent, so a pointed bracket in
+// one would be drawn as a pointed bracket; this is the belt to that brace, and
+// it also catches a translator who was handed a string with a tag in it and
+// translated around the tag.
+func TestCatalogValuesCarryNoMarkup(t *testing.T) {
+	for _, code := range catalogCodes {
+		for key, value := range readCatalog(t, code) {
+			if strings.ContainsAny(value, "<>") {
+				t.Errorf("%s catalog: %q carries markup: %q", code, key, value)
+			}
+		}
+	}
+}
+
+// TestPlaceholdersAreNamedAndKnown holds the fill-ins of a translation to the
+// ones the English string has.
+//
+// They are named and not numbered so that a language may put them in another
+// order, which is the whole reason for naming them; the cost of that freedom is
+// that a name can be misspelled, and a misspelled one would be drawn on the
+// screen as a word in braces. A translation may leave one out, since not every
+// language needs to repeat what is already on the screen, but it may not invent
+// one.
+func TestPlaceholdersAreNamedAndKnown(t *testing.T) {
+	named := regexp.MustCompile(`\{([^}]*)\}`)
+	plain := regexp.MustCompile(`^[a-z][a-z0-9]*$`)
+	base := readCatalog(t, baseCatalog)
+
+	namesIn := func(value string) map[string]bool {
+		names := map[string]bool{}
+		for _, found := range named.FindAllStringSubmatch(value, -1) {
+			names[found[1]] = true
+		}
+
+		return names
+	}
+
+	for _, code := range catalogCodes {
+		for key, value := range readCatalog(t, code) {
+			english, translated := base[key]
+
+			for name := range namesIn(value) {
+				if !plain.MatchString(name) {
+					t.Errorf("%s catalog: %q holds {%s}, which is not a name app.js fills in", code, key, name)
+
+					continue
+				}
+
+				if code == baseCatalog || !translated {
+					continue
+				}
+
+				if !namesIn(english)[name] {
+					t.Errorf("%s catalog: %q holds {%s}, which the English string has not got", code, key, name)
+				}
+			}
+		}
 	}
 }

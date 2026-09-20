@@ -155,7 +155,7 @@ h1 {
 #versionTag {
   position: fixed;
   bottom: 8px;
-  right: 12px;
+  inset-inline-end: 12px;
   font-size: 11px;
   color: var(--text-muted);
   opacity: 0.6;
@@ -163,24 +163,57 @@ h1 {
   pointer-events: none;
 }
 
-/* The switch between the two themes. It is fixed to the top of every screen,
-   the login included, because it belongs to the browser rather than to what is
-   on the screen, and because the screens themselves are redrawn out from under
-   it. The far corner is where the version is, at the other end of the page, so
-   the two fixed things never meet.
+/* The language and the theme, at the top of every screen, the login included:
+   they belong to the browser rather than to what is on the screen, and the
+   screens themselves are redrawn out from under them. The far corner is where
+   the version is, at the other end of the page, so the fixed things never meet.
 
-   It sits at the same depth as the version, which is under a panel: while a
-   choice is up, the theme is not what is being decided. The button is painted
-   by the rules every other button is painted by; only where it sits and how
-   small it is are said here. */
-#themeToggle {
+   The two are laid out as a row rather than each being told in pixels where it
+   sits, because one of them is as wide as the word on it and that word is a
+   different length in every language. The row grows away from the corner it is
+   pinned to and the theme switch stays where it was.
+
+   They are pinned by the inline end and not by the right, so the row is in the
+   corner the reading ends at: at the right of an English page and at the left
+   of an Arabic one, which is where the eye leaves the line in each.
+
+   Their top edges are aligned rather than their middles, so the switch sits at
+   the same height whatever the list beside it turns out to be.
+
+   The row sits at the same depth as the version, which is under a panel: while
+   a choice is up, neither of these is what is being decided. */
+#cornerControls {
   position: fixed;
   top: 8px;
-  right: 12px;
+  inset-inline-end: 12px;
   z-index: 1;
+  display: flex;
+  align-items: flex-start;
+  gap: 0.4rem;
+}
+
+/* The button is painted by the rules every other button is painted by; only
+   how small it is is said here. */
+#themeToggle {
   padding: 0.15rem 0.5rem;
   font-size: 12px;
   color: var(--text-muted);
+}
+
+/* The list of languages is held to the height of the switch beside it, so the
+   two read as one row of controls and not as a control with a form next to it.
+
+   Every row in it is a name written in its own script, so nothing here sets a
+   font: what draws a line of Thai is whatever the browser reaches for when the
+   row tells it that the line is Thai. */
+#langPick {
+  max-width: 10rem;
+  padding: 0.15rem 0.25rem;
+  font-size: 12px;
+  color: var(--text-muted);
+  background: var(--bg-surface);
+  border: 1px solid var(--border);
+  border-radius: 4px;
 }
 
 pre {
@@ -235,7 +268,7 @@ nav a.current {
 
 /* The logout sits apart from the screens, because it is not one of them. */
 nav a.logout {
-  margin-left: auto;
+  margin-inline-start: auto;
   color: var(--danger);
 }
 
@@ -304,7 +337,7 @@ h3 {
    as the list belonging to something other than the sentence above it. */
 .card ul {
   margin: 0 0 0.75rem;
-  padding-left: 1.25rem;
+  padding-inline-start: 1.25rem;
 }
 
 .card li {
@@ -564,7 +597,7 @@ table {
 th,
 td {
   padding: 0.45rem 0.6rem;
-  text-align: left;
+  text-align: start;
   border-bottom: 1px solid var(--border-soft);
   vertical-align: middle;
 }
@@ -594,7 +627,7 @@ tbody tr:last-child td {
    compared without reading them. */
 th.num,
 td.num {
-  text-align: right;
+  text-align: end;
   font-variant-numeric: tabular-nums;
 }
 
@@ -637,7 +670,7 @@ tbody tr.under > td {
 
 .reach-advice > ul {
   margin: 0.35rem 0 0;
-  padding-left: 1.2rem;
+  padding-inline-start: 1.2rem;
 }
 
 .reach-advice li + li {
@@ -911,6 +944,15 @@ td.actions {
   line-height: 1;
 }
 
+/* The arrow is one character and the character points one way. Nothing turns it
+   round on a page that is read the other way: it is not one of the few marks
+   the text layout mirrors on its own, so on an Arabic page it would be the one
+   thing on the screen still pointing at the box the reading came from. It is
+   turned over here instead of a second character being kept for it. */
+[dir="rtl"] .flow-arrow {
+  transform: scaleX(-1);
+}
+
 /* A phone held upright is around 390px wide, which is under 24rem once the
    padding is taken off. The rules below are what does not fit at that width.
    Everything above is unchanged, so a wide screen looks as it did. */
@@ -923,8 +965,8 @@ td.actions {
      they cost side margin that the content needs more than the frame does. */
   #app {
     padding: 1rem 0.875rem;
-    border-left: 0;
-    border-right: 0;
+    border-inline-start: 0;
+    border-inline-end: 0;
     border-radius: 0;
   }
 
@@ -987,7 +1029,7 @@ td.actions {
   .log-table td:nth-child(2),
   .log-table td:nth-child(3) {
     display: inline-block;
-    margin-right: 0.5rem;
+    margin-inline-end: 0.5rem;
     font-size: 12px;
     color: var(--text-dim);
     vertical-align: middle;
@@ -1011,9 +1053,14 @@ td.actions {
 
   /* The arrow is turned to point the way the reading now goes. It is the same
      character rather than a second one, so there is one arrow to keep. */
-  .flow-arrow {
+  /* The quarter turn is what both directions want: the boxes are stacked, so
+     the arrow points down the page either way. The second selector is here to
+     say so, because without it the rule that turns the arrow over on an Arabic
+     page would be the more particular of the two and would win. */
+  .flow-arrow,
+  [dir="rtl"] .flow-arrow {
     align-self: flex-start;
-    margin-left: 1rem;
+    margin-inline-start: 1rem;
     transform: rotate(90deg);
   }
 }
@@ -1181,8 +1228,8 @@ body.modal-open {
     max-width: none;
     height: 100%;
     padding: 1rem 0.875rem;
-    border-left: 0;
-    border-right: 0;
+    border-inline-start: 0;
+    border-inline-end: 0;
     border-radius: 0;
   }
 }

@@ -1,0 +1,8 @@
+{
+  "common.version.text": "phiên bản {version}",
+  "lang.pick.aria": "Ngôn ngữ",
+  "nav.logout.link": "Đăng xuất",
+  "theme.dark.label": "Tối",
+  "theme.light.label": "Sáng",
+  "theme.switch.aria": "Chuyển sang giao diện {theme}"
+}

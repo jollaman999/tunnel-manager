@@ -1,0 +1,8 @@
+{
+  "common.version.text": "版本 {version}",
+  "lang.pick.aria": "语言",
+  "nav.logout.link": "退出登录",
+  "theme.dark.label": "深色",
+  "theme.light.label": "浅色",
+  "theme.switch.aria": "切换到{theme}主题"
+}

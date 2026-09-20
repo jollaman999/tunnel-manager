@@ -18,6 +18,11 @@ import (
 // to travel next to it, no path has to be configured, and the working
 // directory the process is started from does not matter.
 //
+// The pattern reaches the language catalogs under static/lang as well, so the
+// thirteen of them travel in the binary with everything else: a UI that was
+// built to work on a host that reaches nothing but this server cannot have its
+// words fetched from somewhere that host cannot reach.
+//
 //go:embed static
 var staticFS embed.FS
 
@@ -42,6 +47,7 @@ var contentTypes = map[string]string{
 	".html": "text/html; charset=utf-8",
 	".js":   "text/javascript; charset=utf-8",
 	".css":  "text/css; charset=utf-8",
+	".json": "application/json; charset=utf-8",
 }
 
 // versionPath answers what version of the binary is serving the UI. It sits

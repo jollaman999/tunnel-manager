@@ -1,0 +1,8 @@
+{
+  "common.version.text": "v{version}",
+  "lang.pick.aria": "Language",
+  "nav.logout.link": "Log out",
+  "theme.dark.label": "Dark",
+  "theme.light.label": "Light",
+  "theme.switch.aria": "Switch to the {theme} theme"
+}

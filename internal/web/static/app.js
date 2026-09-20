@@ -60,6 +60,59 @@ const csrfHeaderName = "X-CSRF-Token";
 // refuses to keep it loses nothing but the pick.
 const themeKey = "tm_theme";
 
+// langKey is where the language the operator picked is kept, and index.html
+// holds the same string for the same reason the theme key is held there: lang
+// and dir go on <html> before the first paint. It is a key of the local storage
+// of the one browser and is never sent anywhere.
+//
+// The pick belongs to the browser and not to the account: the login screen has
+// no session to read a setting out of, so a language that lived on the server
+// could not be honoured on the one screen every operator starts at.
+const langKey = "tm_lang";
+
+// languages is what can be picked, in the order a browser language is matched
+// against them and in the order they are offered.
+//
+// The name is what the language calls itself and not what English calls it. A
+// reader looking for their own language is looking for the word they would
+// write it with; a list of English names is a list they cannot search.
+//
+// index.html holds the codes and the right-to-left one again, because the head
+// script settles the language before this file has been fetched. A test
+// compares the two lists, so a language added here and not there is a failed
+// build rather than a page that quietly ignores the new code.
+const languages = [
+  { code: "en", name: "English", rtl: false },
+  { code: "ko", name: "한국어", rtl: false },
+  { code: "ja", name: "日本語", rtl: false },
+  { code: "zh", name: "中文", rtl: false },
+  { code: "es", name: "Español", rtl: false },
+  { code: "fr", name: "Français", rtl: false },
+  { code: "de", name: "Deutsch", rtl: false },
+  { code: "pt-BR", name: "Português (Brasil)", rtl: false },
+  { code: "ru", name: "Русский", rtl: false },
+  { code: "ar", name: "العربية", rtl: true },
+  { code: "hi", name: "हिन्दी", rtl: false },
+  { code: "vi", name: "Tiếng Việt", rtl: false },
+  { code: "th", name: "ไทย", rtl: false }
+];
+
+// baseLang is the language every catalog falls back to, key by key. It is
+// fetched whatever else is, so a key that has not been translated yet is a word
+// in English on the screen and never a blank or the name of the key.
+const baseLang = "en";
+
+// langPath is where a catalog is fetched from. The files are served out of the
+// same binary as this one, so a UI on a host that reaches nothing else still
+// has all thirteen languages.
+const langPath = "/ui/lang/";
+
+// placeholder is what a value is written into a sentence by. The name inside
+// the braces and not the order is what says which value goes where, so a
+// language that puts the count before the noun and one that puts it after can
+// be the same key with the braces in different places.
+const placeholder = /\{([a-z][a-z0-9]*)\}/g;
+
 // versionPath is where the number in the corner is read from. It is served from
 // under /ui/ rather than from /api/, so the login screen, which has no session
 // yet, can show it too.
@@ -96,6 +149,24 @@ const ipCharacters = /[^0-9a-fA-F.:]/g;
 // moved on is compared against it and dropped, so a slow call cannot draw over
 // the screen that replaced the one it was made from.
 let currentScreen = null;
+
+// texts is the catalog of the language the page is in and baseTexts is the
+// English one under it. Both are null until they have been fetched, and that
+// null is what tells the two switches in the corner to stay unlabelled: a
+// control that showed an English word for a moment on a page asked for in
+// Korean is the flip the head script of index.html exists to avoid.
+//
+// A fetch that fails leaves an empty table rather than null. The screens have
+// to be drawn either way, and what is lost is the words on a few controls; left
+// null the page would wait on a catalog that is never coming and draw nothing
+// at all.
+let texts = null;
+let baseTexts = null;
+
+// loadedVersion is the number the corner shows, kept because the corner is
+// drawn again whenever the language changes and one fetch is enough for all of
+// them.
+let loadedVersion = null;
 
 // notice is the one line above the screen. It outlives a redraw of the same
 // screen, which is how the reason a call was refused stays readable while the
@@ -494,7 +565,7 @@ function navigation() {
   const out = document.createElement("a");
   out.href = screenPath("login");
   out.className = "logout";
-  out.textContent = "Log out";
+  out.textContent = t("nav.logout.link");
   out.dataset.action = "logout";
   out.addEventListener("click", function (event) {
     event.preventDefault();
@@ -1668,9 +1739,25 @@ function showVersion() {
         return;
       }
 
-      document.getElementById("versionTag").textContent = "v" + payload.version;
+      loadedVersion = payload.version;
+
+      paintVersion();
     })
     .catch(function () {});
+}
+
+// paintVersion writes the number in the corner. It is apart from the fetch
+// because the two do not arrive together and neither waits on the other: the
+// number comes from the server, the words around it come from a catalog, and
+// whichever is second is what puts the line up. A change of language calls this
+// again, which is why the number is kept rather than fetched once and forgotten.
+function paintVersion() {
+  if (loadedVersion === null || !textsLoaded()) {
+    return;
+  }
+
+  document.getElementById("versionTag").textContent =
+    t("common.version.text", { version: loadedVersion });
 }
 
 // storedTheme is what was picked on this browser, or null where nothing was.
@@ -1718,20 +1805,34 @@ function currentTheme() {
 }
 
 // applyTheme paints the page in a theme and tells the switch what the next
-// press would do. The label names where a press goes rather than where the page
-// is, because that is what the operator is deciding.
+// press would do.
 function applyTheme(name) {
   document.documentElement.setAttribute("data-theme", name);
 
+  labelThemeToggle();
+}
+
+// labelThemeToggle puts the words on the switch. The label names where a press
+// goes rather than where the page is, because that is what the operator is
+// deciding.
+//
+// It is apart from applyTheme because the two happen at different moments. The
+// colour is settled before anything is painted, and the words wait on a catalog
+// that is still being fetched; until it arrives the switch stays as index.html
+// ships it, unlabelled and hidden, rather than carrying an English word on a
+// page that was asked for in another language. The language calls this again
+// once it has what it needs.
+function labelThemeToggle() {
   const button = document.getElementById("themeToggle");
-  if (button === null) {
+  if (button === null || !textsLoaded()) {
     return;
   }
 
-  const next = name === "dark" ? "light" : "dark";
+  const next = currentTheme() === "dark" ? "light" : "dark";
+  const label = next === "dark" ? t("theme.dark.label") : t("theme.light.label");
 
-  button.textContent = next === "dark" ? "Dark" : "Light";
-  button.setAttribute("aria-label", "Switch to the " + next + " theme");
+  button.textContent = label;
+  button.setAttribute("aria-label", t("theme.switch.aria", { theme: label }));
   button.hidden = false;
 }
 
@@ -1771,6 +1872,300 @@ function setUpTheme() {
   });
 }
 
+// t is the word a key stands for, in the language the page is in. It is one
+// letter because it is what every string on every screen is fetched through,
+// and a longer name would be read past rather than read.
+//
+// A key the chosen language has no entry for falls through to English, so a
+// screen that has been translated half way is half translated and never half
+// blank. A key that is in neither is handed back as it was written, which is
+// wrong on the screen on purpose: it is the one failure that has to be visible,
+// and a test over the catalogs keeps it from reaching a release.
+//
+// What comes back is a string and is put on the page with textContent, which is
+// the rule everything here follows. Nothing in a catalog is ever markup, so a
+// translation cannot bring an element with it.
+function t(key, values) {
+  let template = entry(texts, key);
+
+  if (template === null) {
+    template = entry(baseTexts, key);
+  }
+
+  if (template === null) {
+    return key;
+  }
+
+  if (values === undefined) {
+    return template;
+  }
+
+  // The values are written in one pass over the sentence, so what is written in
+  // is never read again. A Host named "{name}" is a name and not a second place
+  // to fill, which is what a fill that went value by value would make of it.
+  return template.replace(placeholder, function (whole, name) {
+    if (!Object.prototype.hasOwnProperty.call(values, name)) {
+      return whole;
+    }
+
+    return String(values[name]);
+  });
+}
+
+// entry is one string out of one catalog, or null where the catalog has not
+// arrived, has no such key, or holds something other than a string under it.
+// The last of those is what a catalog edited into the wrong shape looks like,
+// and it falls back like a missing key rather than putting an object on screen.
+function entry(table, key) {
+  if (table === null || !Object.prototype.hasOwnProperty.call(table, key)) {
+    return null;
+  }
+
+  return typeof table[key] === "string" ? table[key] : null;
+}
+
+// textsLoaded says whether there is anything to draw words from yet. Everything
+// that writes a word outside #app asks first, because those elements are drawn
+// once and are not redrawn by a screen.
+function textsLoaded() {
+  return baseTexts !== null;
+}
+
+// languageFor is the entry for a code, or null where there is no such language.
+function languageFor(code) {
+  for (const language of languages) {
+    if (language.code === code) {
+      return language;
+    }
+  }
+
+  return null;
+}
+
+// storedLang is what was picked on this browser, or null where nothing was or
+// where what is kept is no longer a language this UI has. The read is inside
+// the try for the reason the theme read is: a browser with storage turned off
+// throws on the access itself.
+function storedLang() {
+  let picked = null;
+
+  try {
+    picked = window.localStorage.getItem(langKey);
+  } catch (error) {
+    return null;
+  }
+
+  return languageFor(picked) === null ? null : picked;
+}
+
+// rememberLang keeps the pick for the next visit. A browser that will not keep
+// it is not an error to report: the page is already in the language that was
+// asked for, and what is lost is only that the next one starts from what the
+// browser asks for rather than from what was picked here.
+function rememberLang(code) {
+  try {
+    window.localStorage.setItem(langKey, code);
+  } catch (error) {
+    return;
+  }
+}
+
+// browserLang is the first language the browser asks for that there is a
+// catalog for. index.html works the same thing out in the head, and this is
+// what is used where that script did not run.
+//
+// A tag is matched whole before it is matched by its language alone, so a
+// browser set to pt-BR is answered with the Brazilian catalog and one set to
+// pt-PT is answered with Portuguese rather than dropped to English.
+function browserLang() {
+  let wanted = window.navigator.languages;
+
+  if (wanted === undefined || wanted === null || wanted.length === 0) {
+    wanted = window.navigator.language === undefined ? [] : [window.navigator.language];
+  }
+
+  for (const tag of wanted) {
+    const lower = String(tag).toLowerCase();
+
+    for (const language of languages) {
+      if (language.code.toLowerCase() === lower) {
+        return language.code;
+      }
+    }
+
+    for (const language of languages) {
+      if (language.code.toLowerCase().split("-")[0] === lower.split("-")[0]) {
+        return language.code;
+      }
+    }
+  }
+
+  return baseLang;
+}
+
+// currentLang is the language to draw in: what was picked, then what the
+// browser asks for, then English.
+//
+// The head script of index.html has been down this road already and left its
+// answer behind, so the same answer is used rather than worked out again: it is
+// the one the first paint was laid out with, and a second run that disagreed
+// with it would turn the page round after it had been drawn.
+//
+// A setting on the server belongs between the pick and the browser, and this is
+// where it goes in: the stored pick still wins, and a browser that asks for
+// nothing this UI has lands on what the installation was set up with instead of
+// on English. The login screen cannot reach it, having no session, so that
+// screen is settled by the two rules that are here now.
+function currentLang() {
+  const boot = window.tmBoot;
+
+  if (boot !== undefined && boot !== null && languageFor(boot.lang) !== null) {
+    return boot.lang;
+  }
+
+  const picked = storedLang();
+
+  return picked === null ? browserLang() : picked;
+}
+
+// fetchCatalog asks for one language file. A refusal comes back as null rather
+// than as a throw: what a missing catalog costs is words, and the caller has to
+// carry on and draw the screens either way.
+function fetchCatalog(code) {
+  return fetch(langPath + code + ".json", {
+    headers: { Accept: "application/json" },
+    credentials: "same-origin"
+  })
+    .then(function (response) {
+      return response.ok ? response.json() : null;
+    })
+    .catch(function () {
+      return null;
+    });
+}
+
+// loadTexts puts the two catalogs a draw needs in place: the one that was asked
+// for and the English one it falls back to key by key.
+//
+// The English one is fetched once and kept. Every later change of language
+// needs only the language being changed to, so switching costs one file and not
+// two, and the fallback cannot go missing part way through a session.
+//
+// Where the head script started the same two fetches, those are what is waited
+// on rather than two more: they went out while the head was still being parsed
+// and have been travelling alongside screens.js and app.js ever since.
+async function loadTexts(code) {
+  const boot = window.tmBoot !== undefined && window.tmBoot !== null &&
+    window.tmBoot.lang === code ? window.tmBoot : null;
+
+  if (baseTexts === null) {
+    const loaded = await (boot === null ? fetchCatalog(baseLang) : boot.base);
+
+    baseTexts = loaded === null ? {} : loaded;
+  }
+
+  if (code === baseLang) {
+    texts = baseTexts;
+
+    return;
+  }
+
+  const loaded = await (boot === null ? fetchCatalog(code) : boot.text);
+
+  texts = loaded === null ? baseTexts : loaded;
+}
+
+// applyLang draws the page in a language: it fetches what is needed first, so
+// that nothing is ever relabelled twice, and then puts the language on <html>
+// and the words on everything that lives outside a screen.
+//
+// lang is what tells a screen reader which voice to read the page in and what a
+// browser picks a font by. dir is what turns the layout round, and it is set on
+// every language and not only on the one that needs it: left on rtl after a
+// change away from Arabic the page would stay reversed.
+async function applyLang(code) {
+  await loadTexts(code);
+
+  const language = languageFor(code);
+
+  document.documentElement.setAttribute("lang", code);
+  document.documentElement.setAttribute("dir", language !== null && language.rtl ? "rtl" : "ltr");
+
+  labelThemeToggle();
+  labelLanguagePicker(code);
+  paintVersion();
+}
+
+// fillLanguagePicker puts the thirteen names in the list. It runs before any
+// catalog has arrived, because the names are not translated: each is written in
+// the language it names, and that is the whole point of it.
+function fillLanguagePicker() {
+  const picker = document.getElementById("langPick");
+  if (picker === null) {
+    return;
+  }
+
+  for (const language of languages) {
+    const option = document.createElement("option");
+
+    option.value = language.code;
+    option.textContent = language.name;
+
+    // The row is told what language it is in, which is not the language the
+    // page is in. It is what a browser picks the font for that one line by, and
+    // it is how the Arabic name reads the way it is written while the list
+    // around it runs the other way.
+    option.lang = language.code;
+    option.dir = language.rtl ? "rtl" : "ltr";
+
+    picker.appendChild(option);
+  }
+}
+
+// labelLanguagePicker points the list at the language that is up and gives it
+// the name a screen reader announces it by. It is what unhides the list, so
+// what is shown is never a control whose purpose has no words on it yet.
+function labelLanguagePicker(code) {
+  const picker = document.getElementById("langPick");
+  if (picker === null || !textsLoaded()) {
+    return;
+  }
+
+  picker.value = code;
+  picker.setAttribute("aria-label", t("lang.pick.aria"));
+  picker.hidden = false;
+}
+
+// setUpLanguage puts the list to work and draws the page in the language that
+// was settled on. What it hands back is what the first screen waits for: the
+// words have to be in hand before anything is drawn, or the first screen would
+// go up in English and be replaced a moment later.
+function setUpLanguage() {
+  fillLanguagePicker();
+
+  const picker = document.getElementById("langPick");
+  if (picker !== null) {
+    picker.addEventListener("change", function () {
+      const code = picker.value;
+
+      // The pick is kept before the catalog is fetched. It is the operator's
+      // choice either way, and a fetch that fails should not leave the next
+      // visit in a language they have already said they do not want.
+      rememberLang(code);
+
+      run(function () {
+        return applyLang(code).then(function () {
+          // The screen is entered again rather than redrawn, so that what a
+          // screen built once on the way in is built again in the new words.
+          showScreen(currentScreen);
+        });
+      });
+    });
+  }
+
+  return applyLang(currentLang());
+}
+
 // The scroll is watched for one thing: when it last happened. The listener is
 // passive, so nothing it does can hold up the scrolling it is watching.
 window.addEventListener("scroll", function () {
@@ -1799,4 +2194,18 @@ window.addEventListener("popstate", function () {
 
 setUpTheme();
 showVersion();
-showScreen(screenName());
+
+// The first screen waits for the words it is to be drawn with, and for nothing
+// else: the colour is already on the page, the version fills itself in when it
+// arrives, and the two files being waited on left in the head, before this one
+// had been fetched. Drawn without them the screen would go up in English and be
+// replaced a moment later, which is the one thing a page that knows what
+// language it is in should never do.
+//
+// A catalog that cannot be fetched at all resolves to an empty table rather
+// than hanging, so this always reaches the draw.
+run(function () {
+  return setUpLanguage().then(function () {
+    showScreen(screenName());
+  });
+});

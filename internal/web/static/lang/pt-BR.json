@@ -1,0 +1,8 @@
+{
+  "common.version.text": "v{version}",
+  "lang.pick.aria": "Idioma",
+  "nav.logout.link": "Sair",
+  "theme.dark.label": "Escuro",
+  "theme.light.label": "Claro",
+  "theme.switch.aria": "Mudar para o tema {theme}"
+}

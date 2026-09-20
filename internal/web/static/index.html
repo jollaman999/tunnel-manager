@@ -34,19 +34,112 @@
         document.documentElement.setAttribute("data-theme", picked);
       })();
     </script>
+    <!-- The language is settled here for the reason the theme is: lang and dir
+         are on <html>, and a page that took them after the body was parsed
+         would lay the first paint out left to right and turn it round
+         afterwards. The list of codes and the one that is written right to left
+         are the same ones app.js holds, and a test compares the two lists, so a
+         language added to one file and not the other fails the build rather
+         than the page.
+
+         The two catalogs are asked for here as well, while the head is still
+         being parsed, so they travel alongside screens.js and app.js instead of
+         after them. app.js waits on what is left of them and draws the first
+         screen in the right words. English is always one of the two because it
+         is what a key the chosen language is missing falls back to. -->
+    <script>
+      (function () {
+        var codes = ["en", "ko", "ja", "zh", "es", "fr", "de", "pt-BR", "ru", "ar", "hi", "vi", "th"];
+        var rightToLeft = ["ar"];
+        var picked = null;
+
+        try {
+          picked = window.localStorage.getItem("tm_lang");
+        } catch (error) {
+          picked = null;
+        }
+
+        if (codes.indexOf(picked) < 0) {
+          picked = fromBrowser();
+        }
+
+        document.documentElement.setAttribute("lang", picked);
+        document.documentElement.setAttribute("dir", rightToLeft.indexOf(picked) < 0 ? "ltr" : "rtl");
+
+        window.tmBoot = { lang: picked, base: catalog("en"), text: null };
+        window.tmBoot.text = picked === "en" ? window.tmBoot.base : catalog(picked);
+
+        // fromBrowser is the first language the browser asks for that there is
+        // a catalog for. A tag is taken whole first and by its language alone
+        // after, so that a browser set to pt-PT is answered in Portuguese
+        // rather than in English, and one set to pt-BR is not answered by
+        // whatever Portuguese happens to be first in the list.
+        function fromBrowser() {
+          var wanted = window.navigator.languages;
+          if (wanted === undefined || wanted === null || wanted.length === 0) {
+            wanted = window.navigator.language === undefined ? [] : [window.navigator.language];
+          }
+
+          for (var i = 0; i < wanted.length; i++) {
+            var tag = String(wanted[i]).toLowerCase();
+
+            for (var j = 0; j < codes.length; j++) {
+              if (codes[j].toLowerCase() === tag) {
+                return codes[j];
+              }
+            }
+
+            for (var k = 0; k < codes.length; k++) {
+              if (codes[k].toLowerCase().split("-")[0] === tag.split("-")[0]) {
+                return codes[k];
+              }
+            }
+          }
+
+          return "en";
+        }
+
+        // catalog starts one file on its way. A failure is answered with null
+        // and not with a throw: app.js has to draw the screens either way, and
+        // what a missing catalog costs is the words on a handful of controls,
+        // not the page.
+        function catalog(code) {
+          return window.fetch("/ui/lang/" + code + ".json", {
+            headers: { Accept: "application/json" },
+            credentials: "same-origin"
+          }).then(function (response) {
+            return response.ok ? response.json() : null;
+          }).catch(function () {
+            return null;
+          });
+        }
+      })();
+    </script>
   </head>
   <body>
     <!-- The version sits outside #app because that element is emptied on every
          draw. Kept inside it the number would be wiped by the first screen and
          would have to be fetched again for each one. -->
     <div id="versionTag"></div>
-    <!-- The theme switch is outside #app for the same reason the version is,
-         and it is on every screen because it is outside: a button drawn inside
-         a screen would be gone from the login, which draws no navigation. It
-         carries no label until app.js has put one on it, so what is shown is
-         never a press that does nothing. -->
-    <button id="themeToggle" type="button" hidden></button>
-    <div id="app">Loading...</div>
+    <!-- The two switches that belong to the browser rather than to the screen.
+         They are outside #app because that element is emptied on every draw,
+         and they are in one box so that the two sit next to each other at one
+         end of the top row without either being told in pixels where the other
+         ends.
+
+         Neither carries a label until app.js has put one on it: the words on
+         them come from a catalog that is still on its way, and a switch that
+         showed English for a moment on a page asked for in Korean is the flip
+         this whole arrangement is here to avoid. -->
+    <div id="cornerControls">
+      <select id="langPick" hidden></select>
+      <button id="themeToggle" type="button" hidden></button>
+    </div>
+    <!-- The ellipsis is not a word on purpose. It is painted before any script
+         has run, so there is no catalog to take a word from, and "Loading..."
+         would be the one English string a page asked for in another language
+         starts with. -->
+    <div id="app">&#8230;</div>
     <!-- screens.js is loaded first: it holds the table of screens that app.js
          reads as soon as it runs, to draw the screen the URL asks for. -->
     <script src="/ui/screens.js"></script>

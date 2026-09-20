@@ -1,0 +1,8 @@
+{
+  "common.version.text": "버전 {version}",
+  "lang.pick.aria": "언어",
+  "nav.logout.link": "로그아웃",
+  "theme.dark.label": "다크",
+  "theme.light.label": "라이트",
+  "theme.switch.aria": "{theme} 테마로 바꾸기"
+}

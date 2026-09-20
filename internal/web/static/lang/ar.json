@@ -1,0 +1,8 @@
+{
+  "common.version.text": "الإصدار {version}",
+  "lang.pick.aria": "اللغة",
+  "nav.logout.link": "تسجيل الخروج",
+  "theme.dark.label": "داكن",
+  "theme.light.label": "فاتح",
+  "theme.switch.aria": "التبديل إلى السمة {theme}"
+}
