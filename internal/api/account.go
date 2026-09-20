@@ -84,19 +84,13 @@ func (h *AuthHandler) GetAccount(c echo.Context) error {
 		// The middleware is what puts it there, so getting here means the route
 		// was hung somewhere the middleware does not cover.
 		h.logger.Error("the account read was reached with no account on the context")
-		return c.JSON(http.StatusInternalServerError, models.Response{
-			Success: false,
-			Error:   "Failed to read the account",
-		})
+		return failure(c, http.StatusInternalServerError, errAccountReadFailed)
 	}
 
 	user, err := h.readUser(userID)
 	if err != nil {
 		h.logger.Error("failed to read the account", zap.Error(err))
-		return c.JSON(http.StatusInternalServerError, models.Response{
-			Success: false,
-			Error:   "Failed to read the account",
-		})
+		return failure(c, http.StatusInternalServerError, errAccountReadFailed)
 	}
 
 	return c.JSON(http.StatusOK, models.Response{
@@ -121,11 +115,7 @@ func (h *AuthHandler) ChangeAccount(c echo.Context) error {
 		// What went wrong with the parse is not passed on. It says nothing the
 		// caller can act on beyond what naming the fields says, and the body it
 		// failed to read is the one carrying the password.
-		return c.JSON(http.StatusBadRequest, models.Response{
-			Success: false,
-			Error: "Invalid request body. Send a JSON object with current_password and " +
-				"username, new_password or both",
-		})
+		return failure(c, http.StatusBadRequest, errAccountRequestInvalid)
 	}
 
 	// A value that is not sent is a value that stays as it is. An empty new
@@ -136,10 +126,7 @@ func (h *AuthHandler) ChangeAccount(c echo.Context) error {
 	changePassword := req.NewPassword != ""
 
 	if !changeUsername && !changePassword {
-		return c.JSON(http.StatusBadRequest, models.Response{
-			Success: false,
-			Error:   accountNothingToChangeMessage,
-		})
+		return failure(c, http.StatusBadRequest, errAccountNothingToChange)
 	}
 
 	// The name is stored with the surrounding space taken off, the way the
@@ -148,10 +135,7 @@ func (h *AuthHandler) ChangeAccount(c echo.Context) error {
 	// made of nothing but space is a name being cleared rather than one being
 	// left alone, and the account cannot be left without one.
 	if changeUsername && username == "" {
-		return c.JSON(http.StatusBadRequest, models.Response{
-			Success: false,
-			Error:   "Username must not be empty",
-		})
+		return failure(c, http.StatusBadRequest, errAccountUsernameEmpty)
 	}
 
 	// The bounds are the ones the setup holds, not a second pair. A password
@@ -161,17 +145,9 @@ func (h *AuthHandler) ChangeAccount(c echo.Context) error {
 	if changePassword {
 		switch {
 		case len(req.NewPassword) < minPasswordBytes:
-			return c.JSON(http.StatusBadRequest, models.Response{
-				Success: false,
-				Error: "The new password must be at least " + strconv.Itoa(minPasswordBytes) +
-					" bytes long",
-			})
+			return failure(c, http.StatusBadRequest, errAccountNewPasswordShort, errorArgs{"min": strconv.Itoa(minPasswordBytes)})
 		case len(req.NewPassword) > maxPasswordBytes:
-			return c.JSON(http.StatusBadRequest, models.Response{
-				Success: false,
-				Error: "The new password must be at most " + strconv.Itoa(maxPasswordBytes) +
-					" bytes long, because that is as far as bcrypt reads",
-			})
+			return failure(c, http.StatusBadRequest, errAccountNewPasswordLong, errorArgs{"max": strconv.Itoa(maxPasswordBytes)})
 		}
 	}
 
@@ -180,19 +156,13 @@ func (h *AuthHandler) ChangeAccount(c echo.Context) error {
 		// The middleware is what puts it there, so getting here means the route
 		// was hung somewhere the middleware does not cover.
 		h.logger.Error("the account change was reached with no account on the context")
-		return c.JSON(http.StatusInternalServerError, models.Response{
-			Success: false,
-			Error:   "Failed to read the account",
-		})
+		return failure(c, http.StatusInternalServerError, errAccountReadFailed)
 	}
 
 	user, err := h.readUser(userID)
 	if err != nil {
 		h.logger.Error("failed to read the account", zap.Error(err))
-		return c.JSON(http.StatusInternalServerError, models.Response{
-			Success: false,
-			Error:   "Failed to read the account",
-		})
+		return failure(c, http.StatusInternalServerError, errAccountReadFailed)
 	}
 
 	if !auth.CheckPassword(user.PasswordHash, req.CurrentPassword) {
@@ -204,10 +174,7 @@ func (h *AuthHandler) ChangeAccount(c echo.Context) error {
 		h.logger.Warn("the account was asked to be changed with a password that does not open " +
 			"it, so nothing was changed and no session was ended")
 
-		return c.JSON(http.StatusUnauthorized, models.Response{
-			Success: false,
-			Error:   accountWrongPasswordMessage,
-		})
+		return failure(c, http.StatusUnauthorized, errAccountPasswordWrong)
 	}
 
 	// A value that is already the stored one is refused rather than stored
@@ -221,17 +188,11 @@ func (h *AuthHandler) ChangeAccount(c echo.Context) error {
 	// the password of the account is answering a guess at it. Above this line
 	// the request has not proved it may hear that.
 	if changeUsername && username == user.Username {
-		return c.JSON(http.StatusBadRequest, models.Response{
-			Success: false,
-			Error:   "The username is the one the account already has",
-		})
+		return failure(c, http.StatusBadRequest, errAccountUsernameUnchanged)
 	}
 
 	if changePassword && auth.CheckPassword(user.PasswordHash, req.NewPassword) {
-		return c.JSON(http.StatusBadRequest, models.Response{
-			Success: false,
-			Error:   "The new password is the one the account already has",
-		})
+		return failure(c, http.StatusBadRequest, errAccountPasswordUnchanged)
 	}
 
 	if changeUsername {
@@ -242,10 +203,7 @@ func (h *AuthHandler) ChangeAccount(c echo.Context) error {
 		hash, hashErr := auth.HashPassword(req.NewPassword)
 		if hashErr != nil {
 			h.logger.Error("failed to hash the password", zap.Error(hashErr))
-			return c.JSON(http.StatusInternalServerError, models.Response{
-				Success: false,
-				Error:   "Failed to hash the password",
-			})
+			return failure(c, http.StatusInternalServerError, errAccountHashFailed)
 		}
 
 		user.PasswordHash = hash
@@ -254,10 +212,7 @@ func (h *AuthHandler) ChangeAccount(c echo.Context) error {
 	err = h.db.Save(user).Error
 	if err != nil {
 		h.logger.Error("failed to store the changed account", zap.Error(err))
-		return c.JSON(http.StatusInternalServerError, models.Response{
-			Success: false,
-			Error:   "Failed to store the account",
-		})
+		return failure(c, http.StatusInternalServerError, errAccountStoreFailed)
 	}
 
 	// Everything below this point runs only because the row has been written.

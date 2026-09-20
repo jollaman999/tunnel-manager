@@ -109,10 +109,7 @@ func (h *CertificateHandler) GetCertificate(c echo.Context) error {
 	if err != nil {
 		h.logger.Error("the certificate being served cannot be parsed", zap.Error(err))
 
-		return c.JSON(http.StatusInternalServerError, models.Response{
-			Success: false,
-			Error:   "Failed to read the certificate being served",
-		})
+		return failure(c, http.StatusInternalServerError, errCertificateServedUnread)
 	}
 
 	return c.JSON(http.StatusOK, models.Response{
@@ -135,10 +132,7 @@ func (h *CertificateHandler) RenewCertificate(c echo.Context) error {
 	if err != nil {
 		h.logger.Error("failed to make a new certificate", zap.Error(err))
 
-		return c.JSON(http.StatusInternalServerError, models.Response{
-			Success: false,
-			Error:   "Failed to make a new certificate. Nothing was changed",
-		})
+		return failure(c, http.StatusInternalServerError, errCertificateRenewFailed)
 	}
 
 	return h.replaced(c, previous, keyPair, info, now, "generated")
@@ -156,10 +150,7 @@ func (h *CertificateHandler) InstallCertificate(c echo.Context) error {
 
 	err := c.Bind(&body)
 	if err != nil {
-		return c.JSON(http.StatusBadRequest, models.Response{
-			Success: false,
-			Error:   "Invalid request body: " + err.Error(),
-		})
+		return failure(c, http.StatusBadRequest, errRequestBodyInvalid, errorArgs{"reason": err.Error()})
 	}
 
 	now := time.Now()
@@ -171,18 +162,12 @@ func (h *CertificateHandler) InstallCertificate(c echo.Context) error {
 		// database or a cipher, so there is nothing about this process in it.
 		var refused *tlsserve.InputError
 		if errors.As(err, &refused) {
-			return c.JSON(http.StatusBadRequest, models.Response{
-				Success: false,
-				Error:   "The certificate was not stored: " + refused.Error(),
-			})
+			return failure(c, http.StatusBadRequest, errCertificateInstallRefused, errorArgs{"reason": refused.Error()})
 		}
 
 		h.logger.Error("failed to store the certificate that was sent", zap.Error(err))
 
-		return c.JSON(http.StatusInternalServerError, models.Response{
-			Success: false,
-			Error:   "Failed to store the certificate. Nothing was changed",
-		})
+		return failure(c, http.StatusInternalServerError, errCertificateStoreFailed)
 	}
 
 	return h.replaced(c, previous, keyPair, info, now, "installed")
@@ -208,10 +193,7 @@ func (h *CertificateHandler) replaced(c echo.Context, previous *tls.Certificate,
 		h.logger.Error("the new certificate cannot be parsed and was not put in place",
 			zap.Error(err))
 
-		return c.JSON(http.StatusInternalServerError, models.Response{
-			Success: false,
-			Error:   "Failed to read the new certificate back",
-		})
+		return failure(c, http.StatusInternalServerError, errCertificateReadBackFailed)
 	}
 
 	previousFingerprint := ""
@@ -258,11 +240,7 @@ func (h *CertificateHandler) replaced(c echo.Context, previous *tls.Certificate,
 // on is not: the setting that decides it is on the same screen, and the message
 // says so.
 func (h *CertificateHandler) noCertificate(c echo.Context) error {
-	return c.JSON(http.StatusConflict, models.Response{
-		Success: false,
-		Error: "No certificate is in use, because HTTPS is turned off. Turn on \"Serve over " +
-			"HTTPS\" and start tunnel-manager again",
-	})
+	return failure(c, http.StatusConflict, errCertificateHTTPSOff)
 }
 
 // viewOf is what one certificate looks like on the screen.

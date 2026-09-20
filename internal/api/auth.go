@@ -58,23 +58,10 @@ const csrfHeaderName = "X-CSRF-Token"
 // a session token, because both are defended against guessing and nothing else.
 const csrfTokenBytes = 32
 
-// csrfRefusedMessage is the answer to a state changing request that did not
-// bring its token back. It says what to send, because the client can fix it.
-// It must not read like the setup refusal: the UI moves to the setup screen on
-// a 403 that mentions one.
-const csrfRefusedMessage = "The request carries no valid " + csrfHeaderName +
-	" header. Send the token of the session, which the login answers with and " +
-	"the " + csrfCookieName + " cookie holds, on every POST, PUT and DELETE"
-
 // invalidCredentialsMessage is the answer to every failed login. It does not say
 // whether the username or the password was the wrong one, because that tells an
 // outsider which of the two they have already got right.
 const invalidCredentialsMessage = "Invalid username or password"
-
-// setupRequiredMessage is the answer to a request that a logged in client is
-// not allowed to make yet. It names what is missing, since the client can fix it
-// and the UI sends the operator to the setup screen on the strength of it.
-const setupRequiredMessage = "The account setup is not finished. Set a username and a password through " + setupPath + " first"
 
 // setupAlreadyDoneMessage is the answer to a setup that comes after the account
 // has one. The setup is how the account is settled the first time, not how it is
@@ -342,19 +329,13 @@ func (h *AuthHandler) Login(c echo.Context) error {
 
 	err := c.Bind(&req)
 	if err != nil {
-		return c.JSON(http.StatusBadRequest, models.Response{
-			Success: false,
-			Error:   "Invalid request body: " + err.Error(),
-		})
+		return failure(c, http.StatusBadRequest, errRequestBodyInvalid, errorArgs{"reason": err.Error()})
 	}
 
 	user, err := h.readUser()
 	if err != nil {
 		h.logger.Error("failed to read the account", zap.Error(err))
-		return c.JSON(http.StatusInternalServerError, models.Response{
-			Success: false,
-			Error:   "Failed to read the account",
-		})
+		return failure(c, http.StatusInternalServerError, errAccountReadFailed)
 	}
 
 	// The password is hashed and compared whatever the username was, so that a
@@ -367,19 +348,13 @@ func (h *AuthHandler) Login(c echo.Context) error {
 	}
 
 	if !ok {
-		return c.JSON(http.StatusUnauthorized, models.Response{
-			Success: false,
-			Error:   invalidCredentialsMessage,
-		})
+		return failure(c, http.StatusUnauthorized, errAuthCredentialsInvalid)
 	}
 
 	token, csrfToken, err := h.sessions.Create(user.ID)
 	if err != nil {
 		h.logger.Error("failed to create a session", zap.Error(err))
-		return c.JSON(http.StatusInternalServerError, models.Response{
-			Success: false,
-			Error:   "Failed to create a session",
-		})
+		return failure(c, http.StatusInternalServerError, errAuthSessionCreateFailed)
 	}
 
 	c.SetCookie(sessionCookie(c, token, 0))
@@ -418,10 +393,7 @@ func (h *AuthHandler) Setup(c echo.Context) error {
 
 	err := c.Bind(&req)
 	if err != nil {
-		return c.JSON(http.StatusBadRequest, models.Response{
-			Success: false,
-			Error:   "Invalid request body: " + err.Error(),
-		})
+		return failure(c, http.StatusBadRequest, errRequestBodyInvalid, errorArgs{"reason": err.Error()})
 	}
 
 	// The name is stored with the surrounding space taken off, because that is
@@ -429,26 +401,16 @@ func (h *AuthHandler) Setup(c echo.Context) error {
 	// operator cannot type back in.
 	username := strings.TrimSpace(req.Username)
 	if username == "" {
-		return c.JSON(http.StatusBadRequest, models.Response{
-			Success: false,
-			Error:   "Username must not be empty",
-		})
+		return failure(c, http.StatusBadRequest, errAccountUsernameEmpty)
 	}
 
 	// len on a string counts bytes, which is the unit bcrypt reads the password
 	// in as well.
 	switch {
 	case len(req.Password) < minPasswordBytes:
-		return c.JSON(http.StatusBadRequest, models.Response{
-			Success: false,
-			Error:   "Password must be at least " + strconv.Itoa(minPasswordBytes) + " bytes long",
-		})
+		return failure(c, http.StatusBadRequest, errAuthPasswordTooShort, errorArgs{"min": strconv.Itoa(minPasswordBytes)})
 	case len(req.Password) > maxPasswordBytes:
-		return c.JSON(http.StatusBadRequest, models.Response{
-			Success: false,
-			Error: "Password must be at most " + strconv.Itoa(maxPasswordBytes) +
-				" bytes long, because that is as far as bcrypt reads",
-		})
+		return failure(c, http.StatusBadRequest, errAuthPasswordTooLong, errorArgs{"max": strconv.Itoa(maxPasswordBytes)})
 	}
 
 	// The hash is made before the transaction is opened. bcrypt is slow on
@@ -456,10 +418,7 @@ func (h *AuthHandler) Setup(c echo.Context) error {
 	hash, err := auth.HashPassword(req.Password)
 	if err != nil {
 		h.logger.Error("failed to hash the password", zap.Error(err))
-		return c.JSON(http.StatusInternalServerError, models.Response{
-			Success: false,
-			Error:   "Failed to hash the password",
-		})
+		return failure(c, http.StatusInternalServerError, errAccountHashFailed)
 	}
 
 	userID, ok := c.Get(contextUserIDKey).(uint)
@@ -467,20 +426,14 @@ func (h *AuthHandler) Setup(c echo.Context) error {
 		// The middleware is what puts it there, so getting here means the route
 		// was hung somewhere the middleware does not cover.
 		h.logger.Error("the setup was reached with no account on the context")
-		return c.JSON(http.StatusInternalServerError, models.Response{
-			Success: false,
-			Error:   "Failed to read the account",
-		})
+		return failure(c, http.StatusInternalServerError, errAccountReadFailed)
 	}
 
 	tx := h.db.Begin()
 	err = tx.Error
 	if err != nil {
 		h.logger.Error("failed to start the transaction", zap.Error(err))
-		return c.JSON(http.StatusInternalServerError, models.Response{
-			Success: false,
-			Error:   "Failed to start transaction",
-		})
+		return failure(c, http.StatusInternalServerError, errTransactionBeginFailed)
 	}
 
 	// The row is read inside the transaction and the flag is looked at again
@@ -495,18 +448,12 @@ func (h *AuthHandler) Setup(c echo.Context) error {
 	if err != nil {
 		tx.Rollback()
 		h.logger.Error("failed to read the account", zap.Error(err))
-		return c.JSON(http.StatusInternalServerError, models.Response{
-			Success: false,
-			Error:   "Failed to read the account",
-		})
+		return failure(c, http.StatusInternalServerError, errAccountReadFailed)
 	}
 
 	if !user.SetupRequired {
 		tx.Rollback()
-		return c.JSON(http.StatusConflict, models.Response{
-			Success: false,
-			Error:   setupAlreadyDoneMessage,
-		})
+		return failure(c, http.StatusConflict, errAuthSetupAlreadyDone)
 	}
 
 	user.Username = username
@@ -517,19 +464,13 @@ func (h *AuthHandler) Setup(c echo.Context) error {
 	if err != nil {
 		tx.Rollback()
 		h.logger.Error("failed to set up the account", zap.Error(err))
-		return c.JSON(http.StatusInternalServerError, models.Response{
-			Success: false,
-			Error:   "Failed to set up the account",
-		})
+		return failure(c, http.StatusInternalServerError, errAuthSetupFailed)
 	}
 
 	err = tx.Commit().Error
 	if err != nil {
 		h.logger.Error("failed to commit the account setup", zap.Error(err))
-		return c.JSON(http.StatusInternalServerError, models.Response{
-			Success: false,
-			Error:   "Failed to commit transaction",
-		})
+		return failure(c, http.StatusInternalServerError, errTransactionCommitFailed)
 	}
 
 	// Everything below this point runs only because the account has already
@@ -628,10 +569,7 @@ func (h *AuthHandler) RequireSession() echo.MiddlewareFunc {
 
 			if !isSafeMethod(c.Request().Method) &&
 				subtle.ConstantTimeCompare([]byte(c.Request().Header.Get(csrfHeaderName)), []byte(csrfToken)) != 1 {
-				return c.JSON(http.StatusForbidden, models.Response{
-					Success: false,
-					Error:   csrfRefusedMessage,
-				})
+				return failure(c, http.StatusForbidden, errAuthCSRFRefused, errorArgs{"header": csrfHeaderName, "cookie": csrfCookieName})
 			}
 
 			// The logout needs nothing below this point: it ends the session it
@@ -647,17 +585,11 @@ func (h *AuthHandler) RequireSession() echo.MiddlewareFunc {
 			user, err := h.readUser(userID)
 			if err != nil {
 				h.logger.Error("failed to read the account", zap.Error(err))
-				return c.JSON(http.StatusInternalServerError, models.Response{
-					Success: false,
-					Error:   "Failed to read the account",
-				})
+				return failure(c, http.StatusInternalServerError, errAccountReadFailed)
 			}
 
 			if user.SetupRequired && path != setupPath {
-				return c.JSON(http.StatusForbidden, models.Response{
-					Success: false,
-					Error:   setupRequiredMessage,
-				})
+				return failure(c, http.StatusForbidden, errAuthSetupRequired, errorArgs{"path": setupPath})
 			}
 
 			c.Set(contextUserIDKey, userID)
@@ -678,12 +610,4 @@ func isSafeMethod(method string) bool {
 	}
 
 	return false
-}
-
-// unauthenticated answers a request that carries no usable session.
-func unauthenticated(c echo.Context) error {
-	return c.JSON(http.StatusUnauthorized, models.Response{
-		Success: false,
-		Error:   "Authentication required",
-	})
 }

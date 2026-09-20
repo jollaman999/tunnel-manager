@@ -137,23 +137,16 @@ func NewLogsHandler(logger *zap.Logger, path string) *LogsHandler {
 
 // GetLogs answers with the last lines of the log file.
 func (h *LogsHandler) GetLogs(c echo.Context) error {
-	count, err := logsLineCount(c.QueryParam("lines"))
-	if err != nil {
-		return c.JSON(http.StatusBadRequest, models.Response{
-			Success: false,
-			Error:   err.Error(),
-		})
+	count, refused := logsLineCount(c.QueryParam("lines"))
+	if refused != nil {
+		return refused.answer(c)
 	}
 
 	// A path that is empty means the logging settings name no file at all.
 	// Answering with an empty list would read as a log with nothing in it,
 	// which is a different thing to be told.
 	if h.path == "" {
-		return c.JSON(http.StatusNotFound, models.Response{
-			Success: false,
-			Error: "No log file is configured, so the logs are written to the console only. " +
-				"Set a log file on the Settings screen and start the server again.",
-		})
+		return failure(c, http.StatusNotFound, errLogsFileNotConfigured)
 	}
 
 	raw, tail, err := tailFile(h.path, count)
@@ -163,22 +156,14 @@ func (h *LogsHandler) GetLogs(c echo.Context) error {
 		// only. The screen cannot see that console, so the reason is spelled
 		// out here instead of being answered as an empty log.
 		if errors.Is(err, fs.ErrNotExist) {
-			return c.JSON(http.StatusNotFound, models.Response{
-				Success: false,
-				Error: "There is no file at " + h.path + ". Either nothing has been " +
-					"logged to it yet, or the server could not open it at startup and " +
-					"is writing to the console only.",
-			})
+			return failure(c, http.StatusNotFound, errLogsFileMissing, errorArgs{"path": h.path})
 		}
 
 		h.logger.Error("failed to read the log file",
 			zap.String("path", h.path),
 			zap.Error(err))
 
-		return c.JSON(http.StatusInternalServerError, models.Response{
-			Success: false,
-			Error:   "The log file at " + h.path + " cannot be read: " + err.Error(),
-		})
+		return failure(c, http.StatusInternalServerError, errLogsFileReadFailed, errorArgs{"path": h.path, "reason": err.Error()})
 	}
 
 	lines := make([]logLine, 0, len(raw))
@@ -204,18 +189,18 @@ func (h *LogsHandler) GetLogs(c echo.Context) error {
 // above the bound is cut down to it, and anything that is not a positive whole
 // number is refused rather than quietly turned into the default: a screen that
 // sent a number it worked out wrong has to hear about it.
-func logsLineCount(value string) (int, error) {
+func logsLineCount(value string) (int, *refusal) {
 	if strings.TrimSpace(value) == "" {
 		return logsDefaultLines, nil
 	}
 
 	count, err := strconv.Atoi(strings.TrimSpace(value))
 	if err != nil {
-		return 0, errors.New("lines has to be a whole number")
+		return 0, refuse(http.StatusBadRequest, errLogsLinesNotANumber)
 	}
 
 	if count < 1 {
-		return 0, errors.New("lines has to be one or more")
+		return 0, refuse(http.StatusBadRequest, errLogsLinesBelowOne)
 	}
 
 	if count > logsMaxLines {

@@ -126,10 +126,7 @@ func (h *SettingsHandler) GetSettings(c echo.Context) error {
 	stored, err := settings.Load(h.db)
 	if err != nil {
 		h.logger.Error("failed to read the settings", zap.Error(err))
-		return c.JSON(http.StatusInternalServerError, models.Response{
-			Success: false,
-			Error:   "Failed to read the settings",
-		})
+		return failure(c, http.StatusInternalServerError, errSettingsReadFailed)
 	}
 
 	return c.JSON(http.StatusOK, models.Response{
@@ -148,10 +145,7 @@ func (h *SettingsHandler) UpdateSettings(c echo.Context) error {
 	stored, err := settings.Load(h.db)
 	if err != nil {
 		h.logger.Error("failed to read the settings", zap.Error(err))
-		return c.JSON(http.StatusInternalServerError, models.Response{
-			Success: false,
-			Error:   "Failed to read the settings",
-		})
+		return failure(c, http.StatusInternalServerError, errSettingsReadFailed)
 	}
 
 	before := *stored
@@ -164,10 +158,7 @@ func (h *SettingsHandler) UpdateSettings(c echo.Context) error {
 
 	err = c.Bind(&updated)
 	if err != nil {
-		return c.JSON(http.StatusBadRequest, models.Response{
-			Success: false,
-			Error:   "Invalid request body: " + err.Error(),
-		})
+		return failure(c, http.StatusBadRequest, errRequestBodyInvalid, errorArgs{"reason": err.Error()})
 	}
 
 	// The rules are run here as well as inside Save so that a value they refuse
@@ -176,19 +167,13 @@ func (h *SettingsHandler) UpdateSettings(c echo.Context) error {
 	// on only one of them.
 	err = updated.Validate()
 	if err != nil {
-		return c.JSON(http.StatusBadRequest, models.Response{
-			Success: false,
-			Error:   "The settings are refused: " + err.Error(),
-		})
+		return failure(c, http.StatusBadRequest, errSettingsRefused, errorArgs{"reason": err.Error()})
 	}
 
 	err = settings.Save(h.db, &updated)
 	if err != nil {
 		h.logger.Error("failed to store the settings", zap.Error(err))
-		return c.JSON(http.StatusInternalServerError, models.Response{
-			Success: false,
-			Error:   "Failed to store the settings",
-		})
+		return failure(c, http.StatusInternalServerError, errSettingsStoreFailed)
 	}
 
 	changes := h.applyChanges(&before, &updated)

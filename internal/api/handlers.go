@@ -2,7 +2,6 @@ package api
 
 import (
 	"errors"
-	"fmt"
 	"net/http"
 	"sort"
 	"strconv"
@@ -107,14 +106,21 @@ type listPageOf struct {
 // A size that is not one of pageSizes is refused rather than brought into
 // range, and the refusal names the sizes it takes, so that no request is
 // answered with a page of a size it did not ask for.
-func readListPage(c echo.Context) (listPage, error) {
+//
+// The two values it can be sent wrong are two refusals rather than one with the
+// reason written into it. What is wrong with a page is not what is wrong with a
+// size, and a screen that shows either in its own language has to be able to
+// tell them apart. The value is quoted where it is handed over, because the
+// English sentence quotes it and the quoting is what marks where it ends.
+func readListPage(c echo.Context) (listPage, *refusal) {
 	page := listPage{number: 1, size: defaultPageSize}
 
 	raw := c.QueryParam("page")
 	if raw != "" {
 		number, err := strconv.Atoi(raw)
 		if err != nil {
-			return listPage{}, fmt.Errorf("page is not a number: %q", raw)
+			return listPage{}, refuse(http.StatusBadRequest, errListPageNotANumber,
+				errorArgs{"page": strconv.Quote(raw)})
 		}
 
 		if number < 1 {
@@ -128,7 +134,8 @@ func readListPage(c echo.Context) (listPage, error) {
 	if raw != "" {
 		size, err := strconv.Atoi(raw)
 		if err != nil || !isPageSize(size) {
-			return listPage{}, fmt.Errorf("size must be one of %s, and not %q", pageSizeList(), raw)
+			return listPage{}, refuse(http.StatusBadRequest, errListSizeUnsupported,
+				errorArgs{"sizes": pageSizeList(), "size": strconv.Quote(raw)})
 		}
 
 		page.size = size
@@ -162,11 +169,12 @@ func pageSizeList() string {
 // badListPage answers a page or a size the request cannot be served with. It
 // carries what is wrong with it: the request is the thing that is wrong, and
 // the client is the one that can put it right.
-func badListPage(c echo.Context, err error) error {
-	return c.JSON(http.StatusBadRequest, models.Response{
-		Success: false,
-		Error:   "The list was not read: " + err.Error(),
-	})
+//
+// readListPage hands back the refusal already named, rather than an error this
+// would have to read the text of, so that the two ways a page can be wrong stay
+// two refusals on the way out.
+func badListPage(c echo.Context, refused *refusal) error {
+	return refused.answer(c)
 }
 
 // sealPassword returns the password of a Host as it is stored. An empty
@@ -223,21 +231,18 @@ func (h *Handler) sealPrivateKey(keyPEM string, passphrase string) (string, stri
 // to and what to do about it, and it is built from what was checked rather than
 // from anything inside this process. Everything else is answered as a failure
 // and written to the log, where the key and the passphrase never appear.
-func (h *Handler) keyRefused(c echo.Context, err error, prefix string) error {
+// The code is handed in rather than a prefix, because the sentence a create
+// and an update are refused with differ in more than a language that is not
+// this one can be expected to put back together.
+func (h *Handler) keyRefused(c echo.Context, err error, code errorCode) error {
 	var refused *tunnel.KeyError
 	if errors.As(err, &refused) {
-		return c.JSON(http.StatusBadRequest, models.Response{
-			Success: false,
-			Error:   prefix + refused.Error(),
-		})
+		return failure(c, http.StatusBadRequest, code, errorArgs{"reason": refused.Error()})
 	}
 
 	h.logger.Error("failed to encrypt the private key of the Host", zap.Error(err))
 
-	return c.JSON(http.StatusInternalServerError, models.Response{
-		Success: false,
-		Error:   "Failed to encrypt the private key",
-	})
+	return failure(c, http.StatusInternalServerError, errHostKeyEncryptFailed)
 }
 
 // wantsAssignments is what a create request asked about the assignments it
@@ -258,38 +263,25 @@ func (h *Handler) CreateHost(c echo.Context) error {
 	var req models.CreateHostRequest
 	err := c.Bind(&req)
 	if err != nil {
-		return c.JSON(http.StatusBadRequest, models.Response{
-			Success: false,
-			Error:   "Invalid request body: " + err.Error(),
-		})
+		return failure(c, http.StatusBadRequest, errRequestBodyInvalid, errorArgs{"reason": err.Error()})
 	}
 
 	err = c.Validate(&req)
 	if err != nil {
-		return c.JSON(http.StatusBadRequest, models.Response{
-			Success: false,
-			Error:   "Validation failed: " + err.Error(),
-		})
+		return failure(c, http.StatusBadRequest, errRequestValidationFailed, errorArgs{"reason": err.Error()})
 	}
 
 	// A Host that carries neither is one nothing can log in with. It is refused
 	// here rather than by a rule on the password field, so that the message can
 	// name both ways in and say that either will do.
 	if req.Password == "" && strings.TrimSpace(req.PrivateKey) == "" {
-		return c.JSON(http.StatusBadRequest, models.Response{
-			Success: false,
-			Error: "The Host was not created: it carries no way to log in. Give a private key, " +
-				"a password, or both",
-		})
+		return failure(c, http.StatusBadRequest, errHostCreateNoLogin)
 	}
 
 	password, err := h.sealPassword(req.Password)
 	if err != nil {
 		h.logger.Error("failed to encrypt the password of the Host", zap.Error(err))
-		return c.JSON(http.StatusInternalServerError, models.Response{
-			Success: false,
-			Error:   "Failed to encrypt the password",
-		})
+		return failure(c, http.StatusInternalServerError, errHostPasswordEncryptFailed)
 	}
 
 	// The key is read before anything is stored, so that a key that cannot be
@@ -299,17 +291,14 @@ func (h *Handler) CreateHost(c echo.Context) error {
 	// here.
 	privateKey, keyPassphrase, err := h.sealPrivateKey(req.PrivateKey, req.KeyPassphrase)
 	if err != nil {
-		return h.keyRefused(c, err, "The Host was not created: ")
+		return h.keyRefused(c, err, errHostCreateKeyRefused)
 	}
 
 	tx := h.db.Begin()
 	err = tx.Error
 	if err != nil {
 		h.logger.Error("failed to start the transaction", zap.Error(err))
-		return c.JSON(http.StatusInternalServerError, models.Response{
-			Success: false,
-			Error:   "Failed to start transaction",
-		})
+		return failure(c, http.StatusInternalServerError, errTransactionBeginFailed)
 	}
 
 	// A Host that does not say is enabled. Saying nothing is how every Host was
@@ -337,10 +326,7 @@ func (h *Handler) CreateHost(c echo.Context) error {
 	if err != nil {
 		tx.Rollback()
 		h.logger.Error("failed to create Host", zap.Error(err))
-		return c.JSON(http.StatusInternalServerError, models.Response{
-			Success: false,
-			Error:   "Failed to create Host",
-		})
+		return failure(c, http.StatusInternalServerError, errHostCreateFailed)
 	}
 
 	// The assignments are written in the transaction that wrote the Host, so
@@ -357,10 +343,7 @@ func (h *Handler) CreateHost(c echo.Context) error {
 		if err != nil {
 			tx.Rollback()
 			h.logger.Error("failed to read the service ports to assign to a new Host", zap.Error(err))
-			return c.JSON(http.StatusInternalServerError, models.Response{
-				Success: false,
-				Error:   "The Host was not created: failed to read the service ports",
-			})
+			return failure(c, http.StatusInternalServerError, errHostCreateServicePortsRead)
 		}
 
 		for _, spID := range spIDs {
@@ -369,10 +352,7 @@ func (h *Handler) CreateHost(c echo.Context) error {
 				tx.Rollback()
 				h.logger.Error("failed to assign a service port to a new Host",
 					zap.Error(err), zap.Uint("host_id", host.ID), zap.Uint("service_port_id", spID))
-				return c.JSON(http.StatusInternalServerError, models.Response{
-					Success: false,
-					Error:   "The Host was not created: failed to store the service ports it carries",
-				})
+				return failure(c, http.StatusInternalServerError, errHostCreateServicePortsStore)
 			}
 		}
 	}
@@ -380,10 +360,7 @@ func (h *Handler) CreateHost(c echo.Context) error {
 	err = tx.Commit().Error
 	if err != nil {
 		h.logger.Error("failed to commit the transaction", zap.Error(err))
-		return c.JSON(http.StatusInternalServerError, models.Response{
-			Success: false,
-			Error:   "Failed to commit transaction",
-		})
+		return failure(c, http.StatusInternalServerError, errTransactionCommitFailed)
 	}
 
 	h.manager.WakeReconcile()
@@ -401,22 +378,19 @@ func (h *Handler) CreateHost(c echo.Context) error {
 // id is what that order is taken from, since it is given out once, never
 // changes, and no two Hosts share one.
 func (h *Handler) ListHosts(c echo.Context) error {
-	page, err := readListPage(c)
-	if err != nil {
-		return badListPage(c, err)
+	page, refused := readListPage(c)
+	if refused != nil {
+		return badListPage(c, refused)
 	}
 
 	// The rows are counted by the database rather than read and measured here.
 	// Reading every row to find out how many there are is the work the paging
 	// is here to avoid.
 	var total int64
-	err = h.db.Model(&models.Host{}).Count(&total).Error
+	err := h.db.Model(&models.Host{}).Count(&total).Error
 	if err != nil {
 		h.logger.Error("failed to count the Hosts", zap.Error(err))
-		return c.JSON(http.StatusInternalServerError, models.Response{
-			Success: false,
-			Error:   "Failed to fetch Hosts",
-		})
+		return failure(c, http.StatusInternalServerError, errHostListFailed)
 	}
 
 	page = page.fitTo(total)
@@ -425,10 +399,7 @@ func (h *Handler) ListHosts(c echo.Context) error {
 	err = h.db.Order("id").Limit(page.size).Offset(page.offset()).Find(&hosts).Error
 	if err != nil {
 		h.logger.Error("failed to fetch Hosts", zap.Error(err))
-		return c.JSON(http.StatusInternalServerError, models.Response{
-			Success: false,
-			Error:   "Failed to fetch Hosts",
-		})
+		return failure(c, http.StatusInternalServerError, errHostListFailed)
 	}
 
 	// A page that holds no row is an empty array and not null: a client draws a
@@ -451,10 +422,7 @@ func (h *Handler) ListHosts(c echo.Context) error {
 func (h *Handler) GetHost(c echo.Context) error {
 	id, err := strconv.ParseUint(c.Param("id"), 10, 32)
 	if err != nil {
-		return c.JSON(http.StatusBadRequest, models.Response{
-			Success: false,
-			Error:   "Invalid Host ID: " + err.Error(),
-		})
+		return failure(c, http.StatusBadRequest, errHostIDInvalid, errorArgs{"reason": err.Error()})
 	}
 
 	// A read that failed is told apart from a row that is not stored, because a
@@ -467,16 +435,10 @@ func (h *Handler) GetHost(c echo.Context) error {
 	err = h.db.First(&host, id).Error
 	if err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return c.JSON(http.StatusNotFound, models.Response{
-				Success: false,
-				Error:   "Host not found",
-			})
+			return failure(c, http.StatusNotFound, errHostNotFound)
 		}
 		h.logger.Error("failed to fetch Host", zap.Error(err))
-		return c.JSON(http.StatusInternalServerError, models.Response{
-			Success: false,
-			Error:   "Failed to fetch Host",
-		})
+		return failure(c, http.StatusInternalServerError, errHostFetchFailed)
 	}
 
 	return c.JSON(http.StatusOK, models.Response{
@@ -488,37 +450,25 @@ func (h *Handler) GetHost(c echo.Context) error {
 func (h *Handler) UpdateHost(c echo.Context) error {
 	id, err := strconv.ParseUint(c.Param("id"), 10, 32)
 	if err != nil {
-		return c.JSON(http.StatusBadRequest, models.Response{
-			Success: false,
-			Error:   "Invalid Host ID: " + err.Error(),
-		})
+		return failure(c, http.StatusBadRequest, errHostIDInvalid, errorArgs{"reason": err.Error()})
 	}
 
 	var req models.UpdateHostRequest
 	err = c.Bind(&req)
 	if err != nil {
-		return c.JSON(http.StatusBadRequest, models.Response{
-			Success: false,
-			Error:   "Invalid request body: " + err.Error(),
-		})
+		return failure(c, http.StatusBadRequest, errRequestBodyInvalid, errorArgs{"reason": err.Error()})
 	}
 
 	err = c.Validate(&req)
 	if err != nil {
-		return c.JSON(http.StatusBadRequest, models.Response{
-			Success: false,
-			Error:   "Validation failed: " + err.Error(),
-		})
+		return failure(c, http.StatusBadRequest, errRequestValidationFailed, errorArgs{"reason": err.Error()})
 	}
 
 	tx := h.db.Begin()
 	err = tx.Error
 	if err != nil {
 		h.logger.Error("failed to start the transaction", zap.Error(err))
-		return c.JSON(http.StatusInternalServerError, models.Response{
-			Success: false,
-			Error:   "Failed to start transaction",
-		})
+		return failure(c, http.StatusInternalServerError, errTransactionBeginFailed)
 	}
 
 	// The row is read inside the transaction, because what is written below is
@@ -537,16 +487,10 @@ func (h *Handler) UpdateHost(c echo.Context) error {
 	if err != nil {
 		tx.Rollback()
 		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return c.JSON(http.StatusNotFound, models.Response{
-				Success: false,
-				Error:   "Host not found",
-			})
+			return failure(c, http.StatusNotFound, errHostNotFound)
 		}
 		h.logger.Error("failed to fetch Host", zap.Error(err))
-		return c.JSON(http.StatusInternalServerError, models.Response{
-			Success: false,
-			Error:   "Failed to fetch Host",
-		})
+		return failure(c, http.StatusInternalServerError, errHostFetchFailed)
 	}
 
 	if req.IP != "" {
@@ -563,10 +507,7 @@ func (h *Handler) UpdateHost(c echo.Context) error {
 		if err != nil {
 			tx.Rollback()
 			h.logger.Error("failed to encrypt the password of the Host", zap.Error(err))
-			return c.JSON(http.StatusInternalServerError, models.Response{
-				Success: false,
-				Error:   "Failed to encrypt the password",
-			})
+			return failure(c, http.StatusInternalServerError, errHostPasswordEncryptFailed)
 		}
 		host.Password = password
 	}
@@ -578,18 +519,14 @@ func (h *Handler) UpdateHost(c echo.Context) error {
 		privateKey, keyPassphrase, err := h.sealPrivateKey(req.PrivateKey, req.KeyPassphrase)
 		if err != nil {
 			tx.Rollback()
-			return h.keyRefused(c, err, "The Host was not updated: ")
+			return h.keyRefused(c, err, errHostUpdateKeyRefused)
 		}
 
 		host.PrivateKey = privateKey
 		host.KeyPassphrase = keyPassphrase
 	} else if req.KeyPassphrase != "" {
 		tx.Rollback()
-		return c.JSON(http.StatusBadRequest, models.Response{
-			Success: false,
-			Error: "The Host was not updated: a passphrase was sent without a private key. " +
-				"The two are checked together, so send the key along with it",
-		})
+		return failure(c, http.StatusBadRequest, errHostUpdatePassphraseAlone)
 	}
 	if req.Description != "" {
 		host.Description = req.Description
@@ -602,19 +539,13 @@ func (h *Handler) UpdateHost(c echo.Context) error {
 	if err != nil {
 		tx.Rollback()
 		h.logger.Error("failed to update Host", zap.Error(err))
-		return c.JSON(http.StatusInternalServerError, models.Response{
-			Success: false,
-			Error:   "Failed to update Host",
-		})
+		return failure(c, http.StatusInternalServerError, errHostUpdateFailed)
 	}
 
 	err = tx.Commit().Error
 	if err != nil {
 		h.logger.Error("failed to commit the transaction", zap.Error(err))
-		return c.JSON(http.StatusInternalServerError, models.Response{
-			Success: false,
-			Error:   "Failed to commit transaction",
-		})
+		return failure(c, http.StatusInternalServerError, errTransactionCommitFailed)
 	}
 
 	h.manager.WakeReconcile()
@@ -628,20 +559,14 @@ func (h *Handler) UpdateHost(c echo.Context) error {
 func (h *Handler) DeleteHost(c echo.Context) error {
 	id, err := strconv.ParseUint(c.Param("id"), 10, 32)
 	if err != nil {
-		return c.JSON(http.StatusBadRequest, models.Response{
-			Success: false,
-			Error:   "Invalid Host ID: " + err.Error(),
-		})
+		return failure(c, http.StatusBadRequest, errHostIDInvalid, errorArgs{"reason": err.Error()})
 	}
 
 	tx := h.db.Begin()
 	err = tx.Error
 	if err != nil {
 		h.logger.Error("failed to start the transaction", zap.Error(err))
-		return c.JSON(http.StatusInternalServerError, models.Response{
-			Success: false,
-			Error:   "Failed to start transaction",
-		})
+		return failure(c, http.StatusInternalServerError, errTransactionBeginFailed)
 	}
 
 	// Read inside the transaction as in UpdateHost, so that the answer and the
@@ -652,26 +577,17 @@ func (h *Handler) DeleteHost(c echo.Context) error {
 	if err != nil {
 		tx.Rollback()
 		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return c.JSON(http.StatusNotFound, models.Response{
-				Success: false,
-				Error:   "Host not found",
-			})
+			return failure(c, http.StatusNotFound, errHostNotFound)
 		}
 		h.logger.Error("failed to fetch Host", zap.Error(err))
-		return c.JSON(http.StatusInternalServerError, models.Response{
-			Success: false,
-			Error:   "Failed to fetch Host",
-		})
+		return failure(c, http.StatusInternalServerError, errHostFetchFailed)
 	}
 
 	err = tx.Delete(&host).Error
 	if err != nil {
 		tx.Rollback()
 		h.logger.Error("failed to delete Host", zap.Error(err), zap.Uint64("host_id", id))
-		return c.JSON(http.StatusInternalServerError, models.Response{
-			Success: false,
-			Error:   "Failed to delete Host",
-		})
+		return failure(c, http.StatusInternalServerError, errHostDeleteFailed)
 	}
 
 	// The assignments of this Host go with it, in the same transaction as the
@@ -684,19 +600,13 @@ func (h *Handler) DeleteHost(c echo.Context) error {
 		tx.Rollback()
 		h.logger.Error("failed to delete the service port assignments of a Host",
 			zap.Error(err), zap.Uint64("host_id", id))
-		return c.JSON(http.StatusInternalServerError, models.Response{
-			Success: false,
-			Error:   "Failed to delete Host",
-		})
+		return failure(c, http.StatusInternalServerError, errHostDeleteFailed)
 	}
 
 	err = tx.Commit().Error
 	if err != nil {
 		h.logger.Error("failed to commit the transaction", zap.Error(err))
-		return c.JSON(http.StatusInternalServerError, models.Response{
-			Success: false,
-			Error:   "Failed to commit transaction",
-		})
+		return failure(c, http.StatusInternalServerError, errTransactionCommitFailed)
 	}
 
 	h.manager.WakeReconcile()
@@ -711,18 +621,12 @@ func (h *Handler) CreateServicePort(c echo.Context) error {
 	var req models.CreateServicePortRequest
 	err := c.Bind(&req)
 	if err != nil {
-		return c.JSON(http.StatusBadRequest, models.Response{
-			Success: false,
-			Error:   "Invalid request body: " + err.Error(),
-		})
+		return failure(c, http.StatusBadRequest, errRequestBodyInvalid, errorArgs{"reason": err.Error()})
 	}
 
 	err = c.Validate(&req)
 	if err != nil {
-		return c.JSON(http.StatusBadRequest, models.Response{
-			Success: false,
-			Error:   "Validation failed: " + err.Error(),
-		})
+		return failure(c, http.StatusBadRequest, errRequestValidationFailed, errorArgs{"reason": err.Error()})
 	}
 
 	sp := &models.ServicePort{
@@ -736,20 +640,14 @@ func (h *Handler) CreateServicePort(c echo.Context) error {
 	err = tx.Error
 	if err != nil {
 		h.logger.Error("failed to start the transaction", zap.Error(err))
-		return c.JSON(http.StatusInternalServerError, models.Response{
-			Success: false,
-			Error:   "Failed to start transaction",
-		})
+		return failure(c, http.StatusInternalServerError, errTransactionBeginFailed)
 	}
 
 	err = tx.Create(sp).Error
 	if err != nil {
 		tx.Rollback()
 		h.logger.Error("failed to create service port", zap.Error(err))
-		return c.JSON(http.StatusInternalServerError, models.Response{
-			Success: false,
-			Error:   "Failed to create service port",
-		})
+		return failure(c, http.StatusInternalServerError, errServicePortCreateFailed)
 	}
 
 	// The other half of what CreateHost does, and in the transaction that wrote
@@ -766,10 +664,7 @@ func (h *Handler) CreateServicePort(c echo.Context) error {
 		if err != nil {
 			tx.Rollback()
 			h.logger.Error("failed to read the Hosts to assign a new service port to", zap.Error(err))
-			return c.JSON(http.StatusInternalServerError, models.Response{
-				Success: false,
-				Error:   "The service port was not created: failed to read the Hosts",
-			})
+			return failure(c, http.StatusInternalServerError, errServicePortCreateHostsRead)
 		}
 
 		for _, hostID := range hostIDs {
@@ -778,10 +673,7 @@ func (h *Handler) CreateServicePort(c echo.Context) error {
 				tx.Rollback()
 				h.logger.Error("failed to assign a new service port to a Host",
 					zap.Error(err), zap.Uint("host_id", hostID), zap.Uint("service_port_id", sp.ID))
-				return c.JSON(http.StatusInternalServerError, models.Response{
-					Success: false,
-					Error:   "The service port was not created: failed to store the Hosts that carry it",
-				})
+				return failure(c, http.StatusInternalServerError, errServicePortCreateHostsStore)
 			}
 		}
 	}
@@ -789,10 +681,7 @@ func (h *Handler) CreateServicePort(c echo.Context) error {
 	err = tx.Commit().Error
 	if err != nil {
 		h.logger.Error("failed to commit the transaction", zap.Error(err))
-		return c.JSON(http.StatusInternalServerError, models.Response{
-			Success: false,
-			Error:   "Failed to commit transaction",
-		})
+		return failure(c, http.StatusInternalServerError, errTransactionCommitFailed)
 	}
 
 	// The row is stored, which is what the answer reports. Whether a tunnel can
@@ -808,19 +697,16 @@ func (h *Handler) CreateServicePort(c echo.Context) error {
 // ListServicePorts answers one page of the service ports, ordered by id for the
 // reason ListHosts is.
 func (h *Handler) ListServicePorts(c echo.Context) error {
-	page, err := readListPage(c)
-	if err != nil {
-		return badListPage(c, err)
+	page, refused := readListPage(c)
+	if refused != nil {
+		return badListPage(c, refused)
 	}
 
 	var total int64
-	err = h.db.Model(&models.ServicePort{}).Count(&total).Error
+	err := h.db.Model(&models.ServicePort{}).Count(&total).Error
 	if err != nil {
 		h.logger.Error("failed to count the service ports", zap.Error(err))
-		return c.JSON(http.StatusInternalServerError, models.Response{
-			Success: false,
-			Error:   "Failed to fetch service ports",
-		})
+		return failure(c, http.StatusInternalServerError, errServicePortListFailed)
 	}
 
 	page = page.fitTo(total)
@@ -829,10 +715,7 @@ func (h *Handler) ListServicePorts(c echo.Context) error {
 	err = h.db.Order("id").Limit(page.size).Offset(page.offset()).Find(&sps).Error
 	if err != nil {
 		h.logger.Error("failed to fetch service ports", zap.Error(err))
-		return c.JSON(http.StatusInternalServerError, models.Response{
-			Success: false,
-			Error:   "Failed to fetch service ports",
-		})
+		return failure(c, http.StatusInternalServerError, errServicePortListFailed)
 	}
 
 	if sps == nil {
@@ -853,26 +736,17 @@ func (h *Handler) ListServicePorts(c echo.Context) error {
 func (h *Handler) GetServicePort(c echo.Context) error {
 	id, err := strconv.ParseUint(c.Param("id"), 10, 32)
 	if err != nil {
-		return c.JSON(http.StatusBadRequest, models.Response{
-			Success: false,
-			Error:   "Invalid service port ID: " + err.Error(),
-		})
+		return failure(c, http.StatusBadRequest, errServicePortIDInvalid, errorArgs{"reason": err.Error()})
 	}
 
 	var sp models.ServicePort
 	err = h.db.First(&sp, id).Error
 	if err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return c.JSON(http.StatusNotFound, models.Response{
-				Success: false,
-				Error:   "Service port not found",
-			})
+			return failure(c, http.StatusNotFound, errServicePortNotFound)
 		}
 		h.logger.Error("failed to fetch service port", zap.Error(err))
-		return c.JSON(http.StatusInternalServerError, models.Response{
-			Success: false,
-			Error:   "Failed to fetch service port",
-		})
+		return failure(c, http.StatusInternalServerError, errServicePortFetchFailed)
 	}
 
 	return c.JSON(http.StatusOK, models.Response{
@@ -884,10 +758,7 @@ func (h *Handler) GetServicePort(c echo.Context) error {
 func (h *Handler) UpdateServicePort(c echo.Context) error {
 	id, err := strconv.ParseUint(c.Param("id"), 10, 32)
 	if err != nil {
-		return c.JSON(http.StatusBadRequest, models.Response{
-			Success: false,
-			Error:   "Invalid service port ID: " + err.Error(),
-		})
+		return failure(c, http.StatusBadRequest, errServicePortIDInvalid, errorArgs{"reason": err.Error()})
 	}
 
 	// The body is read before the transaction is opened, because reading it
@@ -895,28 +766,19 @@ func (h *Handler) UpdateServicePort(c echo.Context) error {
 	var req models.CreateServicePortRequest
 	err = c.Bind(&req)
 	if err != nil {
-		return c.JSON(http.StatusBadRequest, models.Response{
-			Success: false,
-			Error:   "Invalid request body: " + err.Error(),
-		})
+		return failure(c, http.StatusBadRequest, errRequestBodyInvalid, errorArgs{"reason": err.Error()})
 	}
 
 	err = c.Validate(&req)
 	if err != nil {
-		return c.JSON(http.StatusBadRequest, models.Response{
-			Success: false,
-			Error:   "Validation failed: " + err.Error(),
-		})
+		return failure(c, http.StatusBadRequest, errRequestValidationFailed, errorArgs{"reason": err.Error()})
 	}
 
 	tx := h.db.Begin()
 	err = tx.Error
 	if err != nil {
 		h.logger.Error("failed to start the transaction", zap.Error(err))
-		return c.JSON(http.StatusInternalServerError, models.Response{
-			Success: false,
-			Error:   "Failed to start transaction",
-		})
+		return failure(c, http.StatusInternalServerError, errTransactionBeginFailed)
 	}
 
 	// Read inside the transaction for the reason UpdateHost is: the write below
@@ -926,16 +788,10 @@ func (h *Handler) UpdateServicePort(c echo.Context) error {
 	if err != nil {
 		tx.Rollback()
 		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return c.JSON(http.StatusNotFound, models.Response{
-				Success: false,
-				Error:   "Service port not found",
-			})
+			return failure(c, http.StatusNotFound, errServicePortNotFound)
 		}
 		h.logger.Error("failed to fetch service port", zap.Error(err))
-		return c.JSON(http.StatusInternalServerError, models.Response{
-			Success: false,
-			Error:   "Failed to fetch service port",
-		})
+		return failure(c, http.StatusInternalServerError, errServicePortFetchFailed)
 	}
 
 	sp.ServiceIP = req.ServiceIP
@@ -947,19 +803,13 @@ func (h *Handler) UpdateServicePort(c echo.Context) error {
 	if err != nil {
 		tx.Rollback()
 		h.logger.Error("failed to update service port", zap.Error(err))
-		return c.JSON(http.StatusInternalServerError, models.Response{
-			Success: false,
-			Error:   "Failed to update service port",
-		})
+		return failure(c, http.StatusInternalServerError, errServicePortUpdateFailed)
 	}
 
 	err = tx.Commit().Error
 	if err != nil {
 		h.logger.Error("failed to commit the transaction", zap.Error(err))
-		return c.JSON(http.StatusInternalServerError, models.Response{
-			Success: false,
-			Error:   "Failed to commit transaction",
-		})
+		return failure(c, http.StatusInternalServerError, errTransactionCommitFailed)
 	}
 
 	h.manager.WakeReconcile()
@@ -973,20 +823,14 @@ func (h *Handler) UpdateServicePort(c echo.Context) error {
 func (h *Handler) DeleteServicePort(c echo.Context) error {
 	id, err := strconv.ParseUint(c.Param("id"), 10, 32)
 	if err != nil {
-		return c.JSON(http.StatusBadRequest, models.Response{
-			Success: false,
-			Error:   "Invalid service port ID: " + err.Error(),
-		})
+		return failure(c, http.StatusBadRequest, errServicePortIDInvalid, errorArgs{"reason": err.Error()})
 	}
 
 	tx := h.db.Begin()
 	err = tx.Error
 	if err != nil {
 		h.logger.Error("failed to start the transaction", zap.Error(err))
-		return c.JSON(http.StatusInternalServerError, models.Response{
-			Success: false,
-			Error:   "Failed to start transaction",
-		})
+		return failure(c, http.StatusInternalServerError, errTransactionBeginFailed)
 	}
 
 	// Read inside the transaction as in DeleteHost, so that an update of the
@@ -996,26 +840,17 @@ func (h *Handler) DeleteServicePort(c echo.Context) error {
 	if err != nil {
 		tx.Rollback()
 		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return c.JSON(http.StatusNotFound, models.Response{
-				Success: false,
-				Error:   "Service port not found",
-			})
+			return failure(c, http.StatusNotFound, errServicePortNotFound)
 		}
 		h.logger.Error("failed to fetch service port", zap.Error(err))
-		return c.JSON(http.StatusInternalServerError, models.Response{
-			Success: false,
-			Error:   "Failed to fetch service port",
-		})
+		return failure(c, http.StatusInternalServerError, errServicePortFetchFailed)
 	}
 
 	err = tx.Delete(&sp).Error
 	if err != nil {
 		tx.Rollback()
 		h.logger.Error("failed to delete service port", zap.Error(err), zap.Uint64("service_port_id", id))
-		return c.JSON(http.StatusInternalServerError, models.Response{
-			Success: false,
-			Error:   "Failed to delete service port",
-		})
+		return failure(c, http.StatusInternalServerError, errServicePortDeleteFailed)
 	}
 
 	// The assignments of this service port go with it, as in DeleteHost: a row
@@ -1027,19 +862,13 @@ func (h *Handler) DeleteServicePort(c echo.Context) error {
 		tx.Rollback()
 		h.logger.Error("failed to delete the Host assignments of a service port",
 			zap.Error(err), zap.Uint64("service_port_id", id))
-		return c.JSON(http.StatusInternalServerError, models.Response{
-			Success: false,
-			Error:   "Failed to delete service port",
-		})
+		return failure(c, http.StatusInternalServerError, errServicePortDeleteFailed)
 	}
 
 	err = tx.Commit().Error
 	if err != nil {
 		h.logger.Error("failed to commit the transaction", zap.Error(err))
-		return c.JSON(http.StatusInternalServerError, models.Response{
-			Success: false,
-			Error:   "Failed to commit transaction",
-		})
+		return failure(c, http.StatusInternalServerError, errTransactionCommitFailed)
 	}
 
 	h.manager.WakeReconcile()
@@ -1069,15 +898,12 @@ type hostServicePortItem struct {
 func (h *Handler) ListHostServicePorts(c echo.Context) error {
 	id, err := strconv.ParseUint(c.Param("id"), 10, 32)
 	if err != nil {
-		return c.JSON(http.StatusBadRequest, models.Response{
-			Success: false,
-			Error:   "Invalid Host ID: " + err.Error(),
-		})
+		return failure(c, http.StatusBadRequest, errHostIDInvalid, errorArgs{"reason": err.Error()})
 	}
 
-	page, err := readListPage(c)
-	if err != nil {
-		return badListPage(c, err)
+	page, refused := readListPage(c)
+	if refused != nil {
+		return badListPage(c, refused)
 	}
 
 	// The Host is read first, so that a request naming one that is not there is
@@ -1088,26 +914,17 @@ func (h *Handler) ListHostServicePorts(c echo.Context) error {
 	err = h.db.First(&host, id).Error
 	if err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return c.JSON(http.StatusNotFound, models.Response{
-				Success: false,
-				Error:   "Host not found",
-			})
+			return failure(c, http.StatusNotFound, errHostNotFound)
 		}
 		h.logger.Error("failed to fetch Host", zap.Error(err))
-		return c.JSON(http.StatusInternalServerError, models.Response{
-			Success: false,
-			Error:   "Failed to fetch Host",
-		})
+		return failure(c, http.StatusInternalServerError, errHostFetchFailed)
 	}
 
 	var total int64
 	err = h.db.Model(&models.ServicePort{}).Count(&total).Error
 	if err != nil {
 		h.logger.Error("failed to count the service ports", zap.Error(err))
-		return c.JSON(http.StatusInternalServerError, models.Response{
-			Success: false,
-			Error:   "Failed to fetch service ports",
-		})
+		return failure(c, http.StatusInternalServerError, errServicePortListFailed)
 	}
 
 	page = page.fitTo(total)
@@ -1116,10 +933,7 @@ func (h *Handler) ListHostServicePorts(c echo.Context) error {
 	err = h.db.Order("id").Limit(page.size).Offset(page.offset()).Find(&sps).Error
 	if err != nil {
 		h.logger.Error("failed to fetch service ports", zap.Error(err))
-		return c.JSON(http.StatusInternalServerError, models.Response{
-			Success: false,
-			Error:   "Failed to fetch service ports",
-		})
+		return failure(c, http.StatusInternalServerError, errServicePortListFailed)
 	}
 
 	// Only the assignments of the rows on this page are read. The table holds a
@@ -1138,10 +952,7 @@ func (h *Handler) ListHostServicePorts(c echo.Context) error {
 		if err != nil {
 			h.logger.Error("failed to fetch the service port assignments of a Host",
 				zap.Error(err), zap.Uint64("host_id", id))
-			return c.JSON(http.StatusInternalServerError, models.Response{
-				Success: false,
-				Error:   "Failed to fetch service ports",
-			})
+			return failure(c, http.StatusInternalServerError, errServicePortListFailed)
 		}
 
 		for _, spID := range spIDs {
@@ -1198,10 +1009,7 @@ type hostServicePortChanged struct {
 func (h *Handler) UpdateHostServicePorts(c echo.Context) error {
 	id, err := strconv.ParseUint(c.Param("id"), 10, 32)
 	if err != nil {
-		return c.JSON(http.StatusBadRequest, models.Response{
-			Success: false,
-			Error:   "Invalid Host ID: " + err.Error(),
-		})
+		return failure(c, http.StatusBadRequest, errHostIDInvalid, errorArgs{"reason": err.Error()})
 	}
 
 	// The body is read before the transaction is opened, for the reason
@@ -1210,10 +1018,7 @@ func (h *Handler) UpdateHostServicePorts(c echo.Context) error {
 	var req hostServicePortChange
 	err = c.Bind(&req)
 	if err != nil {
-		return c.JSON(http.StatusBadRequest, models.Response{
-			Success: false,
-			Error:   "Invalid request body: " + err.Error(),
-		})
+		return failure(c, http.StatusBadRequest, errRequestBodyInvalid, errorArgs{"reason": err.Error()})
 	}
 
 	add := sortedIDs(req.Add)
@@ -1224,20 +1029,14 @@ func (h *Handler) UpdateHostServicePorts(c echo.Context) error {
 	// it decides is whether a tunnel to that service runs.
 	both := idsIn(add, remove)
 	if len(both) > 0 {
-		return c.JSON(http.StatusBadRequest, models.Response{
-			Success: false,
-			Error:   "The change names the same service port to add and to remove: " + idList(both),
-		})
+		return failure(c, http.StatusBadRequest, errAssignmentAddAndRemove, errorArgs{"ids": idList(both)})
 	}
 
 	tx := h.db.Begin()
 	err = tx.Error
 	if err != nil {
 		h.logger.Error("failed to start the transaction", zap.Error(err))
-		return c.JSON(http.StatusInternalServerError, models.Response{
-			Success: false,
-			Error:   "Failed to start transaction",
-		})
+		return failure(c, http.StatusInternalServerError, errTransactionBeginFailed)
 	}
 
 	// Read inside the transaction as in UpdateHost: the rows written below name
@@ -1248,16 +1047,10 @@ func (h *Handler) UpdateHostServicePorts(c echo.Context) error {
 	if err != nil {
 		tx.Rollback()
 		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return c.JSON(http.StatusNotFound, models.Response{
-				Success: false,
-				Error:   "Host not found",
-			})
+			return failure(c, http.StatusNotFound, errHostNotFound)
 		}
 		h.logger.Error("failed to fetch Host", zap.Error(err))
-		return c.JSON(http.StatusInternalServerError, models.Response{
-			Success: false,
-			Error:   "Failed to fetch Host",
-		})
+		return failure(c, http.StatusInternalServerError, errHostFetchFailed)
 	}
 
 	// Every service port to be added is looked for before anything is written,
@@ -1271,19 +1064,13 @@ func (h *Handler) UpdateHostServicePorts(c echo.Context) error {
 		if err != nil {
 			tx.Rollback()
 			h.logger.Error("failed to fetch service ports", zap.Error(err))
-			return c.JSON(http.StatusInternalServerError, models.Response{
-				Success: false,
-				Error:   "Failed to fetch service ports",
-			})
+			return failure(c, http.StatusInternalServerError, errServicePortListFailed)
 		}
 
 		missing := idsNotIn(add, stored)
 		if len(missing) > 0 {
 			tx.Rollback()
-			return c.JSON(http.StatusBadRequest, models.Response{
-				Success: false,
-				Error:   "No such service port: " + idList(missing),
-			})
+			return failure(c, http.StatusBadRequest, errAssignmentServicePortsMissing, errorArgs{"ids": idList(missing)})
 		}
 	}
 
@@ -1299,10 +1086,7 @@ func (h *Handler) UpdateHostServicePorts(c echo.Context) error {
 			tx.Rollback()
 			h.logger.Error("failed to fetch the service port assignments of a Host",
 				zap.Error(err), zap.Uint64("host_id", id))
-			return c.JSON(http.StatusInternalServerError, models.Response{
-				Success: false,
-				Error:   "Failed to update the service ports of the Host",
-			})
+			return failure(c, http.StatusInternalServerError, errAssignmentUpdateFailed)
 		}
 
 		for _, spID := range idsNotIn(add, carried) {
@@ -1311,10 +1095,7 @@ func (h *Handler) UpdateHostServicePorts(c echo.Context) error {
 				tx.Rollback()
 				h.logger.Error("failed to assign a service port to a Host",
 					zap.Error(err), zap.Uint64("host_id", id), zap.Uint("service_port_id", spID))
-				return c.JSON(http.StatusInternalServerError, models.Response{
-					Success: false,
-					Error:   "Failed to update the service ports of the Host",
-				})
+				return failure(c, http.StatusInternalServerError, errAssignmentUpdateFailed)
 			}
 
 			added++
@@ -1331,10 +1112,7 @@ func (h *Handler) UpdateHostServicePorts(c echo.Context) error {
 			tx.Rollback()
 			h.logger.Error("failed to remove the service ports of a Host",
 				zap.Error(result.Error), zap.Uint64("host_id", id))
-			return c.JSON(http.StatusInternalServerError, models.Response{
-				Success: false,
-				Error:   "Failed to update the service ports of the Host",
-			})
+			return failure(c, http.StatusInternalServerError, errAssignmentUpdateFailed)
 		}
 
 		removed = int(result.RowsAffected)
@@ -1343,10 +1121,7 @@ func (h *Handler) UpdateHostServicePorts(c echo.Context) error {
 	err = tx.Commit().Error
 	if err != nil {
 		h.logger.Error("failed to commit the transaction", zap.Error(err))
-		return c.JSON(http.StatusInternalServerError, models.Response{
-			Success: false,
-			Error:   "Failed to commit transaction",
-		})
+		return failure(c, http.StatusInternalServerError, errTransactionCommitFailed)
 	}
 
 	// The loop is woken once the transaction is committed, as everywhere here,
@@ -1435,9 +1210,9 @@ func idList(ids []uint) string {
 // happens to return. See ListHosts for what an order that is not stated does to
 // LIMIT and OFFSET.
 func (h *Handler) GetStatus(c echo.Context) error {
-	page, err := readListPage(c)
-	if err != nil {
-		return badListPage(c, err)
+	page, refused := readListPage(c)
+	if refused != nil {
+		return badListPage(c, refused)
 	}
 
 	// A count that is missing is an error rather than a field left out: the
@@ -1446,30 +1221,21 @@ func (h *Handler) GetStatus(c echo.Context) error {
 	desiredTunnels, err := h.manager.DesiredTunnelCount()
 	if err != nil {
 		h.logger.Error("failed to count the tunnels that should be running", zap.Error(err))
-		return c.JSON(http.StatusInternalServerError, models.Response{
-			Success: false,
-			Error:   "Failed to count the tunnels that should be running",
-		})
+		return failure(c, http.StatusInternalServerError, errStatusDesiredCountFailed)
 	}
 
 	var totalTunnels int64
 	err = h.db.Model(&models.Tunnel{}).Count(&totalTunnels).Error
 	if err != nil {
 		h.logger.Error("failed to count the tunnel rows", zap.Error(err))
-		return c.JSON(http.StatusInternalServerError, models.Response{
-			Success: false,
-			Error:   "Failed to fetch tunnel status",
-		})
+		return failure(c, http.StatusInternalServerError, errStatusFetchFailed)
 	}
 
 	var connectedTunnels int64
 	err = h.db.Model(&models.Tunnel{}).Where("status = ?", "connected").Count(&connectedTunnels).Error
 	if err != nil {
 		h.logger.Error("failed to count the connected tunnels", zap.Error(err))
-		return c.JSON(http.StatusInternalServerError, models.Response{
-			Success: false,
-			Error:   "Failed to fetch tunnel status",
-		})
+		return failure(c, http.StatusInternalServerError, errStatusFetchFailed)
 	}
 
 	page = page.fitTo(totalTunnels)
@@ -1478,10 +1244,7 @@ func (h *Handler) GetStatus(c echo.Context) error {
 	err = h.db.Order("host_id, sp_id").Limit(page.size).Offset(page.offset()).Find(&tunnels).Error
 	if err != nil {
 		h.logger.Error("failed to fetch the tunnel status", zap.Error(err))
-		return c.JSON(http.StatusInternalServerError, models.Response{
-			Success: false,
-			Error:   "Failed to fetch tunnel status",
-		})
+		return failure(c, http.StatusInternalServerError, errStatusFetchFailed)
 	}
 
 	if tunnels == nil {
@@ -1504,36 +1267,24 @@ func (h *Handler) GetStatus(c echo.Context) error {
 func (h *Handler) GetHostStatus(c echo.Context) error {
 	hostID, err := strconv.ParseUint(c.Param("hostId"), 10, 32)
 	if err != nil {
-		return c.JSON(http.StatusBadRequest, models.Response{
-			Success: false,
-			Error:   "Invalid Host ID: " + err.Error(),
-		})
+		return failure(c, http.StatusBadRequest, errHostIDInvalid, errorArgs{"reason": err.Error()})
 	}
 
 	var host models.Host
 	err = h.db.First(&host, hostID).Error
 	if err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return c.JSON(http.StatusNotFound, models.Response{
-				Success: false,
-				Error:   "Host not found",
-			})
+			return failure(c, http.StatusNotFound, errHostNotFound)
 		}
 		h.logger.Error("failed to fetch Host", zap.Error(err))
-		return c.JSON(http.StatusInternalServerError, models.Response{
-			Success: false,
-			Error:   "Failed to fetch Host",
-		})
+		return failure(c, http.StatusInternalServerError, errHostFetchFailed)
 	}
 
 	tunnels, err := h.manager.GetHostTunnels(uint(hostID))
 	if err != nil {
 		h.logger.Error("failed to fetch the tunnel status of the Host", zap.Error(err),
 			zap.Uint64("host_id", hostID))
-		return c.JSON(http.StatusInternalServerError, models.Response{
-			Success: false,
-			Error:   "Failed to fetch tunnel status",
-		})
+		return failure(c, http.StatusInternalServerError, errStatusFetchFailed)
 	}
 
 	var connectedTunnels int

@@ -303,41 +303,18 @@ func NewTransferHandler(hosts *Handler, version string) *TransferHandler {
 	}
 }
 
-// transferRefusal is an answer that says why nothing was done. It is a value
-// rather than a written response, so that the step that found the problem can
-// hand it back through a transaction that still has to be rolled back before
-// anything is written to the client.
-type transferRefusal struct {
-	status  int
-	message string
-}
-
-func (r *transferRefusal) answer(c echo.Context) error {
-	return c.JSON(r.status, models.Response{
-		Success: false,
-		Error:   r.message,
-	})
-}
-
-func refuse(status int, message string) *transferRefusal {
-	return &transferRefusal{status: status, message: message}
-}
-
 // checkExportPassword holds the password that seals a file to the length the
 // account is held to. The file carries the SSH credentials of every Host and is
 // kept wherever the operator puts it, so it stands to be guessed at for as long
 // as it exists, which is longer than a login does.
-func checkExportPassword(password string) *transferRefusal {
+func checkExportPassword(password string) *refusal {
 	switch {
 	case password == "":
-		return refuse(http.StatusBadRequest, "A password is required. It is what seals the file, "+
-			"and the file cannot be opened without it")
+		return refuse(http.StatusBadRequest, errExportPasswordRequired)
 	case len(password) < minPasswordBytes:
-		return refuse(http.StatusBadRequest, "The password must be at least "+
-			strconv.Itoa(minPasswordBytes)+" bytes long")
+		return refuse(http.StatusBadRequest, errExportPasswordTooShort, errorArgs{"min": strconv.Itoa(minPasswordBytes)})
 	case len(password) > maxPasswordBytes:
-		return refuse(http.StatusBadRequest, "The password must be at most "+
-			strconv.Itoa(maxPasswordBytes)+" bytes long")
+		return refuse(http.StatusBadRequest, errExportPasswordTooLong, errorArgs{"max": strconv.Itoa(maxPasswordBytes)})
 	}
 
 	return nil
@@ -371,29 +348,22 @@ func (h *TransferHandler) seal(kind string, content interface{}, password string
 // ways it failed. They are kept apart because they leave the operator with
 // different work to do: type the password again, pick another file, fetch the
 // file again because this copy is cut, or go to the other import.
-func (h *TransferHandler) open(file string, password string, want string) (*transferFile, *transferRefusal) {
+func (h *TransferHandler) open(file string, password string, want string) (*transferFile, *refusal) {
 	if strings.TrimSpace(file) == "" {
-		return nil, refuse(http.StatusBadRequest, "No file was sent. Send the text an export "+
-			"answered with in the 'file' field")
+		return nil, refuse(http.StatusBadRequest, errImportFileMissing)
 	}
 
 	plaintext, err := crypto.DecryptWithPassword(strings.TrimSpace(file), password)
 	if err != nil {
 		switch {
 		case errors.Is(err, crypto.ErrPasswordRequired):
-			return nil, refuse(http.StatusBadRequest, "A password is required. It is the one the "+
-				"file was sealed with at the installation it came from")
+			return nil, refuse(http.StatusBadRequest, errImportPasswordRequired)
 		case errors.Is(err, crypto.ErrNotPasswordEncrypted):
-			return nil, refuse(http.StatusBadRequest, "This is not a file tunnel-manager exported. "+
-				"An exported file is one line of text that starts with a marker naming the format, "+
-				"and this one does not")
+			return nil, refuse(http.StatusBadRequest, errImportFileNotAnExport)
 		case errors.Is(err, crypto.ErrPasswordEncryptedDamaged):
-			return nil, refuse(http.StatusBadRequest, "The file is damaged. It carries the marker of "+
-				"an exported file, but the text after it was cut or altered, so no password opens it. "+
-				"Export it again")
+			return nil, refuse(http.StatusBadRequest, errImportFileDamaged)
 		case errors.Is(err, crypto.ErrWrongPassword):
-			return nil, refuse(http.StatusBadRequest, "The password does not open this file. It is the "+
-				"password that was typed at the export, not the password of this account")
+			return nil, refuse(http.StatusBadRequest, errImportPasswordWrong)
 		}
 
 		// Everything above is what DecryptWithPassword reports. Anything else
@@ -401,32 +371,44 @@ func (h *TransferHandler) open(file string, password string, want string) (*tran
 		// and answered as one.
 		h.hosts.logger.Error("failed to open an exported file", zap.Error(err))
 
-		return nil, refuse(http.StatusInternalServerError, "Failed to open the file")
+		return nil, refuse(http.StatusInternalServerError, errImportFileOpenFailed)
 	}
 
 	var read transferFile
 
 	err = json.Unmarshal([]byte(plaintext), &read)
 	if err != nil {
-		return nil, refuse(http.StatusBadRequest, "The file opened with this password but does not "+
-			"hold what an export writes. It was sealed with the password of this program by "+
-			"something else")
+		return nil, refuse(http.StatusBadRequest, errImportFileNotOurs)
 	}
 
 	if read.Kind != want {
-		return nil, refuse(http.StatusBadRequest, "This file holds "+whatIsIn(read.Kind)+
-			", and this call takes "+whatIsIn(want)+". Send it to the other import")
+		return nil, refuse(http.StatusBadRequest, errImportFileWrongKind, errorArgs{"found": whatIsIn(read.Kind), "wanted": whatIsIn(want)})
 	}
 
 	if read.FormatVersion > transferFormatVersion {
-		return nil, refuse(http.StatusBadRequest, "The file is in format version "+
-			strconv.Itoa(read.FormatVersion)+" and this version of tunnel-manager reads up to "+
-			strconv.Itoa(transferFormatVersion)+". It was written by a newer version"+
-			exportedBy(read.ExportedBy))
+		version := strconv.Itoa(read.FormatVersion)
+		supported := strconv.Itoa(transferFormatVersion)
+
+		// A file that says which version wrote it is refused under a code of
+		// its own rather than under the one below with an empty value. The
+		// version is in the middle of the sentence, and a sentence with a hole
+		// where it should be is not one a screen can write in its own language.
+		if read.ExportedBy != "" {
+			return nil, refuse(http.StatusBadRequest, errImportFileNewerFormatBy, errorArgs{
+				"version":     version,
+				"supported":   supported,
+				"exported_by": read.ExportedBy,
+			})
+		}
+
+		return nil, refuse(http.StatusBadRequest, errImportFileNewerFormat, errorArgs{
+			"version":   version,
+			"supported": supported,
+		})
 	}
 
 	if len(read.Content) == 0 {
-		return nil, refuse(http.StatusBadRequest, "The file carries no content")
+		return nil, refuse(http.StatusBadRequest, errImportFileEmpty)
 	}
 
 	return &read, nil
@@ -558,10 +540,7 @@ func (h *TransferHandler) ExportTunnels(c echo.Context) error {
 
 	err := c.Bind(&req)
 	if err != nil {
-		return c.JSON(http.StatusBadRequest, models.Response{
-			Success: false,
-			Error:   "Invalid request body: " + err.Error(),
-		})
+		return failure(c, http.StatusBadRequest, errRequestBodyInvalid, errorArgs{"reason": err.Error()})
 	}
 
 	refused := checkExportPassword(req.Password)
@@ -574,10 +553,7 @@ func (h *TransferHandler) ExportTunnels(c echo.Context) error {
 	err = h.hosts.db.Find(&hosts).Error
 	if err != nil {
 		h.hosts.logger.Error("failed to read the Hosts for an export", zap.Error(err))
-		return c.JSON(http.StatusInternalServerError, models.Response{
-			Success: false,
-			Error:   "Failed to read the Hosts",
-		})
+		return failure(c, http.StatusInternalServerError, errExportHostsReadFailed)
 	}
 
 	var sps []models.ServicePort
@@ -585,19 +561,13 @@ func (h *TransferHandler) ExportTunnels(c echo.Context) error {
 	err = h.hosts.db.Find(&sps).Error
 	if err != nil {
 		h.hosts.logger.Error("failed to read the service ports for an export", zap.Error(err))
-		return c.JSON(http.StatusInternalServerError, models.Response{
-			Success: false,
-			Error:   "Failed to read the service ports",
-		})
+		return failure(c, http.StatusInternalServerError, errExportServicePortsRead)
 	}
 
 	assigned, err := assignedLocalPortsByHost(h.hosts.db, sps)
 	if err != nil {
 		h.hosts.logger.Error("failed to read the service port assignments for an export", zap.Error(err))
-		return c.JSON(http.StatusInternalServerError, models.Response{
-			Success: false,
-			Error:   "Failed to read the service port assignments",
-		})
+		return failure(c, http.StatusInternalServerError, errExportAssignmentsRead)
 	}
 
 	content := tunnelsContent{
@@ -616,11 +586,7 @@ func (h *TransferHandler) ExportTunnels(c echo.Context) error {
 				"this installation, so no export was made", zap.Uint("host_id", host.ID),
 				zap.Error(err))
 
-			return c.JSON(http.StatusInternalServerError, models.Response{
-				Success: false,
-				Error: "No export was made: the stored secrets of the Host " + host.IP +
-					" do not open with the encryption key of this installation",
-			})
+			return failure(c, http.StatusInternalServerError, errExportHostSecretsSealed, errorArgs{"host": host.IP})
 		}
 
 		// A Host that carries nothing is written as an empty list and never as
@@ -647,10 +613,7 @@ func (h *TransferHandler) ExportTunnels(c echo.Context) error {
 	sealed, err := h.seal(transferKindTunnels, content, req.Password, exportedAt)
 	if err != nil {
 		h.hosts.logger.Error("failed to seal the exported tunnel configuration", zap.Error(err))
-		return c.JSON(http.StatusInternalServerError, models.Response{
-			Success: false,
-			Error:   "Failed to seal the file",
-		})
+		return failure(c, http.StatusInternalServerError, errExportSealFailed)
 	}
 
 	// What is logged is that an export was made and how much went into it. The
@@ -685,10 +648,7 @@ func (h *TransferHandler) ImportTunnels(c echo.Context) error {
 
 	err := c.Bind(&req)
 	if err != nil {
-		return c.JSON(http.StatusBadRequest, models.Response{
-			Success: false,
-			Error:   "Invalid request body: " + err.Error(),
-		})
+		return failure(c, http.StatusBadRequest, errRequestBodyInvalid, errorArgs{"reason": err.Error()})
 	}
 
 	file, refused := h.open(req.File, req.Password, transferKindTunnels)
@@ -700,11 +660,7 @@ func (h *TransferHandler) ImportTunnels(c echo.Context) error {
 
 	err = json.Unmarshal(file.Content, &content)
 	if err != nil {
-		return c.JSON(http.StatusBadRequest, models.Response{
-			Success: false,
-			Error: "The file says it holds the tunnel configuration, but the configuration in it " +
-				"cannot be read",
-		})
+		return failure(c, http.StatusBadRequest, errImportTunnelsUnreadable)
 	}
 
 	tx := h.hosts.db.Begin()
@@ -712,10 +668,7 @@ func (h *TransferHandler) ImportTunnels(c echo.Context) error {
 	err = tx.Error
 	if err != nil {
 		h.hosts.logger.Error("failed to start the transaction", zap.Error(err))
-		return c.JSON(http.StatusInternalServerError, models.Response{
-			Success: false,
-			Error:   "Failed to start transaction",
-		})
+		return failure(c, http.StatusInternalServerError, errTransactionBeginFailed)
 	}
 
 	items := make([]transferItem, 0, len(content.Hosts)+len(content.ServicePorts))
@@ -771,10 +724,7 @@ func (h *TransferHandler) ImportTunnels(c echo.Context) error {
 	err = tx.Commit().Error
 	if err != nil {
 		h.hosts.logger.Error("failed to commit the transaction", zap.Error(err))
-		return c.JSON(http.StatusInternalServerError, models.Response{
-			Success: false,
-			Error:   "Failed to commit transaction",
-		})
+		return failure(c, http.StatusInternalServerError, errTransactionCommitFailed)
 	}
 
 	answer := importedTunnels{Items: items}
@@ -813,7 +763,7 @@ func (h *TransferHandler) ImportTunnels(c echo.Context) error {
 // rows before it are taken back out by the rollback, which is what makes "run
 // it again once that row is fixed" the whole of the work left.
 func (h *TransferHandler) importHost(c echo.Context, tx *gorm.DB, host hostContent,
-	overwrite bool) (*transferItem, *transferRefusal) {
+	overwrite bool) (*transferItem, *refusal) {
 	name := host.IP
 
 	// The rules of a create are run on what the file carries, so that a file
@@ -829,13 +779,11 @@ func (h *TransferHandler) importHost(c echo.Context, tx *gorm.DB, host hostConte
 		Description:   host.Description,
 	})
 	if err != nil {
-		return nil, refuse(http.StatusBadRequest, "Nothing was imported. The Host "+name+
-			" in the file was refused: "+err.Error())
+		return nil, refuse(http.StatusBadRequest, errImportHostRefused, errorArgs{"host": name, "reason": err.Error()})
 	}
 
 	if host.Password == "" && strings.TrimSpace(host.PrivateKey) == "" {
-		return nil, refuse(http.StatusBadRequest, "Nothing was imported. The Host "+name+
-			" in the file carries no way to log in: it has neither a private key nor a password")
+		return nil, refuse(http.StatusBadRequest, errImportHostNoLogin, errorArgs{"host": name})
 	}
 
 	var stored models.Host
@@ -845,7 +793,7 @@ func (h *TransferHandler) importHost(c echo.Context, tx *gorm.DB, host hostConte
 
 	if err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
 		h.hosts.logger.Error("failed to look for a Host while importing", zap.Error(err))
-		return nil, refuse(http.StatusInternalServerError, "Nothing was imported: failed to read the Hosts")
+		return nil, refuse(http.StatusInternalServerError, errImportHostsReadFailed)
 	}
 
 	if found && !overwrite {
@@ -863,22 +811,19 @@ func (h *TransferHandler) importHost(c echo.Context, tx *gorm.DB, host hostConte
 	password, err := h.hosts.sealPassword(host.Password)
 	if err != nil {
 		h.hosts.logger.Error("failed to encrypt the password of an imported Host", zap.Error(err))
-		return nil, refuse(http.StatusInternalServerError, "Nothing was imported: failed to encrypt "+
-			"the password of the Host "+name)
+		return nil, refuse(http.StatusInternalServerError, errImportHostPasswordEncrypt, errorArgs{"host": name})
 	}
 
 	privateKey, keyPassphrase, err := h.hosts.sealPrivateKey(host.PrivateKey, host.KeyPassphrase)
 	if err != nil {
 		var refusedKey *tunnel.KeyError
 		if errors.As(err, &refusedKey) {
-			return nil, refuse(http.StatusBadRequest, "Nothing was imported. The private key of the "+
-				"Host "+name+" in the file was refused: "+refusedKey.Error())
+			return nil, refuse(http.StatusBadRequest, errImportHostKeyRefused, errorArgs{"host": name, "reason": refusedKey.Error()})
 		}
 
 		h.hosts.logger.Error("failed to encrypt the private key of an imported Host", zap.Error(err))
 
-		return nil, refuse(http.StatusInternalServerError, "Nothing was imported: failed to encrypt "+
-			"the private key of the Host "+name)
+		return nil, refuse(http.StatusInternalServerError, errImportHostKeyEncrypt, errorArgs{"host": name})
 	}
 
 	if found {
@@ -895,8 +840,7 @@ func (h *TransferHandler) importHost(c echo.Context, tx *gorm.DB, host hostConte
 		err = tx.Save(&stored).Error
 		if err != nil {
 			h.hosts.logger.Error("failed to replace a Host while importing", zap.Error(err))
-			return nil, refuse(http.StatusInternalServerError, "Nothing was imported: failed to "+
-				"replace the Host "+name)
+			return nil, refuse(http.StatusInternalServerError, errImportHostReplaceFailed, errorArgs{"host": name})
 		}
 
 		return &transferItem{Kind: "host", Name: name, Action: transferReplaced}, nil
@@ -916,8 +860,7 @@ func (h *TransferHandler) importHost(c echo.Context, tx *gorm.DB, host hostConte
 	err = tx.Create(&created).Error
 	if err != nil {
 		h.hosts.logger.Error("failed to create a Host while importing", zap.Error(err))
-		return nil, refuse(http.StatusInternalServerError, "Nothing was imported: failed to create "+
-			"the Host "+name)
+		return nil, refuse(http.StatusInternalServerError, errImportHostCreateFailed, errorArgs{"host": name})
 	}
 
 	return &transferItem{Kind: "host", Name: name, Action: transferAdded}, nil
@@ -930,7 +873,7 @@ func (h *TransferHandler) importHost(c echo.Context, tx *gorm.DB, host hostConte
 // port, and the local port. A row of the file can meet either of them, so both
 // are looked up.
 func (h *TransferHandler) importServicePort(c echo.Context, tx *gorm.DB, sp servicePortContent,
-	overwrite bool) (*transferItem, *transferRefusal) {
+	overwrite bool) (*transferItem, *refusal) {
 	name := sp.ServiceIP + ":" + strconv.Itoa(sp.ServicePort) + " on " + strconv.Itoa(sp.LocalPort)
 
 	err := c.Validate(&models.CreateServicePortRequest{
@@ -940,8 +883,7 @@ func (h *TransferHandler) importServicePort(c echo.Context, tx *gorm.DB, sp serv
 		Description: sp.Description,
 	})
 	if err != nil {
-		return nil, refuse(http.StatusBadRequest, "Nothing was imported. The service port "+name+
-			" in the file was refused: "+err.Error())
+		return nil, refuse(http.StatusBadRequest, errImportServicePortRefused, errorArgs{"service_port": name, "reason": err.Error()})
 	}
 
 	var onService models.ServicePort
@@ -952,8 +894,7 @@ func (h *TransferHandler) importServicePort(c echo.Context, tx *gorm.DB, sp serv
 
 	if err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
 		h.hosts.logger.Error("failed to look for a service port while importing", zap.Error(err))
-		return nil, refuse(http.StatusInternalServerError, "Nothing was imported: failed to read the "+
-			"service ports")
+		return nil, refuse(http.StatusInternalServerError, errImportServicePortsReadFailed)
 	}
 
 	var onLocal models.ServicePort
@@ -963,8 +904,7 @@ func (h *TransferHandler) importServicePort(c echo.Context, tx *gorm.DB, sp serv
 
 	if err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
 		h.hosts.logger.Error("failed to look for a service port while importing", zap.Error(err))
-		return nil, refuse(http.StatusInternalServerError, "Nothing was imported: failed to read the "+
-			"service ports")
+		return nil, refuse(http.StatusInternalServerError, errImportServicePortsReadFailed)
 	}
 
 	if !foundOnService && !foundOnLocal {
@@ -978,8 +918,7 @@ func (h *TransferHandler) importServicePort(c echo.Context, tx *gorm.DB, sp serv
 		err = tx.Create(&created).Error
 		if err != nil {
 			h.hosts.logger.Error("failed to create a service port while importing", zap.Error(err))
-			return nil, refuse(http.StatusInternalServerError, "Nothing was imported: failed to "+
-				"create the service port "+name)
+			return nil, refuse(http.StatusInternalServerError, errImportServicePortCreate, errorArgs{"service_port": name})
 		}
 
 		return &transferItem{Kind: "service_port", Name: name, Action: transferAdded}, nil
@@ -1007,10 +946,9 @@ func (h *TransferHandler) importServicePort(c echo.Context, tx *gorm.DB, sp serv
 	// one of them is not what an overwrite was asked for, so this is refused
 	// with the two rows named and the whole import is taken back.
 	if foundOnService && foundOnLocal && onService.ID != onLocal.ID {
-		return nil, refuse(http.StatusConflict, "Nothing was imported. The service port "+name+
-			" in the file meets two rows that are registered here: "+sp.ServiceIP+":"+
-			strconv.Itoa(sp.ServicePort)+" belongs to one and the local port "+
-			strconv.Itoa(sp.LocalPort)+" to another. Delete one of the two and import again")
+		return nil, refuse(http.StatusConflict, errImportServicePortTwoRows, errorArgs{"service_port": name,
+			"service_address": sp.ServiceIP + ":" + strconv.Itoa(sp.ServicePort),
+			"local_port":      strconv.Itoa(sp.LocalPort)})
 	}
 
 	stored := onService
@@ -1026,8 +964,7 @@ func (h *TransferHandler) importServicePort(c echo.Context, tx *gorm.DB, sp serv
 	err = tx.Save(&stored).Error
 	if err != nil {
 		h.hosts.logger.Error("failed to replace a service port while importing", zap.Error(err))
-		return nil, refuse(http.StatusInternalServerError, "Nothing was imported: failed to replace "+
-			"the service port "+name)
+		return nil, refuse(http.StatusInternalServerError, errImportServicePortReplace, errorArgs{"service_port": name})
 	}
 
 	return &transferItem{Kind: "service_port", Name: name, Action: transferReplaced}, nil
@@ -1051,14 +988,13 @@ func (h *TransferHandler) importServicePort(c echo.Context, tx *gorm.DB, sp serv
 // not done is passing over it in silence: every one of them is in the answer as
 // a skipped item, with the Host and the local port named.
 func (h *TransferHandler) importAssignments(tx *gorm.DB, host hostContent,
-	content tunnelsContent) ([]transferItem, *transferRefusal) {
+	content tunnelsContent) ([]transferItem, *refusal) {
 	var stored models.Host
 
 	err := tx.Where("ip = ?", host.IP).First(&stored).Error
 	if err != nil {
 		h.hosts.logger.Error("failed to read back a Host while importing its assignments", zap.Error(err))
-		return nil, refuse(http.StatusInternalServerError, "Nothing was imported: failed to read the "+
-			"Host "+host.IP)
+		return nil, refuse(http.StatusInternalServerError, errImportAssignmentsHostRead, errorArgs{"host": host.IP})
 	}
 
 	wanted := host.AssignedLocalPorts
@@ -1076,8 +1012,7 @@ func (h *TransferHandler) importAssignments(tx *gorm.DB, host hostContent,
 	err = tx.Where("host_id = ?", stored.ID).Delete(&models.HostServicePort{}).Error
 	if err != nil {
 		h.hosts.logger.Error("failed to clear the assignments of a Host while importing", zap.Error(err))
-		return nil, refuse(http.StatusInternalServerError, "Nothing was imported: failed to replace the "+
-			"service ports the Host "+host.IP+" carries")
+		return nil, refuse(http.StatusInternalServerError, errImportAssignmentsClearFailed, errorArgs{"host": host.IP})
 	}
 
 	items := make([]transferItem, 0)
@@ -1107,8 +1042,7 @@ func (h *TransferHandler) importAssignments(tx *gorm.DB, host hostContent,
 			h.hosts.logger.Error("failed to look for a service port while importing an assignment",
 				zap.Error(err))
 
-			return nil, refuse(http.StatusInternalServerError, "Nothing was imported: failed to read "+
-				"the service ports")
+			return nil, refuse(http.StatusInternalServerError, errImportServicePortsReadFailed)
 		}
 
 		if assigned[sp.ID] {
@@ -1120,8 +1054,7 @@ func (h *TransferHandler) importAssignments(tx *gorm.DB, host hostContent,
 		err = tx.Create(&models.HostServicePort{HostID: stored.ID, SPID: sp.ID}).Error
 		if err != nil {
 			h.hosts.logger.Error("failed to store an assignment while importing", zap.Error(err))
-			return nil, refuse(http.StatusInternalServerError, "Nothing was imported: failed to store "+
-				"the service ports the Host "+host.IP+" carries")
+			return nil, refuse(http.StatusInternalServerError, errImportAssignmentsStoreFailed, errorArgs{"host": host.IP})
 		}
 	}
 
@@ -1140,10 +1073,7 @@ func (h *TransferHandler) ExportSettings(c echo.Context) error {
 
 	err := c.Bind(&req)
 	if err != nil {
-		return c.JSON(http.StatusBadRequest, models.Response{
-			Success: false,
-			Error:   "Invalid request body: " + err.Error(),
-		})
+		return failure(c, http.StatusBadRequest, errRequestBodyInvalid, errorArgs{"reason": err.Error()})
 	}
 
 	refused := checkExportPassword(req.Password)
@@ -1154,10 +1084,7 @@ func (h *TransferHandler) ExportSettings(c echo.Context) error {
 	stored, err := settings.Load(h.hosts.db)
 	if err != nil {
 		h.hosts.logger.Error("failed to read the settings for an export", zap.Error(err))
-		return c.JSON(http.StatusInternalServerError, models.Response{
-			Success: false,
-			Error:   "Failed to read the settings",
-		})
+		return failure(c, http.StatusInternalServerError, errSettingsReadFailed)
 	}
 
 	exportedAt := time.Now()
@@ -1165,10 +1092,7 @@ func (h *TransferHandler) ExportSettings(c echo.Context) error {
 	sealed, err := h.seal(transferKindSettings, settingsOf(stored), req.Password, exportedAt)
 	if err != nil {
 		h.hosts.logger.Error("failed to seal the exported settings", zap.Error(err))
-		return c.JSON(http.StatusInternalServerError, models.Response{
-			Success: false,
-			Error:   "Failed to seal the file",
-		})
+		return failure(c, http.StatusInternalServerError, errExportSealFailed)
 	}
 
 	h.hosts.logger.Info("exported the settings of the manager")
@@ -1202,10 +1126,7 @@ func (h *TransferHandler) ImportSettings(c echo.Context) error {
 
 	err := c.Bind(&req)
 	if err != nil {
-		return c.JSON(http.StatusBadRequest, models.Response{
-			Success: false,
-			Error:   "Invalid request body: " + err.Error(),
-		})
+		return failure(c, http.StatusBadRequest, errRequestBodyInvalid, errorArgs{"reason": err.Error()})
 	}
 
 	file, refused := h.open(req.File, req.Password, transferKindSettings)
@@ -1216,10 +1137,7 @@ func (h *TransferHandler) ImportSettings(c echo.Context) error {
 	stored, err := settings.Load(h.hosts.db)
 	if err != nil {
 		h.hosts.logger.Error("failed to read the settings for an import", zap.Error(err))
-		return c.JSON(http.StatusInternalServerError, models.Response{
-			Success: false,
-			Error:   "Failed to read the settings",
-		})
+		return failure(c, http.StatusInternalServerError, errSettingsReadFailed)
 	}
 
 	before := *stored
@@ -1232,10 +1150,7 @@ func (h *TransferHandler) ImportSettings(c echo.Context) error {
 
 	err = json.Unmarshal(file.Content, &content)
 	if err != nil {
-		return c.JSON(http.StatusBadRequest, models.Response{
-			Success: false,
-			Error:   "The file says it holds the settings of the manager, but the settings in it cannot be read",
-		})
+		return failure(c, http.StatusBadRequest, errImportSettingsUnreadable)
 	}
 
 	updated := *stored
@@ -1246,19 +1161,13 @@ func (h *TransferHandler) ImportSettings(c echo.Context) error {
 	// written to stays a 500. It is the same split UpdateSettings makes.
 	err = updated.Validate()
 	if err != nil {
-		return c.JSON(http.StatusBadRequest, models.Response{
-			Success: false,
-			Error:   "Nothing was imported. The settings in the file are refused: " + err.Error(),
-		})
+		return failure(c, http.StatusBadRequest, errImportSettingsRefused, errorArgs{"reason": err.Error()})
 	}
 
 	err = settings.Save(h.hosts.db, &updated)
 	if err != nil {
 		h.hosts.logger.Error("failed to store the imported settings", zap.Error(err))
-		return c.JSON(http.StatusInternalServerError, models.Response{
-			Success: false,
-			Error:   "Failed to store the settings",
-		})
+		return failure(c, http.StatusInternalServerError, errSettingsStoreFailed)
 	}
 
 	diff := settings.Diff(&before, &updated)

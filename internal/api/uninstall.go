@@ -146,10 +146,7 @@ func (h *UninstallHandler) Uninstall(c echo.Context) error {
 
 	err := c.Bind(&req)
 	if err != nil {
-		return c.JSON(http.StatusBadRequest, models.Response{
-			Success: false,
-			Error:   "Invalid request body: " + err.Error(),
-		})
+		return failure(c, http.StatusBadRequest, errRequestBodyInvalid, errorArgs{"reason": err.Error()})
 	}
 
 	userID, ok := c.Get(contextUserIDKey).(uint)
@@ -157,10 +154,7 @@ func (h *UninstallHandler) Uninstall(c echo.Context) error {
 		// The middleware is what puts it there, so getting here means the route
 		// was hung somewhere the middleware does not cover.
 		h.logger.Error("the uninstall was reached with no account on the context")
-		return c.JSON(http.StatusInternalServerError, models.Response{
-			Success: false,
-			Error:   "Failed to read the account",
-		})
+		return failure(c, http.StatusInternalServerError, errAccountReadFailed)
 	}
 
 	var user models.User
@@ -168,10 +162,7 @@ func (h *UninstallHandler) Uninstall(c echo.Context) error {
 	err = h.db.First(&user, userID).Error
 	if err != nil {
 		h.logger.Error("failed to read the account", zap.Error(err))
-		return c.JSON(http.StatusInternalServerError, models.Response{
-			Success: false,
-			Error:   "Failed to read the account",
-		})
+		return failure(c, http.StatusInternalServerError, errAccountReadFailed)
 	}
 
 	if !auth.CheckPassword(user.PasswordHash, req.Password) {
@@ -181,10 +172,7 @@ func (h *UninstallHandler) Uninstall(c echo.Context) error {
 		h.logger.Warn("the uninstall was asked for with a password that does not open the account, " +
 			"so nothing was stopped and nothing was removed")
 
-		return c.JSON(http.StatusUnauthorized, models.Response{
-			Success: false,
-			Error:   "The password does not open this account",
-		})
+		return failure(c, http.StatusUnauthorized, errUninstallPasswordWrong)
 	}
 
 	h.logger.Warn("the uninstall was asked for and the password opens the account. The tunnels are " +
