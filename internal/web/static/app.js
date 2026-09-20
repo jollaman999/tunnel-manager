@@ -2076,6 +2076,42 @@ function storedTheme() {
 // it is not an error to report: the screen is already in the theme that was
 // asked for, and what is lost is only that the next page starts from what the
 // browser prefers rather than from what was pressed here.
+// setupDoneKey is where this browser remembers that the account of the
+// installation it last signed in to was already set up. The login screen has
+// no session to ask the server with, and a wrong password is refused the same
+// way whether the setup has happened or not, so the only moment the browser
+// learns it is a login that succeeded. What it learns decides whether the hint
+// under the username box, which is only true before the setup, is shown.
+//
+// It is one browser's memory and not the installation's, so a browser that has
+// never signed in here still sees the hint, which is the reader it is for.
+const setupDoneKey = "tm_setup_done";
+
+// setupKnownDone reports what this browser last learned. It is read the way
+// the theme is, with the storage allowed to be missing or to throw.
+function setupKnownDone() {
+  try {
+    return window.localStorage.getItem(setupDoneKey) === "1";
+  } catch (error) {
+    return false;
+  }
+}
+
+// rememberSetupDone writes what a login answered. A login that came back with
+// the setup still required clears it, so a browser that once saw a set up
+// installation and now sees a fresh one on the same address is told again.
+function rememberSetupDone(done) {
+  try {
+    if (done) {
+      window.localStorage.setItem(setupDoneKey, "1");
+    } else {
+      window.localStorage.removeItem(setupDoneKey);
+    }
+  } catch (error) {
+    return;
+  }
+}
+
 function rememberTheme(name) {
   try {
     window.localStorage.setItem(themeKey, name);
