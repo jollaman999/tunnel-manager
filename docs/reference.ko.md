@@ -106,9 +106,9 @@ SQLite 드라이버가 순수 Go 구현(`modernc.org/sqlite` 위의 `github.com/
 
 ### 조정 루프
 
-Tunnel Manager 는 어떠해야 하는지와 지금 어떠한지, 두 그림을 들고 계속 견줍니다.
+Tunnel Manager 는 어떠해야 하는지와 지금 어떠한지를 끊임없이 맞대어 봅니다.
 
-| 그림 | 무엇인가 | 어디서 오나 |
+| 상태 | 무엇인가 | 어디서 오나 |
 |------|----------|-------------|
 | 목표 상태 | 활성 Host 에 할당된 서비스 포트 전부 | `hosts`, `service_ports`, `host_service_ports` 행 |
 | 실제 상태 | 지금 돌고 있는 터널 | 프로세스 안의 매니저와 그것이 쓰는 `tunnels` 행 |

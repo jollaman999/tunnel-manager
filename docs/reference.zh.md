@@ -96,9 +96,9 @@ SQLite 驱动是纯 Go 写的（`github.com/glebarez/sqlite` 架在 `modernc.org
 
 ### 调谐循环
 
-Tunnel Manager 手里有两幅图：一幅是该有的样子，一幅是眼下的样子，它不停地拿这两幅比对。
+Tunnel Manager 不停地把该有的样子和眼下的样子放在一起比对。
 
-| 图景 | 是什么 | 从哪里来 |
+| 状态 | 是什么 | 从哪里来 |
 |------|--------|----------|
 | 期望 | 每台启用的 Host 上，分配给它的每一个服务端口 | `hosts`、`service_ports` 和 `host_service_ports` 里的行 |
 | 实际 | 此刻正跑着的隧道 | 进程内部的管理器，以及它写下的 `tunnels` 行 |
@@ -868,7 +868,7 @@ PEM、密钥有密码保护但没把密码发来、或者密码打不开这把�
 东西对不对，由 Host 连上与否来确认，状态里写着。
 
 ```bash
-# 一台用密钥登录的 Host。密钥是按文件的文本内容发的，所以里面的换行必须活下来：
+# 一台用密钥登录的 Host。密钥是按文件的文本内容发的，所以里面的换行必须原样保留：
 # 这里用 jq 来读文件。
 jq -n --arg key "$(cat ~/.ssh/id_ed25519)" \
   '{ip:"192.0.2.10",port:22,user:"ubuntu",private_key:$key,description:"example"}' |
