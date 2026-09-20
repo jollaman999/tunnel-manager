@@ -1651,7 +1651,11 @@ function logTimeCell(value) {
     return node;
   }
 
+  // The space between the two halves is what the line breaks at when the
+  // column is narrow, and what keeps the date and the clock apart when it is
+  // not: two boxes set side by side with nothing between them touch.
   node.appendChild(element("span", text.slice(0, split)));
+  node.appendChild(document.createTextNode(" "));
   node.appendChild(element("span", text.slice(split + 1)));
 
   return node;
