@@ -572,7 +572,10 @@ func (t *SSHTunnel) establishConnection(m *Manager, tunnel *models.Tunnel) error
 	}
 
 	if t.Local.IP.IsUnspecified() {
-		t.logger.Info("a wildcard local address was requested, the SSH server binds it to loopback only unless GatewayPorts is enabled",
+		t.logger.Info("a wildcard local address was requested, and the address here is the one that was asked for: "+
+			"the SSH server opens the listener and never says which address it bound, so whether the port is on "+
+			"every address or on loopback alone is not known from this line. The probe that follows says whether "+
+			"it answered",
 			zap.String("local", localAddr),
 			zap.String("server", t.Server.String()),
 			zap.String("remote", t.Remote.String()))
