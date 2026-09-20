@@ -101,9 +101,21 @@ func parseTunnelKey(key string) (uint, uint, bool) {
 }
 
 // desiredTunnels reads the state the tunnels should be in: every service port
-// on every Host that is enabled. A Host that is not enabled is left out here,
-// so the tunnels of a Host that was just disabled count as running without
-// being wanted and are stopped.
+// that is assigned to a Host, on every Host that is enabled. A Host that is not
+// enabled is left out here, so the tunnels of a Host that was just disabled
+// count as running without being wanted and are stopped. Its assignments stay
+// in the table, so enabling it again brings its tunnels back.
+//
+// The three tables are read once each and paired in memory. This runs on every
+// pass of the reconcile loop, so a statement per assignment would put the
+// number of tunnels of this installation onto the database every few seconds.
+//
+// An assignment naming a Host or a service port that is not there is passed
+// over. Nothing can be built from it: the address, the port and the credentials
+// all sit on the rows that are gone. It is not logged, because the loop would
+// report the same row on every pass for as long as it exists, and it is not
+// deleted either, because this is the read side of the loop and a delete here
+// would race the handler that is removing the rows.
 func (m *Manager) desiredTunnels() (map[string]desiredTunnel, error) {
 	var hosts []models.Host
 	err := m.db.Find(&hosts).Error
@@ -117,17 +129,37 @@ func (m *Manager) desiredTunnels() (map[string]desiredTunnel, error) {
 		return nil, fmt.Errorf("failed to fetch service ports: %w", err)
 	}
 
-	desired := make(map[string]desiredTunnel)
+	var assignments []models.HostServicePort
+	err = m.db.Find(&assignments).Error
+	if err != nil {
+		return nil, fmt.Errorf("failed to fetch service port assignments: %w", err)
+	}
+
+	hostByID := make(map[uint]*models.Host, len(hosts))
 	for i := range hosts {
-		if !hosts[i].Enabled {
+		hostByID[hosts[i].ID] = &hosts[i]
+	}
+
+	spByID := make(map[uint]*models.ServicePort, len(servicePorts))
+	for i := range servicePorts {
+		spByID[servicePorts[i].ID] = &servicePorts[i]
+	}
+
+	desired := make(map[string]desiredTunnel, len(assignments))
+	for _, assignment := range assignments {
+		host, ok := hostByID[assignment.HostID]
+		if !ok || !host.Enabled {
 			continue
 		}
 
-		for j := range servicePorts {
-			desired[tunnelKey(hosts[i].ID, servicePorts[j].ID)] = desiredTunnel{
-				host: &hosts[i],
-				sp:   &servicePorts[j],
-			}
+		sp, ok := spByID[assignment.SPID]
+		if !ok {
+			continue
+		}
+
+		desired[tunnelKey(host.ID, sp.ID)] = desiredTunnel{
+			host: host,
+			sp:   sp,
 		}
 	}
 

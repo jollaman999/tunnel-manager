@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/hex"
 	"fmt"
+	"sort"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -796,5 +797,221 @@ func TestReconcileRestartsATunnelWhoseKeyPassphraseChanged(t *testing.T) {
 	}
 	if result.Restarted != 1 {
 		t.Fatalf("replacing the key passphrase restarted %d tunnels, want 1", result.Restarted)
+	}
+}
+
+// assignment is one row of the assignment table, written short so that a test
+// can list the pairs it means.
+func assignment(hostID, spID uint) models.HostServicePort {
+	return models.HostServicePort{HostID: hostID, SPID: spID}
+}
+
+// desiredKeys is the desired state as the sorted keys it holds, so a failure
+// says which combinations a pass wanted.
+func desiredKeys(t *testing.T, m *Manager) []string {
+	t.Helper()
+
+	desired, err := m.desiredTunnels()
+	if err != nil {
+		t.Fatalf("desiredTunnels returned an error: %v", err)
+	}
+
+	keys := make([]string, 0, len(desired))
+	for key := range desired {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+
+	return keys
+}
+
+// TestDesiredTunnelsTakesTheAssignedCombinationsOnly pins down what the
+// assignment table is for: a pass wants the pairs it holds and not every Host
+// against every service port. Two Hosts and three service ports used to be six
+// tunnels whatever the operator wanted; with two assignments removed it is
+// four, and which four is the point.
+func TestDesiredTunnelsTakesTheAssignedCombinationsOnly(t *testing.T) {
+	hosts := []models.Host{enabledHost(1, true), enabledHost(2, true)}
+	hosts[1].IP = "127.0.0.2"
+	sps := []models.ServicePort{testServicePort(1), testServicePort(2), testServicePort(3)}
+
+	// The six combinations the table is filled with, less 1-2 and 2-3.
+	assignments := []models.HostServicePort{
+		assignment(1, 1), assignment(1, 3),
+		assignment(2, 1), assignment(2, 2),
+	}
+
+	m, err := NewManager(newAssignedStubDB(t, hosts, sps, assignments, nil), zap.NewNop(), newTestCipher(t), 1)
+	if err != nil {
+		t.Fatalf("failed to create manager: %v", err)
+	}
+
+	got := desiredKeys(t, m)
+	want := "1-1,1-3,2-1,2-2"
+	if strings.Join(got, ",") != want {
+		t.Fatalf("a pass wants %v, want %s", got, want)
+	}
+
+	count, err := m.DesiredTunnelCount()
+	if err != nil {
+		t.Fatalf("DesiredTunnelCount returned an error: %v", err)
+	}
+	if count != len(got) {
+		t.Fatalf("the count is %d while a pass wants %d tunnels", count, len(got))
+	}
+}
+
+// TestDesiredTunnelsKeepsTheAssignmentsOfADisabledHost pins down that the two
+// questions stay apart: a Host that is not enabled runs no tunnel, and the
+// assignments it keeps bring its tunnels back when it is enabled again.
+func TestDesiredTunnelsKeepsTheAssignmentsOfADisabledHost(t *testing.T) {
+	hosts := []models.Host{enabledHost(1, true), enabledHost(2, false)}
+	hosts[1].IP = "127.0.0.2"
+	sps := []models.ServicePort{testServicePort(1), testServicePort(2)}
+
+	assignments := []models.HostServicePort{
+		assignment(1, 1),
+		assignment(2, 1), assignment(2, 2),
+	}
+
+	// The stub answers off the slice, so enabling the Host again is the same
+	// write the API makes to the row.
+	db := newAssignedStubDB(t, hosts, sps, assignments, nil)
+
+	m, err := NewManager(db, zap.NewNop(), newTestCipher(t), 1)
+	if err != nil {
+		t.Fatalf("failed to create manager: %v", err)
+	}
+
+	got := desiredKeys(t, m)
+	if strings.Join(got, ",") != "1-1" {
+		t.Fatalf("a pass wants %v while a Host is disabled, want the tunnel of the enabled one alone", got)
+	}
+
+	hosts[1].Enabled = true
+
+	got = desiredKeys(t, m)
+	if strings.Join(got, ",") != "1-1,2-1,2-2" {
+		t.Fatalf("a pass wants %v after the Host was enabled again, want its assignments back", got)
+	}
+}
+
+// TestDesiredTunnelsPassesOverAnAssignmentWithNoRow pins down what happens to a
+// row naming a Host or a service port that is not there. Nothing can be built
+// from it, so it is left out, and the assignments beside it are unaffected: a
+// leftover row must not take the tunnels of the rows that are still there down
+// with it.
+func TestDesiredTunnelsPassesOverAnAssignmentWithNoRow(t *testing.T) {
+	hosts := []models.Host{enabledHost(1, true)}
+	sps := []models.ServicePort{testServicePort(2)}
+
+	assignments := []models.HostServicePort{
+		assignment(1, 2),
+		// A Host that was deleted, and a service port that was.
+		assignment(9, 2),
+		assignment(1, 9),
+	}
+
+	m, err := NewManager(newAssignedStubDB(t, hosts, sps, assignments, nil), zap.NewNop(), newTestCipher(t), 1)
+	if err != nil {
+		t.Fatalf("failed to create manager: %v", err)
+	}
+
+	got := desiredKeys(t, m)
+	if strings.Join(got, ",") != "1-2" {
+		t.Fatalf("a pass wants %v beside two assignments whose rows are gone, want the one that has both", got)
+	}
+}
+
+// TestReconcileIgnoresAnAssignmentWithNoRow is the same seen from a pass: the
+// leftover row starts nothing, and the tunnel that is running for an assignment
+// that is whole is neither stopped nor counted as failed.
+func TestReconcileIgnoresAnAssignmentWithNoRow(t *testing.T) {
+	hosts := []models.Host{enabledHost(1, true)}
+	sps := []models.ServicePort{testServicePort(2)}
+
+	assignments := []models.HostServicePort{assignment(1, 2), assignment(9, 2)}
+
+	db := newAssignedStubDB(t, hosts, sps, assignments, nil)
+
+	err := db.Callback().Create().Replace("gorm:create", func(tx *gorm.DB) {})
+	if err != nil {
+		t.Fatalf("failed to replace the create callback: %v", err)
+	}
+
+	err = db.Callback().Update().Replace("gorm:update", func(tx *gorm.DB) {})
+	if err != nil {
+		t.Fatalf("failed to replace the update callback: %v", err)
+	}
+
+	m, err := NewManager(db, zap.NewNop(), newTestCipher(t), 1)
+	if err != nil {
+		t.Fatalf("failed to create manager: %v", err)
+	}
+	t.Cleanup(m.StopAllTunnels)
+
+	result, err := m.Reconcile()
+	if err != nil {
+		t.Fatalf("Reconcile returned an error: %v", err)
+	}
+	if result.Started != 1 || result.Stopped != 0 || result.Failed != 0 {
+		t.Fatalf("Reconcile reported started=%d stopped=%d failed=%d beside an assignment whose Host is gone, want 1/0/0",
+			result.Started, result.Stopped, result.Failed)
+	}
+
+	running := runningKeys(m)
+	if _, ok := running["1-2"]; !ok || len(running) != 1 {
+		t.Fatalf("the tunnels running are %v, want the one of the assignment that is whole", running)
+	}
+
+	// A second pass leaves it alone rather than stopping it over the row it
+	// could not build anything from.
+	result, err = m.Reconcile()
+	if err != nil {
+		t.Fatalf("the second Reconcile returned an error: %v", err)
+	}
+	if result.Stopped != 0 || result.Failed != 0 {
+		t.Fatalf("the second pass reported stopped=%d failed=%d, want 0/0", result.Stopped, result.Failed)
+	}
+}
+
+// TestDesiredTunnelsReportsAssignmentsThatCannotBeRead pins down that a read of
+// the assignment table that failed is an error and not an empty desired state.
+// An empty one reads as nothing being wanted, and a pass would stop every
+// tunnel of the installation over a database that was briefly away.
+func TestDesiredTunnelsReportsAssignmentsThatCannotBeRead(t *testing.T) {
+	hosts := []models.Host{enabledHost(1, true)}
+	sps := []models.ServicePort{testServicePort(2)}
+
+	db := newStubDB(t, hosts, sps, nil)
+
+	err := db.Callback().Query().Replace("gorm:query", func(tx *gorm.DB) {
+		switch dest := tx.Statement.Dest.(type) {
+		case *[]models.Host:
+			*dest = hosts
+		case *[]models.ServicePort:
+			*dest = sps
+		case *[]models.HostServicePort:
+			_ = tx.AddError(errConnPoolClosed)
+		}
+	})
+	if err != nil {
+		t.Fatalf("failed to replace the query callback: %v", err)
+	}
+
+	m, err := NewManager(db, zap.NewNop(), newTestCipher(t), 1)
+	if err != nil {
+		t.Fatalf("failed to create manager: %v", err)
+	}
+
+	registerStoppedTunnel(t, m, 1, 2)
+
+	_, err = m.Reconcile()
+	if err == nil {
+		t.Fatal("Reconcile returned no error when the assignments could not be read")
+	}
+
+	if len(runningKeys(m)) != 1 {
+		t.Fatal("a pass that could not read the assignments stopped the tunnel that was running")
 	}
 }

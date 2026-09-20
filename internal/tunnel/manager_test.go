@@ -477,10 +477,37 @@ func TestStartTunnelFailsWhenTheKeyIsWrong(t *testing.T) {
 	}
 }
 
-// newStubDB returns a gorm DB that answers Host and ServicePort queries from
-// memory, so no statement reaches the failing connection pool. A non-nil
-// deleteErr makes every delete fail.
+// allAssignments pairs every Host with every service port. That is the state
+// the assignment table is filled with the first time it is created, and it is
+// what the tests that are not about the assignments themselves run against, so
+// that they pin down what they did before the table existed.
+func allAssignments(hosts []models.Host, sps []models.ServicePort) []models.HostServicePort {
+	assignments := make([]models.HostServicePort, 0, len(hosts)*len(sps))
+	for i := range hosts {
+		for j := range sps {
+			assignments = append(assignments, models.HostServicePort{
+				HostID: hosts[i].ID,
+				SPID:   sps[j].ID,
+			})
+		}
+	}
+
+	return assignments
+}
+
+// newStubDB returns a stub over hosts and sps with every combination of the two
+// assigned. A non-nil deleteErr makes every delete fail.
 func newStubDB(t *testing.T, hosts []models.Host, sps []models.ServicePort, deleteErr error) *gorm.DB {
+	t.Helper()
+
+	return newAssignedStubDB(t, hosts, sps, allAssignments(hosts, sps), deleteErr)
+}
+
+// newAssignedStubDB returns a gorm DB that answers Host, ServicePort and
+// assignment queries from memory, so no statement reaches the failing
+// connection pool. A non-nil deleteErr makes every delete fail.
+func newAssignedStubDB(t *testing.T, hosts []models.Host, sps []models.ServicePort,
+	assignments []models.HostServicePort, deleteErr error) *gorm.DB {
 	t.Helper()
 
 	db := newFailingDB(t)
@@ -491,6 +518,8 @@ func newStubDB(t *testing.T, hosts []models.Host, sps []models.ServicePort, dele
 			*dest = hosts
 		case *[]models.ServicePort:
 			*dest = sps
+		case *[]models.HostServicePort:
+			*dest = assignments
 		}
 	})
 	if err != nil {
@@ -884,6 +913,8 @@ func newRecordingStubDB(t *testing.T, hosts []models.Host, sps []models.ServiceP
 
 	db := newWritableStubDB(t, hosts, sps)
 
+	assignments := allAssignments(hosts, sps)
+
 	err := db.Callback().Query().Replace("gorm:query", func(tx *gorm.DB) {
 		switch dest := tx.Statement.Dest.(type) {
 		case *[]models.Host:
@@ -891,6 +922,8 @@ func newRecordingStubDB(t *testing.T, hosts []models.Host, sps []models.ServiceP
 			*dest = hosts
 		case *[]models.ServicePort:
 			*dest = sps
+		case *[]models.HostServicePort:
+			*dest = assignments
 		}
 	})
 	if err != nil {

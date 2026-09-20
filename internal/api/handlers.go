@@ -625,6 +625,22 @@ func (h *Handler) DeleteHost(c echo.Context) error {
 		})
 	}
 
+	// The assignments of this Host go with it, in the same transaction as the
+	// row itself: half of the two left behind would be an assignment naming a
+	// Host that is gone. A reconcile pass passes such a row over, so no tunnel
+	// comes of it, but the next Host to be given this identifier would inherit
+	// the service ports of the one that was deleted.
+	err = tx.Where("host_id = ?", host.ID).Delete(&models.HostServicePort{}).Error
+	if err != nil {
+		tx.Rollback()
+		h.logger.Error("failed to delete the service port assignments of a Host",
+			zap.Error(err), zap.Uint64("host_id", id))
+		return c.JSON(http.StatusInternalServerError, models.Response{
+			Success: false,
+			Error:   "Failed to delete Host",
+		})
+	}
+
 	err = tx.Commit().Error
 	if err != nil {
 		h.logger.Error("failed to commit the transaction", zap.Error(err))
@@ -913,6 +929,21 @@ func (h *Handler) DeleteServicePort(c echo.Context) error {
 	if err != nil {
 		tx.Rollback()
 		h.logger.Error("failed to delete service port", zap.Error(err), zap.Uint64("service_port_id", id))
+		return c.JSON(http.StatusInternalServerError, models.Response{
+			Success: false,
+			Error:   "Failed to delete service port",
+		})
+	}
+
+	// The assignments of this service port go with it, as in DeleteHost: a row
+	// naming a service port that is gone builds no tunnel and would hand this
+	// identifier, once it is given out again, to every Host that carried the
+	// old one.
+	err = tx.Where("sp_id = ?", sp.ID).Delete(&models.HostServicePort{}).Error
+	if err != nil {
+		tx.Rollback()
+		h.logger.Error("failed to delete the Host assignments of a service port",
+			zap.Error(err), zap.Uint64("service_port_id", id))
 		return c.JSON(http.StatusInternalServerError, models.Response{
 			Success: false,
 			Error:   "Failed to delete service port",

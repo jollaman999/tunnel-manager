@@ -426,6 +426,15 @@ func newReconcileStubDB(t *testing.T, hosts []models.Host, sps []models.ServiceP
 
 	db, txPool := newTxRecordingDB(t)
 
+	// Every Host carries every service port, as in newRowsDB above: the
+	// reconcile pass reads the tunnels it wants from the assignments.
+	assignments := make([]models.HostServicePort, 0, len(hosts)*len(sps))
+	for _, host := range hosts {
+		for _, sp := range sps {
+			assignments = append(assignments, models.HostServicePort{HostID: host.ID, SPID: sp.ID})
+		}
+	}
+
 	err := db.Callback().Query().Replace("gorm:query", func(tx *gorm.DB) {
 		switch dest := tx.Statement.Dest.(type) {
 		case *[]models.Host:
@@ -434,6 +443,9 @@ func newReconcileStubDB(t *testing.T, hosts []models.Host, sps []models.ServiceP
 		case *[]models.ServicePort:
 			*dest = sps
 			tx.RowsAffected = int64(len(sps))
+		case *[]models.HostServicePort:
+			*dest = assignments
+			tx.RowsAffected = int64(len(assignments))
 		case *models.Tunnel:
 			tx.RowsAffected = 1
 		}
@@ -848,7 +860,7 @@ func newRowsDB(t *testing.T, hosts []models.Host, sps []models.ServicePort, tunn
 		t.Fatalf("failed to open the database: %v", err)
 	}
 
-	err = db.AutoMigrate(&models.Host{}, &models.ServicePort{}, &models.Tunnel{})
+	err = db.AutoMigrate(&models.Host{}, &models.ServicePort{}, &models.Tunnel{}, &models.HostServicePort{})
 	if err != nil {
 		t.Fatalf("failed to migrate the database: %v", err)
 	}
@@ -883,6 +895,19 @@ func newRowsDB(t *testing.T, hosts []models.Host, sps []models.ServicePort, tunn
 		err = db.Create(&row).Error
 		if err != nil {
 			t.Fatalf("failed to store a tunnel: %v", err)
+		}
+	}
+
+	// Every Host carries every service port, which is the state the assignment
+	// table is filled with the first time it is created. The tunnels a pass
+	// wants are read from these rows, so without them the manager over this
+	// database would want none.
+	for _, host := range hosts {
+		for _, sp := range sps {
+			err = db.Create(&models.HostServicePort{HostID: host.ID, SPID: sp.ID}).Error
+			if err != nil {
+				t.Fatalf("failed to store an assignment: %v", err)
+			}
 		}
 	}
 
@@ -3240,5 +3265,147 @@ func TestGetStatusCarriesWhatWasMeasuredOfTheForwardedPort(t *testing.T) {
 		if !found {
 			t.Fatalf("the answer carries no tunnel %d-%d, body: %s", want.HostID, want.SPID, rec.Body.String())
 		}
+	}
+}
+
+// deleteRequest builds one delete request for a handler, the way getRequest
+// builds a read.
+func deleteRequest(t *testing.T, target, param, value string) (echo.Context, *httptest.ResponseRecorder) {
+	t.Helper()
+
+	e := echo.New()
+	e.Validator = &testValidator{validator: validator.New()}
+	req := httptest.NewRequest(http.MethodDelete, target, nil)
+	rec := httptest.NewRecorder()
+	c := e.NewContext(req, rec)
+
+	c.SetParamNames(param)
+	c.SetParamValues(value)
+
+	return c, rec
+}
+
+// storedAssignments reads the assignment rows as the pairs they name, sorted,
+// so a test can say which ones are left rather than only how many.
+func storedAssignments(t *testing.T, db *gorm.DB) []string {
+	t.Helper()
+
+	var rows []models.HostServicePort
+
+	err := db.Order("host_id, sp_id").Find(&rows).Error
+	if err != nil {
+		t.Fatalf("failed to read the assignments: %v", err)
+	}
+
+	pairs := make([]string, 0, len(rows))
+	for _, row := range rows {
+		pairs = append(pairs, fmt.Sprintf("%d-%d", row.HostID, row.SPID))
+	}
+
+	return pairs
+}
+
+// TestDeleteHostTakesItsAssignmentsWithIt pins down that deleting a Host clears
+// the service ports it was assigned. A row left behind names a Host that is
+// gone, and the next Host to be given that identifier would be handed the
+// service ports of the deleted one.
+func TestDeleteHostTakesItsAssignmentsWithIt(t *testing.T) {
+	hosts := []models.Host{statusHost(1, true), statusHost(2, true)}
+	sps := []models.ServicePort{statusServicePort(1), statusServicePort(2)}
+
+	db := newRowsDB(t, hosts, sps, nil)
+
+	before := storedAssignments(t, db)
+	if len(before) != 4 {
+		t.Fatalf("the database holds %v before the delete, want the four combinations", before)
+	}
+
+	h := NewHandler(db, &wakeRecorder{tx: &txConnPool{}}, zap.NewNop(), newTestCipher(t))
+
+	c, rec := deleteRequest(t, "/api/host/1", "id", "1")
+
+	err := h.DeleteHost(c)
+	if err != nil {
+		t.Fatalf("DeleteHost returned an error: %v", err)
+	}
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d, body: %s", rec.Code, http.StatusOK, rec.Body.String())
+	}
+
+	after := storedAssignments(t, db)
+	if strings.Join(after, ",") != "2-1,2-2" {
+		t.Fatalf("the assignments after the delete are %v, want the ones of the Host that is left", after)
+	}
+}
+
+// TestDeleteServicePortTakesItsAssignmentsWithIt is the same for a service
+// port: every Host that carried it loses the assignment.
+func TestDeleteServicePortTakesItsAssignmentsWithIt(t *testing.T) {
+	hosts := []models.Host{statusHost(1, true), statusHost(2, true)}
+	sps := []models.ServicePort{statusServicePort(1), statusServicePort(2)}
+
+	db := newRowsDB(t, hosts, sps, nil)
+
+	before := storedAssignments(t, db)
+	if len(before) != 4 {
+		t.Fatalf("the database holds %v before the delete, want the four combinations", before)
+	}
+
+	h := NewHandler(db, &wakeRecorder{tx: &txConnPool{}}, zap.NewNop(), newTestCipher(t))
+
+	c, rec := deleteRequest(t, "/api/service-port/1", "id", "1")
+
+	err := h.DeleteServicePort(c)
+	if err != nil {
+		t.Fatalf("DeleteServicePort returned an error: %v", err)
+	}
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d, body: %s", rec.Code, http.StatusOK, rec.Body.String())
+	}
+
+	after := storedAssignments(t, db)
+	if strings.Join(after, ",") != "1-2,2-2" {
+		t.Fatalf("the assignments after the delete are %v, want the ones of the service port that is left", after)
+	}
+}
+
+// TestDeleteHandlersLeaveTheAssignmentsWhenTheRowIsGone pins down that a delete
+// that found nothing to delete removes no assignment either. The rows of a Host
+// are only its own, so a request for an identifier that is not there must not
+// be the one that empties the table.
+func TestDeleteHandlersLeaveTheAssignmentsWhenTheRowIsGone(t *testing.T) {
+	tests := []struct {
+		name   string
+		target string
+		call   func(*Handler, echo.Context) error
+	}{
+		{name: "host", target: "/api/host/9", call: (*Handler).DeleteHost},
+		{name: "service port", target: "/api/service-port/9", call: (*Handler).DeleteServicePort},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			hosts := []models.Host{statusHost(1, true)}
+			sps := []models.ServicePort{statusServicePort(1)}
+
+			db := newRowsDB(t, hosts, sps, nil)
+
+			h := NewHandler(db, &wakeRecorder{tx: &txConnPool{}}, zap.NewNop(), newTestCipher(t))
+
+			c, rec := deleteRequest(t, tt.target, "id", "9")
+
+			err := tt.call(h, c)
+			if err != nil {
+				t.Fatalf("the handler returned an error: %v", err)
+			}
+			if rec.Code != http.StatusNotFound {
+				t.Fatalf("status = %d, want %d, body: %s", rec.Code, http.StatusNotFound, rec.Body.String())
+			}
+
+			after := storedAssignments(t, db)
+			if strings.Join(after, ",") != "1-1" {
+				t.Fatalf("the assignments after a delete of a row that is not there are %v, want the stored one", after)
+			}
+		})
 	}
 }
