@@ -197,6 +197,12 @@ async function submitLogin(values) {
     return;
   }
 
+  // The language the installation draws a browser that has picked none in is
+  // read behind the login and nowhere else, so this is the first moment it can
+  // be had. It is read before the move, so the screen moved to is the first one
+  // drawn in it.
+  await followInstallationLang();
+
   navigate("status");
 }
 
@@ -1680,7 +1686,12 @@ function logMessageCell(line) {
   const cell = document.createElement("div");
 
   cell.className = "log-message";
-  cell.appendChild(element("span", line.parsed ? line.message : line.raw));
+
+  // The sentence is drawn from the identifier the line carries rather than from
+  // the words in the file, so the screen is in the language it is being read in
+  // while the file stays in the one it is grepped in. A line that names no
+  // sentence is shown as it was written.
+  cell.appendChild(element("span", logLineText(line)));
 
   if (typeof line.extra === "string" && line.extra !== "") {
     const extra = element("small", line.extra);
@@ -1967,10 +1978,38 @@ function settingsForm(set) {
         type: "checkbox",
         value: set.logging_file_compress,
         note: t("settings.next-start.hint")
+      },
+      {
+        name: "ui_default_language",
+        label: t("settings.ui-language.label"),
+        value: set.ui_default_language,
+        options: languageOptions(),
+        note: t("settings.ui-language.hint")
       }
     ],
     onSubmit: saveSettings
   });
+}
+
+// languageOptions is what the language of the installation is picked from: the
+// languages the UI is drawn in, each under the name it calls itself by, and
+// above them the pick that names none.
+//
+// The name of a language is not translated, for the reason the list in the
+// corner does not translate it either: somebody looking for their own language
+// is looking for the word they would write it with.
+//
+// The empty value is a value and not a gap. It is what says this installation
+// names no language, which leaves every browser being shown the one it asks
+// for, and it is what the setting holds until somebody picks otherwise.
+function languageOptions() {
+  const options = [{ value: "", text: t("settings.ui-language-any.option") }];
+
+  for (const language of languages) {
+    options.push({ value: language.code, text: language.name });
+  }
+
+  return options;
 }
 
 // settingsField puts the note on a field built by one of the helpers above. The
@@ -2021,7 +2060,8 @@ async function saveSettings(values) {
     logging_file_max_size: asNumber(values.logging_file_max_size),
     logging_file_max_backups: asNumber(values.logging_file_max_backups),
     logging_file_max_age: asNumber(values.logging_file_max_age),
-    logging_file_compress: values.logging_file_compress
+    logging_file_compress: values.logging_file_compress,
+    ui_default_language: values.ui_default_language
   };
 
   const data = await apiCall("PUT", "/api/settings", body);
@@ -2037,6 +2077,12 @@ async function saveSettings(values) {
   } else {
     setNotice(t("settings.saved.notice"), "info");
   }
+
+  // A save that changed the language of the installation changes what this
+  // screen is drawn in, unless the operator has picked a language here. It is
+  // read again rather than taken from the answer, so the one place that decides
+  // what the language is stays the one that asked the server for it.
+  await followInstallationLang();
 
   return drawSettings();
 }

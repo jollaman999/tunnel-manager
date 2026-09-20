@@ -5,6 +5,7 @@ import (
 	"io/fs"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"regexp"
 	"sort"
 	"strings"
@@ -431,8 +432,14 @@ const baseCatalog = "en"
 // is always spelled the same way, and a name that has to end in one of
 // thirteen words cannot drift into ".btn" in one file and ".buttonText" in
 // another.
+//
+// An underscore is allowed inside a part for the keys that are not written by
+// hand. The sentence of a refusal and the sentence of a log line are looked up
+// under the name the server raises them by, and those names are snake_case; a
+// key that respelled them would be a second name for the same thing, and the
+// two lists could no longer be held against each other by anything but eye.
 var catalogKey = regexp.MustCompile(
-	`^[a-z][a-z0-9]*(?:-[a-z0-9]+)*(?:\.[a-z][a-z0-9]*(?:-[a-z0-9]+)*)+` +
+	`^[a-z][a-z0-9]*(?:[-_][a-z0-9]+)*(?:\.[a-z][a-z0-9]*(?:[-_][a-z0-9]+)*)+` +
 		`\.(?:title|label|hint|button|link|column|option|empty|notice|confirm|error|aria|text)$`)
 
 // readCatalog reads one language file and hands back what is in it. A catalog
@@ -648,7 +655,11 @@ func TestCatalogValuesCarryNoMarkup(t *testing.T) {
 // one.
 func TestPlaceholdersAreNamedAndKnown(t *testing.T) {
 	named := regexp.MustCompile(`\{([^}]*)\}`)
-	plain := regexp.MustCompile(`^[a-z][a-z0-9]*$`)
+	// The underscore is here for the values that are not this UI's to name. A
+	// refusal hands its values over under the names the server wrote them
+	// under, and a log line is filled in from its own fields, both of which are
+	// snake_case; app.js fills in exactly this shape.
+	plain := regexp.MustCompile(`^[a-z][a-z0-9_]*$`)
 	base := readCatalog(t, baseCatalog)
 
 	namesIn := func(value string) map[string]bool {
@@ -722,7 +733,7 @@ func TestTheServerAndTheUIAgreeOnTheLanguages(t *testing.T) {
 // keyShaped is a string literal in a script that reads as a catalog key. It is
 // the same shape catalogKey holds a key to, anchored so that a sentence which
 // happens to contain a dotted word is not taken for one.
-var keyShaped = regexp.MustCompile(`^[a-z][a-z0-9]*(?:-[a-z0-9]+)*(?:\.[a-z][a-z0-9]*(?:-[a-z0-9]+)*)+` +
+var keyShaped = regexp.MustCompile(`^[a-z][a-z0-9]*(?:[-_][a-z0-9]+)*(?:\.[a-z][a-z0-9]*(?:[-_][a-z0-9]+)*)+` +
 	`\.(?:title|label|hint|button|link|column|option|empty|notice|confirm|error|aria|text)$`)
 
 // scriptKeys is every key the two scripts name, however they name it.
@@ -774,12 +785,174 @@ func TestEveryKeyTheScriptsNameIsInEnglish(t *testing.T) {
 // the catalog from growing a tail. A key no screen asks for is a string that
 // costs thirteen translations and reaches nobody, and it is also what a key
 // renamed in the scripts and not in the catalog leaves behind.
+//
+// The keys the scripts build at run time are counted as asked for. They are the
+// sentence of every refusal the server can raise and of every log line it can
+// write, and neither is written out in a script: the answer and the log line
+// carry the name, and the script puts the key together from it. What holds
+// those to something is the list the server keeps, which is where generatedKeys
+// reads them from, so a key under one of the two prefixes that stands for no
+// code and no identifier is still caught here.
 func TestEveryEnglishKeyIsAskedFor(t *testing.T) {
 	keys := scriptKeys(t)
+	generated := generatedKeys(t)
 
 	for key := range readCatalog(t, baseCatalog) {
-		if !keys[key] {
+		if !keys[key] && !generated[key] {
 			t.Errorf("the English catalog holds %q, which no script asks for", key)
+		}
+	}
+}
+
+// The two kinds of key a script builds rather than writes out. The prefix says
+// which of the two a key belongs to, so the three groups the catalog holds -
+// the words of the screens, the refusals and the log lines - can be told apart
+// by name alone, and the role at the end is the one the naming rule asks for.
+const (
+	refusalKeyPrefix = "error."
+	refusalKeyRole   = ".error"
+	logKeyPrefix     = "log."
+	logKeyRole       = ".text"
+)
+
+// untranslatedLogID is the one log line that has no sentence in the catalog.
+// gorm writes the words of it, so what the line says is not this application's
+// to name: there is no fixed sentence behind the identifier and nothing for a
+// translator to be handed. The Logs screen shows the message out of the file
+// for it, which is what it does for every line it has no sentence for.
+const untranslatedLogID = "database.gorm_message"
+
+// unnamedRefusalCode is the code a refusal goes out under when the package that
+// raised it has no sentence registered for it. It stands for a bug rather than
+// for a refusal anybody can word, and the answer carries the code itself as its
+// text, so there is nothing to translate and it is left out of the catalog.
+const unnamedRefusalCode = "unspecified"
+
+// The two lists the server keeps, read out of the files that hold them. They
+// are read as text rather than imported because both are unexported: what is
+// wanted here is the set of names, and the names are the whole of what those
+// two declarations are.
+var (
+	refusalCodeDeclaration = regexp.MustCompile(`errorCode = "([a-z0-9_.]+)"`)
+	logIDDeclaration       = regexp.MustCompile(`(?m)^\t[A-Za-z]+\s+ID = "([a-z0-9_.]+)"$`)
+)
+
+// namedIn reads one source file of another package and hands back what the
+// pattern names in it.
+//
+// The path is relative to this package, which is where a test runs. It is the
+// server's own list that has to be read: a list written out here a second time
+// would be a copy to keep in step, and the thing being checked is exactly that
+// the catalog and the server have not drifted apart.
+func namedIn(t *testing.T, path string, pattern *regexp.Regexp) []string {
+	t.Helper()
+
+	body, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("failed to read %s: %v", path, err)
+	}
+
+	found := pattern.FindAllStringSubmatch(string(body), -1)
+	if len(found) == 0 {
+		t.Fatalf("%s names nothing in the shape this test reads", path)
+	}
+
+	names := make([]string, 0, len(found))
+	for _, match := range found {
+		names = append(names, match[1])
+	}
+
+	return names
+}
+
+// refusalCodes is every code a refusal is raised under, and logIDs is every
+// identifier a log line is written with.
+func refusalCodes(t *testing.T) []string {
+	t.Helper()
+
+	var codes []string
+
+	for _, code := range namedIn(t, "../api/errors.go", refusalCodeDeclaration) {
+		if code == unnamedRefusalCode {
+			continue
+		}
+
+		codes = append(codes, code)
+	}
+
+	return codes
+}
+
+func logIDs(t *testing.T) []string {
+	t.Helper()
+
+	return namedIn(t, "../logid/logid.go", logIDDeclaration)
+}
+
+// generatedKeys is every key a script looks a server string up under.
+func generatedKeys(t *testing.T) map[string]bool {
+	t.Helper()
+
+	keys := map[string]bool{}
+
+	for _, code := range refusalCodes(t) {
+		keys[refusalKeyPrefix+code+refusalKeyRole] = true
+	}
+
+	for _, id := range logIDs(t) {
+		if id == untranslatedLogID {
+			continue
+		}
+
+		keys[logKeyPrefix+id+logKeyRole] = true
+	}
+
+	return keys
+}
+
+// TestEverySentenceTheServerCanSendIsInEnglish is the half of the two-way check
+// that no scan of the scripts can do.
+//
+// A refusal the catalog has no sentence for is shown as the English sentence
+// the answer carries, and a log line with no sentence is shown as the English
+// message out of the file. Neither is a blank screen, which is why this is one
+// test rather than a rule the UI enforces at run time; but both are a screen in
+// one language with a sentence in another, and a code added to the server
+// without a sentence here would go unnoticed until somebody reading the screen
+// in their own language met an English paragraph in the middle of it.
+func TestEverySentenceTheServerCanSendIsInEnglish(t *testing.T) {
+	base := readCatalog(t, baseCatalog)
+
+	codes := refusalCodes(t)
+	ids := logIDs(t)
+
+	t.Logf("refusals the server can raise: %d", len(codes))
+	t.Logf("identifiers a log line can carry: %d", len(ids))
+
+	for _, code := range codes {
+		key := refusalKeyPrefix + code + refusalKeyRole
+
+		if _, ok := base[key]; !ok {
+			t.Errorf("the server raises the refusal %q, which the English catalog has no %q for",
+				code, key)
+		}
+	}
+
+	for _, id := range ids {
+		if id == untranslatedLogID {
+			if _, ok := base[logKeyPrefix+id+logKeyRole]; ok {
+				t.Errorf("the English catalog holds a sentence for %q, whose words are not ours to write",
+					id)
+			}
+
+			continue
+		}
+
+		key := logKeyPrefix + id + logKeyRole
+
+		if _, ok := base[key]; !ok {
+			t.Errorf("the server writes the log line %q, which the English catalog has no %q for",
+				id, key)
 		}
 	}
 }

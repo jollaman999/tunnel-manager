@@ -32,6 +32,12 @@ const scrollQuietMs = 400;
 const apiLoginPath = "/api/login";
 const apiSetupPath = "/api/setup";
 
+// setupRequiredCode is the refusal that sends the operator to the setup screen.
+// It is the name the server raises it under, which is what the move is decided
+// on: the sentence beside it is drawn in the language of the page and is not
+// something to read a decision out of.
+const setupRequiredCode = "auth.setup.required";
+
 // apiUninstallPath is the third call whose 401 means something else. It is the
 // password box under the uninstall being wrong, and the session it was sent
 // with is still good, so sending the operator to the login would both lose what
@@ -111,7 +117,12 @@ const langPath = "/ui/lang/";
 // the braces and not the order is what says which value goes where, so a
 // language that puts the count before the noun and one that puts it after can
 // be the same key with the braces in different places.
-const placeholder = /\{([a-z][a-z0-9]*)\}/g;
+//
+// An underscore is part of a name because the values the server hands over are
+// named by the server: the arguments of a refusal and the fields of a log line
+// arrive under the names they are written under in Go, which are snake_case. A
+// sentence that renamed them would be a second list to keep in step.
+const placeholder = /\{([a-z][a-z0-9_]*)\}/g;
 
 // versionPath is where the number in the corner is read from. It is served from
 // under /ui/ rather than from /api/, so the login screen, which has no session
@@ -162,6 +173,17 @@ let currentScreen = null;
 // at all.
 let texts = null;
 let baseTexts = null;
+
+// installationLang is the language this installation was set up to draw a
+// browser that has picked none of its own in. It is null until it has been
+// asked for and where the answer could not be had, and "" where the
+// installation names no language, which is the setting saying that every
+// browser is shown what it asks for.
+//
+// It is kept here rather than read at every draw because it comes from a call
+// that needs a session: the login screen cannot make it at all, and the screens
+// behind the login would each be making it again.
+let installationLang = null;
 
 // loadedVersion is the number the corner shows, kept because the corner is
 // drawn again whenever the language changes and one fetch is enough for all of
@@ -622,8 +644,7 @@ async function apiCall(method, path, body) {
 
   // The refusal that names the setup is the one that is a screen change. Other
   // 403s, if any are ever added, stay errors and are shown as they came.
-  if (response.status === 403 && path !== apiSetupPath &&
-      errorOf(payload, response).toLowerCase().indexOf("setup") !== -1) {
+  if (response.status === 403 && path !== apiSetupPath && saysSetupFirst(payload, response)) {
     navigate("setup", t("api.setup-first.error"), false);
 
     throw new Redirected();
@@ -640,6 +661,24 @@ async function apiCall(method, path, body) {
   }
 
   return payload === null ? null : payload.data;
+}
+
+// saysSetupFirst reads whether a refusal is the account setup not being
+// finished, which is the one refusal that moves the operator to another screen.
+//
+// The code is what decides it. The sentence was what decided it before, and a
+// sentence is the one thing about an answer that changes with the language the
+// page is in: read in Korean it holds no word "setup", so a screen that matched
+// on the word would stay where it was and show the refusal over and over.
+//
+// The word is still matched where the answer carries no code at all, which is
+// what a server from before the refusals were named answers with.
+function saysSetupFirst(payload, response) {
+  if (payload !== null && typeof payload.error_code === "string" && payload.error_code !== "") {
+    return payload.error_code === setupRequiredCode;
+  }
+
+  return errorOf(payload, response).toLowerCase().indexOf("setup") !== -1;
 }
 
 // csrfToken is the token of the session, or "" when there is not one yet. It is
@@ -684,8 +723,18 @@ async function readPayload(response) {
 // errorOf is what to show for a refused call. The API answers with an "error"
 // field, but the 404 of an unrouted path comes from the framework and carries
 // "message" instead, so both are read before falling back to the status code.
+//
+// The sentence this UI knows how to say itself comes first. What the server
+// sends is English whatever language the page is in, so a refusal that names
+// itself is said here instead, in the words of the page.
 function errorOf(payload, response) {
   if (payload !== null) {
+    const said = refusalText(payload);
+
+    if (said !== null) {
+      return said;
+    }
+
     if (typeof payload.error === "string" && payload.error !== "") {
       return payload.error;
     }
@@ -696,6 +745,103 @@ function errorOf(payload, response) {
   }
 
   return t("api.status.error", { status: response.status, said: response.statusText });
+}
+
+// refusalKey is where the sentence of a refusal is kept. The server names every
+// answer that says no, and the name is the key of the sentence with the role
+// every refusal carries at the end of it.
+function refusalKey(code) {
+  return "error." + code + ".error";
+}
+
+// refusalText is what a named refusal reads as in the language of the page, or
+// null where there is nothing to say it with.
+//
+// Null is the answer for a code no catalog has heard of, which is what an older
+// screen meets from a newer server, and the caller shows the English sentence
+// the answer carries beside the code. That sentence is always there, so a
+// refusal this UI does not know is still a refusal the operator can read.
+//
+// The values are the ones the server wrote into its own sentence, handed over
+// by name. They are written in by t, which puts them through the same one pass
+// as any other value, and everything t hands back is put on the page as text.
+function refusalText(payload) {
+  if (typeof payload.error_code !== "string" || payload.error_code === "") {
+    return null;
+  }
+
+  const key = refusalKey(payload.error_code);
+
+  if (entry(texts, key) === null && entry(baseTexts, key) === null) {
+    return null;
+  }
+
+  const values = payload.error_args;
+
+  return t(key, values !== null && typeof values === "object" ? values : {});
+}
+
+// logIdField is the field a log line carries its identifier under, and
+// logLineKey is where the sentence of that identifier is kept. The file stays
+// English so that it can be grepped and sent with a support request; the line
+// on the screen is drawn from the identifier instead of from the words.
+const logIdField = "log_id";
+
+function logLineKey(id) {
+  return "log." + id + ".text";
+}
+
+// logFields is what a line carried besides the four the screen gives a column
+// of its own. The server hands them over as the line was written: a line the
+// JSON encoder wrote comes as an object, and anything else is not read here.
+function logFields(line) {
+  if (typeof line.extra !== "string" || line.extra === "") {
+    return null;
+  }
+
+  let held;
+
+  try {
+    held = JSON.parse(line.extra);
+  } catch (error) {
+    return null;
+  }
+
+  return held !== null && typeof held === "object" && !Array.isArray(held) ? held : null;
+}
+
+// logLineText is what one line of the log reads as in the language of the page.
+//
+// What is shown where the line names no sentence is the message out of the
+// file, in the English it was written in. A log file holds the lines of every
+// version that ever wrote to it, and the ones written before the lines were
+// named carry no identifier at all; so does a line of something else that ended
+// up in the file. None of those is an error to report: the words are there to
+// be read, and this screen is the one place they can be read from.
+function logLineText(line) {
+  const message = line.parsed ? line.message : line.raw;
+  const fields = logFields(line);
+
+  if (fields === null) {
+    return message;
+  }
+
+  const id = fields[logIdField];
+
+  if (typeof id !== "string" || id === "") {
+    return message;
+  }
+
+  const key = logLineKey(id);
+
+  if (entry(texts, key) === null && entry(baseTexts, key) === null) {
+    return message;
+  }
+
+  // The values are the fields of the line itself, under the names the line
+  // wrote them under, so a sentence that needs one names it and a language that
+  // wants it somewhere else moves the braces.
+  return t(key, fields);
 }
 
 // element builds a node with text in it. The text is set as text, which is the
@@ -2013,29 +2159,112 @@ function browserLang() {
   return baseLang;
 }
 
-// currentLang is the language to draw in: what was picked, then what the
-// browser asks for, then English.
+// currentLang is the language to draw in: what was picked here, then what the
+// installation was set up to show, then what the browser asks for, then
+// English.
 //
-// The head script of index.html has been down this road already and left its
-// answer behind, so the same answer is used rather than worked out again: it is
-// the one the first paint was laid out with, and a second run that disagreed
-// with it would turn the page round after it had been drawn.
+// The pick of the browser wins over the setting on purpose. The setting is what
+// an installation is drawn in for somebody who has said nothing about it, and
+// somebody who has said something has said it on the screen they are reading.
 //
-// A setting on the server belongs between the pick and the browser, and this is
-// where it goes in: the stored pick still wins, and a browser that asks for
-// nothing this UI has lands on what the installation was set up with instead of
-// on English. The login screen cannot reach it, having no session, so that
-// screen is settled by the two rules that are here now.
+// The setting is only ever in hand behind the login, since reading it needs a
+// session, and it is null until then: the login screen is settled by the pick
+// and the browser, which is the whole of this rule for a client that has not
+// signed in.
+//
+// The head script of index.html has been down the same road without the
+// setting, and where the setting says nothing its answer is the one used rather
+// than worked out again: it is the one the first paint was laid out with, and a
+// second run that disagreed with it would turn the page round after it had been
+// drawn.
 function currentLang() {
+  const picked = storedLang();
+
+  if (picked !== null) {
+    return picked;
+  }
+
+  if (installationLang !== null && languageFor(installationLang) !== null) {
+    return installationLang;
+  }
+
   const boot = window.tmBoot;
 
   if (boot !== undefined && boot !== null && languageFor(boot.lang) !== null) {
     return boot.lang;
   }
 
-  const picked = storedLang();
+  return browserLang();
+}
 
-  return picked === null ? browserLang() : picked;
+// loadInstallationLang reads the language this installation draws a browser
+// that has picked none in, and leaves it where currentLang reads it.
+//
+// It is asked for with a fetch of its own rather than through apiCall, because
+// what it meets on the login screen is the answer that says there is no
+// session, and apiCall turns that into a move to the login: the screen this
+// would be running on. There is nothing to report either way. A setting that
+// cannot be read leaves the page in the language the browser asked for, which
+// is where it would have been without the setting at all.
+async function loadInstallationLang() {
+  if (storedLang() !== null) {
+    // The pick of this browser wins over the setting, so there is nothing the
+    // answer could change and no call to make.
+    return;
+  }
+
+  let response;
+
+  try {
+    response = await fetch("/api/settings", {
+      headers: { Accept: "application/json" },
+      credentials: "same-origin"
+    });
+  } catch (error) {
+    return;
+  }
+
+  if (!response.ok) {
+    return;
+  }
+
+  let payload;
+
+  try {
+    payload = await response.json();
+  } catch (error) {
+    return;
+  }
+
+  if (payload === null || payload.data === null || payload.data === undefined) {
+    return;
+  }
+
+  const code = payload.data.ui_default_language;
+
+  if (typeof code === "string") {
+    installationLang = code;
+  }
+}
+
+// followInstallationLang reads the setting again and draws the page in it if
+// that changes what the language is.
+//
+// It is what the two moments that can change the answer call: a login, which is
+// where the setting becomes readable at all, and a save of the settings, which
+// is where it becomes something else. Neither is a moment the page is reloaded
+// at, and without this the operator would go on reading a screen in the
+// language of their browser until they did reload it.
+async function followInstallationLang() {
+  const was = currentLang();
+
+  await loadInstallationLang();
+
+  const now = currentLang();
+
+  if (now !== was) {
+    await applyLang(now);
+  }
 }
 
 // fetchCatalog asks for one language file. A refusal comes back as null rather
@@ -2173,7 +2402,13 @@ function setUpLanguage() {
     });
   }
 
-  return applyLang(currentLang());
+  // The setting is asked for before the first draw and not after it, so that a
+  // page whose language comes from the installation goes up in that language
+  // once instead of being drawn in the language of the browser and turned round
+  // a moment later. It costs one call, and only where nothing was picked here.
+  return loadInstallationLang().then(function () {
+    return applyLang(currentLang());
+  });
 }
 
 // The scroll is watched for one thing: when it last happened. The listener is
