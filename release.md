@@ -20,6 +20,7 @@
 
 - A timestamp in a table came out back to front on a right to left page, the clock before the date. The date and the clock are left to right text on their own, and the space between them took the direction of the page. The cell is marked left to right now, and nothing changes on a left to right page.
 - Signing out left the login screen in the language of the installation rather than the one the browser asks for, which is what a new visitor sees. What was known about the installation is forgotten on the way out, and on a session that ended on its own.
+- The login screen said to leave the username empty on the first sign in, and went on saying it after the setup was done. It cannot ask the server before there is a session, so it remembers what this browser learned from the last sign in that succeeded and drops the hint once the setup is known to be done. A browser that has never signed in here still sees it.
 - The log line written when a wildcard local address is requested said the SSH server binds it to loopback unless `GatewayPorts` is enabled. It cannot know that, and it was wrong for `clientspecified`, which opens the port on every address as asked. It says now that the address in the line is the one that was requested, and leaves the answer to the probe that follows.
 
 ## Documentation:
