@@ -3645,13 +3645,18 @@ function manualOneTunnel() {
 // The addresses are the documentation ranges, so they name no real machine.
 const manualExampleHost = "203.0.113.10";
 const manualExampleUser = "deploy";
-const manualExampleService = "127.0.0.1:8080";
+const manualExampleService = "192.168.1.20:8080";
 const manualExampleLocalPort = "18080";
 
 // manualTopology is the drawing of the machines: the Host with its SSH server
-// and the port that is opened on it, this machine with tunnel-manager and the
-// service, a client on the far side, and the four legs the traffic takes,
-// numbered in the order they happen.
+// and the port that is opened on it, this machine with tunnel-manager on it, the
+// service off to the side, a client on the far side, and the four legs the
+// traffic takes, numbered in the order they happen.
+//
+// The service is drawn outside the frame of this machine on purpose. It is any
+// address tunnel-manager can open a connection to, which is usually another
+// machine on the same network and not this one, and a service box sitting
+// inside the frame taught the opposite.
 //
 // It is an SVG rather than boxes because the point of it is where the machines
 // are and which way each connection is opened, and boxes in a row cannot show
@@ -3669,7 +3674,7 @@ function manualTopology() {
   wrap.dir = "ltr";
 
   const svg = svgElement("svg", {
-    viewBox: "0 0 800 320",
+    viewBox: "0 0 900 330",
     role: "img",
     "aria-label": t("manual.diagram.aria")
   });
@@ -3690,27 +3695,28 @@ function manualTopology() {
   svg.appendChild(defs);
 
   // The two machines, drawn as the frames the boxes sit in.
-  svg.appendChild(topologyFrame(200, 30, 230, 250, t("manual.diagram-host.label") + " " +
+  svg.appendChild(topologyFrame(200, 30, 230, 260, t("manual.diagram-host.label") + " " +
     manualExampleHost));
-  svg.appendChild(topologyFrame(480, 30, 300, 250, t("manual.diagram-here.label")));
+  svg.appendChild(topologyFrame(480, 30, 210, 260, t("manual.diagram-here.label")));
 
-  // What is on each machine.
-  svg.appendChild(topologyBox(20, 120, 140, 60, t("manual.diagram-client.label"), ""));
+  // What is on each machine, and the service, which is on neither.
+  svg.appendChild(topologyBox(20, 125, 140, 60, t("manual.diagram-client.label"), ""));
   svg.appendChild(topologyBox(225, 75, 180, 60, t("manual.diagram-sshd.label"), ":22"));
-  svg.appendChild(topologyBox(225, 190, 180, 60, t("manual.diagram-listener.label"),
+  svg.appendChild(topologyBox(225, 200, 180, 60, t("manual.diagram-listener.label"),
     "0.0.0.0:" + manualExampleLocalPort));
-  svg.appendChild(topologyBox(505, 75, 150, 60, "tunnel-manager", ""));
-  svg.appendChild(topologyBox(610, 190, 150, 60, t("manual.diagram-service.label"),
+  svg.appendChild(topologyBox(500, 75, 170, 60, "tunnel-manager", ""));
+  svg.appendChild(topologyBox(720, 200, 170, 60, t("manual.diagram-service.label"),
     manualExampleService));
 
   // 1. tunnel-manager opens the SSH connection, so the arrow starts at it.
-  svg.appendChild(topologyLeg("M 505 105 L 405 105", 1, 455, 105, "topology-ssh"));
+  svg.appendChild(topologyLeg("M 500 105 L 405 105", 1, 452, 105, "topology-ssh"));
   // 2. A client connects to the port on the Host.
-  svg.appendChild(topologyLeg("M 160 150 L 190 150 L 190 220 L 225 220", 2, 190, 185, ""));
+  svg.appendChild(topologyLeg("M 160 155 L 185 155 L 185 230 L 225 230", 2, 185, 192, ""));
   // 3. That connection runs back down the SSH connection to tunnel-manager.
-  svg.appendChild(topologyLeg("M 405 220 L 560 220 L 560 135", 3, 480, 220, "topology-back"));
-  // 4. tunnel-manager connects to the service.
-  svg.appendChild(topologyLeg("M 655 105 L 685 105 L 685 190", 4, 685, 148, ""));
+  svg.appendChild(topologyLeg("M 405 230 L 585 230 L 585 135", 3, 500, 230, "topology-back"));
+  // 4. tunnel-manager opens its own connection to the service, which is why
+  //    that leg leaves the frame of this machine.
+  svg.appendChild(topologyLeg("M 670 105 L 805 105 L 805 200", 4, 805, 150, ""));
 
   wrap.appendChild(svg);
 

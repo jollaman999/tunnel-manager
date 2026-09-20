@@ -966,7 +966,7 @@ td.actions {
 .topology > svg {
   display: block;
   width: 100%;
-  min-width: 40rem;
+  min-width: 45rem;
   height: auto;
   /* A frame title that runs past the right edge in a long language is still
      drawn, rather than cut at the edge of the drawing. */
