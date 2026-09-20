@@ -851,3 +851,94 @@ pre.pem {
   overflow: auto;
   user-select: all;
 }
+
+/* The panel that a choice is made in, and the sheet behind it that dims the
+   screen it was opened from. The backdrop is what is clicked to dismiss, so it
+   is what is laid over the whole viewport; the panel sits in the middle of it.
+
+   It is above the version in the corner, which is the only other thing on the
+   page that is fixed. */
+.modal-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 10;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 1.5rem;
+  background: rgba(28, 28, 28, 0.45);
+}
+
+/* The page is held still while a panel is up. Without it the wheel over the
+   panel scrolls the list behind once the panel has no more to scroll, and the
+   reader comes back to a page that has moved. */
+body.modal-open {
+  overflow: hidden;
+}
+
+.modal-panel {
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  max-width: 34rem;
+  /* The panel never grows past the backdrop it sits in, so what is too long
+     for the screen is scrolled inside the panel rather than hanging off it. */
+  max-height: 100%;
+  box-sizing: border-box;
+  padding: 1.25rem;
+  background: #ffffff;
+  border: 1px solid #dcdfe4;
+  border-radius: 6px;
+  box-shadow: 0 8px 24px rgba(28, 28, 28, 0.2);
+}
+
+.modal-panel:focus-visible {
+  outline: 2px solid #24456b;
+  outline-offset: 2px;
+}
+
+.modal-body {
+  /* A flex item is as tall as its content until it is told it may be shorter,
+     and a body that may not be shorter pushes the buttons off the bottom of a
+     long panel instead of scrolling. */
+  min-height: 0;
+  margin-bottom: 1rem;
+  overflow-y: auto;
+  /* Nothing scrolls sideways: a table inside the body brings its own scroller
+     the way it does on a screen. */
+  overflow-x: hidden;
+}
+
+.modal-body > p:first-child {
+  margin-top: 0;
+}
+
+.modal-body > p:last-child {
+  margin-bottom: 0;
+}
+
+/* The buttons are at the end of the row, where the press that finishes with
+   the panel is looked for. */
+.modal-buttons {
+  justify-content: flex-end;
+}
+
+/* Held upright there is no room for a panel with the screen showing around it,
+   so the panel is the screen. The frame goes with the room: a border and
+   rounded corners against the edge of the display cost width that the content
+   needs more than the frame does, which is what is done to #app at this width
+   already. */
+@media (max-width: 34rem) {
+  .modal-backdrop {
+    padding: 0;
+  }
+
+  .modal-panel {
+    max-width: none;
+    height: 100%;
+    padding: 1rem 0.875rem;
+    border-left: 0;
+    border-right: 0;
+    border-radius: 0;
+  }
+}

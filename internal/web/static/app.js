@@ -135,6 +135,16 @@ let fingerDown = false;
 // which are the two cases the scroll position is treated differently in.
 let drawnScreen = null;
 
+// modalStack is the panels that are over the screen, oldest first. It is a
+// stack and not one panel because what has to stay true is that the page
+// behind is locked while any of them is up and is let go when the last one
+// leaves, and a count of one cannot say that of the second panel a panel
+// opened.
+//
+// It is also what Esc reads: the key closes the panel on top and nothing else,
+// so a panel that opened another is not taken down with it.
+const modalStack = [];
+
 // Redirected is what an API call throws when the answer moved the operator to
 // another screen. It carries no message: the screen it lands on is the report,
 // and an error line on a screen that is going away would be read as belonging
@@ -1071,6 +1081,238 @@ function buildForm(spec) {
   });
 
   return form;
+}
+
+// openModal puts a panel over the screen and hands back what closed it.
+//
+// The panel is built from what the caller hands in: a title, the nodes that go
+// in the body, and the buttons along the bottom. Every button carries a value,
+// and that value is what the promise settles with, so the caller learns which
+// press closed the panel rather than only that it closed. A panel that was
+// dismissed instead of pressed settles with null: Esc, the backdrop and the
+// close in the corner all mean the same thing, which is that nothing was
+// chosen.
+//
+// It is appended to the body and never to #app. #app is emptied by every draw,
+// the periodic refresh of the status screen included, so a panel put inside it
+// would be taken down by a tick of a screen the operator is not even looking
+// at any more.
+function openModal(spec) {
+  return new Promise(function (resolve) {
+    // What had the keyboard before the panel went up. It is where the focus
+    // goes back to when the panel leaves, so the operator carries on from the
+    // button they pressed instead of from the top of the page.
+    const opener = document.activeElement;
+
+    const backdrop = document.createElement("div");
+    backdrop.className = "modal-backdrop";
+    backdrop.dataset.modal = spec.name;
+
+    const panel = document.createElement("div");
+    panel.className = "modal-panel";
+    panel.dataset.modalPanel = spec.name;
+
+    // The panel is told to screen readers as a dialog, and is given the title
+    // as its name so that what it is for is read out when the focus arrives.
+    // It takes focus itself as well, which is what happens when there is
+    // nothing inside it that can.
+    const titleId = "modal-" + spec.name + "-title";
+    const heading = element("h2", spec.title);
+    heading.id = titleId;
+
+    panel.setAttribute("role", "dialog");
+    panel.setAttribute("aria-modal", "true");
+    panel.setAttribute("aria-labelledby", titleId);
+    panel.tabIndex = -1;
+    panel.appendChild(heading);
+
+    // The body is a scroller of its own. What is long scrolls inside the panel
+    // and not behind it, which is the whole reason the page is held still.
+    const body = document.createElement("div");
+    body.className = "modal-body";
+
+    for (const node of spec.body === undefined ? [] : spec.body) {
+      body.appendChild(typeof node === "string" ? element("p", node) : node);
+    }
+
+    panel.appendChild(body);
+
+    const buttons = document.createElement("div");
+    buttons.className = "buttons modal-buttons";
+
+    for (const button of spec.buttons === undefined ? [] : spec.buttons) {
+      buttons.appendChild(actionButton(button.label, spec.name + "-" + button.name, function () {
+        close(button.value === undefined ? button.name : button.value);
+      }, button.variant));
+    }
+
+    panel.appendChild(buttons);
+    backdrop.appendChild(panel);
+
+    const record = { panel: panel, close: close };
+
+    // closed says the panel is already on its way out. A second press, or a
+    // press and an Esc in the same moment, would otherwise settle the promise
+    // twice and release the page twice: the second release would let go of a
+    // lock that the panel underneath still needs.
+    let closed = false;
+
+    function close(value) {
+      if (closed) {
+        return;
+      }
+
+      closed = true;
+
+      document.removeEventListener("keydown", onKeyDown, true);
+
+      const at = modalStack.indexOf(record);
+      if (at !== -1) {
+        modalStack.splice(at, 1);
+      }
+
+      if (backdrop.parentNode !== null) {
+        backdrop.parentNode.removeChild(backdrop);
+      }
+
+      // The page is let go only when nothing is left over it. Every way out of
+      // the panel comes through here, so there is one place the lock is
+      // released and no way of closing that skips it.
+      if (modalStack.length === 0) {
+        document.body.classList.remove("modal-open");
+        window.scrollTo(lockedAtX, lockedAtY);
+      }
+
+      // The button that opened the panel may have been drawn again while it
+      // was up, and the node that was noted is then no longer on the page.
+      // Focus is only put back where there is something to put it on.
+      //
+      // It is put back without scrolling to it. A browser handed the focus
+      // scrolls what it lands on into view, which here would be scrolling away
+      // from the position just put back: the page could not move while the
+      // panel was up, so what the focus is going back to is where it was left.
+      if (opener !== null && typeof opener.focus === "function" && document.body.contains(opener)) {
+        opener.focus({ preventScroll: true });
+      }
+
+      resolve(value === undefined ? null : value);
+    }
+
+    // A press that began inside the panel and ended on the backdrop is a drag,
+    // which is what selecting the text of a message looks like when the hand
+    // runs past the edge. Only a press that both began and ended on the
+    // backdrop closes.
+    let pressedBackdrop = false;
+
+    backdrop.addEventListener("mousedown", function (event) {
+      pressedBackdrop = event.target === backdrop;
+    });
+
+    backdrop.addEventListener("click", function (event) {
+      const onBackdrop = event.target === backdrop && pressedBackdrop;
+
+      pressedBackdrop = false;
+
+      if (onBackdrop) {
+        close(null);
+      }
+    });
+
+    function onKeyDown(event) {
+      // Only the panel on top answers. The ones under it are covered by it and
+      // are not what the operator is looking at.
+      if (modalStack[modalStack.length - 1] !== record) {
+        return;
+      }
+
+      if (event.key === "Escape") {
+        event.preventDefault();
+
+        close(null);
+
+        return;
+      }
+
+      if (event.key === "Tab") {
+        holdFocus(event, panel);
+      }
+    }
+
+    // Where the page is being read. It is taken before the lock goes on and
+    // put back when it comes off, because a browser that cannot scroll an
+    // element has nothing to keep a scroll position on: the position survives
+    // the lock in some and is lost in others, and what the reader would see
+    // there is the list back at the first row.
+    const lockedAtX = window.scrollX;
+    const lockedAtY = window.scrollY;
+
+    document.body.appendChild(backdrop);
+    document.body.classList.add("modal-open");
+    modalStack.push(record);
+    document.addEventListener("keydown", onKeyDown, true);
+
+    // The keyboard is moved into the panel, so that the next key press is
+    // answered by the panel and not by the screen behind it.
+    const reachable = modalFocusables(panel);
+
+    (reachable.length === 0 ? panel : reachable[0]).focus();
+  });
+}
+
+// modalFocusables is what the keyboard can reach inside a panel, in the order
+// Tab would reach it.
+//
+// The list is read at the moment it is needed rather than kept from when the
+// panel was built. The body belongs to the caller and a form in it can grow a
+// box or lose one while the panel is up, and a list made once would send Tab
+// to something that is no longer there.
+function modalFocusables(panel) {
+  const nodes = panel.querySelectorAll(
+    "a[href], button, input, select, textarea, [tabindex]"
+  );
+
+  return Array.prototype.filter.call(nodes, function (node) {
+    return !node.disabled && !node.hidden && node.tabIndex !== -1;
+  });
+}
+
+// holdFocus keeps Tab inside the panel. Tab past the last thing in it goes
+// back to the first, and Shift+Tab before the first goes to the last.
+//
+// Without this the keyboard walks out of the panel and onto the screen behind
+// it, which is a screen the operator cannot see past the backdrop and cannot
+// press with the mouse. What they would have is a caret they have lost.
+function holdFocus(event, panel) {
+  const reachable = modalFocusables(panel);
+
+  if (reachable.length === 0) {
+    event.preventDefault();
+
+    panel.focus();
+
+    return;
+  }
+
+  const first = reachable[0];
+  const last = reachable[reachable.length - 1];
+  const at = document.activeElement;
+  const inside = at !== null && panel.contains(at) && at !== panel;
+
+  if (event.shiftKey) {
+    if (!inside || at === first) {
+      event.preventDefault();
+
+      last.focus();
+    }
+
+    return;
+  }
+
+  if (!inside || at === last) {
+    event.preventDefault();
+
+    first.focus();
+  }
 }
 
 // filterInput drops what may not be in a box, as it is typed and as it is
