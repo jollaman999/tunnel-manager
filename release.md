@@ -1,3 +1,22 @@
+# v3.5.1
+
+## Bug fixes:
+
+- The drawing on the manual put the service inside the frame of the machine tunnel-manager runs on, at `127.0.0.1:8080`, which taught that only a service on that same machine can be published. A service is any address tunnel-manager can open a connection to, which is usually another machine on the network it is on, so the service is drawn outside that frame now and the leg to it leaves the frame.
+- The README said tunnel-manager opens the forwarded port itself. The SSH server opens it; what tunnel-manager opens is a TCP connection to it, to see whether it answers.
+
+## Documentation:
+
+- The notice above an export opened by saying the file holds the SSH password, the private key and the key passphrase of every Host in the clear, and named the password the file is encrypted with three sentences later. Read in that order it says the file is written in the clear, which is not what happens. It says the file is encrypted first now, and the reference says it in that order too.
+- The screens, the refusals and the reference say encrypted where some of them said sealed. All thirteen translations already had one word for it, so only the English was of two minds.
+- Sentences that pointed at something with that connection, that port, this end or over there, which sends the reader back a sentence to find out what is meant, name the thing instead. That is a little over a hundred sentences across the thirteen languages. The Korean also called the three columns of the Status screen 칸, which is a cell.
+- The overwrite hint explained itself by the id of a row, which no screen shows; the import kinds said an import says so rather than reading the other; the atomic import said there was nothing to take apart by hand. Each says what it means in one reading now, in every language.
+
+## Notes:
+
+- No behaviour changed in this release. What changed is what the screens, the README and the reference say, and the drawing on the manual.
+- None of the twelve translations has been read by a native speaker.
+
 # v3.5.0
 
 ## Add/fix features:
