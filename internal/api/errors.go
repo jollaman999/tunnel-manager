@@ -322,23 +322,23 @@ var errorMessages = map[errorCode]string{
 	errLogsFileReadFailed:    "The log file at {path} cannot be read: {reason}",
 
 	// The export half of the transfer screens.
-	errExportPasswordRequired:  "A password is required. It is what seals the file, and the file cannot be opened without it",
+	errExportPasswordRequired:  "A password is required. It is what encrypts the file, and the file cannot be opened without it",
 	errExportPasswordTooShort:  "The password must be at least {min} bytes long",
 	errExportPasswordTooLong:   "The password must be at most {max} bytes long",
 	errExportHostsReadFailed:   "Failed to read the Hosts",
 	errExportServicePortsRead:  "Failed to read the service ports",
 	errExportAssignmentsRead:   "Failed to read the service port assignments",
 	errExportHostSecretsSealed: "No export was made: the stored secrets of the Host {host} do not open with the encryption key of this installation",
-	errExportSealFailed:        "Failed to seal the file",
+	errExportSealFailed:        "Failed to encrypt the file",
 
 	// Opening the file an import was sent.
 	errImportFileMissing:      "No file was sent. Send the text an export answered with in the 'file' field",
-	errImportPasswordRequired: "A password is required. It is the one the file was sealed with at the installation it came from",
+	errImportPasswordRequired: "A password is required. It is the one the file was encrypted with at the installation it came from",
 	errImportFileNotAnExport:  "This is not a file tunnel-manager exported. An exported file is one line of text that starts with a marker naming the format, and this one does not",
 	errImportFileDamaged:      "The file is damaged. It carries the marker of an exported file, but the text after it was cut or altered, so no password opens it. Export it again",
 	errImportPasswordWrong:    "The password does not open this file. It is the password that was typed at the export, not the password of this account",
 	errImportFileOpenFailed:   "Failed to open the file",
-	errImportFileNotOurs:      "The file opened with this password but does not hold what an export writes. It was sealed with the password of this program by something else",
+	errImportFileNotOurs:      "The file opened with this password but does not hold what an export writes. It was encrypted with the password of this program by something else",
 	errImportFileWrongKind:    "This file holds {found}, and this call takes {wanted}. Send it to the other import",
 	errImportFileNewerFormat:  "The file is in format version {version} and this version of tunnel-manager reads up to {supported}. It was written by a newer version",
 	// The same refusal from a file that says which version wrote it. It is a

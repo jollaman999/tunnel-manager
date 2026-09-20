@@ -647,7 +647,7 @@ func (h *TransferHandler) ExportTunnels(c echo.Context) error {
 
 	sealed, err := h.seal(transferKindTunnels, content, req.Password, exportedAt)
 	if err != nil {
-		h.hosts.logger.Error("failed to seal the exported tunnel configuration",
+		h.hosts.logger.Error("failed to encrypt the exported tunnel configuration",
 			logid.TransferExportSealFailed.Field(),
 			zap.Error(err))
 		return failure(c, http.StatusInternalServerError, errExportSealFailed)
@@ -1159,7 +1159,7 @@ func (h *TransferHandler) ExportSettings(c echo.Context) error {
 
 	sealed, err := h.seal(transferKindSettings, settingsOf(stored), req.Password, exportedAt)
 	if err != nil {
-		h.hosts.logger.Error("failed to seal the exported settings", logid.TransferSettingsSealFailed.Field(), zap.Error(err))
+		h.hosts.logger.Error("failed to encrypt the exported settings", logid.TransferSettingsSealFailed.Field(), zap.Error(err))
 		return failure(c, http.StatusInternalServerError, errExportSealFailed)
 	}
 
