@@ -907,6 +907,7 @@ curl -s -b cookies.txt "$BASE/api/status?page=99999&size=10"
 |------|------|--------|
 | `POST` | `/api/login` | 收 `username` 和 `password`，设下会话和 CSRF 两个 cookie，答里带着 `setup_required` 和 `csrf_token` |
 | `POST` | `/api/logout` | 丢掉会话，并让两个 cookie 过期 |
+| `GET` | `/api/setup` | 说明账号是否还没有用户名和密码。登录页要用，所以不需要会话也会回答 |
 | `POST` | `/api/setup` | 给还没有用户名和密码的账号定一次用户名和密码 |
 | `GET` | `/api/account` | 这个账号叫什么 |
 | `PUT` | `/api/account` | 收 `current_password`，以及 `username`、`new_password` 或两者，改掉它们并让其他会话全部下线 |

@@ -86,7 +86,6 @@
   "common.unit-gb.text": "GB",
   "common.unit-kb.text": "KB",
   "common.unit-mb.text": "MB",
-  "common.version.text": "バージョン {version}",
   "common.yes.text": "はい",
   "error.account.current_password.wrong.error": "現在のパスワードでは、このアカウントを開けません",
   "error.account.new_password.too_long.error": "新しいパスワードは {max} バイト以内にしてください。bcrypt が読むのはそこまでです",

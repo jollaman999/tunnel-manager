@@ -86,7 +86,6 @@
   "common.unit-gb.text": "GB",
   "common.unit-kb.text": "KB",
   "common.unit-mb.text": "MB",
-  "common.version.text": "v{version}",
   "common.yes.text": "ja",
   "error.account.current_password.wrong.error": "Das aktuelle Passwort öffnet dieses Konto nicht",
   "error.account.new_password.too_long.error": "Das neue Passwort darf höchstens {max} Bytes lang sein, weil bcrypt nicht weiter liest",

@@ -86,7 +86,6 @@
   "common.unit-gb.text": "GB",
   "common.unit-kb.text": "KB",
   "common.unit-mb.text": "MB",
-  "common.version.text": "เวอร์ชัน {version}",
   "common.yes.text": "ใช่",
   "error.account.current_password.wrong.error": "รหัสผ่านปัจจุบันเปิดบัญชีนี้ไม่ได้",
   "error.account.new_password.too_long.error": "รหัสผ่านใหม่ต้องยาวไม่เกิน {max} ไบต์ เพราะ bcrypt อ่านได้แค่นั้น",

@@ -389,6 +389,28 @@ func (h *AuthHandler) Logout(c echo.Context) error {
 // gate down. Before it has run it is the only thing a session may do, and it
 // runs once: it asks for no current password, so it is not a way to change the
 // credentials later on.
+// setupState is what GET /api/setup answers with.
+type setupState struct {
+	SetupRequired bool `json:"setup_required"`
+}
+
+// GetSetup says whether the account is still waiting for its username and
+// password. It answers without a session: the login screen asks it before
+// anyone has signed in, to decide whether the hint about the first sign in is
+// still true.
+func (h *AuthHandler) GetSetup(c echo.Context) error {
+	user, err := h.readUser()
+	if err != nil {
+		h.logger.Error("failed to read the account", logid.AccountReadFailed.Field(), zap.Error(err))
+		return failure(c, http.StatusInternalServerError, errAccountReadFailed)
+	}
+
+	return c.JSON(http.StatusOK, models.Response{
+		Success: true,
+		Data:    setupState{SetupRequired: user.SetupRequired},
+	})
+}
+
 func (h *AuthHandler) Setup(c echo.Context) error {
 	var req setupRequest
 
@@ -541,6 +563,15 @@ func (h *AuthHandler) RequireSession() echo.MiddlewareFunc {
 			// session it would hand out goes into a cookie the attacker cannot
 			// read.
 			if path == loginPath {
+				return next(c)
+			}
+
+			// Whether the setup has happened is read by the login screen,
+			// which has no session yet, so that it can stop telling a reader
+			// to leave the username empty once there is a username to type.
+			// It is the one bit a login attempt would reveal anyway, and only
+			// the read is open: the setup itself stays behind the session.
+			if path == setupPath && c.Request().Method == http.MethodGet {
 				return next(c)
 			}
 

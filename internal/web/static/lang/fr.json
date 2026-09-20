@@ -86,7 +86,6 @@
   "common.unit-gb.text": "Go",
   "common.unit-kb.text": "Ko",
   "common.unit-mb.text": "Mo",
-  "common.version.text": "v{version}",
   "common.yes.text": "oui",
   "error.account.current_password.wrong.error": "Le mot de passe actuel n'ouvre pas ce compte",
   "error.account.new_password.too_long.error": "Le nouveau mot de passe doit faire au plus {max} octets, car c'est jusque-là que bcrypt lit",

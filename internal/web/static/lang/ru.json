@@ -86,7 +86,6 @@
   "common.unit-gb.text": "ГБ",
   "common.unit-kb.text": "КБ",
   "common.unit-mb.text": "МБ",
-  "common.version.text": "вер. {version}",
   "common.yes.text": "да",
   "error.account.current_password.wrong.error": "Текущий пароль не открывает эту учётную запись",
   "error.account.new_password.too_long.error": "Новый пароль должен быть не длиннее {max} байт: дальше bcrypt не читает",

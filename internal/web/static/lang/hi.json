@@ -86,7 +86,6 @@
   "common.unit-gb.text": "GB",
   "common.unit-kb.text": "KB",
   "common.unit-mb.text": "MB",
-  "common.version.text": "संस्करण {version}",
   "common.yes.text": "हाँ",
   "error.account.current_password.wrong.error": "मौजूदा पासवर्ड से यह खाता नहीं खुलता",
   "error.account.new_password.too_long.error": "नया पासवर्ड ज़्यादा से ज़्यादा {max} बाइट का हो सकता है, क्योंकि bcrypt इतना ही पढ़ता है",

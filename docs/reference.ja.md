@@ -1016,6 +1016,7 @@ curl -s -b cookies.txt "$BASE/api/status?page=99999&size=10"
 |----------|------|------------|
 | `POST` | `/api/login` | `username` と `password` を受け取り、セッションと CSRF のクッキーを設定し、`setup_required` と `csrf_token` を返します |
 | `POST` | `/api/logout` | セッションを捨て、両方のクッキーを失効させます |
+| `GET` | `/api/setup` | アカウントにまだユーザー名とパスワードがないかを返します。ログイン画面が使うので、セッションなしで答えます |
 | `POST` | `/api/setup` | まだユーザー名とパスワードを持たないアカウントに、それを一度だけ設定します |
 | `GET` | `/api/account` | アカウントの名前を返します |
 | `PUT` | `/api/account` | `current_password` と、`username` か `new_password` かその両方を受け取り、変更してほかのセッションをすべてサインアウトさせます |

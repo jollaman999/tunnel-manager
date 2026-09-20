@@ -154,7 +154,21 @@ async function logOut() {
 // answers before a login says which state it is in. The username is ignored
 // while the account is still to be set up, so sending it empty is right then
 // and sending it filled in is right afterwards.
-function drawLogin() {
+async function drawLogin() {
+  // Whether the setup is done decides whether the hint under the username
+  // box is still true. The server is asked, since it is the one that knows;
+  // a server that cannot say, an older one for instance, leaves the hint in,
+  // which is the safe way round.
+  let setupDone = false;
+
+  try {
+    const state = await apiCall("GET", "/api/setup");
+
+    setupDone = state !== null && state.setup_required === false;
+  } catch (error) {
+    setupDone = false;
+  }
+
   const form = buildForm({
     name: "login",
     legend: t("login.form.title"),
@@ -163,10 +177,9 @@ function drawLogin() {
       {
         name: "username",
         label: t("login.username.label"),
-        // The hint says to leave the box empty before the setup. Once this
-        // browser has signed in to an installation whose setup was done, the
-        // hint is no longer true for it and is left out.
-        note: setupKnownDone() ? undefined : t("login.username.hint")
+        // The hint says to leave the box empty before the setup, and is
+        // left out once the setup is done.
+        note: setupDone ? undefined : t("login.username.hint")
       },
       { name: "password", label: t("login.password.label"), type: "password" }
     ],
@@ -191,12 +204,6 @@ async function submitLogin(values) {
     username: values.username,
     password: values.password
   });
-
-  // What the login answered is the one thing this browser can learn about the
-  // setup, so it is kept for the next time the login screen is drawn.
-  if (data !== null) {
-    rememberSetupDone(!data.setup_required);
-  }
 
   // The account has no username and no chosen password yet, and a session that
   // is in that state is refused everywhere but at the setup.
@@ -277,7 +284,6 @@ async function submitSetup(values) {
     // to do on this screen any more, and the credentials that now open the
     // account are the ones they chose.
     if (error instanceof ApiError && error.status === 409) {
-      rememberSetupDone(true);
       navigate("login", { text: error.message, kind: "info" });
 
       return;
@@ -285,10 +291,6 @@ async function submitSetup(values) {
 
     throw error;
   }
-
-  // The setup is done, so from here the login screen of this browser has no
-  // first sign in to explain.
-  rememberSetupDone(true);
 
   navigate("status", { text: t("setup.done.notice"), kind: "info" });
 }

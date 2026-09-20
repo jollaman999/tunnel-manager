@@ -86,7 +86,6 @@
   "common.unit-gb.text": "GB",
   "common.unit-kb.text": "KB",
   "common.unit-mb.text": "MB",
-  "common.version.text": "버전 {version}",
   "common.yes.text": "예",
   "error.account.current_password.wrong.error": "현재 비밀번호로는 이 계정이 열리지 않습니다",
   "error.account.new_password.too_long.error": "새 비밀번호는 {max} 바이트 이하여야 합니다. bcrypt 가 거기까지만 읽습니다",

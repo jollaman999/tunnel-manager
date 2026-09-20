@@ -104,6 +104,7 @@ func newServer(t *testing.T, db *gorm.DB, logger *zap.Logger, passwordFile strin
 	g.Use(authHandler.RequireSession())
 	g.POST("/login", authHandler.Login)
 	g.POST("/logout", authHandler.Logout)
+	g.GET("/setup", authHandler.GetSetup)
 	g.POST("/setup", authHandler.Setup)
 	g.GET("/host", h.ListHosts)
 
@@ -1484,6 +1485,51 @@ func TestSetupKeepsTheCauseOfATransactionThatFailedOutOfTheAnswer(t *testing.T) 
 			}
 
 			causeOnlyCheckAnswer(t, rec, logs)
+		})
+	}
+}
+
+// TestTheSetupStateIsReadWithoutASession pins the one read that is open to a
+// reader who has not signed in: the login screen asks it to decide whether
+// the hint about the first sign in is still true. It answers before the setup
+// and after it, and the write beside it stays behind the session.
+func TestTheSetupStateIsReadWithoutASession(t *testing.T) {
+	for _, tc := range []struct {
+		name          string
+		setupRequired bool
+	}{
+		{"before the setup", true},
+		{"after the setup", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f := newSetupFixture(t, tc.setupRequired)
+
+			rec := do(f.e, http.MethodGet, setupPath, "")
+			if rec.Code != http.StatusOK {
+				t.Fatalf("status = %d, want %d, body: %s", rec.Code, http.StatusOK, rec.Body.String())
+			}
+
+			var resp struct {
+				Success bool `json:"success"`
+				Data    struct {
+					SetupRequired bool `json:"setup_required"`
+				} `json:"data"`
+			}
+			if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+				t.Fatalf("failed to decode: %v", err)
+			}
+			if !resp.Success {
+				t.Errorf("success = false, body: %s", rec.Body.String())
+			}
+			if resp.Data.SetupRequired != tc.setupRequired {
+				t.Errorf("setup_required = %v, want %v", resp.Data.SetupRequired, tc.setupRequired)
+			}
+
+			// The write is not opened with it.
+			rec = do(f.e, http.MethodPost, setupPath, setupBody(t, testUsername, testNewPassword))
+			if rec.Code != http.StatusUnauthorized {
+				t.Errorf("POST without a session: status = %d, want %d", rec.Code, http.StatusUnauthorized)
+			}
 		})
 	}
 }

@@ -987,6 +987,7 @@ curl -s -b cookies.txt "$BASE/api/status?page=99999&size=10"
 |--------|------|---------|
 | `POST` | `/api/login` | `username` 과 `password` 를 받아 세션·CSRF 쿠키를 내리고 `setup_required` 와 `csrf_token` 을 응답 |
 | `POST` | `/api/logout` | 세션을 지우고 쿠키 둘을 만료시킴 |
+| `GET` | `/api/setup` | 계정에 아직 사용자명과 비밀번호가 없는지 알려 줌. 로그인 화면이 쓰므로 세션 없이 답함 |
 | `POST` | `/api/setup` | 아직 설정이 필요한 계정에 사용자명과 비밀번호를 한 번 정함 |
 | `GET` | `/api/account` | 계정의 사용자명 조회 |
 | `PUT` | `/api/account` | `current_password` 와 `username`·`new_password` 중 하나 또는 둘을 받아 바꾸고, 다른 세션을 전부 끊음 |

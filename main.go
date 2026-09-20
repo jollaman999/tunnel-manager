@@ -833,6 +833,7 @@ func main() {
 
 	g.POST("/login", authHandler.Login)
 	g.POST("/logout", authHandler.Logout)
+	g.GET("/setup", authHandler.GetSetup)
 	g.POST("/setup", authHandler.Setup)
 
 	g.GET("/account", authHandler.GetAccount)

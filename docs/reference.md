@@ -1096,6 +1096,7 @@ curl -s -b cookies.txt "$BASE/api/status?page=99999&size=10"
 |--------|------|--------------|
 | `POST` | `/api/login` | Takes `username` and `password`, sets the session and CSRF cookies, answers with `setup_required` and `csrf_token` |
 | `POST` | `/api/logout` | Drops the session and expires both cookies |
+| `GET` | `/api/setup` | Says whether the account still needs its username and password. Answers without a session, for the login screen |
 | `POST` | `/api/setup` | Sets the username and the password once, on the account that still needs them |
 | `GET` | `/api/account` | What the account is called |
 | `PUT` | `/api/account` | Takes `current_password` and `username`, `new_password` or both, changes them and signs out every other session |

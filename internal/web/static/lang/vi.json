@@ -86,7 +86,6 @@
   "common.unit-gb.text": "GB",
   "common.unit-kb.text": "KB",
   "common.unit-mb.text": "MB",
-  "common.version.text": "phiên bản {version}",
   "common.yes.text": "có",
   "error.account.current_password.wrong.error": "Mật khẩu hiện tại không mở được tài khoản này",
   "error.account.new_password.too_long.error": "Mật khẩu mới dài nhất là {max} byte, vì bcrypt chỉ đọc tới đó",

@@ -86,7 +86,6 @@
   "common.unit-gb.text": "GB",
   "common.unit-kb.text": "KB",
   "common.unit-mb.text": "MB",
-  "common.version.text": "الإصدار {version}",
   "common.yes.text": "نعم",
   "error.account.current_password.wrong.error": "كلمة المرور الحالية لا تفتح هذا الحساب",
   "error.account.new_password.too_long.error": "يجب ألا تزيد كلمة المرور الجديدة على {max} بايت، فهذا أقصى ما يقرؤه bcrypt",

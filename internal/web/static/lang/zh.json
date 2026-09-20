@@ -86,7 +86,6 @@
   "common.unit-gb.text": "GB",
   "common.unit-kb.text": "KB",
   "common.unit-mb.text": "MB",
-  "common.version.text": "版本 {version}",
   "common.yes.text": "是",
   "error.account.current_password.wrong.error": "当前密码打不开这个账号",
   "error.account.new_password.too_long.error": "新密码最长 {max} 个字节，因为 bcrypt 只读到这里",
