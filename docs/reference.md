@@ -1165,6 +1165,16 @@ These four carry a configuration from one installation to another. An export
 hands out a file and an import takes one back, so you decide where the file is
 kept and for how long, and neither installation has to reach the other.
 
+**What an export hands out is one line of text.** It opens with the marker
+`tmpwenc:v1:` and everything after it is base64, so the whole file is ASCII and
+survives being pasted into a box, a message or a ticket without anything being
+lost to a line ending. Encoded in there are the parameters the key was derived
+with, the salt, the nonce and the encrypted configuration. The parameters and
+the salt are authenticated rather than encrypted, which is what lets a wrong
+password be told apart from a damaged file, and nothing readable is in the file
+at all. That is why the import screen takes a single long line, and why dropping
+the file onto it and pasting what is in it do the same thing.
+
 **The file says which service ports each Host carries**, in
 `assigned_local_ports` on the Host, named by local port and not by the id of the
 row: the ids belong to the installation the file came from, while the local port
