@@ -101,7 +101,7 @@
   "error.assignment.add_and_remove.error": "같은 서비스 포트를 추가하라고도 하고 빼라고도 했습니다: {ids}",
   "error.assignment.service_port.not_found.error": "그런 서비스 포트가 없습니다: {ids}",
   "error.assignment.update_failed.error": "Host 가 담당하는 서비스 포트를 바꾸지 못했습니다",
-  "error.auth.attempts.too_many.error": "로그인 실패가 너무 많습니다. {retry_after} 초 동안은 비밀번호를 확인하지 않습니다. 요청이 온 주소와 계정을 따로 세며, 어느 쪽에 걸렸는지는 알려 드리지 않습니다",
+  "error.auth.attempts.too_many.error": "로그인 실패가 너무 많습니다. {retry_after} 초 동안 로그인이 차단됩니다",
   "error.auth.credentials.invalid.error": "사용자명이나 비밀번호가 틀렸습니다",
   "error.auth.csrf.refused.error": "요청에 올바른 {header} 헤더가 없습니다. 로그인 응답으로 받고 {cookie} 쿠키에도 담기는 세션 토큰을 POST, PUT, DELETE 마다 함께 보내십시오",
   "error.auth.password.too_long.error": "비밀번호는 {max} 바이트 이하여야 합니다. bcrypt 가 거기까지만 읽습니다",

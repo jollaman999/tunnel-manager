@@ -101,7 +101,7 @@
   "error.assignment.add_and_remove.error": "التغيير يسمّي منفذ الخدمة نفسه للإضافة وللإزالة: {ids}",
   "error.assignment.service_port.not_found.error": "لا يوجد منفذ خدمة بهذا المعرّف: {ids}",
   "error.assignment.update_failed.error": "تعذّر تحديث منافذ الخدمة للـ Host",
-  "error.auth.attempts.too_many.error": "محاولات تسجيل دخول فاشلة كثيرة جدًا. لن تُفحص كلمة المرور خلال مدة بالثواني قدرها {retry_after}. يُحتسب عنوان الطلب والحساب كل على حدة، ولا يُذكر هنا أيهما بلغ الحد",
+  "error.auth.attempts.too_many.error": "محاولات تسجيل دخول فاشلة كثيرة جدًا. تسجيل الدخول محجوب مدة بالثواني قدرها {retry_after}",
   "error.auth.credentials.invalid.error": "اسم المستخدم أو كلمة المرور غير صحيح",
   "error.auth.csrf.refused.error": "لا يتضمن الطلب ترويسة {header} صالحة. أرسل رمز الجلسة، وهو ما يجيب به تسجيل الدخول وتتضمنه الكوكي {cookie}، مع كل POST وPUT وDELETE",
   "error.auth.password.too_long.error": "يجب ألا تزيد كلمة المرور على {max} بايت، فهذا أقصى ما يقرؤه bcrypt",

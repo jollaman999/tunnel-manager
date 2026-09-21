@@ -101,7 +101,7 @@
   "error.assignment.add_and_remove.error": "A alteração lista a mesma porta de serviço para adicionar e para remover: {ids}",
   "error.assignment.service_port.not_found.error": "Não existe essa porta de serviço: {ids}",
   "error.assignment.update_failed.error": "Falha ao atualizar as portas de serviço do Host",
-  "error.auth.attempts.too_many.error": "Tentativas de login malsucedidas em excesso. Nos próximos {retry_after} segundos a senha não é conferida. O endereço de origem e a conta são contados separadamente, e qual dos dois atingiu o limite não é informado aqui",
+  "error.auth.attempts.too_many.error": "Tentativas de login malsucedidas em excesso. O login fica bloqueado por {retry_after} segundos",
   "error.auth.credentials.invalid.error": "Nome de usuário ou senha inválidos",
   "error.auth.csrf.refused.error": "A requisição não contém um cabeçalho {header} válido. Envie o token da sessão, que o login retorna e que fica no cookie {cookie}, em todo POST, PUT e DELETE",
   "error.auth.password.too_long.error": "A senha deve ter no máximo {max} bytes, porque é até aí que o bcrypt lê",

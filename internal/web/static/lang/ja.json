@@ -101,7 +101,7 @@
   "error.assignment.add_and_remove.error": "同じサービスポートが、追加にも削除にも指定されています: {ids}",
   "error.assignment.service_port.not_found.error": "そのようなサービスポートはありません: {ids}",
   "error.assignment.update_failed.error": "Host が担当するサービスポートを更新できませんでした",
-  "error.auth.attempts.too_many.error": "ログインの失敗が多すぎます。これから {retry_after} 秒のあいだ、パスワードは確認しません。要求元のアドレスとアカウントは別々に数えており、どちらが上限に達したかはお知らせしません",
+  "error.auth.attempts.too_many.error": "ログインの失敗が多すぎます。{retry_after} 秒間ログインを受け付けません",
   "error.auth.credentials.invalid.error": "ユーザー名かパスワードが違います",
   "error.auth.csrf.refused.error": "リクエストに有効な {header} ヘッダーがありません。POST、PUT、DELETE のたびに、ログインの応答で返され {cookie} クッキーに含まれているセッションのトークンを送ってください",
   "error.auth.password.too_long.error": "パスワードは {max} バイト以内にしてください。bcrypt が読むのはそこまでです",

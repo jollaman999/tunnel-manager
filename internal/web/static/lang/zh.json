@@ -101,7 +101,7 @@
   "error.assignment.add_and_remove.error": "这次修改中，同一个服务端口既要添加又要移除：{ids}",
   "error.assignment.service_port.not_found.error": "没有这个服务端口：{ids}",
   "error.assignment.update_failed.error": "更新这台 Host 的服务端口失败",
-  "error.auth.attempts.too_many.error": "登录失败次数太多。接下来的 {retry_after} 秒内不再检查密码。请求来源地址和账号分别计数，具体是哪一边到了上限，这里不会说明",
+  "error.auth.attempts.too_many.error": "登录失败次数太多。{retry_after} 秒内禁止登录",
   "error.auth.credentials.invalid.error": "用户名或密码错误",
   "error.auth.csrf.refused.error": "请求中没有有效的 {header} 头。每个 POST、PUT 和 DELETE 请求都要带上会话令牌，它在登录的响应里，也保存在 {cookie} cookie 里",
   "error.auth.password.too_long.error": "密码最多 {max} 个字节，因为 bcrypt 只读取到这个长度",
