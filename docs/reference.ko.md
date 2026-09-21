@@ -73,7 +73,7 @@ Host 를 수정할 때 그 칸들은 비어 있는 채로 옵니다. 빈 칸은 
 | 하려는 일 | 필요한 것 |
 |-----------|-----------|
 | 릴리즈 바이너리 실행 | 없음 |
-| 소스에서 빌드 | Go 1.23 이상 |
+| 소스에서 빌드 | Go 1.26 이상 |
 | 컨테이너로 실행 | Docker 와 Docker Compose |
 
 SQLite 드라이버가 순수 Go 구현(`modernc.org/sqlite` 위의 `github.com/glebarez/sqlite`)이라서

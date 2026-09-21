@@ -77,7 +77,7 @@ SQLite ファイル、設定はそのファイルの中にあってブラウザ�
 | したいこと | 要るもの |
 |------------|----------|
 | リリースバイナリを実行する | ほかには何も |
-| ソースからビルドする | Go 1.23 以降 |
+| ソースからビルドする | Go 1.26 以降 |
 | コンテナで実行する | Docker と Docker Compose |
 
 SQLite ドライバは純粋な Go 実装 (`modernc.org/sqlite` の上の `github.com/glebarez/sqlite`)

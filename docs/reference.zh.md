@@ -65,7 +65,7 @@ Tunnel Manager 建立 SSH 隧道，并让它们保持连接。你注册它要登
 | 要做的事 | 需要什么 |
 |----------|----------|
 | 运行发布的可执行文件 | 不需要其他任何东西 |
-| 从源码构建 | Go 1.23 或更新的版本 |
+| 从源码构建 | Go 1.26 或更新的版本 |
 | 运行容器 | Docker 和 Docker Compose |
 
 SQLite 驱动是纯 Go 写的（`github.com/glebarez/sqlite` 架在 `modernc.org/sqlite` 上），所以

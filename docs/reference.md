@@ -83,7 +83,7 @@ everything else it needs.
 | To do this | You need |
 |------------|----------|
 | Run a release binary | Nothing else |
-| Build from source | Go 1.23 or newer |
+| Build from source | Go 1.26 or newer |
 | Run the container | Docker and Docker Compose |
 
 The SQLite driver is a pure Go one (`github.com/glebarez/sqlite` over
