@@ -605,3 +605,451 @@ func CheckPrivilege() error {
 
 	return errors.New("installing and removing the service needs more than this process has. " + privilegeHint)
 }
+
+// Removal is what an uninstall was asked for, beside what it reads out of the
+// registration itself.
+//
+// The two paths are what the design leaves the operator for a machine whose
+// registration is gone: there is no state file of ours anywhere, so once the
+// service manager holds nothing, nothing on the machine says where this
+// installation was put, and then it is the operator who has to name it.
+type Removal struct {
+	// ExecutablePath is the -bin of the command line, empty when none was
+	// named.
+	ExecutablePath string
+	// DatabaseFile is the -db of the command line, empty when none was named.
+	// The directory it is in is the data directory this removal reports on, and
+	// the one -purge removes.
+	DatabaseFile string
+	// Purge asks for the data directory to be removed as well. It cannot be
+	// taken back, which is why what it removed is named on the console while it
+	// happens and again in the report.
+	Purge bool
+}
+
+// Removed is what an uninstall did, in the terms it has to be checked by.
+//
+// Stopping a service, taking a registration out and removing an executable
+// cannot be taken back either, so what the operator is left with is this: what
+// was found, what went, and - the part that is easy to miss - what was kept and
+// where it is.
+type Removed struct {
+	// Source names where the paths below came from, so that a removal driven by
+	// the registration is told apart from one the operator pointed by hand.
+	Source string
+	// Registered says a registration was there and was stopped and taken out.
+	Registered bool
+	// ExecutablePath is the file that was removed, empty when neither the
+	// registration nor the operator named one.
+	ExecutablePath string
+	// ExecutableWasThere says there was a file at that path to begin with. A
+	// path that named nothing is not a failure - the executable may have been
+	// removed by hand before - but it is not the same answer as having removed
+	// it, and an operator reading the report has to be able to tell.
+	ExecutableWasThere bool
+	// ExecutableAtReboot says the file could not be removed now and was handed
+	// to the next reboot instead. See removeExecutable on Windows.
+	ExecutableAtReboot bool
+	// Definition is the registration that was taken out. Empty where the
+	// platform keeps no file for it.
+	Definition string
+	// DataDir is the directory the database is in. It is reported whether or
+	// not it was removed, because a removal that keeps the data has to say
+	// where the data it kept is.
+	DataDir string
+	// DatabaseFile is the database of the installation that was removed.
+	DatabaseFile string
+	// Purged says the data directory was removed.
+	Purged bool
+}
+
+// Report writes what the uninstall did for a person to read.
+//
+// It is built whole and written once, the same way the install report is and
+// for the same reason: this is the record of steps that cannot be taken back.
+func (r Removed) Report(w io.Writer) error {
+	var b strings.Builder
+
+	b.WriteString(serviceName + " uninstall\n")
+	reportLine(&b, "taken from", r.Source)
+	reportLine(&b, "executable", r.executableText())
+	reportLine(&b, "data", r.dataText())
+	reportLine(&b, "database", knownText(r.DatabaseFile))
+
+	if r.Registered {
+		reportLine(&b, "service", removedDefinitionText(r.Definition)+", removed")
+		reportLine(&b, "state", "stopped and taken out of the service manager")
+	} else {
+		reportLine(&b, "service", "nothing was registered")
+		reportLine(&b, "state", "there was nothing registered to stop")
+	}
+
+	_, err := io.WriteString(w, b.String())
+
+	return err
+}
+
+func (r Removed) executableText() string {
+	switch {
+	case r.ExecutablePath == "":
+		return "not known: nothing was registered and -bin named none"
+	case r.ExecutableAtReboot:
+		return r.ExecutablePath + ", removed at the next reboot of this machine"
+	case !r.ExecutableWasThere:
+		return r.ExecutablePath + ", no file was there"
+	}
+
+	return r.ExecutablePath + ", removed"
+}
+
+func (r Removed) dataText() string {
+	switch {
+	case r.DataDir == "":
+		return "not known: no database file was named"
+	case r.Purged:
+		return r.DataDir + ", removed with everything under it"
+	}
+
+	return r.DataDir + ", left in place"
+}
+
+func knownText(path string) string {
+	if path == "" {
+		return "not known"
+	}
+
+	return path
+}
+
+// removedDefinitionText names the registration that went. It is apart from
+// definitionText because that one reads as a registration that exists now,
+// which after an uninstall it does not.
+func removedDefinitionText(definition string) string {
+	if definition == "" {
+		// Windows, where the registration is in the registry under the service
+		// name and there is no file to name.
+		return "the registration of " + serviceName
+	}
+
+	return definition
+}
+
+// Uninstall stops the service, takes its registration out and removes the
+// executable that registration named.
+//
+// The data is kept unless request asks for it to go: what an operator loses by
+// keeping it is disk, and what they lose by removing it is every host, every
+// credential and the key the passwords are sealed with, so the one that cannot
+// be undone is the one that has to be asked for.
+func Uninstall(request Removal, out io.Writer) (Removed, error) {
+	if newService == nil {
+		return Removed{}, ErrNoBackend
+	}
+
+	svc, err := newService()
+	if err != nil {
+		return Removed{}, err
+	}
+
+	return uninstall(svc, request, out)
+}
+
+// uninstall is Uninstall with the backend handed in, which is what the tests
+// drive.
+func uninstall(svc service, request Removal, out io.Writer) (Removed, error) {
+	err := CheckPrivilege()
+	if err != nil {
+		return Removed{}, err
+	}
+
+	existing, err := currentOrNone(svc)
+	if err != nil {
+		return Removed{}, err
+	}
+
+	// Worked out before anything is touched, so that a removal which has
+	// nothing to work on stops while the machine is still as it was.
+	removed, err := whatToRemove(request, existing)
+	if err != nil {
+		return Removed{}, err
+	}
+
+	if existing != nil {
+		// Stopped before the registration goes. The other way round leaves a
+		// running process with nothing registered naming it: the service
+		// manager would no longer stop it, and an operator looking for what is
+		// holding the port has nothing to look the process up by.
+		err = svc.Stop()
+		if err != nil {
+			return removed, fmt.Errorf("failed to stop the service: %w", err)
+		}
+
+		err = svc.Unregister(*existing)
+		if err != nil {
+			return removed, fmt.Errorf("failed to take the service registration out: %w", err)
+		}
+
+		removed.Registered = true
+	}
+
+	err = removeInstalledExecutable(&removed)
+	if err != nil {
+		return removed, err
+	}
+
+	if request.Purge {
+		err = purgeData(removed.DataDir, removed.DatabaseFile, out)
+		if err != nil {
+			// The report is written all the same. The service is gone and the
+			// executable with it, and an operator whose -purge was refused has
+			// to be told what did happen and that the data is still there.
+			_ = removed.Report(out)
+
+			return removed, err
+		}
+
+		removed.Purged = true
+	}
+
+	err = removed.Report(out)
+	if err != nil {
+		return removed, fmt.Errorf("the uninstall finished but reporting it failed: %w", err)
+	}
+
+	return removed, nil
+}
+
+// whatToRemove settles which paths this removal is about.
+//
+// The registration is believed over -bin and -db wherever it names something,
+// and the two flags fill in what it does not. They are not allowed to point the
+// removal somewhere else while a registration exists: the registration is what
+// says which files this installation owns, and a removal that took the operator
+// word for it would remove a path nothing on this machine claims while leaving
+// the registered one behind.
+func whatToRemove(request Removal, existing *Installed) (Removed, error) {
+	if existing == nil && request.ExecutablePath == "" && request.DatabaseFile == "" {
+		return Removed{}, fmt.Errorf("%w, so nothing was removed. If this program was installed on this "+
+			"machine and the registration is already gone, name what is left with -bin and -db and run "+
+			"this again", ErrNotInstalled)
+	}
+
+	removed := Removed{}
+	named := false
+
+	if existing != nil {
+		removed.ExecutablePath = existing.ExecutablePath
+		removed.DatabaseFile = existing.DatabaseFile
+		removed.Definition = existing.DefinitionPath
+	}
+
+	if removed.ExecutablePath == "" && request.ExecutablePath != "" {
+		removed.ExecutablePath = request.ExecutablePath
+		named = true
+	}
+
+	if removed.DatabaseFile == "" && request.DatabaseFile != "" {
+		removed.DatabaseFile = request.DatabaseFile
+		named = true
+	}
+
+	removed.DataDir = dataDirOf(removed.DatabaseFile)
+	removed.Source = removalSource(existing != nil, named)
+
+	return removed, nil
+}
+
+func removalSource(registered bool, named bool) string {
+	switch {
+	case registered && named:
+		return "the registration of this system, and -bin or -db for what it does not name"
+	case registered:
+		return "the registration of this system"
+	}
+
+	return "-bin and -db, since nothing is registered on this system"
+}
+
+// dataDirOf is the directory the database file is in, which is the directory
+// this installation keeps everything in: the key the stored passwords are
+// sealed with, the log and the initial password file are all read against it.
+func dataDirOf(databaseFile string) string {
+	if databaseFile == "" {
+		return ""
+	}
+
+	return filepath.Dir(filepath.Clean(databaseFile))
+}
+
+// removeInstalledExecutable removes the file the registration was started from
+// and records what happened to it.
+//
+// Whether there was a file is asked before rather than taken from the removal,
+// because "there was nothing there" and "it was removed" are different things
+// to tell an operator, and only the first of them means somebody has already
+// been here.
+func removeInstalledExecutable(removed *Removed) error {
+	if removed.ExecutablePath == "" {
+		return nil
+	}
+
+	_, err := os.Stat(removed.ExecutablePath)
+
+	switch {
+	case errors.Is(err, fs.ErrNotExist):
+		return nil
+	case err != nil:
+		return fmt.Errorf("failed to look at the executable %s: %w", removed.ExecutablePath, err)
+	}
+
+	removed.ExecutableWasThere = true
+
+	removed.ExecutableAtReboot, err = removeExecutable(removed.ExecutablePath)
+	if err != nil {
+		return err
+	}
+
+	return nil
+}
+
+// purgeData removes the data directory, once it is sure that is what the
+// directory is.
+func purgeData(dataDir string, databaseFile string, out io.Writer) error {
+	err := checkPurgeTarget(dataDir, databaseFile)
+	if err != nil {
+		return err
+	}
+
+	// Named on the console before it goes and not only in the report
+	// afterwards. This is the one step of an uninstall that cannot be undone by
+	// installing again, and an operator who sees the path while it happens can
+	// tell at once that -purge was pointed at the wrong installation.
+	_, err = fmt.Fprintf(out, "-purge: removing %s and everything under it. This cannot be taken back\n", dataDir)
+	if err != nil {
+		return fmt.Errorf("failed to report what -purge was about to remove: %w", err)
+	}
+
+	err = os.RemoveAll(dataDir)
+	if err != nil {
+		return fmt.Errorf("failed to remove the data directory %s: %w", dataDir, err)
+	}
+
+	return nil
+}
+
+// purgeMinimumDepth is how deep the data directory has to be before -purge may
+// remove it whole.
+//
+// /var/lib/tunnel-manager is three deep and C:\ProgramData\tunnel-manager is
+// two counting from the drive, while one is /var, /opt or C:\ProgramData - the
+// directories a machine keeps everything else in - and zero is the root itself.
+const purgeMinimumDepth = 2
+
+// purgeRefused are the directories that pass the depth above and still hold
+// more than one installation. Removing any of them takes out software nobody
+// asked this program about.
+var purgeRefused = map[string]bool{
+	"var/lib":                     true,
+	"var/log":                     true,
+	"var/tmp":                     true,
+	"var/cache":                   true,
+	"usr/bin":                     true,
+	"usr/lib":                     true,
+	"usr/local":                   true,
+	"usr/share":                   true,
+	"etc/systemd":                 true,
+	"library/application support": true,
+	"library/launchdaemons":       true,
+	"windows/system32":            true,
+	"program files/common files":  true,
+}
+
+// homeRoots are the directories user home directories sit directly under. A
+// home directory is two deep and would pass the rules above, and a -db that
+// named a file in one is not a reason to remove everything that person has.
+var homeRoots = []string{"home", "Users"}
+
+// checkPurgeTarget refuses a directory that is not the data directory of this
+// installation.
+//
+// -purge hands a path to RemoveAll, and the path is worked out from a -db which
+// was either typed by hand or read out of a registration this program did not
+// necessarily write. Every rule here guards the same mistake: removing a
+// directory that holds more than this installation. Being wrong here removes
+// somebody else's data, and no part of that can be given back.
+func checkPurgeTarget(dataDir string, databaseFile string) error {
+	if dataDir == "" || databaseFile == "" {
+		return errors.New("-purge was asked for, but nothing says where the data of this installation is: " +
+			"no database file is named by the registration and none was given with -db")
+	}
+
+	if !filepath.IsAbs(dataDir) {
+		return fmt.Errorf("-purge will not remove %q: it is not an absolute path, so what it means depends "+
+			"on where this was run from", dataDir)
+	}
+
+	// The directory is worked out from the database file by the caller, so this
+	// holds for every path that gets here today. It is checked all the same,
+	// because it is the one rule that says the directory belongs to this
+	// installation at all - the rest only say it is not the machine.
+	if !samePath(filepath.Dir(databaseFile), dataDir) {
+		return fmt.Errorf("-purge will not remove %s: the database of this installation is %s, which is "+
+			"not in that directory", dataDir, databaseFile)
+	}
+
+	elements := pathElements(dataDir)
+
+	if len(elements) < purgeMinimumDepth {
+		return fmt.Errorf("-purge will not remove %s: it is the root of the filesystem or a directory "+
+			"directly under it, which holds far more than this installation", dataDir)
+	}
+
+	if refusedPurgeTarget(elements) {
+		return fmt.Errorf("-purge will not remove %s: it is a directory the system keeps other things in, "+
+			"not a directory of this installation alone", dataDir)
+	}
+
+	return nil
+}
+
+// refusedPurgeTarget says whether the directory is one of the named ones.
+func refusedPurgeTarget(elements []string) bool {
+	if purgeRefused[strings.ToLower(strings.Join(elements, "/"))] {
+		return true
+	}
+
+	if len(elements) == purgeMinimumDepth {
+		for _, root := range homeRoots {
+			if strings.EqualFold(elements[0], root) {
+				return true
+			}
+		}
+	}
+
+	return false
+}
+
+// pathElements is the directories a path is made of, without the drive letter
+// of a Windows path.
+//
+// Both separators are read rather than the one this program was built with. A
+// path comes here from a registration or from a command line, and one spelled
+// the other way round has to be counted as the directories it is rather than
+// read as one long name - a name that would pass the depth rule and be removed
+// whole.
+func pathElements(path string) []string {
+	// Cleaned first, or a path with .. in it counts as deeper than the
+	// directory it actually names: /var/lib/x/.. is /var/lib.
+	cleaned := filepath.Clean(strings.ReplaceAll(path, `\`, "/"))
+
+	elements := strings.FieldsFunc(cleaned, func(r rune) bool {
+		return r == '/' || r == '\\'
+	})
+
+	// A drive is not a directory under the root, it is the root.
+	if len(elements) > 0 && strings.HasSuffix(elements[0], ":") {
+		elements = elements[1:]
+	}
+
+	return elements
+}

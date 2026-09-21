@@ -1,0 +1,541 @@
+package install
+
+import (
+	"errors"
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+)
+
+// installedIn puts an installation under a directory of the test - the
+// executable, the data directory and a file in it - and answers the
+// registration that would name it. Nothing here writes where a real install
+// writes.
+func installedIn(t *testing.T) (Installed, Plan) {
+	t.Helper()
+
+	plan := planIn(t)
+
+	writeFile(t, plan.ExecutablePath, "the installed build")
+	writeFile(t, plan.DatabaseFile, "the database")
+	writeFile(t, filepath.Join(plan.DataDir, "key"), "the key the passwords are sealed with")
+
+	return Installed{
+		ExecutablePath: plan.ExecutablePath,
+		DatabaseFile:   plan.DatabaseFile,
+		DefinitionPath: "/etc/systemd/system/tunnel-manager.service",
+	}, plan
+}
+
+// TestUninstallWithNothingRegistered is the case the design names: nothing is
+// registered, so nothing is removed and the operator is told that rather than
+// left to wonder what an uninstall that printed a report actually did.
+func TestUninstallWithNothingRegistered(t *testing.T) {
+	allowPrivilege(t)
+
+	svc := &fakeService{currentErr: ErrNotInstalled}
+
+	var out strings.Builder
+
+	removed, err := uninstall(svc, Removal{}, &out)
+	if !errors.Is(err, ErrNotInstalled) {
+		t.Fatalf("the uninstall answered %v, want ErrNotInstalled", err)
+	}
+
+	if strings.Join(svc.calls, ",") != "current" {
+		t.Errorf("the backend was used as %v, want the read alone", svc.calls)
+	}
+
+	if removed.Registered || removed.Purged || removed.ExecutableWasThere {
+		t.Errorf("the uninstall says it did something: %+v", removed)
+	}
+
+	// The message has to say what to do next, since there is nothing left on
+	// the machine that names where an installation was put.
+	if !strings.Contains(err.Error(), "-bin") || !strings.Contains(err.Error(), "-db") {
+		t.Errorf("the message does not say the paths can be named by hand: %v", err)
+	}
+
+	t.Logf("answered: %v", err)
+}
+
+// TestUninstallWithNothingRegisteredButPathsNamed covers the other half of that
+// rule: with the paths named by hand there is something to remove, and no
+// registration to stop or take out.
+func TestUninstallWithNothingRegisteredButPathsNamed(t *testing.T) {
+	allowPrivilege(t)
+
+	_, plan := installedIn(t)
+	svc := &fakeService{currentErr: ErrNotInstalled}
+
+	var out strings.Builder
+
+	removed, err := uninstall(svc, Removal{ExecutablePath: plan.ExecutablePath, DatabaseFile: plan.DatabaseFile}, &out)
+	if err != nil {
+		t.Fatalf("the uninstall failed: %v", err)
+	}
+
+	if strings.Join(svc.calls, ",") != "current" {
+		t.Errorf("the backend was used as %v, want the read alone since nothing was registered", svc.calls)
+	}
+
+	if _, err := os.Stat(plan.ExecutablePath); !errors.Is(err, os.ErrNotExist) {
+		t.Errorf("the executable named by -bin is still there: %v", err)
+	}
+
+	if !removed.ExecutableWasThere {
+		t.Error("the removal does not say the executable was there")
+	}
+
+	if removed.Registered {
+		t.Error("the removal says a registration was taken out, but there was none")
+	}
+
+	if removed.DataDir != plan.DataDir {
+		t.Errorf("the data directory is %q, want %q", removed.DataDir, plan.DataDir)
+	}
+
+	if _, err := os.Stat(plan.DatabaseFile); err != nil {
+		t.Errorf("the database was removed without -purge: %v", err)
+	}
+}
+
+// TestUninstallRemovesAndKeepsTheData is the ordinary run. The order the
+// backend is used in is what cannot be seen from the files afterwards: a
+// registration taken out before the service was stopped leaves a running
+// process with nothing naming it.
+func TestUninstallRemovesAndKeepsTheData(t *testing.T) {
+	allowPrivilege(t)
+
+	registered, plan := installedIn(t)
+	svc := &fakeService{current: registered}
+
+	var out strings.Builder
+
+	removed, err := uninstall(svc, Removal{}, &out)
+	if err != nil {
+		t.Fatalf("the uninstall failed: %v", err)
+	}
+
+	want := []string{"current", "stop", "unregister"}
+	if strings.Join(svc.calls, ",") != strings.Join(want, ",") {
+		t.Errorf("the backend was used as %v, want %v", svc.calls, want)
+	}
+
+	if svc.unregistered == nil || *svc.unregistered != registered {
+		t.Errorf("the backend was told to unregister %+v, want %+v", svc.unregistered, registered)
+	}
+
+	if _, err := os.Stat(plan.ExecutablePath); !errors.Is(err, os.ErrNotExist) {
+		t.Errorf("the executable is still at %s: %v", plan.ExecutablePath, err)
+	}
+
+	if !removed.Registered || !removed.ExecutableWasThere {
+		t.Errorf("the removal does not say what it did: %+v", removed)
+	}
+
+	if removed.Purged {
+		t.Error("the removal says the data was purged, but -purge was not asked for")
+	}
+
+	// The whole point of the default: what is in the data directory is the
+	// hosts, the credentials and the key they are sealed with.
+	for _, path := range []string{plan.DataDir, plan.DatabaseFile, filepath.Join(plan.DataDir, "key")} {
+		if _, err := os.Stat(path); err != nil {
+			t.Errorf("%s was removed without -purge: %v", path, err)
+		}
+	}
+
+	if !strings.Contains(out.String(), plan.DataDir) || !strings.Contains(out.String(), "left in place") {
+		t.Errorf("the report does not say where the data was left:\n%s", out.String())
+	}
+
+	t.Logf("\n%s", out.String())
+}
+
+// TestUninstallPurge covers the flag that cannot be taken back: the data
+// directory goes, and what went is named on the console before it does.
+func TestUninstallPurge(t *testing.T) {
+	allowPrivilege(t)
+
+	registered, plan := installedIn(t)
+	svc := &fakeService{current: registered}
+
+	var out strings.Builder
+
+	removed, err := uninstall(svc, Removal{Purge: true}, &out)
+	if err != nil {
+		t.Fatalf("the uninstall failed: %v", err)
+	}
+
+	if !removed.Purged {
+		t.Error("the removal does not say the data was purged")
+	}
+
+	if _, err := os.Stat(plan.DataDir); !errors.Is(err, os.ErrNotExist) {
+		t.Errorf("the data directory %s is still there: %v", plan.DataDir, err)
+	}
+
+	if !strings.Contains(out.String(), "-purge: removing "+plan.DataDir) {
+		t.Errorf("the console does not name what -purge removed:\n%s", out.String())
+	}
+
+	if !strings.Contains(out.String(), "removed with everything under it") {
+		t.Errorf("the report does not say the data went:\n%s", out.String())
+	}
+
+	t.Logf("\n%s", out.String())
+}
+
+// TestUninstallPurgeWithoutADatabase covers -purge on a registration that names
+// no -db. There is then nothing saying where the data is, and a guess would be
+// a RemoveAll of a guessed path.
+func TestUninstallPurgeWithoutADatabase(t *testing.T) {
+	allowPrivilege(t)
+
+	registered, plan := installedIn(t)
+	registered.DatabaseFile = ""
+
+	svc := &fakeService{current: registered}
+
+	var out strings.Builder
+
+	_, err := uninstall(svc, Removal{Purge: true}, &out)
+	if err == nil {
+		t.Fatal("-purge went ahead with nothing saying where the data is")
+	}
+
+	if _, statErr := os.Stat(plan.DataDir); statErr != nil {
+		t.Errorf("the data directory was removed all the same: %v", statErr)
+	}
+
+	// The service was still taken out, and the report has to be there to say
+	// so: it is the state the machine was left in.
+	if !strings.Contains(out.String(), serviceName+" uninstall") {
+		t.Errorf("no report was written for the uninstall that got that far:\n%s", out.String())
+	}
+
+	t.Logf("refused as it should: %v", err)
+}
+
+// TestCheckPurgeTarget is the guard on its own, held against the paths that
+// must never be handed to RemoveAll.
+//
+// They are given to the check and not to the flow, deliberately. Driving a
+// removal of /var/lib or of a home directory end to end would mean that a
+// broken check removes those directories on the machine the tests run on, and
+// the round trip of this package is run as root.
+func TestCheckPurgeTarget(t *testing.T) {
+	cases := []struct {
+		name     string
+		dataDir  string
+		database string
+		refuse   bool
+	}{
+		{
+			name:     "the default linux data directory",
+			dataDir:  "/var/lib/tunnel-manager",
+			database: "/var/lib/tunnel-manager/tunnel-manager.db",
+		},
+		{
+			name:     "a data directory of its own elsewhere",
+			dataDir:  "/opt/tm/data",
+			database: "/opt/tm/data/tm.db",
+		},
+		{
+			name:     "the default macos data directory",
+			dataDir:  "/Library/Application Support/tunnel-manager",
+			database: "/Library/Application Support/tunnel-manager/tunnel-manager.db",
+		},
+		{
+			name:     "a directory the database is not in",
+			dataDir:  "/var/lib/tunnel-manager",
+			database: "/opt/tm/tm.db",
+			refuse:   true,
+		},
+		{
+			name:     "the parent of the directory the database is in",
+			dataDir:  "/var/lib",
+			database: "/var/lib/tunnel-manager/tunnel-manager.db",
+			refuse:   true,
+		},
+		{name: "the root", dataDir: "/", database: "/tunnel-manager.db", refuse: true},
+		{name: "a directory under the root", dataDir: "/var", database: "/var/tunnel-manager.db", refuse: true},
+		{name: "var lib itself", dataDir: "/var/lib", database: "/var/lib/tunnel-manager.db", refuse: true},
+		{name: "usr local", dataDir: "/usr/local", database: "/usr/local/tunnel-manager.db", refuse: true},
+		{
+			name:     "the macos application support directory itself",
+			dataDir:  "/Library/Application Support",
+			database: "/Library/Application Support/tunnel-manager.db",
+			refuse:   true,
+		},
+		{name: "a home directory", dataDir: "/home/someone", database: "/home/someone/tm.db", refuse: true},
+		{name: "a macos home directory", dataDir: "/Users/someone", database: "/Users/someone/tm.db", refuse: true},
+		{
+			name:     "the root reached through a dotted path",
+			dataDir:  "/var/lib/tunnel-manager/../../..",
+			database: "/var/lib/tunnel-manager/../../../tunnel-manager.db",
+			refuse:   true,
+		},
+		{name: "a relative path", dataDir: "data", database: "data/tunnel-manager.db", refuse: true},
+		{name: "nothing at all", dataDir: "", database: "", refuse: true},
+		{
+			name:     "a windows drive",
+			dataDir:  `C:\`,
+			database: `C:\tunnel-manager.db`,
+			refuse:   true,
+		},
+		{
+			name:     "the windows program data directory itself",
+			dataDir:  `C:\ProgramData`,
+			database: `C:\ProgramData\tunnel-manager.db`,
+			refuse:   true,
+		},
+	}
+
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			err := checkPurgeTarget(c.dataDir, c.database)
+
+			switch {
+			case c.refuse && err == nil:
+				t.Errorf("-purge would have removed %q", c.dataDir)
+			case !c.refuse && err != nil:
+				t.Errorf("-purge was refused %q: %v", c.dataDir, err)
+			case c.refuse:
+				t.Logf("refused as it should: %v", err)
+			}
+		})
+	}
+}
+
+// TestPathElements covers the counting the guard above stands on, including the
+// spellings a path arrives in from another platform.
+func TestPathElements(t *testing.T) {
+	cases := []struct {
+		path string
+		want []string
+	}{
+		{path: "/", want: []string{}},
+		{path: "/var", want: []string{"var"}},
+		{path: "/var/lib//tunnel-manager/", want: []string{"var", "lib", "tunnel-manager"}},
+		{path: "/var/lib/tunnel-manager/..", want: []string{"var", "lib"}},
+		{path: `C:\`, want: []string{}},
+		{path: `C:\ProgramData\tunnel-manager`, want: []string{"ProgramData", "tunnel-manager"}},
+		{path: "/Library/Application Support/tunnel-manager", want: []string{"Library", "Application Support", "tunnel-manager"}},
+	}
+
+	for _, c := range cases {
+		got := pathElements(c.path)
+
+		if strings.Join(got, "|") != strings.Join(c.want, "|") {
+			t.Errorf("pathElements(%q) is %v, want %v", c.path, got, c.want)
+		}
+	}
+}
+
+// TestWhatToRemove covers which of the two sources each path comes from. The
+// registration is what says which files this installation owns, so it is
+// believed over the flags wherever it names something.
+func TestWhatToRemove(t *testing.T) {
+	registered := &Installed{
+		ExecutablePath: "/usr/local/bin/tunnel-manager",
+		DatabaseFile:   "/var/lib/tunnel-manager/tunnel-manager.db",
+		DefinitionPath: "/etc/systemd/system/tunnel-manager.service",
+	}
+
+	cases := []struct {
+		name       string
+		request    Removal
+		existing   *Installed
+		executable string
+		database   string
+		dataDir    string
+	}{
+		{
+			name:       "the registration alone",
+			existing:   registered,
+			executable: registered.ExecutablePath,
+			database:   registered.DatabaseFile,
+			dataDir:    "/var/lib/tunnel-manager",
+		},
+		{
+			name:       "the flags do not move a removal that is registered",
+			request:    Removal{ExecutablePath: "/opt/tm/tunnel-manager", DatabaseFile: "/opt/tm/tm.db"},
+			existing:   registered,
+			executable: registered.ExecutablePath,
+			database:   registered.DatabaseFile,
+			dataDir:    "/var/lib/tunnel-manager",
+		},
+		{
+			name:       "a registration that passes no database",
+			request:    Removal{DatabaseFile: "/opt/tm/tm.db"},
+			existing:   &Installed{ExecutablePath: registered.ExecutablePath},
+			executable: registered.ExecutablePath,
+			database:   "/opt/tm/tm.db",
+			dataDir:    "/opt/tm",
+		},
+		{
+			name:       "nothing registered, the flags say where it is",
+			request:    Removal{ExecutablePath: "/opt/tm/tunnel-manager", DatabaseFile: "/opt/tm/tm.db"},
+			executable: "/opt/tm/tunnel-manager",
+			database:   "/opt/tm/tm.db",
+			dataDir:    "/opt/tm",
+		},
+	}
+
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			removed, err := whatToRemove(c.request, c.existing)
+			if err != nil {
+				t.Fatalf("whatToRemove failed: %v", err)
+			}
+
+			if removed.ExecutablePath != c.executable {
+				t.Errorf("the executable to remove is %q, want %q", removed.ExecutablePath, c.executable)
+			}
+
+			if removed.DatabaseFile != c.database {
+				t.Errorf("the database is %q, want %q", removed.DatabaseFile, c.database)
+			}
+
+			if removed.DataDir != c.dataDir {
+				t.Errorf("the data directory is %q, want %q", removed.DataDir, c.dataDir)
+			}
+
+			if removed.Source == "" {
+				t.Error("the removal does not say where its paths came from")
+			}
+		})
+	}
+}
+
+// TestUninstallWithoutPrivilege checks that the refusal comes before the
+// backend is reached, the same as it does for an install.
+func TestUninstallWithoutPrivilege(t *testing.T) {
+	was := privileged
+	privileged = func() bool { return false }
+
+	t.Cleanup(func() {
+		privileged = was
+	})
+
+	svc := &fakeService{currentErr: ErrNotInstalled}
+
+	_, err := uninstall(svc, Removal{Purge: true}, &strings.Builder{})
+	if err == nil {
+		t.Fatal("the uninstall ran as a process with no privilege")
+	}
+
+	if len(svc.calls) != 0 {
+		t.Errorf("the backend was used as %v, want nothing", svc.calls)
+	}
+}
+
+// TestUninstallWithoutABackend covers the platform no backend was written for,
+// where the hook is nil and a call on it would panic.
+func TestUninstallWithoutABackend(t *testing.T) {
+	was := newService
+	newService = nil
+
+	t.Cleanup(func() {
+		newService = was
+	})
+
+	_, err := Uninstall(Removal{}, &strings.Builder{})
+	if !errors.Is(err, ErrNoBackend) {
+		t.Errorf("the uninstall answered %v, want %v", err, ErrNoBackend)
+	}
+}
+
+// TestRemovedReport checks that what an operator is left with is in what they
+// read: what went, and - the line that is easy to miss - what was kept and
+// where.
+func TestRemovedReport(t *testing.T) {
+	removed := Removed{
+		Source:             "the registration of this system",
+		Registered:         true,
+		ExecutablePath:     "/usr/local/bin/tunnel-manager",
+		ExecutableWasThere: true,
+		Definition:         "/usr/lib/systemd/system/tunnel-manager.service",
+		DataDir:            "/var/lib/tunnel-manager",
+		DatabaseFile:       "/var/lib/tunnel-manager/tunnel-manager.db",
+	}
+
+	var out strings.Builder
+
+	err := removed.Report(&out)
+	if err != nil {
+		t.Fatalf("failed to write the report: %v", err)
+	}
+
+	for _, want := range []string{
+		removed.Source,
+		removed.ExecutablePath,
+		removed.Definition,
+		removed.DataDir,
+		removed.DatabaseFile,
+		"removed",
+		"left in place",
+	} {
+		if !strings.Contains(out.String(), want) {
+			t.Errorf("the report does not hold %q:\n%s", want, out.String())
+		}
+	}
+
+	t.Logf("\n%s", out.String())
+}
+
+// TestRemovedReportOfAnExecutableLeftForTheReboot covers the Windows answer.
+// An operator told the file was removed, when it is still on disk until the
+// machine comes up again, would go looking for what put it back.
+func TestRemovedReportOfAnExecutableLeftForTheReboot(t *testing.T) {
+	removed := Removed{
+		Source:             "the registration of this system",
+		Registered:         true,
+		ExecutablePath:     `C:\Program Files\tunnel-manager\tunnel-manager.exe`,
+		ExecutableWasThere: true,
+		ExecutableAtReboot: true,
+		DataDir:            `C:\ProgramData\tunnel-manager`,
+		DatabaseFile:       `C:\ProgramData\tunnel-manager\tunnel-manager.db`,
+	}
+
+	var out strings.Builder
+
+	err := removed.Report(&out)
+	if err != nil {
+		t.Fatalf("failed to write the report: %v", err)
+	}
+
+	if !strings.Contains(out.String(), "removed at the next reboot") {
+		t.Errorf("the report does not say the executable is still there until the reboot:\n%s", out.String())
+	}
+
+	// Windows keeps no file for the registration, so the line has to name the
+	// service instead of being blank.
+	if !strings.Contains(out.String(), "the registration of "+serviceName) {
+		t.Errorf("the report does not name the registration that went:\n%s", out.String())
+	}
+
+	t.Logf("\n%s", out.String())
+}
+
+// TestRemovedReportOfAnExecutableThatWasNotThere covers the path that named no
+// file. Somebody has already been here, and reading that as "removed" hides it.
+func TestRemovedReportOfAnExecutableThatWasNotThere(t *testing.T) {
+	var out strings.Builder
+
+	err := Removed{ExecutablePath: "/usr/local/bin/tunnel-manager"}.Report(&out)
+	if err != nil {
+		t.Fatalf("failed to write the report: %v", err)
+	}
+
+	if !strings.Contains(out.String(), "no file was there") {
+		t.Errorf("the report does not say the path named no file:\n%s", out.String())
+	}
+
+	if !strings.Contains(out.String(), "nothing was registered") {
+		t.Errorf("the report does not say there was no registration:\n%s", out.String())
+	}
+}
