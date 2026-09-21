@@ -1,3 +1,32 @@
+# v3.6.0
+
+## Add/fix features:
+
+- The program installs itself as a service of the machine it is run on, and takes itself back out. `-install` puts the executable in place, makes the data directory, registers the service with systemd, launchd or the Windows service control manager, and starts it; `-uninstall` stops it, takes the registration out and removes the executable. It needs root, or an administrator on Windows, and refuses without saying anything else when it does not have it.
+  - What is installed is the newest release rather than the file that was run, downloaded from GitHub and checked against the `SHA256SUMS` of that release when the release carries one. A checksum that does not match stops the install. A release that cannot be reached is not a failure: the running executable is installed instead and the report names which of the two landed.
+  - `-bin` and `-db` put the executable and the database somewhere other than the defaults, which are `/usr/local/bin/tunnel-manager` with `/var/lib/tunnel-manager` on Linux, the same executable path with `/Library/Application Support/tunnel-manager` on macOS, and `C:\Program Files\tunnel-manager` with `C:\ProgramData\tunnel-manager` on Windows. The data directory follows `-db`, so the key, the log and the initial password land beside the database.
+  - An install over one that is already registered at the same paths writes over it and restarts the service, with the digest of the file before and after in the report. One registered at other paths is refused before anything is touched, because the executable and the database of the old one would be left with nothing naming them.
+  - **An uninstall asks the running service which files it has open** rather than reading paths out of the registration. A service started without `-db`, or with the log moved on the Settings screen, tells the registration nothing, and the files that would go are then not the files that are there. Linux reads `/proc/<pid>/fd` and macOS runs `lsof`; Windows has no cheap way to list another process's handles, so there the service command line is read, which is safe because the install always writes `-db` into it.
+  - The uninstall lists what it is about to remove and asks before removing any of it. `-y` answers for a script, and with no terminal to ask at it refuses rather than assuming yes. The data is kept unless `-purge` is given, and `-purge` refuses a directory that is not the one the database sits in, that is too near the root, or that the system keeps other things in.
+- The program runs as a Windows service. It could not answer the service control manager before, so `sc create` would have left a service that never started. It answers now, and the install registers it to start at boot and to come back after a failure.
+- Releases carry a `SHA256SUMS` file beside the binaries. A download that was cut short still looks like a binary, and the install that reads a release needs something to check it against.
+- The systemd unit the install writes carries `LimitNOFILE=65535`. The process can raise its soft limit only as far as the hard one and cannot raise the hard one itself, so the limit it runs with is the one the unit sets. The unit goes to `/lib/systemd/system` and `/etc` is left to the operator, where enabling the service puts the link systemd makes.
+
+## Bug fixes:
+
+- A `-purge` of a directory it would refuse was refused only after the service had been stopped, its registration taken out and the executable deleted, so the refusal arrived with the installation already half gone.
+- A path with a space in it was refused while the service was being registered, which is after the new executable had been written into place.
+
+## Documentation:
+
+- The README and the reference say how to install as a service and how to take it back out, in all four languages, including what an install does over one that is already there and which directories `-purge` refuses.
+- The bundled `_scripts` are gone. The systemd unit is written by `-install`, and the script that raised the descriptor limit in `/etc/security/limits.conf` is answered by `LimitNOFILE` in that unit, which binds to this service alone rather than to every login on the machine.
+
+## Notes:
+
+- Only the Linux path has been run. The macOS and the Windows backends are held up by the compiler, by the vet tool for their platform, and by tests over the plist and the service configuration they produce. Neither has been installed, started or removed on the system it is for.
+- The `-install` of this release is the first one that can be taken out by `-uninstall`. An installation made by an earlier release has no such flag in the binary it put in place.
+
 # v3.5.1
 
 ## Bug fixes:
