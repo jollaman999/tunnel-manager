@@ -9,8 +9,10 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/glebarez/sqlite"
 	"github.com/go-playground/validator/v10"
@@ -198,6 +200,174 @@ func TestPrepareLogFileReportsALogFileThatCannotBeOpened(t *testing.T) {
 	if !strings.Contains(err.Error(), "failed to create log file") {
 		t.Fatalf("the failure does not name the log file: %v", err)
 	}
+}
+
+// skipWithoutFileModes leaves a test that reads permission bits where there are
+// none to read. Windows carries no Unix mode, and os.Chmod there turns the
+// read-only attribute on and off rather than writing the bits this asks about.
+func skipWithoutFileModes(t *testing.T) {
+	t.Helper()
+
+	if runtime.GOOS == "windows" {
+		t.Skip("this platform carries no Unix permission bits")
+	}
+}
+
+// requireMode fails unless the path is at exactly that permission.
+func requireMode(t *testing.T, path string, want os.FileMode) {
+	t.Helper()
+
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Fatalf("failed to read the permission of %s: %v", path, err)
+	}
+
+	if info.Mode().Perm() != want {
+		t.Fatalf("%s has permission %#o, want %#o", path, info.Mode().Perm(), want)
+	}
+}
+
+// TestANewLogFileIsClosedToTheRestOfTheMachine covers the first startup. The
+// log says which hosts this installation reaches and under which account
+// names, and a file the whole machine can read hands a local user that map.
+func TestANewLogFileIsClosedToTheRestOfTheMachine(t *testing.T) {
+	skipWithoutFileModes(t)
+
+	logFile := filepath.Join(t.TempDir(), "logs", "tunnel-manager.log")
+
+	err := prepareLogFile(newLoggingSettings(logFile), "")
+	if err != nil {
+		t.Fatalf("failed to prepare the log file: %v", err)
+	}
+
+	requireMode(t, logFile, logFileMode)
+	requireMode(t, filepath.Dir(logFile), logDirMode)
+}
+
+// TestALogFromAnEarlierReleaseIsNarrowedAtStartup is the half that matters to
+// a deployment that is already running. Creating new files narrowly does
+// nothing for the logs that are already lying there at 0644, so the startup
+// sets the mode of what it finds as well as of what it makes, and it does that
+// without touching what the file holds.
+func TestALogFromAnEarlierReleaseIsNarrowedAtStartup(t *testing.T) {
+	skipWithoutFileModes(t)
+
+	logDir := filepath.Join(t.TempDir(), "logs")
+
+	err := os.Mkdir(logDir, 0755)
+	if err != nil {
+		t.Fatalf("failed to make the log directory of an earlier release: %v", err)
+	}
+
+	logFile := filepath.Join(logDir, "tunnel-manager.log")
+
+	err = os.WriteFile(logFile, []byte("a line an earlier release wrote\n"), 0644)
+	if err != nil {
+		t.Fatalf("failed to write the log of an earlier release: %v", err)
+	}
+
+	// The directory is set after the file, because writing the file into it
+	// needed it open.
+	err = os.Chmod(logDir, 0755)
+	if err != nil {
+		t.Fatalf("failed to put the log directory at the mode of an earlier release: %v", err)
+	}
+
+	err = prepareLogFile(newLoggingSettings(logFile), "")
+	if err != nil {
+		t.Fatalf("failed to prepare the log file: %v", err)
+	}
+
+	requireMode(t, logFile, logFileMode)
+	requireMode(t, logDir, logDirMode)
+
+	body, err := os.ReadFile(logFile)
+	if err != nil {
+		t.Fatalf("failed to read the log back: %v", err)
+	}
+	if !strings.Contains(string(body), "a line an earlier release wrote") {
+		t.Fatalf("the lines that were already in the log are gone, it holds %q", string(body))
+	}
+}
+
+// TestTheRotatedLogsAreClosedAsWell reads the mode of every file the logging
+// leaves in the directory rather than of the current one alone. lumberjack
+// opens the files it rotates to and the compressed copies it writes itself,
+// and it takes their mode off the file it is rotating, so the whole directory
+// follows from the current log being at 0600. Nothing in this application
+// passes it a mode, which is why what it does is pinned here.
+func TestTheRotatedLogsAreClosedAsWell(t *testing.T) {
+	skipWithoutFileModes(t)
+
+	logDir := filepath.Join(t.TempDir(), "logs")
+	logFile := filepath.Join(logDir, "tunnel-manager.log")
+
+	set := newLoggingSettings(logFile)
+	set.LoggingFileMaxBackups = 3
+	set.LoggingFileCompress = true
+
+	// The logger writes to the console as well as to the file, so the lines
+	// this has to write to reach a rotation are kept out of the test output.
+	withStdoutCaptured(t, func() {
+		core, _, err := initLogger(set, "")
+		if err != nil {
+			t.Errorf("failed to build the logger: %v", err)
+
+			return
+		}
+
+		logger := zap.New(core)
+
+		// MaxSize is in megabytes and the smallest lumberjack takes is 1, so
+		// this is what it costs to see a rotation at all.
+		line := strings.Repeat("x", 1024)
+		for i := 0; i < 1200; i++ {
+			logger.Info(line)
+		}
+	})
+
+	// The compression runs in a goroutine of its own, so the file it writes
+	// appears some time after the rotation that started it. The wait is
+	// bounded: what is asked is only that the mode of whatever was left in the
+	// directory is right, and the rotated file that is not compressed yet is
+	// already one of them.
+	deadline := time.Now().Add(10 * time.Second)
+	for time.Now().Before(deadline) {
+		matches, err := filepath.Glob(filepath.Join(logDir, "*.gz"))
+		if err != nil {
+			t.Fatalf("failed to look for a compressed log: %v", err)
+		}
+		if len(matches) > 0 {
+			break
+		}
+
+		time.Sleep(50 * time.Millisecond)
+	}
+
+	entries, err := os.ReadDir(logDir)
+	if err != nil {
+		t.Fatalf("failed to read the log directory: %v", err)
+	}
+
+	if len(entries) < 2 {
+		t.Fatalf("the log did not rotate, the directory holds %d file(s)", len(entries))
+	}
+
+	compressed := false
+
+	for _, entry := range entries {
+		requireMode(t, filepath.Join(logDir, entry.Name()), logFileMode)
+
+		if strings.HasSuffix(entry.Name(), ".gz") {
+			compressed = true
+		}
+	}
+
+	if !compressed {
+		t.Logf("no compressed log appeared within the wait, so only the rotated ones were read")
+	}
+
+	requireMode(t, logDir, logDirMode)
 }
 
 // withStdoutCaptured runs the function with os.Stdout replaced by a pipe and

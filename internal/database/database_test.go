@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"sort"
 	"strings"
 	"sync"
@@ -1630,4 +1631,204 @@ func TestARealFailedAccountWriteDoesNotLeakTheHash(t *testing.T) {
 	}
 
 	requireNoHashAnywhere(t, logs)
+}
+
+// skipWithoutFileModes leaves a test that reads permission bits where there are
+// none to read. Windows carries no Unix mode, and os.Chmod there turns the
+// read-only attribute on and off rather than writing the bits this asks about.
+func skipWithoutFileModes(t *testing.T) {
+	t.Helper()
+
+	if runtime.GOOS == "windows" {
+		t.Skip("this platform carries no Unix permission bits")
+	}
+}
+
+// requireMode fails unless the path is at exactly that permission.
+func requireMode(t *testing.T, path string, want os.FileMode) {
+	t.Helper()
+
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Fatalf("failed to read the permission of %s: %v", path, err)
+	}
+
+	if info.Mode().Perm() != want {
+		t.Fatalf("%s has permission %#o, want %#o", path, info.Mode().Perm(), want)
+	}
+}
+
+// requireSidecarsAreClosed holds the write-ahead log and the shared memory file
+// to the mode of the database file. They exist only while a connection is open,
+// so one that is not there is passed over rather than failed on.
+func requireSidecarsAreClosed(t *testing.T, path string) {
+	t.Helper()
+
+	for _, sidecar := range databaseSidecars {
+		beside := path + sidecar
+
+		_, err := os.Stat(beside)
+		if errors.Is(err, os.ErrNotExist) {
+			continue
+		}
+
+		requireMode(t, beside, databaseFileMode)
+	}
+}
+
+// TestANewDatabaseIsClosedToTheRestOfTheMachine covers the first startup. The
+// file holds the hash of the account password, the registered Hosts and the
+// certificate of this installation, and the sqlite driver creates it at 0644,
+// which hands all of that to any other local user of the machine.
+func TestANewDatabaseIsClosedToTheRestOfTheMachine(t *testing.T) {
+	skipWithoutFileModes(t)
+
+	_, path := newTestDatabase(t)
+
+	requireMode(t, path, databaseFileMode)
+	requireMode(t, filepath.Dir(path), databaseDirMode)
+	requireSidecarsAreClosed(t, path)
+}
+
+// TestADatabaseFromAnEarlierReleaseIsNarrowedOnTheNextStartup is the half that
+// matters to a deployment that is already running. Creating new files narrowly
+// does nothing for the installations that hold the secrets today, so the
+// startup sets the mode of what it finds as well as of what it makes.
+func TestADatabaseFromAnEarlierReleaseIsNarrowedOnTheNextStartup(t *testing.T) {
+	skipWithoutFileModes(t)
+
+	db, path := newTestDatabase(t)
+
+	sqlDB, err := db.DB()
+	if err != nil {
+		t.Fatalf("failed to reach the connection pool: %v", err)
+	}
+
+	err = sqlDB.Close()
+	if err != nil {
+		t.Fatalf("failed to close the database of the first startup: %v", err)
+	}
+
+	// What an earlier release left behind: the file as the driver created it
+	// and the directory as MkdirAll made it.
+	dir := filepath.Dir(path)
+
+	err = os.Chmod(path, 0644)
+	if err != nil {
+		t.Fatalf("failed to put the database back to the mode of an earlier release: %v", err)
+	}
+
+	err = os.Chmod(dir, 0755)
+	if err != nil {
+		t.Fatalf("failed to put the directory back to the mode of an earlier release: %v", err)
+	}
+
+	core, _ := observer.New(zapcore.DebugLevel)
+
+	again, _, err := NewDatabase(path, zap.New(core), "error")
+	if err != nil {
+		t.Fatalf("the second startup failed to open the database: %v", err)
+	}
+
+	t.Cleanup(func() {
+		sqlDB, err := again.DB()
+		if err == nil {
+			_ = sqlDB.Close()
+		}
+	})
+
+	requireMode(t, path, databaseFileMode)
+	requireMode(t, dir, databaseDirMode)
+	requireSidecarsAreClosed(t, path)
+}
+
+// TestAModeThatCannotBeSetDoesNotStopTheStartup pins what happens where the
+// mode cannot be written: a container volume on a file system that carries no
+// Unix permissions, or files owned by another account. The database opened and
+// every Host in it can be reached, so refusing to serve over a file this
+// process has no way of narrowing would take a running installation away for
+// nothing.
+func TestAModeThatCannotBeSetDoesNotStopTheStartup(t *testing.T) {
+	original := chmod
+
+	t.Cleanup(func() {
+		chmod = original
+	})
+
+	chmod = func(string, os.FileMode) error {
+		return errors.New("this file system carries no permissions")
+	}
+
+	path := filepath.Join(t.TempDir(), "state", "tunnel-manager.db")
+	core, _ := observer.New(zapcore.DebugLevel)
+
+	db, _, err := NewDatabase(path, zap.New(core), "error")
+	if err != nil {
+		t.Fatalf("the startup was stopped by a mode that could not be set: %v", err)
+	}
+
+	t.Cleanup(func() {
+		sqlDB, err := db.DB()
+		if err == nil {
+			_ = sqlDB.Close()
+		}
+	})
+
+	// The handle is not only non-nil but usable, since a startup that came up
+	// on a database it cannot query is no better than one that stopped.
+	if !db.Migrator().HasTable(&models.Host{}) {
+		t.Fatalf("the database that was opened holds no hosts table")
+	}
+}
+
+// TestTightenPermissionsReportsEveryPathItCouldNotSet holds the gathering. The
+// paths fail for the same reason when they fail at all, and a report that named
+// the first one would leave whoever reads it fixing one file of several.
+func TestTightenPermissionsReportsEveryPathItCouldNotSet(t *testing.T) {
+	original := chmod
+
+	t.Cleanup(func() {
+		chmod = original
+	})
+
+	chmod = func(string, os.FileMode) error {
+		return errors.New("this file system carries no permissions")
+	}
+
+	dir := t.TempDir()
+	path := filepath.Join(dir, "tunnel-manager.db")
+
+	err := os.WriteFile(path, []byte("x"), 0644)
+	if err != nil {
+		t.Fatalf("failed to write the file that stands in for the database: %v", err)
+	}
+
+	err = tightenPermissions(path)
+	if err == nil {
+		t.Fatal("a chmod that fails everywhere was reported as done")
+	}
+
+	for _, named := range []string{dir, path} {
+		if !strings.Contains(err.Error(), named) {
+			t.Errorf("the report does not name %s: %v", named, err)
+		}
+	}
+}
+
+// TestTightenPermissionsPassesOverAFileThatIsNotThere covers the database
+// nobody has open. The write-ahead log and the shared memory file are removed
+// when the last connection closes cleanly, so their absence is the normal state
+// of such a file rather than something to report.
+func TestTightenPermissionsPassesOverAFileThatIsNotThere(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "tunnel-manager.db")
+
+	err := os.WriteFile(path, []byte("x"), 0644)
+	if err != nil {
+		t.Fatalf("failed to write the file that stands in for the database: %v", err)
+	}
+
+	err = tightenPermissions(path)
+	if err != nil {
+		t.Fatalf("a database with no files beside it was reported as a failure: %v", err)
+	}
 }

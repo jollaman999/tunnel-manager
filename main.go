@@ -181,19 +181,57 @@ func resolveInstallPath(installDir, path string) string {
 	return filepath.Join(installDir, path)
 }
 
+// logDirMode and logFileMode are what the log file and the directory holding
+// it are left at.
+//
+// The log is not a file of secrets, but it is read back through GET /api/logs
+// behind the session check, and the lines it carries say which hosts this
+// installation reaches, under which account names, and what a failed query was.
+// The account password is not in it, yet a file the rest of the machine can
+// read hands a local user the map of everything this installation manages, so
+// it is kept to the account this process runs as, as the database and the
+// encryption key beside it are.
+const (
+	logDirMode  os.FileMode = 0700
+	logFileMode os.FileMode = 0600
+)
+
 // prepareLogFile makes sure the configured log file can be written to.
 func prepareLogFile(s *settings.Settings, installDir string) error {
 	logFilePath := resolveInstallPath(installDir, s.LoggingFilePath)
 	logDir := filepath.Dir(logFilePath)
-	err := os.MkdirAll(logDir, 0755)
+	err := os.MkdirAll(logDir, logDirMode)
 	if err != nil {
 		return fmt.Errorf("failed to create log directory: %v", err)
 	}
 
-	file, err := os.OpenFile(logFilePath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
+	// The directory is narrowed as well as created, because MkdirAll writes the
+	// mode only for the directories it makes and an installation from an
+	// earlier release has one that is already there at 0755.
+	//
+	// What this and the call below report is dropped, and that is the whole of
+	// the handling. A mode that cannot be set is no reason to stop writing logs:
+	// the file opened, and an installation on a file system that carries no
+	// Unix modes would otherwise come up with its logging turned off over a
+	// file it has no way of narrowing.
+	_ = os.Chmod(logDir, logDirMode)
+
+	file, err := os.OpenFile(logFilePath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, logFileMode)
 	if err != nil {
 		return fmt.Errorf("failed to create log file: %v", err)
 	}
+
+	// The mode handed to OpenFile is masked by the umask and is written only
+	// for a file that is being created, so it is set again on the descriptor
+	// that was opened. That covers the log an earlier release left at 0644,
+	// and it is done through the descriptor rather than the path so that it
+	// reaches the file that was just opened and not whatever appeared under
+	// that name in the meantime.
+	//
+	// The rotated files follow from this one. lumberjack copies the mode of the
+	// file it rotates onto the one it opens next and onto the compressed copy
+	// it writes, so a current log at 0600 is a whole directory of them at 0600.
+	_ = file.Chmod(logFileMode)
 
 	// The file is opened to see that it can be written to, nothing else. The
 	// logs go through lumberjack, which opens the file on its own, so holding

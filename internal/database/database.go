@@ -231,6 +231,92 @@ func (l *zapGormLogger) Trace(_ context.Context, begin time.Time, fc func() (str
 // good is reported instead of the request hanging.
 const busyTimeout = 5 * time.Second
 
+// databaseDirMode and databaseFileMode are what the database file and the
+// directory holding it are left at.
+//
+// The file holds the bcrypt hash of the account password, the registered Hosts
+// with the account names they are reached under, and the certificate this
+// installation is served with. Every one of those is readable by any local user
+// of the machine while the file is 0644, which is what the sqlite driver
+// creates it as, so the file is narrowed to the account this process runs as
+// and so is the directory around it. The key file beside it has been created
+// this way from the start (internal/crypto), and this is the same rule applied
+// to the file that key protects the contents of.
+const (
+	databaseDirMode  os.FileMode = 0700
+	databaseFileMode os.FileMode = 0600
+)
+
+// databaseSidecars are the files SQLite keeps beside the database in WAL mode.
+// The write-ahead log holds the rows of a transaction that has not been
+// checkpointed into the database file yet, and the shared-memory file is the
+// index into it, so both carry what the database file carries and are narrowed
+// with it.
+//
+// SQLite makes them with the mode of the database file, so the ones it opens
+// from here on follow the file on their own. What is narrowed below are the
+// ones an earlier release left lying there, which the driver reuses as they
+// are rather than creating again.
+var databaseSidecars = []string{"-wal", "-shm"}
+
+// chmod is os.Chmod. It is held in a variable so that a test can put a failure
+// in its place: this process owns every file it makes, chmod on a file one owns
+// does not fail, and what is worth pinning here is that a mode which cannot be
+// set does not stop the startup.
+var chmod = os.Chmod
+
+// tightenPermissions takes the group and the rest of the machine off the
+// database file, the files SQLite keeps beside it and the directory they are
+// in.
+//
+// It runs on every startup rather than only on the one that creates the file.
+// An installation laid down by an earlier release has a 0644 database sitting
+// there, and creating new files narrowly would leave exactly the deployments
+// that already hold secrets as open as they were.
+//
+// A file that is not there is passed over. The write-ahead log and the shared
+// memory file exist only while a connection is open and are removed when the
+// last one closes cleanly, so their absence is the normal state of a database
+// nobody is using rather than something to report.
+//
+// Every path is tried before the failures are handed back together, because
+// they fail for the same reason when they fail at all - a file system that
+// carries no Unix modes, or files owned by another account - and stopping at
+// the first one would name one path while leaving the rest untouched.
+//
+// On Windows os.Chmod writes no mode. It turns the read-only attribute on for a
+// mode with no owner write bit and off for one that has it, so 0600 leaves the
+// file writable, which is what a file this process writes to has to be. Nothing
+// is narrowed there and nothing fails over it either, which is why this is one
+// implementation and not a pair of platform files.
+func tightenPermissions(absPath string) error {
+	var problems []error
+
+	dir := filepath.Dir(absPath)
+
+	err := chmod(dir, databaseDirMode)
+	if err != nil {
+		problems = append(problems, fmt.Errorf("failed to set the permission of the database directory %q: %w",
+			dir, err))
+	}
+
+	paths := make([]string, 0, len(databaseSidecars)+1)
+	paths = append(paths, absPath)
+
+	for _, sidecar := range databaseSidecars {
+		paths = append(paths, absPath+sidecar)
+	}
+
+	for _, path := range paths {
+		err := chmod(path, databaseFileMode)
+		if err != nil && !errors.Is(err, os.ErrNotExist) {
+			problems = append(problems, fmt.Errorf("failed to set the permission of %q: %w", path, err))
+		}
+	}
+
+	return errors.Join(problems...)
+}
+
 // sqliteDSN assembles what the driver is opened with. It is kept apart from the
 // open so that the parameters can be read back without touching a file.
 //
@@ -329,7 +415,7 @@ func NewDatabase(path string, logger *zap.Logger, logLevel string) (*gorm.DB, *L
 	// SQLite creates the database file but not the directories above it, so a
 	// first startup against a path that does not exist yet would fail to open
 	// with nothing created.
-	err = os.MkdirAll(filepath.Dir(absPath), 0755)
+	err = os.MkdirAll(filepath.Dir(absPath), databaseDirMode)
 	if err != nil {
 		return nil, nil, fmt.Errorf("failed to create the database directory %q: %w", filepath.Dir(absPath), err)
 	}
@@ -395,6 +481,20 @@ func NewDatabase(path string, logger *zap.Logger, logLevel string) (*gorm.DB, *L
 	if err != nil {
 		return nil, nil, fmt.Errorf("failed to migrate database: %w", err)
 	}
+
+	// The mode is set once the migration has run, so that the write-ahead log
+	// and the shared memory file the driver made along the way are narrowed
+	// with the database file rather than left behind by a pass that ran before
+	// they existed.
+	//
+	// What it reports is dropped on purpose, and this is the whole of the
+	// handling. A mode that cannot be set is not a reason to refuse to serve:
+	// the database opened, every Host in it can be reached, and an installation
+	// on a file system that carries no Unix modes would otherwise stop coming
+	// up over a file it has no way of narrowing. It is not logged either, since
+	// a line of this application carries an identifier the Logs screen
+	// translates it by and there is no identifier for this yet.
+	_ = tightenPermissions(absPath)
 
 	if !hadAssignments {
 		err = fillHostServicePorts(db, logger)
