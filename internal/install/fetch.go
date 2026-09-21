@@ -125,6 +125,11 @@ func (f *Fetched) Close() {
 // release was read and the file it named hashes to something else, and putting
 // that file in place would be installing content nobody published.
 //
+// A release that publishes no checksums at all, or none for this platform's
+// file, ends on the fallback too. Without them there is nothing that tells the
+// published file apart from whatever answered the request, and an install has
+// to know what it is putting in place.
+//
 // dir is where a downloaded file is put. Close removes what was written into
 // it; the directory itself belongs to the caller that made it.
 func Fetch(ctx context.Context, dir string) (*Fetched, error) {
@@ -158,23 +163,30 @@ func fetchFrom(ctx context.Context, dir string, latestURL string) (*Fetched, err
 	// The checksums are read before the binary. They are a few kilobytes against
 	// fifteen megabytes, and whatever keeps them from arriving keeps the binary
 	// from being usable, so failing here costs nothing that was going to be kept.
-	var want string
+	sums := latest.asset(sha256SumsAsset)
+	if sums == nil {
+		// A release that carries no checksums leaves nothing to check a download
+		// against, and a file that cannot be checked is whatever answered the
+		// request rather than what the release published. Releases made before
+		// the build wrote this file are what land here, and the executable this
+		// process is already running is content that was checked when it was put
+		// in place, so the install takes that instead.
+		return runningExecutable(fmt.Sprintf("release %s carries no %s", latest.TagName, sha256SumsAsset))
+	}
 
-	if sums := latest.asset(sha256SumsAsset); sums != nil {
-		body, err := readBody(ctx, client, sums.BrowserDownloadURL, maxMetaBytes)
-		if err != nil {
-			return runningExecutable(fmt.Sprintf("the %s of release %s could not be read: %v", sha256SumsAsset, latest.TagName, err))
-		}
+	body, err := readBody(ctx, client, sums.BrowserDownloadURL, maxMetaBytes)
+	if err != nil {
+		return runningExecutable(fmt.Sprintf("the %s of release %s could not be read: %v", sha256SumsAsset, latest.TagName, err))
+	}
 
-		want = sumFor(body, name)
-		if want == "" {
-			// The release publishes checksums and this file is not among them.
-			// There is nothing to check it against, and a release that says what
-			// its files hash to is not one to take an unlisted file from, so this
-			// goes to the executable that is already running rather than to an
-			// error: falling back installs known content either way.
-			return runningExecutable(fmt.Sprintf("the %s of release %s lists no checksum for %s", sha256SumsAsset, latest.TagName, name))
-		}
+	want := sumFor(body, name)
+	if want == "" {
+		// The release publishes checksums and this file is not among them.
+		// There is nothing to check it against, and a release that says what
+		// its files hash to is not one to take an unlisted file from, so this
+		// goes to the executable that is already running rather than to an
+		// error: falling back installs known content either way.
+		return runningExecutable(fmt.Sprintf("the %s of release %s lists no checksum for %s", sha256SumsAsset, latest.TagName, name))
 	}
 
 	path := filepath.Join(dir, name)
@@ -186,7 +198,7 @@ func fetchFrom(ctx context.Context, dir string, latestURL string) (*Fetched, err
 		return runningExecutable(fmt.Sprintf("%s of release %s could not be downloaded: %v", name, latest.TagName, err))
 	}
 
-	if want != "" && !strings.EqualFold(got, want) {
+	if !strings.EqualFold(got, want) {
 		// The half-written file goes now. It is content nobody vouched for, and
 		// leaving it in the staging directory is leaving something for a later
 		// step, or a later operator, to pick up by mistake.
@@ -196,11 +208,14 @@ func fetchFrom(ctx context.Context, dir string, latestURL string) (*Fetched, err
 			name, latest.TagName, got, sha256SumsAsset, want)
 	}
 
+	// The download got here only by hashing to what the release said it would,
+	// because the paths where there was nothing to compare it against all left
+	// on the fallback above.
 	return &Fetched{
 		Path:     path,
 		Source:   SourceRelease,
 		Tag:      latest.TagName,
-		Verified: want != "",
+		Verified: true,
 		cleanup:  func() { _ = os.Remove(path) },
 	}, nil
 }
@@ -508,6 +523,27 @@ func sumFor(sums []byte, name string) string {
 	return ""
 }
 
+// maxRedirects is how many hops one request may be sent on. A release download
+// takes two of them today (the API names a github.com address, which answers
+// with the address of the asset host), so five leaves room for a hop GitHub
+// adds without leaving a redirect loop to be walked ten times.
+const maxRedirects = 5
+
+// releaseDomains are the domains a request here may be sent to. The list is
+// what the addresses in this file resolve to in practice: the API is on
+// api.github.com, a browser_download_url is on github.com, and that address
+// answers with the host the asset itself is served from, which has been
+// objects.githubusercontent.com and is release-assets.githubusercontent.com
+// now.
+//
+// The whole domain is taken rather than those three names, because the asset
+// host is GitHub's to rename and has been renamed once already. Pinning the
+// name it has today would turn every install into a fallback the next time it
+// changes, which is a worse failure than the one this guards against: every
+// host under these domains is GitHub's, and the point here is that a redirect
+// cannot walk the install off GitHub entirely.
+var releaseDomains = []string{"github.com", "githubusercontent.com"}
+
 // newFetchClient is the client every request here goes through.
 //
 // It is built rather than http.DefaultClient because the default has no timeout
@@ -515,7 +551,8 @@ func sumFor(sums []byte, name string) string {
 // install until the operator gave up on it.
 func newFetchClient() *http.Client {
 	return &http.Client{
-		Timeout: fetchTimeout,
+		Timeout:       fetchTimeout,
+		CheckRedirect: checkRedirect,
 		Transport: &http.Transport{
 			Proxy:                 http.ProxyFromEnvironment,
 			DialContext:           (&net.Dialer{Timeout: connectTimeout}).DialContext,
@@ -523,4 +560,59 @@ func newFetchClient() *http.Client {
 			ResponseHeaderTimeout: headerTimeout,
 		},
 	}
+}
+
+// checkRedirect decides whether a request may be sent on to where the answer
+// points.
+//
+// The default policy follows anything up to ten times, which on a download
+// means the file that gets installed is chosen by whoever answered last. A
+// redirect to plain http is a download an operator's network can rewrite on the
+// way past, and a redirect off GitHub is a file nobody published; both are
+// refused here rather than checked after the fact, because by the time the
+// bytes are on disk the request has already been made to a host that should
+// never have been asked.
+//
+// This is a second line and not the only one. The checksums are what say the
+// file is the published one, and they are fetched over the same policy.
+func checkRedirect(req *http.Request, via []*http.Request) error {
+	// Only the scheme and the host go into the messages. The address of an
+	// asset carries the signature that authorises the read, and an install
+	// prints why it fell back, which would put that signature on a terminal and
+	// in whatever collects its output.
+	where := req.URL.Scheme + "://" + req.URL.Host
+
+	if len(via) > maxRedirects {
+		return fmt.Errorf("the request was redirected more than %d times, last to %s", maxRedirects, where)
+	}
+
+	if req.URL.Scheme != "https" {
+		return fmt.Errorf("the request was redirected to %s, which is not https", where)
+	}
+
+	if !isReleaseHost(req.URL.Hostname()) {
+		return fmt.Errorf("the request was redirected to %s, which is not a GitHub host", where)
+	}
+
+	return nil
+}
+
+// isReleaseHost says whether a host is one of releaseDomains or a name under
+// one of them.
+//
+// The leading dot is what keeps the suffix from matching a domain somebody else
+// registered to end in the same letters: notgithub.com ends in "github.com" and
+// is not GitHub, while objects.githubusercontent.com ends in
+// ".githubusercontent.com" and is. Host names are compared folded, because a
+// redirect may spell one in any case and DNS does not care.
+func isReleaseHost(host string) bool {
+	host = strings.ToLower(host)
+
+	for _, domain := range releaseDomains {
+		if host == domain || strings.HasSuffix(host, "."+domain) {
+			return true
+		}
+	}
+
+	return false
 }

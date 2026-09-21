@@ -163,36 +163,58 @@ func TestFetchTakesTheReleaseWhenTheChecksumMatches(t *testing.T) {
 	}
 }
 
-func TestFetchTakesTheReleaseWithNoChecksumFile(t *testing.T) {
+// TestFetchFallsBackWhenTheReleaseHasNoChecksumFile is a release published
+// before the build wrote SHA256SUMS beside the binaries. Nothing there says
+// what the download should hash to, so what arrives cannot be told from what
+// was published and the install takes the running executable instead.
+func TestFetchFallsBackWhenTheReleaseHasNoChecksumFile(t *testing.T) {
 	name := platformAsset(t)
 
 	url := fakeRelease(t, "v3.5.1", map[string][]byte{name: testBinary})
 
-	fetched, err := fetchFrom(context.Background(), t.TempDir(), url)
+	dir := t.TempDir()
+
+	fetched, err := fetchFrom(context.Background(), dir, url)
 	if err != nil {
-		t.Fatalf("fetchFrom: %v", err)
+		t.Fatalf("a release without checksums is not an error: %v", err)
 	}
 	defer fetched.Close()
 
-	if fetched.Source != SourceRelease {
-		t.Errorf("source = %v, want SourceRelease", fetched.Source)
+	if fetched.Source != SourceRunning {
+		t.Fatalf("source = %v, want SourceRunning. Why: %s", fetched.Source, fetched.Why)
 	}
 
 	if fetched.Verified {
-		t.Error("there was nothing to check against, so Verified should be false")
+		t.Error("nothing was checked, so Verified should be false")
 	}
 
-	if fetched.Why != "" {
-		t.Errorf("the release was used, so Why should be empty, got %q", fetched.Why)
+	if fetched.Tag != "" {
+		t.Errorf("tag = %q, want empty for the running executable", fetched.Tag)
 	}
 
-	landed, err := os.ReadFile(fetched.Path)
+	if !strings.Contains(fetched.Why, sha256SumsAsset) {
+		t.Errorf("Why should name the file the release is missing, got %q", fetched.Why)
+	}
+
+	running, err := os.Executable()
 	if err != nil {
-		t.Fatalf("failed to read what was downloaded: %v", err)
+		t.Fatalf("os.Executable: %v", err)
 	}
 
-	if !bytes.Equal(landed, testBinary) {
-		t.Error("what landed on disk is not what the release served")
+	if fetched.Path != running {
+		t.Errorf("path = %q, want the running executable %q", fetched.Path, running)
+	}
+
+	// The binary is not fetched at all here. A file nothing can check is not one
+	// to leave in the staging directory, where a later step or a later operator
+	// could take it for the release.
+	left, err := os.ReadDir(dir)
+	if err != nil {
+		t.Fatalf("read the staging directory: %v", err)
+	}
+
+	if len(left) != 0 {
+		t.Errorf("the release was downloaded although there was no checksum for it: %v", left[0].Name())
 	}
 }
 
@@ -497,5 +519,174 @@ func TestSumForReadsWhatSha256sumWrites(t *testing.T) {
 
 	if sumFor(sums, "tunnel-manager-darwin-arm64") != "" {
 		t.Error("a file that is not listed has no checksum")
+	}
+}
+
+// checkOneRedirect runs the redirect policy over one hop to raw, with hops
+// requests already made before it.
+//
+// It takes the policy off newFetchClient rather than calling checkRedirect,
+// because what matters is what the client Fetch builds does with a redirect
+// and not only what the function would say if it were asked.
+func checkOneRedirect(t *testing.T, raw string, hops int) error {
+	t.Helper()
+
+	req, err := http.NewRequest(http.MethodGet, raw, nil)
+	if err != nil {
+		t.Fatalf("build a request for %q: %v", raw, err)
+	}
+
+	via := make([]*http.Request, hops)
+	for i := range via {
+		via[i] = req
+	}
+
+	policy := newFetchClient().CheckRedirect
+	if policy == nil {
+		t.Fatal("the client has no redirect policy, so it follows anything ten times")
+	}
+
+	return policy(req, via)
+}
+
+// TestCheckRedirectTakesOnlyGitHubOverHTTPS is the list of hosts a download may
+// be sent to. A redirect is the one place where something other than this code
+// picks the address, so a hop to plain http or off GitHub has to stop there.
+func TestCheckRedirectTakesOnlyGitHubOverHTTPS(t *testing.T) {
+	cases := []struct {
+		name string
+		url  string
+		want string // the part of the refusal to look for, empty when it is allowed
+	}{
+		{"the API", "https://api.github.com/repos/jollaman999/tunnel-manager/releases/latest", ""},
+		{"a release download", "https://github.com/jollaman999/tunnel-manager/releases/download/v3.6.1/SHA256SUMS", ""},
+		{"the asset host of today", "https://release-assets.githubusercontent.com/github-production-release-asset/1/2?sig=x", ""},
+		{"the asset host of before", "https://objects.githubusercontent.com/github-production-release-asset/1/2", ""},
+		{"the domain itself", "https://github.com/", ""},
+		{"a host spelled in capitals", "https://GITHUB.COM/jollaman999/tunnel-manager", ""},
+		{"a host with the port written out", "https://github.com:443/jollaman999/tunnel-manager", ""},
+
+		{"plain http on GitHub", "http://github.com/jollaman999/tunnel-manager", "not https"},
+		{"plain http on the asset host", "http://objects.githubusercontent.com/1/2", "not https"},
+		{"a scheme that is not the web at all", "file:///etc/passwd", "not https"},
+		{"somewhere else entirely", "https://example.com/tunnel-manager-linux-amd64", "not a GitHub host"},
+		{"a domain that ends in the same letters", "https://notgithub.com/tunnel-manager-linux-amd64", "not a GitHub host"},
+		{"a domain that starts with one of ours", "https://github.com.example.net/tunnel-manager-linux-amd64", "not a GitHub host"},
+		{"the same letters with no dot between", "https://evilgithubusercontent.com/1/2", "not a GitHub host"},
+	}
+
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			err := checkOneRedirect(t, c.url, 1)
+
+			if c.want == "" {
+				if err != nil {
+					t.Fatalf("a redirect to %s is how a release is served, and it was refused: %v", c.url, err)
+				}
+
+				return
+			}
+
+			if err == nil {
+				t.Fatalf("a redirect to %s was followed", c.url)
+			}
+
+			if !strings.Contains(err.Error(), c.want) {
+				t.Errorf("the refusal says %q, want it to say %q", err, c.want)
+			}
+		})
+	}
+}
+
+// TestCheckRedirectKeepsTheQueryOutOfItsMessage guards the signature. The
+// address of a release asset carries what authorises the read, and the reason
+// a fetch fell back is printed by the install.
+func TestCheckRedirectKeepsTheQueryOutOfItsMessage(t *testing.T) {
+	err := checkOneRedirect(t, "https://example.com/1/2?sig=asignaturenobodyshouldsee", 1)
+	if err == nil {
+		t.Fatal("a redirect off GitHub was followed")
+	}
+
+	if strings.Contains(err.Error(), "asignaturenobodyshouldsee") {
+		t.Errorf("the refusal puts the query of the address in its message: %v", err)
+	}
+}
+
+// TestCheckRedirectStopsAfterTheHopsAreSpent is the loop: two addresses that
+// point at each other, both of them ones this would otherwise follow.
+func TestCheckRedirectStopsAfterTheHopsAreSpent(t *testing.T) {
+	const url = "https://github.com/jollaman999/tunnel-manager"
+
+	err := checkOneRedirect(t, url, maxRedirects)
+	if err != nil {
+		t.Fatalf("%d hops are within the limit and were refused: %v", maxRedirects, err)
+	}
+
+	err = checkOneRedirect(t, url, maxRedirects+1)
+	if err == nil {
+		t.Fatalf("a request that has already been redirected %d times was sent on again", maxRedirects+1)
+	}
+
+	if !strings.Contains(err.Error(), "redirected more than") {
+		t.Errorf("the refusal says %q, want it to say the hops are spent", err)
+	}
+}
+
+// TestFetchFallsBackWhenTheReleaseRedirectsOffHTTPS drives the policy the way a
+// real download meets it: the release names an address, that address answers
+// with another one, and the client is what has to refuse. The fake release runs
+// on plain http, which is what every hop here is, so the refusal is the scheme.
+func TestFetchFallsBackWhenTheReleaseRedirectsOffHTTPS(t *testing.T) {
+	name := platformAsset(t)
+
+	elsewhere := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write(sha256Line(testBinary, name))
+	}))
+	t.Cleanup(elsewhere.Close)
+
+	mux := http.NewServeMux()
+	server := httptest.NewServer(mux)
+	t.Cleanup(server.Close)
+
+	info := releaseInfo{TagName: "v9.9.9", Assets: []releaseAsset{
+		{Name: name, BrowserDownloadURL: server.URL + "/download/" + name},
+		{Name: sha256SumsAsset, BrowserDownloadURL: server.URL + "/download/" + sha256SumsAsset},
+	}}
+
+	mux.HandleFunc("/releases/latest", func(w http.ResponseWriter, _ *http.Request) {
+		_ = json.NewEncoder(w).Encode(info)
+	})
+
+	mux.HandleFunc("/download/"+name, func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write(testBinary)
+	})
+
+	mux.HandleFunc("/download/"+sha256SumsAsset, func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, elsewhere.URL+"/"+sha256SumsAsset, http.StatusFound)
+	})
+
+	dir := t.TempDir()
+
+	fetched, err := fetchFrom(context.Background(), dir, server.URL+"/releases/latest")
+	if err != nil {
+		t.Fatalf("a redirect that was refused is not an error: %v", err)
+	}
+	defer fetched.Close()
+
+	if fetched.Source != SourceRunning {
+		t.Fatalf("source = %v, want SourceRunning. Why: %s", fetched.Source, fetched.Why)
+	}
+
+	if !strings.Contains(fetched.Why, "not https") {
+		t.Errorf("Why should say the redirect was refused, got %q", fetched.Why)
+	}
+
+	left, err := os.ReadDir(dir)
+	if err != nil {
+		t.Fatalf("read the staging directory: %v", err)
+	}
+
+	if len(left) != 0 {
+		t.Errorf("the release was downloaded although its checksums never arrived: %v", left[0].Name())
 	}
 }
