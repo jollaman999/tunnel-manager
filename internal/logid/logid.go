@@ -250,6 +250,13 @@ const (
 	HostServicePortAssignmentsFetchFailed  ID = "host.service_port_assignments_fetch_failed"
 	HostServicePortAssignFailed            ID = "host.service_port_assign_failed"
 	HostServicePortsRemoveFailed           ID = "host.service_ports_remove_failed"
+	// The two lines the host key approval writes. Which SSH server a Host
+	// trusts is what keeps its password from being offered to somebody else,
+	// so a change of it is recorded whether it went through or not: the line
+	// carries the fingerprint, which is a digest of a public key and not a
+	// secret, and never the password that was asked for.
+	HostHostKeyApproved              ID = "host.host_key_approved"
+	HostHostKeyApprovalPasswordWrong ID = "host.host_key_approval_password_wrong"
 )
 
 // service_port: the service ports the screens add, change and remove.

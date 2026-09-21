@@ -388,6 +388,16 @@ async function drawStatus() {
       // the row when a tunnel has both.
       const under = [];
 
+      // A tunnel the host key check refused carries the one thing under a row
+      // that is answered rather than read, so it goes above the rest of it.
+      // The last error under it is the same refusal in the words the
+      // connection failed with, which is what the server wrote and is not in
+      // the language of the page.
+      const hostKey = hostKeyNotice(tunnel);
+      if (hostKey !== null) {
+        under.push(hostKey);
+      }
+
       const failure = typeof tunnel.last_error === "string" ? tunnel.last_error : "";
       if (failure !== "") {
         const said = element("span", failure);
@@ -443,13 +453,20 @@ async function drawStatus() {
 function statusBadge(status) {
   const known = { connected: "ok", error: "bad", reconnecting: "waiting" };
   const text = status === null || status === undefined ? "" : String(status);
-  const badge = element("span", text);
+
+  // The two the host key check leaves behind are the exception to the word
+  // being whatever the server said. They are the states an operator answers,
+  // so what they say has to be a sentence in the language of the page rather
+  // than a name out of the database; every other state stays as it came.
+  const asked = hostKeyState(text);
+  const badge = element("span", asked === null ? text : t(asked.word));
 
   // Asked of the table itself and not of what every object inherits, so that a
   // status the server names "constructor" is coloured as unknown rather than
   // with the name of a function.
-  badge.className = "badge " +
-    (Object.prototype.hasOwnProperty.call(known, text) ? known[text] : "unknown");
+  const paint = Object.prototype.hasOwnProperty.call(known, text) ? known[text] : "unknown";
+
+  badge.className = "badge " + (asked === null ? paint : asked.paint);
   badge.dataset.status = text;
 
   return badge;
@@ -577,6 +594,263 @@ function reachAdvice(tunnel) {
   box.appendChild(element("p", t("status.reach-firewall.text")));
 
   return box;
+}
+
+// hostKeyState is what a status the host key check left behind is drawn as,
+// and null for every other status.
+//
+// The two are apart from the rest because they are not something to fix on
+// the Host or on the way to it. They are a question about which machine is
+// answering, which only a person can settle, so each carries a word of its
+// own and the colour of how much is at stake: a Host that has never been
+// approved is a step of registering it and is drawn as something waiting,
+// while a key that changed under a Host that was approved is either a rebuilt
+// server or a connection that is not reaching the server at all, and that one
+// is drawn the way a failure is.
+function hostKeyState(status) {
+  const states = {
+    host_key_unapproved: {
+      word: "status.host-key-unapproved.text",
+      said: "status.host-key-unapproved.notice",
+      paint: "waiting"
+    },
+    host_key_mismatch: {
+      word: "status.host-key-mismatch.text",
+      said: "status.host-key-mismatch.notice",
+      paint: "bad"
+    }
+  };
+
+  const text = status === null || status === undefined ? "" : String(status);
+
+  // Asked of the table itself, for the reason statusBadge asks that way.
+  return Object.prototype.hasOwnProperty.call(states, text) ? states[text] : null;
+}
+
+// hostKeyNotice is what goes under a tunnel the host key check refused: what
+// the state means in one line, and the press that opens the key to compare it
+// and approve it.
+//
+// It is under the row rather than in it for the reason the reach advice is.
+// Nine columns of addresses and counts already ask for more width than a
+// screen has, and a sentence with a button after it in the status column
+// would take the rest of it.
+function hostKeyNotice(tunnel) {
+  const state = hostKeyState(tunnel.status);
+  if (state === null) {
+    return null;
+  }
+
+  const box = document.createElement("div");
+
+  box.className = "host-key-notice " + state.paint;
+  box.dataset.hostKey = String(tunnel.status);
+  box.appendChild(element("p", t(state.said)));
+  box.appendChild(actionButton(t("status.host-key-review.button"),
+    "host-key-" + tunnel.host_id, function () {
+      return openHostKeyPanel(tunnel.host_id);
+    }));
+
+  return box;
+}
+
+// openHostKeyPanel is where the key an SSH server presented is compared with
+// the server and approved.
+//
+// The Host is read again on the way in rather than taken from the row that
+// was pressed. A status row carries the state of a tunnel and not the keys of
+// the Host it runs over, and the screen behind this is a refresh or two old
+// either way: what is put in front of the operator has to be the key that is
+// waiting now, because that is the key the approval names.
+async function openHostKeyPanel(hostID) {
+  const host = await apiCall("GET", "/api/host/" + hostID);
+  const waiting = typeof host.pending_host_key_fingerprint === "string"
+    ? host.pending_host_key_fingerprint
+    : "";
+  const trusted = typeof host.host_key_fingerprint === "string"
+    ? host.host_key_fingerprint
+    : "";
+
+  if (waiting === "") {
+    // Approved from another client in the meantime, or nothing has connected
+    // since the last one was approved. There is nothing to compare, so the
+    // panel says so rather than showing an empty box with an approve under
+    // it.
+    await openModal({
+      name: "host-key-gone",
+      title: t("status.host-key.title", { id: host.id, ip: host.ip }),
+      body: [element("p", t("status.host-key-gone.text"))],
+      buttons: [{ label: t("common.close.button"), name: "close" }]
+    });
+
+    return drawStatus();
+  }
+
+  // Why an approval was refused. It is shown inside the panel because the line
+  // above the screen is behind the backdrop, where the operator who pressed
+  // the button cannot read it.
+  const problem = element("p", "");
+
+  problem.className = "notice error";
+  problem.dataset.problem = "host-key";
+  problem.hidden = true;
+
+  // The password of the account is asked for exactly where the server reads
+  // one: on an approval that replaces a key that is already trusted. A Host
+  // that carries none has no trust to overturn, and a box there would be a
+  // password on the registration of every Host.
+  const password = trusted === "" ? null : hostKeyPasswordField();
+
+  const body = [
+    element("p", trusted === ""
+      ? t("status.host-key-first.text")
+      : t("status.host-key-changed.text")),
+    problem,
+    hostKeyFingerprints(trusted, waiting)
+  ];
+
+  if (password !== null) {
+    body.push(password.row);
+  }
+
+  const outcome = await openModal({
+    name: "host-key",
+    title: t("status.host-key.title", { id: host.id, ip: host.ip }),
+    body: body,
+    buttons: [
+      {
+        label: t("status.host-key-approve.button"),
+        name: "approve",
+        // An approval that replaces a trusted key is painted as what cannot
+        // be taken back, because the key it drops is the one thing that would
+        // have caught a server answering in place of this one.
+        variant: trusted === "" ? "primary" : "danger",
+        press: function (button, close) {
+          return approveHostKey(host, waiting, password, button, close, problem);
+        }
+      },
+      { label: t("common.close.button"), name: "close" }
+    ]
+  });
+
+  if (outcome !== "approved") {
+    return;
+  }
+
+  return drawStatus();
+}
+
+// hostKeyFingerprints is the key that is waiting, and the key the Host is
+// trusted on where it carries one, side by side.
+//
+// The two are drawn as two boxes of the same width rather than as a sentence
+// each, because what is done with them is a comparison: the same face, the
+// same width and the same wrapping put the character that differs of one
+// under the character of the other.
+function hostKeyFingerprints(trusted, waiting) {
+  const pair = document.createElement("div");
+
+  pair.className = "host-key-fingerprints";
+
+  if (trusted !== "") {
+    pair.appendChild(hostKeyFingerprint("trusted", t("status.host-key-trusted.label"), trusted));
+  }
+
+  pair.appendChild(hostKeyFingerprint("presented", t("status.host-key-presented.label"), waiting));
+
+  return pair;
+}
+
+// hostKeyFingerprint is one of those boxes: which key it is, and the
+// fingerprint itself in the face every fingerprint on these screens is in.
+function hostKeyFingerprint(name, label, fingerprint) {
+  const box = document.createElement("div");
+
+  box.className = "host-key-fingerprint";
+  box.dataset.fingerprint = name;
+  box.appendChild(element("small", label));
+  box.appendChild(fingerprintValue(fingerprint));
+
+  return box;
+}
+
+// hostKeyPasswordField is the box the password of the account is typed into
+// inside the panel.
+//
+// It is built here rather than with buildForm, because what sends it is a
+// button of the panel: a form inside a panel would send itself on Enter, and
+// what a form sends is read by the form and not by the press that the panel
+// settles on.
+function hostKeyPasswordField() {
+  const row = document.createElement("div");
+  const id = "host-key-password";
+  const label = element("label", t("status.host-key-password.label"));
+  const input = document.createElement("input");
+
+  row.className = "field";
+  label.htmlFor = id;
+
+  input.type = "password";
+  input.id = id;
+  input.name = "password";
+  input.dataset.field = "password";
+
+  row.appendChild(label);
+  row.appendChild(input);
+  row.appendChild(element("small", t("status.host-key-password.hint")));
+
+  return { row: row, input: input };
+}
+
+// approveHostKey sends the approval of the key that was drawn.
+//
+// The fingerprint goes back with it. The server takes the approval only while
+// that is still the key waiting on the Host, so a press meant for the key on
+// the screen cannot approve one the SSH server presented after the screen was
+// drawn; that refusal is shown in the panel, where the fingerprints the
+// operator was comparing are still in front of them.
+async function approveHostKey(host, waiting, password, button, close, problem) {
+  const body = { fingerprint: waiting };
+
+  if (password !== null) {
+    // An empty box is answered here rather than by a round trip, the way a
+    // form answers a value the server would refuse anyway.
+    if (password.input.value === "") {
+      password.input.classList.add("bad");
+      showPanelProblem(problem, t("status.host-key-password.error"));
+
+      return;
+    }
+
+    password.input.classList.remove("bad");
+    body.password = password.input.value;
+  }
+
+  // The button is held down for the whole call, because the panel stays up
+  // while it is in flight and a second press would send the same approval
+  // again.
+  button.disabled = true;
+  problem.hidden = true;
+
+  try {
+    await apiCall("POST", "/api/host/" + host.id + "/host-key", body);
+
+    setNotice(t("status.host-key-approved.notice", { id: host.id, fingerprint: waiting }), "info");
+
+    close("approved");
+  } catch (error) {
+    if (error instanceof Redirected) {
+      // The session ended and the page is on its way to the login. The panel
+      // goes with the screen it was opened from.
+      close(null);
+
+      throw error;
+    }
+
+    showPanelProblem(problem, error.message);
+  } finally {
+    button.disabled = false;
+  }
 }
 
 // countBox is one of the three numbers at the top of the status screen.

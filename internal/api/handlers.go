@@ -373,7 +373,7 @@ func (h *Handler) CreateHost(c echo.Context) error {
 
 	return c.JSON(http.StatusCreated, models.Response{
 		Success: true,
-		Data:    host,
+		Data:    hostViewOf(*host),
 	})
 }
 
@@ -408,16 +408,10 @@ func (h *Handler) ListHosts(c echo.Context) error {
 		return failure(c, http.StatusInternalServerError, errHostListFailed)
 	}
 
-	// A page that holds no row is an empty array and not null: a client draws a
-	// list out of it, and null is not a list.
-	if hosts == nil {
-		hosts = []models.Host{}
-	}
-
 	return c.JSON(http.StatusOK, models.Response{
 		Success: true,
 		Data: listPageOf{
-			Items: hosts,
+			Items: hostViewsOf(hosts),
 			Total: total,
 			Page:  page.number,
 			Size:  page.size,
@@ -449,7 +443,7 @@ func (h *Handler) GetHost(c echo.Context) error {
 
 	return c.JSON(http.StatusOK, models.Response{
 		Success: true,
-		Data:    host,
+		Data:    hostViewOf(host),
 	})
 }
 
@@ -558,7 +552,7 @@ func (h *Handler) UpdateHost(c echo.Context) error {
 
 	return c.JSON(http.StatusOK, models.Response{
 		Success: true,
-		Data:    host,
+		Data:    hostViewOf(host),
 	})
 }
 
@@ -1320,7 +1314,7 @@ func (h *Handler) GetHostStatus(c echo.Context) error {
 	return c.JSON(http.StatusOK, models.Response{
 		Success: true,
 		Data: map[string]interface{}{
-			"host":              host,
+			"host":              hostViewOf(host),
 			"total_tunnels":     len(*tunnels),
 			"connected_tunnels": connectedTunnels,
 			"tunnels":           tunnels,

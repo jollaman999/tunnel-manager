@@ -677,6 +677,72 @@ tbody tr.under > td {
   margin-top: 0.25rem;
 }
 
+/* What is said under a tunnel the host key check refused, and the press that
+   opens the key. It carries the colour of the badge in the row above it, so
+   the two say the same thing about how much is at stake: amber for a Host
+   nobody has approved yet, which is a step of registering one, and red for a
+   key that changed under a Host that was approved, which is either a rebuilt
+   server or a connection that is not reaching the server at all. */
+.host-key-notice {
+  margin: 0.25rem 0 0.5rem;
+  padding: 0.5rem 0.75rem;
+  border-radius: 4px;
+  border: 1px solid;
+  overflow-wrap: break-word;
+}
+
+.host-key-notice > p {
+  margin: 0 0 0.5rem;
+}
+
+.host-key-notice.waiting {
+  color: var(--warn);
+  background: var(--warn-bg);
+  border-color: var(--warn-border);
+}
+
+.host-key-notice.bad {
+  color: var(--danger-strong);
+  background: var(--danger-bg);
+  border-color: var(--danger-border);
+}
+
+/* The key that is waiting and the key the Host is trusted on, in the panel
+   that approves one of them. They sit side by side while there is room for
+   both, because what is done with them is a comparison and two boxes one
+   above the other are read one after the other; narrowed, they stack rather
+   than shrink to a column a fingerprint cannot be read in. */
+.host-key-fingerprints {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+  margin: 0.75rem 0;
+}
+
+.host-key-fingerprint {
+  flex: 1 1 13rem;
+  min-width: 0;
+  padding: 0.5rem 0.6rem;
+  background: var(--bg-sunken);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+}
+
+.host-key-fingerprint > small {
+  display: block;
+  margin-bottom: 0.2rem;
+  color: var(--text-muted);
+}
+
+/* The fingerprint is the face every fingerprint on these screens is in. It is
+   a block of its own so that the two boxes break their lines at the same
+   place, which is what puts the character that differs of one under the
+   character of the other. */
+.host-key-fingerprint > .fingerprint {
+  display: block;
+  user-select: all;
+}
+
 /* A timestamp in a table stays on one line. Broken at the space between the
    date and the clock, the two halves read as two values stacked in one cell. */
 .stamp {

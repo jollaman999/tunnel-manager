@@ -753,15 +753,12 @@ func installSource(fetched *install.Fetched) string {
 		return text
 	}
 
-	text := "the " + fetched.Tag + " release"
-
-	if fetched.Verified {
-		text += ", checksum verified"
-	} else {
-		text += ", with no SHA256SUMS in it to check the download against"
-	}
-
-	return text
+	// A release that reaches here was checked against the SHA256SUMS of the
+	// release. Fetch leaves on the fallback above whenever there was nothing
+	// to check the download against - a release without that file, or without
+	// an entry for this one in it - so a binary that came from a release is
+	// one whose checksum matched.
+	return "the " + fetched.Tag + " release, checksum verified"
 }
 
 // usage is what -help prints and what an unknown flag prints. It says where the
@@ -1246,6 +1243,14 @@ func serve() {
 	g.GET("/host/:id", h.GetHost)
 	g.PUT("/host/:id", h.UpdateHost)
 	g.DELETE("/host/:id", h.DeleteHost)
+
+	// Approving the host key of a Host is a change to the Host, so it hangs
+	// under it and behind the same session check. It is a POST and carries a
+	// body, because a Host whose trusted key is being replaced is approved
+	// with the password of the account, and a password in a URL is written to
+	// the access log of this server and to the history of the browser that
+	// sent it.
+	g.POST("/host/:id/host-key", h.ApproveHostKey)
 
 	// The service ports a Host carries are read and changed under the Host, on
 	// the group that carries the session check, because an assignment decides

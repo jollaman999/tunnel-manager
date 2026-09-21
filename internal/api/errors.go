@@ -117,6 +117,9 @@ const (
 	errHostCreateServicePortsStore errorCode = "host.create.service_ports_store_failed"
 	errHostUpdateKeyRefused        errorCode = "host.update.key_refused"
 	errHostUpdatePassphraseAlone   errorCode = "host.update.passphrase_without_key"
+	errHostKeyNothingToApprove     errorCode = "host.host_key.nothing_to_approve"
+	errHostKeyFingerprintChanged   errorCode = "host.host_key.fingerprint_changed"
+	errHostKeyPasswordWrong        errorCode = "host.host_key.password_wrong"
 
 	errServicePortIDInvalid        errorCode = "service_port.id.invalid"
 	errServicePortNotFound         errorCode = "service_port.not_found"
@@ -276,6 +279,13 @@ var errorMessages = map[errorCode]string{
 	errHostCreateServicePortsStore: "The Host was not created: failed to store the service ports it carries",
 	errHostUpdateKeyRefused:        "The Host was not updated: {reason}",
 	errHostUpdatePassphraseAlone:   "The Host was not updated: a passphrase was sent without a private key. The two are checked together, so send the key along with it",
+	errHostKeyNothingToApprove:     "The host key was not approved: this Host has no key waiting to be approved. Either it has been approved already, or nothing has connected to this Host since the last one was",
+	// The refusal that says the question changed under the answer. The
+	// fingerprint that is waiting goes into it, because the screen the
+	// operator answered from is showing another one and the sentence has to be
+	// able to say so without a second request.
+	errHostKeyFingerprintChanged: "The host key was not approved: the fingerprint sent is not the one waiting to be approved, which is {waiting}. The SSH server presented another key after the one on the screen was read. Compare the fingerprint above against the server itself before approving it",
+	errHostKeyPasswordWrong:      "The host key was not approved: the password does not open this account",
 
 	// The service ports.
 	errServicePortIDInvalid:        "Invalid service port ID: {reason}",
