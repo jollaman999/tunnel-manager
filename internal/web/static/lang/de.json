@@ -101,7 +101,7 @@
   "error.assignment.add_and_remove.error": "Die Änderung nennt denselben Service-Port zum Hinzufügen und zum Entfernen: {ids}",
   "error.assignment.service_port.not_found.error": "Diesen Service-Port gibt es nicht: {ids}",
   "error.assignment.update_failed.error": "Die Service-Ports des Hosts konnten nicht aktualisiert werden",
-  "error.auth.attempts.too_many.error": "Zu viele fehlgeschlagene Anmeldungen. In den nächsten {retry_after} Sekunden wird gar kein Passwort geprüft. Gezählt werden sowohl die Adresse, von der ein Versuch kam, als auch das Konto, und diese Antwort sagt nicht, welches von beiden erreicht wurde",
+  "error.auth.attempts.too_many.error": "Zu viele fehlgeschlagene Anmeldungen. In den nächsten {retry_after} Sekunden wird kein Passwort geprüft. Die Adresse der Anfrage und das Konto werden getrennt gezählt; welches von beiden die Grenze erreicht hat, wird hier nicht gesagt",
   "error.auth.credentials.invalid.error": "Benutzername oder Passwort ist falsch",
   "error.auth.csrf.refused.error": "Die Anfrage enthält keinen gültigen {header}-Header. Senden Sie bei jedem POST, PUT und DELETE das Token der Sitzung, das die Anmeldung zurückgibt und das im Cookie {cookie} enthalten ist",
   "error.auth.password.too_long.error": "Das Passwort darf höchstens {max} Bytes lang sein, weil bcrypt nicht weiter liest",

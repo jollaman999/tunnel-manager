@@ -101,7 +101,7 @@
   "error.assignment.add_and_remove.error": "Thay đổi này vừa thêm vừa bỏ cùng một cổng dịch vụ: {ids}",
   "error.assignment.service_port.not_found.error": "Không có cổng dịch vụ này: {ids}",
   "error.assignment.update_failed.error": "Không cập nhật được các cổng dịch vụ của Host",
-  "error.auth.attempts.too_many.error": "Quá nhiều lượt đăng nhập thất bại. Trong {retry_after} giây tới, mật khẩu sẽ không được kiểm tra chút nào. Cả địa chỉ gửi lượt thử đến lẫn tài khoản đều được đếm, và câu trả lời này không nói bên nào đã chạm giới hạn",
+  "error.auth.attempts.too_many.error": "Quá nhiều lượt đăng nhập thất bại. Trong {retry_after} giây tới, mật khẩu sẽ không được kiểm tra. Địa chỉ gửi yêu cầu và tài khoản được đếm riêng, và bên nào chạm giới hạn thì không được nêu ở đây",
   "error.auth.credentials.invalid.error": "Tên đăng nhập hoặc mật khẩu không đúng",
   "error.auth.csrf.refused.error": "Yêu cầu không có header {header} hợp lệ. Hãy gửi token của phiên - token mà lượt đăng nhập trả về và cookie {cookie} đang giữ - trong mọi POST, PUT và DELETE",
   "error.auth.password.too_long.error": "Mật khẩu dài nhất là {max} byte, vì bcrypt chỉ đọc tới đó",

@@ -101,7 +101,7 @@
   "error.assignment.add_and_remove.error": "एक ही सर्विस पोर्ट को जोड़ने और हटाने, दोनों के लिए भेजा गया है: {ids}",
   "error.assignment.service_port.not_found.error": "ऐसा कोई सर्विस पोर्ट नहीं है: {ids}",
   "error.assignment.update_failed.error": "Host के सर्विस पोर्ट बदले नहीं जा सके",
-  "error.auth.attempts.too_many.error": "लॉगिन की नाकाम कोशिशें बहुत ज़्यादा हो गईं। अगले {retry_after} सेकंड तक कोई पासवर्ड जाँचा ही नहीं जाएगा। जिस पते से कोशिश आई वह और खाता, दोनों गिने जा रहे हैं, और यह जवाब नहीं बताता कि दोनों में से किसकी सीमा पूरी हुई",
+  "error.auth.attempts.too_many.error": "लॉगिन की नाकाम कोशिशें बहुत ज़्यादा हैं। अगले {retry_after} सेकंड तक पासवर्ड नहीं जाँचा जाएगा। अनुरोध का पता और खाता अलग-अलग गिने जाते हैं, और इनमें से किसकी सीमा पूरी हुई, यह यहाँ नहीं बताया जाता",
   "error.auth.credentials.invalid.error": "उपयोगकर्ता नाम या पासवर्ड गलत है",
   "error.auth.csrf.refused.error": "अनुरोध में सही {header} हेडर नहीं है। सेशन का टोकन, जो लॉगिन के जवाब में मिलता है और {cookie} कुकी में रहता है, हर POST, PUT और DELETE के साथ भेजें",
   "error.auth.password.too_long.error": "पासवर्ड ज़्यादा से ज़्यादा {max} बाइट का हो सकता है, क्योंकि bcrypt इतना ही पढ़ता है",
