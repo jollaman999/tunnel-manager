@@ -13,8 +13,19 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"sync/atomic"
 	"testing"
+	"time"
 )
+
+// TestMain shortens the waits between retries. The waits are there for a CDN
+// that needs seconds to catch up with a release, and a test that sat through a
+// real one would spend that time doing nothing.
+func TestMain(m *testing.M) {
+	retryWaits = []time.Duration{time.Millisecond, time.Millisecond, time.Millisecond, time.Millisecond}
+
+	os.Exit(m.Run())
+}
 
 // testBinary is what the fake release serves in place of the real binary. Its
 // content does not matter to Fetch; what matters is that the file that lands on
@@ -329,6 +340,117 @@ func TestFetchFallsBackWhenTheChecksumsDoNotListTheAsset(t *testing.T) {
 
 	if !strings.Contains(fetched.Why, sha256SumsAsset) {
 		t.Errorf("Why should say the checksums did not list it, got %q", fetched.Why)
+	}
+}
+
+// TestFetchRetriesAServerThatIsBusy is the install run right after a release:
+// the API names the file and the CDN that serves it answers 504 until it has
+// caught up. The install has to wait rather than fall back, or the operator is
+// told it worked and is left on the version they started with.
+func TestFetchRetriesAServerThatIsBusy(t *testing.T) {
+	name := platformAsset(t)
+	sums := sha256Line(testBinary, name)
+
+	var tries atomic.Int32
+
+	mux := http.NewServeMux()
+	server := httptest.NewServer(mux)
+	t.Cleanup(server.Close)
+
+	info := releaseInfo{TagName: "v9.9.9", Assets: []releaseAsset{
+		{Name: name, BrowserDownloadURL: server.URL + "/download/" + name},
+		{Name: sha256SumsAsset, BrowserDownloadURL: server.URL + "/download/" + sha256SumsAsset},
+	}}
+
+	mux.HandleFunc("/releases/latest", func(w http.ResponseWriter, _ *http.Request) {
+		_ = json.NewEncoder(w).Encode(info)
+	})
+
+	mux.HandleFunc("/download/"+name, func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write(testBinary)
+	})
+
+	// The checksums are what the CDN is behind on. The first two asks get the
+	// status it gives for a file it has not been handed yet.
+	mux.HandleFunc("/download/"+sha256SumsAsset, func(w http.ResponseWriter, _ *http.Request) {
+		if tries.Add(1) <= 2 {
+			http.Error(w, "gateway time-out", http.StatusGatewayTimeout)
+
+			return
+		}
+
+		_, _ = w.Write(sums)
+	})
+
+	fetched, err := fetchFrom(context.Background(), t.TempDir(), server.URL+"/releases/latest")
+	if err != nil {
+		t.Fatalf("a server that came back is not an error: %v", err)
+	}
+	defer fetched.Close()
+
+	if fetched.Source != SourceRelease {
+		t.Fatalf("source = %v, want SourceRelease. Why: %s", fetched.Source, fetched.Why)
+	}
+
+	if !fetched.Verified {
+		t.Error("the checksums arrived on the third ask, so the binary should be verified")
+	}
+
+	if got := tries.Load(); got != 3 {
+		t.Errorf("the checksums were asked for %d times, want 3", got)
+	}
+}
+
+// TestFetchFallsBackWhenAServerStaysBusy is the same server that never catches
+// up. The retries run out and the install takes the running executable, which
+// is what it did before there were any retries.
+func TestFetchFallsBackWhenAServerStaysBusy(t *testing.T) {
+	var tries atomic.Int32
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		tries.Add(1)
+		http.Error(w, "gateway time-out", http.StatusGatewayTimeout)
+	}))
+	t.Cleanup(server.Close)
+
+	fetched, err := fetchFrom(context.Background(), t.TempDir(), server.URL+"/releases/latest")
+	if err != nil {
+		t.Fatalf("a server that stays down is not an error: %v", err)
+	}
+	defer fetched.Close()
+
+	if fetched.Source != SourceRunning {
+		t.Errorf("source = %v, want SourceRunning", fetched.Source)
+	}
+
+	if !strings.Contains(fetched.Why, "504") {
+		t.Errorf("Why should carry what the server said, got %q", fetched.Why)
+	}
+
+	if want := int32(len(retryWaits) + 1); tries.Load() != want {
+		t.Errorf("the server was asked %d times, want %d", tries.Load(), want)
+	}
+}
+
+// TestFetchDoesNotRetryARefusal is the rate limit. Asking again says the same
+// thing, so the install must not spend the waits on it.
+func TestFetchDoesNotRetryARefusal(t *testing.T) {
+	var tries atomic.Int32
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		tries.Add(1)
+		http.Error(w, "rate limit exceeded", http.StatusForbidden)
+	}))
+	t.Cleanup(server.Close)
+
+	fetched, err := fetchFrom(context.Background(), t.TempDir(), server.URL+"/releases/latest")
+	if err != nil {
+		t.Fatalf("an API that refuses is not an error: %v", err)
+	}
+	defer fetched.Close()
+
+	if tries.Load() != 1 {
+		t.Errorf("the API was asked %d times, want 1", tries.Load())
 	}
 }
 

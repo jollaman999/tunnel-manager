@@ -7,6 +7,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"hash"
 	"io"
@@ -50,6 +51,14 @@ const (
 	connectTimeout = 10 * time.Second
 	headerTimeout  = 20 * time.Second
 )
+
+// retryWaits is how long to wait before each retry of a request that failed in
+// a way that may pass. The number of entries is the number of retries: four
+// waits are five attempts in all, and the waits together are under a minute so
+// that the whole of Fetch still fits in fetchTimeout beside a download.
+//
+// It is a variable so the tests can shrink it. Nothing else may write to it.
+var retryWaits = []time.Duration{2 * time.Second, 5 * time.Second, 10 * time.Second, 20 * time.Second}
 
 // maxAssetBytes and maxMetaBytes cap what is read off the network. The sizes
 // come from the release itself, which is not this process's to trust: without a
@@ -375,9 +384,62 @@ func readBody(ctx context.Context, client *http.Client, url string, limit int64)
 	return body, nil
 }
 
-// get performs one request and hands back an answer that said 200. The caller
-// closes the body.
+// get asks for a URL until it gets an answer that said 200, or until the last
+// try is spent. The caller closes the body.
+//
+// It retries because a release that was published a moment ago is not yet on
+// the CDN that serves its files, which answers 502 or 504 until it is. That is
+// the shape of an install run right after a release: the API already names the
+// files and one of them cannot be fetched yet. Waiting a few seconds is a
+// better answer than falling back to the running executable, which leaves the
+// operator told the install worked and holding the version they started with.
+//
+// A refusal is not retried. A rate limit answers 403 and a repository with no
+// release answers 404, and asking those again says the same thing.
 func get(ctx context.Context, client *http.Client, url string) (*http.Response, error) {
+	var lastErr error
+
+	for attempt := 0; ; attempt++ {
+		resp, err := getOnce(ctx, client, url)
+		if err == nil {
+			return resp, nil
+		}
+
+		lastErr = err
+
+		if attempt >= len(retryWaits) || !worthRetrying(err) {
+			return nil, lastErr
+		}
+
+		// A context that is already spent has no time for another try, and the
+		// wait itself must end with it rather than hold the install past the
+		// deadline the caller set.
+		select {
+		case <-ctx.Done():
+			return nil, lastErr
+		case <-time.After(retryWaits[attempt]):
+		}
+	}
+}
+
+// retryableError marks a failure that asking again may get past.
+type retryableError struct {
+	err error
+}
+
+func (e *retryableError) Error() string { return e.err.Error() }
+
+func (e *retryableError) Unwrap() error { return e.err }
+
+// worthRetrying says whether get should ask again.
+func worthRetrying(err error) bool {
+	var retryable *retryableError
+
+	return errors.As(err, &retryable)
+}
+
+// getOnce performs one request and hands back an answer that said 200.
+func getOnce(ctx context.Context, client *http.Client, url string) (*http.Response, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
 		return nil, err
@@ -388,16 +450,29 @@ func get(ctx context.Context, client *http.Client, url string) (*http.Response, 
 
 	resp, err := client.Do(req)
 	if err != nil {
-		return nil, err
+		// A connection that was refused, reset or timed out says nothing about
+		// whether the file is there, so it is one to ask about again. A context
+		// that ended is not: the time this was given is gone.
+		if ctx.Err() != nil {
+			return nil, err
+		}
+
+		return nil, &retryableError{err: err}
 	}
 
 	if resp.StatusCode != http.StatusOK {
 		_ = resp.Body.Close()
 
-		// The status is the whole of the message. A rate limit answers 403 and a
-		// repository with no release yet answers 404, and both are reasons to
-		// install what is running rather than things to retry here.
-		return nil, fmt.Errorf("%s answered %s", url, resp.Status)
+		// The status is the whole of the message.
+		statusErr := fmt.Errorf("%s answered %s", url, resp.Status)
+
+		// A server that says it is overloaded or that it could not reach the
+		// one behind it is describing a moment, not the file.
+		if resp.StatusCode == http.StatusTooManyRequests || resp.StatusCode >= http.StatusInternalServerError {
+			return nil, &retryableError{err: statusErr}
+		}
+
+		return nil, statusErr
 	}
 
 	return resp, nil
