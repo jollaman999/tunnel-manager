@@ -13,19 +13,20 @@ import (
 	"time"
 )
 
-// TestParseExecStart holds the reading of a registration to what systemctl on
-// this machine actually answers.
+// TestExecStartExecutable holds the reading of a registration to what systemctl
+// on this machine actually answers.
 //
 // The first case is the output of the deployed service, copied as it was
-// printed. It is the whole of how an uninstall finds what to remove: read it
-// wrong and the removal either misses the installation or takes a path that was
-// never installed.
-func TestParseExecStart(t *testing.T) {
+// printed. What is read out of it is the executable and nothing else: the -db
+// of the command line used to be read here too and is not any more, because a
+// unit does not have to carry one and the file the process actually opened is
+// asked of the process itself (see execStartExecutable and OpenFiles). The
+// cases that were here for the spellings of that flag went with it.
+func TestExecStartExecutable(t *testing.T) {
 	cases := []struct {
 		name       string
 		value      string
 		executable string
-		database   string
 		fails      bool
 	}{
 		{
@@ -35,34 +36,17 @@ func TestParseExecStart(t *testing.T) {
 				"start_time=[Mon 2026-09-21 02:44:10 KST] ; stop_time=[n/a] ; pid=219825 ; " +
 				"code=(null) ; status=0/0 }",
 			executable: "/usr/local/bin/tunnel-manager",
-			database:   "/var/lib/tunnel-manager/tunnel-manager.db",
 		},
 		{
 			name:       "no -db at all",
 			value:      "{ path=/usr/local/bin/tunnel-manager ; argv[]=/usr/local/bin/tunnel-manager ; ignore_errors=no }",
 			executable: "/usr/local/bin/tunnel-manager",
-			database:   "",
-		},
-		{
-			name: "-db written with an equals sign",
-			value: "{ path=/opt/tm/tunnel-manager ; argv[]=/opt/tm/tunnel-manager -db=/opt/tm/tm.db ; " +
-				"ignore_errors=no }",
-			executable: "/opt/tm/tunnel-manager",
-			database:   "/opt/tm/tm.db",
-		},
-		{
-			name: "other flags around the database",
-			value: "{ path=/usr/local/bin/tunnel-manager ; argv[]=/usr/local/bin/tunnel-manager -port 8080 " +
-				"--db /srv/tm.db -log /var/log/tm.log ; ignore_errors=no }",
-			executable: "/usr/local/bin/tunnel-manager",
-			database:   "/srv/tm.db",
 		},
 		{
 			name: "several ExecStart lines, the first is the one",
 			value: "{ path=/usr/local/bin/first ; argv[]=/usr/local/bin/first -db /first.db ; ignore_errors=no }\n" +
 				"{ path=/usr/local/bin/second ; argv[]=/usr/local/bin/second -db /second.db ; ignore_errors=no }",
 			executable: "/usr/local/bin/first",
-			database:   "/first.db",
 		},
 		{
 			name:  "nothing that looks like a command line",
@@ -78,11 +62,11 @@ func TestParseExecStart(t *testing.T) {
 
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			executable, database, err := parseExecStart(c.value)
+			executable, err := execStartExecutable(c.value)
 
 			if c.fails {
 				if err == nil {
-					t.Fatalf("parseExecStart(%q) answered %q and %q, want a failure", c.value, executable, database)
+					t.Fatalf("execStartExecutable(%q) answered %q, want a failure", c.value, executable)
 				}
 
 				t.Logf("refused as it should: %v", err)
@@ -91,15 +75,11 @@ func TestParseExecStart(t *testing.T) {
 			}
 
 			if err != nil {
-				t.Fatalf("parseExecStart(%q) failed: %v", c.value, err)
+				t.Fatalf("execStartExecutable(%q) failed: %v", c.value, err)
 			}
 
 			if executable != c.executable {
 				t.Errorf("executable is %q, want %q", executable, c.executable)
-			}
-
-			if database != c.database {
-				t.Errorf("database is %q, want %q", database, c.database)
 			}
 		})
 	}
@@ -110,8 +90,10 @@ func TestParseExecStart(t *testing.T) {
 // They are written out rather than built from the pieces, for the reason the
 // default paths are in install_test.go: a unit built from the same code that
 // builds the unit passes whatever that code does. What has to be caught is a
-// directive that quietly went missing - Restart=always or TimeoutStopSec - and
-// that only shows up against a file somebody read and agreed with.
+// directive that quietly went missing - Restart=always, TimeoutStopSec, or the
+// LimitNOFILE that is the only way this service gets more descriptors than the
+// machine hands out by default - and that only shows up against a file somebody
+// read and agreed with.
 func TestUnitFile(t *testing.T) {
 	defaults := `# Written by tunnel-manager -install. Anything changed here is written over by
 # the next install.
@@ -128,6 +110,10 @@ StateDirectory=tunnel-manager
 Restart=always
 RestartSec=5
 TimeoutStopSec=90
+
+# The descriptor limit of this service alone. The process cannot raise its
+# own hard limit, so the one it runs with is the one set here.
+LimitNOFILE=65535
 
 [Install]
 WantedBy=multi-user.target
@@ -150,6 +136,10 @@ ExecStart=/opt/tm/tunnel-manager -db /opt/tm/tm.db
 Restart=always
 RestartSec=5
 TimeoutStopSec=90
+
+# The descriptor limit of this service alone. The process cannot raise its
+# own hard limit, so the one it runs with is the one set here.
+LimitNOFILE=65535
 
 [Install]
 WantedBy=multi-user.target
@@ -340,12 +330,21 @@ func TestSystemdRoundTrip(t *testing.T) {
 	}
 
 	svc := systemd{unit: roundTripUnit}
-	unitPath := filepath.Join(unitDir, roundTripUnit)
+
+	// Written out rather than built from unitDir, for the reason the default
+	// paths in install_test.go are written out: built from the constant, this
+	// would pass for whatever the constant happens to be, and where the unit
+	// goes is exactly what has to be caught if it changes. The link is where
+	// enabling puts it, which is the other half of being registered - a unit
+	// with no link from multi-user.target does not come back after a reboot.
+	unitPath := "/lib/systemd/system/" + roundTripUnit
+	wantsLink := "/etc/systemd/system/multi-user.target.wants/" + roundTripUnit
 
 	// Registered even before anything was written, so that a run which fails
 	// halfway leaves nothing behind either.
 	t.Cleanup(func() {
 		_, _ = svc.run(jobTimeout, "disable", "--now", svc.unit)
+		_ = os.Remove(wantsLink)
 		_ = os.Remove(unitPath)
 		_, _ = svc.run(commandTimeout, "daemon-reload")
 	})
@@ -357,11 +356,7 @@ func TestSystemdRoundTrip(t *testing.T) {
 		DatabaseFile:   filepath.Join(dir, "data", databaseFileName),
 	}
 
-	// A program that stays up and ignores the arguments it is handed. What is
-	// being checked is the registration and not this program, and the real
-	// binary would want a database and a port, which is a second thing that
-	// could fail and say nothing about the backend.
-	err := os.WriteFile(plan.ExecutablePath, []byte("#!/bin/sh\nexec sleep 600\n"), executableMode)
+	err := os.WriteFile(plan.ExecutablePath, []byte(databaseHoldingProgram(t, plan, "the test unit")), executableMode)
 	if err != nil {
 		t.Fatalf("failed to write the program the test unit starts: %v", err)
 	}
@@ -385,16 +380,42 @@ func TestSystemdRoundTrip(t *testing.T) {
 		t.Fatalf("after registering, Current failed: %v", err)
 	}
 
-	if current.DefinitionPath != unitPath {
+	if !sameFile(t, current.DefinitionPath, unitPath) {
 		t.Errorf("the registration is at %q, want %q", current.DefinitionPath, unitPath)
+	} else {
+		t.Logf("the registration is at %q, which is %q", current.DefinitionPath, unitPath)
 	}
 
 	if current.ExecutablePath != plan.ExecutablePath {
 		t.Errorf("the registration starts %q, want %q", current.ExecutablePath, plan.ExecutablePath)
 	}
 
-	if current.DatabaseFile != plan.DatabaseFile {
-		t.Errorf("the registration passes -db %q, want %q", current.DatabaseFile, plan.DatabaseFile)
+	// The unit is where this install writes units, and nowhere else. Asked of
+	// the file system and not of systemd, because FragmentPath above is what
+	// systemd loaded and this is what is on the disk.
+	if _, statErr := os.Stat(unitPath); statErr != nil {
+		t.Errorf("the unit is not at %s: %v", unitPath, statErr)
+	}
+
+	// And enabling made the link under /etc, which is what makes the service
+	// come back after a reboot. It is read with Lstat and Readlink: what is
+	// there is a symbolic link to the unit above, and a copy of the file would
+	// pass a plain Stat.
+	link, linkErr := os.Readlink(wantsLink)
+	if linkErr != nil {
+		t.Errorf("enabling did not leave a link at %s: %v", wantsLink, linkErr)
+	} else if !sameFile(t, link, unitPath) {
+		t.Errorf("the link at %s points at %q, want %q", wantsLink, link, unitPath)
+	} else {
+		t.Logf("%s -> %s", wantsLink, link)
+	}
+
+	// What the registration says about the database: nothing. A unit carries a
+	// -db and this does not read it any more, because a unit need not carry one
+	// at all. It is the running process that is asked, further down.
+	if current.DatabaseFile != "" {
+		t.Errorf("the registration answered the database %q, want it empty and asked of the process",
+			current.DatabaseFile)
 	}
 
 	// Register leaves the service registered and not started, which is what the
@@ -415,6 +436,18 @@ func TestSystemdRoundTrip(t *testing.T) {
 		t.Logf("after Start, systemctl is-active %s says %q", svc.unit, state)
 	}
 
+	// The part an uninstall depends on and no fake can show: the main process
+	// of a unit systemd is running, read out of systemd, and the files that
+	// process actually has open, read out of /proc. This is where the database
+	// of an installation comes from.
+	database := databaseOfRunningService(t, svc)
+
+	if database != plan.DatabaseFile {
+		t.Errorf("the database read out of the running service is %q, want %q", database, plan.DatabaseFile)
+	}
+
+	// A service that is not running has no descriptors to read, and that has to
+	// be an answer and not a list.
 	err = svc.Stop()
 	if err != nil {
 		t.Fatalf("Stop failed: %v", err)
@@ -422,6 +455,13 @@ func TestSystemdRoundTrip(t *testing.T) {
 
 	if state := activeState(t, svc.unit); state == "active" {
 		t.Errorf("after Stop the service is still %q", state)
+	}
+
+	_, err = svc.OpenFiles()
+	if !errors.Is(err, ErrOpenFilesUnknown) {
+		t.Errorf("the open files of a service that is stopped answered %v, want %v", err, ErrOpenFilesUnknown)
+	} else {
+		t.Logf("with the service stopped: %v", err)
 	}
 
 	err = svc.Unregister(current)
@@ -438,6 +478,13 @@ func TestSystemdRoundTrip(t *testing.T) {
 		t.Errorf("after Unregister, systemctl still answers %q", shown)
 	}
 
+	// The link under /etc goes with the unit. It is disable that removes it,
+	// and a link left pointing at a unit file that is gone is what systemd
+	// reports as a broken enablement on the next boot.
+	if _, statErr := os.Lstat(wantsLink); !errors.Is(statErr, os.ErrNotExist) {
+		t.Errorf("after Unregister, %s is still there: %v", wantsLink, statErr)
+	}
+
 	_, err = svc.Current()
 	if !errors.Is(err, ErrNotInstalled) {
 		t.Errorf("after Unregister, Current answered %v, want ErrNotInstalled", err)
@@ -449,6 +496,121 @@ func TestSystemdRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Errorf("Unregister of a unit that is already gone failed: %v", err)
 	}
+}
+
+// openFilesPollAttempts bounds the wait below. Twenty five attempts at the
+// interval the backend polls a start with is about five seconds, which is
+// nothing against a shell opening three files and everything against a test
+// that would otherwise hang.
+const openFilesPollAttempts = 25
+
+// databaseOfRunningService reads the database out of the files the running
+// service has open, waiting for the program to have opened them.
+//
+// The wait is the test's and not the backend's. systemctl start answers once
+// systemd has forked the process, and is-active says active from that moment,
+// which is before that process has opened anything: the stand-in is a shell
+// that opens three files and then execs, and reading its descriptors in the
+// first instant answers an empty list. This has been seen happen, roughly one
+// run in five. A service an uninstall is pointed at has been running since the
+// machine came up, so that instant is not a state it is ever read in, and a
+// backend that waited would be waiting on behalf of nobody.
+func databaseOfRunningService(t *testing.T, svc systemd) string {
+	t.Helper()
+
+	var last error
+
+	for attempt := 0; attempt < openFilesPollAttempts; attempt++ {
+		openFiles, err := svc.OpenFiles()
+		if err != nil {
+			t.Fatalf("reading the open files of the started service failed: %v", err)
+		}
+
+		database, err := databaseAmong(openFiles)
+		if err == nil {
+			t.Logf("systemctl show %s -p MainPID:\n%s\nopen files:\n%s",
+				svc.unit, systemctlShow(t, svc.unit, "MainPID"), strings.Join(openFiles, "\n"))
+
+			return database
+		}
+
+		last = err
+
+		time.Sleep(startPollInterval)
+	}
+
+	t.Fatalf("the database could not be read out of the open files of the service after %s: %v",
+		openFilesPollAttempts*startPollInterval, last)
+
+	return ""
+}
+
+// databaseHoldingProgram is the stand-in for the real binary in the round trips
+// here: a program that stays up holding the database and the two files SQLite
+// keeps beside it open, and writes the three files first so that it can.
+//
+// It has to hold them rather than merely be started with -db, because that is
+// where an install and an uninstall now read the database of an installation
+// from: the descriptors of the running process, and not the command line it was
+// registered with. The descriptors a shell opens are not closed on exec, so
+// they are still open on the sleep that replaces it.
+//
+// The real binary is not used for the reason it never was: it would want a port
+// to itself and a database it could actually open, which is a second thing that
+// can fail and says nothing about the backend. What the comment is for is
+// telling two of these apart by their md5.
+func databaseHoldingProgram(t *testing.T, plan Plan, comment string) string {
+	t.Helper()
+
+	err := os.MkdirAll(plan.DataDir, dataDirMode)
+	if err != nil {
+		t.Fatalf("failed to make the data directory %s: %v", plan.DataDir, err)
+	}
+
+	for _, path := range []string{plan.DatabaseFile, plan.DatabaseFile + walSuffix, plan.DatabaseFile + shmSuffix} {
+		err = os.WriteFile(path, []byte("held open by the program the test unit starts"), 0o600)
+		if err != nil {
+			t.Fatalf("failed to write %s: %v", path, err)
+		}
+	}
+
+	return "#!/bin/sh\n" +
+		"# " + comment + "\n" +
+		"exec 3< " + plan.DatabaseFile +
+		" 4< " + plan.DatabaseFile + walSuffix +
+		" 5< " + plan.DatabaseFile + shmSuffix + "\n" +
+		"exec sleep 600\n"
+}
+
+// sameFile says whether two paths name the same file on this machine.
+//
+// /lib is a symbolic link to usr/lib on every system that merged /usr, and
+// systemd answers with the path it resolved: the unit this install writes to
+// /lib/systemd/system comes back from systemctl as /usr/lib/systemd/system.
+// They are one file, and a test that compared the spellings would be failing
+// over the name of a symbolic link rather than over where the unit went.
+func sameFile(t *testing.T, got string, want string) bool {
+	t.Helper()
+
+	if got == want {
+		return true
+	}
+
+	gotResolved, err := filepath.EvalSymlinks(got)
+	if err != nil {
+		t.Logf("%s could not be resolved: %v", got, err)
+
+		return false
+	}
+
+	wantResolved, err := filepath.EvalSymlinks(want)
+	if err != nil {
+		t.Logf("%s could not be resolved: %v", want, err)
+
+		return false
+	}
+
+	return gotResolved == wantResolved
 }
 
 // systemctlShow is the test asking systemd directly, rather than through the
@@ -508,144 +670,4 @@ func systemctl(t *testing.T, args ...string) string {
 	}
 
 	return string(out)
-}
-
-// packagedUnitDir is where the distribution's own units live, and where the
-// unit of this machine's deployment actually sits. It is only ever written to
-// by the test below, which puts one file there and removes it again.
-const packagedUnitDir = "/usr/lib/systemd/system"
-
-// fragmentTestUnit is the unit that test plants there. It is a name of its own
-// for the reason every other unit here has one, and doubly so: this is the one
-// test that writes outside /etc.
-const fragmentTestUnit = serviceName + "-fragmenttest" + unitSuffix
-
-// TestInstallWritesOverTheUnitWhereItAlreadyIs installs over a registration
-// that lives in /usr/lib/systemd/system.
-//
-// This is the case the deployment on this machine is in: its unit is in
-// /usr/lib and not in /etc. A Register that wrote to /etc anyway would not
-// replace that unit but shadow it, leaving two files where systemd takes the
-// /etc one and the old one sits there still looking like the installation.
-// Nothing about that is visible from the unit that was written; it takes
-// systemd being asked which file it loaded.
-func TestInstallWritesOverTheUnitWhereItAlreadyIs(t *testing.T) {
-	roundTripGate(t, fragmentTestUnit)
-	allowPrivilege(t)
-
-	svc := systemd{unit: fragmentTestUnit}
-	packagedPath := filepath.Join(packagedUnitDir, fragmentTestUnit)
-	etcPath := filepath.Join(unitDir, fragmentTestUnit)
-
-	// Registered before the file is planted, so that a run which fails at any
-	// step still takes the unit out of /usr/lib. That directory belongs to the
-	// package manager and a file of this test's left behind there is the one
-	// piece of this run that would not be cleaned up by a reboot or a reinstall.
-	t.Cleanup(func() {
-		_, _ = svc.run(jobTimeout, "disable", "--now", svc.unit)
-		_ = os.Remove(packagedPath)
-		_ = os.Remove(etcPath)
-		_, _ = svc.run(commandTimeout, "daemon-reload")
-	})
-
-	dir := t.TempDir()
-	plan := Plan{
-		ExecutablePath: filepath.Join(dir, serviceName+"-fragmenttest"),
-		DataDir:        filepath.Join(dir, "data"),
-		DatabaseFile:   filepath.Join(dir, "data", databaseFileName),
-	}
-
-	// Written by hand rather than by unitFile, because this is the state the
-	// machine is put into before the test starts and not something under test.
-	// The marker is what says afterwards whether this file was written over or
-	// merely left alone. The paths are the ones the install will ask for, so
-	// that it is the placing of the unit being tested and not the refusal of an
-	// installation registered somewhere else.
-	planted := "# planted by the test, standing in for the unit of a distribution package\n" +
-		"[Unit]\n" +
-		"Description=Tunnel Manager Service, planted by the test\n" +
-		"\n" +
-		"[Service]\n" +
-		"Type=simple\n" +
-		"ExecStart=" + plan.ExecutablePath + " -db " + plan.DatabaseFile + "\n" +
-		"\n" +
-		"[Install]\n" +
-		"WantedBy=multi-user.target\n"
-
-	err := os.WriteFile(packagedPath, []byte(planted), unitFileMode)
-	if err != nil {
-		t.Fatalf("failed to plant a unit at %s: %v", packagedPath, err)
-	}
-
-	_, err = svc.run(commandTimeout, "daemon-reload")
-	if err != nil {
-		t.Fatalf("daemon-reload after planting the unit failed: %v", err)
-	}
-
-	if _, err := os.Stat(etcPath); !errors.Is(err, os.ErrNotExist) {
-		t.Fatalf("%s is there before the test installed anything: %v", etcPath, err)
-	}
-
-	before, err := svc.Current()
-	if err != nil {
-		t.Fatalf("the planted unit could not be read back: %v", err)
-	}
-
-	if before.DefinitionPath != packagedPath {
-		t.Fatalf("systemd loaded the planted unit from %q, want %q", before.DefinitionPath, packagedPath)
-	}
-
-	source := writeFile(t, filepath.Join(t.TempDir(), "downloaded"), "#!/bin/sh\nexec sleep 600\n")
-
-	var out strings.Builder
-
-	outcome, err := install(svc, plan, source, "the test", &out)
-	if err != nil {
-		t.Fatalf("the install over the planted unit failed: %v", err)
-	}
-
-	t.Logf("\n%s", out.String())
-
-	if !outcome.Replaced {
-		t.Error("the install says nothing was registered before")
-	}
-
-	if outcome.Definition != packagedPath {
-		t.Errorf("the install reports the registration at %q, want %q", outcome.Definition, packagedPath)
-	}
-
-	// The one that decides it: systemd itself saying which file it loaded. A
-	// second unit in /etc would win, and this would name that one.
-	fragment := systemctlShow(t, svc.unit, "FragmentPath")
-	if strings.TrimSpace(fragment) != "FragmentPath="+packagedPath {
-		t.Errorf("after the install systemctl answers %q, want FragmentPath=%s", fragment, packagedPath)
-	}
-
-	t.Logf("systemctl show %s -p FragmentPath -p ExecStart:\n%s",
-		svc.unit, systemctlShow(t, svc.unit, "FragmentPath", "ExecStart"))
-
-	if _, err := os.Stat(etcPath); !errors.Is(err, os.ErrNotExist) {
-		t.Errorf("the install put a second unit at %s: %v", etcPath, err)
-	}
-
-	// The planted file is gone from under the marker: written over where it
-	// was, rather than left as it was beside a new one.
-	written, err := os.ReadFile(packagedPath)
-	if err != nil {
-		t.Fatalf("after the install the unit at %s could not be read: %v", packagedPath, err)
-	}
-
-	if strings.Contains(string(written), "planted by the test") {
-		t.Errorf("the unit at %s is still the planted one:\n%s", packagedPath, written)
-	}
-
-	if !strings.Contains(string(written), "ExecStart="+plan.ExecutablePath) {
-		t.Errorf("the unit at %s does not start %s:\n%s", packagedPath, plan.ExecutablePath, written)
-	}
-
-	if state := activeState(t, svc.unit); state != "active" {
-		t.Errorf("after the install the service is %q, want \"active\"", state)
-	} else {
-		t.Logf("after the install, systemctl is-active %s says %q", svc.unit, state)
-	}
 }

@@ -511,19 +511,22 @@ type installation struct {
 	database      string
 	databaseNamed bool
 	purge         bool
+	assumeYes     bool
 }
 
 // installationAsked reads the installation flags off the command line.
 //
 // flag.Visit walks the flags that were given rather than all of them, which is
 // the only way to tell a -db that was left out from one that was named.
-func installationAsked(install bool, uninstall bool, bin string, database string, purge bool) installation {
+func installationAsked(install bool, uninstall bool, bin string, database string, purge bool,
+	assumeYes bool) installation {
 	asked := installation{
 		install:   install,
 		uninstall: uninstall,
 		bin:       bin,
 		database:  database,
 		purge:     purge,
+		assumeYes: assumeYes,
 	}
 
 	flag.Visit(func(f *flag.Flag) {
@@ -546,7 +549,7 @@ func installationAsked(install bool, uninstall bool, bin string, database string
 // would go on serving while the operator waited for an install, and a -purge
 // that was quietly dropped would leave somebody believing their data was gone.
 func (a installation) asked() bool {
-	return a.install || a.uninstall || a.binNamed || a.purge
+	return a.install || a.uninstall || a.binNamed || a.purge || a.assumeYes
 }
 
 // check reports the combinations that are refused, so that they are refused
@@ -566,6 +569,11 @@ func (a installation) check() error {
 			"It goes with -uninstall")
 	}
 
+	if a.assumeYes && !a.uninstall {
+		return errors.New("-y answers the question -uninstall asks before it removes anything. " +
+			"It goes with -uninstall")
+	}
+
 	return nil
 }
 
@@ -576,7 +584,7 @@ func (a installation) check() error {
 // and at the end, so nothing here writes one. What is left for this is the
 // refusals and the failures, which go to the error output beside the usage the
 // flag package writes there.
-func runInstallation(asked installation, out io.Writer) int {
+func runInstallation(asked installation, in io.Reader, out io.Writer) int {
 	err := asked.check()
 	if err != nil {
 		fmt.Fprintf(flag.CommandLine.Output(), "%v\n\n", err)
@@ -588,7 +596,7 @@ func runInstallation(asked installation, out io.Writer) int {
 	if asked.install {
 		err = asked.runInstall(out)
 	} else {
-		err = asked.runUninstall(out)
+		err = asked.runUninstall(in, out)
 	}
 
 	if err != nil {
@@ -654,13 +662,13 @@ func (a installation) runInstall(out io.Writer) error {
 // says where this installation is, and what the two flags are for is the
 // machine whose registration is already gone; a path this process worked out
 // for itself would be a guess reported as if the removal had found it.
-func (a installation) runUninstall(out io.Writer) error {
+func (a installation) runUninstall(in io.Reader, out io.Writer) error {
 	err := install.CheckPrivilege()
 	if err != nil {
 		return err
 	}
 
-	removal := install.Removal{Purge: a.purge}
+	removal := install.Removal{Purge: a.purge, AssumeYes: a.assumeYes}
 
 	if a.binNamed {
 		removal.ExecutablePath = a.bin
@@ -670,7 +678,7 @@ func (a installation) runUninstall(out io.Writer) error {
 		removal.DatabaseFile = a.database
 	}
 
-	_, err = install.Uninstall(removal, out)
+	_, err = install.Uninstall(removal, in, out)
 
 	return err
 }
@@ -809,6 +817,11 @@ func serve() {
 			"database, the key the stored passwords are sealed with and every host and\n"+
 			"credential in it go with it.\n"+
 			"Without this an uninstall leaves the data where it is and says where that is.")
+	assumeYes := flag.Bool("y", false,
+		"answer yes to the question -uninstall asks before it removes anything. The list\n"+
+			"of what would go is still printed.\n"+
+			"An uninstall whose standard input is not a terminal - one run from a script -\n"+
+			"has nobody to ask and is refused without this.")
 	flag.Parse()
 
 	if *versionFlag {
@@ -821,9 +834,12 @@ func serve() {
 	// database of the installation it is laying down, and opening one first
 	// would build it under whoever ran the command rather than where the
 	// service is about to be registered to read it from.
-	installation := installationAsked(*installFlag, *uninstallFlag, *binPath, *dbPath, *purge)
+	installation := installationAsked(*installFlag, *uninstallFlag, *binPath, *dbPath, *purge, *assumeYes)
 	if installation.asked() {
-		os.Exit(runInstallation(installation, os.Stdout))
+		// The standard input is handed over because the uninstall asks before
+		// it removes anything, and whether there is anybody to answer is read
+		// off this very file: a terminal is asked, a pipe is refused.
+		os.Exit(runInstallation(installation, os.Stdin, os.Stdout))
 	}
 
 	// The path of the database file is the one thing this process has to be

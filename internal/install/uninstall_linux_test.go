@@ -58,11 +58,11 @@ func TestUninstallRoundTrip(t *testing.T) {
 		DatabaseFile:   filepath.Join(dir, "data", databaseFileName),
 	}
 
-	// A program that stays up and ignores what it is handed, the same as the
-	// backend round trip uses: what is under test is the flow, and the real
-	// binary would want a database and a port to itself, which is a second
-	// thing that can fail and says nothing about an uninstall.
-	source := writeFile(t, filepath.Join(t.TempDir(), "downloaded"), "#!/bin/sh\nexec sleep 600\n")
+	// A program that stays up holding the database open, the same as the
+	// backend round trip uses. Holding it is what makes this a stand-in at all:
+	// the uninstall reads which database this installation is out of the files
+	// the running process has open.
+	source := writeFile(t, filepath.Join(t.TempDir(), "downloaded"), databaseHoldingProgram(t, plan, "the release"))
 
 	_, err := svc.Current()
 	if !errors.Is(err, ErrNotInstalled) {
@@ -87,16 +87,15 @@ func TestUninstallRoundTrip(t *testing.T) {
 		t.Fatalf("after the install the service is %q, want \"active\"", state)
 	}
 
-	// Written by the test and not by the service: what the unit starts is a
-	// sleep, so nothing else puts a file in the data directory. These are what
-	// an uninstall without -purge has to leave alone, and an empty directory
-	// would not show that it did.
-	writeFile(t, plan.DatabaseFile, "the database")
+	// Written by the test and not by the service: what the unit starts holds
+	// the database open and writes nothing. This is what an uninstall without
+	// -purge has to leave alone, and a directory with only the database in it
+	// would not show that it left the rest.
 	keyFile := writeFile(t, filepath.Join(plan.DataDir, "key"), "the key the passwords are sealed with")
 
 	var out strings.Builder
 
-	removed, err := uninstall(svc, Removal{}, &out)
+	removed, err := uninstall(svc, Removal{AssumeYes: true}, nil, &out)
 	if err != nil {
 		t.Fatalf("the uninstall failed: %v", err)
 	}
@@ -149,7 +148,7 @@ func TestUninstallRoundTrip(t *testing.T) {
 	// where the data is, which is the case the design hands to -db.
 	var purgeOut strings.Builder
 
-	purged, err := uninstall(svc, Removal{DatabaseFile: plan.DatabaseFile, Purge: true}, &purgeOut)
+	purged, err := uninstall(svc, Removal{DatabaseFile: plan.DatabaseFile, Purge: true, AssumeYes: true}, nil, &purgeOut)
 	if err != nil {
 		t.Fatalf("the purge failed: %v", err)
 	}
@@ -165,14 +164,21 @@ func TestUninstallRoundTrip(t *testing.T) {
 	}
 
 	// Nothing registered and nothing named: the machine is already in the state
-	// that was asked for, and an uninstall has to say so rather than report a
-	// removal it did not do.
-	_, err = uninstall(svc, Removal{}, &strings.Builder{})
-	if !errors.Is(err, ErrNotInstalled) {
-		t.Errorf("an uninstall with nothing left answered %v, want ErrNotInstalled", err)
-	} else {
-		t.Logf("with nothing left: %v", err)
+	// that was asked for, so the uninstall says so in its report and does not
+	// fail. A caller running this twice over is not asking for an error the
+	// second time.
+	var nothingOut strings.Builder
+
+	nothing, err := uninstall(svc, Removal{AssumeYes: true}, nil, &nothingOut)
+	if err != nil {
+		t.Fatalf("an uninstall with nothing left failed: %v", err)
 	}
+
+	if !nothing.NothingToRemove {
+		t.Error("an uninstall with nothing left does not say there was nothing to remove")
+	}
+
+	t.Logf("with nothing left:\n%s", nothingOut.String())
 }
 
 // TestProductionServiceIsUntouched is the check that the round trip above stays
@@ -275,11 +281,13 @@ func TestInstallOverTheSameInstallation(t *testing.T) {
 	// Two programs that behave the same and are not the same file: what a
 	// second install has to show is that the bytes on disk were replaced, and
 	// two copies of one program would pass that whether or not anything was
-	// written. Both only sleep, for the reason the round trip above does.
+	// written. Both hold the database open, which is what the second install
+	// reads the database of the first out of: the unit carries a -db and the
+	// install does not read it, because a unit need not carry one.
 	first := writeFile(t, filepath.Join(t.TempDir(), "downloaded"),
-		"#!/bin/sh\n# the first release\nexec sleep 600\n")
+		databaseHoldingProgram(t, plan, "the first release"))
 	second := writeFile(t, filepath.Join(t.TempDir(), "downloaded"),
-		"#!/bin/sh\n# the second release, a different file\nexec sleep 600\n")
+		databaseHoldingProgram(t, plan, "the second release, a different file"))
 
 	_, err := svc.Current()
 	if !errors.Is(err, ErrNotInstalled) {

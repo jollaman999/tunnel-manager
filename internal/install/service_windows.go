@@ -147,6 +147,23 @@ func (scmService) Current() (Installed, error) {
 	return Installed{ExecutablePath: executable, DatabaseFile: database}, nil
 }
 
+// OpenFiles answers that the files this service has open cannot be read here.
+//
+// Windows has nothing like /proc/<pid>/fd. Enumerating the handles of another
+// process means NtQuerySystemInformation with SystemExtendedHandleInformation,
+// walking every handle on the machine and turning the object names of those
+// that are files back into paths - an undocumented interface and a fair amount
+// of code, for a question this platform does not need to ask: the registration
+// carries the whole command line, -install always writes -db into it, and
+// parseServiceCommand reads it back. So the caller is told the answer is not
+// available rather than being handed a guess, and it falls back on what the
+// registration says.
+func (scmService) OpenFiles() ([]string, error) {
+	return nil, fmt.Errorf("%w: Windows keeps no such list for another process. What this "+
+		"installation is made of comes from the command line the service is registered with",
+		ErrOpenFilesUnknown)
+}
+
 // CheckPlan has nothing to refuse on this platform, so it answers nil.
 //
 // The command line the SCM keeps is quoted with syscall.EscapeArg and read back

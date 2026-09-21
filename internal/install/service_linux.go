@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -32,14 +33,19 @@ func init() {
 // disk has to carry it, and the two have to be the same name.
 const unitSuffix = ".service"
 
-// unitDir is where a unit written by this install goes when nothing is
-// registered yet.
+// unitDir is where the unit written by this install goes, always.
 //
-// It is /etc and not /usr/lib because /usr/lib belongs to the package manager
-// of the distribution, the same reason the executable goes to /usr/local/bin.
-// A unit that is already registered is written over where it already is, not
-// here: see Register.
-const unitDir = "/etc/systemd/system"
+// It is the directory units that come with software live in, and /etc is left
+// to the operator: systemd reads /etc/systemd/system first, so a drop-in or a
+// whole unit an administrator puts there wins over this file and survives the
+// next install writing over it. Enabling the service is what puts anything in
+// /etc - the link from multi-user.target.wants - and that is systemd's own to
+// make and to remove.
+//
+// It is spelled /lib and not /usr/lib because that is the name the unit of the
+// deployment already carries on the machines this runs on; on a system that
+// merged /usr the two are the same directory.
+const unitDir = "/lib/systemd/system"
 
 // stateDirectoryRoot is the one directory StateDirectory= can make under.
 // systemd resolves the name against /var/lib and refuses a path, so a data
@@ -54,6 +60,12 @@ const unitFileMode fs.FileMode = 0o644
 // unitDirMode is for the directory the unit goes in, on the machine where it
 // does not exist yet.
 const unitDirMode fs.FileMode = 0o755
+
+// unitFileDescriptorLimit is the LimitNOFILE= the unit carries. It is the
+// number the process asks for itself at startup (ulimit_unix.go, desiredCur),
+// so that a service started from this unit is already at the limit rather than
+// warning that it could not get there.
+const unitFileDescriptorLimit = 65535
 
 // How long the systemctl calls are given.
 //
@@ -96,9 +108,10 @@ type systemd struct {
 
 // Current reads the registration out of systemd itself.
 //
-// There is no state file: the unit holds the path it is started from and the
-// -db it passes, which is what the design settled on, and systemctl show hands
-// both back.
+// There is no state file: the unit is the record of where the executable is and
+// systemctl show hands it back. Which database that executable opened is not
+// read from here - see execStartExecutable - and is left empty for the caller
+// to ask the running process about.
 func (s systemd) Current() (Installed, error) {
 	// FragmentPath is empty for a unit systemd has never been given a file for,
 	// and systemctl answers that without failing, so this tells a machine with
@@ -120,15 +133,15 @@ func (s systemd) Current() (Installed, error) {
 		return Installed{}, err
 	}
 
-	executable, database, err := parseExecStart(execStart)
+	executable, err := execStartExecutable(execStart)
 	if err != nil {
 		return Installed{}, fmt.Errorf("the %s unit at %s is registered but what it starts could not be read: %w",
 			s.unit, fragment, err)
 	}
 
+	// DatabaseFile is left empty here on purpose. See execStartExecutable.
 	return Installed{
 		ExecutablePath: executable,
-		DatabaseFile:   database,
 		DefinitionPath: fragment,
 	}, nil
 }
@@ -154,14 +167,11 @@ func (s systemd) Register(plan Plan, existing *Installed) error {
 		return err
 	}
 
-	// An existing registration is written over where it already lives. The unit
-	// on this machine is in /usr/lib/systemd/system, and a new one dropped into
-	// /etc/systemd/system would not replace it but shadow it: two units, /etc
-	// winning, and the old file left behind still looking like the install.
+	// One place, whatever was registered before. The unit of an installation
+	// this program wrote is at this path, and the registration is read back
+	// from systemd afterwards rather than assumed, so a unit an operator left
+	// somewhere else is seen in the report instead of being written over.
 	path := filepath.Join(unitDir, s.unit)
-	if existing != nil && existing.DefinitionPath != "" {
-		path = existing.DefinitionPath
-	}
 
 	if stateDirectoryName(plan.DataDir) == "" {
 		// StateDirectory= cannot name this one, so nothing will make it when
@@ -364,13 +374,16 @@ const execStartArgv = "argv[]="
 // ends the command line.
 const execStartSeparator = " ; "
 
-// parseExecStart pulls the executable path and the -db argument out of that
-// record.
+// execStartExecutable pulls the executable path out of that record.
 //
-// This is the whole of how an uninstall knows what to remove, which is why it
-// is a function of its own with the real output of the machine held against it
-// in the test rather than something done inside Current.
-func parseExecStart(value string) (string, string, error) {
+// The -db of the command line is deliberately not read any more. A unit may
+// start this program without one - the unit an operator wrote by hand, the one
+// a distribution shipped - and then the command line says nothing about which
+// database the process actually opened, while an uninstall that believed it
+// would report no data at all. The database is asked of the running process
+// instead, through OpenFiles, which answers with the file it has open rather
+// than with what it was asked to open.
+func execStartExecutable(value string) (string, error) {
 	// Only the first line. A unit may carry several ExecStart lines and systemd
 	// answers with one record each; the first is the one this install writes,
 	// and guessing among the rest would be guessing.
@@ -381,7 +394,7 @@ func parseExecStart(value string) (string, string, error) {
 
 	start := strings.Index(line, execStartArgv)
 	if start < 0 {
-		return "", "", fmt.Errorf("systemctl answered with no %s in %q", execStartArgv, value)
+		return "", fmt.Errorf("systemctl answered with no %s in %q", execStartArgv, value)
 	}
 
 	argv := line[start+len(execStartArgv):]
@@ -391,43 +404,10 @@ func parseExecStart(value string) (string, string, error) {
 
 	fields := strings.Fields(argv)
 	if len(fields) == 0 {
-		return "", "", fmt.Errorf("systemctl answered with an empty command line in %q", value)
+		return "", fmt.Errorf("systemctl answered with an empty command line in %q", value)
 	}
 
-	// An empty database is an answer and not a failure: a unit may start this
-	// program without -db, and then the process works out its own default. What
-	// an uninstall does with that is its own business.
-	return fields[0], databaseArgument(fields[1:]), nil
-}
-
-// databaseArgument is the value of -db among args, empty when it is not there.
-//
-// Both spellings the flag package takes are read, -db value and -db=value, and
-// the double dash form of each. What is written by Register is only ever the
-// first, but what is read here is whatever unit is on the machine, including
-// one an operator wrote by hand.
-func databaseArgument(args []string) string {
-	for i, arg := range args {
-		name, value, assigned := strings.Cut(arg, "=")
-
-		if name != "-db" && name != "--db" {
-			continue
-		}
-
-		if assigned {
-			return value
-		}
-
-		if i+1 < len(args) {
-			return args[i+1]
-		}
-
-		// -db as the last word, with nothing after it. The unit would not start
-		// at all, and there is no path in it to report.
-		return ""
-	}
-
-	return ""
+	return fields[0], nil
 }
 
 // checkUnitPaths refuses paths that would not survive the round trip through
@@ -483,10 +463,12 @@ func stateDirectoryName(dataDir string) string {
 
 // unitFile is the unit written for plan.
 //
-// It is the same unit as _scripts/systemd/tunnel-manager.service, which is the
-// one running on the deployed machines, with the paths coming from plan: an
-// install that wrote a different unit than the one the deployment was tested
-// against would be a second configuration nobody is watching.
+// It carries the same directives the unit of the deployed machines was written
+// by hand with - the description, Type=simple, User=root, the restart and the
+// stop timeout - with the paths coming from plan. That hand written file used
+// to live in the repository as _scripts/systemd/tunnel-manager.service and is
+// gone now that this writes it: two copies of a unit are two configurations,
+// and the one nobody edits is the one that drifts.
 func unitFile(plan Plan) string {
 	b := &strings.Builder{}
 
@@ -514,6 +496,18 @@ func unitFile(plan Plan) string {
 	b.WriteString("Restart=always\n")
 	b.WriteString("RestartSec=5\n")
 	b.WriteString("TimeoutStopSec=90\n")
+	b.WriteString("\n")
+
+	// Every tunnel this program keeps up is open sockets, and so descriptors.
+	// The process raises its own soft limit at startup, but only as far as the
+	// hard limit it was given (ulimit_unix.go, checkUlimit), and it cannot
+	// raise that one at all - that needs privilege the running process is not
+	// meant to keep. Setting it here is what makes the limit this service's
+	// own: systemd applies it to this unit alone, so nothing else on the
+	// machine is changed by an install.
+	b.WriteString("# The descriptor limit of this service alone. The process cannot raise its\n")
+	b.WriteString("# own hard limit, so the one it runs with is the one set here.\n")
+	b.WriteString("LimitNOFILE=" + strconv.Itoa(unitFileDescriptorLimit) + "\n")
 	b.WriteString("\n")
 	b.WriteString("[Install]\n")
 	b.WriteString("WantedBy=multi-user.target\n")

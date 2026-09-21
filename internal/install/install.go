@@ -166,13 +166,30 @@ type service interface {
 	// registered and not started. Start is what starts it.
 	//
 	// existing is what Current answered, and is nil when Current answered
-	// ErrNotInstalled. It is passed rather than looked up again because a
-	// registration that is already there has a place of its own that has to be
-	// written over: on this machine the unit sits in /usr/lib/systemd/system,
-	// and a backend that wrote a new one into /etc/systemd/system would leave
-	// two units with /etc winning, so the old file would stay and still look
-	// like the installation.
+	// ErrNotInstalled. It is passed rather than looked up again because
+	// registering over something that is already there is not the same call on
+	// every platform: the Windows backend changes the configuration of the
+	// service that exists instead of deleting it and making it again, since a
+	// deleted service keeps its name until every handle to it is closed. The
+	// Unix backends write their file at the one path they use and answer the
+	// same either way.
 	Register(plan Plan, existing *Installed) error
+
+	// OpenFiles answers the files the running service holds open, as absolute
+	// paths, with what is not a file of this installation - sockets, pipes, the
+	// terminal, the kernel's own trees - already left out.
+	//
+	// This is how a removal finds the database. What a service was registered
+	// with does not have to name one: a unit or a plist that passes no -db
+	// starts a process which works out a path of its own, and the registration
+	// then says nothing about the file that is about to be removed. What the
+	// process has open is the file itself.
+	//
+	// It reports ErrOpenFilesUnknown, wrapped, for every answer that is not a
+	// list: a service that is not running, a platform where the question cannot
+	// be asked (Windows). That is not a failure of the removal - what the caller
+	// does about it depends on whether it was going to remove data with it.
+	OpenFiles() ([]string, error)
 
 	// Unregister removes the registration named by installed, and nothing else.
 	// The executable and the data are removed by the caller, which is what
@@ -381,9 +398,15 @@ func install(svc service, plan Plan, executable string, source string, out io.Wr
 		return Outcome{}, err
 	}
 
+	// Which database the registration is using is asked of the process that is
+	// running it, because the registration does not have to name one. It is
+	// asked here, before anything is stopped: the answer comes out of the open
+	// files of that process, and a process that has been stopped has none.
+	unknownDatabase := fillDatabase(svc, existing)
+
 	// Refused before anything is touched, so that the paths in the message are
 	// the ones that are still on disk untouched.
-	err = refuseElsewhere(plan, existing)
+	err = refuseElsewhere(plan, existing, unknownDatabase)
 	if err != nil {
 		return Outcome{}, err
 	}
@@ -487,6 +510,40 @@ func currentOrNone(svc service) (*Installed, error) {
 	return &current, nil
 }
 
+// fillDatabase works out which database the registration in existing is using,
+// when the registration itself does not name one, and answers why it could not
+// be worked out.
+//
+// The running process is asked: the files it has open are the files it opened,
+// which is the question being asked, while the command line it was started with
+// is only what it was asked to open and may name nothing at all. A registration
+// that already names a database is believed and the process is not asked - that
+// is what the Windows backend answers, where -install always writes the path
+// into the command line and there is no way to read a process's open files.
+//
+// A failure is answered and not returned as an error: not knowing is an answer
+// the callers act on differently. An install refuses with it in the message, a
+// removal that keeps the data goes ahead without it, and only -purge stops.
+func fillDatabase(svc service, existing *Installed) error {
+	if existing == nil || existing.DatabaseFile != "" {
+		return nil
+	}
+
+	files, err := svc.OpenFiles()
+	if err != nil {
+		return err
+	}
+
+	database, err := databaseAmong(files)
+	if err != nil {
+		return err
+	}
+
+	existing.DatabaseFile = database
+
+	return nil
+}
+
 // refuseElsewhere stops an install that would leave an older one behind.
 //
 // An installation that is registered at other paths owns an executable and a
@@ -494,7 +551,7 @@ func currentOrNone(svc service) (*Installed, error) {
 // somewhere else, and the old files would sit there with nothing naming them,
 // which is a state no uninstall can clear up afterwards. So it is the operator
 // who removes the old one, and this says which one it is.
-func refuseElsewhere(plan Plan, existing *Installed) error {
+func refuseElsewhere(plan Plan, existing *Installed, unknownDatabase error) error {
 	if existing == nil {
 		return nil
 	}
@@ -515,12 +572,11 @@ func refuseElsewhere(plan Plan, existing *Installed) error {
 	// with nothing naming it. Guessing that the two are the same is the
 	// dangerous reading, so this refuses and says what to do instead.
 	if sameExecutable && existing.DatabaseFile == "" {
-		return fmt.Errorf("%s is already registered as a service at %s, and the registration passes no -db, "+
-			"so which database it uses is not known. The process it starts works out a default of its own, "+
-			"and nothing here can say whether that is %s.\n"+
-			"Run -uninstall first, or give -db the database that registration is actually using. Installing "+
-			"over it would leave that database behind with nothing naming it",
-			serviceName, existing.ExecutablePath, plan.DatabaseFile)
+		return fmt.Errorf("%s is already registered as a service at %s, and which database it uses is not "+
+			"known: the registration passes no -db, and %s. Nothing here can say whether it is %s.\n"+
+			"Run -uninstall first. Installing over it would leave that database behind with nothing "+
+			"naming it",
+			serviceName, existing.ExecutablePath, unknownDatabaseText(unknownDatabase), plan.DatabaseFile)
 	}
 
 	return fmt.Errorf("%s is already registered as a service at another place:\n"+
@@ -531,6 +587,19 @@ func refuseElsewhere(plan Plan, existing *Installed) error {
 		serviceName,
 		existing.ExecutablePath, registeredDatabaseText(existing.DatabaseFile),
 		plan.ExecutablePath, plan.DatabaseFile)
+}
+
+// unknownDatabaseText says why the running process could not be asked which
+// database it has open. The reason is the whole of what the operator can act
+// on - a service that is not running is started again and asked, a platform
+// that cannot be asked is told the path with -db - so it is carried into the
+// message rather than summed up as "not known".
+func unknownDatabaseText(err error) string {
+	if err == nil {
+		return "the service it is registered from was not asked which files it has open"
+	}
+
+	return err.Error()
 }
 
 // registeredDatabaseText names the database of the registration for the line
@@ -696,6 +765,11 @@ type Removal struct {
 	// taken back, which is why what it removed is named on the console while it
 	// happens and again in the report.
 	Purge bool
+	// AssumeYes skips the question that is otherwise asked before anything is
+	// removed. It is what a script says instead of answering, and it is the
+	// only way an uninstall runs where the standard input is not a terminal:
+	// see askToRemove.
+	AssumeYes bool
 }
 
 // Removed is what an uninstall did, in the terms it has to be checked by.
@@ -737,6 +811,12 @@ type Removed struct {
 	// nothing. It is an answer and not a failure, which is why it is a field
 	// here rather than an error: see whatToRemove.
 	NothingToRemove bool
+	// Cancelled says the question asked before anything was removed was
+	// answered no, so nothing was stopped and nothing was removed. It is an
+	// answer and not a failure for the same reason NothingToRemove is one: the
+	// operator was asked and said no, and the machine is in the state they
+	// asked for.
+	Cancelled bool
 }
 
 // nothingToRemoveText is the whole of the report for that case.
@@ -752,6 +832,16 @@ var nothingToRemoveText = "  nothing to remove: " + ErrNotInstalled.Error() + ",
 	"  If this program was installed on this machine and the registration is\n" +
 	"  already gone, name what is left with -bin and -db and run this again.\n"
 
+// cancelledText is the whole of the report for a removal that was answered no.
+//
+// It says what state the machine is in and not merely that the answer was no,
+// because the question is asked before anything is stopped: the service is
+// still running, which is the part an operator has to be able to count on
+// without going and looking.
+const cancelledText = "  nothing was removed: the question was answered no.\n" +
+	"  The service is still registered and running and every file of the\n" +
+	"  installation is where it was.\n"
+
 // Report writes what the uninstall did for a person to read.
 //
 // It is built whole and written once, the same way the install report is and
@@ -760,6 +850,14 @@ func (r Removed) Report(w io.Writer) error {
 	var b strings.Builder
 
 	b.WriteString(serviceName + " uninstall\n")
+
+	if r.Cancelled {
+		b.WriteString(cancelledText)
+
+		_, err := io.WriteString(w, b.String())
+
+		return err
+	}
 
 	if r.NothingToRemove {
 		// The lines below would every one of them read "not known", which
@@ -842,7 +940,7 @@ func removedDefinitionText(definition string) string {
 // keeping it is disk, and what they lose by removing it is every host, every
 // credential and the key the passwords are sealed with, so the one that cannot
 // be undone is the one that has to be asked for.
-func Uninstall(request Removal, out io.Writer) (Removed, error) {
+func Uninstall(request Removal, in io.Reader, out io.Writer) (Removed, error) {
 	if newService == nil {
 		return Removed{}, ErrNoBackend
 	}
@@ -852,12 +950,18 @@ func Uninstall(request Removal, out io.Writer) (Removed, error) {
 		return Removed{}, err
 	}
 
-	return uninstall(svc, request, out)
+	return uninstall(svc, request, in, out)
 }
 
 // uninstall is Uninstall with the backend handed in, which is what the tests
 // drive.
-func uninstall(svc service, request Removal, out io.Writer) (Removed, error) {
+//
+// The order of the first half is what it is for one reason: the files the
+// running service has open are read while it is still running. Reading comes
+// first, then the question, and only then the stop and the removals. A flow
+// that stopped the service first would be asking a process that no longer
+// exists which files it had open.
+func uninstall(svc service, request Removal, in io.Reader, out io.Writer) (Removed, error) {
 	err := CheckPrivilege()
 	if err != nil {
 		return Removed{}, err
@@ -868,9 +972,31 @@ func uninstall(svc service, request Removal, out io.Writer) (Removed, error) {
 		return Removed{}, err
 	}
 
+	registeredDatabase := ""
+	if existing != nil {
+		registeredDatabase = existing.DatabaseFile
+	}
+
+	openFiles, unknownDatabase := askTheRunningService(svc, existing, request)
+
 	// Worked out before anything is touched, so that a removal which has
 	// nothing to work on stops while the machine is still as it was.
 	removed := whatToRemove(request, existing)
+
+	if existing != nil && registeredDatabase == "" && existing.DatabaseFile != "" {
+		// Said in the report, because where the paths came from is what an
+		// operator checks them against: a database the registration named is a
+		// different kind of answer from one read off the descriptors of a
+		// process that was running a moment ago.
+		removed.Source = "the registration of this system, and the running service for the database it had open"
+	}
+
+	// The rest of what this installation is made of: the key, the initial
+	// password file and the logs the rotation left. They are not open files -
+	// the key is read at startup and closed - so they are worked out from the
+	// database, which is the path everything else of this installation is read
+	// against.
+	files := installationFiles(removed.DatabaseFile, openFiles)
 
 	if request.Purge {
 		// Checked here and not only where the directory is removed, which is
@@ -881,7 +1007,7 @@ func uninstall(svc service, request Removal, out io.Writer) (Removed, error) {
 		// their data is still there wants the rest of it still there too.
 		err = checkPurgeTarget(removed.DataDir, removed.DatabaseFile)
 		if err != nil {
-			return Removed{}, err
+			return Removed{}, purgeRefusalWithReason(err, removed.DatabaseFile, unknownDatabase)
 		}
 	}
 
@@ -889,6 +1015,27 @@ func uninstall(svc service, request Removal, out io.Writer) (Removed, error) {
 		err = removed.Report(out)
 		if err != nil {
 			return removed, fmt.Errorf("the uninstall had nothing to remove but reporting it failed: %w", err)
+		}
+
+		return removed, nil
+	}
+
+	// Asked while everything is still standing. What is shown is the list above,
+	// paths and all, because the one mistake this catches is a removal pointed
+	// at another installation than the operator had in mind, and that is only
+	// visible from the paths.
+	goAhead, err := askToRemove(removalPlanText(removed, files, existing != nil, request.Purge),
+		request.AssumeYes, in, out)
+	if err != nil {
+		return Removed{}, err
+	}
+
+	if !goAhead {
+		removed.Cancelled = true
+
+		err = removed.Report(out)
+		if err != nil {
+			return removed, fmt.Errorf("the uninstall was answered no but reporting it failed: %w", err)
 		}
 
 		return removed, nil
@@ -918,7 +1065,7 @@ func uninstall(svc service, request Removal, out io.Writer) (Removed, error) {
 	}
 
 	if request.Purge {
-		err = purgeData(removed.DataDir, removed.DatabaseFile, out)
+		err = purgeData(removed.DataDir, removed.DatabaseFile, files, out)
 		if err != nil {
 			// The report is written all the same. What the directory is was
 			// settled at the top of this flow, so a failure here is the
@@ -940,6 +1087,68 @@ func uninstall(svc service, request Removal, out io.Writer) (Removed, error) {
 	}
 
 	return removed, nil
+}
+
+// askTheRunningService reads the files the service has open and works the
+// database out of them, and answers why it could not where it could not.
+//
+// It is skipped when the operator named -db: they have said which database this
+// is, and asking a process to check up on that would only raise the question of
+// which of the two to believe. It is skipped when nothing is registered too,
+// since there is no service to ask.
+//
+// The list itself is answered as well as the database, because the log file is
+// in it. Which file the logs go to is a stored setting, and one that was changed
+// without a restart names a file this process never wrote to; the descriptor is
+// the file that is actually being written.
+func askTheRunningService(svc service, existing *Installed, request Removal) ([]string, error) {
+	if existing == nil || request.DatabaseFile != "" {
+		return nil, nil
+	}
+
+	// A registration that names the database has answered the question this is
+	// here for. It is still asked when -purge was given, because then the logs
+	// are removed as well and the descriptor is the log that is being written
+	// to, whatever the stored setting says it should be.
+	if existing.DatabaseFile != "" && !request.Purge {
+		return nil, nil
+	}
+
+	files, err := svc.OpenFiles()
+	if err != nil {
+		return nil, err
+	}
+
+	if existing.DatabaseFile != "" {
+		// The registration named one, which is the Windows answer: there the
+		// command line always carries -db and the open files cannot be read.
+		return files, nil
+	}
+
+	database, err := databaseAmong(files)
+	if err != nil {
+		return files, err
+	}
+
+	existing.DatabaseFile = database
+
+	return files, nil
+}
+
+// purgeRefusalWithReason puts the reason the database is not known into the
+// refusal.
+//
+// checkPurgeTarget knows that nothing says where the data is; it does not know
+// why, and why is the whole of what the operator can do something about - a
+// service that is not running is started and asked again, a platform that
+// cannot be asked is told the path with -db. The refusals for a directory that
+// is known and refused for what it is are left as they are.
+func purgeRefusalWithReason(refusal error, databaseFile string, unknownDatabase error) error {
+	if databaseFile != "" || unknownDatabase == nil {
+		return refusal
+	}
+
+	return fmt.Errorf("%w: %s. Give -db the database file of the installation to remove", refusal, unknownDatabase)
 }
 
 // whatToRemove settles which paths this removal is about.
@@ -1047,7 +1256,7 @@ func removeInstalledExecutable(removed *Removed) error {
 // service, and this asks it again. It is the last statement before a RemoveAll
 // of a path, so what it costs is one function call and what it buys is that no
 // future caller can reach that RemoveAll without the check having run.
-func purgeData(dataDir string, databaseFile string, out io.Writer) error {
+func purgeData(dataDir string, databaseFile string, files []installedFile, out io.Writer) error {
 	err := checkPurgeTarget(dataDir, databaseFile)
 	if err != nil {
 		return err
@@ -1065,6 +1274,21 @@ func purgeData(dataDir string, databaseFile string, out io.Writer) error {
 	err = os.RemoveAll(dataDir)
 	if err != nil {
 		return fmt.Errorf("failed to remove the data directory %s: %w", dataDir, err)
+	}
+
+	// Whatever of this installation is not under that directory. A log or a key
+	// whose setting names a path of its own is outside it, and leaving the key
+	// behind is leaving the one file that opens every stored SSH password.
+	for _, file := range outsideDataDir(files, dataDir) {
+		_, err = fmt.Fprintf(out, "-purge: removing %s, %s\n", file.Path, file.What)
+		if err != nil {
+			return fmt.Errorf("failed to report what -purge was about to remove: %w", err)
+		}
+
+		err = os.Remove(file.Path)
+		if err != nil && !errors.Is(err, fs.ErrNotExist) {
+			return fmt.Errorf("failed to remove %s, %s: %w", file.Path, file.What, err)
+		}
 	}
 
 	return nil

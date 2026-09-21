@@ -84,8 +84,12 @@ func TestLaunchdPlistIsReadBackWhole(t *testing.T) {
 		t.Errorf("the executable read back is %q, want %q", installed.ExecutablePath, plan.ExecutablePath)
 	}
 
-	if installed.DatabaseFile != plan.DatabaseFile {
-		t.Errorf("the database read back is %q, want %q", installed.DatabaseFile, plan.DatabaseFile)
+	// The plist carries -db and the read does not answer with it. Which
+	// database an installation is using is asked of the running process, which
+	// is the one place it is certain: a plist need not carry -db at all, and
+	// then the arguments say nothing about the file that was opened.
+	if installed.DatabaseFile != "" {
+		t.Errorf("the database read back is %q, want it empty and asked of the process", installed.DatabaseFile)
 	}
 
 	if installed.DefinitionPath != path {
@@ -252,62 +256,6 @@ func TestCurrentFromAPlistThatCannotBeRead(t *testing.T) {
 	}
 
 	t.Log(err)
-}
-
-// TestDatabaseArgument covers the forms of -db that turn up in a plist. The
-// first is the only one this package writes; the rest are what flag accepts,
-// so they are what an operator who edited the file by hand may have left.
-func TestDatabaseArgument(t *testing.T) {
-	cases := []struct {
-		name      string
-		arguments []string
-		want      string
-	}{
-		{
-			name:      "the form this package writes",
-			arguments: []string{"/usr/local/bin/tunnel-manager", "-db", "/var/db/tm.db"},
-			want:      "/var/db/tm.db",
-		},
-		{
-			name:      "two dashes",
-			arguments: []string{"/usr/local/bin/tunnel-manager", "--db", "/var/db/tm.db"},
-			want:      "/var/db/tm.db",
-		},
-		{
-			name:      "joined with an equals sign",
-			arguments: []string{"/usr/local/bin/tunnel-manager", "-db=/var/db/tm.db"},
-			want:      "/var/db/tm.db",
-		},
-		{
-			name:      "two dashes and an equals sign",
-			arguments: []string{"/usr/local/bin/tunnel-manager", "--db=/var/db/tm.db"},
-			want:      "/var/db/tm.db",
-		},
-		{
-			name:      "no -db at all",
-			arguments: []string{"/usr/local/bin/tunnel-manager"},
-			want:      "",
-		},
-		{
-			name:      "-db with nothing after it",
-			arguments: []string{"/usr/local/bin/tunnel-manager", "-db"},
-			want:      "",
-		},
-		{
-			name:      "an executable whose own path ends in -db",
-			arguments: []string{"/usr/local/bin/-db", "-db", "/var/db/tm.db"},
-			want:      "/var/db/tm.db",
-		},
-	}
-
-	for _, c := range cases {
-		t.Run(c.name, func(t *testing.T) {
-			got := databaseArgument(c.arguments)
-			if got != c.want {
-				t.Errorf("the -db of %q is %q, want %q", c.arguments, got, c.want)
-			}
-		})
-	}
 }
 
 // TestLaunchctlCommands freezes the commands this package runs as root on a

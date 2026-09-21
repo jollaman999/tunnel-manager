@@ -2,6 +2,7 @@ package install
 
 import (
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -88,6 +89,12 @@ type fakeService struct {
 	checkPlanErr  error
 	registerErr   error
 	startErr      error
+	// openFiles is what the running service is said to have open, and
+	// openFilesErr what asking for them answers instead. A backend that cannot
+	// be asked - Windows - answers ErrOpenFilesUnknown, and so does one whose
+	// service is not running.
+	openFiles    []string
+	openFilesErr error
 
 	calls          []string
 	checkedPlan    Plan
@@ -106,6 +113,16 @@ func (f *fakeService) Current() (Installed, error) {
 	}
 
 	return f.current, f.currentErr
+}
+
+func (f *fakeService) OpenFiles() ([]string, error) {
+	f.calls = append(f.calls, "openfiles")
+
+	if f.openFilesErr != nil {
+		return nil, f.openFilesErr
+	}
+
+	return f.openFiles, nil
 }
 
 func (f *fakeService) CheckPlan(plan Plan) error {
@@ -196,7 +213,7 @@ func TestInstallFresh(t *testing.T) {
 
 	svc := &fakeService{
 		currentErr:    ErrNotInstalled,
-		afterRegister: Installed{ExecutablePath: plan.ExecutablePath, DatabaseFile: plan.DatabaseFile, DefinitionPath: "/etc/systemd/system/tunnel-manager.service"},
+		afterRegister: Installed{ExecutablePath: plan.ExecutablePath, DatabaseFile: plan.DatabaseFile, DefinitionPath: "/lib/systemd/system/tunnel-manager.service"},
 	}
 
 	var out strings.Builder
@@ -323,7 +340,7 @@ func TestInstallRefusesAnotherPlace(t *testing.T) {
 	svc := &fakeService{current: Installed{
 		ExecutablePath: "/opt/tm/tunnel-manager",
 		DatabaseFile:   "/opt/tm/tm.db",
-		DefinitionPath: "/etc/systemd/system/tunnel-manager.service",
+		DefinitionPath: "/lib/systemd/system/tunnel-manager.service",
 	}}
 
 	var out strings.Builder
@@ -520,7 +537,7 @@ func TestRefuseElsewhere(t *testing.T) {
 
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			err := refuseElsewhere(plan, c.existing)
+			err := refuseElsewhere(plan, c.existing, nil)
 
 			if c.refuse && err == nil {
 				t.Error("the install was not refused")
@@ -552,10 +569,14 @@ func TestRefuseElsewhereWithoutARegisteredDatabase(t *testing.T) {
 		DatabaseFile:   "/var/lib/tunnel-manager/tunnel-manager.db",
 	}
 
+	// The reason the running process could not be asked either, which is what
+	// the operator is left to act on.
+	unknown := fmt.Errorf("%w: the service is registered but no process of it is running", ErrOpenFilesUnknown)
+
 	err := refuseElsewhere(plan, &Installed{
 		ExecutablePath: plan.ExecutablePath,
-		DefinitionPath: "/etc/systemd/system/tunnel-manager.service",
-	})
+		DefinitionPath: "/lib/systemd/system/tunnel-manager.service",
+	}, unknown)
 	if err == nil {
 		t.Fatal("the install went ahead over a registration whose database is not known")
 	}
@@ -564,7 +585,8 @@ func TestRefuseElsewhereWithoutARegisteredDatabase(t *testing.T) {
 
 	// What it has to say: that the database is unknown, and what the operator
 	// can do about it.
-	for _, want := range []string{"passes no -db", "not known", "-uninstall", "-db"} {
+	for _, want := range []string{"passes no -db", "not known", "-uninstall", "-db",
+		"no process of it is running"} {
 		if !strings.Contains(message, want) {
 			t.Errorf("the refusal does not hold %q: %v", want, err)
 		}
@@ -588,7 +610,7 @@ func TestRefuseElsewhereNamesAnUnknownDatabaseInTheTable(t *testing.T) {
 		DatabaseFile:   "/var/lib/tunnel-manager/tunnel-manager.db",
 	}
 
-	err := refuseElsewhere(plan, &Installed{ExecutablePath: "/opt/tm/tunnel-manager"})
+	err := refuseElsewhere(plan, &Installed{ExecutablePath: "/opt/tm/tunnel-manager"}, nil)
 	if err == nil {
 		t.Fatal("the install went ahead over a registration somewhere else")
 	}

@@ -144,9 +144,14 @@ func currentFrom(path string) (Installed, error) {
 		return Installed{}, fmt.Errorf("%s is there but the registration in it could not be read: %w", path, err)
 	}
 
+	// DatabaseFile is left empty on purpose. The -db of the ProgramArguments is
+	// not read any more: a plist may name no database at all - one written by
+	// hand, one from a release before -install existed - and then the arguments
+	// say nothing about the file the process actually opened, while a removal
+	// that believed them would report no data. It is the running process that
+	// is asked instead, through OpenFiles.
 	return Installed{
 		ExecutablePath: arguments[0],
-		DatabaseFile:   databaseArgument(arguments),
 		DefinitionPath: path,
 	}, nil
 }
@@ -658,36 +663,4 @@ func programArguments(document []byte) ([]string, error) {
 	}
 
 	return nil, errors.New("it has no ProgramArguments, so it names no executable")
-}
-
-// databaseArgument is the -db path out of a command line, and the empty string
-// when there is none. An empty answer is a real one here, the way the Installed
-// field says: a registration that passes no -db is one where the process works
-// out its own path.
-//
-// The forms other than the one this package writes are read because the plist
-// is a text file on the operator's own machine, and one that was edited by hand
-// is still the registration this installation has to be removed by.
-func databaseArgument(arguments []string) string {
-	// From 1: the first argument is the executable, and a program that happens
-	// to be installed at a path ending in -db is not a flag.
-	for index := 1; index < len(arguments); index++ {
-		argument := arguments[index]
-
-		for _, name := range []string{databaseFlag, "-" + databaseFlag} {
-			if argument == name {
-				if index+1 < len(arguments) {
-					return arguments[index+1]
-				}
-
-				return ""
-			}
-
-			if strings.HasPrefix(argument, name+"=") {
-				return strings.TrimPrefix(argument, name+"=")
-			}
-		}
-	}
-
-	return ""
 }

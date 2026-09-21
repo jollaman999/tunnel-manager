@@ -26,7 +26,7 @@ func installedIn(t *testing.T) (Installed, Plan) {
 	return Installed{
 		ExecutablePath: plan.ExecutablePath,
 		DatabaseFile:   plan.DatabaseFile,
-		DefinitionPath: "/etc/systemd/system/tunnel-manager.service",
+		DefinitionPath: "/lib/systemd/system/tunnel-manager.service",
 	}, plan
 }
 
@@ -47,7 +47,7 @@ func TestUninstallWithNothingRegistered(t *testing.T) {
 
 	var out strings.Builder
 
-	removed, err := uninstall(svc, Removal{}, &out)
+	removed, err := uninstall(svc, Removal{AssumeYes: true}, nil, &out)
 	if err != nil {
 		t.Fatalf("the uninstall failed although there was simply nothing to remove: %v", err)
 	}
@@ -85,7 +85,7 @@ func TestUninstallTwiceOverIsTheSameAnswer(t *testing.T) {
 	registered, _ := installedIn(t)
 	svc := &fakeService{current: registered}
 
-	_, err := uninstall(svc, Removal{}, &strings.Builder{})
+	_, err := uninstall(svc, Removal{AssumeYes: true}, nil, &strings.Builder{})
 	if err != nil {
 		t.Fatalf("the first uninstall failed: %v", err)
 	}
@@ -96,7 +96,7 @@ func TestUninstallTwiceOverIsTheSameAnswer(t *testing.T) {
 
 	var out strings.Builder
 
-	removed, err := uninstall(svc, Removal{}, &out)
+	removed, err := uninstall(svc, Removal{AssumeYes: true}, nil, &out)
 	if err != nil {
 		t.Fatalf("the second uninstall failed: %v", err)
 	}
@@ -117,7 +117,7 @@ func TestUninstallPurgeWithNothingToRemoveIsStillRefused(t *testing.T) {
 
 	var out strings.Builder
 
-	removed, err := uninstall(svc, Removal{Purge: true}, &out)
+	removed, err := uninstall(svc, Removal{Purge: true, AssumeYes: true}, nil, &out)
 	if err == nil {
 		t.Fatal("-purge was answered as nothing to do")
 	}
@@ -144,7 +144,7 @@ func TestUninstallWithNothingRegisteredButPathsNamed(t *testing.T) {
 
 	var out strings.Builder
 
-	removed, err := uninstall(svc, Removal{ExecutablePath: plan.ExecutablePath, DatabaseFile: plan.DatabaseFile}, &out)
+	removed, err := uninstall(svc, Removal{ExecutablePath: plan.ExecutablePath, DatabaseFile: plan.DatabaseFile, AssumeYes: true}, nil, &out)
 	if err != nil {
 		t.Fatalf("the uninstall failed: %v", err)
 	}
@@ -186,7 +186,7 @@ func TestUninstallRemovesAndKeepsTheData(t *testing.T) {
 
 	var out strings.Builder
 
-	removed, err := uninstall(svc, Removal{}, &out)
+	removed, err := uninstall(svc, Removal{AssumeYes: true}, nil, &out)
 	if err != nil {
 		t.Fatalf("the uninstall failed: %v", err)
 	}
@@ -237,7 +237,7 @@ func TestUninstallPurge(t *testing.T) {
 
 	var out strings.Builder
 
-	removed, err := uninstall(svc, Removal{Purge: true}, &out)
+	removed, err := uninstall(svc, Removal{Purge: true, AssumeYes: true}, nil, &out)
 	if err != nil {
 		t.Fatalf("the uninstall failed: %v", err)
 	}
@@ -256,6 +256,164 @@ func TestUninstallPurge(t *testing.T) {
 
 	if !strings.Contains(out.String(), "removed with everything under it") {
 		t.Errorf("the report does not say the data went:\n%s", out.String())
+	}
+
+	t.Logf("\n%s", out.String())
+}
+
+// TestUninstallAsksBeforeItRemovesAnything covers the question, through the
+// whole flow and not through askToRemove alone.
+//
+// What it holds is the order. The list is worked out and the question asked
+// while the service is still registered and running, because the database in
+// that list comes out of the files the running process has open - a flow that
+// stopped the service first would be asking a process that no longer exists.
+// So an answer of no has to leave the backend with nothing but the read behind
+// it.
+func TestUninstallAsksBeforeItRemovesAnything(t *testing.T) {
+	allowPrivilege(t)
+	atATerminal(t)
+
+	registered, plan := installedIn(t)
+	svc := &fakeService{current: registered}
+
+	var out strings.Builder
+
+	removed, err := uninstall(svc, Removal{Purge: true}, strings.NewReader("n\n"), &out)
+	if err != nil {
+		t.Fatalf("answering no failed: %v", err)
+	}
+
+	if !removed.Cancelled {
+		t.Errorf("the removal does not say it was cancelled: %+v", removed)
+	}
+
+	// Nothing was stopped, nothing was taken out. The read of the registration
+	// and the question put to the running service are all that happened, and
+	// neither of them changes anything.
+	if strings.Join(svc.calls, ",") != "current,openfiles" {
+		t.Errorf("the backend was used as %v, want the read and the open files", svc.calls)
+	}
+
+	for _, path := range []string{plan.ExecutablePath, plan.DataDir, plan.DatabaseFile} {
+		if _, statErr := os.Stat(path); statErr != nil {
+			t.Errorf("%s was removed although the question was answered no: %v", path, statErr)
+		}
+	}
+
+	// Asked before it was answered, with the paths in it: the one mistake this
+	// catches is a removal pointed at another installation than the operator
+	// had in mind, and that is only visible from the paths.
+	for _, want := range []string{plan.ExecutablePath, plan.DataDir, plan.DatabaseFile,
+		registered.DefinitionPath, "[y/N]"} {
+		if !strings.Contains(out.String(), want) {
+			t.Errorf("the question does not name %q:\n%s", want, out.String())
+		}
+	}
+
+	if !strings.Contains(out.String(), "nothing was removed") {
+		t.Errorf("the report does not say nothing was removed:\n%s", out.String())
+	}
+
+	t.Logf("\n%s", out.String())
+}
+
+// TestUninstallAnsweredYesGoesAhead is the other half of that: the same command
+// answered yes removes the installation.
+func TestUninstallAnsweredYesGoesAhead(t *testing.T) {
+	allowPrivilege(t)
+	atATerminal(t)
+
+	registered, plan := installedIn(t)
+	svc := &fakeService{current: registered}
+
+	var out strings.Builder
+
+	removed, err := uninstall(svc, Removal{}, strings.NewReader("y\n"), &out)
+	if err != nil {
+		t.Fatalf("answering yes failed: %v", err)
+	}
+
+	if removed.Cancelled || !removed.Registered {
+		t.Errorf("the removal did not go ahead: %+v", removed)
+	}
+
+	if _, statErr := os.Stat(plan.ExecutablePath); !errors.Is(statErr, os.ErrNotExist) {
+		t.Errorf("the executable is still at %s: %v", plan.ExecutablePath, statErr)
+	}
+
+	t.Logf("\n%s", out.String())
+}
+
+// TestUninstallWithNobodyToAskIsRefused covers the run from a script: there is
+// no terminal, so there is nobody to answer, and without -y it is refused
+// before anything is touched.
+func TestUninstallWithNobodyToAskIsRefused(t *testing.T) {
+	allowPrivilege(t)
+
+	registered, plan := installedIn(t)
+	svc := &fakeService{current: registered}
+
+	var out strings.Builder
+
+	// A reader that is not a terminal, which is what the real check answers for
+	// anything a script hands over. inputIsTerminal is not replaced here.
+	_, err := uninstall(svc, Removal{}, strings.NewReader("y\n"), &out)
+	if err == nil {
+		t.Fatal("the uninstall went ahead with nobody to ask")
+	}
+
+	if strings.Join(svc.calls, ",") != "current" {
+		t.Errorf("the backend was used as %v, want the read alone", svc.calls)
+	}
+
+	if _, statErr := os.Stat(plan.ExecutablePath); statErr != nil {
+		t.Errorf("the executable was removed by a command that was refused: %v", statErr)
+	}
+
+	t.Logf("refused as it should: %v", err)
+}
+
+// TestUninstallFindsTheDatabaseInTheRunningProcess is what the whole of the
+// open files mechanism is for: a registration that passes no -db, and a -purge
+// that still removes the right directory.
+//
+// The registration says nothing about which database the process opened. The
+// process has it open, along with the write ahead log beside it, and that pair
+// is what says which file it is.
+func TestUninstallFindsTheDatabaseInTheRunningProcess(t *testing.T) {
+	allowPrivilege(t)
+
+	registered, plan := installedIn(t)
+	registered.DatabaseFile = ""
+
+	svc := &fakeService{
+		current: registered,
+		openFiles: []string{
+			plan.DatabaseFile,
+			plan.DatabaseFile + walSuffix,
+			plan.DatabaseFile + shmSuffix,
+			filepath.Join(plan.DataDir, "logs", "tunnel-manager.log"),
+		},
+	}
+
+	var out strings.Builder
+
+	removed, err := uninstall(svc, Removal{Purge: true, AssumeYes: true}, nil, &out)
+	if err != nil {
+		t.Fatalf("the uninstall failed: %v", err)
+	}
+
+	if removed.DatabaseFile != plan.DatabaseFile {
+		t.Errorf("the removal is about the database %q, want %q", removed.DatabaseFile, plan.DatabaseFile)
+	}
+
+	if !removed.Purged {
+		t.Error("the removal does not say the data was purged")
+	}
+
+	if _, statErr := os.Stat(plan.DataDir); !errors.Is(statErr, os.ErrNotExist) {
+		t.Errorf("the data directory %s is still there: %v", plan.DataDir, statErr)
 	}
 
 	t.Logf("\n%s", out.String())
@@ -287,7 +445,7 @@ func TestUninstallPurgeWithoutADatabase(t *testing.T) {
 	var out strings.Builder
 	console := io.MultiWriter(&out, os.Stdout)
 
-	_, err := uninstall(svc, Removal{Purge: true}, console)
+	_, err := uninstall(svc, Removal{Purge: true, AssumeYes: true}, nil, console)
 
 	fmt.Fprintln(os.Stdout, "marker: the uninstall has returned, what follows is this test tidying up")
 
@@ -295,9 +453,12 @@ func TestUninstallPurgeWithoutADatabase(t *testing.T) {
 		t.Fatal("-purge went ahead with nothing saying where the data is")
 	}
 
-	// Nothing was stopped and nothing was taken out: the read, and no more.
-	if strings.Join(svc.calls, ",") != "current" {
-		t.Errorf("the backend was used as %v, want the read alone", svc.calls)
+	// Nothing was stopped and nothing was taken out: the read and the question
+	// put to the running service, and no more. Asking which files it has open
+	// is how a registration that names no database is answered, and it changes
+	// nothing on the machine.
+	if strings.Join(svc.calls, ",") != "current,openfiles" {
+		t.Errorf("the backend was used as %v, want the read and the open files", svc.calls)
 	}
 
 	if _, statErr := os.Stat(plan.ExecutablePath); statErr != nil {
@@ -336,13 +497,15 @@ func TestUninstallPurgeOfADirectoryThatIsRefusedTouchesNothing(t *testing.T) {
 
 	var out strings.Builder
 
-	_, err := uninstall(svc, Removal{Purge: true}, &out)
+	_, err := uninstall(svc, Removal{Purge: true, AssumeYes: true}, nil, &out)
 	if err == nil {
 		t.Fatal("-purge went ahead with the root as the data directory")
 	}
 
-	if strings.Join(svc.calls, ",") != "current" {
-		t.Errorf("the backend was used as %v, want the read alone", svc.calls)
+	// The read and the question put to the running service, and no more.
+	// Neither of them changes anything on the machine.
+	if strings.Join(svc.calls, ",") != "current,openfiles" {
+		t.Errorf("the backend was used as %v, want the read and the open files", svc.calls)
 	}
 
 	if _, statErr := os.Stat(plan.ExecutablePath); statErr != nil {
@@ -475,7 +638,7 @@ func TestWhatToRemove(t *testing.T) {
 	registered := &Installed{
 		ExecutablePath: "/usr/local/bin/tunnel-manager",
 		DatabaseFile:   "/var/lib/tunnel-manager/tunnel-manager.db",
-		DefinitionPath: "/etc/systemd/system/tunnel-manager.service",
+		DefinitionPath: "/lib/systemd/system/tunnel-manager.service",
 	}
 
 	cases := []struct {
@@ -571,7 +734,7 @@ func TestUninstallWithoutPrivilege(t *testing.T) {
 
 	svc := &fakeService{currentErr: ErrNotInstalled}
 
-	_, err := uninstall(svc, Removal{Purge: true}, &strings.Builder{})
+	_, err := uninstall(svc, Removal{Purge: true, AssumeYes: true}, nil, &strings.Builder{})
 	if err == nil {
 		t.Fatal("the uninstall ran as a process with no privilege")
 	}
@@ -591,7 +754,7 @@ func TestUninstallWithoutABackend(t *testing.T) {
 		newService = was
 	})
 
-	_, err := Uninstall(Removal{}, &strings.Builder{})
+	_, err := Uninstall(Removal{}, nil, &strings.Builder{})
 	if !errors.Is(err, ErrNoBackend) {
 		t.Errorf("the uninstall answered %v, want %v", err, ErrNoBackend)
 	}
