@@ -219,6 +219,7 @@ chmod +x tunnel-manager-linux-amd64
 | `-bin` | `-install` 把可执行文件放到哪里，以及注册已经没有了的机器上 `-uninstall` 到哪里去找可执行文件。不给的话就是这个平台放管理员所装程序的地方。它和 `-install` 或 `-uninstall` 一起用 |
 | `-purge` | 和 `-uninstall` 一起用时，连数据目录一起删掉。它删掉的东西拿不回来 |
 | `-reset-settings` | 把每一项设置都还原成默认值，打印改了什么然后退出。注册的 Host、服务端口、账号和证书都原样留着。见[服务起不来的时候](#服务起不来的时候) |
+| `-trust-proxy-headers` | 信任这台服务器前面那个东西加的 `X-Forwarded-Proto` 头，这样明文到达本进程的连接上，会话 cookie 也会标上 `Secure`。不给就是关的。见[放在反向代理后面](#放在反向代理后面) |
 | `-version` | 打印版本号后退出 |
 | `-help` | 打印参数后退出 |
 
@@ -237,10 +238,26 @@ chmod +x tunnel-manager-linux-amd64
 ```
 
 密钥文件和日志文件是**设置**，不是命令行参数：它们在 Settings 页面上，默认值是
-`keys/tunnel-manager.key` 和 `logs/tunnel-manager.log`。**设置里写相对路径，是相对数据库
-文件所在的目录来解析的，不是相对当前工作目录。** 工作目录每次都不一样，相对它解析的默认值会
-让密钥在每台主机上落在不同的位置。给设置写绝对路径，就使用那个路径，这也正是把密钥或日志特意
-放到安装目录之外的办法。
+`keys/tunnel-manager.key` 和 `logs/tunnel-manager.log`。**两者都是相对数据库文件所在的目录
+来解析的，不是相对当前工作目录。** 工作目录每次都不一样，相对它解析的默认值会让密钥在每台
+主机上落在不同的位置。
+
+**两者都必须留在那个目录底下。** 它们收的是相对路径，`logs/a/b/x.log` 或 `x.log` 就是能写的
+全部；绝对路径和用 `..` 爬出去的路径，在保存的时候就被拒绝。日志文件由进程创建并往后追加，
+Logs 页面又把它的末尾读回来，所以一个能离开这套安装的路径，会让这项设置变成让本进程往机器上
+任何一个文件里写、并读取它能打开的任何一个文件的通道。在还接受这种路径的时候存过一个的安装，
+改用默认值启动，并说明它把什么换成了什么：
+
+```text
+warn  a stored path setting names a place outside the directory the database file is in,
+      which is no longer allowed, and was put back to its default
+      {"setting": "logging.file.path", "from": "/var/log/tunnel-manager/x.log",
+       "to": "logs/tunnel-manager.log"}
+```
+
+**放在安装目录之外的密钥，从此不再读取。** 启动会在数据库旁边新建一把，用旧密钥封装的密码在
+它下面打不开，[加密密钥](#加密密钥)里启动中止的正是这个。请把密钥文件移进安装目录，并在设置
+里写它在那里的位置。
 
 **进程启动时所在的那个目录里，什么都不会创建。**
 
@@ -542,6 +559,26 @@ Settings 页面上的 **Serve over HTTPS**，在 API 里是 `api_https_enabled`�
 之所以留了个能关闭的选项，是因为没有机构签名的证书在有些环境里会造成阻碍，而一个连页面都打不开
 的运维人员什么也修不了。
 
+### 放在反向代理后面
+
+前面摆一个终结 TLS、再用明文连到这台服务器的代理，服务器看到的就是一条普通的 HTTP 连接，而
+会话 cookie 只有在 TLS 的连接上才会标上 `Secure`。这样一来，浏览器从头到尾都在 HTTPS 上，
+cookie 却是不带这个标志跑的。
+
+`-trust-proxy-headers` 就是用来说明情况不是这样的。加上它，带着 `X-Forwarded-Proto: https`
+的请求就被当作从 TLS 上过来的，那两个会话 cookie 会标上 `Secure`。
+
+```bash
+./tunnel-manager -db /var/lib/tunnel-manager/tunnel-manager.db -trust-proxy-headers
+```
+
+**不给就是关的，而且它不决定别的任何事情。** 这个头任何客户端都能发，所以只有在运维自己跑的
+代理是唯一能连到这台服务器的东西的地方，它才值得读。直接暴露在外的服务器就照原样留着：在那里
+打开它，等于让客户端把自己的连接标成安全的。
+
+它是命令行参数而不是设置，因为它描述的是这个进程周围的部署方式，不是运行期间要改的东西；而且
+做成设置，就会把这个问题摆到前面什么都没有的那套安装的 Settings 页面上。
+
 ## 首次启动与账号
 
 **API 和界面都要先登录才能用。** 账号只有一个，在第一次启动时创建。第一次启动之前先读这一节，
@@ -728,7 +765,7 @@ Settings 页面。同样的值通过 `GET /api/settings` 和 `PUT /api/settings`
 |------|------|
 | `api_port` | 1 到 65535 |
 | `monitoring_interval_sec`、`reconcile_interval_sec` | 大于零 |
-| `security_key_file` | 不能为空 |
+| `security_key_file`、`logging_file_path` | 不能为空，而且要是数据库文件所在的目录底下的路径：绝对路径和用 `..` 爬出去的路径都会被拒绝。见[文件放在哪里](#文件放在哪里) |
 | `logging_level` | `debug`、`info`、`warn`、`error`、`dpanic`、`panic` 或 `fatal` |
 | `logging_format` | `json` 或 `console` |
 | `logging_file_max_size`、`logging_file_max_backups`、`logging_file_max_age` | 零或更大 |
@@ -1377,9 +1414,10 @@ Host 的 SSH 密码在保存之前，用 AES-256-GCM 加密。密钥从 **Encryp
 的那些会在一条警告里列出，它们的隧道不会建立，已保存的值保持不变：一个无法解密的密码，别处再也
 没有副本，被覆盖就丢失了。请通过 API 重新设置那几个。
 
-这项设置里写相对路径，是相对数据库文件所在的目录来解析的，所以默认值把密钥放在数据库旁边的
-`keys/` 里。绝对路径原样使用，这也正是把密钥放到别处、比如放到单独一个卷上的办法。启动时会把
-打开的那个文件的绝对路径记进日志，所以日志里写着读的是哪把密钥。
+这项设置里的路径，是相对数据库文件所在的目录来解析的，所以默认值把密钥放在数据库旁边的
+`keys/` 里。它必须留在那个目录底下：绝对路径会被拒绝，还接受的时候存下来的那种，会在下次启动
+时被放回默认值。启动时会把打开的那个文件的绝对路径记进日志，所以日志里写着读的是哪把密钥。
+见[文件放在哪里](#文件放在哪里)。
 
 ## 以非 root 用户运行
 
