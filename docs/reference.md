@@ -1057,8 +1057,9 @@ tunnel, deletes the files the installation is made of and ends the process.
 
 **The program file is not removed.** A running process cannot delete its own
 image on Windows, and on Unix it would stay on disk until the process ends
-anyway, which is half of a job rather than one done. Remove it by hand, along
-with the systemd unit or the compose file if this was set up as a service.
+anyway, which is half of a job rather than one done. `-uninstall` is what
+removes the executable and the registration of a service installed with
+`-install`; a compose file is removed by hand.
 
 The **password of the account is asked for again** and checked before anything is
 touched. A session left open on an unattended screen is otherwise one press away
