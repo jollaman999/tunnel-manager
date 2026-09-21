@@ -482,7 +482,7 @@
   "logs.lines.label": "Linhas",
   "logs.message.column": "Mensagem",
   "logs.none-at-level-many.empty": "Nenhuma das {count} linhas lidas está em {level} ou acima.",
-  "logs.none-at-level-one.empty": "A única linha lida não está em {level} ou acima.",
+  "logs.none-at-level-one.empty": "Apenas {count} linha foi lida, e ela não está em {level} ou acima.",
   "logs.refresh.button": "Atualizar agora",
   "logs.scope.text": "Só o arquivo que está sendo escrito agora é lido. Os arquivos rotacionados ao lado dele não aparecem, nem o console, que é para onde o servidor escreve quando não consegue abrir o arquivo de log. A linha mais nova fica no topo.",
   "logs.screen.title": "Logs",
