@@ -86,15 +86,15 @@ status 화면 (`internal/web/static/screens.js:315` 의 `drawStatus`, `:443` 의
 | 2 | `internal/settings/settings.go:185-245` | `logging_file_path`·`security_key_file` 에 경로 규칙이 없다. 인증된 관리자가 `PUT /api/settings` + `POST /api/restart` 로 root 권한의 임의 파일 추가쓰기(`main.go:193`, 0644 생성)와 `GET /api/logs` 임의 파일 tail 을 얻는다 | `Validate()` 가 데이터 디렉터리 하위 상대경로만 받는다. 이미 저장된 위반값은 기동 시 거부하고 기본값으로 떨어뜨리며 경고 |
 | 3 | `go.mod:9` | echo v4.13.3 의 `%2F` 가 라우트 보호를 우회한다 (GO-2026-6293). 이 앱은 `/api/*` 그룹 미들웨어로 인증을 건다 (`main.go:1164`) | 도달 여부를 요청으로 확인해 기록하고, 결과와 무관하게 v4.15.3 으로 올린다 |
 | 4 | `internal/database/database.go:285`, `main.go:188,193` | DB·로그 파일 0644, 디렉터리 0755. 키 파일만 0600 이다 (`internal/crypto/crypto.go:21`) | 파일 0600, 디렉터리 0700 으로 생성하고 기동 시 기존 파일도 좁힌다 |
-| 5 | `main.go:1166` | 로그인에 시도 제한이 없다. 관련 코드 0건 | IP·계정 단위 실패 카운터와 누적 지연. 메모리 상태로 두고 재시작 시 초기화 |
+| 5 | `main.go:1166` | 로그인에 시도 제한이 없다. 관련 코드 0건 | IP·계정 단위 실패 카운터. 메모리 상태로 두고 재시작 시 초기화 |
 | 7 | `internal/tlsserve/cert.go:117,120` | 자체서명 인증서가 `IsCA: true` + `CertSign` 이고 이름 제약이 없다. 신뢰 저장소에 넣은 클라이언트에서, 키를 얻은 자가 임의 도메인 인증서를 발급할 수 있다 | `IsCA:false` 로 내리거나 `PermittedDNSDomains`/`PermittedIPRanges` 를 건다. 어느 쪽인지는 구현 시 정해 보고 |
-| 8 | `main.go:1090-1097` | 본문 크기 제한과 서버 타임아웃이 없다. 걸린 곳은 평문 리다이렉트 서버뿐이다 (`internal/tlsserve/redirect.go:98`) | `BodyLimit("1M")` + `ReadHeaderTimeout`·`ReadTimeout`·`IdleTimeout` |
+| 8 | `main.go:1090-1097` | 본문 크기 제한과 서버 타임아웃이 없다. 걸린 곳은 평문 리다이렉트 서버뿐이다 (`internal/tlsserve/redirect.go:98`) | `BodyLimit` + `ReadHeaderTimeout`·`ReadTimeout`·`IdleTimeout` |
 | 9 | `internal/install/fetch.go:162-179,512-526` | 릴리즈에 `SHA256SUMS` 자산이 없으면 무검증 설치가 된다 (`Verified:false`). 리다이렉트 스킴·호스트 검사가 없다 | 체크섬 자산이 없으면 설치를 중단하고 실행 중 바이너리로 폴백. `CheckRedirect` 로 https 아닌 스킴과 github 밖 호스트 거부 |
 | 10 | `main.go:1090-1097` | 보안 헤더가 하나도 없다 | `X-Frame-Options: DENY`·`nosniff`·`default-src 'self'` 는 항상. HSTS 는 운영자가 정식 인증서를 등록했을 때만 - 자체서명에 HSTS 를 걸면 되돌릴 수 없다 |
 | 11 | `internal/api/auth.go:292,309` | 쿠키 `Secure` 를 `c.IsTLS()` 로만 정한다. TLS 를 종단하는 프록시 뒤에서는 세션 쿠키가 `Secure` 없이 나간다 | 신뢰 프록시 설정이 켜졌을 때만 `X-Forwarded-Proto` 를 반영. 기본은 지금 그대로 |
 | 12 | `internal/auth/auth.go:79-96` | 초기 비밀번호 파일을 `O_TRUNC` 로 열어 내용을 먼저 쓰고 나중에 `Chmod(0600)` 한다 | `O_EXCL` 로 만들거나 쓰기 전에 `Chmod` |
 | 13 | `internal/api/auth.go:189` | 세션에 절대 수명이 없다. 조회마다 만료가 밀린다 | 생성 시각을 두고 절대 상한 |
-| 14 | `internal/database/database.go:158,166` | `zap.String("sql", sql)` 의 `sql` 은 gorm 이 바인딩 값을 끼워 넣은 것이다. `users` INSERT/UPDATE 가 실패하면 bcrypt 해시가 로그에 남고, 그 로그는 0644 이자 `GET /api/logs` 로 읽힌다. 실패 분기는 debug 가 아니라 기본 레벨에서도 찍힌다 | `users` 테이블 문장을 마스킹 |
+| 14 | `internal/database/database.go:158,166` | `zap.String("sql", sql)` 의 `sql` 은 gorm 이 바인딩 값을 끼워 넣은 것이다. 계정 테이블 INSERT/UPDATE 가 실패하면 bcrypt 해시가 로그에 남고, 그 로그는 0644 이자 `GET /api/logs` 로 읽힌다. 실패 분기는 debug 가 아니라 기본 레벨에서도 찍힌다 | 계정 테이블 문장을 마스킹 |
 | 15 | `Dockerfile:15,24,27` | `USER root`, `alpine:3.21.0`, 두 베이스가 digest 고정이 아니다 | 비루트 `USER`, alpine 갱신, digest 고정 |
 | 16 | `.github/workflows/build.yaml:16` | `permissions:` 블록이 없어 `GITHUB_TOKEN` 이 리포 기본 권한으로 돈다 | `permissions: contents: read` |
 | 17 | `internal/install/files.go:88-95` | `-purge` 가 저장된 `security.key_file` 이 아니라 기본값으로 키 경로를 계산해, 옮겨 둔 키를 남긴다 | 주석이 이유(돌고 있는 서비스의 DB 를 열어야 한다)를 적어 둔 트레이드오프다. 지우지 못했을 수 있다고 보고에 적는다 |
@@ -115,6 +115,17 @@ status 화면 (`internal/web/static/screens.js:315` 의 `drawStatus`, `:443` 의
 않아 옛 익스포트를 다시 임포트할 수 있으나, 비밀번호와 세션이 둘 다 필요해 우선순위가 낮다.
 
 **릴리즈 재빌드와 태그.** 구현이 끝난 뒤 별도 절차로 간다.
+
+## 구현이 설계와 갈린 곳
+
+만들면서 알게 된 것 때문에 설계와 다르게 간 것이 넷이다. 무엇을 왜 바꿨는지 여기 남긴다.
+
+| 항목 | 설계 | 구현 | 왜 |
+|------|------|------|-----|
+| 5 로그인 시도 제한 | 누적 지연 | **거절** | 지연은 핸들러 안에서 요청을 붙잡을 뿐이라, 동시에 보낸 50개가 나란히 지연되고 전부 bcrypt 에 닿는다. 추측 속도도 CPU 도 안 묶인다. 비밀번호를 보기 전에 쓰는 거절이 둘 다 묶는다 |
+| 8 본문 크기 제한 | `1M` 하나 | **2단: 일반 1M, 임포트 32M** | 설정 익스포트가 Host 마다 PEM 개인키·패스프레이즈·SSH 비밀번호를 담고 전체를 base64 로 싼다. Host 가 수백 개면 1M 을 넘어 임포트가 깨진다 |
+| 14 계정 테이블 | 테이블명 `users` | **`user`** | `internal/models/models.go:184` 의 `TableName()` 이 단수로 고정한다. gorm 이 복수로 만드는 것을 그 메서드가 막고 있다 |
+| 15 Dockerfile | 비루트 `USER` 포함 | **digest 고정과 alpine 갱신만** | `docker-compose.yaml:25` 의 `./_data:/data` 바인드 마운트가 호스트 디렉터리 소유권을 그대로 쓰고, docker 가 없는 디렉터리를 root 로 만든다. 비루트로는 DB 생성이 실패하는 것을 실측했다. 배포 쪽(`user:` 지정 + 호스트 디렉터리 chown)이 같이 가야 한다 |
 
 ## 작업 순서
 
