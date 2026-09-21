@@ -1308,22 +1308,33 @@ func serve() {
 			logger.Info("serving the API and the web UI over HTTPS. A request that arrives in the clear "+
 				"on the same port is answered with a redirect to https",
 				logid.ApiServerServingHttps.Field(),
-				zap.String("address", address),
+				zap.String("address", listener.Addr().String()),
 				zap.Int("port", set.APIPort))
 		}
 	} else {
-		logger.Warn("HTTPS is turned off, so the API and the web UI are served in the clear. Everything "+
-			"the screens send travels as it is, the password of the account among it",
-			logid.ApiServerServingPlain.Field(),
-			zap.String("address", address),
-			zap.Int("port", set.APIPort))
+		// The port is taken here rather than inside the server for the same
+		// reason as above, and so that the line below can name the address the
+		// listener bound instead of the one that was asked for. echo serves on
+		// a listener that is already open when it is handed one.
+		listener, listenErr := net.Listen("tcp", address)
+		if listenErr != nil {
+			serverErr <- fmt.Errorf("failed to listen on %s: %w", address, listenErr)
+		} else {
+			e.Listener = listener
 
-		go func() {
-			err := e.Start(address)
-			if err != nil && !errors.Is(err, http.ErrServerClosed) {
-				serverErr <- err
-			}
-		}()
+			go func() {
+				err := e.Start(address)
+				if err != nil && !errors.Is(err, http.ErrServerClosed) {
+					serverErr <- err
+				}
+			}()
+
+			logger.Warn("HTTPS is turned off, so the API and the web UI are served in the clear. Everything "+
+				"the screens send travels as it is, the password of the account among it",
+				logid.ApiServerServingPlain.Field(),
+				zap.String("address", listener.Addr().String()),
+				zap.Int("port", set.APIPort))
+		}
 	}
 
 	var startErr error
