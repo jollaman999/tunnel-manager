@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
 	"sync/atomic"
 	"time"
 
@@ -141,6 +142,52 @@ func (l *zapGormLogger) Error(_ context.Context, msg string, data ...interface{}
 	}
 }
 
+// redactedStatement is what the log carries in place of a statement that
+// touches the account table.
+//
+// The whole statement is thrown away rather than the values picked out of it,
+// because what has to be kept out of the log is the password hash and there is
+// no reliable way to tell which of the rendered values is the hash: gorm hands
+// the logger one string with the bound values already written into it
+// (Dialector.Explain), so picking a value out means parsing SQL, and a parser
+// that is wrong once writes the hash to a file that is read back through
+// GET /api/logs. What a redacted line loses is which column of the one-row
+// account table was being written, which is worth less than the hash is
+// dangerous. Everything the line is otherwise read for - the ID, the row
+// count, how long it took and the error - is still beside it, so a failed or
+// slow write to the account table is still reported as one.
+const redactedStatement = "<redacted: statement on the user table>"
+
+// userTableStatement matches a statement that names the account table.
+//
+// The table is "user" rather than the "users" gorm would pluralize it to; the
+// name is pinned by models.User.TableName, and the driver quotes every
+// identifier with backticks. The name is only looked for where a table name
+// can stand, after the keywords that introduce one, because the bare word
+// appears elsewhere as well: models.Host has a User field, so a statement on
+// the hosts table carries a `user` column, and matching the word anywhere
+// would redact the host statements too. Those are what an operator turns
+// tracing on to read.
+//
+// The quoting alternatives are there so that a statement written by hand
+// rather than built by gorm is caught as well. The unquoted alternative is
+// last, as the quoted forms are what the driver produces.
+var userTableStatement = regexp.MustCompile("(?i)\\b(?:from|into|update|join|table)\\s+(?:`user`|\"user\"|\\[user\\]|user\\b)")
+
+// maskStatement hides a statement that touches the account table and hands
+// every other one back as it is.
+//
+// It is applied to what the logger writes rather than to what gorm builds,
+// because the statement has to stay whole on its way to SQLite. Only the
+// copy that goes into the log is replaced.
+func maskStatement(sql string) string {
+	if userTableStatement.MatchString(sql) {
+		return redactedStatement
+	}
+
+	return sql
+}
+
 func (l *zapGormLogger) Trace(_ context.Context, begin time.Time, fc func() (string, int64), err error) {
 	level := l.currentLevel()
 
@@ -156,7 +203,7 @@ func (l *zapGormLogger) Trace(_ context.Context, begin time.Time, fc func() (str
 		sql, rows := fc()
 		return []zap.Field{
 			id.Field(),
-			zap.String("sql", sql),
+			zap.String("sql", maskStatement(sql)),
 			zap.Int64("rows", rows),
 			zap.Float64("elapsed_ms", float64(elapsed.Nanoseconds())/1e6),
 		}

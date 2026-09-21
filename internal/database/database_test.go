@@ -1390,3 +1390,244 @@ func TestTheAssignmentsAreWrittenInBatches(t *testing.T) {
 		t.Fatalf("the 400 assignments took %d statements, want %d", inserts, want)
 	}
 }
+
+// theHashOfTheTest stands in for what the account table holds. It is written
+// out rather than produced with bcrypt so that the test names the very string
+// it then looks for, and so that the check does not depend on the hashing
+// package.
+const theHashOfTheTest = "$2a$10$N9qo8uLOickgx2ZMRZoMyeIjZAgcfl7p92ldGxad68LJZdL17lhWy"
+
+// requireNoHashAnywhere fails if the hash reached any part of any line. It
+// looks at the whole of every entry rather than at the sql field alone,
+// because the point is that the value is not in the log file, and a field
+// added later would carry it just as well.
+func requireNoHashAnywhere(t *testing.T, logs *observer.ObservedLogs) {
+	t.Helper()
+
+	for _, entry := range logs.All() {
+		rendered := fmt.Sprintf("%s %v", entry.Message, entry.ContextMap())
+		if strings.Contains(rendered, theHashOfTheTest) {
+			t.Fatalf("the password hash is in the log: %s", rendered)
+		}
+	}
+}
+
+// TestMaskStatementHidesTheAccountTableAndLeavesTheRest walks the forms a
+// statement can take. The account table is "user", which is also the name of a
+// column of the hosts table, so the cases below are as much about what must
+// not be redacted as about what must.
+func TestMaskStatementHidesTheAccountTableAndLeavesTheRest(t *testing.T) {
+	cases := []struct {
+		name string
+		sql  string
+		want bool
+	}{
+		{
+			name: "insert as the driver writes it",
+			sql:  "INSERT INTO `user` (`username`,`password_hash`) VALUES ('operator','" + theHashOfTheTest + "')",
+			want: true,
+		},
+		{
+			name: "update as the driver writes it",
+			sql:  "UPDATE `user` SET `password_hash`='" + theHashOfTheTest + "' WHERE `id` = 1",
+			want: true,
+		},
+		{
+			name: "select",
+			sql:  "SELECT * FROM `user` WHERE `username` = 'operator' ORDER BY `user`.`id` LIMIT 1",
+			want: true,
+		},
+		{
+			name: "delete",
+			sql:  "DELETE FROM `user` WHERE `id` = 1",
+			want: true,
+		},
+		{
+			name: "unquoted",
+			sql:  "UPDATE user SET password_hash = 'x'",
+			want: true,
+		},
+		{
+			name: "double quoted",
+			sql:  "SELECT * FROM \"user\"",
+			want: true,
+		},
+		{
+			name: "the migration that builds it",
+			sql:  "CREATE TABLE `user` (`id` integer PRIMARY KEY AUTOINCREMENT,`password_hash` text NOT NULL)",
+			want: true,
+		},
+		{
+			name: "broken over lines",
+			sql:  "SELECT *\n\tFROM `user`\n\tWHERE `id` = 1",
+			want: true,
+		},
+		{
+			name: "the user column of a host",
+			sql:  "UPDATE `hosts` SET `user`='operator',`updated_at`='2026-09-22 00:00:00' WHERE `id` = 1",
+			want: false,
+		},
+		{
+			name: "a host read back by its user",
+			sql:  "SELECT `id`,`ip`,`user` FROM `hosts` WHERE `user` = 'operator'",
+			want: false,
+		},
+		{
+			name: "the updated_at column is not the update keyword",
+			sql:  "SELECT `updated_at` FROM `tunnels`",
+			want: false,
+		},
+		{
+			name: "another table",
+			sql:  "INSERT INTO `host_service_ports` (`host_id`,`sp_id`) VALUES (1,2)",
+			want: false,
+		},
+	}
+
+	for _, test := range cases {
+		t.Run(test.name, func(t *testing.T) {
+			got := maskStatement(test.sql)
+
+			if test.want {
+				if got != redactedStatement {
+					t.Fatalf("maskStatement(%q) is %q, want it redacted", test.sql, got)
+				}
+				return
+			}
+
+			if got != test.sql {
+				t.Fatalf("maskStatement(%q) is %q, want it unchanged", test.sql, got)
+			}
+		})
+	}
+}
+
+// TestAFailedAccountWriteIsReportedWithoutTheHash is the branch that made this
+// worth doing: a failed query is logged at the level the application runs at
+// by default, so an INSERT into the account table that hits a constraint would
+// write the password hash into a file that is read back through GET /api/logs.
+//
+// What has to survive the redaction is everything the line is read for, so the
+// row count, the elapsed time and the error are checked as well.
+func TestAFailedAccountWriteIsReportedWithoutTheHash(t *testing.T) {
+	logger, logs := newTraceLogger(gormlogger.Error)
+
+	failure := errors.New("UNIQUE constraint failed: user.username")
+
+	logger.Trace(context.Background(), time.Now().Add(-50*time.Millisecond),
+		statement("INSERT INTO `user` (`username`,`password_hash`,`setup_required`) VALUES ('operator','"+
+			theHashOfTheTest+"',false)", 1), failure)
+
+	entry := onlyEntry(t, logs)
+
+	if entry.Message != "query failed" {
+		t.Fatalf("the message is %q, want %q", entry.Message, "query failed")
+	}
+
+	requireField(t, entry, "sql", redactedStatement)
+	requireField(t, entry, "rows", int64(1))
+	requireField(t, entry, "error", failure.Error())
+	requireNoHashAnywhere(t, logs)
+
+	if _, ok := entry.ContextMap()["elapsed_ms"].(float64); !ok {
+		t.Fatalf("the elapsed_ms field is missing from %v", entry.ContextMap())
+	}
+}
+
+// TestTheAccountTableIsRedactedOnEverySlowAndTracedLine covers the other two
+// branches, which all read the statement through the same closure. A guard put
+// on one of them alone would leave the hash in the log of an installation that
+// runs at debug, or of one where the write was slow.
+func TestTheAccountTableIsRedactedOnEverySlowAndTracedLine(t *testing.T) {
+	sql := "UPDATE `user` SET `password_hash`='" + theHashOfTheTest + "' WHERE `id` = 1"
+
+	cases := []struct {
+		name  string
+		level gormlogger.LogLevel
+		begin time.Time
+		want  string
+	}{
+		{
+			name:  "slow",
+			level: gormlogger.Warn,
+			begin: time.Now().Add(slowQueryThreshold * -2),
+			want:  "slow query",
+		},
+		{
+			name:  "traced",
+			level: gormlogger.Info,
+			begin: time.Now(),
+			want:  "query",
+		},
+	}
+
+	for _, test := range cases {
+		t.Run(test.name, func(t *testing.T) {
+			logger, logs := newTraceLogger(test.level)
+
+			logger.Trace(context.Background(), test.begin, statement(sql, 1), nil)
+
+			entry := onlyEntry(t, logs)
+
+			if entry.Message != test.want {
+				t.Fatalf("the message is %q, want %q", entry.Message, test.want)
+			}
+
+			requireField(t, entry, "sql", redactedStatement)
+			requireField(t, entry, "rows", int64(1))
+			requireNoHashAnywhere(t, logs)
+		})
+	}
+}
+
+// TestAFailedQueryOnAnotherTableKeepsItsStatement is the other half: the
+// redaction has to be narrow enough that the log is still worth reading. The
+// statement carries the user column of the hosts table, which is the value a
+// match on the bare word would trip over.
+func TestAFailedQueryOnAnotherTableKeepsItsStatement(t *testing.T) {
+	logger, logs := newTraceLogger(gormlogger.Error)
+
+	sql := "UPDATE `hosts` SET `user`='operator',`enabled`=true WHERE `id` = 1"
+
+	logger.Trace(context.Background(), time.Now(), statement(sql, 1), errors.New("database is locked"))
+
+	entry := onlyEntry(t, logs)
+
+	requireField(t, entry, "sql", sql)
+}
+
+// TestARealFailedAccountWriteDoesNotLeakTheHash runs the statement through
+// gorm and the driver rather than through a hand-built callback, which is what
+// answers whether the string the logger is handed in the running program is
+// the one the redaction catches. gorm writes the bound values into that string
+// itself (Dialector.Explain), so the hash is in it before the logger sees it.
+//
+// The database is opened at "error", the level an installation runs at by
+// default, so the line under test is one an operator would actually have.
+func TestARealFailedAccountWriteDoesNotLeakTheHash(t *testing.T) {
+	db, _, logs := newObservedDatabase(t, "error")
+
+	err := db.Create(&models.User{ID: 1, Username: "operator", PasswordHash: theHashOfTheTest}).Error
+	if err != nil {
+		t.Fatalf("failed to store the account: %v", err)
+	}
+
+	// The same ID again, which SQLite refuses. It is the failure an account
+	// write hits in the running program: a constraint, reported through the
+	// logger with the statement that ran.
+	err = db.Create(&models.User{ID: 1, Username: "operator", PasswordHash: theHashOfTheTest}).Error
+	if err == nil {
+		t.Fatal("the second account row was stored, so nothing failed to be logged")
+	}
+
+	failures := logs.FilterMessage("query failed").All()
+	if len(failures) == 0 {
+		t.Fatalf("the failed account write was not logged at all: %v", logs.All())
+	}
+
+	for _, entry := range failures {
+		requireField(t, entry, "sql", redactedStatement)
+	}
+
+	requireNoHashAnywhere(t, logs)
+}
