@@ -245,6 +245,15 @@ chmod +x tunnel-manager-linux-amd64
 ./tunnel-manager-linux-amd64
 ```
 
+The release carries a `SHA256SUMS` file beside the binaries, and it says what
+each download should be. Check it before the first start: a download that was
+cut short, or served by something in the middle, still looks like a binary.
+`grep tunnel-manager-linux-amd64 SHA256SUMS | sha256sum -c -` answers with the
+file name and `OK`, and macOS has `shasum -a 256 -c -` in place of
+`sha256sum -c -`. The `grep` is there because the file lists every platform
+while only one of them was downloaded, and the names in it carry no directory,
+so the check runs wherever the files were put.
+
 The flags are all of them:
 
 | Flag | What it does |
