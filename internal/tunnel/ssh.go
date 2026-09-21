@@ -583,18 +583,6 @@ func (t *SSHTunnel) establishConnection(m *Manager, tunnel *models.Tunnel) error
 		boundPort = bound.Port
 	}
 
-	if t.Local.IP.IsUnspecified() {
-		t.logger.Info("a wildcard local address was requested, and the address here is the one that was asked for: "+
-			"the SSH server opens the listener and never says which address it bound, so whether the port is on "+
-			"every address or on loopback alone is not known from this line. The probe that follows says whether "+
-			"it answered, and if it did not, what to change is the setting that opens a forwarded port on the "+
-			"SSH server or the firewall on the way",
-			logid.TunnelWildcardLocalAddress.Field(),
-			zap.String("local", localAddr),
-			zap.String("server", t.Server.String()),
-			zap.String("remote", t.Remote.String()))
-	}
-
 	t.tunnelMu.Lock()
 	tunnel.Local = localAddr
 	tunnel.Status = "connected"

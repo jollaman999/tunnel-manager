@@ -439,7 +439,6 @@
   "log.tunnel.stop_failed.text": "falha ao parar o túnel",
   "log.tunnel.stop_skipped_not_running.text": "não há túnel para parar",
   "log.tunnel.tunnels_fetch_failed.text": "falha ao buscar os túneis",
-  "log.tunnel.wildcard_local_address.text": "foi pedido um endereço local curinga, e o endereço aqui é o que foi pedido: quem abre o listener é o servidor SSH, e ele nunca informa em qual endereço fez o bind, então esta linha não diz se a porta está em todos os endereços ou só no loopback. A verificação que vem em seguida diz se ela respondeu; se não respondeu, o que mudar é a configuração que abre uma porta encaminhada no servidor SSH ou o firewall no caminho",
   "log.ulimit.change_failed.text": "falha ao alterar o ulimit",
   "log.ulimit.change_not_needed.text": "não é preciso alterar o ulimit",
   "log.ulimit.changed.text": "alterou o ulimit com sucesso",

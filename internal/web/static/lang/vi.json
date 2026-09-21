@@ -439,7 +439,6 @@
   "log.tunnel.stop_failed.text": "không dừng được tunnel",
   "log.tunnel.stop_skipped_not_running.text": "không có tunnel nào để dừng",
   "log.tunnel.tunnels_fetch_failed.text": "không lấy được các tunnel",
-  "log.tunnel.wildcard_local_address.text": "đã yêu cầu một địa chỉ cục bộ dạng wildcard, và địa chỉ ghi ở đây chính là địa chỉ được yêu cầu: máy chủ SSH mới là bên mở trình lắng nghe và nó không hề cho biết đã gắn vào địa chỉ nào, nên từ dòng này không biết được cổng đang mở ở mọi địa chỉ hay chỉ ở loopback. Lượt dò ngay sau đây sẽ cho biết cổng có phản hồi hay không; nếu không phản hồi thì thứ cần sửa là cài đặt mở cổng chuyển tiếp trên máy chủ SSH hoặc tường lửa trên đường đi",
   "log.ulimit.change_failed.text": "không đổi được ulimit",
   "log.ulimit.change_not_needed.text": "không cần đổi ulimit",
   "log.ulimit.changed.text": "đã đổi ulimit xong",

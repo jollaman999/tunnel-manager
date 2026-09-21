@@ -439,7 +439,6 @@
   "log.tunnel.stop_failed.text": "تعذّر إيقاف النفق",
   "log.tunnel.stop_skipped_not_running.text": "لا يوجد نفق ليُوقف",
   "log.tunnel.tunnels_fetch_failed.text": "تعذّر جلب الأنفاق",
-  "log.tunnel.wildcard_local_address.text": "طُلب عنوان محلي شامل، والعنوان هنا هو ما طُلب: خادم SSH يفتح المستمع ولا يُبلغ أبدًا بالعنوان الذي ربطه، فهل المنفذ على كل العناوين أم على loopback وحده أمر غير معروف من هذا السطر. والفحص الذي يليه يبيّن هل استجاب، فإن لم يستجب فما يُغيَّر هو الإعداد الذي يفتح المنفذ الممرَّر في خادم SSH، أو الجدار الناري في الطريق",
   "log.ulimit.change_failed.text": "تعذّر تغيير ulimit",
   "log.ulimit.change_not_needed.text": "لا حاجة إلى تغيير ulimit",
   "log.ulimit.changed.text": "غُيّر ulimit بنجاح",

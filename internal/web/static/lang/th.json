@@ -439,7 +439,6 @@
   "log.tunnel.stop_failed.text": "หยุดอุโมงค์ไม่สำเร็จ",
   "log.tunnel.stop_skipped_not_running.text": "ไม่มีอุโมงค์ให้หยุด",
   "log.tunnel.tunnels_fetch_failed.text": "ดึงรายการอุโมงค์ไม่สำเร็จ",
-  "log.tunnel.wildcard_local_address.text": "มีการขอที่อยู่ฝั่ง Host แบบ wildcard และที่อยู่ที่เขียนไว้ตรงนี้คือที่อยู่ที่ขอไป เซิร์ฟเวอร์ SSH เป็นผู้เปิดตัวรับการเชื่อมต่อและไม่เคยบอกว่าผูกกับที่อยู่ใด บรรทัดนี้จึงบอกไม่ได้ว่าพอร์ตเปิดอยู่ทุกที่อยู่หรือเปิดแค่ loopback การทดสอบที่ตามมาจะบอกว่าพอร์ตตอบหรือไม่ และถ้าไม่ตอบ สิ่งที่ต้องแก้คือการตั้งค่าที่เปิดพอร์ตที่ส่งต่อบนเซิร์ฟเวอร์ SSH หรือไฟร์วอลล์ระหว่างทาง",
   "log.ulimit.change_failed.text": "เปลี่ยน ulimit ไม่สำเร็จ",
   "log.ulimit.change_not_needed.text": "ไม่จำเป็นต้องเปลี่ยน ulimit",
   "log.ulimit.changed.text": "เปลี่ยน ulimit สำเร็จแล้ว",

@@ -439,7 +439,6 @@
   "log.tunnel.stop_failed.text": "टनल रोका नहीं जा सका",
   "log.tunnel.stop_skipped_not_running.text": "रोकने के लिए कोई टनल है ही नहीं",
   "log.tunnel.tunnels_fetch_failed.text": "टनल लाए नहीं जा सके",
-  "log.tunnel.wildcard_local_address.text": "लोकल पता वाइल्डकार्ड माँगा गया था, और यहाँ जो पता लिखा है वही माँगा गया था: SSH सर्वर लिसनर खोलता तो है पर कभी नहीं बताता कि उसने कौन सा पता बाइंड किया, इसलिए पोर्ट हर पते पर है या सिर्फ़ loopback पर, यह इस लाइन से पता नहीं चलता। आगे की जाँच बताती है कि उसने जवाब दिया या नहीं, और अगर नहीं दिया तो बदलनी वह सेटिंग है जो SSH सर्वर पर फ़ॉरवर्ड किए गए पोर्ट को खोलती है, या रास्ते का फ़ायरवॉल",
   "log.ulimit.change_failed.text": "ulimit बदला नहीं जा सका",
   "log.ulimit.change_not_needed.text": "ulimit बदलने की ज़रूरत नहीं",
   "log.ulimit.changed.text": "ulimit बदल दिया",

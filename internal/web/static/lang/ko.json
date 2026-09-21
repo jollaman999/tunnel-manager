@@ -439,7 +439,6 @@
   "log.tunnel.stop_failed.text": "터널을 멈추지 못했습니다",
   "log.tunnel.stop_skipped_not_running.text": "멈출 터널이 없습니다",
   "log.tunnel.tunnels_fetch_failed.text": "터널을 가져오지 못했습니다",
-  "log.tunnel.wildcard_local_address.text": "와일드카드 로컬 주소로 요청했고, 여기 적힌 주소는 요청한 그 주소입니다. 리스너를 여는 것은 SSH 서버이고 그 서버는 어느 주소에 묶었는지 알려 주지 않으므로, 그 포트가 모든 주소에 열렸는지 루프백에만 열렸는지는 이 줄로 알 수 없습니다. 이어지는 확인이 그 포트가 응답했는지를 알려 주며, 응답하지 않았다면 고칠 것은 SSH 서버에서 포워딩된 포트를 여는 설정이거나 오는 길의 방화벽입니다",
   "log.ulimit.change_failed.text": "ulimit 를 바꾸지 못했습니다",
   "log.ulimit.change_not_needed.text": "ulimit 를 바꿀 필요가 없습니다",
   "log.ulimit.changed.text": "ulimit 를 바꿨습니다",

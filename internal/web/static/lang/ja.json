@@ -439,7 +439,6 @@
   "log.tunnel.stop_failed.text": "トンネルを停止できませんでした",
   "log.tunnel.stop_skipped_not_running.text": "停止するトンネルがありません",
   "log.tunnel.tunnels_fetch_failed.text": "トンネルを取得できませんでした",
-  "log.tunnel.wildcard_local_address.text": "ワイルドカードのローカルアドレスを要求しました。ここに出ているアドレスは、要求したそのものです。待ち受けを開くのは SSH サーバーで、どのアドレスに bind したかは返してこないので、ポートがすべてのアドレスにあるのか、ループバックだけなのかは、この行からは分かりません。このあとの疎通の確認が、応答があったかどうかを伝えます。応答がなかったときに変えるのは、SSH サーバーで転送ポートを開く設定か、途中のファイアウォールです",
   "log.ulimit.change_failed.text": "ulimit を変更できませんでした",
   "log.ulimit.change_not_needed.text": "ulimit を変更する必要はありません",
   "log.ulimit.changed.text": "ulimit を変更しました",

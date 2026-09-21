@@ -439,7 +439,6 @@
   "log.tunnel.stop_failed.text": "停止隧道失败",
   "log.tunnel.stop_skipped_not_running.text": "没有隧道要停",
   "log.tunnel.tunnels_fetch_failed.text": "获取隧道失败",
-  "log.tunnel.wildcard_local_address.text": "请求的是通配的本地地址，这里写的地址就是请求的那个：监听是 SSH 服务器打开的，它不会报告自己绑定了哪个地址，所以端口是绑定在所有地址上还是只在回环地址上，从这一行看不出来。紧接着的探测会报告它是否响应；如果没有响应，要修改的是 SSH 服务器上允许转发端口对外开放的那项设置，或者中间的防火墙",
   "log.ulimit.change_failed.text": "修改 ulimit 失败",
   "log.ulimit.change_not_needed.text": "不需要修改 ulimit",
   "log.ulimit.changed.text": "ulimit 已修改",

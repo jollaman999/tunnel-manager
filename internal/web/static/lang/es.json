@@ -439,7 +439,6 @@
   "log.tunnel.stop_failed.text": "no se pudo detener el túnel",
   "log.tunnel.stop_skipped_not_running.text": "no hay ningún túnel que detener",
   "log.tunnel.tunnels_fetch_failed.text": "no se pudieron obtener los túneles",
-  "log.tunnel.wildcard_local_address.text": "se pidió una dirección local comodín, y la dirección que aparece aquí es la que se pidió: el servidor SSH abre el listener y nunca indica a qué dirección lo enlazó, así que esta línea no dice si el puerto escucha en todas las direcciones o solo en loopback. La comprobación que sigue indica si respondió, y si no respondió, lo que hay que cambiar es el ajuste del servidor SSH que permite exponer un puerto reenviado, o el cortafuegos que hay en el trayecto",
   "log.ulimit.change_failed.text": "no se pudo cambiar el ulimit",
   "log.ulimit.change_not_needed.text": "no hace falta cambiar el ulimit",
   "log.ulimit.changed.text": "se cambió el ulimit correctamente",

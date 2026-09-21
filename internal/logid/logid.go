@@ -70,7 +70,6 @@ const (
 	TunnelForwardCopyFailed           ID = "tunnel.forward_copy_failed"
 	TunnelSshConnectFailed            ID = "tunnel.ssh_connect_failed"
 	TunnelRemoteListenerFailed        ID = "tunnel.remote_listener_failed"
-	TunnelWildcardLocalAddress        ID = "tunnel.wildcard_local_address"
 	TunnelConnected                   ID = "tunnel.connected"
 	TunnelConnectionClosed            ID = "tunnel.connection_closed"
 	TunnelListenerAcceptFailed        ID = "tunnel.listener_accept_failed"

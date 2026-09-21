@@ -439,7 +439,6 @@
   "log.tunnel.stop_failed.text": "échec de l'arrêt du tunnel",
   "log.tunnel.stop_skipped_not_running.text": "aucun tunnel à arrêter",
   "log.tunnel.tunnels_fetch_failed.text": "échec de la récupération des tunnels",
-  "log.tunnel.wildcard_local_address.text": "une adresse locale générique a été demandée, et l'adresse indiquée ici est celle qui a été demandée : le serveur SSH ouvre le port en écoute sans jamais indiquer à quelle adresse il l'a lié, cette ligne ne dit donc pas si le port est sur toutes les adresses ou sur loopback seulement. Le test qui suit dit s'il a répondu, et s'il n'a pas répondu, ce qu'il faut changer est le paramètre qui ouvre un port redirigé sur le serveur SSH, ou le pare-feu intermédiaire",
   "log.ulimit.change_failed.text": "échec du changement d'ulimit",
   "log.ulimit.change_not_needed.text": "pas besoin de changer ulimit",
   "log.ulimit.changed.text": "ulimit changé",

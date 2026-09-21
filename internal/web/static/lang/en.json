@@ -439,7 +439,6 @@
   "log.tunnel.stop_failed.text": "failed to stop tunnel",
   "log.tunnel.stop_skipped_not_running.text": "no tunnel to stop",
   "log.tunnel.tunnels_fetch_failed.text": "failed to fetch tunnels",
-  "log.tunnel.wildcard_local_address.text": "a wildcard local address was requested, and the address here is the one that was asked for: the SSH server opens the listener and never says which address it bound, so whether the port is on every address or on loopback alone is not known from this line. The probe that follows says whether it answered, and if it did not, what to change is the setting that opens a forwarded port on the SSH server or the firewall on the way",
   "log.ulimit.change_failed.text": "failed to change ulimit",
   "log.ulimit.change_not_needed.text": "no need to change ulimit",
   "log.ulimit.changed.text": "successfully changed ulimit",

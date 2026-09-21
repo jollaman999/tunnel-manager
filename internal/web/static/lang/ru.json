@@ -439,7 +439,6 @@
   "log.tunnel.stop_failed.text": "не удалось остановить туннель",
   "log.tunnel.stop_skipped_not_running.text": "останавливать нечего, туннеля нет",
   "log.tunnel.tunnels_fetch_failed.text": "не удалось получить туннели",
-  "log.tunnel.wildcard_local_address.text": "запрошен локальный wildcard-адрес, и адрес здесь - тот, который был запрошен: слушатель открывает сервер SSH и не сообщает, какой адрес он привязал, поэтому из этой строки неизвестно, открыт порт на всех адресах или только на loopback. Ответил ли он, покажет следующая за этим проверка, а если не ответил, менять нужно настройку, которая открывает переадресованный порт на сервере SSH, или firewall по пути",
   "log.ulimit.change_failed.text": "не удалось изменить ulimit",
   "log.ulimit.change_not_needed.text": "менять ulimit не нужно",
   "log.ulimit.changed.text": "ulimit успешно изменён",
