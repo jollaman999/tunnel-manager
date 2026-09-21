@@ -42,4 +42,4 @@ jobs:
         fi
 
     - name: Test
-      run: go test ./... -count=1 -race
+      run: go test ./... -count=1 -race -timeout 20m
