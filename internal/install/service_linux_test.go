@@ -257,6 +257,58 @@ func TestCheckUnitPaths(t *testing.T) {
 	}
 }
 
+// pathCheckTestUnit is the unit name the refusal below asks systemd about. It
+// is a name of its own like every other unit in this file, so that nothing here
+// can read - let alone write - the registration of a service that is deployed
+// on the machine the tests run on.
+const pathCheckTestUnit = serviceName + "-pathcheck" + unitSuffix
+
+// TestInstallRefusesAUnitPathBeforeTheExecutableIsCopied drives the real
+// systemd backend with a database path a unit cannot carry, and holds the state
+// the refused install leaves the machine in.
+//
+// Nothing here is registered or started: the refusal comes before any of that,
+// and the only systemctl this runs is the read of a unit name nothing owns. The
+// refusal itself is TestCheckUnitPaths' to cover. What is covered here is when
+// it happens - before the executable is copied. It used to happen inside
+// Register, which is after the copy, so an operator whose path was refused was
+// left with a new binary at a path no registration names and no way to tell it
+// from an install that worked.
+func TestInstallRefusesAUnitPathBeforeTheExecutableIsCopied(t *testing.T) {
+	if _, err := exec.LookPath("systemctl"); err != nil {
+		t.Skipf("the install reads the registration of this system first, and systemctl is not here: %v", err)
+	}
+
+	allowPrivilege(t)
+
+	dir := t.TempDir()
+
+	// A space in the directory the database is in, which is what a unit cannot
+	// carry in a way an uninstall could read back.
+	plan := Plan{
+		ExecutablePath: filepath.Join(dir, "bin", executableName),
+		DataDir:        filepath.Join(dir, "tm data"),
+		DatabaseFile:   filepath.Join(dir, "tm data", databaseFileName),
+	}
+
+	source := writeFile(t, filepath.Join(dir, "downloaded"), "the new build")
+
+	_, err := install(systemd{unit: pathCheckTestUnit}, plan, source, "the test", &strings.Builder{})
+	if err == nil {
+		t.Fatal("the install went ahead with a database path a unit cannot carry")
+	}
+
+	if _, statErr := os.Stat(plan.ExecutablePath); !errors.Is(statErr, os.ErrNotExist) {
+		t.Errorf("the executable was copied to %s before the path was refused: %v", plan.ExecutablePath, statErr)
+	}
+
+	if _, statErr := os.Stat(plan.DataDir); !errors.Is(statErr, os.ErrNotExist) {
+		t.Errorf("the data directory %s was made before the path was refused: %v", plan.DataDir, statErr)
+	}
+
+	t.Logf("refused as it should: %v", err)
+}
+
 // roundTripEnv is what has to be set for the round trip below to run.
 //
 // Being root is not enough on its own to ask for it: it registers a unit with
@@ -456,4 +508,144 @@ func systemctl(t *testing.T, args ...string) string {
 	}
 
 	return string(out)
+}
+
+// packagedUnitDir is where the distribution's own units live, and where the
+// unit of this machine's deployment actually sits. It is only ever written to
+// by the test below, which puts one file there and removes it again.
+const packagedUnitDir = "/usr/lib/systemd/system"
+
+// fragmentTestUnit is the unit that test plants there. It is a name of its own
+// for the reason every other unit here has one, and doubly so: this is the one
+// test that writes outside /etc.
+const fragmentTestUnit = serviceName + "-fragmenttest" + unitSuffix
+
+// TestInstallWritesOverTheUnitWhereItAlreadyIs installs over a registration
+// that lives in /usr/lib/systemd/system.
+//
+// This is the case the deployment on this machine is in: its unit is in
+// /usr/lib and not in /etc. A Register that wrote to /etc anyway would not
+// replace that unit but shadow it, leaving two files where systemd takes the
+// /etc one and the old one sits there still looking like the installation.
+// Nothing about that is visible from the unit that was written; it takes
+// systemd being asked which file it loaded.
+func TestInstallWritesOverTheUnitWhereItAlreadyIs(t *testing.T) {
+	roundTripGate(t, fragmentTestUnit)
+	allowPrivilege(t)
+
+	svc := systemd{unit: fragmentTestUnit}
+	packagedPath := filepath.Join(packagedUnitDir, fragmentTestUnit)
+	etcPath := filepath.Join(unitDir, fragmentTestUnit)
+
+	// Registered before the file is planted, so that a run which fails at any
+	// step still takes the unit out of /usr/lib. That directory belongs to the
+	// package manager and a file of this test's left behind there is the one
+	// piece of this run that would not be cleaned up by a reboot or a reinstall.
+	t.Cleanup(func() {
+		_, _ = svc.run(jobTimeout, "disable", "--now", svc.unit)
+		_ = os.Remove(packagedPath)
+		_ = os.Remove(etcPath)
+		_, _ = svc.run(commandTimeout, "daemon-reload")
+	})
+
+	dir := t.TempDir()
+	plan := Plan{
+		ExecutablePath: filepath.Join(dir, serviceName+"-fragmenttest"),
+		DataDir:        filepath.Join(dir, "data"),
+		DatabaseFile:   filepath.Join(dir, "data", databaseFileName),
+	}
+
+	// Written by hand rather than by unitFile, because this is the state the
+	// machine is put into before the test starts and not something under test.
+	// The marker is what says afterwards whether this file was written over or
+	// merely left alone. The paths are the ones the install will ask for, so
+	// that it is the placing of the unit being tested and not the refusal of an
+	// installation registered somewhere else.
+	planted := "# planted by the test, standing in for the unit of a distribution package\n" +
+		"[Unit]\n" +
+		"Description=Tunnel Manager Service, planted by the test\n" +
+		"\n" +
+		"[Service]\n" +
+		"Type=simple\n" +
+		"ExecStart=" + plan.ExecutablePath + " -db " + plan.DatabaseFile + "\n" +
+		"\n" +
+		"[Install]\n" +
+		"WantedBy=multi-user.target\n"
+
+	err := os.WriteFile(packagedPath, []byte(planted), unitFileMode)
+	if err != nil {
+		t.Fatalf("failed to plant a unit at %s: %v", packagedPath, err)
+	}
+
+	_, err = svc.run(commandTimeout, "daemon-reload")
+	if err != nil {
+		t.Fatalf("daemon-reload after planting the unit failed: %v", err)
+	}
+
+	if _, err := os.Stat(etcPath); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("%s is there before the test installed anything: %v", etcPath, err)
+	}
+
+	before, err := svc.Current()
+	if err != nil {
+		t.Fatalf("the planted unit could not be read back: %v", err)
+	}
+
+	if before.DefinitionPath != packagedPath {
+		t.Fatalf("systemd loaded the planted unit from %q, want %q", before.DefinitionPath, packagedPath)
+	}
+
+	source := writeFile(t, filepath.Join(t.TempDir(), "downloaded"), "#!/bin/sh\nexec sleep 600\n")
+
+	var out strings.Builder
+
+	outcome, err := install(svc, plan, source, "the test", &out)
+	if err != nil {
+		t.Fatalf("the install over the planted unit failed: %v", err)
+	}
+
+	t.Logf("\n%s", out.String())
+
+	if !outcome.Replaced {
+		t.Error("the install says nothing was registered before")
+	}
+
+	if outcome.Definition != packagedPath {
+		t.Errorf("the install reports the registration at %q, want %q", outcome.Definition, packagedPath)
+	}
+
+	// The one that decides it: systemd itself saying which file it loaded. A
+	// second unit in /etc would win, and this would name that one.
+	fragment := systemctlShow(t, svc.unit, "FragmentPath")
+	if strings.TrimSpace(fragment) != "FragmentPath="+packagedPath {
+		t.Errorf("after the install systemctl answers %q, want FragmentPath=%s", fragment, packagedPath)
+	}
+
+	t.Logf("systemctl show %s -p FragmentPath -p ExecStart:\n%s",
+		svc.unit, systemctlShow(t, svc.unit, "FragmentPath", "ExecStart"))
+
+	if _, err := os.Stat(etcPath); !errors.Is(err, os.ErrNotExist) {
+		t.Errorf("the install put a second unit at %s: %v", etcPath, err)
+	}
+
+	// The planted file is gone from under the marker: written over where it
+	// was, rather than left as it was beside a new one.
+	written, err := os.ReadFile(packagedPath)
+	if err != nil {
+		t.Fatalf("after the install the unit at %s could not be read: %v", packagedPath, err)
+	}
+
+	if strings.Contains(string(written), "planted by the test") {
+		t.Errorf("the unit at %s is still the planted one:\n%s", packagedPath, written)
+	}
+
+	if !strings.Contains(string(written), "ExecStart="+plan.ExecutablePath) {
+		t.Errorf("the unit at %s does not start %s:\n%s", packagedPath, plan.ExecutablePath, written)
+	}
+
+	if state := activeState(t, svc.unit); state != "active" {
+		t.Errorf("after the install the service is %q, want \"active\"", state)
+	} else {
+		t.Logf("after the install, systemctl is-active %s says %q", svc.unit, state)
+	}
 }
