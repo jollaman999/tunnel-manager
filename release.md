@@ -1,3 +1,15 @@
+# v3.6.1
+
+## Add/fix features:
+
+- The program draws its name and its version on the terminal as the first thing a run puts there, and the banner of the web framework it is built on is hidden. A console somebody is watching now says what started in it before any log line does.
+- The line that reports the server is up names the address the listener bound, `[::]:8888` rather than the `:8888` that was asked for. The framework used to print that address and no longer prints anything, and the plain-HTTP path opens its own listener now so that it has one to ask.
+- The log line written every time a tunnel asked for a wildcard local address is gone. It repeated the same paragraph on every such tunnel and ended by leaving the answer to the probe that follows it, which is the line worth reading.
+
+## Notes:
+
+- Only the Linux path of `-install` and `-uninstall` has been run. The macOS and the Windows backends are still held up by the compiler, by the vet tool for their platform, and by tests over the plist and the service configuration they produce.
+
 # v3.6.0
 
 ## Add/fix features:
