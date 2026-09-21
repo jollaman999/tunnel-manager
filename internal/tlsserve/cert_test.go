@@ -1,10 +1,15 @@
 package tlsserve
 
 import (
+	"crypto"
 	"crypto/ecdsa"
 	"crypto/elliptic"
+	"crypto/rand"
 	"crypto/tls"
 	"crypto/x509"
+	"crypto/x509/pkix"
+	"errors"
+	"math/big"
 	"net"
 	"sort"
 	"testing"
@@ -32,6 +37,84 @@ func parseGenerated(t *testing.T, now time.Time) (*x509.Certificate, *material) 
 	}
 
 	return leaf, generated
+}
+
+// generatedSigner reads the private key back out of what generate produced, so
+// that a test can sign with it the way whoever came away with the database file
+// and the key file together would.
+func generatedSigner(t *testing.T, generated *material) crypto.Signer {
+	t.Helper()
+
+	keyPair, err := tls.X509KeyPair(generated.certPEM, generated.keyPEM)
+	if err != nil {
+		t.Fatalf("the generated certificate and key do not form a pair: %v", err)
+	}
+
+	signer, ok := keyPair.PrivateKey.(crypto.Signer)
+	if !ok {
+		t.Fatalf("the generated private key is %T, which cannot sign", keyPair.PrivateKey)
+	}
+
+	return signer
+}
+
+// signedUnder issues a server certificate for the names given, signed by the
+// generated certificate. It is what the holder of the key would mint.
+func signedUnder(t *testing.T, anchor *x509.Certificate, signer crypto.Signer,
+	dnsNames []string, ips []net.IP) *x509.Certificate {
+	t.Helper()
+
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatalf("generating a key for the issued certificate: %v", err)
+	}
+
+	name := "issued"
+	if len(dnsNames) > 0 {
+		name = dnsNames[0]
+	}
+
+	template := x509.Certificate{
+		SerialNumber:          big.NewInt(2),
+		Subject:               pkix.Name{CommonName: name},
+		NotBefore:             anchor.NotBefore,
+		NotAfter:              anchor.NotAfter,
+		KeyUsage:              x509.KeyUsageDigitalSignature,
+		ExtKeyUsage:           []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
+		BasicConstraintsValid: true,
+		DNSNames:              dnsNames,
+		IPAddresses:           ips,
+	}
+
+	der, err := x509.CreateCertificate(rand.Reader, &template, anchor, &key.PublicKey, signer)
+	if err != nil {
+		t.Fatalf("signing a certificate under the generated one: %v", err)
+	}
+
+	issued, err := x509.ParseCertificate(der)
+	if err != nil {
+		t.Fatalf("parsing the issued certificate: %v", err)
+	}
+
+	return issued
+}
+
+// verifyAgainst checks a certificate the way a client does whose trust store
+// holds the generated certificate: the anchor is the only root, and the name
+// asked for is the one the client typed.
+func verifyAgainst(anchor *x509.Certificate, leaf *x509.Certificate, name string,
+	now time.Time) error {
+	pool := x509.NewCertPool()
+	pool.AddCert(anchor)
+
+	_, err := leaf.Verify(x509.VerifyOptions{
+		Roots:       pool,
+		DNSName:     name,
+		CurrentTime: now,
+		KeyUsages:   []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
+	})
+
+	return err
 }
 
 // TestTheCertificateCarriesTheLoopbackNames pins the three names that have to
@@ -116,13 +199,18 @@ func TestTheCertificateSaysWhatItMayBeUsedFor(t *testing.T) {
 		t.Error("the certificate carries no basic constraints")
 	}
 	if !leaf.IsCA {
-		t.Error("the certificate is not a CA, so it cannot be imported as a trust anchor")
+		t.Error("the certificate is not a CA, so a trust store that insists on one refuses to " +
+			"take it as an anchor")
 	}
 	if leaf.KeyUsage&x509.KeyUsageDigitalSignature == 0 {
 		t.Error("the certificate may not sign, so it cannot serve a TLS handshake")
 	}
 	if leaf.KeyUsage&x509.KeyUsageCertSign == 0 {
 		t.Error("the certificate may not sign a certificate, so it cannot be its own issuer")
+	}
+	if !leaf.MaxPathLenZero || leaf.MaxPathLen != 0 {
+		t.Errorf("the path length is %d (zero recorded: %v), want a recorded zero so that no "+
+			"authority can be made under this certificate", leaf.MaxPathLen, leaf.MaxPathLenZero)
 	}
 
 	serverAuth := false
@@ -138,6 +226,139 @@ func TestTheCertificateSaysWhatItMayBeUsedFor(t *testing.T) {
 	if leaf.SerialNumber == nil || leaf.SerialNumber.Sign() <= 0 {
 		t.Errorf("the serial number is %v, want a positive random one", leaf.SerialNumber)
 	}
+}
+
+// TestTheCertificateMayOnlySignItsOwnNames reads the constraints off the
+// certificate and holds them to the names it is made out to. A constraint that
+// is wider than the names is a certificate that may vouch for something this
+// machine is not.
+func TestTheCertificateMayOnlySignItsOwnNames(t *testing.T) {
+	leaf, _ := parseGenerated(t, time.Now())
+
+	if !leaf.PermittedDNSDomainsCritical {
+		t.Error("the name constraints are not critical, so a client that cannot read them takes " +
+			"the certificate without the limit")
+	}
+
+	if !sameStrings(leaf.PermittedDNSDomains, leaf.DNSNames) {
+		t.Errorf("the certificate may sign for the names %v while it is made out to %v",
+			leaf.PermittedDNSDomains, leaf.DNSNames)
+	}
+
+	wanted := make([]string, 0, len(leaf.IPAddresses))
+	for _, ip := range leaf.IPAddresses {
+		bits := 128
+		if ip.To4() != nil {
+			bits = 32
+		}
+		wanted = append(wanted, (&net.IPNet{IP: ip, Mask: net.CIDRMask(bits, bits)}).String())
+	}
+
+	got := make([]string, 0, len(leaf.PermittedIPRanges))
+	for _, permitted := range leaf.PermittedIPRanges {
+		got = append(got, permitted.String())
+	}
+
+	if !sameStrings(got, wanted) {
+		t.Errorf("the certificate may sign for the addresses %v while it is made out to %v",
+			got, wanted)
+	}
+}
+
+// TestTheCertificateCannotSignForAnotherName is what the constraints are there
+// for, seen from the client.
+//
+// The operator is told to put this certificate in the trust store of their
+// machine to be rid of the warning, and from that moment it is allowed to have
+// signed. Whoever comes away with the database file and the key file together
+// would otherwise mint a certificate for any name at all and that browser would
+// accept it, which is an interception of every site it visits rather than of
+// this one. The issuing still works for the names this machine answers to, so
+// what fails below is the limit and not the signing.
+func TestTheCertificateCannotSignForAnotherName(t *testing.T) {
+	now := time.Now()
+	anchor, generated := parseGenerated(t, now)
+	signer := generatedSigner(t, generated)
+
+	forged := signedUnder(t, anchor, signer, []string{"bank.example.com"}, nil)
+
+	err := verifyAgainst(anchor, forged, "bank.example.com", now)
+	if err == nil {
+		t.Fatal("a certificate for bank.example.com signed with the key of this machine is " +
+			"accepted by a client that trusts this machine")
+	}
+
+	var invalid x509.CertificateInvalidError
+	if !errors.As(err, &invalid) || invalid.Reason != x509.CANotAuthorizedForThisName {
+		t.Errorf("bank.example.com was refused with %v, want the name constraint to be what "+
+			"refused it", err)
+	}
+
+	// The same for an address outside the ones this machine answers to. The
+	// address is from the range reserved for documentation, which no interface
+	// carries, and the test says so rather than guessing when it does.
+	outside := net.IPv4(198, 51, 100, 7)
+	for _, permitted := range anchor.PermittedIPRanges {
+		if permitted.Contains(outside) {
+			t.Skipf("this machine answers to %s, so it is not an address to test the limit with",
+				outside)
+		}
+	}
+
+	forgedIP := signedUnder(t, anchor, signer, nil, []net.IP{outside})
+
+	err = verifyAgainst(anchor, forgedIP, outside.String(), now)
+	if err == nil {
+		t.Errorf("a certificate for %s signed with the key of this machine is accepted by a "+
+			"client that trusts this machine", outside)
+	}
+}
+
+// TestTheCertificateIsStillItsOwnAnchor is the other side of the constraints:
+// the server it was made for is still reached under every name it carries by a
+// client that holds it as the only root. A limit that also shut this out would
+// be a machine nobody can connect to.
+func TestTheCertificateIsStillItsOwnAnchor(t *testing.T) {
+	now := time.Now()
+	anchor, generated := parseGenerated(t, now)
+
+	for _, host := range generated.hosts {
+		if err := verifyAgainst(anchor, anchor, host, now); err != nil {
+			t.Errorf("a client that trusts this certificate cannot reach the server at %s: %v",
+				host, err)
+		}
+	}
+
+	// A certificate issued under it for a name it carries verifies as well,
+	// which is what the CA bits are kept for.
+	signer := generatedSigner(t, generated)
+	issued := signedUnder(t, anchor, signer, []string{"localhost"}, nil)
+
+	if err := verifyAgainst(anchor, issued, "localhost", now); err != nil {
+		t.Errorf("a certificate issued under this one for a name it carries is refused: %v", err)
+	}
+}
+
+// sameStrings reports whether two lists hold the same entries, in whatever
+// order. The generated lists are sorted, and a test that pins the order as well
+// would fail for a reason that is not what it is about.
+func sameStrings(left []string, right []string) bool {
+	if len(left) != len(right) {
+		return false
+	}
+
+	leftSorted := append([]string(nil), left...)
+	rightSorted := append([]string(nil), right...)
+	sort.Strings(leftSorted)
+	sort.Strings(rightSorted)
+
+	for i := range leftSorted {
+		if leftSorted[i] != rightSorted[i] {
+			return false
+		}
+	}
+
+	return true
 }
 
 // TestTheKeyIsOnTheCurveEveryClientSupports pins the key type. A key of another

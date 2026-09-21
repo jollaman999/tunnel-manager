@@ -112,12 +112,42 @@ func generate(now time.Time) (*material, error) {
 		// an operator who wants the warning gone imports it as a trust anchor,
 		// and a client building a chain up to it checks that the anchor is
 		// allowed to have signed something, which is what CertSign and IsCA
-		// together say. KeyEncipherment is left out on purpose: it covers RSA
-		// key transport, which an ECDSA key never performs.
+		// together say. Go itself does not need them - a self-signed
+		// certificate that is in the pool is taken as the chain on its own -
+		// but whether every trust store a browser reads is as forgiving was
+		// not established, and a store that insists on a CA is one where the
+		// operator is left with no way to stop the warning. So the two bits
+		// stay and the constraints below take away what made them dangerous.
+		// KeyEncipherment is left out on purpose: it covers RSA key transport,
+		// which an ECDSA key never performs.
 		KeyUsage:              x509.KeyUsageDigitalSignature | x509.KeyUsageCertSign,
 		ExtKeyUsage:           []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
 		BasicConstraintsValid: true,
 		IsCA:                  true,
+
+		// A path length of zero says the certificate may sign a server
+		// certificate and nothing that signs further, so no authority can be
+		// made under it that the constraints below would then have to be
+		// carried down through.
+		MaxPathLen:     0,
+		MaxPathLenZero: true,
+
+		// This is what keeps a trust anchor from being a way into everything
+		// else the browser visits. Trusted by hand, this certificate is
+		// allowed to have signed, and without a limit on the names it may
+		// sign for, whoever takes the database file and the key file together
+		// can issue a certificate for any bank in the world and the browser
+		// that was told to trust this machine accepts it. With the limit the
+		// anchor vouches for the names this machine answers to and nothing
+		// else, which is all it was ever imported for. What remains is that
+		// such a holder can impersonate this server, which the key alone
+		// already allows.
+		//
+		// Critical, as RFC 5280 asks of a CA, so that a client which cannot
+		// read the limit refuses the certificate rather than ignoring it.
+		PermittedDNSDomains:         dnsNames,
+		PermittedDNSDomainsCritical: true,
+		PermittedIPRanges:           singleAddressRanges(ips),
 
 		// The names live here and not in the Subject. A client has read the
 		// common name as a host name for nothing since 2017, and a certificate
@@ -244,6 +274,36 @@ func subjectNames() ([]string, []net.IP) {
 	}
 
 	return dnsNames, addresses
+}
+
+// singleAddressRanges turns the addresses the certificate is made out to into
+// the ranges a name constraint is written as. Each range holds one address:
+// what the certificate may sign for is meant to be exactly what this machine
+// answers to, not the network it happens to sit on.
+//
+// The address is put in the form its family is encoded in, four bytes for IPv4
+// and sixteen for IPv6, and the mask is as long as the address. An address of
+// one length with a mask of another is written into the certificate as it
+// stands and then matches nothing at all, which would turn the constraint into
+// a certificate that cannot sign for this machine either.
+func singleAddressRanges(ips []net.IP) []*net.IPNet {
+	ranges := make([]*net.IPNet, 0, len(ips))
+
+	for _, ip := range ips {
+		if four := ip.To4(); four != nil {
+			ranges = append(ranges, &net.IPNet{IP: four, Mask: net.CIDRMask(32, 32)})
+			continue
+		}
+
+		sixteen := ip.To16()
+		if sixteen == nil {
+			continue
+		}
+
+		ranges = append(ranges, &net.IPNet{IP: sixteen, Mask: net.CIDRMask(128, 128)})
+	}
+
+	return ranges
 }
 
 // hostnameForms returns the host name and, when it is a fully qualified one,
