@@ -21,6 +21,7 @@ import (
 	"go.uber.org/zap/zapcore"
 	"go.uber.org/zap/zaptest/observer"
 	"gorm.io/gorm"
+	gormlogger "gorm.io/gorm/logger"
 )
 
 // newLoggingSettings returns settings whose logging values are filled in and
@@ -801,5 +802,151 @@ func TestTheLogFileIsWrittenBesideTheDatabase(t *testing.T) {
 	}
 	if !strings.Contains(string(body), "a line that belongs beside the database") {
 		t.Fatalf("the entry did not reach %s, its content is %q", written, string(body))
+	}
+}
+
+// newSettingsDB returns a handle on an empty database file that holds the
+// settings table. A real file is used rather than the fake driver the tests
+// above build, because what the repair is about is the row that comes back out
+// of the database after it was written.
+func newSettingsDB(t *testing.T) *gorm.DB {
+	t.Helper()
+
+	path := filepath.Join(t.TempDir(), "tunnel-manager.db")
+
+	db, err := gorm.Open(sqlite.Open(path), &gorm.Config{Logger: gormlogger.Discard})
+	if err != nil {
+		t.Fatalf("failed to open the database: %v", err)
+	}
+
+	err = db.AutoMigrate(&settings.Settings{})
+	if err != nil {
+		t.Fatalf("failed to migrate the database: %v", err)
+	}
+
+	return db
+}
+
+// TestTheStartupPutsAStoredPathOutsideTheInstallationBackToItsDefault is the
+// installation that is upgraded. It stored an absolute log file while that was
+// accepted, and the startup now reads the settings under a rule that refuses
+// it. It comes up on the default and says so, rather than stopping at a
+// setting whose screen is served by the server that would not be running.
+func TestTheStartupPutsAStoredPathOutsideTheInstallationBackToItsDefault(t *testing.T) {
+	db := newSettingsDB(t)
+
+	// The row a first startup writes, which is then made into the row the
+	// older version left behind.
+	_, err := settings.Load(db)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+
+	err = db.Model(&settings.Settings{}).Where("id = ?", 1).
+		Updates(map[string]interface{}{"logging_file_path": "/etc/cron.d/x"}).Error
+	if err != nil {
+		t.Fatalf("storing an absolute log path by hand: %v", err)
+	}
+
+	core, logs := observer.New(zapcore.DebugLevel)
+
+	repairStoredPaths(db, zap.New(core))
+
+	if !loggedAtLeast(logs, zapcore.WarnLevel, "was put back to its default") {
+		t.Errorf("the repair was not reported as a warning, what was logged is %v", logs.All())
+	}
+
+	replaced := false
+
+	for _, entry := range logs.All() {
+		fields := entry.ContextMap()
+		if fields["setting"] != "logging.file.path" {
+			continue
+		}
+		replaced = true
+
+		if fields["from"] != "/etc/cron.d/x" {
+			t.Errorf("the line says the path came from %v, want /etc/cron.d/x", fields["from"])
+		}
+		if fields["to"] != settings.Defaults().LoggingFilePath {
+			t.Errorf("the line says the path went to %v, want %q",
+				fields["to"], settings.Defaults().LoggingFilePath)
+		}
+	}
+
+	if !replaced {
+		t.Errorf("no line named the log file, what was logged is %v", logs.All())
+	}
+
+	// The read the startup makes next is the one that would have stopped it.
+	set, err := settings.Load(db)
+	if err != nil {
+		t.Fatalf("Load after the repair: %v", err)
+	}
+	if set.LoggingFilePath != settings.Defaults().LoggingFilePath {
+		t.Fatalf("the startup runs on the log path %q, want the default %q",
+			set.LoggingFilePath, settings.Defaults().LoggingFilePath)
+	}
+}
+
+// TestTheStartupSaysNothingAboutPathsItDoesNotRepair covers every installation
+// but the upgraded one. Nothing is refused, so nothing is written and the log
+// of a normal startup carries no line about it.
+func TestTheStartupSaysNothingAboutPathsItDoesNotRepair(t *testing.T) {
+	db := newSettingsDB(t)
+
+	_, err := settings.Load(db)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+
+	core, logs := observer.New(zapcore.DebugLevel)
+
+	repairStoredPaths(db, zap.New(core))
+
+	if logs.Len() != 0 {
+		t.Fatalf("a startup with nothing to repair logged %v", logs.All())
+	}
+}
+
+// proxyTrustRecorder stands in for the authentication handler and remembers
+// what it was told, since the handler itself keeps the answer to itself.
+type proxyTrustRecorder struct {
+	calls []bool
+}
+
+func (r *proxyTrustRecorder) TrustProxyHeaders(trust bool) {
+	r.calls = append(r.calls, trust)
+}
+
+// TestTheProxyHeadersAreTrustedOnlyWhenTheFlagIsGiven pins both halves of the
+// flag. The header it turns on is one any client can send, so a deployment
+// that has nothing in front of it has to be left exactly as it was: the
+// handler is not called at all, and off stays the state it was built in.
+func TestTheProxyHeadersAreTrustedOnlyWhenTheFlagIsGiven(t *testing.T) {
+	cases := []struct {
+		name string
+		flag bool
+		want []bool
+	}{
+		{"the flag was left out", false, nil},
+		{"the flag was given", true, []bool{true}},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			recorder := &proxyTrustRecorder{}
+
+			applyProxyTrust(recorder, tc.flag)
+
+			if len(recorder.calls) != len(tc.want) {
+				t.Fatalf("the handler was told %v, want %v", recorder.calls, tc.want)
+			}
+			for i, call := range recorder.calls {
+				if call != tc.want[i] {
+					t.Errorf("call %d was %v, want %v", i, call, tc.want[i])
+				}
+			}
+		})
 	}
 }

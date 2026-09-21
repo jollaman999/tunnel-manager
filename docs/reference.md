@@ -265,6 +265,7 @@ The flags are all of them:
 | `-bin` | Where `-install` puts the executable, and where `-uninstall` looks for one on a machine that has no registration left. Left out, it is the place this platform keeps programs an administrator installed. It goes with `-install` or with `-uninstall` |
 | `-purge` | With `-uninstall`, removes the data directory as well. What it removes cannot be brought back |
 | `-reset-settings` | Puts every stored setting back to its default, prints what it changed and exits. The registered hosts, the service ports, the account and the certificate are left as they are. See [If the server will not start](#if-the-server-will-not-start) |
+| `-trust-proxy-headers` | Believes the `X-Forwarded-Proto` header of whatever is in front of this server, which marks the session cookies `Secure` on a connection that reaches this process in the clear. Off unless it is given. See [Behind a reverse proxy](#behind-a-reverse-proxy) |
 | `-version` | Prints the version and exits |
 | `-help` | Prints the flags and exits |
 
@@ -286,12 +287,32 @@ is in.
 
 The key file and the log file are **settings**, not flags: they are on the
 Settings screen, and their defaults are `keys/tunnel-manager.key` and
-`logs/tunnel-manager.log`. **A relative path in a setting is read against the
-directory the database file is in, and not against the working directory.** The
-working directory is never the same twice, so a relative default read against it
-would put the key somewhere different on every host. Give a setting an absolute
-path and that path wins, which is how the key or the log can be put outside the
-installation directory on purpose.
+`logs/tunnel-manager.log`. **Both are read against the directory the database
+file is in, and not against the working directory.** The working directory is
+never the same twice, so a relative default read against it would put the key
+somewhere different on every host.
+
+**Both have to stay under that directory.** A relative path is what they take,
+and `logs/a/b/x.log` or `x.log` is as free as it gets; an absolute path and a
+path that climbs out with `..` are refused when they are saved. The process
+creates the log file and appends to it, and the Logs screen reads its tail
+back, so a path that could leave the installation made the setting a way to
+have this process write into any file on the machine and read any file it can
+open. An installation that stored such a path while it was still accepted comes
+up on the default instead and says what it replaced:
+
+```text
+warn  a stored path setting names a place outside the directory the database file is in,
+      which is no longer allowed, and was put back to its default
+      {"setting": "logging.file.path", "from": "/var/log/tunnel-manager/x.log",
+       "to": "logs/tunnel-manager.log"}
+```
+
+**A key that was kept outside the installation directory is not read after
+that.** The startup creates a new one beside the database, and the passwords
+sealed with the old key do not open under it, which is what stops the startup
+in [Encryption key](#encryption-key). Move the key file into the installation
+directory and name it there.
 
 **Nothing is created in the directory the process was started from.**
 
@@ -650,6 +671,32 @@ It can be turned off because a certificate nobody signed for gets in the way in
 some places, and an operator who cannot reach the screen cannot fix anything from
 it.
 
+### Behind a reverse proxy
+
+A proxy that terminates TLS and reaches this server in the clear leaves the
+server looking at a plain HTTP connection, and the session cookies are marked
+`Secure` only on a connection that is TLS. The cookies would then travel
+without that flag although the browser is on HTTPS throughout.
+
+`-trust-proxy-headers` is what says otherwise. With it, a request that carries
+`X-Forwarded-Proto: https` is treated as having arrived over TLS, and the two
+session cookies are marked `Secure`.
+
+```bash
+./tunnel-manager -db /var/lib/tunnel-manager/tunnel-manager.db -trust-proxy-headers
+```
+
+**It is off unless it is given, and it decides nothing else.** That header is
+one any client can send, so it is worth reading only where a proxy the operator
+runs is the only thing that can reach this server. A server that is exposed
+directly is left as it is: turning this on there would let a client mark its
+own connection as secure.
+
+It is a flag and not a setting because it describes the deployment around this
+process rather than something to change while it runs, and because a setting
+would put the question on the Settings screen of an installation that has
+nothing in front of it.
+
 ## First startup and the account
 
 **The API and the UI are behind a login.** There is one account, and it is
@@ -904,7 +951,7 @@ A save is refused before it is stored when a value would not hold:
 |---------|------|
 | `api_port` | 1 to 65535 |
 | `monitoring_interval_sec`, `reconcile_interval_sec` | Above zero |
-| `security_key_file` | Not empty |
+| `security_key_file`, `logging_file_path` | Not empty, and a path under the directory the database file is in: an absolute path and one that climbs out with `..` are refused. See [Where the files go](#where-the-files-go) |
 | `logging_level` | `debug`, `info`, `warn`, `error`, `dpanic`, `panic` or `fatal` |
 | `logging_format` | `json` or `console` |
 | `logging_file_max_size`, `logging_file_max_backups`, `logging_file_max_age` | Zero or more |
@@ -1660,11 +1707,12 @@ it does not open are named in a warning, their tunnels are not built, and the
 stored values are left untouched: a password that does not open exists nowhere
 else and is gone once it is written over. Set those through the API again.
 
-A relative path in this setting is read against the directory the database file
-is in, so the default puts the key in `keys/` next to the database. An absolute
-path is left alone and is how the key is kept somewhere else, on a volume of its
-own for instance. The startup logs the absolute path of the file it opened, so
-the log says which key was read.
+The path in this setting is read against the directory the database file is in,
+so the default puts the key in `keys/` next to the database. It has to stay
+under that directory: an absolute path is refused, and one that was stored
+while it was still accepted is put back to the default at the next startup. The
+startup logs the absolute path of the file it opened, so the log says which key
+was read. See [Where the files go](#where-the-files-go).
 
 ## Running as a non-root user
 

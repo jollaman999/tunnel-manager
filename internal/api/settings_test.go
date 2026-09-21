@@ -317,7 +317,7 @@ func TestSaveKeepsWhatTheBodyDoesNotName(t *testing.T) {
 	db := newSettingsDB(t)
 
 	stored := settings.Defaults()
-	stored.SecurityKeyFile = "/var/lib/tunnel-manager/tunnel-manager.key"
+	stored.SecurityKeyFile = "secrets/tunnel-manager.key"
 	stored.LoggingFileMaxBackups = 9
 
 	err := settings.Save(db, &stored)

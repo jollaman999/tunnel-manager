@@ -15,6 +15,7 @@ import (
 	"github.com/glebarez/sqlite"
 	"github.com/go-playground/validator/v10"
 	"github.com/jollaman999/tunnel-manager/internal/crypto"
+	"github.com/jollaman999/tunnel-manager/internal/logid"
 	"github.com/jollaman999/tunnel-manager/internal/models"
 	"github.com/jollaman999/tunnel-manager/internal/settings"
 	"github.com/labstack/echo/v4"
@@ -1133,6 +1134,170 @@ func TestASettingTheFileDoesNotNameIsLeftAsItIs(t *testing.T) {
 
 	if after.APIPort != 8888 || after.LoggingLevel != "info" {
 		t.Errorf("a setting the file did not name was overwritten: %+v", after)
+	}
+}
+
+// TestAPathOutsideTheInstallationIsStoredAsTheDefault is what keeps an older
+// file importable at all.
+//
+// The encryption key file and the log file used to be free paths, and every
+// installation set up before they were held inside the installation directory
+// has an absolute one, which is what its export carries. Held to the rule the
+// way every other setting is, such a file would be refused whole: the Hosts,
+// the intervals and the language would move nowhere because of where a log
+// file used to go, and moving a configuration is the one thing this call is
+// for. So the two paths are dropped to their defaults, the way the startup
+// repairs a stored one, and the rest of the file is stored.
+func TestAPathOutsideTheInstallationIsStoredAsTheDefault(t *testing.T) {
+	source := newTransferInstall(t)
+	target := newTransferInstall(t)
+
+	stored, err := settings.Load(source.db)
+	if err != nil {
+		t.Fatalf("failed to read the settings: %v", err)
+	}
+
+	// The file is built rather than exported. An installation running on these
+	// paths is one from before the rule, and this one cannot be made to store
+	// them any more.
+	content := settingsOf(stored)
+	content.SecurityKeyFile = "/var/lib/tunnel-manager/tunnel-manager.key"
+	content.LoggingFilePath = "../../etc/cron.d/tunnel-manager"
+	content.MonitoringIntervalSec = 47
+
+	file, err := source.handler.seal(transferKindSettings, content, testExportPassword, time.Now())
+	if err != nil {
+		t.Fatalf("failed to seal a file: %v", err)
+	}
+
+	rec := target.call(t, target.handler.ImportSettings,
+		`{"password":`+jsonString(t, testExportPassword)+`,"file":`+jsonString(t, file)+`}`)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("the import answered %d, want %d: %s", rec.Code, http.StatusOK, rec.Body.String())
+	}
+
+	var imported importedSettings
+
+	decodeTransfer(t, rec).into(t, &imported)
+
+	defaults := settings.Defaults()
+
+	after, err := settings.Load(target.db)
+	if err != nil {
+		t.Fatalf("failed to read the settings: %v", err)
+	}
+
+	if after.SecurityKeyFile != defaults.SecurityKeyFile {
+		t.Errorf("security.key_file was stored as %q, want the default %q",
+			after.SecurityKeyFile, defaults.SecurityKeyFile)
+	}
+	if after.LoggingFilePath != defaults.LoggingFilePath {
+		t.Errorf("logging.file.path was stored as %q, want the default %q",
+			after.LoggingFilePath, defaults.LoggingFilePath)
+	}
+
+	// The answer says what is stored, so it carries the defaults too and not
+	// the paths that were asked for.
+	if imported.Settings.SecurityKeyFile != defaults.SecurityKeyFile ||
+		imported.Settings.LoggingFilePath != defaults.LoggingFilePath {
+		t.Errorf("the answer carries the paths of the file: %q and %q",
+			imported.Settings.SecurityKeyFile, imported.Settings.LoggingFilePath)
+	}
+
+	// The rest of the file landed. A file that is taken in for the settings it
+	// names and silently loses them is no better than the refusal.
+	if after.MonitoringIntervalSec != 47 {
+		t.Errorf("monitoring.interval_sec = %d, want the 47 the file names", after.MonitoringIntervalSec)
+	}
+
+	// What was dropped is in the answer, with the path that is gone in it. The
+	// operator is standing in front of the screen that asked for the import,
+	// and the key file that was named is where the secrets of the other
+	// installation are unsealed from.
+	got := map[string]transferItem{}
+	for _, item := range imported.Items {
+		got[item.Name] = item
+	}
+
+	if len(imported.Items) != 2 {
+		t.Fatalf("the answer lists %d dropped paths, want both: %+v", len(imported.Items), imported.Items)
+	}
+
+	for name, carried := range map[string]string{
+		"security.key_file": "/var/lib/tunnel-manager/tunnel-manager.key",
+		"logging.file.path": "../../etc/cron.d/tunnel-manager",
+	} {
+		item, found := got[name]
+		if !found {
+			t.Errorf("%s is not in the answer: %+v", name, imported.Items)
+			continue
+		}
+
+		if item.Kind != "setting" || item.Action != transferSkipped {
+			t.Errorf("%s is reported as %q %q, want a skipped setting", name, item.Kind, item.Action)
+		}
+		if !strings.Contains(item.Reason, carried) {
+			t.Errorf("the reason for %s does not name the path that was dropped: %q", name, item.Reason)
+		}
+	}
+
+	// It is in the log as well, under the id the startup writes a repaired
+	// path under, because the answer is read once and the log is what is left
+	// afterwards.
+	dropped := target.logs.FilterField(zap.String(logid.FieldKey,
+		string(logid.SettingsSettingPutBackToDefault)))
+	if dropped.Len() != 2 {
+		t.Errorf("the log holds %d lines about a dropped path, want 2", dropped.Len())
+	}
+}
+
+// TestAPathInsideTheInstallationIsImportedAsItIs is the other half: the
+// dropping is for the paths the rule refuses and for nothing else, so a file
+// that names a place under the installation directory is stored as it is
+// rather than being flattened onto the default.
+func TestAPathInsideTheInstallationIsImportedAsItIs(t *testing.T) {
+	source := newTransferInstall(t)
+	target := newTransferInstall(t)
+
+	stored, err := settings.Load(source.db)
+	if err != nil {
+		t.Fatalf("failed to read the settings: %v", err)
+	}
+
+	stored.SecurityKeyFile = "secrets/tunnel-manager.key"
+	stored.LoggingFilePath = "logs/tunnel-manager.log"
+
+	err = settings.Save(source.db, stored)
+	if err != nil {
+		t.Fatalf("failed to store the settings: %v", err)
+	}
+
+	file := source.exportSettings(t, testExportPassword)
+
+	rec := target.call(t, target.handler.ImportSettings,
+		`{"password":`+jsonString(t, testExportPassword)+`,"file":`+jsonString(t, file)+`}`)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("the import answered %d, want %d: %s", rec.Code, http.StatusOK, rec.Body.String())
+	}
+
+	var imported importedSettings
+
+	decodeTransfer(t, rec).into(t, &imported)
+
+	if len(imported.Items) != 0 {
+		t.Errorf("the answer drops a path the rules take: %+v", imported.Items)
+	}
+
+	after, err := settings.Load(target.db)
+	if err != nil {
+		t.Fatalf("failed to read the settings: %v", err)
+	}
+
+	if after.SecurityKeyFile != "secrets/tunnel-manager.key" {
+		t.Errorf("security.key_file = %q, want the path the file names", after.SecurityKeyFile)
+	}
+	if after.LoggingFilePath != "logs/tunnel-manager.log" {
+		t.Errorf("logging.file.path = %q, want the path the file names", after.LoggingFilePath)
 	}
 }
 

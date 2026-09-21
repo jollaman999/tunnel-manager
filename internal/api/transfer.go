@@ -295,6 +295,130 @@ type importedTunnels struct {
 	Skipped  int            `json:"skipped"`
 }
 
+// The two settings that name a file of this installation, as the file carries
+// them and as settings.Diff names them. They are the only two an import cannot
+// store as the file has them, because what they may hold depends on the
+// installation reading the file rather than on the one that wrote it: both are
+// read against the directory the database file is in, and the settings package
+// refuses one that names a place outside it.
+//
+// The pair is read and written through functions rather than through a pointer
+// into a settings.Settings, because the check below needs the same field of a
+// second set: a path is offered to the rule by putting it into a set that
+// passes every other one.
+var importedDataPaths = []struct {
+	name  string
+	read  func(*settings.Settings) string
+	write func(*settings.Settings, string)
+}{
+	{
+		name:  "security.key_file",
+		read:  func(s *settings.Settings) string { return s.SecurityKeyFile },
+		write: func(s *settings.Settings, path string) { s.SecurityKeyFile = path },
+	},
+	{
+		name:  "logging.file.path",
+		read:  func(s *settings.Settings) string { return s.LoggingFilePath },
+		write: func(s *settings.Settings, path string) { s.LoggingFilePath = path },
+	},
+}
+
+// acceptsDataPath asks the settings package whether it would store a path in
+// the field the setter writes.
+//
+// It asks by holding the rule against a set of the defaults with that one
+// field changed, because the rule itself is not reachable from here: the
+// settings package keeps it unexported and runs it inside Validate. A copy of
+// it written out in this file would be a second place deciding what a stored
+// path may be, and the two would part company the first time the rule moves,
+// leaving the import storing what the startup then repairs behind the
+// operator's back. The defaults pass every other rule, so a set that is
+// refused here is refused for the path and for nothing else.
+func acceptsDataPath(write func(*settings.Settings, string), path string) bool {
+	probe := settings.Defaults()
+	write(&probe, path)
+
+	return probe.Validate() == nil
+}
+
+// dropPathsOutsideTheInstallation puts a path the settings package refuses back
+// to its default and reports the ones it dropped.
+//
+// An export written before those two settings were held inside the
+// installation directory carries an absolute path, which is what every
+// installation that was set up by hand has: it was accepted when the file was
+// written. Stored as it is, it is refused, and the whole import fails - so a
+// file that carries the Hosts, the intervals and the language across would
+// move none of it because of where a log file used to go. Moving a
+// configuration is the one thing this call is for, and it is the way out of an
+// installation that has just been refused for that same path.
+//
+// So the path is dropped to the default and the rest of the file is stored,
+// which is what the startup does with a stored path it finds (settings.
+// RepairPaths). The two agree on purpose: an operator who upgrades this
+// installation and one who imports the settings of it somewhere else end up
+// running on the same thing. What was dropped is in the answer rather than
+// only in the log, because the operator is standing in front of the screen
+// that asked for the import and the path that was thrown away may be the one
+// the encryption key of the other installation is under.
+//
+// What it hands back is what RepairPaths hands back, a settings.Change per
+// path, so that the answer and the log line are written from one reading of
+// what happened rather than from two.
+func dropPathsOutsideTheInstallation(s *settings.Settings) []settings.Change {
+	defaults := settings.Defaults()
+
+	dropped := make([]settings.Change, 0, len(importedDataPaths))
+
+	for _, path := range importedDataPaths {
+		carried := path.read(s)
+		if acceptsDataPath(path.write, carried) {
+			continue
+		}
+
+		fallback := path.read(&defaults)
+		path.write(s, fallback)
+
+		dropped = append(dropped, settings.Change{
+			Name: path.name,
+			From: carried,
+			To:   fallback,
+		})
+	}
+
+	return dropped
+}
+
+// droppedPathItems says in the answer what became of each path that was
+// dropped, as a row of the same list an import of the tunnel configuration
+// answers with: what it is, which setting, that the file did not get its way,
+// and why.
+//
+// A file that carries an empty path is named as carrying one. It is refused by
+// the same rule, since neither the log nor the key file can be turned off by
+// leaving it out, and a sentence with nothing where the path should be reads
+// as though the reason had been written wrong.
+func droppedPathItems(dropped []settings.Change) []transferItem {
+	items := make([]transferItem, 0, len(dropped))
+
+	for _, change := range dropped {
+		carried := change.From
+		if carried == "" {
+			carried = "an empty path"
+		}
+
+		items = append(items, transferItem{
+			Kind:   "setting",
+			Name:   change.Name,
+			Action: transferSkipped,
+			Reason: "the file carries " + carried + ", which does not name a file under the " +
+				"directory the database file is in, so " + change.To + " was stored instead",
+		})
+	}
+
+	return items
+}
+
 // importedSettings is the answer to an import of the settings of the manager.
 // It carries what is stored now and what the import changed, the way a save on
 // the Settings screen does.
@@ -303,9 +427,18 @@ type importedTunnels struct {
 // put into place on the running process. What is waiting is listed by
 // GET /api/settings, which works it out by holding the stored settings against
 // the ones this process started on.
+//
+// Items is what the import did not take from the file, carried the way an
+// import of the tunnel configuration carries it: one row per thing, with the
+// reason on the ones that were skipped. Only the two path settings can land
+// there, and Changes is not the place for them, because a change says what the
+// stored value went from and to while these say what the file asked for and
+// did not get - a file whose path is dropped onto the value this installation
+// already holds changes nothing and still has to be reported.
 type importedSettings struct {
 	Settings        *settings.Settings `json:"settings"`
 	Changes         []settingsChange   `json:"changes"`
+	Items           []transferItem     `json:"items"`
 	RestartRequired bool               `json:"restart_required"`
 }
 
@@ -1261,6 +1394,11 @@ func (h *TransferHandler) ImportSettings(c echo.Context) error {
 	updated := *stored
 	content.applyTo(&updated)
 
+	// Before the rules are run, because the two paths are the one thing in the
+	// file this installation repairs rather than refuses: see
+	// dropPathsOutsideTheInstallation.
+	dropped := dropPathsOutsideTheInstallation(&updated)
+
 	// The rules are run here as well as inside Save, so that a value they
 	// refuse is answered as a bad request while a database that could not be
 	// written to stays a 500. It is the same split UpdateSettings makes.
@@ -1293,6 +1431,20 @@ func (h *TransferHandler) ImportSettings(c echo.Context) error {
 		})
 	}
 
+	// A dropped path is written under the id the startup writes it under, with
+	// the same two halves: what the file asked for is gone once this has been
+	// stored, and it is the only place it is written down. The line is the
+	// warning it is there too, because the installation is now reading its
+	// encryption key somewhere other than the one the file named.
+	for _, change := range dropped {
+		h.hosts.logger.Warn("a path setting of an imported file names a place outside the directory "+
+			"the database file is in, which is not allowed, and was stored as its default",
+			logid.SettingsSettingPutBackToDefault.Field(),
+			zap.String("setting", change.Name),
+			zap.String("from", change.From),
+			zap.String("to", change.To))
+	}
+
 	h.hosts.logger.Info("imported the settings of the manager",
 		logid.TransferSettingsImported.Field(),
 		zap.Int("changed", len(changes)))
@@ -1302,6 +1454,7 @@ func (h *TransferHandler) ImportSettings(c echo.Context) error {
 		Data: importedSettings{
 			Settings:        &updated,
 			Changes:         changes,
+			Items:           droppedPathItems(dropped),
 			RestartRequired: len(changes) > 0,
 		},
 	})

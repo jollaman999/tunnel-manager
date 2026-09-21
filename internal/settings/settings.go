@@ -3,7 +3,9 @@ package settings
 import (
 	"errors"
 	"fmt"
+	"path/filepath"
 	"strconv"
+	"strings"
 	"time"
 
 	"gorm.io/gorm"
@@ -172,6 +174,62 @@ func Languages() []string {
 	return codes
 }
 
+// The names the two path settings are refused under. They are the words an
+// operator reads on the Settings screen rather than the column names, because
+// the sentence they end up in is shown beside the box that was filled in.
+const (
+	keyFileSetting = "encryption key file"
+	logFileSetting = "log file"
+)
+
+// validateDataPath holds a stored path inside the installation.
+//
+// Both paths this is used on, the log file and the encryption key file, are
+// read against the directory the database file is in, and an absolute one used
+// to win over that directory. That made either setting a way to name any file
+// on the machine: the startup creates the log file and appends to it, with the
+// process running as root in the installation the service registers, and the
+// Logs screen reads the tail of that same file back. Saving one setting and
+// pressing Restart was therefore enough to have a root process create
+// /etc/cron.d/something and write into it. An operator who may change the
+// settings is trusted with this installation, which is not the same as being
+// trusted with the host it runs on, and the two were the same thing as long as
+// the path was free.
+//
+// So both paths name a place inside the installation directory: a relative
+// path, which every default already is, that does not climb back out of it.
+// The path is refused rather than repaired, for the reason the language codes
+// are: a value repaired on the way in is one the screen goes on showing as it
+// was typed while the server runs on something else.
+//
+// The check is made with filepath, so it is the rules of the platform the
+// process runs on that decide what is absolute. A drive letter and a UNC share
+// are absolute on Windows and are two more ways of naming a place outside,
+// which is what the volume test covers.
+func validateDataPath(setting string, path string) error {
+	if path == "" {
+		return fmt.Errorf("the %s is required", setting)
+	}
+
+	if filepath.IsAbs(path) || filepath.VolumeName(path) != "" {
+		return fmt.Errorf("invalid %s path: %s. It is read against the directory the database "+
+			"file is in, so it has to be a relative path and an absolute one is refused", setting, path)
+	}
+
+	cleaned := filepath.Clean(path)
+	if cleaned == ".." || strings.HasPrefix(cleaned, ".."+string(filepath.Separator)) {
+		return fmt.Errorf("invalid %s path: %s. It has to stay under the directory the database "+
+			"file is in, so a path that climbs out of it with .. is refused", setting, path)
+	}
+
+	if cleaned == "." {
+		return fmt.Errorf("invalid %s path: %s. It names the installation directory itself "+
+			"rather than a file in it", setting, path)
+	}
+
+	return nil
+}
+
 // ErrLanguageUnsupported is what a ui.default_language that names no catalog is
 // refused with. It is a value rather than a sentence built on the spot, so that
 // the API can tell this refusal from every other thing Validate says no to and
@@ -204,8 +262,9 @@ func (s *Settings) Validate() error {
 	// The key file is the one rule that was not in the configuration file. An
 	// empty path stops the startup where the key is loaded, and a setting that
 	// stops the startup can no longer be corrected by editing a file.
-	if s.SecurityKeyFile == "" {
-		return fmt.Errorf("the encryption key file is required")
+	err := validateDataPath(keyFileSetting, s.SecurityKeyFile)
+	if err != nil {
+		return err
 	}
 
 	if !validLevels[s.LoggingLevel] {
@@ -214,6 +273,16 @@ func (s *Settings) Validate() error {
 
 	if !validFormats[s.LoggingFormat] {
 		return fmt.Errorf("invalid log format: %s", s.LoggingFormat)
+	}
+
+	// The log file is held to the same rule as the key file, and an empty one
+	// is refused with it. Empty is not how file logging is turned off: the
+	// Settings screen refuses an empty box, the startup would open no file and
+	// say nothing about why, and the Logs screen would then read a file that
+	// nothing writes.
+	err = validateDataPath(logFileSetting, s.LoggingFilePath)
+	if err != nil {
+		return err
 	}
 
 	if s.LoggingFileMaxSize < 0 {
@@ -289,6 +358,77 @@ func Load(db *gorm.DB) (*Settings, error) {
 	}
 
 	return stored, nil
+}
+
+// RepairPaths puts a stored path that names a place outside the installation
+// directory back to its default, and reports what it changed so the caller can
+// log it. It is run by the startup, before the settings are read.
+//
+// It is here rather than left to Load refusing the row, because the rule the
+// two paths are held to is newer than the installations it applies to. A path
+// that was stored while an absolute one was accepted is a setting somebody
+// chose and the server used to run on, so a startup that refused it would take
+// an installation that was working and leave it with no server, and the screen
+// that would correct the setting is served by that server. The way out would
+// be -reset-settings, which puts back every other setting as well.
+//
+// Coming up on the default is the safe half of both: the process runs, the log
+// and the key are inside the installation directory where the rule wants them,
+// and the operator reads in the log what was replaced. What it costs is that a
+// key deliberately kept on a volume of its own is no longer read, and the
+// startup then creates a new key beside the database and cannot open the
+// stored passwords with it. That is loud rather than quiet: the check of the
+// stored passwords stops the startup, and the line this writes says which path
+// was dropped.
+//
+// The repair is stored and not just held for this process, so that the screen
+// shows the path the server is running on. Only the columns that were repaired
+// are written, so a row that is refused for some other reason is left for Load
+// to report rather than being half repaired here.
+func RepairPaths(db *gorm.DB) ([]Change, error) {
+	stored, err := read(db)
+	if err != nil {
+		return nil, err
+	}
+
+	if stored == nil {
+		return nil, nil
+	}
+
+	defaults := Defaults()
+
+	var changes []Change
+
+	repaired := map[string]interface{}{}
+
+	if validateDataPath(keyFileSetting, stored.SecurityKeyFile) != nil {
+		changes = append(changes, Change{
+			Name: "security.key_file",
+			From: stored.SecurityKeyFile,
+			To:   defaults.SecurityKeyFile,
+		})
+		repaired["security_key_file"] = defaults.SecurityKeyFile
+	}
+
+	if validateDataPath(logFileSetting, stored.LoggingFilePath) != nil {
+		changes = append(changes, Change{
+			Name: "logging.file.path",
+			From: stored.LoggingFilePath,
+			To:   defaults.LoggingFilePath,
+		})
+		repaired["logging_file_path"] = defaults.LoggingFilePath
+	}
+
+	if len(repaired) == 0 {
+		return nil, nil
+	}
+
+	err = db.Model(&Settings{}).Where("id = ?", settingsID).Updates(repaired).Error
+	if err != nil {
+		return nil, fmt.Errorf("failed to store the repaired path settings: %w", err)
+	}
+
+	return changes, nil
 }
 
 // Save validates before it writes, so a set that would keep the process from

@@ -420,6 +420,27 @@ type CustomValidator struct {
 	validator *validator.Validate
 }
 
+// proxyTrustSetter is the half of the authentication handler this file uses to
+// pass the -trust-proxy-headers flag on. It is an interface of one method so
+// that what the flag does can be held to in a test: the handler keeps the
+// answer to itself, and a test that was handed the handler could only look at
+// the cookies of a request to find out.
+type proxyTrustSetter interface {
+	TrustProxyHeaders(trust bool)
+}
+
+// applyProxyTrust turns the flag on where it is on and says nothing where it
+// is not. It calls nothing for the flag that was left out rather than passing
+// false, so that off is the state the handler was built in: what is in front
+// of this server is believed only where the operator said something is.
+func applyProxyTrust(setter proxyTrustSetter, trust bool) {
+	if !trust {
+		return
+	}
+
+	setter.TrustProxyHeaders(true)
+}
+
 func (cv *CustomValidator) Validate(i interface{}) error {
 	cv.validator.RegisterTagNameFunc(func(fld reflect.StructField) string {
 		name, _, _ := strings.Cut(fld.Tag.Get("json"), ",")
@@ -429,6 +450,38 @@ func (cv *CustomValidator) Validate(i interface{}) error {
 		return name
 	})
 	return cv.validator.Struct(i)
+}
+
+// repairStoredPaths puts a stored log file or encryption key file that names a
+// place outside the installation directory back to its default, and says in
+// the log what it replaced. It runs before the settings are read, because the
+// read is what would otherwise refuse such a row.
+//
+// The line is a warning and not an error: the process goes on, and it goes on
+// with the path the rule allows rather than the one that was stored. What is
+// gone is what the operator wrote, so the line carries both halves of it.
+//
+// A write that fails is reported and left there. The read that follows holds
+// the row against the same rules and stops the startup naming -reset-settings,
+// which is the advice this could only repeat.
+func repairStoredPaths(db *gorm.DB, logger *zap.Logger) {
+	changes, err := settings.RepairPaths(db)
+	if err != nil {
+		logger.Warn("failed to put a stored path setting back to its default",
+			logid.SettingsStoreFailed.Field(),
+			zap.Error(err))
+
+		return
+	}
+
+	for _, change := range changes {
+		logger.Warn("a stored path setting names a place outside the directory the database file "+
+			"is in, which is no longer allowed, and was put back to its default",
+			logid.SettingsSettingPutBackToDefault.Field(),
+			zap.String("setting", change.Name),
+			zap.String("from", change.From),
+			zap.String("to", change.To))
+	}
 }
 
 // resetStoredSettings puts every stored setting back to its default and ends
@@ -834,6 +887,14 @@ func serve() {
 			"database, the key the stored passwords are sealed with and every host and\n"+
 			"credential in it go with it.\n"+
 			"Without this an uninstall leaves the data where it is and says where that is.")
+	trustProxyHeaders := flag.Bool("trust-proxy-headers", false,
+		"believe the X-Forwarded-Proto header of whatever is in front of this server. Turn\n"+
+			"it on when a reverse proxy terminates TLS and reaches this server in the clear:\n"+
+			"the session cookies are then marked Secure, which the connection this process\n"+
+			"sees would not ask for.\n"+
+			"It is a flag and not a setting because it describes the deployment around this\n"+
+			"process rather than something to change while it runs. Leave it out when\n"+
+			"nothing is in front, since the header is one any client can send.")
 	assumeYes := flag.Bool("y", false,
 		"answer yes to the question -uninstall asks before it removes anything. The list\n"+
 			"of what would go is still printed.\n"+
@@ -909,6 +970,11 @@ func serve() {
 	if *resetSettings {
 		resetStoredSettings(db, logger)
 	}
+
+	// A path stored while an absolute one was still accepted is put back to
+	// its default here, above the read that would refuse it. An installation
+	// that was working goes on working, on a path inside its own directory.
+	repairStoredPaths(db, logger)
 
 	set, err := settings.Load(db)
 	if err != nil {
@@ -1153,6 +1219,10 @@ func serve() {
 	// because an imported Host has to be stored the way a created one is. The
 	// version goes into the file, so that a file found later says what wrote it.
 	transferHandler := api.NewTransferHandler(h, version)
+	// The forwarding headers are believed only where -trust-proxy-headers said
+	// so, and this is settled here, above the routes, so that nothing is
+	// serving while the answer is written.
+	applyProxyTrust(authHandler, *trustProxyHeaders)
 	g := e.Group("/api")
 
 	// The session check is put on the group before any route is added to it.

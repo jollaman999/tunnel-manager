@@ -261,6 +261,27 @@ func TestValidateRejects(t *testing.T) {
 		{"zero reconcile interval", func(s *Settings) { s.ReconcileIntervalSec = 0 }, "reconcile interval"},
 		{"negative reconcile interval", func(s *Settings) { s.ReconcileIntervalSec = -1 }, "reconcile interval"},
 		{"empty key file", func(s *Settings) { s.SecurityKeyFile = "" }, "encryption key file"},
+		{"empty log file", func(s *Settings) { s.LoggingFilePath = "" }, "log file"},
+		// The two paths name a place inside the installation directory. An
+		// absolute one used to win over that directory, which made either
+		// setting a way to have this process create and append to any file on
+		// the machine and to read its tail back on the Logs screen.
+		{"absolute key file", func(s *Settings) { s.SecurityKeyFile = "/etc/cron.d/x" }, "encryption key file"},
+		{"absolute log file", func(s *Settings) { s.LoggingFilePath = "/etc/cron.d/x" }, "log file"},
+		{"key file that climbs out", func(s *Settings) { s.SecurityKeyFile = "../../etc/cron.d/x" },
+			"encryption key file"},
+		{"log file that climbs out", func(s *Settings) { s.LoggingFilePath = "../../etc/cron.d/x" },
+			"log file"},
+		// The climb that is hidden in the middle of a path rather than written
+		// at the front of it. filepath.Join resolves it as it puts the path
+		// together, so this lands in the same place the one above does.
+		{"key file that climbs out halfway", func(s *Settings) { s.SecurityKeyFile = "keys/../../../etc/x" },
+			"encryption key file"},
+		{"log file that climbs out halfway", func(s *Settings) { s.LoggingFilePath = "logs/../../../etc/x" },
+			"log file"},
+		{"key file that is the directory itself", func(s *Settings) { s.SecurityKeyFile = "." },
+			"encryption key file"},
+		{"log file that is the directory itself", func(s *Settings) { s.LoggingFilePath = "./" }, "log file"},
 		{"unknown log level", func(s *Settings) { s.LoggingLevel = "verbose" }, "log level"},
 		{"unknown log format", func(s *Settings) { s.LoggingFormat = "text" }, "log format"},
 		{"negative log max size", func(s *Settings) { s.LoggingFileMaxSize = -1 }, "log max size"},
@@ -553,5 +574,213 @@ func TestDiffReportsNothingWhenTheSettingsAreTheSame(t *testing.T) {
 
 	if changes := Diff(&a, &b); len(changes) != 0 {
 		t.Fatalf("two identical sets were reported as differing: %+v", changes)
+	}
+}
+
+// TestTheDefaultPathsPassThePathRule is the rule held against the values every
+// installation starts on. A rule the defaults fail is a rule that is wrong: a
+// first startup would store a set it refuses to read back, and the repair the
+// startup runs would put the refused value in place of the refused value.
+func TestTheDefaultPathsPassThePathRule(t *testing.T) {
+	d := Defaults()
+
+	err := validateDataPath(keyFileSetting, d.SecurityKeyFile)
+	if err != nil {
+		t.Errorf("the default security.key_file %q is refused: %v", d.SecurityKeyFile, err)
+	}
+
+	err = validateDataPath(logFileSetting, d.LoggingFilePath)
+	if err != nil {
+		t.Errorf("the default logging.file.path %q is refused: %v", d.LoggingFilePath, err)
+	}
+
+	err = d.Validate()
+	if err != nil {
+		t.Fatalf("the defaults do not pass the validation: %v", err)
+	}
+}
+
+// TestTheAcceptedPathsAreTheOnesInsideTheInstallation is the other half of the
+// rule. What it keeps out is a path that leaves the installation directory,
+// not a path with a directory in it, and a rule that took the second with the
+// first would leave the defaults as the only paths anybody could store.
+func TestTheAcceptedPathsAreTheOnesInsideTheInstallation(t *testing.T) {
+	accepted := []string{
+		"logs/tunnel-manager.log",
+		"keys/tunnel-manager.key",
+		"x.log",
+		"./x.log",
+		"a/b/c/x.log",
+		// The climb that comes back. It names a file inside the installation
+		// directory, which is the whole of what is asked of it.
+		"logs/../x.log",
+		// A name with dots in it is not a climb.
+		"..hidden.log",
+		"logs/..hidden/x.log",
+	}
+
+	for _, path := range accepted {
+		t.Run(path, func(t *testing.T) {
+			err := validateDataPath(logFileSetting, path)
+			if err != nil {
+				t.Errorf("validateDataPath refused %q: %v", path, err)
+			}
+		})
+	}
+}
+
+// storeByHand writes columns straight into the settings row, which is how a
+// value that Save refuses today is put there. It stands for the installation
+// that stored it while it was still accepted.
+func storeByHand(t *testing.T, db *gorm.DB, columns map[string]interface{}) {
+	t.Helper()
+
+	err := db.Model(&Settings{}).Where("id = ?", settingsID).Updates(columns).Error
+	if err != nil {
+		t.Fatalf("storing %v by hand: %v", columns, err)
+	}
+}
+
+// TestRepairPathsPutsAStoredAbsolutePathBackToItsDefault is the installation
+// that is upgraded. It stored an absolute log file and an absolute key file
+// while both were accepted, and the startup has to come up on the defaults
+// rather than refuse to start: the screen that would correct the setting is
+// served by the server that would not be running.
+func TestRepairPathsPutsAStoredAbsolutePathBackToItsDefault(t *testing.T) {
+	db := newDB(t)
+
+	_, err := Load(db)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+
+	storeByHand(t, db, map[string]interface{}{
+		"security_key_file": "/etc/tunnel-manager/x.key",
+		"logging_file_path": "/etc/cron.d/x",
+	})
+
+	changes, err := RepairPaths(db)
+	if err != nil {
+		t.Fatalf("RepairPaths: %v", err)
+	}
+
+	got := map[string]Change{}
+	for _, change := range changes {
+		got[change.Name] = change
+	}
+
+	if len(got) != 2 {
+		t.Fatalf("RepairPaths reported %d changes, want 2: %+v", len(changes), changes)
+	}
+
+	defaults := Defaults()
+
+	if change := got["security.key_file"]; change.From != "/etc/tunnel-manager/x.key" ||
+		change.To != defaults.SecurityKeyFile {
+		t.Errorf("security.key_file was reported as %q -> %q, want /etc/tunnel-manager/x.key -> %q",
+			change.From, change.To, defaults.SecurityKeyFile)
+	}
+	if change := got["logging.file.path"]; change.From != "/etc/cron.d/x" ||
+		change.To != defaults.LoggingFilePath {
+		t.Errorf("logging.file.path was reported as %q -> %q, want /etc/cron.d/x -> %q",
+			change.From, change.To, defaults.LoggingFilePath)
+	}
+
+	// The read that follows in the startup is the point of the repair: it is
+	// the one that would otherwise refuse the row and stop the process.
+	reloaded, err := Load(db)
+	if err != nil {
+		t.Fatalf("Load after the repair: %v", err)
+	}
+	if reloaded.SecurityKeyFile != defaults.SecurityKeyFile {
+		t.Errorf("security.key_file is %q after the repair, want %q",
+			reloaded.SecurityKeyFile, defaults.SecurityKeyFile)
+	}
+	if reloaded.LoggingFilePath != defaults.LoggingFilePath {
+		t.Errorf("logging.file.path is %q after the repair, want %q",
+			reloaded.LoggingFilePath, defaults.LoggingFilePath)
+	}
+}
+
+// TestRepairPathsRepairsOnlyThePathThatIsRefused holds the repair to the one
+// column that needs it. A stored path that is inside the installation is a
+// path the operator chose, and putting it back to the default with the other
+// one would take it away for nothing.
+func TestRepairPathsRepairsOnlyThePathThatIsRefused(t *testing.T) {
+	db := newDB(t)
+
+	stored, err := Load(db)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+
+	stored.SecurityKeyFile = "secrets/its-own-name.key"
+
+	err = Save(db, stored)
+	if err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+
+	storeByHand(t, db, map[string]interface{}{"logging_file_path": "../../var/log/x"})
+
+	changes, err := RepairPaths(db)
+	if err != nil {
+		t.Fatalf("RepairPaths: %v", err)
+	}
+	if len(changes) != 1 || changes[0].Name != "logging.file.path" {
+		t.Fatalf("RepairPaths reported %+v, want the log file alone", changes)
+	}
+
+	reloaded, err := Load(db)
+	if err != nil {
+		t.Fatalf("Load after the repair: %v", err)
+	}
+	if reloaded.SecurityKeyFile != "secrets/its-own-name.key" {
+		t.Errorf("security.key_file is %q after the repair, want the stored secrets/its-own-name.key",
+			reloaded.SecurityKeyFile)
+	}
+}
+
+// TestRepairPathsLeavesASetThatPassesAlone covers the startup every
+// installation but the upgraded one runs: there is nothing to repair, nothing
+// is written and nothing is logged.
+func TestRepairPathsLeavesASetThatPassesAlone(t *testing.T) {
+	db := newDB(t)
+
+	stored, err := Load(db)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+
+	changes, err := RepairPaths(db)
+	if err != nil {
+		t.Fatalf("RepairPaths: %v", err)
+	}
+	if len(changes) != 0 {
+		t.Fatalf("RepairPaths changed %+v in a set that passes", changes)
+	}
+
+	again, err := Load(db)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if !again.UpdatedAt.Equal(stored.UpdatedAt) {
+		t.Errorf("the row was written although there was nothing to repair: %v became %v",
+			stored.UpdatedAt, again.UpdatedAt)
+	}
+}
+
+// TestRepairPathsHasNothingToDoBeforeAFirstStartup covers the empty database.
+// The repair runs above the read that stores the defaults, so the row it looks
+// for is not there yet on a first startup.
+func TestRepairPathsHasNothingToDoBeforeAFirstStartup(t *testing.T) {
+	db := newDB(t)
+
+	changes, err := RepairPaths(db)
+	if err != nil {
+		t.Fatalf("RepairPaths: %v", err)
+	}
+	if len(changes) != 0 {
+		t.Fatalf("RepairPaths changed %+v in an empty database", changes)
 	}
 }
