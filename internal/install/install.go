@@ -842,6 +842,24 @@ const cancelledText = "  nothing was removed: the question was answered no.\n" +
 	"  The service is still registered and running and every file of the\n" +
 	"  installation is where it was.\n"
 
+// keyOutsideDataDirText is the last paragraph of the report of a -purge.
+//
+// What -purge removes is the data directory, and the key the stored SSH
+// passwords are sealed with is in there only while security.key_file is left
+// at its default. The stored setting is not read - that would mean opening the
+// database of a service that is still running, see keyFileOf - so a removal
+// cannot tell a key that was moved out of the data directory from one that was
+// never made, and there is nothing to make this line conditional on. It is
+// written every time -purge runs for that reason: the operator is the one who
+// knows which of the two this installation was, and the file it is about opens
+// every stored SSH password in a backup of the database.
+const keyOutsideDataDirText = "\n" +
+	"  The key the stored SSH passwords are sealed with was in the data\n" +
+	"  directory that went, unless security.key_file was set to a path outside\n" +
+	"  it. That setting was not read here. If it named such a path, that file is\n" +
+	"  still on disk and has to be removed by hand: it opens every stored SSH\n" +
+	"  password in a backup of the database.\n"
+
 // Report writes what the uninstall did for a person to read.
 //
 // It is built whole and written once, the same way the install report is and
@@ -881,6 +899,10 @@ func (r Removed) Report(w io.Writer) error {
 	} else {
 		reportLine(&b, "service", "nothing was registered")
 		reportLine(&b, "state", "there was nothing registered to stop")
+	}
+
+	if r.Purged {
+		b.WriteString(keyOutsideDataDirText)
 	}
 
 	_, err := io.WriteString(w, b.String())

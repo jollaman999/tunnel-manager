@@ -89,7 +89,9 @@ func installationFiles(databaseFile string, openFiles []string) []installedFile 
 // default is used - and a setting that was changed to name a file outside the
 // data directory is a file this does not list. It is listed from inside the
 // data directory in every other case, because -purge removes that directory
-// whole.
+// whole, and the report of a -purge says that a key moved out of it is left
+// behind (install.go, keyOutsideDataDirText), since nothing here can tell that
+// case from an installation that never made a key.
 func keyFileOf(dataDir string) string {
 	return resolveAgainst(dataDir, settings.Defaults().SecurityKeyFile)
 }

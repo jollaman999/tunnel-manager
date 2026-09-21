@@ -224,6 +224,13 @@ func TestUninstallRemovesAndKeepsTheData(t *testing.T) {
 		t.Errorf("the report does not say where the data was left:\n%s", out.String())
 	}
 
+	// The warning about a key outside the data directory is about what -purge
+	// leaves behind. Here nothing was removed, so it would send an operator
+	// looking for a file that is still where it always was.
+	if strings.Contains(out.String(), "has to be removed by hand") {
+		t.Errorf("the report warns about a key left behind although nothing was purged:\n%s", out.String())
+	}
+
 	t.Logf("\n%s", out.String())
 }
 
@@ -256,6 +263,16 @@ func TestUninstallPurge(t *testing.T) {
 
 	if !strings.Contains(out.String(), "removed with everything under it") {
 		t.Errorf("the report does not say the data went:\n%s", out.String())
+	}
+
+	// What -purge removed is the data directory, and a key that security.key_file
+	// moved out of it is still on disk. This run cannot know whether it was
+	// moved, so the report has to say so either way.
+	for _, want := range []string{"security.key_file", "has to be removed by hand"} {
+		if !strings.Contains(out.String(), want) {
+			t.Errorf("the report does not hold %q, so a key outside the data directory goes unsaid:\n%s",
+				want, out.String())
+		}
 	}
 
 	t.Logf("\n%s", out.String())
