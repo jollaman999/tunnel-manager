@@ -780,6 +780,23 @@ func main() {
 // It is apart from main so that it can be handed to the service manager on the
 // platform that starts it that way. Called from main it is what this program
 // has always done from a console.
+// logo is the name of the program drawn large. It is what the program puts on
+// the terminal first, so that a console someone is watching says what started
+// there before any log line does.
+const logo = "" +
+	"___                 ___\n" +
+	" |  |  | |\\ | |\\ | |__  |\n" +
+	" |  \\__/ | \\| | \\| |___ |___\n" +
+	"                     __   ___  __\n" +
+	"|\\/|  /\\  |\\ |  /\\  / _` |__  |__)\n" +
+	"|  | /~~\\ | \\| /~~\\ \\__> |___ |  \\"
+
+// printLogo draws the logo with the version beside it. It is skipped for
+// -version, whose one line is read by scripts.
+func printLogo() {
+	fmt.Printf("\n%s  v%s\n\n", logo, version)
+}
+
 func serve() {
 	flag.Usage = usage
 
@@ -828,6 +845,8 @@ func serve() {
 		fmt.Printf("tunnel-manager v%s\n", version)
 		os.Exit(0)
 	}
+
+	printLogo()
 
 	// The installation commands are done here and end the process, above
 	// everything that opens the database. An install has no use for the
@@ -1069,6 +1088,10 @@ func serve() {
 	}
 
 	e := echo.New()
+	// The framework draws a banner of its own and announces the port it
+	// listens on. The logo above is what this program says for itself.
+	e.HideBanner = true
+	e.HidePort = true
 	e.Validator = &CustomValidator{validator: validator.New()}
 	e.Use(middleware.Logger())
 	e.Use(middleware.Recover())
