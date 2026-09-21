@@ -101,6 +101,7 @@
   "error.assignment.add_and_remove.error": "คำขอนี้ระบุพอร์ตบริการเดียวกันทั้งให้เพิ่มและให้เอาออก: {ids}",
   "error.assignment.service_port.not_found.error": "ไม่มีพอร์ตบริการนี้: {ids}",
   "error.assignment.update_failed.error": "แก้ไขพอร์ตบริการของ Host ไม่สำเร็จ",
+  "error.auth.attempts.too_many.error": "เข้าสู่ระบบไม่สำเร็จหลายครั้งเกินไป อีก {retry_after} วินาทีต่อจากนี้จะไม่ตรวจรหัสผ่านเลย ทั้งที่อยู่ที่ส่งคำขอมาและบัญชีถูกนับทั้งคู่ และคำตอบนี้ไม่บอกว่าถึงขีดจำกัดของฝั่งไหน",
   "error.auth.credentials.invalid.error": "ชื่อผู้ใช้หรือรหัสผ่านไม่ถูกต้อง",
   "error.auth.csrf.refused.error": "คำขอนี้ไม่มีส่วนหัว {header} ที่ใช้ได้ ส่งโทเคนของเซสชัน ซึ่งได้จากการเข้าสู่ระบบและเก็บอยู่ในคุกกี้ {cookie} ไปกับทุกคำขอ POST, PUT และ DELETE",
   "error.auth.password.too_long.error": "รหัสผ่านต้องยาวไม่เกิน {max} ไบต์ เพราะ bcrypt อ่านได้แค่นั้น",

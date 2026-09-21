@@ -101,6 +101,7 @@
   "error.assignment.add_and_remove.error": "El cambio indica el mismo puerto de servicio para añadir y para quitar: {ids}",
   "error.assignment.service_port.not_found.error": "No existe ese puerto de servicio: {ids}",
   "error.assignment.update_failed.error": "No se pudieron actualizar los puertos de servicio del Host",
+  "error.auth.attempts.too_many.error": "Demasiados intentos fallidos de inicio de sesión. Durante los próximos {retry_after} segundos no se comprueba ninguna contraseña. Se cuentan tanto la dirección de la que vino el intento como la cuenta, y esta respuesta no dice cuál de las dos se alcanzó",
   "error.auth.credentials.invalid.error": "Nombre de usuario o contraseña no válidos",
   "error.auth.csrf.refused.error": "La petición no incluye una cabecera {header} válida. Envíe en cada POST, PUT y DELETE el token de la sesión, que es el que devuelve el inicio de sesión y contiene la cookie {cookie}",
   "error.auth.password.too_long.error": "La contraseña puede tener {max} bytes como mucho, porque bcrypt no lee más allá",

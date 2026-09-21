@@ -101,6 +101,7 @@
   "error.assignment.add_and_remove.error": "La modification nomme le même port de service à ajouter et à retirer : {ids}",
   "error.assignment.service_port.not_found.error": "Port de service inconnu : {ids}",
   "error.assignment.update_failed.error": "La mise à jour des ports de service du Host a échoué",
+  "error.auth.attempts.too_many.error": "Trop de tentatives de connexion échouées. Pendant les {retry_after} prochaines secondes, aucun mot de passe n'est vérifié. L'adresse d'où vient la tentative et le compte sont comptés tous les deux, et cette réponse ne dit pas lequel des deux a été atteint",
   "error.auth.credentials.invalid.error": "Nom d'utilisateur ou mot de passe invalide",
   "error.auth.csrf.refused.error": "La requête ne contient pas d'en-tête {header} valide. Envoyez le jeton de session, celui que renvoie la connexion et que contient le cookie {cookie}, avec chaque POST, PUT et DELETE",
   "error.auth.password.too_long.error": "Le mot de passe doit faire au plus {max} octets, car bcrypt ne lit pas au-delà",
