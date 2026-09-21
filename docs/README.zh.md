@@ -88,7 +88,7 @@ cat <dir>/initial-password
 sudo ./tunnel-manager-linux-amd64 -install
 ```
 
-在 Windows 上，用**以管理员身份运行**打开的 PowerShell 执行同一条命令：
+在 Windows 上，用**以管理员身份运行**打开的 PowerShell 或命令提示符执行同一条命令：
 
 ```powershell
 .\tunnel-manager-windows-amd64.exe -install

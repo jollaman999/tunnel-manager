@@ -106,8 +106,8 @@ then on, and is started again on its own when it exits.
 sudo ./tunnel-manager-linux-amd64 -install
 ```
 
-On Windows, run the same command from a PowerShell started with **Run as
-administrator**:
+On Windows, run the same command from a PowerShell or a Command Prompt
+started with **Run as administrator**:
 
 ```powershell
 .\tunnel-manager-windows-amd64.exe -install

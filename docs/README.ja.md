@@ -100,7 +100,7 @@ Host とサービスポートを、それぞれの画面から追加します。
 sudo ./tunnel-manager-linux-amd64 -install
 ```
 
-Windows では、**管理者として実行**で開いた PowerShell から同じコマンドを実行します。
+Windows では、**管理者として実行**で開いた PowerShell かコマンドプロンプトから同じコマンドを実行します。
 
 ```powershell
 .\tunnel-manager-windows-amd64.exe -install

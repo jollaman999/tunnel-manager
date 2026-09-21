@@ -95,7 +95,7 @@ cat <dir>/initial-password
 sudo ./tunnel-manager-linux-amd64 -install
 ```
 
-Windows 에서는 **관리자 권한으로 실행**한 PowerShell 에서 같은 명령을 실행합니다.
+Windows 에서는 **관리자 권한으로 실행**한 PowerShell 이나 명령 프롬프트에서 같은 명령을 실행합니다.
 
 ```powershell
 .\tunnel-manager-windows-amd64.exe -install
