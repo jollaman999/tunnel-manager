@@ -1308,12 +1308,14 @@ func serve() {
 			logger.Info("serving the API and the web UI over HTTPS. A request that arrives in the clear "+
 				"on the same port is answered with a redirect to https",
 				logid.ApiServerServingHttps.Field(),
+				zap.String("address", address),
 				zap.Int("port", set.APIPort))
 		}
 	} else {
 		logger.Warn("HTTPS is turned off, so the API and the web UI are served in the clear. Everything "+
 			"the screens send travels as it is, the password of the account among it",
 			logid.ApiServerServingPlain.Field(),
+			zap.String("address", address),
 			zap.Int("port", set.APIPort))
 
 		go func() {
