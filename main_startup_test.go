@@ -2,13 +2,25 @@ package main
 
 import (
 	"context"
+	"crypto/ed25519"
+	"crypto/rand"
+	"crypto/sha256"
+	"crypto/tls"
+	"crypto/x509"
+	"crypto/x509/pkix"
 	"database/sql"
 	"database/sql/driver"
+	"encoding/base64"
 	"encoding/json"
+	"encoding/pem"
 	"fmt"
 	"io"
+	"math/big"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"regexp"
 	"runtime"
 	"strings"
 	"testing"
@@ -19,6 +31,8 @@ import (
 	"github.com/jollaman999/tunnel-manager/internal/crypto"
 	"github.com/jollaman999/tunnel-manager/internal/models"
 	"github.com/jollaman999/tunnel-manager/internal/settings"
+	"github.com/jollaman999/tunnel-manager/internal/web"
+	"github.com/labstack/echo/v4"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
 	"go.uber.org/zap/zaptest/observer"
@@ -1118,5 +1132,589 @@ func TestTheProxyHeadersAreTrustedOnlyWhenTheFlagIsGiven(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+// readBackHandler is what the routes of the hardened server below answer with:
+// the whole body, read to its end, counted. Nothing here is the real handler,
+// because what is under test is the middleware in front of it, and the count is
+// how a body that arrived whole is told from one the limit cut short.
+func readBackHandler(c echo.Context) error {
+	body, err := io.ReadAll(c.Request().Body)
+	if err != nil {
+		return err
+	}
+
+	return c.JSON(http.StatusOK, map[string]int{"read": len(body)})
+}
+
+// newHardenedServer builds the server main builds, with the routes the tests
+// below need registered the way main registers them: the two imports with the
+// body limit of their own, everything else on the general one.
+//
+// harden is called rather than copied, so a test that passes is a test of the
+// wiring that is served.
+func newHardenedServer(servedCertificate func() *tls.Certificate) *echo.Echo {
+	e := echo.New()
+	e.HideBanner = true
+	e.HidePort = true
+
+	harden(e, servedCertificate)
+
+	g := e.Group(apiPrefix)
+
+	g.POST("/login", readBackHandler)
+	g.GET("/status", readBackHandler)
+	g.PUT("/certificate", readBackHandler)
+	g.POST(importTunnelsPath, readBackHandler, importBodyLimitMiddleware())
+	g.POST(importSettingsPath, readBackHandler, importBodyLimitMiddleware())
+
+	// The UI is registered as main registers it, because the policy the
+	// headers carry is written for the page these routes serve and the page
+	// has to be served through them to be covered by it.
+	web.RegisterRoutes(e, "test")
+
+	return e
+}
+
+// noCertificate is what the holder answers with while HTTPS is off.
+func noCertificate() *tls.Certificate { return nil }
+
+// postJSON sends a body of the given size to a path and hands back what came
+// out. The body is valid JSON, so nothing is refused for its shape, and the
+// padding sits in a string field the way the file of an import does.
+func postJSON(e *echo.Echo, method string, path string, size int) *httptest.ResponseRecorder {
+	body := `{"file":"` + strings.Repeat("a", size) + `"}`
+
+	request := httptest.NewRequest(method, path, strings.NewReader(body))
+	request.Header.Set(echo.HeaderContentType, echo.MIMEApplicationJSON)
+
+	recorder := httptest.NewRecorder()
+	e.ServeHTTP(recorder, request)
+
+	return recorder
+}
+
+// TestABodyOverTheGeneralLimitIsRefused pins the limit on the route anybody who
+// can reach the port reaches: POST /api/login takes no session, and without a
+// limit what it costs this process is decided by whoever is sending.
+func TestABodyOverTheGeneralLimitIsRefused(t *testing.T) {
+	e := newHardenedServer(noCertificate)
+
+	recorder := postJSON(e, http.MethodPost, apiPrefix+"/login", 2*1024*1024)
+
+	if recorder.Code != http.StatusRequestEntityTooLarge {
+		t.Fatalf("a 2MB body to /api/login was answered %d, want %d",
+			recorder.Code, http.StatusRequestEntityTooLarge)
+	}
+}
+
+// TestABodyOverTheGeneralLimitIsRefusedWithoutAContentLength covers the other
+// half of the check. A client that says how much it is sending is refused on
+// the number it gave; one that sends without saying, which is what a chunked
+// request is, has to be refused on what it actually sent.
+func TestABodyOverTheGeneralLimitIsRefusedWithoutAContentLength(t *testing.T) {
+	e := newHardenedServer(noCertificate)
+
+	body := `{"file":"` + strings.Repeat("a", 2*1024*1024) + `"}`
+
+	// io.NopCloser hides the reader httptest.NewRequest would otherwise take a
+	// length from, which is what leaves ContentLength at -1.
+	request := httptest.NewRequest(http.MethodPost, apiPrefix+"/login", io.NopCloser(strings.NewReader(body)))
+	request.Header.Set(echo.HeaderContentType, echo.MIMEApplicationJSON)
+
+	if request.ContentLength >= 0 {
+		t.Fatalf("the request carries a content length of %d, so it is not the case this test is for",
+			request.ContentLength)
+	}
+
+	recorder := httptest.NewRecorder()
+	e.ServeHTTP(recorder, request)
+
+	if recorder.Code != http.StatusRequestEntityTooLarge {
+		t.Fatalf("a 2MB body sent without a content length was answered %d, want %d",
+			recorder.Code, http.StatusRequestEntityTooLarge)
+	}
+}
+
+// TestARequestUnderTheGeneralLimitIsTakenWhole says the limit is a limit and
+// not a truncation: the handler is reached and what it reads is everything that
+// was sent.
+func TestARequestUnderTheGeneralLimitIsTakenWhole(t *testing.T) {
+	const padding = 512 * 1024
+
+	e := newHardenedServer(noCertificate)
+
+	recorder := postJSON(e, http.MethodPost, apiPrefix+"/login", padding)
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("a body under the limit was answered %d, want %d: %s",
+			recorder.Code, http.StatusOK, recorder.Body.String())
+	}
+
+	want := len(`{"file":"`) + padding + len(`"}`)
+	if got := readCount(t, recorder); got != want {
+		t.Fatalf("the handler read %d bytes of a %d byte body", got, want)
+	}
+}
+
+// TestAnImportCarriesABodyTheGeneralLimitWouldRefuse is the point of the two
+// limits. An exported configuration is as large as the installation that wrote
+// it, so the imports are measured against importBodyLimit while everything else
+// stays on the general one.
+func TestAnImportCarriesABodyTheGeneralLimitWouldRefuse(t *testing.T) {
+	const padding = 8 * 1024 * 1024
+
+	e := newHardenedServer(noCertificate)
+
+	for _, path := range []string{apiPrefix + importTunnelsPath, apiPrefix + importSettingsPath} {
+		t.Run(path, func(t *testing.T) {
+			recorder := postJSON(e, http.MethodPost, path, padding)
+
+			if recorder.Code != http.StatusOK {
+				t.Fatalf("an 8MB import was answered %d, want %d", recorder.Code, http.StatusOK)
+			}
+
+			want := len(`{"file":"`) + padding + len(`"}`)
+			if got := readCount(t, recorder); got != want {
+				t.Fatalf("the import read %d bytes of an %d byte body", got, want)
+			}
+		})
+	}
+}
+
+// TestTheSameBodyIsRefusedOnARouteThatIsNotAnImport holds the pair up against
+// each other, so that a skipper which stopped matching shows here rather than
+// as a login that is suddenly allowed to send eight megabytes.
+func TestTheSameBodyIsRefusedOnARouteThatIsNotAnImport(t *testing.T) {
+	e := newHardenedServer(noCertificate)
+
+	recorder := postJSON(e, http.MethodPost, apiPrefix+"/login", 8*1024*1024)
+
+	if recorder.Code != http.StatusRequestEntityTooLarge {
+		t.Fatalf("an 8MB body to /api/login was answered %d, want %d",
+			recorder.Code, http.StatusRequestEntityTooLarge)
+	}
+}
+
+// TestACertificateRegistrationStillFitsTheGeneralLimit sends what the Settings
+// screen sends: a certificate and the PEM private key that goes with it. It is
+// the largest body any route but the imports carries, and it is nowhere near
+// the limit.
+func TestACertificateRegistrationStillFitsTheGeneralLimit(t *testing.T) {
+	e := newHardenedServer(noCertificate)
+
+	_, certPEM, keyPEM := issuedCertificate(t)
+
+	body, err := json.Marshal(map[string]string{"cert_pem": certPEM, "key_pem": keyPEM})
+	if err != nil {
+		t.Fatalf("Marshal: %v", err)
+	}
+
+	request := httptest.NewRequest(http.MethodPut, apiPrefix+"/certificate", strings.NewReader(string(body)))
+	request.Header.Set(echo.HeaderContentType, echo.MIMEApplicationJSON)
+
+	recorder := httptest.NewRecorder()
+	e.ServeHTTP(recorder, request)
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("a certificate registration was answered %d, want %d: %s",
+			recorder.Code, http.StatusOK, recorder.Body.String())
+	}
+
+	if got := readCount(t, recorder); got != len(body) {
+		t.Fatalf("the handler read %d bytes of a %d byte registration", got, len(body))
+	}
+}
+
+// readCount is the number readBackHandler answered with.
+func readCount(t *testing.T, recorder *httptest.ResponseRecorder) int {
+	t.Helper()
+
+	var answer struct {
+		Read int `json:"read"`
+	}
+
+	err := json.Unmarshal(recorder.Body.Bytes(), &answer)
+	if err != nil {
+		t.Fatalf("the answer %q is not what the handler writes: %v", recorder.Body.String(), err)
+	}
+
+	return answer.Read
+}
+
+// TestBothServersCarryTheDeadlines pins the timeouts onto the two http.Servers
+// echo holds. Which of them is started is decided by api.https_enabled several
+// hundred lines into main, so a value put on one of them only is a deployment
+// that is covered and another that is not.
+func TestBothServersCarryTheDeadlines(t *testing.T) {
+	e := echo.New()
+
+	harden(e, noCertificate)
+
+	servers := map[string]*http.Server{
+		"the plaintext server": e.Server,
+		"the TLS server":       e.TLSServer,
+	}
+
+	for name, server := range servers {
+		t.Run(name, func(t *testing.T) {
+			if server.ReadHeaderTimeout != apiReadHeaderTimeout {
+				t.Errorf("ReadHeaderTimeout = %v, want %v", server.ReadHeaderTimeout, apiReadHeaderTimeout)
+			}
+			if server.ReadTimeout != apiReadTimeout {
+				t.Errorf("ReadTimeout = %v, want %v", server.ReadTimeout, apiReadTimeout)
+			}
+			if server.IdleTimeout != apiIdleTimeout {
+				t.Errorf("IdleTimeout = %v, want %v", server.IdleTimeout, apiIdleTimeout)
+			}
+
+			// No WriteTimeout, and it is checked here so that one added
+			// without reading why there is none fails as a test rather than
+			// as an import that is cut off half way: see the note under the
+			// timeouts in main.go.
+			if server.WriteTimeout != 0 {
+				t.Errorf("WriteTimeout = %v, want none", server.WriteTimeout)
+			}
+		})
+	}
+}
+
+// TestEveryAnswerCarriesTheSecurityHeaders covers the answers a handler wrote
+// and the one it never reached alike. The 413 is written by the body limit and
+// leaves through the same response, so it has to carry them too: a refusal that
+// a browser renders without them is still a page on this origin.
+func TestEveryAnswerCarriesTheSecurityHeaders(t *testing.T) {
+	e := newHardenedServer(noCertificate)
+
+	cases := []struct {
+		name string
+		run  func(t *testing.T) *httptest.ResponseRecorder
+	}{
+		{"an answer a handler wrote", func(*testing.T) *httptest.ResponseRecorder {
+			return postJSON(e, http.MethodPost, apiPrefix+"/login", 16)
+		}},
+		{"a body that was refused", func(*testing.T) *httptest.ResponseRecorder {
+			return postJSON(e, http.MethodPost, apiPrefix+"/login", 2*1024*1024)
+		}},
+		{"a path that is not there", func(*testing.T) *httptest.ResponseRecorder {
+			recorder := httptest.NewRecorder()
+			e.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/api/nothing-here", nil))
+
+			return recorder
+		}},
+		{"the page itself", func(*testing.T) *httptest.ResponseRecorder {
+			recorder := httptest.NewRecorder()
+			e.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/ui/", nil))
+
+			return recorder
+		}},
+		{"a page the browser already holds", func(t *testing.T) *httptest.ResponseRecorder {
+			first := httptest.NewRecorder()
+			e.ServeHTTP(first, httptest.NewRequest(http.MethodGet, "/ui/app.js", nil))
+
+			request := httptest.NewRequest(http.MethodGet, "/ui/app.js", nil)
+			request.Header.Set("If-None-Match", first.Header().Get("ETag"))
+
+			recorder := httptest.NewRecorder()
+			e.ServeHTTP(recorder, request)
+
+			if recorder.Code != http.StatusNotModified {
+				t.Fatalf("the second request was answered %d, want %d",
+					recorder.Code, http.StatusNotModified)
+			}
+
+			return recorder
+		}},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			recorder := tc.run(t)
+
+			if got := recorder.Header().Get(echo.HeaderXFrameOptions); got != "DENY" {
+				t.Errorf("X-Frame-Options = %q, want %q", got, "DENY")
+			}
+			if got := recorder.Header().Get(echo.HeaderXContentTypeOptions); got != "nosniff" {
+				t.Errorf("X-Content-Type-Options = %q, want %q", got, "nosniff")
+			}
+			if got := recorder.Header().Get(echo.HeaderContentSecurityPolicy); got == "" {
+				t.Error("no Content-Security-Policy")
+			}
+		})
+	}
+}
+
+// TestTheContentSecurityPolicyIsTheOneThePageNeeds reads the page itself and
+// works out what the policy has to say for it, so that a policy and a page
+// which drifted apart fail here rather than as a screen that comes up blank.
+//
+// The scripts are pulled out with a regular expression rather than with
+// inlineScriptHashes, which is what the policy is built with: two readings of
+// the same file that agree are worth something, one function checked against
+// itself is worth nothing.
+func TestTheContentSecurityPolicyIsTheOneThePageNeeds(t *testing.T) {
+	page, err := os.ReadFile(filepath.Join("internal", "web", "static", "index.html"))
+	if err != nil {
+		t.Fatalf("ReadFile: %v", err)
+	}
+
+	policy := contentSecurityPolicy(page)
+
+	scriptTag := regexp.MustCompile(`(?s)<script([^>]*)>(.*?)</script>`)
+
+	inline := 0
+
+	for _, match := range scriptTag.FindAllStringSubmatch(string(page), -1) {
+		if strings.Contains(match[1], "src") {
+			continue
+		}
+
+		inline++
+
+		sum := sha256.Sum256([]byte(match[2]))
+		want := "'sha256-" + base64.StdEncoding.EncodeToString(sum[:]) + "'"
+
+		if !strings.Contains(policy, want) {
+			t.Errorf("the policy does not name the inline script whose hash is %s:\n%s", want, policy)
+		}
+	}
+
+	if inline == 0 {
+		t.Fatal("no inline script was found in the page, so this test checked nothing")
+	}
+
+	if got := strings.Count(policy, "'sha256-"); got != inline {
+		t.Errorf("the policy names %d hashes for %d inline scripts:\n%s", got, inline, policy)
+	}
+
+	// What the page loads besides its own scripts, read off the files it is
+	// made of. Anything the UI starts doing that is not here is refused by the
+	// browser, which is the point of default-src 'none'.
+	for _, directive := range []string{
+		"default-src 'none'",
+		"script-src 'self'",
+		"style-src 'self'",
+		"img-src 'self'",
+		"connect-src 'self'",
+		"base-uri 'none'",
+		"form-action 'self'",
+		"frame-ancestors 'none'",
+	} {
+		if !strings.Contains(policy, directive) {
+			t.Errorf("the policy is missing %q:\n%s", directive, policy)
+		}
+	}
+}
+
+// selfSignedCertificate is what a fresh installation serves: a certificate that
+// signed for itself.
+func selfSignedCertificate(t *testing.T) *tls.Certificate {
+	t.Helper()
+
+	public, private, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatalf("GenerateKey: %v", err)
+	}
+
+	template := &x509.Certificate{
+		SerialNumber: big.NewInt(1),
+		Subject:      pkix.Name{CommonName: "tunnel-manager"},
+		NotBefore:    time.Now().Add(-time.Hour),
+		NotAfter:     time.Now().Add(time.Hour),
+	}
+
+	der, err := x509.CreateCertificate(rand.Reader, template, template, public, private)
+	if err != nil {
+		t.Fatalf("CreateCertificate: %v", err)
+	}
+
+	leaf, err := x509.ParseCertificate(der)
+	if err != nil {
+		t.Fatalf("ParseCertificate: %v", err)
+	}
+
+	return &tls.Certificate{Certificate: [][]byte{der}, PrivateKey: private, Leaf: leaf}
+}
+
+// issuedCertificate is what an operator registers: a certificate somebody else
+// signed. The PEM of the certificate and of its private key come back with it,
+// because that is what the Settings screen sends.
+func issuedCertificate(t *testing.T) (*tls.Certificate, string, string) {
+	t.Helper()
+
+	issuerPublic, issuerPrivate, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatalf("GenerateKey: %v", err)
+	}
+
+	issuerTemplate := &x509.Certificate{
+		SerialNumber:          big.NewInt(2),
+		Subject:               pkix.Name{CommonName: "a certificate authority"},
+		NotBefore:             time.Now().Add(-time.Hour),
+		NotAfter:              time.Now().Add(time.Hour),
+		IsCA:                  true,
+		KeyUsage:              x509.KeyUsageCertSign,
+		BasicConstraintsValid: true,
+	}
+
+	issuerDER, err := x509.CreateCertificate(rand.Reader, issuerTemplate, issuerTemplate, issuerPublic, issuerPrivate)
+	if err != nil {
+		t.Fatalf("CreateCertificate: %v", err)
+	}
+
+	issuer, err := x509.ParseCertificate(issuerDER)
+	if err != nil {
+		t.Fatalf("ParseCertificate: %v", err)
+	}
+
+	public, private, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatalf("GenerateKey: %v", err)
+	}
+
+	template := &x509.Certificate{
+		SerialNumber: big.NewInt(3),
+		Subject:      pkix.Name{CommonName: "tunnel-manager"},
+		NotBefore:    time.Now().Add(-time.Hour),
+		NotAfter:     time.Now().Add(time.Hour),
+		DNSNames:     []string{"tunnel-manager.example"},
+	}
+
+	der, err := x509.CreateCertificate(rand.Reader, template, issuer, public, issuerPrivate)
+	if err != nil {
+		t.Fatalf("CreateCertificate: %v", err)
+	}
+
+	leaf, err := x509.ParseCertificate(der)
+	if err != nil {
+		t.Fatalf("ParseCertificate: %v", err)
+	}
+
+	keyDER, err := x509.MarshalPKCS8PrivateKey(private)
+	if err != nil {
+		t.Fatalf("MarshalPKCS8PrivateKey: %v", err)
+	}
+
+	certPEM := string(pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der}))
+	keyPEM := string(pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: keyDER}))
+
+	return &tls.Certificate{Certificate: [][]byte{der}, PrivateKey: private, Leaf: leaf}, certPEM, keyPEM
+}
+
+// TestHSTSIsSentOnlyForACertificateSomebodyElseSigned is the whole of the
+// caution around this header. A browser that was told to stay on HTTPS refuses
+// to let anybody past the warning a self-signed certificate raises, and the
+// screens are then unreachable with nothing on them to undo it.
+func TestHSTSIsSentOnlyForACertificateSomebodyElseSigned(t *testing.T) {
+	issued, _, _ := issuedCertificate(t)
+
+	cases := []struct {
+		name        string
+		tls         bool
+		certificate *tls.Certificate
+		want        bool
+	}{
+		{"HTTPS is turned off", false, nil, false},
+		{"a self-signed certificate", true, selfSignedCertificate(t), false},
+		{"a certificate somebody else signed", true, issued, true},
+		{"a certificate over a plaintext request", false, issued, false},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			e := newHardenedServer(func() *tls.Certificate { return tc.certificate })
+
+			request := httptest.NewRequest(http.MethodGet, apiPrefix+"/status", nil)
+			if tc.tls {
+				request.TLS = &tls.ConnectionState{}
+			}
+
+			recorder := httptest.NewRecorder()
+			e.ServeHTTP(recorder, request)
+
+			got := recorder.Header().Get(echo.HeaderStrictTransportSecurity)
+
+			if tc.want && got != fmt.Sprintf("max-age=%d", hstsMaxAgeSeconds) {
+				t.Fatalf("Strict-Transport-Security = %q, want max-age=%d", got, hstsMaxAgeSeconds)
+			}
+
+			if !tc.want && got != "" {
+				t.Fatalf("Strict-Transport-Security = %q, want nothing", got)
+			}
+		})
+	}
+}
+
+// TestTheHeaderFollowsACertificateThatIsReplaced pins that the decision is made
+// per request. The certificate is replaced while the process runs, from the
+// Settings screen, and a header worked out once at startup would keep saying
+// what was true then.
+func TestTheHeaderFollowsACertificateThatIsReplaced(t *testing.T) {
+	issued, _, _ := issuedCertificate(t)
+	serving := selfSignedCertificate(t)
+
+	e := newHardenedServer(func() *tls.Certificate { return serving })
+
+	ask := func() string {
+		request := httptest.NewRequest(http.MethodGet, apiPrefix+"/status", nil)
+		request.TLS = &tls.ConnectionState{}
+
+		recorder := httptest.NewRecorder()
+		e.ServeHTTP(recorder, request)
+
+		return recorder.Header().Get(echo.HeaderStrictTransportSecurity)
+	}
+
+	if got := ask(); got != "" {
+		t.Fatalf("a self-signed certificate was answered with %q", got)
+	}
+
+	serving = issued
+
+	if got := ask(); got == "" {
+		t.Fatal("a registered certificate was answered with no Strict-Transport-Security")
+	}
+}
+
+// TestACertificateThatWasNotParsedIsNotTakenAsIssued covers what is answered
+// when the question cannot be. The header decides whether a browser refuses
+// plaintext for the next month, so anything unreadable has to end as no header
+// rather than as one sent on a guess.
+func TestACertificateThatWasNotParsedIsNotTakenAsIssued(t *testing.T) {
+	cases := []struct {
+		name string
+		pair *tls.Certificate
+	}{
+		{"nothing is being served", nil},
+		{"a pair that holds no certificate", &tls.Certificate{}},
+		{"a pair whose certificate does not parse", &tls.Certificate{Certificate: [][]byte{{1, 2, 3}}}},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if caIssuedCertificate(tc.pair) {
+				t.Fatal("was taken for a certificate somebody else signed")
+			}
+		})
+	}
+}
+
+// TestALeafThatWasNotParsedYetIsStillRead is the other half: tlsserve fills
+// Leaf on everything it hands out, and a pair built some other way is parsed
+// here rather than treated as unreadable.
+func TestALeafThatWasNotParsedYetIsStillRead(t *testing.T) {
+	issued, _, _ := issuedCertificate(t)
+	selfSigned := selfSignedCertificate(t)
+
+	issued.Leaf = nil
+	selfSigned.Leaf = nil
+
+	if !caIssuedCertificate(issued) {
+		t.Error("a certificate somebody else signed was not read out of the pair")
+	}
+
+	if caIssuedCertificate(selfSigned) {
+		t.Error("a self-signed certificate was read as one somebody else signed")
 	}
 }

@@ -1,8 +1,13 @@
 package main
 
 import (
+	"bytes"
 	"context"
+	"crypto/sha256"
 	"crypto/tls"
+	"crypto/x509"
+	_ "embed"
+	"encoding/base64"
 	"errors"
 	"flag"
 	"fmt"
@@ -58,6 +63,100 @@ const reconcileStopTimeout = 10 * time.Second
 // database, so the steps that open the database have to log at some level
 // chosen without it. "info" is the level a fresh deployment gets anyway.
 const bootstrapLogLevel = "info"
+
+// apiPrefix is the path every route that is not the UI hangs under, and
+// importTunnelsPath and importSettingsPath are the two that take a whole
+// exported file in the body.
+//
+// The three are named rather than written out at the call because the body
+// limit below is decided by the route: generalBodyLimit skips these two and
+// they carry importBodyLimit instead. A path typed twice would drift, and the
+// half that drifted would be the skipper, which fails as an import that is
+// refused at a size that used to work.
+const (
+	apiPrefix          = "/api"
+	importTunnelsPath  = "/import/tunnels"
+	importSettingsPath = "/import/settings"
+)
+
+// generalBodyLimit is the most a request body may hold on every route but the
+// two imports. Without it a body is read into memory until the client stops
+// sending, and POST /api/login is reached before any session exists, so
+// anybody who can open the port decides how much this process allocates.
+//
+// A megabyte is far more than any of these routes needs. The largest is the
+// registration of a TLS certificate (PUT /api/certificate), which carries a
+// certificate chain and a PEM private key, and the creation of a Host, which
+// carries one PEM private key: a 4096-bit RSA key is around 3KB and a chain a
+// few KB more.
+const generalBodyLimit = "1M"
+
+// importBodyLimit is what the two imports are allowed instead. Their body is a
+// whole exported configuration, and the size of that follows from how much the
+// installation that wrote it held rather than from anything this code decides.
+//
+// One Host in an exported file carries its PEM private key, its passphrase and
+// its SSH password in the clear (internal/api/transfer.go, hostContent), which
+// is a few KB, and the whole file is then base64 encoded, which adds a third.
+// So a Host costs on the order of 5KB of body and a service port a hundred
+// bytes, and the local port being unique caps the service ports at 65535.
+// 32MB carries a few thousand Hosts or every service port an installation can
+// hold. An import is behind the session, so what this allows is an
+// administrator who is already authenticated.
+const importBodyLimit = "32M"
+
+// The timeouts the API server runs under. echo builds its http.Server with all
+// of them at zero, which means a client that opens a connection and says
+// nothing holds it until the process ends.
+const (
+	// apiReadHeaderTimeout bounds how long the request head may take. It is
+	// the same ten seconds the plaintext redirect server on the same port
+	// already uses (internal/tlsserve, peekTimeout): a client writes its
+	// request straight after connecting, so this covers the network in
+	// between and not any thinking on its part.
+	apiReadHeaderTimeout = 10 * time.Second
+	// apiReadTimeout bounds the head and the body together. It has to hold
+	// the largest import importBodyLimit allows, so it is minutes rather than
+	// seconds: 32MB over a link of a couple of megabits is already past a
+	// minute, and a body cut off half way is an import that failed for a
+	// reason nothing in the answer explains. The head is bounded far more
+	// tightly by the deadline above, which is what a client that dribbles a
+	// request head is stopped by.
+	apiReadTimeout = 5 * time.Minute
+	// apiIdleTimeout is how long a kept-alive connection may sit between
+	// requests. The screens make a handful of calls per draw and poll the
+	// status, so two minutes keeps the connection they are using while
+	// clearing up the ones nobody came back to.
+	apiIdleTimeout = 2 * time.Minute
+)
+
+// No WriteTimeout is set, on purpose.
+//
+// net/http arms the write deadline when the request head has been read and not
+// when the handler starts answering (net/http.conn.readRequest, the deferred
+// SetWriteDeadline). One value therefore has to cover reading the body,
+// running the handler and writing the answer. To leave the largest import room
+// it would have to be longer than apiReadTimeout, which makes it no bound on
+// the answer at all, and any value short enough to be one would cut those
+// imports off.
+//
+// What it would otherwise protect against is a client that reads the answer a
+// byte at a time. The answers here are bounded - the log screen reads at most
+// 4MB of the file per request (internal/api, logsMaxBytes) and everything else
+// is smaller - so such a client holds one connection and no unbounded memory,
+// and apiIdleTimeout takes the connection once the answer is out.
+
+// hstsMaxAgeSeconds is how long a browser is told to reach this installation
+// over HTTPS only. It is sent solely while a certificate somebody else signed
+// is being served: see securityHeaders.
+//
+// Thirty days rather than the year that is usual elsewhere. The certificate
+// here can be put back to a self-signed one from the Settings screen at any
+// time, and a browser holding this header refuses to let anybody click through
+// the warning that follows, with no way back but clearing it by hand in the
+// browser. A month is long enough to cover the life of a session and short
+// enough that a mistake ends.
+const hstsMaxAgeSeconds = 30 * 24 * 60 * 60
 
 // coreSwitch holds the core a logger writes through so that it can be exchanged
 // while the logger stays the same object.
@@ -477,6 +576,221 @@ func applyProxyTrust(setter proxyTrustSetter, trust bool) {
 	}
 
 	setter.TrustProxyHeaders(true)
+}
+
+// indexHTML is the page the UI is drawn from. It is embedded here as well as
+// in internal/web, which serves it, because the Content-Security-Policy below
+// has to name the scripts written inside that page and there is no way to name
+// an inline script but by the hash of its text.
+//
+// Reading the file rather than keeping the hashes as constants is what makes
+// the policy follow the page: somebody editing the theme or the language block
+// at the top of index.html changes what its hash is, and a policy holding the
+// old one leaves a page that comes up blank with an error only the browser
+// console shows.
+//
+//go:embed internal/web/static/index.html
+var indexHTML []byte
+
+// inlineScriptHashes is the CSP source list entry for every script written
+// inside html, in the order they appear. A script that names a file with src
+// is left out: it is fetched from this origin and 'self' already covers it.
+//
+// The hash is over the text between the tags exactly as it stands, whitespace
+// and all, because that is what a browser hashes when it checks the policy.
+func inlineScriptHashes(html []byte) []string {
+	var hashes []string
+
+	rest := html
+
+	for {
+		open := bytes.Index(rest, []byte("<script"))
+		if open < 0 {
+			break
+		}
+
+		rest = rest[open+len("<script"):]
+
+		tagEnd := bytes.IndexByte(rest, '>')
+		if tagEnd < 0 {
+			break
+		}
+
+		attributes := rest[:tagEnd]
+		body := rest[tagEnd+1:]
+
+		end := bytes.Index(body, []byte("</script>"))
+		if end < 0 {
+			break
+		}
+
+		text := body[:end]
+		rest = body[end+len("</script>"):]
+
+		if bytes.Contains(attributes, []byte("src")) {
+			continue
+		}
+
+		sum := sha256.Sum256(text)
+		hashes = append(hashes, "'sha256-"+base64.StdEncoding.EncodeToString(sum[:])+"'")
+	}
+
+	return hashes
+}
+
+// contentSecurityPolicy is what every answer carries. It is built from the
+// page rather than written out, because of the inline scripts: see indexHTML.
+//
+// The default is 'none' and every kind of load the UI actually makes is listed
+// from there, so a kind nobody thought of is refused rather than allowed. What
+// the UI loads was read off the files it is made of: style.css is the one
+// stylesheet and holds no url() and no @import, screens.js and app.js are
+// fetched from this origin, the catalogs and /api/** are fetched with
+// window.fetch from this origin, and there is no image, font, frame, worker or
+// plugin anywhere in them.
+//
+// img-src is listed even though no page names an image, because a browser asks
+// for /favicon.ico on its own and a refused one is an error in the console of
+// every operator who opens the screens.
+//
+// frame-ancestors says what X-Frame-Options says. Both are sent: the header is
+// what an older browser reads and the directive is what a current one reads,
+// and a current one ignores the header where the directive is present.
+func contentSecurityPolicy(html []byte) string {
+	scripts := append([]string{"'self'"}, inlineScriptHashes(html)...)
+
+	return strings.Join([]string{
+		"default-src 'none'",
+		"script-src " + strings.Join(scripts, " "),
+		"style-src 'self'",
+		"img-src 'self'",
+		"connect-src 'self'",
+		"base-uri 'none'",
+		"form-action 'self'",
+		"frame-ancestors 'none'",
+	}, "; ")
+}
+
+// caIssuedCertificate reports whether the certificate being served was signed
+// by somebody other than itself, which is to say that the operator registered
+// one rather than letting this installation make its own.
+//
+// The subject and the issuer are compared as they were encoded, which is what
+// a client building a chain compares, and it is the same test the Settings
+// screen shows a certificate as self-signed by (internal/api, viewOf).
+//
+// Everything it cannot answer is answered with false. This decides whether a
+// browser is told to refuse plaintext for the next month, and the one thing
+// that must not happen is that being turned on for an installation serving a
+// certificate no client trusts.
+func caIssuedCertificate(keyPair *tls.Certificate) bool {
+	if keyPair == nil {
+		return false
+	}
+
+	leaf := keyPair.Leaf
+
+	if leaf == nil {
+		if len(keyPair.Certificate) == 0 {
+			return false
+		}
+
+		parsed, err := x509.ParseCertificate(keyPair.Certificate[0])
+		if err != nil {
+			return false
+		}
+
+		leaf = parsed
+	}
+
+	return !bytes.Equal(leaf.RawSubject, leaf.RawIssuer)
+}
+
+// securityHeaders puts the headers on every answer this server writes, the API
+// and the UI alike. servedCertificate is read per request rather than once,
+// because the certificate is replaced while the process runs: an operator who
+// registers a real one on the Settings screen gets the header from the next
+// request, and one who goes back to a self-signed one stops getting it.
+//
+// Strict-Transport-Security is the only one that is conditional, and it is
+// held to two things at once. The request has to have arrived over TLS, and
+// the certificate being served has to be one somebody else signed. A
+// self-signed certificate is what a fresh installation serves, and a browser
+// that was told to stay on HTTPS refuses to let anybody past the warning such
+// a certificate raises, with no way back from the screens themselves. The
+// header is not sent over plaintext either way, which is what a client would
+// ignore, so nothing is said where nothing can be meant.
+func securityHeaders(policy string, servedCertificate func() *tls.Certificate) echo.MiddlewareFunc {
+	hsts := fmt.Sprintf("max-age=%d", hstsMaxAgeSeconds)
+
+	return func(next echo.HandlerFunc) echo.HandlerFunc {
+		return func(c echo.Context) error {
+			header := c.Response().Header()
+
+			header.Set(echo.HeaderXFrameOptions, "DENY")
+			header.Set(echo.HeaderXContentTypeOptions, "nosniff")
+			header.Set(echo.HeaderContentSecurityPolicy, policy)
+
+			if c.IsTLS() && caIssuedCertificate(servedCertificate()) {
+				header.Set(echo.HeaderStrictTransportSecurity, hsts)
+			}
+
+			return next(c)
+		}
+	}
+}
+
+// isImportRoute is the one place that says which routes carry a body of their
+// own size. It reads the registered path and not the one that was asked for,
+// so a request that spells the path some other way is measured against the
+// general limit.
+func isImportRoute(c echo.Context) bool {
+	switch c.Path() {
+	case apiPrefix + importTunnelsPath, apiPrefix + importSettingsPath:
+		return true
+	}
+
+	return false
+}
+
+// importBodyLimitMiddleware is what the two import routes are registered with.
+// It is a function rather than one value shared by both, because the
+// middleware keeps a pool of readers and there is no reason for the two routes
+// to contend on one.
+func importBodyLimitMiddleware() echo.MiddlewareFunc {
+	return middleware.BodyLimit(importBodyLimit)
+}
+
+// applyServerTimeouts puts the deadlines on the servers echo would otherwise
+// run with none. Both are set: e.Server is what serves while HTTPS is off and
+// e.TLSServer is what serves while it is on, and which of them main starts is
+// decided several hundred lines later.
+func applyServerTimeouts(servers ...*http.Server) {
+	for _, server := range servers {
+		server.ReadHeaderTimeout = apiReadHeaderTimeout
+		server.ReadTimeout = apiReadTimeout
+		server.IdleTimeout = apiIdleTimeout
+	}
+}
+
+// harden is everything this file does to the HTTP server that is not a route:
+// the body limits, the headers and the deadlines. It is one function so that a
+// test serves through the same wiring main does rather than through a copy of
+// it that has drifted.
+//
+// The headers go on before the body limit and not after it. Everything put on
+// the response before the handler runs is carried by whatever answer leaves,
+// the ones no handler wrote included: the 413 the limit below refuses an
+// oversized body with, and the 304 the UI answers a fresh browser cache with,
+// both go out through the same response and both carry the headers.
+func harden(e *echo.Echo, servedCertificate func() *tls.Certificate) {
+	e.Use(securityHeaders(contentSecurityPolicy(indexHTML), servedCertificate))
+	e.Use(middleware.BodyLimitWithConfig(middleware.BodyLimitConfig{
+		Skipper: isImportRoute,
+		Limit:   generalBodyLimit,
+	}))
+
+	applyServerTimeouts(e.Server, e.TLSServer)
 }
 
 func (cv *CustomValidator) Validate(i interface{}) error {
@@ -1215,6 +1529,15 @@ func serve() {
 	// is off, and the handler answers with what that means rather than with a
 	// certificate nothing is serving.
 	certHolder := tlsserve.NewHolder(nil)
+
+	// The body limits, the security headers and the server deadlines. They are
+	// put on here rather than beside the two lines above because the headers
+	// read the certificate being served, and the holder that answers for it
+	// has to exist first. echo applies what e.Use carries at the time a request
+	// is served and not at the time a route is added, so this reaches the
+	// routes below and the UI alike.
+	harden(e, certHolder.Current)
+
 	certificateHandler := api.NewCertificateHandler(db, cipher, logger, certHolder)
 	// The level handle goes to the handler that stores the settings, so that a
 	// stored logging.level reaches the running loggers as it is saved. It is
@@ -1258,7 +1581,7 @@ func serve() {
 	// so, and this is settled here, above the routes, so that nothing is
 	// serving while the answer is written.
 	applyProxyTrust(authHandler, *trustProxyHeaders)
-	g := e.Group("/api")
+	g := e.Group(apiPrefix)
 
 	// The session check is put on the group before any route is added to it.
 	// echo binds the middleware a group carries at the time the route is added,
@@ -1311,10 +1634,16 @@ func serve() {
 	// The exports are POST because the password that seals the file is in the
 	// body. A password in a URL is written to the access log of this server and
 	// to the history of the browser that asked for it.
+	//
+	// The two imports carry a body limit of their own, since what they are
+	// given is a whole exported configuration and the general limit is sized
+	// for a request that carries a form: see importBodyLimit. The route-level
+	// middleware is what isImportRoute leaves room for by skipping these two
+	// paths on the instance.
 	g.POST("/export/tunnels", transferHandler.ExportTunnels)
-	g.POST("/import/tunnels", transferHandler.ImportTunnels)
+	g.POST(importTunnelsPath, transferHandler.ImportTunnels, importBodyLimitMiddleware())
 	g.POST("/export/settings", transferHandler.ExportSettings)
-	g.POST("/import/settings", transferHandler.ImportSettings)
+	g.POST(importSettingsPath, transferHandler.ImportSettings, importBodyLimitMiddleware())
 
 	g.GET("/certificate", certificateHandler.GetCertificate)
 	g.POST("/certificate/renew", certificateHandler.RenewCertificate)
