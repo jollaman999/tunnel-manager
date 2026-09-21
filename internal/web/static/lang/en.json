@@ -101,6 +101,7 @@
   "error.assignment.add_and_remove.error": "The change names the same service port to add and to remove: {ids}",
   "error.assignment.service_port.not_found.error": "No such service port: {ids}",
   "error.assignment.update_failed.error": "Failed to update the service ports of the Host",
+  "error.auth.attempts.too_many.error": "Too many failed sign in attempts. No password is checked for the next {retry_after} seconds. Both the address an attempt came from and the account are counted, and this answer does not say which of the two was reached",
   "error.auth.credentials.invalid.error": "Invalid username or password",
   "error.auth.csrf.refused.error": "The request carries no valid {header} header. Send the token of the session, which the login answers with and the {cookie} cookie holds, on every POST, PUT and DELETE",
   "error.auth.password.too_long.error": "Password must be at most {max} bytes long, because that is as far as bcrypt reads",

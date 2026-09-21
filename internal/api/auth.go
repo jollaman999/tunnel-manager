@@ -278,6 +278,11 @@ type AuthHandler struct {
 	// is the one the startup wrote and the two cannot drift apart.
 	initialPasswordFile string
 	sessions            *SessionStore
+	// logins counts the failed sign ins and is what refuses one that has been
+	// tried too often. It is made here rather than handed in, so that an
+	// installation is limited by default and nothing has to be wired up at the
+	// startup for it to be: see loginlimit.go for what it counts and why.
+	logins *loginLimiter
 	// trustProxyHeaders says whether the forwarding headers of whatever is in
 	// front of this server are believed. It decides nothing but the Secure
 	// flag of the cookies below, and it is off unless the operator turns it
@@ -292,6 +297,7 @@ func NewAuthHandler(db *gorm.DB, logger *zap.Logger, initialPasswordFile string)
 		logger:              logger,
 		initialPasswordFile: initialPasswordFile,
 		sessions:            NewSessionStore(),
+		logins:              newLoginLimiter(),
 	}
 }
 
@@ -426,6 +432,19 @@ func (h *AuthHandler) Login(c echo.Context) error {
 		return failure(c, http.StatusInternalServerError, errAccountReadFailed)
 	}
 
+	// The failures are looked at before the password is, because checking the
+	// password is the expensive half: bcrypt is what this refusal is protecting
+	// as much as the account is. The account row is read first because the
+	// counter of the account is named by the row, and that read is one indexed
+	// row out of a table that holds one, which next to a bcrypt compare is
+	// nothing.
+	address := h.loginAddress(c)
+
+	wait, held := h.logins.retryAfter(address, user.ID)
+	if held {
+		return h.refuseHeldLogin(c, wait)
+	}
+
 	// The password is hashed and compared whatever the username was, so that a
 	// wrong username is not answered faster than a wrong password. Before the
 	// setup there is no username to send, so only the password is looked at.
@@ -436,8 +455,16 @@ func (h *AuthHandler) Login(c echo.Context) error {
 	}
 
 	if !ok {
+		h.logins.failed(address, user.ID)
+
 		return failure(c, http.StatusUnauthorized, errAuthCredentialsInvalid)
 	}
+
+	// Everything counted against this address and this account is forgotten
+	// here, before the session is made. The one who got the password right is
+	// not the one the counters are for, and a failure that is still counted
+	// after a successful sign in would hold the operator on their next slip.
+	h.logins.succeeded(address, user.ID)
 
 	token, csrfToken, err := h.sessions.Create(user.ID)
 	if err != nil {

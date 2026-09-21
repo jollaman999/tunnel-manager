@@ -1,0 +1,372 @@
+package api
+
+import (
+	"net"
+	"net/http"
+	"sort"
+	"strconv"
+	"sync"
+	"time"
+
+	"github.com/labstack/echo/v4"
+)
+
+// The login is the one place in this API where a request that carries no
+// session is answered with work. The password it sends is checked with bcrypt
+// at cost 10 (internal/auth/auth.go), which is tens of milliseconds of CPU
+// every time and is meant to be. With nothing counting the failures that is two
+// holes at once: a password that can be guessed at as fast as the network
+// carries requests, against an installation that has exactly one account to aim
+// at, and a way for anyone who can reach the port to spend the CPU of the host
+// without ever logging in.
+//
+// What is below counts the failures and stops checking passwords at all once
+// there have been too many of them.
+//
+// It refuses rather than delays. A delay holds the request inside the handler
+// and costs the sender nothing but a socket: fifty requests sent at once are
+// delayed alongside each other and every one of them still reaches bcrypt, so
+// a delay bounds neither the rate of the guessing nor the CPU it burns. A
+// refusal written before the password is looked at bounds both, and it is the
+// same answer whether the requests arrive one at a time or all together.
+//
+// Two things are counted, because either one alone is walked around. An
+// address alone is walked around by sending each guess from another address,
+// which a botnet has by the thousand. An account alone would be the only
+// counter there is, and since this installation has one account, anybody who
+// can reach the port could hold the operator out of it forever by guessing
+// wrong on purpose. Counting both means the cheap attack meets the address
+// limit and the distributed one meets the account limit, and the second is set
+// far enough above ordinary mistyping that the operator never reaches it by
+// hand.
+
+// loginFailureWindow is how long a failed sign in goes on counting. Failures
+// further apart than this never add up, so an operator who gets it wrong once
+// this morning and once this afternoon is at one failure and not at two.
+const loginFailureWindow = 15 * time.Minute
+
+// loginAddressFailureLimit is how many failures one address may pile up inside
+// that window before it is held. Five, because an operator typing a password
+// they know gets it wrong once or twice - caps lock, the wrong keyboard layout
+// - and a third and fourth mistake is still a person rather than a program.
+const loginAddressFailureLimit = 5
+
+// loginAddressBlockFor is how long that address is then held for.
+//
+// Five minutes, and the number is a trade between two costs that pull opposite
+// ways. Long enough is what makes guessing pointless: five tries per five
+// minutes is sixty an hour from one address, which against the shortest
+// password the setup takes (minPasswordBytes, twelve bytes) is not a number
+// that ever finishes. Short enough matters because the operator who typed it
+// wrong five times is held by this as well, with nothing but the clock to get
+// them back in: five minutes is a wait, fifteen would be an outage of the thing
+// they came to the screen to fix.
+const loginAddressBlockFor = 5 * time.Minute
+
+// loginAccountFailureLimit is how many failures the account may pile up inside
+// the window, counted wherever they came from. Thirty, which is six times the
+// per address limit on purpose: this counter exists for the attack that changes
+// address on every request, so it has to sit far enough above the other one
+// that an operator at one keyboard cannot walk into it. One person typing
+// thirty wrong passwords in a quarter of an hour has met the address limit five
+// times over already.
+const loginAccountFailureLimit = 30
+
+// loginAccountBlockFor is how long the account is then held for.
+//
+// Five minutes as well, and here the short end of the trade is what decides it.
+// Unlike the address counter, this one can be driven by anyone who can reach
+// the port: thirty requests from thirty addresses hold the account, and holding
+// the operator out is the whole of what the sender gets. Five minutes bounds
+// what that buys them, and it still cuts guessing down to three hundred and
+// sixty tries an hour across every address there is, which is around twenty
+// seconds of CPU an hour rather than a core held flat.
+const loginAccountBlockFor = 5 * time.Minute
+
+// loginLimiterMaxAddresses is how many addresses are counted at once.
+//
+// The map is the other thing an outsider can spend: a request from a new
+// address adds an entry, so without a ceiling, sending one failed login each
+// from many addresses grows it without bound and the memory is the attack.
+// Four thousand entries is a few hundred kilobytes and is far more than any
+// installation of this has operators, so the ceiling is only ever met by
+// something that is doing it on purpose.
+const loginLimiterMaxAddresses = 4096
+
+// loginLimiterKeepAddresses is how far the map is cut back to when the ceiling
+// is met. It is three quarters of it rather than the ceiling itself, so that
+// the sweep runs once per thousand new addresses instead of once per request
+// for as long as the flood lasts.
+const loginLimiterKeepAddresses = loginLimiterMaxAddresses * 3 / 4
+
+// loginKeyKind says which of the two counters a key belongs to. The two live in
+// one map so that a single sweep covers both.
+type loginKeyKind uint8
+
+const (
+	loginKeyAddress loginKeyKind = iota
+	loginKeyAccount
+)
+
+// loginKey names one counter.
+type loginKey struct {
+	kind loginKeyKind
+	name string
+}
+
+// limits returns how many failures a key of this kind takes before it is held,
+// and how long it is held for.
+func (k loginKey) limits() (int, time.Duration) {
+	if k.kind == loginKeyAccount {
+		return loginAccountFailureLimit, loginAccountBlockFor
+	}
+
+	return loginAddressFailureLimit, loginAddressBlockFor
+}
+
+// loginKeysOf returns the two counters one login attempt is counted against.
+//
+// The account is named by the row the password is checked against and not by
+// the username the request sent. The username arrives from outside, so keying
+// on it would be keying on a string the sender chooses, which is both a way to
+// grow the map a name at a time and a counter that counts nothing: a guess
+// against a username that does not exist is not a guess at this account. There
+// is one account row, so there is one account key.
+func loginKeysOf(address string, accountID uint) [2]loginKey {
+	return [2]loginKey{
+		{kind: loginKeyAddress, name: address},
+		{kind: loginKeyAccount, name: strconv.FormatUint(uint64(accountID), 10)},
+	}
+}
+
+// loginFailures is what one counter holds.
+type loginFailures struct {
+	count int
+	// blocked says the limit has been reached and no password is being checked
+	// for this key until the entry runs out.
+	blocked bool
+	// expiresAt is when the entry stops meaning anything. While the count is
+	// under the limit it is the end of the window the failures are counted in;
+	// once the limit is reached it is the end of the block, so that the block
+	// ending and the count being forgotten are the same event and whoever comes
+	// back after it has the whole set of tries again rather than one.
+	expiresAt time.Time
+}
+
+// loginLimiter counts the failed logins. It is memory and nothing else: a
+// restart forgets every block, which is the same trade the sessions make
+// (SessionStore) and is affordable for the same reason. A restart of this
+// process is not something an outsider can ask for.
+type loginLimiter struct {
+	// A plain mutex rather than an RWMutex: every path that reads also drops
+	// what has run out, so there is no read-only path to take a cheaper lock
+	// on, and the contention on a login is not what costs anything here.
+	mu       sync.Mutex
+	failures map[loginKey]loginFailures
+	// now is the clock the deadlines are measured against. It is a field so a
+	// test can move time forward instead of waiting for it, which is what
+	// SessionStore does with the same name.
+	now func() time.Time
+}
+
+// newLoginLimiter returns an empty limiter on the real clock.
+//
+// No goroutine sweeps the map. What has run out is dropped by the attempt that
+// meets it, and the ceiling is enforced by the attempt that would push the map
+// past it, so a limiter that nobody is talking to costs nothing and needs
+// nothing shut down.
+func newLoginLimiter() *loginLimiter {
+	return &loginLimiter{
+		failures: make(map[loginKey]loginFailures),
+		now:      time.Now,
+	}
+}
+
+// live returns the entry key stands for and reports whether it still counts. An
+// entry that has run out is dropped here and answers as if it had never been
+// made, which is how a block ends and how a window closes: both are the same
+// deadline.
+func (l *loginLimiter) live(key loginKey, now time.Time) (loginFailures, bool) {
+	entry, ok := l.failures[key]
+	if !ok {
+		return loginFailures{}, false
+	}
+
+	if !now.Before(entry.expiresAt) {
+		delete(l.failures, key)
+
+		return loginFailures{}, false
+	}
+
+	return entry, true
+}
+
+// retryAfter reports whether this attempt is held, and for how much longer.
+//
+// Where both counters are holding, the longer of the two is what is answered:
+// the sender is not free to try again until both have let go, and an answer
+// that named the shorter one would send them back to another refusal.
+func (l *loginLimiter) retryAfter(address string, accountID uint) (time.Duration, bool) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+
+	now := l.now()
+	longest := time.Duration(0)
+
+	for _, key := range loginKeysOf(address, accountID) {
+		entry, ok := l.live(key, now)
+		if !ok || !entry.blocked {
+			continue
+		}
+
+		left := entry.expiresAt.Sub(now)
+		if left > longest {
+			longest = left
+		}
+	}
+
+	return longest, longest > 0
+}
+
+// failed records one wrong password against both counters.
+func (l *loginLimiter) failed(address string, accountID uint) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+
+	now := l.now()
+
+	for _, key := range loginKeysOf(address, accountID) {
+		limit, blockFor := key.limits()
+
+		entry, ok := l.live(key, now)
+		if !ok {
+			entry = loginFailures{expiresAt: now.Add(loginFailureWindow)}
+		}
+
+		entry.count++
+
+		if entry.count >= limit {
+			entry.blocked = true
+			entry.expiresAt = now.Add(blockFor)
+		}
+
+		l.failures[key] = entry
+	}
+
+	l.prune(now)
+}
+
+// succeeded forgets both counters of an attempt that got the password right.
+//
+// It is what keeps the limit off the operator: somebody who mistypes four times
+// and then signs in is back at nothing, rather than carrying those four
+// failures into the next quarter of an hour where one more slip would hold
+// them. It costs an attacker nothing to reach, because reaching it means they
+// already have the password.
+func (l *loginLimiter) succeeded(address string, accountID uint) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+
+	for _, key := range loginKeysOf(address, accountID) {
+		delete(l.failures, key)
+	}
+}
+
+// prune keeps the map from being the attack.
+//
+// It runs only when the map is over its ceiling, which no ordinary use reaches.
+// First what has run out goes, which under a flood of single failures from
+// changing addresses is most of it. If that is not enough, what is left is all
+// still counting, and what goes then is whatever was closest to going anyway:
+// the entries are cut back to loginLimiterKeepAddresses by deadline, oldest
+// first.
+//
+// Only address entries are ever evicted. There is one account entry per row of
+// the account table and the table holds one row, so account entries are not a
+// way to grow anything - and if they could be evicted, a flood of addresses
+// would be a way to lift the hold off the account, which is the opposite of
+// what the ceiling is for.
+func (l *loginLimiter) prune(now time.Time) {
+	if len(l.failures) <= loginLimiterMaxAddresses {
+		return
+	}
+
+	for key, entry := range l.failures {
+		if !now.Before(entry.expiresAt) {
+			delete(l.failures, key)
+		}
+	}
+
+	addresses := make([]loginKey, 0, len(l.failures))
+
+	for key := range l.failures {
+		if key.kind == loginKeyAddress {
+			addresses = append(addresses, key)
+		}
+	}
+
+	if len(addresses) <= loginLimiterKeepAddresses {
+		return
+	}
+
+	sort.Slice(addresses, func(i, j int) bool {
+		return l.failures[addresses[i]].expiresAt.Before(l.failures[addresses[j]].expiresAt)
+	})
+
+	for _, key := range addresses[:len(addresses)-loginLimiterKeepAddresses] {
+		delete(l.failures, key)
+	}
+}
+
+// loginAddress returns what the login attempt is counted against.
+//
+// It is the address the connection came from, and it is read from the socket
+// rather than from a header. echo's RealIP believes X-Forwarded-For, which is a
+// header any client can put anything in: counting by it unasked would make the
+// per address limit a line an attacker steps over by writing a different number
+// on every request, and it would also let them pin the failures on somebody
+// else's address. The forwarding headers are read only where the operator has
+// said that a proxy they run is the only thing that can set them, which is the
+// same switch and the same reasoning as cookieIsSecure in auth.go.
+func (h *AuthHandler) loginAddress(c echo.Context) string {
+	if h.trustProxyHeaders {
+		return c.RealIP()
+	}
+
+	// RemoteAddr is host:port and the port is a different one on every
+	// connection, so only the host half is the counter's name.
+	host, _, err := net.SplitHostPort(c.Request().RemoteAddr)
+	if err != nil {
+		return c.Request().RemoteAddr
+	}
+
+	return host
+}
+
+// refuseHeldLogin is the answer to a login that is not being checked.
+//
+// It says nothing about the account. It cannot say which of the two counters is
+// holding, whether the username sent exists, or whether the password was right,
+// because all three are things the sender is here to find out and the refusal
+// is reached before any of them is looked at. That is the same reason every
+// failed login is answered with one sentence (invalidCredentialsMessage).
+//
+// Retry-After is sent. It tells the sender how long the hold they are already
+// in has left to run, which is something they find out anyway by trying again,
+// and against that it is what lets an operator who is locked out know whether
+// to wait or to go and restart the service. A client that is not a browser gets
+// the same number in the sentence, so neither has to guess at a number by
+// retrying, which is the traffic this is here to stop.
+func (h *AuthHandler) refuseHeldLogin(c echo.Context, wait time.Duration) error {
+	// Rounded up, so that a client that comes back exactly when it was told to
+	// is past the deadline rather than one tick short of it.
+	seconds := int((wait + time.Second - 1) / time.Second)
+	if seconds < 1 {
+		seconds = 1
+	}
+
+	c.Response().Header().Set(echo.HeaderRetryAfter, strconv.Itoa(seconds))
+
+	return failure(c, http.StatusTooManyRequests, errAuthTooManyAttempts,
+		errorArgs{"retry_after": strconv.Itoa(seconds)})
+}

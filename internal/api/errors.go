@@ -89,6 +89,7 @@ const (
 	errAuthSetupFailed         errorCode = "auth.setup.failed"
 	errAuthPasswordTooShort    errorCode = "auth.password.too_short"
 	errAuthPasswordTooLong     errorCode = "auth.password.too_long"
+	errAuthTooManyAttempts     errorCode = "auth.attempts.too_many"
 
 	errAccountReadFailed        errorCode = "account.read_failed"
 	errAccountStoreFailed       errorCode = "account.store_failed"
@@ -249,6 +250,13 @@ var errorMessages = map[errorCode]string{
 	errAuthSetupFailed:      "Failed to set up the account",
 	errAuthPasswordTooShort: "Password must be at least {min} bytes long",
 	errAuthPasswordTooLong:  "Password must be at most {max} bytes long, because that is as far as bcrypt reads",
+	// The answer to a login that is not being checked at all. It says how long
+	// the hold has left to run, which is what the header beside it says, and it
+	// says nothing else: which of the two counters is holding, whether the
+	// username sent exists and whether the password was right are all things
+	// the sender is here to find out, and none of them is looked at before this
+	// is raised.
+	errAuthTooManyAttempts: "Too many failed sign in attempts. No password is checked for the next {retry_after} seconds. Both the address an attempt came from and the account are counted, and this answer does not say which of the two was reached",
 
 	// The one account this API is served behind.
 	errAccountReadFailed:        "Failed to read the account",
