@@ -368,6 +368,165 @@ func tunnelAddresses(host *models.Host, sp *models.ServicePort) (local, server, 
 		net.JoinHostPort(sp.ServiceIP, strconv.Itoa(sp.ServicePort))
 }
 
+// The two statuses a tunnel is left in when the host key check refused the
+// connection. They stand apart from the other statuses because they are the
+// only ones an operator answers rather than fixes: every other failure is
+// something to put right on the Host or on the way to it, and these two are a
+// question about the identity of the server that only a person can settle.
+//
+// They are exported because the approval API and the screens branch on them.
+// A Host that has never been approved and a Host whose key changed under it
+// are shown differently and approved differently, and which of the two it is
+// is decided here, where the keys were compared.
+const (
+	// StatusHostKeyUnapproved is a Host that carries no trusted key. The
+	// server presented one, nobody has said it is the right one, and there is
+	// nothing to compare it against until somebody does.
+	StatusHostKeyUnapproved = "host_key_unapproved"
+	// StatusHostKeyMismatch is a Host that carries a trusted key and was
+	// presented a different one. Either the server was rebuilt and given a
+	// new key, or the connection is not reaching the server at all, and the
+	// two cannot be told apart from here.
+	StatusHostKeyMismatch = "host_key_mismatch"
+)
+
+// MarshalHostKey writes a public key the way a Host row holds one:
+// "<algorithm> <base64>", an authorized_keys line without the comment that may
+// follow it.
+//
+// Every key that is stored and every key that is compared goes through this
+// one function, so the comparison is a string comparison and cannot fail on
+// two spellings of the same key.
+func MarshalHostKey(key ssh.PublicKey) string {
+	return strings.TrimSpace(string(ssh.MarshalAuthorizedKey(key)))
+}
+
+// HostKeyFingerprint returns the SHA256 fingerprint of a key held in the form
+// a Host row holds one: "SHA256:" followed by the digest in unpadded base64,
+// which is what ssh(1) prints and what ssh-keygen -lf reports for the key file
+// on the server. That is the form an operator can compare; the key in full is
+// a line nobody reads to the end.
+//
+// A stored value that is empty or that cannot be read as a key gives an empty
+// string. Neither is a failure worth reporting: the first is a Host that
+// carries no key, which is the normal state of one that has never been
+// approved, and the second is a row somebody wrote by hand, which is answered
+// by showing no fingerprint rather than by taking the screen down.
+func HostKeyFingerprint(stored string) string {
+	stored = strings.TrimSpace(stored)
+	if stored == "" {
+		return ""
+	}
+
+	key, _, _, _, err := ssh.ParseAuthorizedKey([]byte(stored))
+	if err != nil {
+		return ""
+	}
+
+	return ssh.FingerprintSHA256(key)
+}
+
+// HostKeyError reports that the SSH server is not the one the Host is trusted
+// on. It is raised inside the handshake, which runs the host key check before
+// any authentication, so a server that fails it is never offered the password
+// or the private key of the Host.
+//
+// It carries the status the tunnel row is left in, so that what is shown and
+// what is asked before the key is approved follow from the refusal itself
+// rather than from a second comparison somewhere else.
+type HostKeyError struct {
+	// Status is StatusHostKeyUnapproved or StatusHostKeyMismatch.
+	Status string
+	// Presented is the key the server offered, in the stored form.
+	Presented string
+	// Trusted is the key the Host is trusted on, in the stored form, and is
+	// empty for a Host that carries none.
+	Trusted string
+}
+
+func (e *HostKeyError) Error() string {
+	if e.Status == StatusHostKeyMismatch {
+		return fmt.Sprintf("the SSH server presented the host key %s, and this Host is trusted on %s. "+
+			"Either the server was rebuilt and given a new key, or this connection is not reaching the "+
+			"server it is meant for. Find out which before approving the key that was presented",
+			HostKeyFingerprint(e.Presented), HostKeyFingerprint(e.Trusted))
+	}
+
+	return fmt.Sprintf("the SSH server presented the host key %s and no host key has been approved for "+
+		"this Host. Compare it with the fingerprint the server itself reports, ssh-keygen -lf on its host "+
+		"key file, and approve it to let the tunnels connect", HostKeyFingerprint(e.Presented))
+}
+
+// hostKeyRefusal returns the host key refusal inside err, and nil when err is
+// not one. The library wraps whatever the callback returned into the error it
+// reports the handshake with (x/crypto/ssh, NewClientConn), so the refusal is
+// unwrapped out of it rather than compared against.
+func hostKeyRefusal(err error) *HostKeyError {
+	var refusal *HostKeyError
+	if errors.As(err, &refusal) {
+		return refusal
+	}
+
+	return nil
+}
+
+// hostKeyCallback builds what the handshake asks whether the server that
+// answered is the one this Host is trusted on.
+//
+// A Host that carries no approved key reaches nothing. Trusting the first key
+// that is presented is what an ssh client does and is far less work for
+// whoever registers a Host, but it settles the question at the one moment it
+// cannot be answered: somebody on the path while a Host is registered has
+// their own key written down as the trusted one, and every connection after
+// that is checked against it and passes. Registering a Host happens rarely and
+// reading a fingerprint once is cheap, while a trust fixed on the wrong key is
+// never noticed at all.
+//
+// Whatever was presented is written to the Host row so that there is something
+// to show and to approve. It is written under PendingHostKey and never under
+// HostKey, because nothing this end sees makes a key the right one; the only
+// thing that does is a person who compared the fingerprint with the server.
+//
+// What the trust is compared against is read here, where the tunnel is built,
+// and not in the callback. A key approved in the meantime changes the
+// connection fingerprint of the tunnel, and a reconcile pass then builds the
+// tunnel again, rather than the trust of a connection that already stands
+// changing underneath it.
+func (m *Manager) hostKeyCallback(host *models.Host) ssh.HostKeyCallback {
+	hostID, hostIP, trusted := host.ID, host.IP, host.HostKey
+
+	return func(_ string, _ net.Addr, key ssh.PublicKey) error {
+		presented := MarshalHostKey(key)
+		if trusted != "" && presented == trusted {
+			return nil
+		}
+
+		refusal := &HostKeyError{
+			Status:    StatusHostKeyUnapproved,
+			Presented: presented,
+			Trusted:   trusted,
+		}
+		if trusted != "" {
+			refusal.Status = StatusHostKeyMismatch
+		}
+
+		err := m.db.Model(&models.Host{}).Where("id = ?", hostID).
+			Update("pending_host_key", presented).Error
+		if err != nil {
+			// The connection is refused either way. A key that could not be
+			// written down is one nobody can approve, which is worse than the
+			// refusal and is no reason to let the connection through. It is
+			// carried on the refusal instead of being logged on its own, so
+			// that it reaches the tunnel row and the line the caller writes
+			// about the connection that was not made.
+			return fmt.Errorf("%w. The key that was presented could not be stored for approval "+
+				"(host_id=%d, host_ip=%s): %v", refusal, hostID, hostIP, err)
+		}
+
+		return refusal
+	}
+}
+
 func (m *Manager) StartTunnel(host *models.Host, sp *models.ServicePort) error {
 	if !host.Enabled {
 		m.logger.Info("skipped starting tunnel for disabled Host",
@@ -394,7 +553,7 @@ func (m *Manager) StartTunnel(host *models.Host, sp *models.ServicePort) error {
 	sshConfig := &ssh.ClientConfig{
 		User:            host.User,
 		Auth:            auth,
-		HostKeyCallback: ssh.InsecureIgnoreHostKey(),
+		HostKeyCallback: m.hostKeyCallback(host),
 		Timeout:         time.Second * 10,
 	}
 

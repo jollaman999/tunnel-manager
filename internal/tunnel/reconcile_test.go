@@ -1015,3 +1015,44 @@ func TestDesiredTunnelsReportsAssignmentsThatCannotBeRead(t *testing.T) {
 		t.Fatal("a pass that could not read the assignments stopped the tunnel that was running")
 	}
 }
+
+// TestReconcileRebuildsATunnelWhenItsHostKeyIsApproved is the other half of a
+// tunnel that gives up on a host key it was refused. The tunnel holds no
+// connection to drop, so nothing else would ever make it read the approval,
+// and without the key in the connection fingerprint it would stay down until
+// the process was restarted.
+func TestReconcileRebuildsATunnelWhenItsHostKeyIsApproved(t *testing.T) {
+	hosts := []models.Host{enabledHost(1, true)}
+	sps := []models.ServicePort{testServicePort(2)}
+
+	m, err := NewManager(newWritableStubDB(t, hosts, sps), zap.NewNop(), newTestCipher(t), 1)
+	if err != nil {
+		t.Fatalf("failed to create manager: %v", err)
+	}
+	t.Cleanup(m.StopAllTunnels)
+
+	tun := registerStoppedTunnel(t, m, 1, 2)
+	tun.connFP = connectionFingerprint(&hosts[0], &sps[0], hostCreds{password: hosts[0].Password})
+
+	result, err := m.Reconcile()
+	if err != nil {
+		t.Fatalf("Reconcile returned an error: %v", err)
+	}
+	if result.Restarted != 0 {
+		t.Fatalf("the pass restarted %d tunnels before anything was approved, want 0", result.Restarted)
+	}
+
+	hosts[0].HostKey = MarshalHostKey(testHostKey(t))
+
+	result, err = m.Reconcile()
+	if err != nil {
+		t.Fatalf("Reconcile returned an error: %v", err)
+	}
+	if result.Restarted != 1 {
+		t.Fatalf("the pass restarted %d tunnels after the host key was approved, want 1", result.Restarted)
+	}
+
+	if runningKeys(m)["1-2"] == tun {
+		t.Fatal("the tunnel still runs on the trust it was built with")
+	}
+}

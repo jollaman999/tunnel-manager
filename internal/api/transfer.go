@@ -86,8 +86,30 @@ type hostContent struct {
 	Password      string `json:"password"`
 	PrivateKey    string `json:"private_key"`
 	KeyPassphrase string `json:"key_passphrase"`
-	Description   string `json:"description"`
-	Enabled       bool   `json:"enabled"`
+	// HostKey is the public key the SSH server of this Host is trusted on,
+	// carried as models.Host holds it. It is not sealed with the key of an
+	// installation the way the three above are, because it is not a secret,
+	// so what goes into the file is what the row holds.
+	//
+	// It is in the file so that moving a configuration does not throw the
+	// trust away. A Host reaches nothing until the key of its server has been
+	// approved by a person, and an installation that took the Hosts in without
+	// their keys would connect to none of them until somebody had approved
+	// every one again, one at a time. The file already carries the SSH
+	// password and the PEM private key of every Host, so leaving out a public
+	// key protects nothing and costs that.
+	//
+	// models.Host.PendingHostKey is deliberately not here. It is what some
+	// server presented on a connection that was refused, which is the state of
+	// a connection this installation made rather than anything the operator
+	// asked for, and the question it stands for is about a machine that the
+	// installation reading the file has not spoken to yet. Carried across, it
+	// would put an approval on the screen of the other installation for a key
+	// nothing there ever saw. The import drops it for the same reason:
+	// importHost.
+	HostKey     string `json:"host_key"`
+	Description string `json:"description"`
+	Enabled     bool   `json:"enabled"`
 	// AssignedLocalPorts is which service ports this Host carries, named by
 	// their local port rather than by the id of the row. The ids belong to the
 	// installation the file came from, so a file carrying them would point at
@@ -516,6 +538,7 @@ func (h *TransferHandler) unsealHost(host models.Host) (hostContent, error) {
 		Password:      password,
 		PrivateKey:    privateKey,
 		KeyPassphrase: keyPassphrase,
+		HostKey:       host.HostKey,
 		Description:   host.Description,
 		Enabled:       host.Enabled,
 	}, nil
@@ -881,6 +904,17 @@ func (h *TransferHandler) importHost(c echo.Context, tx *gorm.DB, host hostConte
 		stored.Password = password
 		stored.PrivateKey = privateKey
 		stored.KeyPassphrase = keyPassphrase
+		stored.HostKey = host.HostKey
+		// The pending key is dropped rather than kept. It was the key some
+		// server presented to this installation while the row was trusted on
+		// what it was trusted on before, and the answer to it is "is this the
+		// right server". The file has just said what the right key is, so that
+		// question is no longer the one being asked: approving the old pending
+		// key would overwrite what was imported with a key the file did not
+		// name. Dropping it costs nothing, since a server that still presents
+		// something other than the imported key writes the pending key again
+		// on the next connection, with what it presents now.
+		stored.PendingHostKey = ""
 		stored.Description = host.Description
 		stored.Enabled = host.Enabled
 
@@ -902,6 +936,7 @@ func (h *TransferHandler) importHost(c echo.Context, tx *gorm.DB, host hostConte
 		Password:      password,
 		PrivateKey:    privateKey,
 		KeyPassphrase: keyPassphrase,
+		HostKey:       host.HostKey,
 		Description:   host.Description,
 		Enabled:       host.Enabled,
 	}

@@ -28,12 +28,35 @@ type Host struct {
 	// it when the key is protected by one. Both are kept out of every response:
 	// a key that leaves this process is a key into every machine that trusts
 	// it, and a passphrase beside it takes the protection off.
-	PrivateKey    string    `json:"-"`
-	KeyPassphrase string    `json:"-"`
-	Description   string    `json:"description"`
-	Enabled       bool      `json:"enabled"`
-	CreatedAt     time.Time `json:"created_at"`
-	UpdatedAt     time.Time `json:"updated_at"`
+	PrivateKey    string `json:"-"`
+	KeyPassphrase string `json:"-"`
+	// HostKey is the public key the SSH server of this Host is trusted on,
+	// written as "<algorithm> <base64>", which is an authorized_keys line
+	// without the comment that may follow it. A connection is made only to a
+	// server that presents exactly this key, so a Host that carries none
+	// reaches nothing until the key that was presented has been approved.
+	//
+	// PendingHostKey is what a server presented on a connection that was
+	// refused for that reason, in the same form. It is what the approval is
+	// asked about, and it is never promoted to HostKey by anything but a
+	// person: nothing this end can see makes a key the right one.
+	//
+	// Neither is kept out of responses the way the password and the private
+	// key are, because a public key is not a secret. What is put on a screen
+	// is the SHA256 fingerprint rather than the key itself, which is short
+	// enough to read out and compare against what the server says about
+	// itself, so an answer carrying one of these turns it into a fingerprint
+	// first.
+	//
+	// Neither carries "not null". The columns are added to installations
+	// whose rows were written before they existed, and AutoMigrate fills
+	// those with NULL, the way it did for Tunnel.ServerBanner below.
+	HostKey        string    `json:"host_key"`
+	PendingHostKey string    `json:"pending_host_key"`
+	Description    string    `json:"description"`
+	Enabled        bool      `json:"enabled"`
+	CreatedAt      time.Time `json:"created_at"`
+	UpdatedAt      time.Time `json:"updated_at"`
 }
 
 type ServicePort struct {

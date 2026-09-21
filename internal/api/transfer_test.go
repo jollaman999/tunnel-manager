@@ -196,6 +196,7 @@ func (i *transferInstall) registerHost(t *testing.T, host hostContent) models.Ho
 		Password:      password,
 		PrivateKey:    privateKey,
 		KeyPassphrase: keyPassphrase,
+		HostKey:       host.HostKey,
 		Description:   host.Description,
 		Enabled:       host.Enabled,
 	}
@@ -318,7 +319,17 @@ func TestTheSettingsContentCarriesEverySetting(t *testing.T) {
 // TestTheHostContentCarriesEveryFieldOfAHost does for a Host what the test
 // above does for the settings.
 func TestTheHostContentCarriesEveryFieldOfAHost(t *testing.T) {
-	left := map[string]bool{"ID": true, "CreatedAt": true, "UpdatedAt": true}
+	// PendingHostKey is the one field left out that is not a column about the
+	// row itself. It is the key some server presented on a connection this
+	// installation was refused on, waiting for a person to say whether it is
+	// the right one, so it describes a connection rather than the
+	// configuration. Carried in a file, it would ask the installation that
+	// imports it to approve a key presented to a machine it is not, about a
+	// server it has never spoken to. HostKey, the key already approved, is
+	// carried: see hostContent.
+	left := map[string]bool{
+		"ID": true, "CreatedAt": true, "UpdatedAt": true, "PendingHostKey": true,
+	}
 
 	stored := reflect.TypeOf(models.Host{})
 	carried := reflect.TypeOf(hostContent{})
@@ -1281,6 +1292,142 @@ func TestAnImportedHostThatWasDisabledStaysDisabled(t *testing.T) {
 			t.Errorf("the Host %s arrived with enabled %v, want %v",
 				want.IP, stored.Enabled, want.Enabled)
 		}
+	}
+}
+
+// testTrustedHostKey and testPresentedHostKey are two keys of the form a Host
+// row holds one in, "<algorithm> <base64>". Nothing in these tests speaks SSH,
+// so what matters about them is that they are two different strings that look
+// like what the tunnels write.
+const (
+	testTrustedHostKey   = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIHRoZVRydXN0ZWRLZXlPZlRoZVNlcnZlcg"
+	testPresentedHostKey = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIHRoZVByZXNlbnRlZEtleU9mQVNlcnZlcg"
+)
+
+// presentedAKeyNobodyHasApproved writes onto a stored Host what a server
+// presented on a connection that was refused, which is what the tunnels do
+// when the key they are offered is not the one the Host is trusted on.
+func (i *transferInstall) presentedAKeyNobodyHasApproved(t *testing.T, hostIP string, key string) {
+	t.Helper()
+
+	err := i.db.Model(&models.Host{}).Where("ip = ?", hostIP).
+		Update("pending_host_key", key).Error
+	if err != nil {
+		t.Fatalf("failed to store the pending key of the Host %s: %v", hostIP, err)
+	}
+}
+
+// TestTheTrustedHostKeyComesAcrossAndThePendingOneDoesNot is the round trip of
+// the two keys of a Host.
+//
+// The approved key is what makes a Host reachable: a tunnel is built only to a
+// server that presents it, so an installation that took the Hosts in without
+// it would connect to none of them until a person had approved every server
+// again. The key waiting for approval is the other way round. It is what some
+// server presented to the installation the file came from, on a connection
+// that was refused, so on the installation reading the file it stands for a
+// conversation that never happened there.
+func TestTheTrustedHostKeyComesAcrossAndThePendingOneDoesNot(t *testing.T) {
+	source := newTransferInstall(t)
+	target := newTransferInstall(t)
+
+	withKey, _ := twoHosts(t)
+	withKey.HostKey = testTrustedHostKey
+
+	source.registerHost(t, withKey)
+	source.presentedAKeyNobodyHasApproved(t, withKey.IP, testPresentedHostKey)
+
+	file := source.exportTunnels(t, testExportPassword)
+
+	// Opened rather than read as JSON: the pending key must not be anywhere in
+	// the content, under whatever name.
+	opened, err := crypto.DecryptWithPassword(file, testExportPassword)
+	if err != nil {
+		t.Fatalf("the exported file does not open: %v", err)
+	}
+
+	if !strings.Contains(opened, testTrustedHostKey) {
+		t.Errorf("the file does not carry the key the Host is trusted on")
+	}
+
+	if strings.Contains(opened, testPresentedHostKey) {
+		t.Errorf("the file carries the key the Host is waiting for an approval of")
+	}
+
+	rec := target.importTunnels(t, file, testExportPassword, false)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("the import answered %d: %s", rec.Code, rec.Body.String())
+	}
+
+	var stored models.Host
+
+	err = target.db.Where("ip = ?", withKey.IP).First(&stored).Error
+	if err != nil {
+		t.Fatalf("the Host %s did not arrive: %v", withKey.IP, err)
+	}
+
+	if stored.HostKey != testTrustedHostKey {
+		t.Errorf("the Host arrived trusted on %q, want %q", stored.HostKey, testTrustedHostKey)
+	}
+
+	if stored.PendingHostKey != "" {
+		t.Errorf("the Host arrived waiting for an approval of %q, want none", stored.PendingHostKey)
+	}
+}
+
+// TestImportingOverAHostDropsTheKeyItWasWaitingOnApprovalFor is the same two
+// keys on a row that is already here.
+//
+// The Host on this installation is trusted on one key and has been presented
+// another, so somebody is being asked whether the server changed. The file
+// then says what the key is. Approving the pending one after that would put
+// back a key the file did not name, and the question it stands for was asked
+// about the trust the row held before, so the import drops it. Nothing is lost
+// by that: a server that still presents something else writes the pending key
+// again on the next connection.
+func TestImportingOverAHostDropsTheKeyItWasWaitingOnApprovalFor(t *testing.T) {
+	source := newTransferInstall(t)
+	target := newTransferInstall(t)
+
+	withKey, _ := twoHosts(t)
+	withKey.HostKey = testTrustedHostKey
+	source.registerHost(t, withKey)
+
+	here := withKey
+	here.HostKey = "ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAABgQCtheKeyThisInstallationTrusted"
+	target.registerHost(t, here)
+	target.presentedAKeyNobodyHasApproved(t, here.IP, testPresentedHostKey)
+
+	file := source.exportTunnels(t, testExportPassword)
+
+	rec := target.importTunnels(t, file, testExportPassword, true)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("the import answered %d: %s", rec.Code, rec.Body.String())
+	}
+
+	var imported importedTunnels
+
+	decodeTransfer(t, rec).into(t, &imported)
+
+	if imported.Replaced != 1 {
+		t.Fatalf("the import replaced %d Hosts, want 1", imported.Replaced)
+	}
+
+	var stored models.Host
+
+	err := target.db.Where("ip = ?", withKey.IP).First(&stored).Error
+	if err != nil {
+		t.Fatalf("the Host %s is no longer stored: %v", withKey.IP, err)
+	}
+
+	if stored.HostKey != testTrustedHostKey {
+		t.Errorf("the Host is trusted on %q, want the %q the file carried",
+			stored.HostKey, testTrustedHostKey)
+	}
+
+	if stored.PendingHostKey != "" {
+		t.Errorf("the Host is still waiting for an approval of %q, want none",
+			stored.PendingHostKey)
 	}
 }
 

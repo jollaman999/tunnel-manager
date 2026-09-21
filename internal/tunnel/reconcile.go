@@ -59,6 +59,15 @@ type connFingerprint [sha256.Size]byte
 // hours later and looks like the key failing rather than the key never having
 // been used.
 //
+// The host key the Host is trusted on is in here because approving one is a
+// change to how the connection is made rather than to what it logs in with.
+// The trust is read where the tunnel is built, so a tunnel that was refused
+// for a key nobody had approved goes on being refused against the empty value
+// it was built with. Without this, approving a key would take hold only when
+// something else brought the connection down, and a tunnel that was refused
+// has no connection left to bring down: it would stay down until the process
+// was restarted.
+//
 // Every value is written with its length in front, so that two different sets
 // of settings cannot produce the same input to the hash.
 func connectionFingerprint(host *models.Host, sp *models.ServicePort, creds hostCreds) connFingerprint {
@@ -68,6 +77,7 @@ func connectionFingerprint(host *models.Host, sp *models.ServicePort, creds host
 	for _, value := range []string{
 		server, remote, local, host.User,
 		creds.password, creds.privateKey, creds.passphrase,
+		host.HostKey,
 	} {
 		_, _ = fmt.Fprintf(h, "%d:%s", len(value), value)
 	}

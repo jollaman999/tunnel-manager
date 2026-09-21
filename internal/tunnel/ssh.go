@@ -527,6 +527,19 @@ func (t *SSHTunnel) dialSSH() (*ssh.Client, net.Conn, error) {
 	return ssh.NewClient(c, chans, reqs), conn, nil
 }
 
+// connectFailureStatus is the status a connection that was not made leaves on
+// the tunnel row. A host key that was refused is a state of its own rather
+// than a plain error: it is the one failure that is answered on the screen
+// instead of being fixed on the Host, and which of the two refusals it was
+// decides what the operator is shown and what is asked of them.
+func connectFailureStatus(err error) string {
+	if refusal := hostKeyRefusal(err); refusal != nil {
+		return refusal.Status
+	}
+
+	return "error"
+}
+
 func (t *SSHTunnel) establishConnection(m *Manager, tunnel *models.Tunnel) error {
 	client, clientConn, err := t.dialSSH()
 	if err != nil {
@@ -537,7 +550,7 @@ func (t *SSHTunnel) establishConnection(m *Manager, tunnel *models.Tunnel) error
 			zap.String("remote", t.Remote.String()), zap.Error(err))
 
 		t.tunnelMu.Lock()
-		tunnel.Status = "error"
+		tunnel.Status = connectFailureStatus(err)
 		tunnel.LastError = err.Error()
 		t.saveTunnelStatus(m, tunnel)
 		t.tunnelMu.Unlock()
@@ -719,7 +732,22 @@ func (t *SSHTunnel) Start(m *Manager, tunnel *models.Tunnel) {
 					continue
 				}
 
-				if isAuthFailure(err) {
+				// Credentials the server refused and a host key that was not
+				// approved are both refusals that no number of attempts turns
+				// into a connection. The first needs the credentials of the
+				// Host changed and the second needs a person to compare a
+				// fingerprint, and neither happens because a tunnel tried
+				// again. Retrying would write a line every interval, for
+				// every tunnel of that Host, for as long as the process runs,
+				// and the log an operator has to read to find out why would
+				// be the thing burying it.
+				//
+				// Giving up does not leave the tunnel unreachable. Both of
+				// those changes are changes to the connection settings, so a
+				// reconcile pass sees a fingerprint that no longer matches
+				// and builds the tunnel again, and until then the tunnel row
+				// says which refusal it was.
+				if isAuthFailure(err) || hostKeyRefusal(err) != nil {
 					t.logger.Error("connection failed",
 						logid.TunnelConnectFailedGivingUp.Field(),
 						zap.String("local", t.Local.String()),

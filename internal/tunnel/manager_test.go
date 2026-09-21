@@ -15,6 +15,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -1692,5 +1693,380 @@ func TestStartTunnelWritesARowThatSaysNothingWasMeasured(t *testing.T) {
 	}
 	if created.ServerBanner != "" {
 		t.Fatalf("the created row carries a banner %q before a handshake happened", created.ServerBanner)
+	}
+}
+
+// testHostKey generates a public key to stand for the one an SSH server
+// presents.
+func testHostKey(t *testing.T) ssh.PublicKey {
+	t.Helper()
+
+	public, _, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatalf("failed to generate a host key: %v", err)
+	}
+
+	key, err := ssh.NewPublicKey(public)
+	if err != nil {
+		t.Fatalf("failed to read the generated host key: %v", err)
+	}
+
+	return key
+}
+
+// TestAHostKeyIsStoredAsOneLineAndShownAsItsFingerprint pins both halves of
+// the form the Host row holds a key in. The stored form is what two keys are
+// compared as, so it has to be one line and the same line for the same key,
+// and the fingerprint is what is put in front of an operator, so it has to be
+// the string ssh(1) prints for that key and nothing of our own.
+func TestAHostKeyIsStoredAsOneLineAndShownAsItsFingerprint(t *testing.T) {
+	public := testHostKey(t)
+	stored := MarshalHostKey(public)
+
+	if strings.ContainsAny(stored, "\r\n") {
+		t.Fatalf("the stored form %q is not a single line", stored)
+	}
+	if fields := strings.Fields(stored); len(fields) != 2 {
+		t.Fatalf("the stored form %q is not \"<algorithm> <base64>\"", stored)
+	}
+
+	parsed, _, _, _, err := ssh.ParseAuthorizedKey([]byte(stored))
+	if err != nil {
+		t.Fatalf("the stored form cannot be read back as a key: %v", err)
+	}
+	if !bytes.Equal(parsed.Marshal(), public.Marshal()) {
+		t.Fatal("the stored form reads back as a different key")
+	}
+
+	fingerprint := HostKeyFingerprint(stored)
+	if fingerprint != ssh.FingerprintSHA256(public) {
+		t.Fatalf("the fingerprint of the stored key is %q, want %q",
+			fingerprint, ssh.FingerprintSHA256(public))
+	}
+	if !strings.HasPrefix(fingerprint, "SHA256:") {
+		t.Fatalf("the fingerprint %q does not say which digest it is", fingerprint)
+	}
+	if strings.Contains(fingerprint, "=") {
+		t.Fatalf("the fingerprint %q is padded, which is not what ssh(1) prints", fingerprint)
+	}
+
+	// A Host that carries no key and a row somebody wrote by hand both leave
+	// the screen without a fingerprint rather than taking it down.
+	for _, stored := range []string{"", "   ", "this is not a key"} {
+		if got := HostKeyFingerprint(stored); got != "" {
+			t.Fatalf("HostKeyFingerprint(%q) = %q, want no fingerprint at all", stored, got)
+		}
+	}
+}
+
+// newPendingHostKeyStubDB returns a stub that records every value written to
+// the pending_host_key column, so a test can see what a refused connection
+// wrote down for approval. A non-nil updateErr makes every update fail.
+func newPendingHostKeyStubDB(t *testing.T, written *[]string, mu *sync.Mutex, updateErr error) *gorm.DB {
+	t.Helper()
+
+	db := newFailingDB(t)
+
+	err := db.Callback().Update().Replace("gorm:update", func(tx *gorm.DB) {
+		if updateErr != nil {
+			_ = tx.AddError(updateErr)
+
+			return
+		}
+
+		values, ok := tx.Statement.Dest.(map[string]interface{})
+		if !ok {
+			return
+		}
+
+		value, ok := values["pending_host_key"].(string)
+		if !ok {
+			return
+		}
+
+		mu.Lock()
+		*written = append(*written, value)
+		mu.Unlock()
+	})
+	if err != nil {
+		t.Fatalf("failed to replace the update callback: %v", err)
+	}
+
+	// A tunnel row that is saved reaches the create callback, because gorm
+	// falls back to an insert when the update it ran changed no row.
+	err = db.Callback().Create().Replace("gorm:create", func(tx *gorm.DB) {})
+	if err != nil {
+		t.Fatalf("failed to replace the create callback: %v", err)
+	}
+
+	return db
+}
+
+// startHostKeySSHServer speaks SSH with a host key of its own and asks nothing
+// of the client. It hands back the address, the key it presents and a count of
+// the connections it accepted, which is what says whether a client that was
+// refused kept trying.
+func startHostKeySSHServer(t *testing.T) (string, ssh.PublicKey, *atomic.Int64) {
+	t.Helper()
+
+	_, priv, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatalf("failed to generate host key: %v", err)
+	}
+
+	signer, err := ssh.NewSignerFromKey(priv)
+	if err != nil {
+		t.Fatalf("failed to create signer: %v", err)
+	}
+
+	config := &ssh.ServerConfig{NoClientAuth: true}
+	config.AddHostKey(signer)
+
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("failed to listen: %v", err)
+	}
+
+	done := make(chan struct{})
+	t.Cleanup(func() {
+		close(done)
+		_ = ln.Close()
+	})
+
+	var accepted atomic.Int64
+
+	go func() {
+		for {
+			conn, err := ln.Accept()
+			if err != nil {
+				return
+			}
+
+			accepted.Add(1)
+
+			go func(conn net.Conn) {
+				sshConn, chans, reqs, err := ssh.NewServerConn(conn, config)
+				if err != nil {
+					_ = conn.Close()
+
+					return
+				}
+
+				go ssh.DiscardRequests(reqs)
+				go func() {
+					for newChannel := range chans {
+						_ = newChannel.Reject(ssh.Prohibited, "nothing is served here")
+					}
+				}()
+
+				// Held open until the test is over, so a client that got
+				// through the handshake is not raced by a server closing
+				// under it.
+				<-done
+				_ = sshConn.Close()
+			}(conn)
+		}
+	}()
+
+	return ln.Addr().String(), signer.PublicKey(), &accepted
+}
+
+// TestTheHostKeyDecidesWhetherTheConnectionIsMade runs the three answers
+// against a handshake with a real SSH server rather than against the callback
+// on its own. What is pinned that way is the key as x/crypto/ssh presents it
+// against the form the Host row holds, which is the comparison that has to
+// hold for a Host to connect at all.
+func TestTheHostKeyDecidesWhetherTheConnectionIsMade(t *testing.T) {
+	addr, presented, _ := startHostKeySSHServer(t)
+	stored := MarshalHostKey(presented)
+
+	cases := []struct {
+		name    string
+		trusted string
+		// want is the status the refusal carries, and an empty one is a
+		// connection that is made.
+		want string
+	}{
+		{"a Host that carries no approved key", "", StatusHostKeyUnapproved},
+		{"a Host that is trusted on another key", MarshalHostKey(testHostKey(t)), StatusHostKeyMismatch},
+		{"a Host that is trusted on the key the server presents", stored, ""},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			var mu sync.Mutex
+			var written []string
+
+			m, err := NewManager(newPendingHostKeyStubDB(t, &written, &mu, nil),
+				zap.NewNop(), newTestCipher(t), 1)
+			if err != nil {
+				t.Fatalf("failed to create manager: %v", err)
+			}
+
+			host := &models.Host{ID: 7, IP: "127.0.0.1", Port: 22, User: "user",
+				HostKey: tc.trusted, Enabled: true}
+
+			client, err := ssh.Dial("tcp", addr, &ssh.ClientConfig{
+				User:            "user",
+				HostKeyCallback: m.hostKeyCallback(host),
+				Timeout:         10 * time.Second,
+			})
+
+			mu.Lock()
+			got := append([]string(nil), written...)
+			mu.Unlock()
+
+			if tc.want == "" {
+				if err != nil {
+					t.Fatalf("the connection to a server presenting the approved key was refused: %v", err)
+				}
+				_ = client.Close()
+
+				if len(got) != 0 {
+					t.Fatalf("the approved key was written down for approval: %v", got)
+				}
+
+				return
+			}
+
+			if err == nil {
+				_ = client.Close()
+				t.Fatal("the connection was made to a server whose key is not the approved one")
+			}
+
+			refusal := hostKeyRefusal(err)
+			if refusal == nil {
+				t.Fatalf("the handshake failed with %v, which is not a host key refusal", err)
+			}
+			if refusal.Status != tc.want {
+				t.Fatalf("the refusal carries the status %q, want %q", refusal.Status, tc.want)
+			}
+			if refusal.Presented != stored {
+				t.Fatalf("the refusal carries the key %q, want the one the server presented, %q",
+					refusal.Presented, stored)
+			}
+			if !strings.Contains(refusal.Error(), ssh.FingerprintSHA256(presented)) {
+				t.Fatalf("the refusal %q does not name the fingerprint that was presented", refusal.Error())
+			}
+
+			if !reflect.DeepEqual(got, []string{stored}) {
+				t.Fatalf("the keys written down for approval are %v, want the presented one alone, %v",
+					got, []string{stored})
+			}
+		})
+	}
+}
+
+// TestAHostKeyThatCannotBeWrittenDownStillRefusesTheConnection is the database
+// being away while a key is refused. Letting the connection through would make
+// a failure to write a row into a way past the check, and the refusal says
+// that the key could not be stored so that the operator is not left looking
+// for an approval that never appeared.
+func TestAHostKeyThatCannotBeWrittenDownStillRefusesTheConnection(t *testing.T) {
+	addr, presented, _ := startHostKeySSHServer(t)
+
+	var mu sync.Mutex
+	var written []string
+
+	m, err := NewManager(newPendingHostKeyStubDB(t, &written, &mu, errConnPoolClosed),
+		zap.NewNop(), newTestCipher(t), 1)
+	if err != nil {
+		t.Fatalf("failed to create manager: %v", err)
+	}
+
+	host := &models.Host{ID: 7, IP: "127.0.0.1", Port: 22, User: "user", Enabled: true}
+
+	client, err := ssh.Dial("tcp", addr, &ssh.ClientConfig{
+		User:            "user",
+		HostKeyCallback: m.hostKeyCallback(host),
+		Timeout:         10 * time.Second,
+	})
+	if err == nil {
+		_ = client.Close()
+		t.Fatal("the connection was made although the key that was presented could not be written down")
+	}
+
+	refusal := hostKeyRefusal(err)
+	if refusal == nil {
+		t.Fatalf("the handshake failed with %v, which is not a host key refusal", err)
+	}
+	if refusal.Presented != MarshalHostKey(presented) {
+		t.Fatal("the refusal does not carry the key the server presented")
+	}
+	if !strings.Contains(err.Error(), "could not be stored") {
+		t.Fatalf("the refusal %q does not say that the key could not be stored", err.Error())
+	}
+}
+
+// TestATunnelRefusedOnItsHostKeyStopsTrying is what keeps the refusal from
+// filling the log. Nothing a tunnel does turns an unapproved key into an
+// approved one, so a tunnel that retried would connect, be refused and write a
+// line every interval for as long as the process runs, once per tunnel of the
+// Host. It gives up instead, leaves the row saying which refusal it was, and
+// the reconcile pass builds it again once the key is approved, which
+// TestReconcileRebuildsATunnelWhenItsHostKeyIsApproved covers.
+func TestATunnelRefusedOnItsHostKeyStopsTrying(t *testing.T) {
+	addr, presented, accepted := startHostKeySSHServer(t)
+
+	var mu sync.Mutex
+	var written []string
+
+	m, err := NewManager(newPendingHostKeyStubDB(t, &written, &mu, nil),
+		zap.NewNop(), newTestCipher(t), 1)
+	if err != nil {
+		t.Fatalf("failed to create manager: %v", err)
+	}
+
+	host := &models.Host{ID: 1, IP: "127.0.0.1", Port: 22, User: "user", Password: "pass", Enabled: true}
+
+	hostID, spID := host.ID, uint(2)
+	tun, err := NewSSHTunnel(&hostID, &spID, "0.0.0.0:18099", addr, "127.0.0.1:1",
+		&ssh.ClientConfig{
+			User:            host.User,
+			Auth:            []ssh.AuthMethod{ssh.Password("pass")},
+			HostKeyCallback: m.hostKeyCallback(host),
+			Timeout:         10 * time.Second,
+		}, zap.NewNop())
+	if err != nil {
+		t.Fatalf("failed to create tunnel: %v", err)
+	}
+
+	tunnel := &models.Tunnel{HostID: hostID, SPID: spID, Status: "starting"}
+
+	returned := make(chan struct{})
+	go func() {
+		tun.Start(m, tunnel)
+		close(returned)
+	}()
+
+	select {
+	case <-returned:
+	case <-time.After(10 * time.Second):
+		_ = tun.Stop(m)
+		t.Fatal("the Start loop is still going at a connection the host key check refuses")
+	}
+
+	tun.tunnelMu.Lock()
+	status := tunnel.Status
+	tun.tunnelMu.Unlock()
+
+	if status != StatusHostKeyUnapproved {
+		t.Fatalf("the tunnel row says %q, want %q", status, StatusHostKeyUnapproved)
+	}
+
+	// The monitoring interval is a second, so a loop that kept retrying would
+	// have connected several more times by now.
+	time.Sleep(2500 * time.Millisecond)
+
+	if got := accepted.Load(); got != 1 {
+		t.Fatalf("the server was connected to %d times, want the one attempt that was refused", got)
+	}
+
+	mu.Lock()
+	got := append([]string(nil), written...)
+	mu.Unlock()
+
+	if !reflect.DeepEqual(got, []string{MarshalHostKey(presented)}) {
+		t.Fatalf("the keys written down for approval are %v, want the presented one alone", got)
 	}
 }
