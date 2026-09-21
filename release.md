@@ -1,3 +1,43 @@
+# v3.7.0
+
+## Add/fix features:
+
+- **Tunnel Manager checks the host key of the SSH server it connects to.** Every connection was made with the host key ignored, so anything on the path to a Host could answer as that Host and be handed the password this program keeps encrypted in its database. A Host now reaches only the server that presents the key it is trusted on.
+  - A key that has not been approved, and a key that is not the one approved before, both stop the connection rather than being retried. The Status screen says which of the two happened and opens a panel that puts the fingerprints side by side.
+  - Approving a key that replaces one already trusted takes the password of the account, the way an uninstall does. Approving the first key of a Host takes only the session, since there is nothing yet to overturn.
+  - The trusted key is carried in an exported configuration, so moving an installation does not drop what its Hosts are pinned to. The key waiting for an approval is not carried, being a fact about a refused connection rather than a setting.
+- **A login that keeps failing is blocked.** Nothing counted a failed sign in before, so the one account could be guessed at without limit, and every guess spent a password hash on the way. The address and the account are counted apart, the refusal says how long the block has left to run, and it does not say which of the two was reached.
+- The database and the log file are created 0600 under a 0700 directory. They were 0644 under 0755, so any other user of the same machine read the password hash of the account, the Hosts and the users they are registered with. Files an earlier release left wider are narrowed at startup.
+- `logging_file_path` and `security_key_file` are taken only as paths inside the data directory. An operator could point the log at any path on the machine and have the service create it, append to it and read it back through the Logs screen. A path stored before this rule, or one that arrives in an imported file, is put back to its default with a warning rather than refused.
+- A request is bounded in size and in time. A body is limited to one megabyte, and to thirty-two on the two import routes, whose file carries a private key for every Host; the server carries a header deadline, a read deadline and an idle deadline, which it had none of before.
+- The answers carry `X-Frame-Options`, `X-Content-Type-Options` and a content security policy. HSTS is sent only where the certificate is one somebody else signed, since a self-signed one can be replaced from the Settings screen and a pin the browser is holding could not.
+- The certificate this program makes for itself may sign only for the names and the addresses this machine answers to. An operator who wants the browser warning gone is told to trust it, and it was made an authority with nothing said about what it may sign, so whoever held the database file and the key file together could issue a certificate for any name at all.
+- A session runs out at an absolute age rather than only at an idle deadline that every request pushed forward, so a stolen token no longer lives as long as it is used.
+- `-trust-proxy-headers` marks the session cookies Secure behind a reverse proxy that terminates TLS, and lets the counters above read the forwarded address. It is off unless given, since the header is one any client can send.
+- An install refuses a release that carries no `SHA256SUMS` instead of taking the download unchecked, and no download follows a redirect off https or off GitHub.
+- The query log no longer carries statements on the account table. The database driver writes the bound values into the statement it hands the logger, so a failed write put the password hash in the log file, which the Logs screen reads back. It was not only tracing that wrote it; the branch for a failed query writes at the level an installation runs at.
+- The initial password is only ever written into a file this program created. It went into whatever was at the path and the mode was narrowed afterwards, so a file pre-created by another local user, or a symlink, took the password before 0600 landed.
+- `-uninstall -purge` says that an encryption key moved outside the data directory may still be on disk. A removal does not read the stored setting, which would mean opening the database of a service that is still running, so it cannot tell a key that was moved from one that was never made.
+
+## Bug fixes:
+
+- The German, Spanish, French and Portuguese screens dropped the number out of four sentences. The singular forms said "the only line read" and "every second" where the English says how many, so the count never reached the screen. The plural forms beside them had carried it all along.
+
+## Documentation:
+
+- The reference says what the path rule is, what `-trust-proxy-headers` does and what running behind a reverse proxy means, in all four languages.
+- The design this release was built from is in `docs/design`, including the four places the build went another way than the design and why.
+
+## Notes:
+
+- **Every Host stops until its key is approved.** Nothing was pinned before this release, so on the first start after it every tunnel goes to "host key not approved" and the Status screen has a button for each. This is the upgrade doing what it is for, not a fault, but no tunnel carries traffic until somebody has looked at the fingerprints.
+- **A stored path outside the data directory is put back to its default.** An installation that moved its log or its encryption key with an absolute path comes up on the default path instead, and says so in the log. Move the file if the old path held something worth keeping.
+- **The data directory becomes 0700.** A deployment that bind mounts it from the host, as the bundled Docker Compose file does, leaves that directory readable by root alone, where it was world readable before. Anything on the host that read the log out of it needs the ownership changed.
+- The container still runs as root. The bind mount takes the ownership of the host directory and Docker creates it as root when it is missing, so another user in the image cannot create the database. Moving off root is a change to the deployment as much as to the image.
+- Only the Linux path of `-install` and `-uninstall` has been run. The macOS and the Windows backends are still held up by the compiler, by the vet tool for their platform, and by tests over the plist and the service configuration they produce.
+- None of the twelve translations has been read by a native speaker.
+- Whether a trust store other than Go's accepts a certificate that is not an authority was not established here, which is why the certificate above stays one and is limited by name instead.
+
 # v3.6.1
 
 ## Add/fix features:
