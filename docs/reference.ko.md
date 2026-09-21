@@ -307,7 +307,7 @@ docker compose exec tunnel-manager cat /data/initial-password
 
 ### systemd 서비스로 실행하는 경우
 
-`_scripts/systemd/tunnel-manager.service` 는 `-db` 를 절대 경로로 줍니다.
+[`-install`](#서비스로-설치하기) 이 쓰는 systemd 유닛은 `-db` 를 절대 경로로 줍니다.
 
 ```ini
 ExecStart=/usr/local/bin/tunnel-manager -db /var/lib/tunnel-manager/tunnel-manager.db
@@ -316,7 +316,7 @@ StateDirectory=tunnel-manager
 
 `StateDirectory=tunnel-manager` 가 `/var/lib/tunnel-manager` 를 만들어 `User=` 의 계정에게
 넘겨주고, 데이터베이스와 키와 로그와 임시 비밀번호가 전부 그 안에 들어갑니다. 유닛은
-`User=root` 로 배포되니 계정을 바꾸려면 [비root로 실행하는 경우](#비root로-실행하는-경우)를
+`User=root` 로 써지니 계정을 바꾸려면 [비root로 실행하는 경우](#비root로-실행하는-경우)를
 보십시오.
 
 ### 서비스로 설치하기
@@ -1520,8 +1520,8 @@ Host 의 SSH 비밀번호는 AES-256-GCM 으로 암호화해서 저장합니다.
 갖춰집니다. 로그 파일을 못 만들어도 기동을 멈추지는 않습니다. 파일 로깅만 끄고 콘솔에 전부
 남기며, 이유는 `logging to file is disabled` 경고에 적힙니다.
 
-systemd 로 실행할 때는 `_scripts/systemd/tunnel-manager.service` 가 `User=root` 이므로 계정만
-바꾸고 `StateDirectory=` 는 그대로 두면 됩니다.
+systemd 로 실행할 때는 `-install` 이 쓰는 유닛이 `User=root` 이므로 계정만 바꾸고
+`StateDirectory=` 는 그대로 두면 됩니다.
 
 ```ini
 [Service]

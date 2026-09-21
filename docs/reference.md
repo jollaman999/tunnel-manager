@@ -345,8 +345,8 @@ docker compose exec tunnel-manager cat /data/initial-password
 
 ### As a systemd service
 
-`_scripts/systemd/tunnel-manager.service` starts the binary with an absolute
-`-db`:
+[`-install`](#installing-as-a-service) writes a systemd unit that starts the
+binary with an absolute `-db`:
 
 ```ini
 ExecStart=/usr/local/bin/tunnel-manager -db /var/lib/tunnel-manager/tunnel-manager.db
@@ -355,7 +355,7 @@ StateDirectory=tunnel-manager
 
 `StateDirectory=tunnel-manager` makes `/var/lib/tunnel-manager` and hands it to
 the account in `User=`, and the database, the key, the logs and the initial
-password all sit in it. The unit ships with `User=root`; see
+password all sit in it. The unit is written with `User=root`; see
 [Running as a non-root user](#running-as-a-non-root-user) to change that.
 
 ### Installing as a service
@@ -1697,8 +1697,8 @@ write that directory has everything it needs. A log file that cannot be created
 does not stop the startup: file logging is turned off, the console keeps
 everything, and the reason is in the `logging to file is disabled` warning.
 
-For systemd, `_scripts/systemd/tunnel-manager.service` ships with `User=root`.
-Change the account and leave `StateDirectory=` alone:
+For systemd, the unit `-install` writes has `User=root`. Change the account and
+leave `StateDirectory=` alone:
 
 ```ini
 [Service]

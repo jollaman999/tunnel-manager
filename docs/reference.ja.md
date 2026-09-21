@@ -319,7 +319,8 @@ docker compose exec tunnel-manager cat /data/initial-password
 
 ### systemd サービスとして動かす
 
-`_scripts/systemd/tunnel-manager.service` は、バイナリを絶対パスの `-db` 付きで起動します。
+[`-install`](#サービスとしてインストールする)が書く systemd ユニットは、バイナリを絶対パスの
+`-db` 付きで起動します。
 
 ```ini
 ExecStart=/usr/local/bin/tunnel-manager -db /var/lib/tunnel-manager/tunnel-manager.db
@@ -328,7 +329,7 @@ StateDirectory=tunnel-manager
 
 `StateDirectory=tunnel-manager` が `/var/lib/tunnel-manager` を作り、`User=` のアカウントを
 所有者にします。データベースもキーもログも初期パスワードも、すべてこの中に収まります。ユニットは
-`User=root` で配布しています。変えたいときは
+`User=root` で書かれます。変えたいときは
 [非 root ユーザーで動かす](#非-root-ユーザーで動かす)を参照してください。
 
 ### サービスとしてインストールする
@@ -1566,8 +1567,8 @@ root でないなら、`local_port` は 1024 以上にしてください。
 ログ出力が無効になり、コンソールにはすべてが残り、理由は `logging to file is disabled` の警告に
 出ます。
 
-systemd では、`_scripts/systemd/tunnel-manager.service` は `User=root` で配布しています。
-アカウントを変え、`StateDirectory=` はそのままにしてください。
+systemd では、`-install` が書くユニットは `User=root` です。アカウントを変え、
+`StateDirectory=` はそのままにしてください。
 
 ```ini
 [Service]

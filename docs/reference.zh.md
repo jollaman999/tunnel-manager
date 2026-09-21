@@ -288,7 +288,7 @@ docker compose exec tunnel-manager cat /data/initial-password
 
 ### 作为 systemd 服务运行
 
-`_scripts/systemd/tunnel-manager.service` 用绝对路径的 `-db` 启动这个可执行文件：
+[`-install`](#作为服务安装) 写出的 systemd unit 用绝对路径的 `-db` 启动这个可执行文件：
 
 ```ini
 ExecStart=/usr/local/bin/tunnel-manager -db /var/lib/tunnel-manager/tunnel-manager.db
@@ -296,7 +296,7 @@ StateDirectory=tunnel-manager
 ```
 
 `StateDirectory=tunnel-manager` 会建出 `/var/lib/tunnel-manager` 并交给 `User=` 里的账号，
-数据库、密钥、日志和初始密码全都在里面。unit 里带的是 `User=root`，要改的话见
+数据库、密钥、日志和初始密码全都在里面。写出的 unit 里是 `User=root`，要改的话见
 [以非 root 用户运行](#以非-root-用户运行)。
 
 ### 作为服务安装
@@ -1403,7 +1403,7 @@ SSH 账号不是 root 的话，请把 `local_port` 留在 1024 或更大。
 一个有权写那个目录的账号，需要的就都齐了。日志文件无法创建不会让启动中止：文件日志关闭，
 控制台照样什么都有，原因写在 `logging to file is disabled` 这条警告里。
 
-用 systemd 的话，`_scripts/systemd/tunnel-manager.service` 里带的是 `User=root`。改账号时
+用 systemd 的话，`-install` 写出的 unit 里是 `User=root`。改账号时
 别动 `StateDirectory=`：
 
 ```ini
