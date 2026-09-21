@@ -151,6 +151,17 @@ func currentFrom(path string) (Installed, error) {
 	}, nil
 }
 
+// CheckPlan has nothing to refuse on this platform, so it answers nil.
+//
+// The plist carries the executable and its arguments as separate <string>
+// elements of ProgramArguments, so a path with a space or a quote in it goes in
+// and comes back out as the one path it is - the default data directory here is
+// /Library/Application Support/tunnel-manager, which has a space in it. There
+// is no splitting on words to survive, the way a systemd command line has.
+func (launchdService) CheckPlan(Plan) error {
+	return nil
+}
+
 // Register writes the plist. It does not load it: Start does that, and an
 // install that has not yet copied the executable would otherwise have launchd
 // starting a file that is half written.

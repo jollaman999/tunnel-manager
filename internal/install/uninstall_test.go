@@ -2,6 +2,8 @@ package install
 
 import (
 	"errors"
+	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -31,6 +33,13 @@ func installedIn(t *testing.T) (Installed, Plan) {
 // TestUninstallWithNothingRegistered is the case the design names: nothing is
 // registered, so nothing is removed and the operator is told that rather than
 // left to wonder what an uninstall that printed a report actually did.
+//
+// It is not a failure. "There is nothing to remove" is the state the command
+// was asking for, the way rm -f and systemctl disable answer for something that
+// is not there, and an uninstall is run twice often enough - by hand, and by
+// whatever script wraps it - that the second run has to end the way the first
+// one did. So the answer is nil and the process exits 0; what carries the
+// message is the report.
 func TestUninstallWithNothingRegistered(t *testing.T) {
 	allowPrivilege(t)
 
@@ -39,8 +48,8 @@ func TestUninstallWithNothingRegistered(t *testing.T) {
 	var out strings.Builder
 
 	removed, err := uninstall(svc, Removal{}, &out)
-	if !errors.Is(err, ErrNotInstalled) {
-		t.Fatalf("the uninstall answered %v, want ErrNotInstalled", err)
+	if err != nil {
+		t.Fatalf("the uninstall failed although there was simply nothing to remove: %v", err)
 	}
 
 	if strings.Join(svc.calls, ",") != "current" {
@@ -51,13 +60,77 @@ func TestUninstallWithNothingRegistered(t *testing.T) {
 		t.Errorf("the uninstall says it did something: %+v", removed)
 	}
 
-	// The message has to say what to do next, since there is nothing left on
-	// the machine that names where an installation was put.
-	if !strings.Contains(err.Error(), "-bin") || !strings.Contains(err.Error(), "-db") {
-		t.Errorf("the message does not say the paths can be named by hand: %v", err)
+	if !removed.NothingToRemove {
+		t.Error("the removal does not say there was nothing to remove")
 	}
 
-	t.Logf("answered: %v", err)
+	// The report has to say what to do next, since there is nothing left on
+	// the machine that names where an installation was put, and it has to say
+	// that nothing happening was the answer and not a failure.
+	for _, want := range []string{"-bin", "-db", "nothing to remove", "not a failure"} {
+		if !strings.Contains(out.String(), want) {
+			t.Errorf("the report does not hold %q:\n%s", want, out.String())
+		}
+	}
+
+	t.Logf("\n%s", out.String())
+}
+
+// TestUninstallTwiceOverIsTheSameAnswer is why the case above is not a failure.
+// The second run of a removal finds nothing registered, and an operator or a
+// script that gets a failure out of it goes looking for what went wrong.
+func TestUninstallTwiceOverIsTheSameAnswer(t *testing.T) {
+	allowPrivilege(t)
+
+	registered, _ := installedIn(t)
+	svc := &fakeService{current: registered}
+
+	_, err := uninstall(svc, Removal{}, &strings.Builder{})
+	if err != nil {
+		t.Fatalf("the first uninstall failed: %v", err)
+	}
+
+	// What the backend answers once its registration has been taken out.
+	svc.current = Installed{}
+	svc.currentErr = ErrNotInstalled
+
+	var out strings.Builder
+
+	removed, err := uninstall(svc, Removal{}, &out)
+	if err != nil {
+		t.Fatalf("the second uninstall failed: %v", err)
+	}
+
+	if !removed.NothingToRemove {
+		t.Errorf("the second run says it had something to remove: %+v", removed)
+	}
+}
+
+// TestUninstallPurgeWithNothingToRemoveIsStillRefused is the line the case
+// above must not cross. -purge asks for data to be destroyed, and with no
+// registration and no -db there is nothing saying where that data is. Answering
+// "nothing to do" there would leave somebody believing their data was gone.
+func TestUninstallPurgeWithNothingToRemoveIsStillRefused(t *testing.T) {
+	allowPrivilege(t)
+
+	svc := &fakeService{currentErr: ErrNotInstalled}
+
+	var out strings.Builder
+
+	removed, err := uninstall(svc, Removal{Purge: true}, &out)
+	if err == nil {
+		t.Fatal("-purge was answered as nothing to do")
+	}
+
+	if removed.Purged {
+		t.Error("the removal says the data was purged")
+	}
+
+	if out.Len() != 0 {
+		t.Errorf("something was reported for a command that was refused:\n%s", out.String())
+	}
+
+	t.Logf("refused as it should: %v", err)
 }
 
 // TestUninstallWithNothingRegisteredButPathsNamed covers the other half of that
@@ -191,6 +264,14 @@ func TestUninstallPurge(t *testing.T) {
 // TestUninstallPurgeWithoutADatabase covers -purge on a registration that names
 // no -db. There is then nothing saying where the data is, and a guess would be
 // a RemoveAll of a guessed path.
+//
+// What this holds is when the refusal comes. It used to come after the service
+// had been stopped, its registration taken out and its executable deleted, so
+// an operator whose command was refused was left with no service, no binary and
+// the data they had asked to have removed - a refusal that had already done the
+// three things that cannot be taken back. Now nothing at all is touched, which
+// is what the assertions below are: the backend is only read from, and both the
+// executable and the data are still where they were.
 func TestUninstallPurgeWithoutADatabase(t *testing.T) {
 	allowPrivilege(t)
 
@@ -199,21 +280,73 @@ func TestUninstallPurgeWithoutADatabase(t *testing.T) {
 
 	svc := &fakeService{current: registered}
 
+	// Written to the console as well, so that a strace of this test shows any
+	// write the flow makes in the same stream as the syscalls it made. The
+	// marker after the call is where the flow ended: everything traced past it
+	// is the test framework removing its own temporary directory.
 	var out strings.Builder
+	console := io.MultiWriter(&out, os.Stdout)
 
-	_, err := uninstall(svc, Removal{Purge: true}, &out)
+	_, err := uninstall(svc, Removal{Purge: true}, console)
+
+	fmt.Fprintln(os.Stdout, "marker: the uninstall has returned, what follows is this test tidying up")
+
 	if err == nil {
 		t.Fatal("-purge went ahead with nothing saying where the data is")
 	}
 
-	if _, statErr := os.Stat(plan.DataDir); statErr != nil {
-		t.Errorf("the data directory was removed all the same: %v", statErr)
+	// Nothing was stopped and nothing was taken out: the read, and no more.
+	if strings.Join(svc.calls, ",") != "current" {
+		t.Errorf("the backend was used as %v, want the read alone", svc.calls)
 	}
 
-	// The service was still taken out, and the report has to be there to say
-	// so: it is the state the machine was left in.
-	if !strings.Contains(out.String(), serviceName+" uninstall") {
-		t.Errorf("no report was written for the uninstall that got that far:\n%s", out.String())
+	if _, statErr := os.Stat(plan.ExecutablePath); statErr != nil {
+		t.Errorf("the executable was removed by a command that was refused: %v", statErr)
+	}
+
+	for _, path := range []string{plan.DataDir, plan.DatabaseFile, filepath.Join(plan.DataDir, "key")} {
+		if _, statErr := os.Stat(path); statErr != nil {
+			t.Errorf("%s was removed by a command that was refused: %v", path, statErr)
+		}
+	}
+
+	// And no report either. A report is the record of what was done, and
+	// nothing was done; the refusal itself is the whole of the answer.
+	if out.Len() != 0 {
+		t.Errorf("something was reported although nothing was done:\n%s", out.String())
+	}
+
+	t.Logf("refused as it should: %v", err)
+}
+
+// TestUninstallPurgeOfADirectoryThatIsRefusedTouchesNothing is the same rule
+// through the other gate: the path is known, and it is one the guard will not
+// hand to RemoveAll. The service and the executable have to survive that
+// refusal too.
+func TestUninstallPurgeOfADirectoryThatIsRefusedTouchesNothing(t *testing.T) {
+	allowPrivilege(t)
+
+	registered, plan := installedIn(t)
+
+	// A database directly under the root: the data directory worked out of it
+	// is "/", which the guard refuses.
+	registered.DatabaseFile = "/tunnel-manager.db"
+
+	svc := &fakeService{current: registered}
+
+	var out strings.Builder
+
+	_, err := uninstall(svc, Removal{Purge: true}, &out)
+	if err == nil {
+		t.Fatal("-purge went ahead with the root as the data directory")
+	}
+
+	if strings.Join(svc.calls, ",") != "current" {
+		t.Errorf("the backend was used as %v, want the read alone", svc.calls)
+	}
+
+	if _, statErr := os.Stat(plan.ExecutablePath); statErr != nil {
+		t.Errorf("the executable was removed by a command that was refused: %v", statErr)
 	}
 
 	t.Logf("refused as it should: %v", err)
@@ -385,11 +518,26 @@ func TestWhatToRemove(t *testing.T) {
 		},
 	}
 
+	// Nothing registered and nothing named is the one answer that is not a set
+	// of paths, so it is checked apart from the table above.
+	t.Run("nothing registered and nothing named", func(t *testing.T) {
+		removed := whatToRemove(Removal{}, nil)
+
+		if !removed.NothingToRemove {
+			t.Fatalf("whatToRemove found something to remove: %+v", removed)
+		}
+
+		if removed.ExecutablePath != "" || removed.DatabaseFile != "" || removed.DataDir != "" {
+			t.Errorf("paths were worked out for a removal with nothing to work on: %+v", removed)
+		}
+	})
+
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			removed, err := whatToRemove(c.request, c.existing)
-			if err != nil {
-				t.Fatalf("whatToRemove failed: %v", err)
+			removed := whatToRemove(c.request, c.existing)
+
+			if removed.NothingToRemove {
+				t.Fatalf("whatToRemove found nothing to remove in %+v", c)
 			}
 
 			if removed.ExecutablePath != c.executable {

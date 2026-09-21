@@ -85,10 +85,12 @@ type fakeService struct {
 	// afterRegister is what Current answers once Register has run, the way a
 	// real backend reads back the registration it just wrote.
 	afterRegister Installed
+	checkPlanErr  error
 	registerErr   error
 	startErr      error
 
 	calls          []string
+	checkedPlan    Plan
 	registeredPlan Plan
 	registeredOver *Installed
 	unregistered   *Installed
@@ -104,6 +106,13 @@ func (f *fakeService) Current() (Installed, error) {
 	}
 
 	return f.current, f.currentErr
+}
+
+func (f *fakeService) CheckPlan(plan Plan) error {
+	f.calls = append(f.calls, "checkplan")
+	f.checkedPlan = plan
+
+	return f.checkPlanErr
 }
 
 func (f *fakeService) Register(plan Plan, existing *Installed) error {
@@ -282,7 +291,7 @@ func TestInstallOverTheSamePaths(t *testing.T) {
 		t.Fatalf("the install failed: %v", err)
 	}
 
-	want := []string{"current", "stop", "register", "current", "start"}
+	want := []string{"current", "checkplan", "stop", "register", "current", "start"}
 	if strings.Join(svc.calls, ",") != strings.Join(want, ",") {
 		t.Errorf("the backend was used as %v, want %v", svc.calls, want)
 	}
@@ -336,6 +345,85 @@ func TestInstallRefusesAnotherPlace(t *testing.T) {
 	if strings.Join(svc.calls, ",") != "current" {
 		t.Errorf("the backend was used as %v, want the read alone", svc.calls)
 	}
+}
+
+// TestInstallRefusedByTheBackendBeforeAnythingIsWritten covers a plan this
+// platform cannot register - on systemd a path with a space in it, which a unit
+// cannot carry in a way an uninstall could read back.
+//
+// The refusal itself belongs to the backend. What is held here is when it is
+// asked: before the executable is copied. Asked from inside Register, as it
+// once was, the refusal arrives with the new binary already at a path no
+// registration names.
+func TestInstallRefusedByTheBackendBeforeAnythingIsWritten(t *testing.T) {
+	allowPrivilege(t)
+
+	plan := planIn(t)
+	source := writeFile(t, filepath.Join(t.TempDir(), "downloaded"), "the new build")
+
+	svc := &fakeService{
+		currentErr:   ErrNotInstalled,
+		checkPlanErr: errors.New("that path cannot go in a unit"),
+	}
+
+	var out strings.Builder
+
+	_, err := install(svc, plan, source, "the release", &out)
+	if err == nil {
+		t.Fatal("the install went ahead with a plan the backend refused")
+	}
+
+	if _, statErr := os.Stat(plan.ExecutablePath); !errors.Is(statErr, os.ErrNotExist) {
+		t.Errorf("the executable was written to %s before the refusal: %v", plan.ExecutablePath, statErr)
+	}
+
+	if _, statErr := os.Stat(plan.DataDir); !errors.Is(statErr, os.ErrNotExist) {
+		t.Errorf("the data directory %s was made before the refusal: %v", plan.DataDir, statErr)
+	}
+
+	// The read and the question, and nothing that changes the machine: no
+	// stop of a running service either.
+	want := []string{"current", "checkplan"}
+	if strings.Join(svc.calls, ",") != strings.Join(want, ",") {
+		t.Errorf("the backend was used as %v, want %v", svc.calls, want)
+	}
+
+	if svc.checkedPlan != plan {
+		t.Errorf("the backend was asked about %+v, want the plan the install would use, %+v",
+			svc.checkedPlan, plan)
+	}
+
+	t.Logf("refused as it should: %v", err)
+}
+
+// TestCheckUnitPathsIsWhatTheLinuxBackendAnswers ties the case above to the
+// real refusal, on the platform that has one. A path with a space in it is
+// written into a systemd unit fine and cannot be read back out of one, so an
+// uninstall that read it would remove a path that is not the one installed.
+func TestCheckUnitPathsIsWhatTheLinuxBackendAnswers(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("the systemd backend is only built on linux")
+	}
+
+	svc, err := newService()
+	if err != nil {
+		t.Fatalf("failed to build the backend: %v", err)
+	}
+
+	good := plannedFor("linux")
+	if err := svc.CheckPlan(good); err != nil {
+		t.Errorf("the default plan was refused: %v", err)
+	}
+
+	spaced := good
+	spaced.DatabaseFile = "/var/lib/tunnel manager/tunnel-manager.db"
+
+	err = svc.CheckPlan(spaced)
+	if err == nil {
+		t.Fatal("a database path with a space in it was accepted")
+	}
+
+	t.Logf("refused as it should: %v", err)
 }
 
 // TestInstallWithoutPrivilege checks that the refusal comes before the backend
@@ -441,7 +529,166 @@ func TestRefuseElsewhere(t *testing.T) {
 			if !c.refuse && err != nil {
 				t.Errorf("the install was refused: %v", err)
 			}
+
+			if c.refuse && err != nil {
+				t.Logf("refused as it should: %v", err)
+			}
 		})
+	}
+}
+
+// TestRefuseElsewhereWithoutARegisteredDatabase is the message of the case
+// above that reads as nothing at all.
+//
+// The registration passes no -db, so this install cannot tell whether the
+// database it is about to register is the one that registration is already
+// using. It is refused either way - taking the unknown for "the same" is the
+// reading that loses a database - and what has to be right is what the operator
+// is told, which before was a line with an empty path on it.
+func TestRefuseElsewhereWithoutARegisteredDatabase(t *testing.T) {
+	plan := Plan{
+		ExecutablePath: "/usr/local/bin/tunnel-manager",
+		DataDir:        "/var/lib/tunnel-manager",
+		DatabaseFile:   "/var/lib/tunnel-manager/tunnel-manager.db",
+	}
+
+	err := refuseElsewhere(plan, &Installed{
+		ExecutablePath: plan.ExecutablePath,
+		DefinitionPath: "/etc/systemd/system/tunnel-manager.service",
+	})
+	if err == nil {
+		t.Fatal("the install went ahead over a registration whose database is not known")
+	}
+
+	message := err.Error()
+
+	// What it has to say: that the database is unknown, and what the operator
+	// can do about it.
+	for _, want := range []string{"passes no -db", "not known", "-uninstall", "-db"} {
+		if !strings.Contains(message, want) {
+			t.Errorf("the refusal does not hold %q: %v", want, err)
+		}
+	}
+
+	// And what it must not read as: a database whose path is the empty string,
+	// which is what an operator was shown before.
+	if strings.Contains(message, "database \n") || strings.Contains(message, "database ,") {
+		t.Errorf("the refusal prints the unknown database as an empty path: %v", err)
+	}
+
+	t.Logf("refused as it should: %v", err)
+}
+
+// TestRefuseElsewhereNamesAnUnknownDatabaseInTheTable covers the same empty
+// value on the other message, the one for a registration that is at another
+// place altogether.
+func TestRefuseElsewhereNamesAnUnknownDatabaseInTheTable(t *testing.T) {
+	plan := Plan{
+		ExecutablePath: "/usr/local/bin/tunnel-manager",
+		DatabaseFile:   "/var/lib/tunnel-manager/tunnel-manager.db",
+	}
+
+	err := refuseElsewhere(plan, &Installed{ExecutablePath: "/opt/tm/tunnel-manager"})
+	if err == nil {
+		t.Fatal("the install went ahead over a registration somewhere else")
+	}
+
+	if !strings.Contains(err.Error(), "not known, the registration passes no -db") {
+		t.Errorf("the refusal does not say the registered database is unknown: %v", err)
+	}
+
+	t.Logf("refused as it should: %v", err)
+}
+
+// TestPlanWithDatabase holds the rule that the data directory follows -db.
+//
+// The install makes the data directory and the registration hands it out, while
+// an uninstall works it out of the registered -db. Left at the default while
+// -db named a file somewhere else, those are two different directories: the one
+// the install made and nothing wrote to, and the one holding the key, the log
+// and the initial password that -purge would then not touch.
+func TestPlanWithDatabase(t *testing.T) {
+	cases := []struct {
+		name     string
+		plan     Plan
+		database string
+		dataDir  string
+	}{
+		{
+			name:     "a database outside the default data directory",
+			plan:     plannedFor("linux"),
+			database: "/opt/tm/tm.db",
+			dataDir:  "/opt/tm",
+		},
+		{
+			name:     "the default database of this platform",
+			plan:     plannedFor("linux"),
+			database: "/var/lib/tunnel-manager/tunnel-manager.db",
+			dataDir:  "/var/lib/tunnel-manager",
+		},
+		{
+			name:     "a path spelled with a doubled separator",
+			plan:     plannedFor("linux"),
+			database: "/opt/tm//data/tm.db",
+			dataDir:  "/opt/tm/data",
+		},
+	}
+
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			got := c.plan.WithDatabase(c.database)
+
+			if got.DatabaseFile != c.database {
+				t.Errorf("the database is %q, want %q", got.DatabaseFile, c.database)
+			}
+
+			if got.DataDir != c.dataDir {
+				t.Errorf("the data directory is %q, want %q", got.DataDir, c.dataDir)
+			}
+
+			// The directory an uninstall would work out of the very same path,
+			// which is the pair that has to match.
+			if got.DataDir != dataDirOf(got.DatabaseFile) {
+				t.Errorf("the install would use %q while an uninstall reads %q out of the registration",
+					got.DataDir, dataDirOf(got.DatabaseFile))
+			}
+
+			if got.ExecutablePath != c.plan.ExecutablePath {
+				t.Errorf("the executable moved to %q, want %q", got.ExecutablePath, c.plan.ExecutablePath)
+			}
+		})
+	}
+}
+
+// TestInstallMakesTheDataDirectoryTheDatabaseIsIn is the same rule end to end:
+// what the install makes on disk is the directory the database was pointed at,
+// not the default one.
+func TestInstallMakesTheDataDirectoryTheDatabaseIsIn(t *testing.T) {
+	allowPrivilege(t)
+
+	root := t.TempDir()
+	elsewhere := filepath.Join(root, "elsewhere", "tm.db")
+
+	plan := planIn(t).WithDatabase(elsewhere)
+	source := writeFile(t, filepath.Join(t.TempDir(), "downloaded"), "the new build")
+
+	svc := &fakeService{
+		currentErr:    ErrNotInstalled,
+		afterRegister: Installed{ExecutablePath: plan.ExecutablePath, DatabaseFile: plan.DatabaseFile},
+	}
+
+	_, err := install(svc, plan, source, "the release", &strings.Builder{})
+	if err != nil {
+		t.Fatalf("the install failed: %v", err)
+	}
+
+	if _, err := os.Stat(filepath.Dir(elsewhere)); err != nil {
+		t.Errorf("the directory the database was pointed at was not made: %v", err)
+	}
+
+	if svc.registeredPlan.DataDir != filepath.Dir(elsewhere) {
+		t.Errorf("the registration was given the data directory %q, want %q",
+			svc.registeredPlan.DataDir, filepath.Dir(elsewhere))
 	}
 }
 

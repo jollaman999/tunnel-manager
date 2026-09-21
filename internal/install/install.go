@@ -92,6 +92,24 @@ type Plan struct {
 	DatabaseFile string
 }
 
+// WithDatabase answers the plan with the database file the operator named, and
+// the data directory that goes with it.
+//
+// The directory follows the file because it is the file that says where this
+// installation is. Everything else the process keeps - the key the stored
+// passwords are sealed with, the log, the initial password file - is read
+// against the directory the database is in, and an uninstall works the data
+// directory out of the registered -db the same way. Left at the default while
+// -db pointed somewhere else, an install would make and hand out one directory
+// while the process wrote into another, and -purge would then remove the empty
+// one and leave the keys where they actually are.
+func (p Plan) WithDatabase(databaseFile string) Plan {
+	p.DatabaseFile = databaseFile
+	p.DataDir = dataDirOf(databaseFile)
+
+	return p
+}
+
 // Installed is what was read back out of the registration that exists now.
 //
 // There is no state file of ours anywhere: the service definition already holds
@@ -131,6 +149,18 @@ type service interface {
 	// back as a failure, or an uninstall would walk away from a service that is
 	// still running.
 	Current() (Installed, error)
+
+	// CheckPlan reports whether this backend can register the service at the
+	// paths in plan, and answers nil when it has nothing to refuse.
+	//
+	// It is asked before anything is written. The paths have to go into a
+	// service definition and be read back out of one by a later uninstall, and
+	// what survives that trip is the backend's own business: systemd splits a
+	// command line on spaces, so a path with one in it cannot be read back at
+	// all. A backend that only refused inside Register would refuse after the
+	// executable had been copied into place, leaving a machine holding a new
+	// binary that nothing on it starts.
+	CheckPlan(plan Plan) error
 
 	// Register writes the service definition for plan, leaving the service
 	// registered and not started. Start is what starts it.
@@ -358,6 +388,15 @@ func install(svc service, plan Plan, executable string, source string, out io.Wr
 		return Outcome{}, err
 	}
 
+	// Asked here rather than left to Register, which runs after the executable
+	// has been copied. A path this platform cannot carry is the same refusal
+	// either way, but here the machine is still as it was, and there is no new
+	// binary sitting at a path no registration names.
+	err = svc.CheckPlan(plan)
+	if err != nil {
+		return Outcome{}, err
+	}
+
 	outcome := Outcome{Plan: plan, Source: source, Replaced: existing != nil}
 
 	outcome.DigestBefore, err = fileDigest(plan.ExecutablePath)
@@ -460,8 +499,28 @@ func refuseElsewhere(plan Plan, existing *Installed) error {
 		return nil
 	}
 
-	if samePath(plan.ExecutablePath, existing.ExecutablePath) && samePath(plan.DatabaseFile, existing.DatabaseFile) {
+	sameExecutable := samePath(plan.ExecutablePath, existing.ExecutablePath)
+
+	if sameExecutable && samePath(plan.DatabaseFile, existing.DatabaseFile) {
 		return nil
+	}
+
+	// A registration that passes no -db is refused as well, and it is told
+	// apart here because the reason is a different one: the executable is the
+	// very path this install is putting the file at, and what stops it is that
+	// nothing says which database that registration is using. The process it
+	// starts works one out for itself, under the user data directory of
+	// whoever the service runs as, and an install that took the empty value
+	// for "no database" would register another one over it and leave that file
+	// with nothing naming it. Guessing that the two are the same is the
+	// dangerous reading, so this refuses and says what to do instead.
+	if sameExecutable && existing.DatabaseFile == "" {
+		return fmt.Errorf("%s is already registered as a service at %s, and the registration passes no -db, "+
+			"so which database it uses is not known. The process it starts works out a default of its own, "+
+			"and nothing here can say whether that is %s.\n"+
+			"Run -uninstall first, or give -db the database that registration is actually using. Installing "+
+			"over it would leave that database behind with nothing naming it",
+			serviceName, existing.ExecutablePath, plan.DatabaseFile)
 	}
 
 	return fmt.Errorf("%s is already registered as a service at another place:\n"+
@@ -470,8 +529,20 @@ func refuseElsewhere(plan Plan, existing *Installed) error {
 		"Run -uninstall first. Installing over it would leave the registered executable and "+
 		"database behind with nothing naming them",
 		serviceName,
-		existing.ExecutablePath, existing.DatabaseFile,
+		existing.ExecutablePath, registeredDatabaseText(existing.DatabaseFile),
 		plan.ExecutablePath, plan.DatabaseFile)
+}
+
+// registeredDatabaseText names the database of the registration for the line
+// above. A registration that passes no -db would print as nothing at all,
+// beside a path on the line under it, and an operator reading that cannot tell
+// an unknown database from one this program failed to print.
+func registeredDatabaseText(databaseFile string) string {
+	if databaseFile == "" {
+		return "not known, the registration passes no -db"
+	}
+
+	return databaseFile
 }
 
 // samePath compares two paths as the platform reads them. They come from two
@@ -661,7 +732,25 @@ type Removed struct {
 	DatabaseFile string
 	// Purged says the data directory was removed.
 	Purged bool
+	// NothingToRemove says there was no registration on this machine and no
+	// -bin or -db either, so the uninstall had nothing to work on and touched
+	// nothing. It is an answer and not a failure, which is why it is a field
+	// here rather than an error: see whatToRemove.
+	NothingToRemove bool
 }
+
+// nothingToRemoveText is the whole of the report for that case.
+//
+// It is wrapped by hand because it is a paragraph and not a value on a labelled
+// line, and it is indented to the width the report's values start at so that it
+// reads as part of the same block. What it has to carry is both halves: that
+// nothing happening was not a failure, and how to point an uninstall at an
+// installation whose registration is already gone.
+var nothingToRemoveText = "  nothing to remove: " + ErrNotInstalled.Error() + ",\n" +
+	"  and neither -bin nor -db named anything. Nothing was stopped and nothing\n" +
+	"  was removed, which is the state that was asked for and not a failure.\n" +
+	"  If this program was installed on this machine and the registration is\n" +
+	"  already gone, name what is left with -bin and -db and run this again.\n"
 
 // Report writes what the uninstall did for a person to read.
 //
@@ -671,6 +760,18 @@ func (r Removed) Report(w io.Writer) error {
 	var b strings.Builder
 
 	b.WriteString(serviceName + " uninstall\n")
+
+	if r.NothingToRemove {
+		// The lines below would every one of them read "not known", which
+		// looks like a removal that lost track of what it was doing rather
+		// than one that had nothing to do.
+		b.WriteString(nothingToRemoveText)
+
+		_, err := io.WriteString(w, b.String())
+
+		return err
+	}
+
 	reportLine(&b, "taken from", r.Source)
 	reportLine(&b, "executable", r.executableText())
 	reportLine(&b, "data", r.dataText())
@@ -769,9 +870,28 @@ func uninstall(svc service, request Removal, out io.Writer) (Removed, error) {
 
 	// Worked out before anything is touched, so that a removal which has
 	// nothing to work on stops while the machine is still as it was.
-	removed, err := whatToRemove(request, existing)
-	if err != nil {
-		return Removed{}, err
+	removed := whatToRemove(request, existing)
+
+	if request.Purge {
+		// Checked here and not only where the directory is removed, which is
+		// after the service has been stopped, its registration taken out and
+		// its executable deleted. A -purge that is refused has to leave the
+		// installation it was refused over standing: every step below this
+		// line is one that cannot be taken back, and an operator who is told
+		// their data is still there wants the rest of it still there too.
+		err = checkPurgeTarget(removed.DataDir, removed.DatabaseFile)
+		if err != nil {
+			return Removed{}, err
+		}
+	}
+
+	if removed.NothingToRemove {
+		err = removed.Report(out)
+		if err != nil {
+			return removed, fmt.Errorf("the uninstall had nothing to remove but reporting it failed: %w", err)
+		}
+
+		return removed, nil
 	}
 
 	if existing != nil {
@@ -800,9 +920,12 @@ func uninstall(svc service, request Removal, out io.Writer) (Removed, error) {
 	if request.Purge {
 		err = purgeData(removed.DataDir, removed.DatabaseFile, out)
 		if err != nil {
-			// The report is written all the same. The service is gone and the
-			// executable with it, and an operator whose -purge was refused has
-			// to be told what did happen and that the data is still there.
+			// The report is written all the same. What the directory is was
+			// settled at the top of this flow, so a failure here is the
+			// removal itself giving up part way, and the service and the
+			// executable are already gone: the operator has to be told that
+			// much and that the data directory is in whatever state the
+			// failure left it.
 			_ = removed.Report(out)
 
 			return removed, err
@@ -827,11 +950,16 @@ func uninstall(svc service, request Removal, out io.Writer) (Removed, error) {
 // says which files this installation owns, and a removal that took the operator
 // word for it would remove a path nothing on this machine claims while leaving
 // the registered one behind.
-func whatToRemove(request Removal, existing *Installed) (Removed, error) {
+func whatToRemove(request Removal, existing *Installed) Removed {
 	if existing == nil && request.ExecutablePath == "" && request.DatabaseFile == "" {
-		return Removed{}, fmt.Errorf("%w, so nothing was removed. If this program was installed on this "+
-			"machine and the registration is already gone, name what is left with -bin and -db and run "+
-			"this again", ErrNotInstalled)
+		// Not a failure. Nothing is registered and nothing was named, so what
+		// was asked for - this machine without the service on it - is already
+		// the state it is in, the same way removing a file that is not there
+		// or disabling a unit that was never enabled is done rather than
+		// refused. A removal is also a thing that gets run twice, by a person
+		// who is not sure it took the first time and by whatever script wraps
+		// it, and the second run has to end the way the first one did.
+		return Removed{NothingToRemove: true}
 	}
 
 	removed := Removed{}
@@ -856,7 +984,7 @@ func whatToRemove(request Removal, existing *Installed) (Removed, error) {
 	removed.DataDir = dataDirOf(removed.DatabaseFile)
 	removed.Source = removalSource(existing != nil, named)
 
-	return removed, nil
+	return removed
 }
 
 func removalSource(registered bool, named bool) string {
@@ -914,6 +1042,11 @@ func removeInstalledExecutable(removed *Removed) error {
 
 // purgeData removes the data directory, once it is sure that is what the
 // directory is.
+//
+// The flow above has already asked the same question before it stopped the
+// service, and this asks it again. It is the last statement before a RemoveAll
+// of a path, so what it costs is one function call and what it buys is that no
+// future caller can reach that RemoveAll without the check having run.
 func purgeData(dataDir string, databaseFile string, out io.Writer) error {
 	err := checkPurgeTarget(dataDir, databaseFile)
 	if err != nil {

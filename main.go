@@ -613,16 +613,18 @@ func (a installation) runInstall(out io.Writer) error {
 
 	plan := install.Defaults()
 
-	// Only what was actually named is taken. The data directory is left at its
-	// default even when -db names a file somewhere else: the database is what
-	// the operator pointed, and the rest of what an installation owns has no
-	// reason to follow it out of the place this platform keeps it.
+	// Only what was actually named is taken. A named -db takes the data
+	// directory with it, which is WithDatabase's to work out: this process
+	// reads the key, the log and the initial password file against the
+	// directory the database is in, and an uninstall works that directory out
+	// of the registered -db the same way, so a data directory left at the
+	// default would be a directory the install made and nothing ever wrote to.
 	if a.binNamed {
 		plan.ExecutablePath = a.bin
 	}
 
 	if a.databaseNamed {
-		plan.DatabaseFile = a.database
+		plan = plan.WithDatabase(a.database)
 	}
 
 	dir, err := os.MkdirTemp("", "tunnel-manager-install-")

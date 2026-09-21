@@ -133,6 +133,14 @@ func (s systemd) Current() (Installed, error) {
 	}, nil
 }
 
+// CheckPlan answers whether these paths can be written into a unit and read
+// back out of one, which is what checkUnitPaths decides. Register asks the same
+// question again; this is the one that is asked before the executable is
+// copied, so a refusal leaves the machine as it was.
+func (systemd) CheckPlan(plan Plan) error {
+	return checkUnitPaths(plan)
+}
+
 // Register writes the unit for plan and leaves the service registered, enabled
 // and not started.
 //

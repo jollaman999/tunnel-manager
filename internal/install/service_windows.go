@@ -147,6 +147,16 @@ func (scmService) Current() (Installed, error) {
 	return Installed{ExecutablePath: executable, DatabaseFile: database}, nil
 }
 
+// CheckPlan has nothing to refuse on this platform, so it answers nil.
+//
+// The command line the SCM keeps is quoted with syscall.EscapeArg and read back
+// by parseServiceCommand, which handles that quoting: the default install lives
+// under Program Files, so a path with a space in it is the ordinary case here
+// rather than one that has to be kept out.
+func (scmService) CheckPlan(Plan) error {
+	return nil
+}
+
 // Register writes the registration for plan.
 //
 // An existing registration is changed rather than deleted and made again.
