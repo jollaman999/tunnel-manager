@@ -4,6 +4,7 @@ package auth
 import (
 	"crypto/rand"
 	"encoding/base32"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -73,26 +74,53 @@ func CheckPassword(hash, password string) bool {
 // from, so it is there, and a path that cannot be written to is reported as it
 // is instead of being made somewhere else.
 //
-// An existing file is written over, because this is reached only while no
-// account row exists, and the password such a file holds opens nothing.
+// The password is only ever written to a file this call created itself, which
+// is what O_EXCL is for. Opening whatever is at the path and narrowing it
+// afterwards writes the password into a file whose mode somebody else chose,
+// and anyone that mode let read it has the account until the narrowing lands.
+// Narrowing before the write does not close that either, since a file another
+// user owns is one this process may not chmod at all, and a path that is a
+// symlink is one whose target gets truncated and written to. A create that
+// fails because something is at the path writes nothing at all.
+//
+// A file that is already there is removed and the create is tried once more.
+// This is reached only while no account row exists, so such a file is a
+// leftover of an earlier startup and the password in it opens nothing, while
+// stopping on it would leave an installation that can never set its account
+// up. Removing takes write permission on the directory, which is the same
+// permission the create takes. Should the path be taken again between the
+// removal and the second create, that create fails and the startup stops,
+// which is the outcome the password is not handed out in.
 func writeInitialPasswordFile(path, password string) error {
-	f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, initialPasswordFileMode)
+	const createFlags = os.O_WRONLY | os.O_CREATE | os.O_EXCL
+
+	f, err := os.OpenFile(path, createFlags, initialPasswordFileMode)
+	if errors.Is(err, os.ErrExist) {
+		err = os.Remove(path)
+		if err != nil {
+			return fmt.Errorf("failed to remove the initial password file %s that was already there: %w", path, err)
+		}
+
+		f, err = os.OpenFile(path, createFlags, initialPasswordFileMode)
+	}
 	if err != nil {
 		return fmt.Errorf("failed to create the initial password file %s: %w", path, err)
+	}
+
+	// The mode passed to OpenFile is masked by umask, which only takes bits
+	// away, so the file was created no wider than initialPasswordFileMode.
+	// This puts back what the umask took, and it runs while the file is still
+	// empty so that the password is never in a file of any other mode.
+	err = f.Chmod(initialPasswordFileMode)
+	if err != nil {
+		_ = f.Close()
+		return fmt.Errorf("failed to set the permission of the initial password file %s: %w", path, err)
 	}
 
 	_, err = f.WriteString(password + "\n")
 	if err != nil {
 		_ = f.Close()
 		return fmt.Errorf("failed to write the initial password file %s: %w", path, err)
-	}
-
-	// The mode passed to OpenFile is masked by umask, and a file that was
-	// already there keeps the mode it had, so it is set again here.
-	err = f.Chmod(initialPasswordFileMode)
-	if err != nil {
-		_ = f.Close()
-		return fmt.Errorf("failed to set the permission of the initial password file %s: %w", path, err)
 	}
 
 	err = f.Close()

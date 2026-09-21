@@ -6,6 +6,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -166,6 +167,134 @@ func TestWriteInitialPasswordFileTightensAnExistingFile(t *testing.T) {
 
 	if strings.Contains(string(body), "test-password-2") {
 		t.Fatalf("the earlier content is still in the file")
+	}
+}
+
+// TestWriteInitialPasswordFileWritesNothingIntoAFileItFound is the file that a
+// local user put at the path before the first startup. The mode on such a file
+// is the one that user chose, so a password written into it is readable by
+// them, and narrowing the file afterwards is too late. The descriptor opened
+// here before the call is what that user would be holding: it reads the file
+// they made, whatever the path points at afterwards, and the password must not
+// come out of it.
+func TestWriteInitialPasswordFileWritesNothingIntoAFileItFound(t *testing.T) {
+	const password = "test-password"
+
+	path := filepath.Join(t.TempDir(), "initial-password")
+
+	err := os.WriteFile(path, []byte("planted\n"), 0666)
+	if err != nil {
+		t.Fatalf("failed to prepare the file: %v", err)
+	}
+
+	// os.WriteFile creates through the umask, so the mode is set on its own.
+	err = os.Chmod(path, 0666)
+	if err != nil {
+		t.Fatalf("failed to prepare the permission: %v", err)
+	}
+
+	planted, err := os.Open(path)
+	if err != nil {
+		t.Fatalf("failed to open the prepared file: %v", err)
+	}
+	defer func() {
+		_ = planted.Close()
+	}()
+
+	plantedInfo, err := planted.Stat()
+	if err != nil {
+		t.Fatalf("failed to stat the prepared file: %v", err)
+	}
+
+	err = writeInitialPasswordFile(path, password)
+	if err != nil {
+		t.Fatalf("failed to write: %v", err)
+	}
+
+	plantedBody, err := io.ReadAll(planted)
+	if err != nil {
+		t.Fatalf("failed to read the prepared file: %v", err)
+	}
+	if strings.Contains(string(plantedBody), password) {
+		t.Fatalf("the password was written into the file that was already there")
+	}
+
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Fatalf("failed to stat: %v", err)
+	}
+
+	if os.SameFile(plantedInfo, info) {
+		t.Fatalf("the password was written into the file that was already there")
+	}
+
+	// The number is spelled out rather than read from the constant, so a
+	// constant that is widened is a failure here and not a passing test.
+	if info.Mode().Perm() != 0600 {
+		t.Fatalf("the file has permission %#o, want %#o", info.Mode().Perm(), 0600)
+	}
+
+	body, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("failed to read: %v", err)
+	}
+	if strings.TrimRight(string(body), "\n") != password {
+		t.Fatalf("the file does not hold what was written")
+	}
+}
+
+// TestWriteInitialPasswordFileWritesNothingIntoASymlinkItFound pins the same
+// thing one step further: a symlink at the path is not followed, so neither
+// the password nor a truncation reaches the file it names. Following it would
+// let a local user pick any file this process may write to and have it emptied
+// and filled with the password.
+func TestWriteInitialPasswordFileWritesNothingIntoASymlinkItFound(t *testing.T) {
+	const password = "test-password"
+
+	dir := t.TempDir()
+	path := filepath.Join(dir, "initial-password")
+	target := filepath.Join(dir, "target")
+
+	err := os.WriteFile(target, []byte("target\n"), 0644)
+	if err != nil {
+		t.Fatalf("failed to prepare the target: %v", err)
+	}
+
+	err = os.Symlink(target, path)
+	if err != nil {
+		t.Skipf("symlinks cannot be made here: %v", err)
+	}
+
+	err = writeInitialPasswordFile(path, password)
+	if err != nil {
+		t.Fatalf("failed to write: %v", err)
+	}
+
+	targetBody, err := os.ReadFile(target)
+	if err != nil {
+		t.Fatalf("failed to read the target: %v", err)
+	}
+	if string(targetBody) != "target\n" {
+		t.Fatalf("the file the symlink named holds %q", string(targetBody))
+	}
+
+	info, err := os.Lstat(path)
+	if err != nil {
+		t.Fatalf("failed to stat: %v", err)
+	}
+	if info.Mode()&os.ModeSymlink != 0 {
+		t.Fatalf("the path is still a symlink")
+	}
+	if info.Mode().Perm() != 0600 {
+		t.Fatalf("the file has permission %#o, want %#o", info.Mode().Perm(), 0600)
+	}
+
+	body, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("failed to read: %v", err)
+	}
+	if strings.TrimRight(string(body), "\n") != password {
+		t.Fatalf("the file does not hold what was written")
 	}
 }
 
@@ -433,6 +562,51 @@ func TestEnsureUserWritesThePasswordOfTheStoredHash(t *testing.T) {
 	}
 }
 
+// TestEnsureUserWritesOverTheFileAnEarlierStartupLeft pins that a leftover
+// password file does not stop the startup. It is reached only while no account
+// row exists, so the file is one an earlier run wrote and the password in it
+// opens nothing, and an installation whose startup stopped on it could never
+// get its account set up at all.
+func TestEnsureUserWritesOverTheFileAnEarlierStartupLeft(t *testing.T) {
+	stub := newAccountStub(t, 0)
+	passwordFile := passwordFilePath(t)
+
+	const leftover = "left-by-an-earlier-startup"
+
+	err := os.WriteFile(passwordFile, []byte(leftover+"\n"), initialPasswordFileMode)
+	if err != nil {
+		t.Fatalf("failed to prepare the leftover file: %v", err)
+	}
+
+	created, err := EnsureUser(stub.db, passwordFile)
+	if err != nil {
+		t.Fatalf("EnsureUser returned error: %v", err)
+	}
+	if !created {
+		t.Fatalf("created = false while the account table was empty")
+	}
+
+	if len(stub.created) != 1 {
+		t.Fatalf("rows created = %d, want 1", len(stub.created))
+	}
+
+	password := readPasswordFile(t, passwordFile)
+	if password == leftover {
+		t.Fatalf("the leftover password is still in the file")
+	}
+	if !CheckPassword(stub.created[0].PasswordHash, password) {
+		t.Fatalf("the stored hash does not verify against the password in the file")
+	}
+
+	info, err := os.Stat(passwordFile)
+	if err != nil {
+		t.Fatalf("failed to stat the initial password file: %v", err)
+	}
+	if info.Mode().Perm() != 0600 {
+		t.Fatalf("the initial password file has permission %#o, want %#o", info.Mode().Perm(), 0600)
+	}
+}
+
 // TestEnsureUserLeavesTheAccountThatIsAlreadyThere pins that a later startup
 // writes neither a row nor a file, so the password the operator is using is not
 // replaced by one they never saw.
@@ -610,11 +784,17 @@ func TestHashPasswordReportsAPasswordBcryptWillNotTake(t *testing.T) {
 	}
 }
 
-// TestWriteInitialPasswordFileReportsAWriteThatFailed pins that a file that was
-// opened but not filled is an error. The path is a device that takes no bytes,
-// which is the one place a write fails after the open went through.
-func TestWriteInitialPasswordFileReportsAWriteThatFailed(t *testing.T) {
+// TestWriteInitialPasswordFileReportsAPathItCannotReplace pins that a path
+// that is taken by something this process may not remove ends the run instead
+// of being written into. The password would otherwise go into a file whose
+// mode and owner somebody else picked. The path is a device node, which is
+// there on every run and belongs to root.
+func TestWriteInitialPasswordFileReportsAPathItCannotReplace(t *testing.T) {
 	const full = "/dev/full"
+
+	if os.Geteuid() == 0 {
+		t.Skip("root removes a device node whatever the directory says")
+	}
 
 	_, err := os.Stat(full)
 	if err != nil {
@@ -623,7 +803,7 @@ func TestWriteInitialPasswordFileReportsAWriteThatFailed(t *testing.T) {
 
 	err = writeInitialPasswordFile(full, "test-password")
 	if err == nil {
-		t.Fatalf("a write that stored nothing was reported as a success")
+		t.Fatalf("a path that could not be replaced was reported as a success")
 	}
 	if !strings.Contains(err.Error(), full) {
 		t.Fatalf("the error does not name the path: %v", err)
