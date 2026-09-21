@@ -4,6 +4,7 @@
 
 - The program draws its name and its version on the terminal as the first thing a run puts there, and the banner of the web framework it is built on is hidden. A console somebody is watching now says what started in it before any log line does.
 - The line that reports the server is up names the address the listener bound, `[::]:8888` rather than the `:8888` that was asked for. The framework used to print that address and no longer prints anything, and the plain-HTTP path opens its own listener now so that it has one to ask.
+- A download that fails in a way that may pass is asked for again, four times over about thirty-five seconds, before the install gives up on the release. A release published a moment ago is named by the API before the servers that carry its files have it, and those answer 502 or 504 until they do, which used to send the install straight to the executable it was started from: a report that says it worked, on the version the operator already had. A refusal is still not asked twice, since a rate limit and a release that is not there say the same thing however often they are asked.
 - The log line written every time a tunnel asked for a wildcard local address is gone. It repeated the same paragraph on every such tunnel and ended by leaving the answer to the probe that follows it, which is the line worth reading.
 
 ## Notes:
