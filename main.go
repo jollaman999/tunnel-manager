@@ -6,6 +6,7 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"io"
 	"log"
 	"net"
 	"net/http"
@@ -26,6 +27,7 @@ import (
 	"github.com/jollaman999/tunnel-manager/internal/auth"
 	"github.com/jollaman999/tunnel-manager/internal/crypto"
 	"github.com/jollaman999/tunnel-manager/internal/database"
+	"github.com/jollaman999/tunnel-manager/internal/install"
 	"github.com/jollaman999/tunnel-manager/internal/logid"
 	"github.com/jollaman999/tunnel-manager/internal/models"
 	"github.com/jollaman999/tunnel-manager/internal/settings"
@@ -492,6 +494,213 @@ func defaultDatabasePath() (string, error) {
 	return filepath.Join(dir, "tunnel-manager", databaseFileName), nil
 }
 
+// installation is what the four installation flags were given, gathered so that
+// the checks between them are made in one place.
+//
+// binNamed and databaseNamed are carried beside the values because "left out"
+// and "given" are different answers here and an empty string cannot tell them
+// apart. -db is filled in from defaultDatabasePath for a server that is
+// starting, and an install that took that value would register the service with
+// the database of whoever happened to run the install instead of the one the
+// install lays down.
+type installation struct {
+	install       bool
+	uninstall     bool
+	bin           string
+	binNamed      bool
+	database      string
+	databaseNamed bool
+	purge         bool
+}
+
+// installationAsked reads the installation flags off the command line.
+//
+// flag.Visit walks the flags that were given rather than all of them, which is
+// the only way to tell a -db that was left out from one that was named.
+func installationAsked(install bool, uninstall bool, bin string, database string, purge bool) installation {
+	asked := installation{
+		install:   install,
+		uninstall: uninstall,
+		bin:       bin,
+		database:  database,
+		purge:     purge,
+	}
+
+	flag.Visit(func(f *flag.Flag) {
+		switch f.Name {
+		case "bin":
+			asked.binNamed = true
+		case "db":
+			asked.databaseNamed = true
+		}
+	})
+
+	return asked
+}
+
+// asked says this command line is an installation command and not a server that
+// is starting.
+//
+// -bin and -purge count, although neither does anything on its own. They are
+// refused below rather than ignored: a run that took them for a server start
+// would go on serving while the operator waited for an install, and a -purge
+// that was quietly dropped would leave somebody believing their data was gone.
+func (a installation) asked() bool {
+	return a.install || a.uninstall || a.binNamed || a.purge
+}
+
+// check reports the combinations that are refused, so that they are refused
+// before anything is stopped, written or removed.
+func (a installation) check() error {
+	if a.install && a.uninstall {
+		return errors.New("-install and -uninstall ask for opposite things. Give one of them")
+	}
+
+	if a.binNamed && !a.install && !a.uninstall {
+		return errors.New("-bin names where the executable of an installation is. " +
+			"It goes with -install or with -uninstall")
+	}
+
+	if a.purge && !a.uninstall {
+		return errors.New("-purge removes the data of an installation that is being taken away. " +
+			"It goes with -uninstall")
+	}
+
+	return nil
+}
+
+// runInstallation carries out -install or -uninstall and reports the status the
+// process ends with.
+//
+// The reports of what was done are written by the install package itself, whole
+// and at the end, so nothing here writes one. What is left for this is the
+// refusals and the failures, which go to the error output beside the usage the
+// flag package writes there.
+func runInstallation(asked installation, out io.Writer) int {
+	err := asked.check()
+	if err != nil {
+		fmt.Fprintf(flag.CommandLine.Output(), "%v\n\n", err)
+		flag.Usage()
+
+		return 1
+	}
+
+	if asked.install {
+		err = asked.runInstall(out)
+	} else {
+		err = asked.runUninstall(out)
+	}
+
+	if err != nil {
+		fmt.Fprintf(flag.CommandLine.Output(), "%v\n", err)
+
+		return 1
+	}
+
+	return 0
+}
+
+// runInstall puts this program in place as a service of this system.
+//
+// The privilege is checked here as well as inside the install, so that an
+// operator who cannot install anything is told so before a release is
+// downloaded for an install that is going to be refused.
+func (a installation) runInstall(out io.Writer) error {
+	err := install.CheckPrivilege()
+	if err != nil {
+		return err
+	}
+
+	plan := install.Defaults()
+
+	// Only what was actually named is taken. The data directory is left at its
+	// default even when -db names a file somewhere else: the database is what
+	// the operator pointed, and the rest of what an installation owns has no
+	// reason to follow it out of the place this platform keeps it.
+	if a.binNamed {
+		plan.ExecutablePath = a.bin
+	}
+
+	if a.databaseNamed {
+		plan.DatabaseFile = a.database
+	}
+
+	dir, err := os.MkdirTemp("", "tunnel-manager-install-")
+	if err != nil {
+		return fmt.Errorf("failed to make a directory to download the release into: %w", err)
+	}
+
+	defer func() {
+		_ = os.RemoveAll(dir)
+	}()
+
+	fetched, err := install.Fetch(context.Background(), dir)
+	if err != nil {
+		return err
+	}
+
+	defer fetched.Close()
+
+	_, err = install.Install(plan, fetched.Path, installSource(fetched), out)
+
+	return err
+}
+
+// runUninstall takes the service of this system away.
+//
+// -bin and -db are passed only when they were named. The registration is what
+// says where this installation is, and what the two flags are for is the
+// machine whose registration is already gone; a path this process worked out
+// for itself would be a guess reported as if the removal had found it.
+func (a installation) runUninstall(out io.Writer) error {
+	err := install.CheckPrivilege()
+	if err != nil {
+		return err
+	}
+
+	removal := install.Removal{Purge: a.purge}
+
+	if a.binNamed {
+		removal.ExecutablePath = a.bin
+	}
+
+	if a.databaseNamed {
+		removal.DatabaseFile = a.database
+	}
+
+	_, err = install.Uninstall(removal, out)
+
+	return err
+}
+
+// installSource is the line the install report says the executable came from.
+//
+// Which of the two sources was used is the part of an install that cannot be
+// seen afterwards from the machine: the file is in place either way, and an
+// operator who believes they installed the release when the download failed
+// would look for a fix in it that is not there.
+func installSource(fetched *install.Fetched) string {
+	if fetched.Source == install.SourceRunning {
+		text := "this running process, " + fetched.Path
+
+		if fetched.Why != "" {
+			text += " (the release was not used: " + fetched.Why + ")"
+		}
+
+		return text
+	}
+
+	text := "the " + fetched.Tag + " release"
+
+	if fetched.Verified {
+		text += ", checksum verified"
+	} else {
+		text += ", with no SHA256SUMS in it to check the download against"
+	}
+
+	return text
+}
+
 // usage is what -help prints and what an unknown flag prints. It says where the
 // settings are because this text is the only place left that can: there is no
 // configuration file any more, and somebody who goes looking for one has
@@ -509,9 +718,59 @@ func usage() {
 	fmt.Fprintf(out, "\nThere is no configuration file. The database file is the whole of this "+
 		"installation:\nevery other setting is kept in it and is changed on the Settings screen "+
 		"of the web UI.\n")
+	fmt.Fprintf(out, "\nRun with -install to have this system start and keep this program running, "+
+		"and with\n-uninstall to take that away again.\n")
+}
+
+// serviceStopped is closed when the service control manager asks this process
+// to stop. It is the sibling of the signal channel and is read by the same
+// select, so the shutdown a stop runs is the one a signal runs.
+//
+// It is out here rather than inside the run because its two ends are apart: the
+// function that closes it is handed to the service manager before the run is
+// started, and what waits on it is inside the run. The close is guarded the way
+// the uninstall and the restart ones are, since the service manager may ask a
+// second time while the first shutdown is on its way down.
+var serviceStopped = make(chan struct{})
+
+var serviceStopOnce sync.Once
+
+// endOnServiceStop is what the service manager's stop runs.
+//
+// It returns as soon as the channel is closed. The loop that answers the
+// service manager is held up for exactly as long as this takes, and a service
+// that stops answering is one the manager kills, so the shutdown itself is left
+// to the run this wakes.
+func endOnServiceStop() {
+	serviceStopOnce.Do(func() {
+		close(serviceStopped)
+	})
 }
 
 func main() {
+	if runningAsService() {
+		// Started by a service manager that expects a protocol of it, which is
+		// Windows and nowhere else. What the program does is the same; what is
+		// around it is the answers the manager waits for, and a process that
+		// never gives them is killed for it.
+		err := runService(serve, endOnServiceStop)
+		if err != nil {
+			log.Fatalf("Failed to run under the service manager: %v", err)
+		}
+
+		return
+	}
+
+	serve()
+}
+
+// serve is the whole of this program: it reads the flags, opens the database,
+// starts the tunnels and serves the API until it is asked to stop.
+//
+// It is apart from main so that it can be handed to the service manager on the
+// platform that starts it that way. Called from main it is what this program
+// has always done from a console.
+func serve() {
 	flag.Usage = usage
 
 	versionFlag := flag.Bool("version", false, "print the version and exit")
@@ -526,11 +785,43 @@ func main() {
 			"that would change it is served by the server that will not start.\n"+
 			"Only the settings go back. The registered hosts, the service ports, the account\n"+
 			"and the certificate are left as they are.")
+	installFlag := flag.Bool("install", false,
+		"install this program as a service of this system and exit. The executable is put\n"+
+			"in place, the data directory is made and the service is registered to start at\n"+
+			"boot and to come back on its own. The binary that is installed is the latest\n"+
+			"release, or this running one if the release cannot be reached.\n"+
+			"It needs root, or an administrator on Windows. Where things go is -bin and -db.")
+	uninstallFlag := flag.Bool("uninstall", false,
+		"stop the service, take its registration out, remove the installed executable and\n"+
+			"exit. Where the installation is comes from the registration itself, so nothing\n"+
+			"has to be named. If the registration is already gone, name what is left with\n"+
+			"-bin and -db.\n"+
+			"The data is kept. -purge is what removes it.")
+	binPath := flag.String("bin", "",
+		"path the -install puts the executable at, and what the registered service is\n"+
+			"started from. Left out, it is the place this platform keeps programs an\n"+
+			"administrator installed (on Linux and macOS /usr/local/bin/tunnel-manager).\n"+
+			"It goes with -install or with -uninstall and means nothing on its own.")
+	purge := flag.Bool("purge", false,
+		"remove the data directory as well, for -uninstall. It cannot be taken back: the\n"+
+			"database, the key the stored passwords are sealed with and every host and\n"+
+			"credential in it go with it.\n"+
+			"Without this an uninstall leaves the data where it is and says where that is.")
 	flag.Parse()
 
 	if *versionFlag {
 		fmt.Printf("tunnel-manager v%s\n", version)
 		os.Exit(0)
+	}
+
+	// The installation commands are done here and end the process, above
+	// everything that opens the database. An install has no use for the
+	// database of the installation it is laying down, and opening one first
+	// would build it under whoever ran the command rather than where the
+	// service is about to be registered to read it from.
+	installation := installationAsked(*installFlag, *uninstallFlag, *binPath, *dbPath, *purge)
+	if installation.asked() {
+		os.Exit(runInstallation(installation, os.Stdout))
 	}
 
 	// The path of the database file is the one thing this process has to be
@@ -1004,6 +1295,13 @@ func main() {
 		logger.Info("Received signal, shutting down...",
 			logid.ShutdownSignalReceived.Field(),
 			zap.String("signal", sig.String()))
+	case <-serviceStopped:
+		// Reported under the signal id. A stop from the service manager is what
+		// a signal is on the platform that has no signals, and the shutdown it
+		// asks for is the same one.
+		logger.Info("The service manager asked for a stop, shutting down...",
+			logid.ShutdownSignalReceived.Field(),
+			zap.String("signal", "service manager stop"))
 	case <-uninstalled:
 		logger.Info("The installation was removed, shutting down...", logid.ShutdownUninstalled.Field())
 	case <-restarting:
