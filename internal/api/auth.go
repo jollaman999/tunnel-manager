@@ -39,6 +39,21 @@ const sessionCookieName = "tm_session"
 // not thrown out in the middle of it.
 const sessionLifetime = 12 * time.Hour
 
+// sessionAbsoluteLifetime is how long a session lives counted from the login,
+// however much it is used. The sliding deadline above is pushed out by every
+// request that finds the session, so a token that keeps being sent never runs
+// out on its own: one that was stolen would go on working for as long as the
+// process is up. This is the bound on that.
+//
+// It is fourteen sliding lifetimes, which is a week. A cap of one or two of
+// them would fall due in the middle of an ordinary working day, which is the
+// thing the sliding deadline exists to avoid, and it is not what the cap is
+// for: what it is for is that a token cannot live forever. A week is only ever
+// reached by a session that was kept alive by use for seven days straight, so
+// the operator meets it about as often as they meet a restart, and a stolen
+// token dies on a date that was fixed when it was made.
+const sessionAbsoluteLifetime = 7 * 24 * time.Hour
+
 // sessionTokenBytes is how much randomness a session token carries. The token
 // is the whole credential, so it is read from crypto/rand and nothing else.
 const sessionTokenBytes = 32
@@ -98,6 +113,10 @@ type session struct {
 	csrfToken string
 	// expiresAt is moved forward by every lookup that finds the session.
 	expiresAt time.Time
+	// createdAt is when the session was made and is never moved. It is what
+	// the absolute deadline is counted from, so that the deadline cannot be
+	// pushed out by the same requests that push expiresAt out.
+	createdAt time.Time
 }
 
 // SessionStore holds the live sessions in memory. They are gone after a
@@ -112,6 +131,10 @@ type SessionStore struct {
 	mu       sync.RWMutex
 	sessions map[string]session
 	lifetime time.Duration
+	// absoluteLifetime is the cap the sliding lifetime is measured against. It
+	// sits next to it rather than being read from the constant at the lookup,
+	// so that both deadlines of a store are named in one place.
+	absoluteLifetime time.Duration
 	// now is the clock the deadlines are measured against. It is a field so a
 	// test can move time forward instead of waiting for it.
 	now func() time.Time
@@ -124,9 +147,10 @@ type SessionStore struct {
 // client of the single account, so nothing piles up that a sweep would clear.
 func NewSessionStore() *SessionStore {
 	return &SessionStore{
-		sessions: make(map[string]session),
-		lifetime: sessionLifetime,
-		now:      time.Now,
+		sessions:         make(map[string]session),
+		lifetime:         sessionLifetime,
+		absoluteLifetime: sessionAbsoluteLifetime,
+		now:              time.Now,
 	}
 }
 
@@ -146,10 +170,13 @@ func (s *SessionStore) Create(userID uint) (string, string, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
+	now := s.now()
+
 	s.sessions[token] = session{
 		userID:    userID,
 		csrfToken: csrfToken,
-		expiresAt: s.now().Add(s.lifetime),
+		expiresAt: now.Add(s.lifetime),
+		createdAt: now,
 	}
 
 	return token, csrfToken, nil
@@ -182,8 +209,15 @@ func (s *SessionStore) Lookup(token string) (uint, string, bool) {
 		return 0, "", false
 	}
 
+	// Two deadlines are checked and both end the session the same way, because
+	// to the client there is no difference between the two: the session is not
+	// there any more and the answer is the one a request with no session gets.
+	// The first is the sliding one, which says the session has been left alone
+	// for too long. The second is counted from the login and is not moved by
+	// anything, which is what stops a token that is used often enough from
+	// living for as long as the process does.
 	now := s.now()
-	if !now.Before(found.expiresAt) {
+	if !now.Before(found.expiresAt) || !now.Before(found.createdAt.Add(s.absoluteLifetime)) {
 		delete(s.sessions, token)
 		return 0, "", false
 	}
@@ -244,6 +278,12 @@ type AuthHandler struct {
 	// is the one the startup wrote and the two cannot drift apart.
 	initialPasswordFile string
 	sessions            *SessionStore
+	// trustProxyHeaders says whether the forwarding headers of whatever is in
+	// front of this server are believed. It decides nothing but the Secure
+	// flag of the cookies below, and it is off unless the operator turns it
+	// on: a header anyone can send is only worth reading when the operator has
+	// said that a proxy they run is the only thing that can send it.
+	trustProxyHeaders bool
 }
 
 func NewAuthHandler(db *gorm.DB, logger *zap.Logger, initialPasswordFile string) *AuthHandler {
@@ -253,6 +293,17 @@ func NewAuthHandler(db *gorm.DB, logger *zap.Logger, initialPasswordFile string)
 		initialPasswordFile: initialPasswordFile,
 		sessions:            NewSessionStore(),
 	}
+}
+
+// TrustProxyHeaders turns the reading of X-Forwarded-Proto on or off. It is a
+// call of its own rather than an argument of the constructor, because every
+// caller that builds a handler today passes three arguments and the default is
+// the behaviour they already have.
+//
+// It is meant to be called at the startup, before anything is listening, so
+// the flag is never written while a request is reading it.
+func (h *AuthHandler) TrustProxyHeaders(trust bool) {
+	h.trustProxyHeaders = trust
 }
 
 type loginRequest struct {
@@ -281,7 +332,7 @@ type setupRequest struct {
 // sessionCookie returns the cookie a session token is handed out in. Secure is
 // set from the request rather than always, because the server is served over
 // plain HTTP as well and a Secure cookie would never be sent back on it.
-func sessionCookie(c echo.Context, token string, maxAge int) *http.Cookie {
+func (h *AuthHandler) sessionCookie(c echo.Context, token string, maxAge int) *http.Cookie {
 	return &http.Cookie{
 		Name:     sessionCookieName,
 		Value:    token,
@@ -289,8 +340,44 @@ func sessionCookie(c echo.Context, token string, maxAge int) *http.Cookie {
 		MaxAge:   maxAge,
 		HttpOnly: true,
 		SameSite: http.SameSiteLaxMode,
-		Secure:   c.IsTLS(),
+		Secure:   h.cookieIsSecure(c),
 	}
+}
+
+// cookieIsSecure reports whether the cookies of this request are handed out
+// with Secure on.
+//
+// echo's IsTLS is request.TLS != nil, which is what this process terminated
+// itself. Behind a proxy that terminates the TLS and forwards plain HTTP, that
+// is false while the browser is on https, and the session cookie would go out
+// without Secure: the browser would then send it back over a plain request to
+// the same name, which is the thing Secure exists to stop.
+//
+// X-Forwarded-Proto is what the proxy says the browser used, and it is read
+// only when the operator has said there is a proxy. Unasked for, it is a
+// header any client can put on a request, and believing it would let a client
+// on plain HTTP ask for Secure cookies and lock itself out of its own session.
+func (h *AuthHandler) cookieIsSecure(c echo.Context) bool {
+	if c.IsTLS() {
+		return true
+	}
+
+	if !h.trustProxyHeaders {
+		return false
+	}
+
+	// A request that passed through more than one proxy carries them in a
+	// list, oldest first, so the entry that says what the browser used is the
+	// first one. The comparison ignores case because the value is a scheme,
+	// and a scheme is case insensitive.
+	proto := c.Request().Header.Get(echo.HeaderXForwardedProto)
+
+	comma := strings.Index(proto, ",")
+	if comma >= 0 {
+		proto = proto[:comma]
+	}
+
+	return strings.EqualFold(strings.TrimSpace(proto), "https")
 }
 
 // csrfCookie returns the cookie the CSRF token of a session is handed out in.
@@ -298,7 +385,7 @@ func sessionCookie(c echo.Context, token string, maxAge int) *http.Cookie {
 // page has to read the value to send it back in a header. That costs nothing,
 // since the value is not a credential on its own: it is only accepted next to
 // the session it was made for.
-func csrfCookie(c echo.Context, token string, maxAge int) *http.Cookie {
+func (h *AuthHandler) csrfCookie(c echo.Context, token string, maxAge int) *http.Cookie {
 	return &http.Cookie{
 		Name:     csrfCookieName,
 		Value:    token,
@@ -306,7 +393,7 @@ func csrfCookie(c echo.Context, token string, maxAge int) *http.Cookie {
 		MaxAge:   maxAge,
 		HttpOnly: false,
 		SameSite: http.SameSiteLaxMode,
-		Secure:   c.IsTLS(),
+		Secure:   h.cookieIsSecure(c),
 	}
 }
 
@@ -358,8 +445,8 @@ func (h *AuthHandler) Login(c echo.Context) error {
 		return failure(c, http.StatusInternalServerError, errAuthSessionCreateFailed)
 	}
 
-	c.SetCookie(sessionCookie(c, token, 0))
-	c.SetCookie(csrfCookie(c, csrfToken, 0))
+	c.SetCookie(h.sessionCookie(c, token, 0))
+	c.SetCookie(h.csrfCookie(c, csrfToken, 0))
 
 	return c.JSON(http.StatusOK, models.Response{
 		Success: true,
@@ -379,8 +466,8 @@ func (h *AuthHandler) Logout(c echo.Context) error {
 		h.sessions.Delete(cookie.Value)
 	}
 
-	c.SetCookie(sessionCookie(c, "", -1))
-	c.SetCookie(csrfCookie(c, "", -1))
+	c.SetCookie(h.sessionCookie(c, "", -1))
+	c.SetCookie(h.csrfCookie(c, "", -1))
 
 	return c.JSON(http.StatusOK, models.Response{Success: true})
 }
@@ -598,7 +685,7 @@ func (h *AuthHandler) RequireSession() echo.MiddlewareFunc {
 			// session, so that a page which lost its copy gets it back on the
 			// next read instead of being unable to change anything until the
 			// operator logs in again.
-			c.SetCookie(csrfCookie(c, csrfToken, 0))
+			c.SetCookie(h.csrfCookie(c, csrfToken, 0))
 
 			if !isSafeMethod(c.Request().Method) &&
 				subtle.ConstantTimeCompare([]byte(c.Request().Header.Get(csrfHeaderName)), []byte(csrfToken)) != 1 {

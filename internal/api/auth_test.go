@@ -2,6 +2,7 @@ package api
 
 import (
 	"context"
+	"crypto/tls"
 	"database/sql"
 	"encoding/json"
 	"errors"
@@ -483,6 +484,204 @@ func TestTheSessionDeadlineSlides(t *testing.T) {
 		if !ok {
 			t.Fatalf("the session was refused %v after the login", time.Duration(i+1)*(sessionLifetime-time.Hour))
 		}
+	}
+}
+
+// TestTheSessionRunsOutAtTheAbsoluteDeadline pins down the bound the sliding
+// deadline does not give: a session that is looked up often enough to never
+// run out on the sliding deadline is still gone once it is a week old.
+//
+// The sliding deadline of the session is read out before the last lookup and
+// held against the clock that lookup runs at, so that a change which broke the
+// sliding renewal could not make this test pass for the wrong reason.
+func TestTheSessionRunsOutAtTheAbsoluteDeadline(t *testing.T) {
+	store := NewSessionStore()
+
+	start := time.Now()
+	now := start
+	store.now = func() time.Time { return now }
+
+	token, _, err := store.Create(1)
+	if err != nil {
+		t.Fatalf("Create returned an error: %v", err)
+	}
+
+	// One lookup an hour before every sliding deadline, for as long as that
+	// stays inside the absolute one.
+	step := sessionLifetime - time.Hour
+	for now.Add(step).Sub(start) < sessionAbsoluteLifetime {
+		now = now.Add(step)
+
+		_, _, ok := store.Lookup(token)
+		if !ok {
+			t.Fatalf("the session was refused %v after the login, which is inside the absolute lifetime of %v",
+				now.Sub(start), sessionAbsoluteLifetime)
+		}
+	}
+
+	if now.Sub(start) <= sessionLifetime {
+		t.Fatalf("the session was only kept alive for %v, which is inside one sliding lifetime of %v: "+
+			"the loop proves nothing about sliding past it", now.Sub(start), sessionLifetime)
+	}
+
+	store.mu.RLock()
+	sliding := store.sessions[token].expiresAt
+	store.mu.RUnlock()
+
+	now = start.Add(sessionAbsoluteLifetime)
+
+	if !now.Before(sliding) {
+		t.Fatalf("the sliding deadline %v had already run out at %v, so a refusal below would not be "+
+			"the absolute deadline doing it", sliding.Sub(start), now.Sub(start))
+	}
+
+	_, _, ok := store.Lookup(token)
+	if ok {
+		t.Fatalf("the session was still taken %v after the login, with an absolute lifetime of %v",
+			now.Sub(start), sessionAbsoluteLifetime)
+	}
+
+	store.mu.RLock()
+	left := len(store.sessions)
+	store.mu.RUnlock()
+
+	if left != 0 {
+		t.Errorf("the session past its absolute deadline is still in the store: %d left", left)
+	}
+}
+
+// TestASessionInConstantUseIsRefusedOnceItIsTooOld is the same bound seen from
+// the outside: the middleware answers a session that is past the absolute
+// deadline the way it answers one that has no session at all, while the same
+// requests made before that point are served.
+func TestASessionInConstantUseIsRefusedOnceItIsTooOld(t *testing.T) {
+	e, authHandler := newTestServer(t, newTestAccount(t, false))
+
+	start := time.Now()
+	now := start
+	authHandler.sessions.now = func() time.Time { return now }
+
+	_, cookie := login(t, e, `{"username":"`+testUsername+`","password":"`+testPassword+`"}`)
+	if cookie == nil {
+		t.Fatalf("the login set no session cookie")
+	}
+
+	step := sessionLifetime - time.Hour
+	for now.Add(step).Sub(start) < sessionAbsoluteLifetime {
+		now = now.Add(step)
+
+		rec := do(e, http.MethodGet, "/api/host", "", cookie)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("%v after the login: status = %d, want %d, body: %s",
+				now.Sub(start), rec.Code, http.StatusOK, rec.Body.String())
+		}
+	}
+
+	now = start.Add(sessionAbsoluteLifetime)
+
+	rec := do(e, http.MethodGet, "/api/host", "", cookie)
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("%v after the login: status = %d, want %d, body: %s",
+			now.Sub(start), rec.Code, http.StatusUnauthorized, rec.Body.String())
+	}
+
+	authHandler.sessions.mu.RLock()
+	left := len(authHandler.sessions.sessions)
+	authHandler.sessions.mu.RUnlock()
+
+	if left != 0 {
+		t.Errorf("the session past its absolute deadline is still in the store: %d left", left)
+	}
+}
+
+// TestTheCookieSecureFlagFollowsTheProxySwitch covers what decides Secure on
+// the two cookies the login hands out.
+//
+// The first rows are the behaviour with the switch off, which is what every
+// caller that does not turn it on gets: TLS this process terminated itself,
+// and nothing else, sets the flag. A forwarded header is a header any client
+// can send, so with the switch off it is not read at all. The rest are the
+// switch on, which is the operator saying that a proxy they run is the only
+// thing that reaches this server.
+//
+// Every row checks the flags that are not Secure as well, because the switch
+// is not supposed to touch them.
+func TestTheCookieSecureFlagFollowsTheProxySwitch(t *testing.T) {
+	tests := []struct {
+		name           string
+		trustProxy     bool
+		tls            bool
+		forwardedProto string
+		wantSecure     bool
+	}{
+		{name: "plain HTTP and the switch off", wantSecure: false},
+		{name: "TLS terminated here and the switch off", tls: true, wantSecure: true},
+		{name: "the forwarded header is not read while the switch is off", forwardedProto: "https", wantSecure: false},
+		{name: "forwarded https with the switch on", trustProxy: true, forwardedProto: "https", wantSecure: true},
+		{name: "the forwarded scheme is compared without case", trustProxy: true, forwardedProto: "HTTPS", wantSecure: true},
+		{name: "forwarded http with the switch on", trustProxy: true, forwardedProto: "http", wantSecure: false},
+		{name: "no forwarded header with the switch on", trustProxy: true, wantSecure: false},
+		{name: "the browser end of a chain of proxies is the entry read", trustProxy: true, forwardedProto: "https, http", wantSecure: true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			e, authHandler := newTestServer(t, newTestAccount(t, false))
+			authHandler.TrustProxyHeaders(tt.trustProxy)
+
+			body := `{"username":"` + testUsername + `","password":"` + testPassword + `"}`
+
+			req := httptest.NewRequest(http.MethodPost, "/api/login", strings.NewReader(body))
+			req.Header.Set(echo.HeaderContentType, echo.MIMEApplicationJSON)
+
+			if tt.forwardedProto != "" {
+				req.Header.Set(echo.HeaderXForwardedProto, tt.forwardedProto)
+			}
+
+			if tt.tls {
+				// An empty state is enough: echo asks whether there is one.
+				req.TLS = &tls.ConnectionState{}
+			}
+
+			rec := httptest.NewRecorder()
+			e.ServeHTTP(rec, req)
+
+			if rec.Code != http.StatusOK {
+				t.Fatalf("status = %d, want %d, body: %s", rec.Code, http.StatusOK, rec.Body.String())
+			}
+
+			session := sessionCookieOf(rec)
+			if session == nil {
+				t.Fatalf("the login set no %s cookie", sessionCookieName)
+			}
+
+			csrf := csrfCookieOf(rec)
+			if csrf == nil {
+				t.Fatalf("the login set no %s cookie", csrfCookieName)
+			}
+
+			for _, cookie := range []*http.Cookie{session, csrf} {
+				if cookie.Secure != tt.wantSecure {
+					t.Errorf("%s: Secure = %t, want %t", cookie.Name, cookie.Secure, tt.wantSecure)
+				}
+
+				if cookie.Path != "/" {
+					t.Errorf("%s: Path = %q, want %q", cookie.Name, cookie.Path, "/")
+				}
+
+				if cookie.SameSite != http.SameSiteLaxMode {
+					t.Errorf("%s: SameSite = %v, want %v", cookie.Name, cookie.SameSite, http.SameSiteLaxMode)
+				}
+			}
+
+			if !session.HttpOnly {
+				t.Errorf("%s: HttpOnly = false, want true", sessionCookieName)
+			}
+
+			if csrf.HttpOnly {
+				t.Errorf("%s: HttpOnly = true, want false: the page has to read it", csrfCookieName)
+			}
+		})
 	}
 }
 
