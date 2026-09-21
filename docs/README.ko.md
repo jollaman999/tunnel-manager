@@ -85,6 +85,36 @@ cat <dir>/initial-password
 `-db` 로 파일을 지정하지 않으면 데이터베이스는 그 플랫폼이 사용자 데이터를 두는 자리에
 생깁니다. Docker Compose 와 systemd 유닛과 소스 빌드는 아래 레퍼런스에 있습니다.
 
+## 서비스로 설치
+
+`-install` 은 이 프로그램을 장비의 서비스로 만듭니다. 실행 파일을 제자리에 놓고, 데이터
+디렉터리를 만들고, systemd 나 launchd 나 Windows 서비스 제어 관리자에 서비스를 등록하고
+띄웁니다. 그다음부터는 부팅할 때 올라오고, 꺼지면 스스로 다시 뜹니다.
+
+```bash
+sudo ./tunnel-manager-linux-amd64 -install
+```
+
+Windows 에서는 **관리자 권한으로 실행**한 PowerShell 에서 같은 명령을 실행합니다.
+
+```powershell
+.\tunnel-manager-windows-amd64.exe -install
+```
+
+| 플랫폼 | 실행 파일 | 데이터 |
+|--------|-----------|--------|
+| Linux | `/usr/local/bin/tunnel-manager` | `/var/lib/tunnel-manager/` |
+| macOS | `/usr/local/bin/tunnel-manager` | `/Library/Application Support/tunnel-manager/` |
+| Windows | `C:\Program Files\tunnel-manager\tunnel-manager.exe` | `C:\ProgramData\tunnel-manager\` |
+
+**설치되는 바이너리는 최신 릴리즈입니다.** GitHub 에서 내려받고, 그 릴리즈에 `SHA256SUMS` 가
+들어 있으면 내려받은 파일을 그 체크섬으로 검증합니다. 릴리즈에 접속하지 못해도 실패로 끝나지
+않습니다. 그때는 방금 실행한 파일을 대신 설치하고, 둘 중 무엇이 설치됐는지 보고에 찍습니다.
+
+`sudo tunnel-manager -uninstall` 이 다시 걷어냅니다. 서비스를 멈추고, 등록을 지우고, 설치된
+실행 파일을 지웁니다. **데이터는 남깁니다.** 어디에 남았는지는 보고에 나옵니다. 데이터
+디렉터리까지 지우려면 `-purge` 를 붙이는데, `-purge` 가 지운 것은 되돌릴 수 없습니다.
+
 ## 어디서 더 읽나
 
 [docs/reference.ko.md](reference.ko.md) 에 전부 있습니다.
@@ -93,6 +123,7 @@ cat <dir>/initial-password
 |----|------------------|
 | [동작 방식](reference.ko.md#동작-방식) | 조정 루프, 할당, 터널 하나가 끝에서 끝까지 동작하는 과정 |
 | [설치 및 실행](reference.ko.md#설치-및-실행) | 플래그, 파일이 어디에 생기는지, Docker Compose, systemd, 소스 빌드 |
+| [서비스로 설치하기](reference.ko.md#서비스로-설치하기) | 플래그 넷, 이미 설치돼 있을 때 어떻게 되는지, 제거가 경로를 어디서 읽는지 |
 | [HTTPS 와 인증서](reference.ko.md#https-와-인증서) | 브라우저 경고, 내 인증서 등록, 갱신, HTTPS 끄기 |
 | [첫 기동과 계정 설정](reference.ko.md#첫-기동과-계정-설정) | 임시 비밀번호, 계정 설정, 자격증명 바꾸기 |
 | [내장 UI](reference.ko.md#내장-ui) | 화면마다 무엇을 보여주고 무엇을 하는지, 그리고 어떤 언어로 나오는지 |

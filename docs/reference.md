@@ -259,6 +259,10 @@ The flags are all of them:
 | Flag | What it does |
 |------|--------------|
 | `-db <path>` | The database file. It holds the settings, the registered hosts and the account, and it is created, directories above it included, if it is not there |
+| `-install` | Installs this program as a service of this system and exits: the executable is put in place, the data directory is made, and the service is registered to start at boot and to come back on its own. It needs root, or an administrator on Windows. See [Installing as a service](#installing-as-a-service) |
+| `-uninstall` | Stops the service, takes its registration out, removes the installed executable and exits. The data is kept. See [Removing the installation](#removing-the-installation) |
+| `-bin` | Where `-install` puts the executable, and where `-uninstall` looks for one on a machine that has no registration left. Left out, it is the place this platform keeps programs an administrator installed. It goes with `-install` or with `-uninstall` |
+| `-purge` | With `-uninstall`, removes the data directory as well. What it removes cannot be brought back |
 | `-reset-settings` | Puts every stored setting back to its default, prints what it changed and exits. The registered hosts, the service ports, the account and the certificate are left as they are. See [If the server will not start](#if-the-server-will-not-start) |
 | `-version` | Prints the version and exits |
 | `-help` | Prints the flags and exits |
@@ -352,6 +356,163 @@ StateDirectory=tunnel-manager
 the account in `User=`, and the database, the key, the logs and the initial
 password all sit in it. The unit ships with `User=root`; see
 [Running as a non-root user](#running-as-a-non-root-user) to change that.
+
+### Installing as a service
+
+**`-install` makes this program a service of the machine it is run on.** It puts
+the executable where this platform keeps programs an administrator installed,
+makes the data directory, registers the service with the service manager of the
+platform and starts it. From then on the service comes up at boot, and is started
+again on its own when it exits.
+
+```bash
+sudo ./tunnel-manager-linux-amd64 -install
+```
+
+On Windows the same command is run from a PowerShell or a Command Prompt started
+with **Run as administrator**. Started any other way, the install refuses and
+touches nothing:
+
+```powershell
+.\tunnel-manager-windows-amd64.exe -install
+```
+
+Where things go when no path is given:
+
+| | Linux | macOS | Windows |
+|---|-------|-------|---------|
+| Executable | `/usr/local/bin/tunnel-manager` | `/usr/local/bin/tunnel-manager` | `C:\Program Files\tunnel-manager\tunnel-manager.exe` |
+| Data directory | `/var/lib/tunnel-manager` | `/Library/Application Support/tunnel-manager` | `C:\ProgramData\tunnel-manager` |
+| Registration | the systemd unit `/etc/systemd/system/tunnel-manager.service` | the LaunchDaemon `/Library/LaunchDaemons/io.github.jollaman999.tunnel-manager.plist` | the `tunnel-manager` service of the service control manager |
+| The account it runs as | `root` | `root` | `LocalSystem` |
+| Started again when it exits | `Restart=always`, 5 seconds later | `KeepAlive` | three restarts, 5 seconds apart |
+
+`-bin` puts the executable somewhere else and `-db` puts the database somewhere
+else. The database path given here is the one the registration passes to the
+service, and it is the one a removal reads back out of that registration later:
+
+```bash
+sudo ./tunnel-manager-linux-amd64 -install -bin /opt/tunnel-manager/tunnel-manager \
+  -db /opt/tunnel-manager/tunnel-manager.db
+```
+
+**The binary that is installed is the latest release, and not necessarily the
+file that was run.** `-install` reads the newest release from GitHub and
+downloads the asset for this platform and architecture. When that release carries
+a `SHA256SUMS` file, the download is checked against the line for that asset, and
+a checksum that does not match stops the install rather than putting the file in
+place. Everything else - a release that cannot be read, a release with no asset
+for this platform, a download that failed - installs the executable of the
+running process instead, with the reason. Which of the two landed is in the
+report:
+
+```text
+tunnel-manager install
+  executable    /usr/local/bin/tunnel-manager
+  taken from    the v3.5.1 release, checksum verified
+  md5 before    no file was there
+  md5 after     0b7f4b1c9d2e5a6f8c3d1e4b7a9f2c5d
+  data          /var/lib/tunnel-manager
+  database      /var/lib/tunnel-manager/tunnel-manager.db
+  service       /etc/systemd/system/tunnel-manager.service
+  registration  new, nothing was registered before
+  state         started
+```
+
+What an install does on a machine that already carries one depends on the paths
+the registration holds:
+
+| The registration | What `-install` does |
+|------------------|----------------------|
+| There is none | Registers the service and starts it |
+| Holds the same executable and the same database | Stops the service, writes the executable over, registers again and starts it. The md5 before and the md5 after are both in the report |
+| Holds another executable, or another database | Refuses, names both, and touches nothing. Run `-uninstall` first |
+
+**An install that would leave an older one behind is refused rather than made.**
+An installation registered at other paths owns an executable and a database this
+install would not touch: the new registration would name other files, and the old
+ones would sit on disk with nothing on the machine naming them, which no
+uninstall afterwards can find.
+
+### Removing the installation
+
+`-uninstall` stops the service, takes the registration out and removes the
+executable that registration was started from.
+
+```bash
+sudo tunnel-manager -uninstall
+```
+
+**The data is kept**, and the report says where it was left:
+
+```text
+tunnel-manager uninstall
+  taken from    the registration of this system
+  executable    /usr/local/bin/tunnel-manager, removed
+  data          /var/lib/tunnel-manager, left in place
+  database      /var/lib/tunnel-manager/tunnel-manager.db
+  service       /etc/systemd/system/tunnel-manager.service, removed
+  state         stopped and taken out of the service manager
+```
+
+**Nothing has to be named on the command line.** This program keeps no state file
+anywhere: the registration itself holds both the executable path and the `-db`
+path, so the registration is what a removal reads.
+
+| Platform | What the removal reads the paths out of |
+|----------|------------------------------------------|
+| Linux | `systemctl show tunnel-manager -p FragmentPath -p ExecStart` |
+| macOS | the `ProgramArguments` of `/Library/LaunchDaemons/io.github.jollaman999.tunnel-manager.plist` |
+| Windows | the `BinaryPathName` the service control manager holds for the `tunnel-manager` service |
+
+**A machine with no registration has nothing removed.** The registration is the
+only thing that says what belongs to this installation, so on a machine whose
+registration is already gone, `-bin` and `-db` name what is left:
+
+```bash
+sudo tunnel-manager -uninstall -bin /usr/local/bin/tunnel-manager \
+  -db /var/lib/tunnel-manager/tunnel-manager.db
+```
+
+The two flags fill in what the registration does not name, and a registration
+that names a path wins over them. A removal that took the flags instead would
+remove a path nothing on the machine claims and leave the registered one behind.
+
+`-purge` removes the data directory as well.
+
+```bash
+sudo tunnel-manager -uninstall -purge
+```
+
+> **What `-purge` removes cannot be brought back.** The database, every Host and
+> every credential in it, and the key the stored passwords are encrypted with,
+> all go with the directory. A backup of the database taken without that key file
+> does not help: the passwords in it stay unreadable. `-purge` names the
+> directory on the console before removing it.
+
+The directory `-purge` hands to a recursive removal is worked out from a `-db`
+that was either typed by hand or read out of a registration this program did not
+necessarily write. So anything that is not the data directory of one installation
+is refused:
+
+| `-purge` refuses | Why |
+|------------------|-----|
+| A directory the named database file is not in | It is then not the directory of this installation at all |
+| A path that is not absolute | What it means depends on where the command was run from |
+| The root of the filesystem, or a directory directly under it | `/`, `/var`, `/opt` and `C:\ProgramData` hold far more than this installation |
+| `/var/lib`, `/var/log`, `/var/tmp`, `/var/cache`, `/usr/bin`, `/usr/lib`, `/usr/local`, `/usr/share`, `/etc/systemd`, `/Library/Application Support`, `/Library/LaunchDaemons`, `C:\Windows\System32`, `C:\Program Files\Common Files` | Each of them holds more than one installation |
+| A home directory, which is one directory under `/home` or under `/Users` | A database file somebody kept in their home is no reason to remove everything they have |
+
+**On Windows the executable that is running cannot be deleted.** Windows holds
+the image of a running process open, and `-uninstall` is normally run from the
+very executable that was installed. The file is then handed to the next boot to
+be removed, and the report says `removed at the next reboot of this machine`
+in place of `removed`.
+
+**Only the Linux path has been run.** The macOS and the Windows backends are
+built and checked by the compiler, by the vet tool for their platform and by unit
+tests that hold the plist and the service configuration they produce. Neither has
+been installed, started or removed on the system it is for.
 
 ### From source
 

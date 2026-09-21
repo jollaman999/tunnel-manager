@@ -228,6 +228,10 @@ chmod +x tunnel-manager-linux-amd64
 | 플래그 | 하는 일 |
 |--------|---------|
 | `-db <경로>` | 데이터베이스 파일. 설정과 등록한 호스트와 계정이 전부 이 안에 있으며, 없으면 상위 디렉터리까지 만들어 생성합니다 |
+| `-install` | 이 프로그램을 이 시스템의 서비스로 설치하고 종료합니다. 실행 파일을 제자리에 놓고, 데이터 디렉터리를 만들고, 부팅할 때 올라오고 꺼져도 스스로 다시 뜨도록 서비스를 등록합니다. root 권한이, Windows 에서는 관리자 권한이 필요합니다. [서비스로 설치하기](#서비스로-설치하기) 참조 |
+| `-uninstall` | 서비스를 멈추고, 등록을 지우고, 설치된 실행 파일을 지우고 종료합니다. 데이터는 남깁니다. [설치본 제거하기](#설치본-제거하기) 참조 |
+| `-bin` | `-install` 이 실행 파일을 놓을 자리이자, 등록이 남아 있지 않은 장비에서 `-uninstall` 이 실행 파일을 찾을 자리입니다. 지정하지 않으면 그 플랫폼이 관리자가 설치한 프로그램을 두는 자리입니다. `-install` 이나 `-uninstall` 과 같이 씁니다 |
+| `-purge` | `-uninstall` 과 같이 쓰면 데이터 디렉터리까지 지웁니다. 이것으로 지운 것은 되돌릴 수 없습니다 |
 | `-reset-settings` | 저장된 설정을 전부 기본값으로 되돌리고, 무엇이 바뀌었는지 찍고 종료합니다. 등록한 호스트, 서비스 포트, 계정, 인증서는 그대로 둡니다. [서버가 안 뜰 때](#서버가-안-뜰-때) 참조 |
 | `-version` | 버전을 찍고 종료합니다 |
 | `-help` | 플래그를 찍고 종료합니다 |
@@ -314,6 +318,149 @@ StateDirectory=tunnel-manager
 넘겨주고, 데이터베이스와 키와 로그와 임시 비밀번호가 전부 그 안에 들어갑니다. 유닛은
 `User=root` 로 배포되니 계정을 바꾸려면 [비root로 실행하는 경우](#비root로-실행하는-경우)를
 보십시오.
+
+### 서비스로 설치하기
+
+**`-install` 은 이 프로그램을 실행한 장비의 서비스로 만듭니다.** 실행 파일을 그 플랫폼이
+관리자가 설치한 프로그램을 두는 자리에 놓고, 데이터 디렉터리를 만들고, 그 플랫폼의 서비스
+관리자에 서비스를 등록하고 띄웁니다. 그다음부터 서비스는 부팅할 때 올라오고, 꺼지면 스스로
+다시 뜹니다.
+
+```bash
+sudo ./tunnel-manager-linux-amd64 -install
+```
+
+Windows 에서는 **관리자 권한으로 실행**한 PowerShell 이나 명령 프롬프트에서 같은 명령을
+실행합니다. 그렇지 않은 자리에서 실행하면 설치는 거부하고 아무것도 건드리지 않습니다.
+
+```powershell
+.\tunnel-manager-windows-amd64.exe -install
+```
+
+경로를 지정하지 않았을 때 무엇이 어디에 들어가는지는 이렇습니다.
+
+| | Linux | macOS | Windows |
+|---|-------|-------|---------|
+| 실행 파일 | `/usr/local/bin/tunnel-manager` | `/usr/local/bin/tunnel-manager` | `C:\Program Files\tunnel-manager\tunnel-manager.exe` |
+| 데이터 디렉터리 | `/var/lib/tunnel-manager` | `/Library/Application Support/tunnel-manager` | `C:\ProgramData\tunnel-manager` |
+| 서비스 등록 | systemd 유닛 `/etc/systemd/system/tunnel-manager.service` | LaunchDaemon `/Library/LaunchDaemons/io.github.jollaman999.tunnel-manager.plist` | 서비스 제어 관리자의 `tunnel-manager` 서비스 |
+| 실행 계정 | `root` | `root` | `LocalSystem` |
+| 꺼졌을 때 다시 띄우기 | `Restart=always`, 5초 뒤 | `KeepAlive` | 5초 간격으로 세 번 |
+
+`-bin` 은 실행 파일을, `-db` 는 데이터베이스를 다른 자리에 둡니다. 여기서 지정한 데이터베이스
+경로가 서비스 등록에 그대로 들어가고, 나중에 제거가 그 등록에서 읽어내는 것도 그 경로입니다.
+
+```bash
+sudo ./tunnel-manager-linux-amd64 -install -bin /opt/tunnel-manager/tunnel-manager \
+  -db /opt/tunnel-manager/tunnel-manager.db
+```
+
+**설치되는 바이너리는 최신 릴리즈이지, 방금 실행한 파일이 아닙니다.** `-install` 은 GitHub 에서
+최신 릴리즈를 읽어 이 플랫폼과 아키텍처에 맞는 자산을 내려받습니다. 그 릴리즈에 `SHA256SUMS`
+파일이 들어 있으면 내려받은 파일을 그 안의 해당 줄과 대조하고, 체크섬이 맞지 않으면 파일을
+놓지 않고 설치를 멈춥니다. 그 밖의 경우 - 릴리즈를 읽지 못했거나, 이 플랫폼용 자산이 릴리즈에
+없거나, 내려받기가 실패한 경우 - 에는 지금 실행 중인 파일을 대신 설치하고 그 이유를 같이
+찍습니다. 둘 중 무엇이 설치됐는지는 보고에 나옵니다.
+
+```text
+tunnel-manager install
+  executable    /usr/local/bin/tunnel-manager
+  taken from    the v3.5.1 release, checksum verified
+  md5 before    no file was there
+  md5 after     0b7f4b1c9d2e5a6f8c3d1e4b7a9f2c5d
+  data          /var/lib/tunnel-manager
+  database      /var/lib/tunnel-manager/tunnel-manager.db
+  service       /etc/systemd/system/tunnel-manager.service
+  registration  new, nothing was registered before
+  state         started
+```
+
+이미 설치돼 있는 장비에서 `-install` 이 하는 일은 등록이 갖고 있는 경로에 따라 갈립니다.
+
+| 등록 | `-install` 이 하는 일 |
+|------|------------------------|
+| 등록된 서비스가 없음 | 서비스를 등록하고 띄웁니다 |
+| 실행 파일도 데이터베이스도 같은 경로 | 서비스를 멈추고, 실행 파일을 덮어쓰고, 다시 등록하고 띄웁니다. 덮어쓰기 전후의 md5 가 둘 다 보고에 나옵니다 |
+| 실행 파일이나 데이터베이스가 다른 경로 | 거부하고 양쪽 경로를 알려주며, 아무것도 건드리지 않습니다. 먼저 `-uninstall` 을 실행하십시오 |
+
+**옛 설치본을 고아로 남길 설치는 하지 않고 거부합니다.** 다른 경로에 등록된 설치본은 이번
+설치가 건드리지 않을 실행 파일과 데이터베이스를 갖고 있습니다. 새 등록은 다른 파일을 가리키게
+되고, 옛 파일들은 장비 어디에서도 가리키지 않는 채로 디스크에 남아 나중에 어떤 제거도 찾지
+못합니다.
+
+### 설치본 제거하기
+
+`-uninstall` 은 서비스를 멈추고, 등록을 지우고, 그 등록이 띄우던 실행 파일을 지웁니다.
+
+```bash
+sudo tunnel-manager -uninstall
+```
+
+**데이터는 남깁니다.** 어디에 남았는지는 보고가 알려줍니다.
+
+```text
+tunnel-manager uninstall
+  taken from    the registration of this system
+  executable    /usr/local/bin/tunnel-manager, removed
+  data          /var/lib/tunnel-manager, left in place
+  database      /var/lib/tunnel-manager/tunnel-manager.db
+  service       /etc/systemd/system/tunnel-manager.service, removed
+  state         stopped and taken out of the service manager
+```
+
+**명령줄에 경로를 적을 필요가 없습니다.** 이 프로그램은 상태 파일을 어디에도 두지 않습니다.
+등록 자체가 실행 파일 경로와 `-db` 경로를 둘 다 갖고 있고, 제거가 읽는 것이 그 등록입니다.
+
+| 플랫폼 | 제거가 경로를 읽어내는 곳 |
+|--------|---------------------------|
+| Linux | `systemctl show tunnel-manager -p FragmentPath -p ExecStart` |
+| macOS | `/Library/LaunchDaemons/io.github.jollaman999.tunnel-manager.plist` 의 `ProgramArguments` |
+| Windows | 서비스 제어 관리자가 `tunnel-manager` 서비스에 대해 갖고 있는 `BinaryPathName` |
+
+**등록된 서비스가 없는 장비에서는 아무것도 지우지 않습니다.** 무엇이 이 설치본의 것인지
+말해주는 것은 등록 하나뿐이라, 등록이 이미 없어진 장비에서는 남은 것을 `-bin` 과 `-db` 로
+지목해야 합니다.
+
+```bash
+sudo tunnel-manager -uninstall -bin /usr/local/bin/tunnel-manager \
+  -db /var/lib/tunnel-manager/tunnel-manager.db
+```
+
+두 플래그는 등록이 말해주지 않는 것만 채우고, 등록이 경로를 갖고 있으면 등록이 이깁니다.
+플래그를 대신 받아들이는 제거는 장비의 무엇도 자기 것이라 하지 않는 경로를 지우면서 정작
+등록된 파일은 남겨 둘 것입니다.
+
+`-purge` 는 데이터 디렉터리까지 지웁니다.
+
+```bash
+sudo tunnel-manager -uninstall -purge
+```
+
+> **`-purge` 가 지운 것은 되돌릴 수 없습니다.** 데이터베이스와 그 안의 Host 와 자격증명
+> 전부가, 저장된 비밀번호를 암호화한 키와 함께 그 디렉터리와 같이 사라집니다. 그 키 파일 없이
+> 떠 둔 데이터베이스 백업은 소용없습니다. 그 안의 비밀번호는 계속 못 읽습니다. `-purge` 는
+> 지우기 전에 어느 디렉터리를 지우는지 화면에 먼저 찍습니다.
+
+`-purge` 가 통째로 지우라고 넘기는 디렉터리는, 손으로 친 `-db` 나 이 프로그램이 쓴 것이 아닐
+수도 있는 등록에서 읽어낸 `-db` 에서 계산한 것입니다. 그래서 설치본 하나의 데이터 디렉터리가
+아닌 것은 거부합니다.
+
+| `-purge` 가 거부하는 것 | 왜 |
+|-------------------------|-----|
+| 지정된 데이터베이스 파일이 들어 있지 않은 디렉터리 | 그 디렉터리는 애초에 이 설치본의 것이 아닙니다 |
+| 절대 경로가 아닌 경로 | 어디서 실행했느냐에 따라 가리키는 자리가 달라집니다 |
+| 파일시스템 루트와 그 바로 아래의 디렉터리 | `/`, `/var`, `/opt`, `C:\ProgramData` 는 이 설치본보다 훨씬 많은 것을 담고 있습니다 |
+| `/var/lib`, `/var/log`, `/var/tmp`, `/var/cache`, `/usr/bin`, `/usr/lib`, `/usr/local`, `/usr/share`, `/etc/systemd`, `/Library/Application Support`, `/Library/LaunchDaemons`, `C:\Windows\System32`, `C:\Program Files\Common Files` | 설치본 하나보다 많은 것이 들어 있는 자리입니다 |
+| 홈 디렉터리, 곧 `/home` 이나 `/Users` 바로 아래의 디렉터리 | 데이터베이스 파일을 홈에 뒀다는 것이 그 사람의 모든 것을 지울 이유는 아닙니다 |
+
+**Windows 에서는 실행 중인 실행 파일을 지우지 못합니다.** Windows 는 프로세스가 도는 동안 그
+실행 이미지를 붙잡고 있고, `-uninstall` 은 보통 설치된 바로 그 실행 파일로 실행합니다. 그때는
+파일을 다음 부팅 때 지우도록 넘기고, 보고에 `removed` 대신
+`removed at the next reboot of this machine` 이라고 적습니다.
+
+**실제로 돌려 본 것은 Linux 뿐입니다.** macOS 와 Windows 백엔드는 컴파일러와 그 플랫폼용 vet
+도구, 그리고 만들어지는 plist 와 서비스 설정을 고정한 단위 테스트로만 확인했습니다. 어느
+쪽도 그 OS 에서 설치하거나 띄우거나 제거해 본 적이 없습니다.
 
 ### 소스에서 빌드하기
 

@@ -239,6 +239,10 @@ chmod +x tunnel-manager-linux-amd64
 | フラグ | 何をするか |
 |--------|------------|
 | `-db <パス>` | データベースファイルです。設定も、登録した Host も、アカウントもこの中にあります。なければ親ディレクトリごと作ります |
+| `-install` | このプログラムをこのシステムのサービスとしてインストールして終了します。実行ファイルを所定の場所に置き、データディレクトリを作り、起動時に立ち上がって落ちても自分で戻るようにサービスを登録します。root 権限が、Windows では管理者権限が要ります。[サービスとしてインストールする](#サービスとしてインストールする)を参照してください |
+| `-uninstall` | サービスを止め、登録を外し、インストールした実行ファイルを削除して終了します。データは残します。[インストールを取り除く](#インストールを取り除く)を参照してください |
+| `-bin` | `-install` が実行ファイルを置く場所であり、登録が残っていない機械で `-uninstall` が実行ファイルを探す場所です。指定しなければ、そのプラットフォームが管理者のインストールしたプログラムを置く場所になります。`-install` か `-uninstall` と一緒に使います |
+| `-purge` | `-uninstall` と一緒に使うと、データディレクトリも削除します。これで削除したものは元に戻せません |
 | `-reset-settings` | 保存されている設定をすべて既定値に戻し、何を変えたかを出力して終了します。登録した Host、サービスポート、アカウント、証明書はそのままです。[サーバーが起動しないとき](#サーバーが起動しないとき)を参照してください |
 | `-version` | バージョンを出力して終了します |
 | `-help` | フラグを出力して終了します |
@@ -326,6 +330,153 @@ StateDirectory=tunnel-manager
 所有者にします。データベースもキーもログも初期パスワードも、すべてこの中に収まります。ユニットは
 `User=root` で配布しています。変えたいときは
 [非 root ユーザーで動かす](#非-root-ユーザーで動かす)を参照してください。
+
+### サービスとしてインストールする
+
+**`-install` は、このプログラムを実行した機械のサービスにします。** 実行ファイルを、その
+プラットフォームが管理者のインストールしたプログラムを置く場所に置き、データディレクトリを
+作り、そのプラットフォームのサービスマネージャーにサービスを登録して起動します。以後
+サービスは起動時に立ち上がり、落ちても自分で立ち上がり直します。
+
+```bash
+sudo ./tunnel-manager-linux-amd64 -install
+```
+
+Windows では、**管理者として実行**で開いた PowerShell かコマンドプロンプトから同じコマンドを
+実行します。そうでない場所から実行すると、インストールは拒否して何にも触れません。
+
+```powershell
+.\tunnel-manager-windows-amd64.exe -install
+```
+
+パスを指定しなかったときに何がどこへ置かれるかは、次のとおりです。
+
+| | Linux | macOS | Windows |
+|---|-------|-------|---------|
+| 実行ファイル | `/usr/local/bin/tunnel-manager` | `/usr/local/bin/tunnel-manager` | `C:\Program Files\tunnel-manager\tunnel-manager.exe` |
+| データディレクトリ | `/var/lib/tunnel-manager` | `/Library/Application Support/tunnel-manager` | `C:\ProgramData\tunnel-manager` |
+| サービスの登録 | systemd ユニット `/etc/systemd/system/tunnel-manager.service` | LaunchDaemon `/Library/LaunchDaemons/io.github.jollaman999.tunnel-manager.plist` | サービス制御マネージャーの `tunnel-manager` サービス |
+| 実行するアカウント | `root` | `root` | `LocalSystem` |
+| 落ちたときの再起動 | `Restart=always`、5 秒後 | `KeepAlive` | 5 秒間隔で 3 回 |
+
+`-bin` は実行ファイルを、`-db` はデータベースを別の場所に置きます。ここで指定したデータベース
+のパスがそのままサービスの登録に入り、あとでアンインストールがその登録から読み出すのも、この
+パスです。
+
+```bash
+sudo ./tunnel-manager-linux-amd64 -install -bin /opt/tunnel-manager/tunnel-manager \
+  -db /opt/tunnel-manager/tunnel-manager.db
+```
+
+**インストールされるバイナリは最新リリースであって、いま実行したファイルとは限りません。**
+`-install` は GitHub から最新リリースを読み、このプラットフォームとアーキテクチャ向けの
+アセットをダウンロードします。そのリリースに `SHA256SUMS` が入っていれば、ダウンロードした
+ファイルをその中の該当行と照合し、チェックサムが合わなければファイルを置かずにインストールを
+止めます。それ以外の場合 - リリースを読めなかった、このプラットフォーム向けのアセットが
+リリースに無い、ダウンロードが失敗した - は、いま実行中のファイルを代わりにインストールし、
+その理由も出力します。どちらがインストールされたかは報告に出ます。
+
+```text
+tunnel-manager install
+  executable    /usr/local/bin/tunnel-manager
+  taken from    the v3.5.1 release, checksum verified
+  md5 before    no file was there
+  md5 after     0b7f4b1c9d2e5a6f8c3d1e4b7a9f2c5d
+  data          /var/lib/tunnel-manager
+  database      /var/lib/tunnel-manager/tunnel-manager.db
+  service       /etc/systemd/system/tunnel-manager.service
+  registration  new, nothing was registered before
+  state         started
+```
+
+すでにインストールされている機械で `-install` が何をするかは、登録が持っているパスで変わり
+ます。
+
+| 登録 | `-install` がすること |
+|------|------------------------|
+| 登録されたサービスが無い | サービスを登録して起動します |
+| 実行ファイルもデータベースも同じパス | サービスを止め、実行ファイルを上書きし、登録し直して起動します。上書き前と後の md5 が両方とも報告に出ます |
+| 実行ファイルかデータベースが別のパス | 拒否して両方のパスを示し、何にも触れません。先に `-uninstall` を実行してください |
+
+**古いインストールを取り残すインストールは、行わずに拒否します。** 別のパスに登録されている
+インストールは、今回のインストールが触れない実行ファイルとデータベースを持っています。新しい
+登録は別のファイルを指すことになり、古いファイルは機械のどこからも指されないままディスクに
+残って、あとのどのアンインストールからも見つけられません。
+
+### インストールを取り除く
+
+`-uninstall` はサービスを止め、登録を外し、その登録が起動していた実行ファイルを削除します。
+
+```bash
+sudo tunnel-manager -uninstall
+```
+
+**データは残します。** どこに残したかは報告が示します。
+
+```text
+tunnel-manager uninstall
+  taken from    the registration of this system
+  executable    /usr/local/bin/tunnel-manager, removed
+  data          /var/lib/tunnel-manager, left in place
+  database      /var/lib/tunnel-manager/tunnel-manager.db
+  service       /etc/systemd/system/tunnel-manager.service, removed
+  state         stopped and taken out of the service manager
+```
+
+**コマンドラインにパスを書く必要はありません。** このプログラムは状態ファイルをどこにも
+置きません。登録そのものが実行ファイルのパスと `-db` のパスを両方持っていて、アンインストール
+が読むのはその登録です。
+
+| プラットフォーム | アンインストールがパスを読み出す場所 |
+|------------------|--------------------------------------|
+| Linux | `systemctl show tunnel-manager -p FragmentPath -p ExecStart` |
+| macOS | `/Library/LaunchDaemons/io.github.jollaman999.tunnel-manager.plist` の `ProgramArguments` |
+| Windows | サービス制御マネージャーが `tunnel-manager` サービスについて持っている `BinaryPathName` |
+
+**登録されたサービスが無い機械では、何も削除しません。** 何がこのインストールのものかを示す
+のは登録だけなので、登録がすでに失われた機械では、残っているものを `-bin` と `-db` で指定
+します。
+
+```bash
+sudo tunnel-manager -uninstall -bin /usr/local/bin/tunnel-manager \
+  -db /var/lib/tunnel-manager/tunnel-manager.db
+```
+
+この 2 つのフラグは登録が示さないものだけを埋め、登録がパスを持っていれば登録が優先されます。
+フラグのほうを取るアンインストールは、機械の何ものも自分のものだと言っていないパスを削除し、
+登録されたファイルのほうを残してしまいます。
+
+`-purge` はデータディレクトリも削除します。
+
+```bash
+sudo tunnel-manager -uninstall -purge
+```
+
+> **`-purge` が削除したものは元に戻せません。** データベースと、その中のすべての Host と
+> 認証情報が、保存されたパスワードを暗号化しているキーごと、そのディレクトリと一緒に消えます。
+> そのキーファイル抜きで取ったデータベースのバックアップでは足りません。その中のパスワードは
+> 読めないままです。`-purge` は削除する前に、どのディレクトリを削除するかを画面に出します。
+
+`-purge` が丸ごと削除に渡すディレクトリは、手で書いた `-db` か、このプログラムが書いたとは
+限らない登録から読み出した `-db` から割り出したものです。そのため、1 つのインストールの
+データディレクトリでないものは拒否します。
+
+| `-purge` が拒否するもの | なぜ |
+|-------------------------|------|
+| 指定されたデータベースファイルが入っていないディレクトリ | そもそもこのインストールのディレクトリではありません |
+| 絶対パスでないパス | どこから実行したかで指す場所が変わります |
+| ファイルシステムのルートと、その直下のディレクトリ | `/`、`/var`、`/opt`、`C:\ProgramData` は、このインストールよりはるかに多くのものを持っています |
+| `/var/lib`、`/var/log`、`/var/tmp`、`/var/cache`、`/usr/bin`、`/usr/lib`、`/usr/local`、`/usr/share`、`/etc/systemd`、`/Library/Application Support`、`/Library/LaunchDaemons`、`C:\Windows\System32`、`C:\Program Files\Common Files` | どれも 1 つのインストールより多くのものを収めています |
+| ホームディレクトリ、つまり `/home` か `/Users` の直下のディレクトリ | データベースファイルをホームに置いていたことは、その人のすべてを削除する理由にはなりません |
+
+**Windows では、実行中の実行ファイルは削除できません。** Windows はプロセスが動いている間その
+実行イメージを掴んだままにし、`-uninstall` は普通、インストールされたその実行ファイルから
+実行されます。そのときはファイルを次の起動時に削除するよう渡し、報告には `removed` ではなく
+`removed at the next reboot of this machine` と書きます。
+
+**実際に動かしたのは Linux だけです。** macOS と Windows のバックエンドは、コンパイラと、その
+プラットフォーム向けの vet ツールと、生成される plist とサービス設定を固定した単体テストで
+確認しただけです。どちらも、対象の OS でインストールも起動も削除もしたことがありません。
 
 ### ソースからビルドする
 

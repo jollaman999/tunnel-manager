@@ -90,6 +90,37 @@ Host とサービスポートを、それぞれの画面から追加します。
 ディレクトリの下に置かれます。Docker Compose、systemd ユニット、ソースからのビルドは
 下のリファレンスにあります。
 
+## サービスとしてインストール
+
+`-install` は、このプログラムをその機械のサービスにします。実行ファイルを所定の場所に置き、
+データディレクトリを作り、systemd か launchd か Windows のサービス制御マネージャーに
+サービスを登録して起動します。以後は起動時に立ち上がり、落ちても自分で立ち上がり直します。
+
+```bash
+sudo ./tunnel-manager-linux-amd64 -install
+```
+
+Windows では、**管理者として実行**で開いた PowerShell から同じコマンドを実行します。
+
+```powershell
+.\tunnel-manager-windows-amd64.exe -install
+```
+
+| プラットフォーム | 実行ファイル | データ |
+|------------------|--------------|--------|
+| Linux | `/usr/local/bin/tunnel-manager` | `/var/lib/tunnel-manager/` |
+| macOS | `/usr/local/bin/tunnel-manager` | `/Library/Application Support/tunnel-manager/` |
+| Windows | `C:\Program Files\tunnel-manager\tunnel-manager.exe` | `C:\ProgramData\tunnel-manager\` |
+
+**インストールされるバイナリは最新リリースです。** GitHub からダウンロードし、そのリリースに
+`SHA256SUMS` が入っていれば、ダウンロードしたファイルをそのチェックサムと照合します。リリース
+に接続できなくても失敗にはなりません。そのときは、いま実行したファイルを代わりにインストール
+し、どちらがインストールされたかを報告に出します。
+
+`sudo tunnel-manager -uninstall` で元に戻します。サービスを止め、登録を外し、インストールした
+実行ファイルを削除します。**データは残します。** どこに残したかは報告に出ます。データ
+ディレクトリごと削除するには `-purge` を付けますが、`-purge` が削除したものは元に戻せません。
+
 ## さらに読むなら
 
 [reference.ja.md](reference.ja.md) がすべてです。
@@ -98,6 +129,7 @@ Host とサービスポートを、それぞれの画面から追加します。
 |----|------------------|
 | [動作の仕組み](reference.ja.md#動作の仕組み) | 調整ループ、割り当て、トンネル 1 本の最初から最後まで |
 | [インストールと起動](reference.ja.md#インストールと起動) | フラグ、ファイルの置き場所、Docker Compose、systemd、ソースから |
+| [サービスとしてインストールする](reference.ja.md#サービスとしてインストールする) | 4 つのフラグ、すでにインストールされているときの動き、アンインストールがパスをどこから読むか |
 | [HTTPS と証明書](reference.ja.md#https-と証明書) | ブラウザの警告、独自の証明書の登録、更新、HTTPS の無効化 |
 | [初回起動とアカウント](reference.ja.md#初回起動とアカウント) | 初期パスワード、初期設定、認証情報の変更 |
 | [内蔵 UI](reference.ja.md#内蔵-ui) | それぞれの画面が何を見せ、何ができるか、そしてどの言語で表示できるか |

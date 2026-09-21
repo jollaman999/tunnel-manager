@@ -214,6 +214,10 @@ chmod +x tunnel-manager-linux-amd64
 | 参数 | 做什么 |
 |------|--------|
 | `-db <path>` | 数据库文件。设置、注册的 Host 和账号都在里面，文件不存在就创建，上层目录也一并创建 |
+| `-install` | 把这个程序装成本系统的服务然后退出：把可执行文件放到位，建出数据目录，把服务注册成随开机启动、退出后自己回来。需要 root，Windows 上需要管理员。见[作为服务安装](#作为服务安装) |
+| `-uninstall` | 停掉服务，删掉它的注册，删掉装上去的可执行文件然后退出。数据保留。见[卸载这套安装](#卸载这套安装) |
+| `-bin` | `-install` 把可执行文件放到哪里，以及注册已经没有了的机器上 `-uninstall` 到哪里去找可执行文件。不给的话就是这个平台放管理员所装程序的地方。它和 `-install` 或 `-uninstall` 一起用 |
+| `-purge` | 和 `-uninstall` 一起用时，连数据目录一起删掉。它删掉的东西拿不回来 |
 | `-reset-settings` | 把每一项设置都还原成默认值，打印改了什么然后退出。注册的 Host、服务端口、账号和证书都原样留着。见[服务起不来的时候](#服务起不来的时候) |
 | `-version` | 打印版本号后退出 |
 | `-help` | 打印参数后退出 |
@@ -294,6 +298,141 @@ StateDirectory=tunnel-manager
 `StateDirectory=tunnel-manager` 会建出 `/var/lib/tunnel-manager` 并交给 `User=` 里的账号，
 数据库、密钥、日志和初始密码全都在里面。unit 里带的是 `User=root`，要改的话见
 [以非 root 用户运行](#以非-root-用户运行)。
+
+### 作为服务安装
+
+**`-install` 把这个程序装成运行它的那台机器上的服务。** 它把可执行文件放到这个平台存放管理员
+所装程序的地方，建出数据目录，向这个平台的服务管理器注册服务并启动它。此后服务随开机启动，
+退出了也会自己再起来。
+
+```bash
+sudo ./tunnel-manager-linux-amd64 -install
+```
+
+在 Windows 上，这条命令要从用**以管理员身份运行**打开的 PowerShell 或命令提示符里执行。从别处
+执行的话，安装会拒绝，什么都不碰：
+
+```powershell
+.\tunnel-manager-windows-amd64.exe -install
+```
+
+不指定路径时，东西放在哪里：
+
+| | Linux | macOS | Windows |
+|---|-------|-------|---------|
+| 可执行文件 | `/usr/local/bin/tunnel-manager` | `/usr/local/bin/tunnel-manager` | `C:\Program Files\tunnel-manager\tunnel-manager.exe` |
+| 数据目录 | `/var/lib/tunnel-manager` | `/Library/Application Support/tunnel-manager` | `C:\ProgramData\tunnel-manager` |
+| 服务注册 | systemd unit `/etc/systemd/system/tunnel-manager.service` | LaunchDaemon `/Library/LaunchDaemons/io.github.jollaman999.tunnel-manager.plist` | 服务控制管理器里的 `tunnel-manager` 服务 |
+| 运行用的账号 | `root` | `root` | `LocalSystem` |
+| 退出后再起来 | `Restart=always`，5 秒后 | `KeepAlive` | 每隔 5 秒重启，共三次 |
+
+`-bin` 把可执行文件放到别处，`-db` 把数据库放到别处。这里给的数据库路径会原样进到服务注册里，
+以后卸载从那份注册里读出来的也是这个路径：
+
+```bash
+sudo ./tunnel-manager-linux-amd64 -install -bin /opt/tunnel-manager/tunnel-manager \
+  -db /opt/tunnel-manager/tunnel-manager.db
+```
+
+**装上去的是最新的发布版本，不一定是刚才运行的那个文件。** `-install` 从 GitHub 读取最新的
+发布版本，下载对应这个平台和架构的文件。这个发布版本带 `SHA256SUMS` 的话，下载下来的文件会
+和里面对应的那一行核对，校验和对不上就不放文件，安装到此为止。其余情况 - 读不到发布版本、
+发布版本里没有这个平台的文件、下载失败 - 都改装当前运行的这个文件，并把原因一起打印出来。
+装上的是哪一个，报告里写着：
+
+```text
+tunnel-manager install
+  executable    /usr/local/bin/tunnel-manager
+  taken from    the v3.5.1 release, checksum verified
+  md5 before    no file was there
+  md5 after     0b7f4b1c9d2e5a6f8c3d1e4b7a9f2c5d
+  data          /var/lib/tunnel-manager
+  database      /var/lib/tunnel-manager/tunnel-manager.db
+  service       /etc/systemd/system/tunnel-manager.service
+  registration  new, nothing was registered before
+  state         started
+```
+
+在已经装过一遍的机器上，`-install` 做什么取决于注册里存的路径：
+
+| 注册 | `-install` 做什么 |
+|------|-------------------|
+| 没有注册过的服务 | 注册服务并启动它 |
+| 可执行文件和数据库都是同一个路径 | 停掉服务，覆盖可执行文件，重新注册并启动。覆盖前和覆盖后的 md5 都在报告里 |
+| 可执行文件或数据库是别的路径 | 拒绝，把两边的路径都说出来，什么都不碰。先执行 `-uninstall` |
+
+**会把旧的一套留在原地的安装，宁可拒绝也不做。** 注册在别的路径上的那套安装，有这次安装不会
+去碰的可执行文件和数据库。新的注册会指向别的文件，旧的那些则留在磁盘上，机器上没有任何东西
+指着它们，之后任何一次卸载都找不到。
+
+### 卸载这套安装
+
+`-uninstall` 停掉服务，删掉注册，并删掉那份注册所启动的可执行文件。
+
+```bash
+sudo tunnel-manager -uninstall
+```
+
+**数据保留**，报告里会说留在了哪里：
+
+```text
+tunnel-manager uninstall
+  taken from    the registration of this system
+  executable    /usr/local/bin/tunnel-manager, removed
+  data          /var/lib/tunnel-manager, left in place
+  database      /var/lib/tunnel-manager/tunnel-manager.db
+  service       /etc/systemd/system/tunnel-manager.service, removed
+  state         stopped and taken out of the service manager
+```
+
+**命令行上不用写路径。** 这个程序不在任何地方留状态文件：注册本身就存着可执行文件的路径和
+`-db` 的路径，卸载读的就是这份注册。
+
+| 平台 | 卸载从哪里读出路径 |
+|------|--------------------|
+| Linux | `systemctl show tunnel-manager -p FragmentPath -p ExecStart` |
+| macOS | `/Library/LaunchDaemons/io.github.jollaman999.tunnel-manager.plist` 里的 `ProgramArguments` |
+| Windows | 服务控制管理器为 `tunnel-manager` 服务保存的 `BinaryPathName` |
+
+**没有注册的机器上什么都不删。** 说明哪些东西属于这套安装的只有注册，所以在注册已经没有了的
+机器上，要用 `-bin` 和 `-db` 指出剩下的东西：
+
+```bash
+sudo tunnel-manager -uninstall -bin /usr/local/bin/tunnel-manager \
+  -db /var/lib/tunnel-manager/tunnel-manager.db
+```
+
+这两个参数只补注册没有说明的部分；注册里有路径的话，以注册为准。反过来听参数的卸载，会删掉
+机器上没有任何东西认领的路径，却把注册着的那个留下来。
+
+`-purge` 连数据目录一起删掉。
+
+```bash
+sudo tunnel-manager -uninstall -purge
+```
+
+> **`-purge` 删掉的东西拿不回来。** 数据库、里面的每一个 Host 和每一份凭据，连同加密所存密码
+> 的密钥，都跟着这个目录一起没了。没有那个密钥文件的数据库备份也不顶用：里面的密码依然读不
+> 出来。`-purge` 在删之前会先在屏幕上打出要删的是哪个目录。
+
+`-purge` 交给递归删除的那个目录，是从手打的 `-db`，或者从这个程序未必写过的注册里读出来的
+`-db` 推算出来的。所以只要不是某一套安装的数据目录，就拒绝：
+
+| `-purge` 拒绝的 | 为什么 |
+|-----------------|--------|
+| 不含指定数据库文件的目录 | 那个目录根本就不是这套安装的目录 |
+| 不是绝对路径的路径 | 它指哪里取决于命令是在哪里执行的 |
+| 文件系统的根，以及直接位于根下面的目录 | `/`、`/var`、`/opt`、`C:\ProgramData` 装着的东西远不止这套安装 |
+| `/var/lib`、`/var/log`、`/var/tmp`、`/var/cache`、`/usr/bin`、`/usr/lib`、`/usr/local`、`/usr/share`、`/etc/systemd`、`/Library/Application Support`、`/Library/LaunchDaemons`、`C:\Windows\System32`、`C:\Program Files\Common Files` | 每一个装的都不止一套安装 |
+| 家目录，也就是直接位于 `/home` 或 `/Users` 下面的目录 | 某人把数据库文件放在了自己家目录里，不构成删光他全部东西的理由 |
+
+**在 Windows 上删不掉正在运行的可执行文件。** Windows 在进程运行期间一直占着它的映像，而
+`-uninstall` 通常就是用装上去的那个可执行文件执行的。这时会把这个文件交给下一次开机去删，
+报告里写的也不是 `removed`，而是 `removed at the next reboot of this machine`。
+
+**真正跑起来过的只有 Linux。** macOS 和 Windows 的后端只经过编译器、对应平台的 vet 工具，
+以及把生成的 plist 和服务配置固定下来的单元测试的检查。两者都没有在各自的操作系统上安装过、
+启动过或者卸载过。
 
 ### 从源码构建
 

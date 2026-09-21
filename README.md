@@ -95,6 +95,40 @@ The database goes under the user data directory of the platform unless `-db`
 names a file. Docker Compose, the systemd unit and building from source are in
 the reference below.
 
+## Install as a service
+
+`-install` makes this a service of the machine: the executable is put in place,
+the data directory is made, the service is registered with systemd, launchd or
+the Windows service control manager, and it is started. It comes up at boot from
+then on, and is started again on its own when it exits.
+
+```bash
+sudo ./tunnel-manager-linux-amd64 -install
+```
+
+On Windows, run the same command from a PowerShell started with **Run as
+administrator**:
+
+```powershell
+.\tunnel-manager-windows-amd64.exe -install
+```
+
+| Platform | Executable | Data |
+|----------|------------|------|
+| Linux | `/usr/local/bin/tunnel-manager` | `/var/lib/tunnel-manager/` |
+| macOS | `/usr/local/bin/tunnel-manager` | `/Library/Application Support/tunnel-manager/` |
+| Windows | `C:\Program Files\tunnel-manager\tunnel-manager.exe` | `C:\ProgramData\tunnel-manager\` |
+
+**What is installed is the latest release**, downloaded from GitHub and checked
+against the `SHA256SUMS` of that release when the release carries one. A release
+that cannot be reached is not a failure: the executable that was run is installed
+instead, and the report says which of the two landed.
+
+`sudo tunnel-manager -uninstall` takes it away again. The service is stopped, the
+registration goes and the installed executable is removed. **The data is kept**,
+and the report says where it was left. `-purge` removes the data directory as
+well, and what `-purge` removes cannot be brought back.
+
 ## Where to read more
 
 [docs/reference.md](docs/reference.md) is the whole of it.
@@ -103,6 +137,7 @@ the reference below.
 |---------|---------------|
 | [How it works](docs/reference.md#how-it-works) | The reconcile loop, the assignments, one tunnel end to end |
 | [Install and run](docs/reference.md#install-and-run) | The flags, where the files go, Docker Compose, systemd, from source |
+| [Installing as a service](docs/reference.md#installing-as-a-service) | The four flags, what an install does over one that is already there, what a removal reads the paths from |
 | [HTTPS and the certificate](docs/reference.md#https-and-the-certificate) | The browser warning, registering a certificate of your own, renewing, turning HTTPS off |
 | [First startup and the account](docs/reference.md#first-startup-and-the-account) | The initial password, the setup, changing the credentials |
 | [The built-in UI](docs/reference.md#the-built-in-ui) | What each screen shows and does, and the languages it comes in |

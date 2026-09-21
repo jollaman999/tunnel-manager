@@ -79,6 +79,35 @@ cat <dir>/initial-password
 没有用 `-db` 指定文件的话，数据库放在所在平台的用户数据目录下。Docker Compose、systemd unit
 和从源码构建都写在下面的参考手册里。
 
+## 作为服务安装
+
+`-install` 把这个程序装成机器上的服务：把可执行文件放到位，建出数据目录，向 systemd、launchd
+或 Windows 服务控制管理器注册服务并启动它。此后它随开机启动，退出了也会自己再起来。
+
+```bash
+sudo ./tunnel-manager-linux-amd64 -install
+```
+
+在 Windows 上，用**以管理员身份运行**打开的 PowerShell 执行同一条命令：
+
+```powershell
+.\tunnel-manager-windows-amd64.exe -install
+```
+
+| 平台 | 可执行文件 | 数据 |
+|------|------------|------|
+| Linux | `/usr/local/bin/tunnel-manager` | `/var/lib/tunnel-manager/` |
+| macOS | `/usr/local/bin/tunnel-manager` | `/Library/Application Support/tunnel-manager/` |
+| Windows | `C:\Program Files\tunnel-manager\tunnel-manager.exe` | `C:\ProgramData\tunnel-manager\` |
+
+**装上去的是最新的发布版本**，从 GitHub 下载；这个发布版本带 `SHA256SUMS` 的话，下载下来的
+文件会拿里面的校验和核对。连不上发布页面也不算失败：那时改装当前运行的这个文件，报告里会说
+装上的是哪一个。
+
+`sudo tunnel-manager -uninstall` 把它撤掉：停掉服务，删掉注册，删掉装上去的可执行文件。
+**数据保留**，报告里会说留在哪里。要把数据目录也删掉就加 `-purge`，`-purge` 删掉的东西拿不
+回来。
+
 ## 更多内容在哪里
 
 [docs/reference.zh.md](reference.zh.md) 是全部内容。
@@ -87,6 +116,7 @@ cat <dir>/initial-password
 |------|--------------|
 | [工作原理](reference.zh.md#工作原理) | 调谐循环、分配关系，以及一条隧道的完整流程 |
 | [安装与运行](reference.zh.md#安装与运行) | 命令行参数、文件放在哪里、Docker Compose、systemd、从源码构建 |
+| [作为服务安装](reference.zh.md#作为服务安装) | 四个参数、已经装过一遍时会怎样、卸载从哪里读出路径 |
 | [HTTPS 与证书](reference.zh.md#https-与证书) | 浏览器的警告、注册你自己的证书、更换证书、关闭 HTTPS |
 | [首次启动与账号](reference.zh.md#首次启动与账号) | 初始密码、初始化，以及之后怎么改凭据 |
 | [内置界面](reference.zh.md#内置界面) | 每个页面显示什么、能做什么，以及有哪些语言 |
