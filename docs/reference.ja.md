@@ -355,7 +355,7 @@ Windows では、**管理者として実行**で開いた PowerShell かコマ�
 |---|-------|-------|---------|
 | 実行ファイル | `/usr/local/bin/tunnel-manager` | `/usr/local/bin/tunnel-manager` | `C:\Program Files\tunnel-manager\tunnel-manager.exe` |
 | データディレクトリ | `/var/lib/tunnel-manager` | `/Library/Application Support/tunnel-manager` | `C:\ProgramData\tunnel-manager` |
-| サービスの登録 | systemd ユニット `/etc/systemd/system/tunnel-manager.service` | LaunchDaemon `/Library/LaunchDaemons/io.github.jollaman999.tunnel-manager.plist` | サービス制御マネージャーの `tunnel-manager` サービス |
+| サービスの登録 | systemd ユニット。すでに登録されているユニットがあればその場所に、なければ `/etc/systemd/system/tunnel-manager.service` に書きます | LaunchDaemon `/Library/LaunchDaemons/io.github.jollaman999.tunnel-manager.plist` | サービス制御マネージャーの `tunnel-manager` サービス |
 | 実行するアカウント | `root` | `root` | `LocalSystem` |
 | 落ちたときの再起動 | `Restart=always`、5 秒後 | `KeepAlive` | 5 秒間隔で 3 回 |
 

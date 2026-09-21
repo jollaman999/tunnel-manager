@@ -322,7 +322,7 @@ sudo ./tunnel-manager-linux-amd64 -install
 |---|-------|-------|---------|
 | 可执行文件 | `/usr/local/bin/tunnel-manager` | `/usr/local/bin/tunnel-manager` | `C:\Program Files\tunnel-manager\tunnel-manager.exe` |
 | 数据目录 | `/var/lib/tunnel-manager` | `/Library/Application Support/tunnel-manager` | `C:\ProgramData\tunnel-manager` |
-| 服务注册 | systemd unit `/etc/systemd/system/tunnel-manager.service` | LaunchDaemon `/Library/LaunchDaemons/io.github.jollaman999.tunnel-manager.plist` | 服务控制管理器里的 `tunnel-manager` 服务 |
+| 服务注册 | systemd unit。已经注册过的话就写在原来那个位置，没有的话写到 `/etc/systemd/system/tunnel-manager.service` | LaunchDaemon `/Library/LaunchDaemons/io.github.jollaman999.tunnel-manager.plist` | 服务控制管理器里的 `tunnel-manager` 服务 |
 | 运行用的账号 | `root` | `root` | `LocalSystem` |
 | 退出后再起来 | `Restart=always`，5 秒后 | `KeepAlive` | 每隔 5 秒重启，共三次 |
 

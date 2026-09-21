@@ -343,7 +343,7 @@ Windows 에서는 **관리자 권한으로 실행**한 PowerShell 이나 명령 
 |---|-------|-------|---------|
 | 실행 파일 | `/usr/local/bin/tunnel-manager` | `/usr/local/bin/tunnel-manager` | `C:\Program Files\tunnel-manager\tunnel-manager.exe` |
 | 데이터 디렉터리 | `/var/lib/tunnel-manager` | `/Library/Application Support/tunnel-manager` | `C:\ProgramData\tunnel-manager` |
-| 서비스 등록 | systemd 유닛 `/etc/systemd/system/tunnel-manager.service` | LaunchDaemon `/Library/LaunchDaemons/io.github.jollaman999.tunnel-manager.plist` | 서비스 제어 관리자의 `tunnel-manager` 서비스 |
+| 서비스 등록 | systemd 유닛. 이미 등록된 유닛이 있으면 그 자리에 쓰고, 없으면 `/etc/systemd/system/tunnel-manager.service` | LaunchDaemon `/Library/LaunchDaemons/io.github.jollaman999.tunnel-manager.plist` | 서비스 제어 관리자의 `tunnel-manager` 서비스 |
 | 실행 계정 | `root` | `root` | `LocalSystem` |
 | 꺼졌을 때 다시 띄우기 | `Restart=always`, 5초 뒤 | `KeepAlive` | 5초 간격으로 세 번 |
 
