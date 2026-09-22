@@ -169,7 +169,7 @@ const maxPort = 65535;
 //
 // The unit is bytes and not characters because that is what the server counts.
 // One Hangul syllable is three of them.
-const minPasswordBytes = 12;
+const minPasswordBytes = 8;
 const maxPasswordBytes = 72;
 
 // portCharacters and ipCharacters are what may not be in those boxes. They are

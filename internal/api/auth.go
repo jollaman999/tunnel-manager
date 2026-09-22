@@ -85,10 +85,19 @@ const invalidCredentialsMessage = "Invalid username or password"
 // would let anyone holding a session replace the credentials.
 const setupAlreadyDoneMessage = "The account is already set up"
 
-// minPasswordBytes is the shortest password the setup takes. The password it
-// replaces is 52 characters of randomness, so a much shorter one would be a
-// step down from what the account is opened with in the meantime.
-const minPasswordBytes = 12
+// minPasswordBytes is the shortest password the setup takes.
+//
+// The initial password it replaces is 52 characters of randomness, so anything
+// a person types is a step down from what the account is opened with in the
+// meantime. What this bound is for is the step down that goes further than
+// that, and what stands behind it is the rate limit on the login rather than
+// the length itself: see loginAddressBlockFor.
+//
+// The password that seals an exported configuration is held to this as well,
+// and that one is guessed at under different conditions - the file carries the
+// SSH credentials of every Host and is kept wherever it was put, with no rate
+// limit in front of it.
+const minPasswordBytes = 8
 
 // maxPasswordBytes is the longest password the setup takes. bcrypt hashes the
 // first 72 bytes of a password, and anything past that is not part of what is

@@ -56,7 +56,7 @@ const loginAddressFailureLimit = 5
 // Five minutes, and the number is a trade between two costs that pull opposite
 // ways. Long enough is what makes guessing pointless: five tries per five
 // minutes is sixty an hour from one address, which against the shortest
-// password the setup takes (minPasswordBytes, twelve bytes) is not a number
+// password the setup takes (minPasswordBytes, eight bytes) is not a number
 // that ever finishes. Short enough matters because the operator who typed it
 // wrong five times is held by this as well, with nothing but the clock to get
 // them back in: five minutes is a wait, fifteen would be an outage of the thing
