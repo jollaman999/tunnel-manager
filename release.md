@@ -1,3 +1,25 @@
+# v3.7.2
+
+## Add/fix features:
+
+- **The log file can be emptied from the Logs screen.** The screen could only be read, so a log that had filled with something an operator was finished with stayed there until the file rotated past it.
+  - The press takes the password of the account, the way the uninstall does. What it does cannot be taken back, which is the line the uninstall is on rather than the line the restart is on: after a restart the service is running again, and after this the lines that were in the file are gone.
+  - Only the file this server is writing to is emptied. The rotated files beside it are what the retention settings were set to keep, and the panel says that before it asks.
+  - A wrong password is answered inside the panel, with what was typed still in front of the operator. A refusal of a password is not a session that has ended, and the login screen is not the answer to it.
+  - The emptying goes through the writer that holds the file open rather than at the file. That writer carries the size it last wrote at and does not read it again while the handle is open, so a file cut under it would have its next line of any length taken for one that fills the file, and would be rotated on the spot.
+- **The shortest password an account may be set to is eight bytes rather than twelve.** This is a lowering, and it reaches further than the login screen: the same bound is what a password sealing an exported configuration is held to, and that file carries the SSH credentials of every Host, is kept wherever it was put, and has no rate limit in front of it. What stands behind the login is unchanged - five failures from one address in five minutes, thirty on the account.
+
+## Bug fixes:
+
+- The Status screen said every tunnel that should be running was connected on an installation that has no tunnels at all. Nothing was missing and nothing was down because there was nothing, so the line read as a report on work that was never asked for. It is left off where there is no tunnel to run, and the empty list under it is what says so.
+- The panel of host keys waiting for an approval kept the approve button and the count of what is ticked after the last key was answered. Approving the last one from its own row empties the list while the panel is up, and what was left was a press that sends nothing under a line counting to nothing, over a list already saying there is nothing here to approve.
+
+## Notes:
+
+- The upgrade note of v3.7.0 still holds: every Host stops until its key is approved, a stored path outside the data directory is put back to its default, and the data directory becomes 0700.
+- Only the Linux path of `-install` and `-uninstall` has been run. The macOS and the Windows backends are still held up by the compiler, by the vet tool for their platform, and by tests over the plist and the service configuration they produce.
+- None of the twelve translations has been read by a native speaker.
+
 # v3.7.1
 
 ## Add/fix features:
