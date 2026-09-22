@@ -10,8 +10,14 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/glebarez/sqlite"
+	"github.com/jollaman999/tunnel-manager/internal/auth"
+	"github.com/jollaman999/tunnel-manager/internal/models"
 	"github.com/labstack/echo/v4"
 	"go.uber.org/zap"
+	"go.uber.org/zap/zaptest/observer"
+	"gorm.io/gorm"
+	gormlogger "gorm.io/gorm/logger"
 )
 
 // writeLog puts a file in a directory of this test and hands back its path. The
@@ -49,7 +55,7 @@ func logsRequest(t *testing.T, path string, query string) *httptest.ResponseReco
 	rec := httptest.NewRecorder()
 	c := e.NewContext(req, rec)
 
-	err := NewLogsHandler(zap.NewNop(), path).GetLogs(c)
+	err := NewLogsHandler(zap.NewNop(), path, nil, nil).GetLogs(c)
 	if err != nil {
 		t.Fatalf("the handler returned error: %v", err)
 	}
@@ -622,4 +628,313 @@ func firstBytes(line string) string {
 	}
 
 	return line[:16]
+}
+
+// clearLogsDB opens a database with the one account in it, which is what the
+// password under the press is checked against.
+func clearLogsDB(t *testing.T) *gorm.DB {
+	t.Helper()
+
+	db, err := gorm.Open(sqlite.Open(filepath.Join(t.TempDir(), "logsclear.db")),
+		&gorm.Config{Logger: gormlogger.Discard})
+	if err != nil {
+		t.Fatalf("failed to open the database: %v", err)
+	}
+
+	err = db.AutoMigrate(&models.User{})
+	if err != nil {
+		t.Fatalf("failed to migrate the database: %v", err)
+	}
+
+	hash, err := auth.HashPassword(hostKeyAccountPassword)
+	if err != nil {
+		t.Fatalf("failed to hash the password: %v", err)
+	}
+
+	err = db.Create(&models.User{Username: "operator", PasswordHash: hash}).Error
+	if err != nil {
+		t.Fatalf("failed to create the account: %v", err)
+	}
+
+	return db
+}
+
+// clearLogsCall is what one press is run with. empty stands in for the closure
+// the startup hands the handler, and emptied says whether it was reached: the
+// tests that refuse the press hold it to having been left alone, which is the
+// half of a refusal that the status code does not say.
+type clearLogsCall struct {
+	path    string
+	db      *gorm.DB
+	body    string
+	account bool
+	fail    error
+	emptied bool
+}
+
+func (call *clearLogsCall) run(t *testing.T) (*httptest.ResponseRecorder, *observer.ObservedLogs) {
+	t.Helper()
+
+	core, logs := observer.New(zap.DebugLevel)
+
+	e := echo.New()
+	req := httptest.NewRequest(http.MethodPost, "/api/logs/clear", strings.NewReader(call.body))
+	req.Header.Set(echo.HeaderContentType, echo.MIMEApplicationJSON)
+
+	rec := httptest.NewRecorder()
+	c := e.NewContext(req, rec)
+
+	if call.account {
+		c.Set(contextUserIDKey, uint(1))
+	}
+
+	var empty func() error
+
+	if call.path != "" {
+		empty = func() error {
+			call.emptied = true
+
+			if call.fail != nil {
+				return call.fail
+			}
+
+			return os.Truncate(call.path, 0)
+		}
+	}
+
+	err := NewLogsHandler(zap.New(core), call.path, call.db, empty).ClearLogs(c)
+	if err != nil {
+		t.Fatalf("the handler returned error: %v", err)
+	}
+
+	return rec, logs
+}
+
+// TestEmptyingTheLogEmptiesTheFile is the press going through.
+func TestEmptyingTheLogEmptiesTheFile(t *testing.T) {
+	path := writeLog(t, `{"level":"info","msg":"something happened"}`)
+
+	call := &clearLogsCall{
+		path:    path,
+		db:      clearLogsDB(t),
+		body:    `{"password":"` + hostKeyAccountPassword + `"}`,
+		account: true,
+	}
+
+	rec, _ := call.run(t)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200, body: %s", rec.Code, rec.Body.String())
+	}
+
+	if !call.emptied {
+		t.Error("the file was not emptied")
+	}
+
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Fatalf("failed to stat the log file: %v", err)
+	}
+
+	if info.Size() != 0 {
+		t.Errorf("the log file is %d bytes, want 0", info.Size())
+	}
+}
+
+// TestEmptyingTheLogSaysWhichFileWasEmptied holds the answer to naming the file
+// the server emptied. The screen must not be the side that decides where the
+// log is, the same as on the read.
+func TestEmptyingTheLogSaysWhichFileWasEmptied(t *testing.T) {
+	path := writeLog(t, `{"level":"info","msg":"something happened"}`)
+
+	call := &clearLogsCall{
+		path:    path,
+		db:      clearLogsDB(t),
+		body:    `{"password":"` + hostKeyAccountPassword + `"}`,
+		account: true,
+	}
+
+	rec, _ := call.run(t)
+
+	var resp struct {
+		Success bool              `json:"success"`
+		Data    logsClearedAnswer `json:"data"`
+	}
+
+	err := json.Unmarshal(rec.Body.Bytes(), &resp)
+	if err != nil {
+		t.Fatalf("failed to read the answer: %v, body: %s", err, rec.Body.String())
+	}
+
+	if resp.Data.Path != path {
+		t.Errorf("path = %q, want %q", resp.Data.Path, path)
+	}
+}
+
+// TestEmptyingTheLogWithNoPasswordIsRefusedBeforeTheCheck holds an empty box to
+// its own refusal. Answered as a password that is wrong, it would tell an
+// operator who pressed with nothing typed that their password is not their
+// password.
+func TestEmptyingTheLogWithNoPasswordIsRefusedBeforeTheCheck(t *testing.T) {
+	path := writeLog(t, `{"level":"info","msg":"something happened"}`)
+
+	call := &clearLogsCall{
+		path:    path,
+		db:      clearLogsDB(t),
+		body:    `{"password":""}`,
+		account: true,
+	}
+
+	rec, _ := call.run(t)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400, body: %s", rec.Code, rec.Body.String())
+	}
+
+	if call.emptied {
+		t.Error("the file was emptied by a press with no password")
+	}
+
+	message := decodeRefusal(t, rec)
+	if !strings.Contains(message, "password of your account") {
+		t.Errorf("the refusal reads %q, which does not name the box to fill", message)
+	}
+}
+
+// TestEmptyingTheLogWithTheWrongPasswordLeavesTheFile is the refusal the screen
+// reads by its code, so that it stays on the screen it is on rather than being
+// sent to the login.
+func TestEmptyingTheLogWithTheWrongPasswordLeavesTheFile(t *testing.T) {
+	path := writeLog(t, `{"level":"info","msg":"something happened"}`)
+
+	before, err := os.Stat(path)
+	if err != nil {
+		t.Fatalf("failed to stat the log file: %v", err)
+	}
+
+	call := &clearLogsCall{
+		path:    path,
+		db:      clearLogsDB(t),
+		body:    `{"password":"not the password"}`,
+		account: true,
+	}
+
+	rec, logs := call.run(t)
+
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("status = %d, want 401, body: %s", rec.Code, rec.Body.String())
+	}
+
+	if call.emptied {
+		t.Error("the file was emptied by a press with the wrong password")
+	}
+
+	after, err := os.Stat(path)
+	if err != nil {
+		t.Fatalf("failed to stat the log file: %v", err)
+	}
+
+	if after.Size() != before.Size() {
+		t.Errorf("the log file is %d bytes, want the %d it was", after.Size(), before.Size())
+	}
+
+	var code struct {
+		Code string `json:"error_code"`
+	}
+
+	err = json.Unmarshal(rec.Body.Bytes(), &code)
+	if err != nil {
+		t.Fatalf("failed to read the answer: %v, body: %s", err, rec.Body.String())
+	}
+
+	// The screen branches on this name to tell a wrong password from a session
+	// that has ended. Renamed here and not there, the operator would be sent to
+	// the login by a typo.
+	if code.Code != string(errLogsClearPasswordWrong) {
+		t.Errorf("error_code = %q, want %q", code.Code, errLogsClearPasswordWrong)
+	}
+
+	// The attempt is written down, and what was typed is not. The line is in
+	// the very file the press was about to empty.
+	written := logs.FilterMessageSnippet("password that does not open the account").Len()
+	if written != 1 {
+		t.Errorf("the refusal was written down %d times, want 1", written)
+	}
+
+	for _, line := range logs.All() {
+		if strings.Contains(line.Message, "not the password") {
+			t.Errorf("a log line carries what was typed: %s", line.Message)
+		}
+
+		for _, field := range line.Context {
+			if strings.Contains(field.String, "not the password") {
+				t.Errorf("a log field carries what was typed: %s=%s", field.Key, field.String)
+			}
+		}
+	}
+}
+
+// TestEmptyingTheLogWithNoFileConfiguredIsNotFound is the state the read
+// answers the same way: there is no file, so there is nothing to empty.
+func TestEmptyingTheLogWithNoFileConfiguredIsNotFound(t *testing.T) {
+	call := &clearLogsCall{
+		db:      clearLogsDB(t),
+		body:    `{"password":"` + hostKeyAccountPassword + `"}`,
+		account: true,
+	}
+
+	rec, _ := call.run(t)
+
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("status = %d, want 404, body: %s", rec.Code, rec.Body.String())
+	}
+}
+
+// TestEmptyingTheLogAnswersWhatWentWrong holds a failed emptying to being said
+// rather than answered as a press that worked.
+func TestEmptyingTheLogAnswersWhatWentWrong(t *testing.T) {
+	path := writeLog(t, `{"level":"info","msg":"something happened"}`)
+
+	call := &clearLogsCall{
+		path:    path,
+		db:      clearLogsDB(t),
+		body:    `{"password":"` + hostKeyAccountPassword + `"}`,
+		account: true,
+		fail:    os.ErrPermission,
+	}
+
+	rec, _ := call.run(t)
+
+	if rec.Code != http.StatusInternalServerError {
+		t.Fatalf("status = %d, want 500, body: %s", rec.Code, rec.Body.String())
+	}
+
+	message := decodeRefusal(t, rec)
+	if !strings.Contains(message, path) {
+		t.Errorf("the refusal reads %q, which does not name the file", message)
+	}
+}
+
+// TestEmptyingTheLogOutsideTheSessionMiddlewareIsAnError is the route hung
+// somewhere the middleware does not cover. It cannot be reached by a request,
+// and what it must not be is a press that goes through with no account behind
+// it.
+func TestEmptyingTheLogOutsideTheSessionMiddlewareIsAnError(t *testing.T) {
+	path := writeLog(t, `{"level":"info","msg":"something happened"}`)
+
+	call := &clearLogsCall{
+		path: path,
+		db:   clearLogsDB(t),
+		body: `{"password":"` + hostKeyAccountPassword + `"}`,
+	}
+
+	rec, _ := call.run(t)
+
+	if rec.Code != http.StatusInternalServerError {
+		t.Fatalf("status = %d, want 500, body: %s", rec.Code, rec.Body.String())
+	}
+
+	if call.emptied {
+		t.Error("the file was emptied with no account on the context")
+	}
 }

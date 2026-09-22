@@ -50,17 +50,31 @@ const apiUninstallPath = "/api/uninstall";
 // saying the opposite of what happened.
 const apiAccountPath = "/api/account";
 
-// hostKeyPasswordWrongCode is the fifth 401 that does not mean the session is
-// over, and the first that no path can tell: the approval of one host is
-// POST /api/host/<id>/host-key, so there is no single string to compare a path
-// against, and the same refusal also comes back from the call that approves
-// many at once. The name the server raises it under is read instead.
+// hostKeyPasswordWrongCode and logsClearPasswordWrongCode are the two 401s that
+// do not mean the session is over and that no path can tell apart.
 //
-// It means what the uninstall and the account 401s mean: the password box on
-// the panel was wrong. The session that carried it is untouched and the server
-// approved nothing, so the operator stays on the screen they were on and the
-// panel says why, the way every other refusal of that call is shown.
+// The host key approval is the one with no path to compare against: the
+// approval of one host is POST /api/host/<id>/host-key, so there is no single
+// string, and the same refusal also comes back from the call that approves many
+// at once. Emptying the log has a path of its own, but the read of the log is
+// that same path with a query on the end, so a comparison there would be
+// resting on the query being what tells the two calls apart. The name the
+// server raises the refusal under is read instead.
+//
+// Each of them means what the uninstall and the account 401s mean: the password
+// box in front of the operator was wrong. The session that carried it is
+// untouched and the server changed nothing, so the operator stays on the screen
+// they were on and the panel says why, the way every other refusal of that call
+// is shown.
+//
+// They are two constants and not one list of strings because the test that
+// holds these names to the ones the server raises reads them as constants. A
+// list would leave that test with nothing to read and the check would go
+// quiet without failing.
 const hostKeyPasswordWrongCode = "host.host_key.password_wrong";
+const logsClearPasswordWrongCode = "logs.clear.password_wrong";
+
+const passwordWrongCodes = [hostKeyPasswordWrongCode, logsClearPasswordWrongCode];
 
 // csrfCookieName and csrfHeaderName are the two ends of the CSRF check. The
 // server hands the token of the session out in a cookie it leaves readable from
@@ -648,7 +662,7 @@ async function apiCall(method, path, body) {
   const payload = await readPayload(response);
 
   if (response.status === 401 && path !== apiLoginPath && path !== apiUninstallPath &&
-      path !== apiAccountPath && !saysHostKeyPasswordWrong(payload)) {
+      path !== apiAccountPath && !saysPasswordWrong(payload)) {
     // The session is gone, so the login screen that follows is drawn for a
     // reader with no session, in the language the browser asks for and not
     // the one the installation names. The notice is picked after the switch
@@ -680,19 +694,19 @@ async function apiCall(method, path, body) {
   return payload === null ? null : payload.data;
 }
 
-// saysHostKeyPasswordWrong reads whether a 401 is the password under a host key
-// panel being wrong rather than the session being over.
+// saysPasswordWrong reads whether a 401 is a password box in front of the
+// operator being wrong rather than the session being over.
 //
 // Only the code decides it. The sentence beside it is drawn in the language of
 // the page, and a 401 that carries no code at all is what an ended session
 // looks like, so anything this does not find the name in stays a move to the
 // login: a session that really is gone must not be mistaken for a typo.
-function saysHostKeyPasswordWrong(payload) {
+function saysPasswordWrong(payload) {
   if (payload === null || typeof payload.error_code !== "string") {
     return false;
   }
 
-  return payload.error_code === hostKeyPasswordWrongCode;
+  return passwordWrongCodes.indexOf(payload.error_code) !== -1;
 }
 
 // saysSetupFirst reads whether a refusal is the account setup not being

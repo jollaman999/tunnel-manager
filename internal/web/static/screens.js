@@ -1416,32 +1416,40 @@ function hostKeyFingerprint(name, label, fingerprint) {
   return box;
 }
 
-// hostKeyPasswordField is the box the password of the account is typed into
-// inside the panel.
+// accountPasswordField is the box the password of the account is typed into
+// inside a panel.
 //
 // It is built here rather than with buildForm, because what sends it is a
 // button of the panel: a form inside a panel would send itself on Enter, and
 // what a form sends is read by the form and not by the press that the panel
 // settles on.
-function hostKeyPasswordField() {
+//
+// The id is handed in so that two panels of the same screen cannot both call
+// their box the same thing, which is what the label points at.
+function accountPasswordField(id, label, hint) {
   const row = document.createElement("div");
-  const id = "host-key-password";
-  const label = element("label", t("status.host-key-password.label"));
+  const name = element("label", label);
   const input = document.createElement("input");
 
   row.className = "field";
-  label.htmlFor = id;
+  name.htmlFor = id;
 
   input.type = "password";
   input.id = id;
   input.name = "password";
   input.dataset.field = "password";
 
-  row.appendChild(label);
+  row.appendChild(name);
   row.appendChild(input);
-  row.appendChild(element("small", t("status.host-key-password.hint")));
+  row.appendChild(element("small", hint));
 
   return { row: row, input: input };
+}
+
+// hostKeyPasswordField is that box on the panels of the Status screen.
+function hostKeyPasswordField() {
+  return accountPasswordField("host-key-password", t("status.host-key-password.label"),
+    t("status.host-key-password.hint"));
 }
 
 // approveHostKey sends the approval of the key that was drawn.
@@ -2448,7 +2456,7 @@ async function drawLogs() {
     return;
   }
 
-  const nodes = [logControls(), logScope()];
+  const nodes = [logControls(answer), logScope()];
 
   if (problem !== null) {
     nodes.push(statusLine(problem, "warning"));
@@ -2662,7 +2670,7 @@ function logMessageCell(line) {
 // rather than through a Save, because nothing they change is stored anywhere:
 // the count is what the next fetch asks for, and the level is applied to what
 // came back.
-function logControls() {
+function logControls(answer) {
   const row = document.createElement("div");
 
   row.className = "log-controls";
@@ -2698,7 +2706,117 @@ function logControls() {
 
   row.appendChild(actionButton(t("logs.refresh.button"), "log-refresh", drawLogs));
 
+  // The press that empties the log is offered only where the read came back.
+  // A read that did not is a log this server is not writing to a file at all,
+  // or one whose file it could not open, and in both there is nothing here to
+  // empty: the button would be asking for a password to do nothing with.
+  if (answer !== null && answer !== undefined) {
+    const clear = actionButton(t("logs.clear.button"), "log-clear", logClearPanel, "danger");
+
+    row.appendChild(clear);
+  }
+
   return row;
+}
+
+// logClearPanel asks before the log is emptied, and takes the password of the
+// account.
+//
+// The password is asked for because what this does cannot be taken back. It is
+// the line the uninstall is on rather than the line the restart is on: after a
+// restart the service is running again, and after this the lines that were in
+// the file are gone.
+//
+// What the warning has to say beside that is what is left behind. Only the file
+// this server is writing to is emptied, and the rotated files beside it stay as
+// the retention settings keep them, so an operator pressing this to make the
+// machine forget something would otherwise be left believing it had.
+async function logClearPanel() {
+  const problem = element("p", "");
+
+  problem.className = "notice error";
+  problem.dataset.problem = "log-clear";
+  problem.hidden = true;
+
+  const password = accountPasswordField("log-clear-password",
+    t("logs.clear-password.label"), t("logs.clear-password.hint"));
+
+  let cleared = false;
+
+  await openModal({
+    name: "log-clear",
+    title: t("logs.clear-confirm.title"),
+    body: [
+      element("p", t("logs.clear-confirm.text")),
+      element("p", t("logs.clear-kept.text")),
+      problem,
+      password.row
+    ],
+    buttons: [
+      {
+        label: t("logs.clear-confirm.button"),
+        name: "clear",
+        // Painted as what cannot be taken back, the way the list that replaces
+        // a trusted host key is.
+        variant: "danger",
+        press: function (node, close) {
+          return sendLogClear(password, node, close, problem, function () {
+            cleared = true;
+          });
+        }
+      },
+      { label: t("common.cancel.button"), name: "cancel" }
+    ]
+  });
+
+  if (!cleared) {
+    return;
+  }
+
+  // The line above the screen says it happened, because the screen it is drawn
+  // over is a log with nothing in it, which is the same thing the screen shows
+  // when the level filter matches none of the lines.
+  setNotice(t("logs.cleared.notice"), "info");
+
+  return drawLogs();
+}
+
+// sendLogClear is the press at the bottom of that panel.
+//
+// A refusal is shown inside the panel and the panel stays up, with what was
+// typed still in it. The password box is the thing most likely to be refused,
+// and a panel that went away would take the box with it.
+async function sendLogClear(password, button, close, problem, done) {
+  // An empty box is answered here rather than by a round trip, the way a form
+  // answers a value the server would refuse anyway.
+  if (password.input.value === "") {
+    password.input.classList.add("bad");
+    showPanelProblem(problem, t("logs.clear-password.error"));
+
+    return;
+  }
+
+  password.input.classList.remove("bad");
+  problem.hidden = true;
+  button.disabled = true;
+
+  try {
+    await apiCall("POST", "/api/logs/clear", { password: password.input.value });
+  } catch (error) {
+    if (error instanceof Redirected) {
+      throw error;
+    }
+
+    // Nothing was emptied, so the panel goes back to offering the press.
+    button.disabled = false;
+
+    showPanelProblem(problem, error.message);
+
+    return;
+  }
+
+  done();
+  close("clear");
 }
 
 // logSelect is one list of the row above, with the label that says what it is.

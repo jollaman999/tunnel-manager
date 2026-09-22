@@ -147,6 +147,13 @@ const (
 	LoggingToFileDisabled ID = "logging.to_file_disabled"
 	LoggingInitFailed     ID = "logging.init_failed"
 	LoggingFileReadFailed ID = "logging.file_read_failed"
+	// The three below are the press on the Logs screen that empties the file.
+	// The refused one is here rather than with the account lines because what
+	// it guards is this file, and a reader looking into why the log begins
+	// where it does finds all three under the same area.
+	LoggingFileClearPasswordWrong ID = "logging.file_clear_password_wrong"
+	LoggingFileCleared            ID = "logging.file_cleared"
+	LoggingFileClearFailed        ID = "logging.file_clear_failed"
 )
 
 // encryption: the key the stored secrets are encrypted with.

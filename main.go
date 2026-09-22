@@ -352,7 +352,13 @@ func prepareLogFile(s *settings.Settings, installDir string) error {
 // A core is returned instead of a logger because the logger already exists by
 // the time this is called: the startup built one to report on opening the
 // database, and this core is put into it.
-func initLogger(s *settings.Settings, installDir string) (zapcore.Core, zap.AtomicLevel, error) {
+//
+// The third return is what empties the log file, which the Logs screen offers
+// as a press. It comes from here because the writer that holds the file open
+// is built here and the emptying has to go through it: see emptyLogFile. It is
+// nil when nothing is writing to a file.
+func initLogger(s *settings.Settings, installDir string) (zapcore.Core, zap.AtomicLevel,
+	func() error, error) {
 	// An unusable log file is not fatal. The logger falls back to the console
 	// only, but the reason has to be visible since nothing is written to the file.
 	fileErr := prepareLogFile(s, installDir)
@@ -364,7 +370,7 @@ func initLogger(s *settings.Settings, installDir string) (zapcore.Core, zap.Atom
 	level := zap.NewAtomicLevel()
 	err := level.UnmarshalText([]byte(s.LoggingLevel))
 	if err != nil {
-		return nil, level, fmt.Errorf("failed to parse log level: %v", err)
+		return nil, level, nil, fmt.Errorf("failed to parse log level: %v", err)
 	}
 
 	encoderConfig := newEncoderConfig()
@@ -376,15 +382,24 @@ func initLogger(s *settings.Settings, installDir string) (zapcore.Core, zap.Atom
 		encoder = zapcore.NewConsoleEncoder(encoderConfig)
 	}
 
-	var cores []zapcore.Core
+	var (
+		cores []zapcore.Core
+		empty func() error
+	)
 
 	if fileErr == nil {
+		path := resolveInstallPath(installDir, s.LoggingFilePath)
+
 		logWriter := &lumberjack.Logger{
-			Filename:   resolveInstallPath(installDir, s.LoggingFilePath),
+			Filename:   path,
 			MaxSize:    s.LoggingFileMaxSize,
 			MaxBackups: s.LoggingFileMaxBackups,
 			MaxAge:     s.LoggingFileMaxAge,
 			Compress:   s.LoggingFileCompress,
+		}
+
+		empty = func() error {
+			return emptyLogFile(logWriter, path)
 		}
 
 		cores = append(cores, zapcore.NewCore(
@@ -410,7 +425,37 @@ func initLogger(s *settings.Settings, installDir string) (zapcore.Core, zap.Atom
 			zap.String("message", "logs are written to the console only"))
 	}
 
-	return core, level, nil
+	return core, level, empty, nil
+}
+
+// emptyLogFile empties the file the rotating writer is writing to.
+//
+// The writer is closed before the file is cut. It holds the file open across
+// writes and carries the size it last wrote at, and neither is read again
+// while the handle is open: cutting the file under it would leave that size
+// far larger than the file, and the next line of any length would be taken for
+// one that fills the file and rotate it on the spot. Closed, the writer opens
+// the file again on the next line and reads its size then, which is nought.
+//
+// The file is cut rather than removed so that it keeps the mode and the owner
+// it was given. Removed, it would be created again by the writer with the mode
+// that writer defaults to, which is not the one the startup narrowed it to.
+//
+// A line written in the moment between the close and the cut is lost. It is a
+// line from before the press that asked for the file to be emptied, which is
+// what the press is throwing away.
+func emptyLogFile(writer *lumberjack.Logger, path string) error {
+	err := writer.Close()
+	if err != nil {
+		return fmt.Errorf("failed to close the log file: %v", err)
+	}
+
+	err = os.Truncate(path, 0)
+	if err != nil {
+		return fmt.Errorf("failed to empty the log file: %v", err)
+	}
+
+	return nil
 }
 
 // storedPasswordCheck holds what the stored passwords answered when they were
@@ -1333,7 +1378,7 @@ func serve() {
 	// From here the logger is the one the settings describe. logLevel is the
 	// handle the Settings screen changes the level through, which is why the
 	// level is not fixed into the core.
-	core, logLevel, err := initLogger(set, installDir)
+	core, logLevel, emptyLog, err := initLogger(set, installDir)
 	if err != nil {
 		logger.Fatal("failed to initialize the logger", logid.LoggingInitFailed.Field(), zap.Error(err))
 	}
@@ -1553,7 +1598,8 @@ func serve() {
 	// a second place that knows what a relative logging.file.path is read
 	// against, and a path changed on the Settings screen without a restart
 	// would send the screen to a file nothing is being written to.
-	logsHandler := api.NewLogsHandler(logger, resolveInstallPath(installDir, set.LoggingFilePath))
+	logsHandler := api.NewLogsHandler(logger, resolveInstallPath(installDir, set.LoggingFilePath),
+		db, emptyLog)
 	// The uninstall is handed what this process holds: the manager whose
 	// tunnels have to come down, the function that stops the loop that would
 	// build them again, the database handle it closes and the paths of the
@@ -1659,6 +1705,10 @@ func serve() {
 	g.PUT("/certificate", certificateHandler.InstallCertificate)
 
 	g.GET("/logs", logsHandler.GetLogs)
+	// The emptying is a POST and not a DELETE on the path above because the
+	// password of the account is in the body. It is the shape the uninstall and
+	// the exports are on, and for the same reason.
+	g.POST("/logs/clear", logsHandler.ClearLogs)
 
 	g.GET("/restart", restartHandler.GetRestart)
 	g.POST("/restart", restartHandler.Restart)

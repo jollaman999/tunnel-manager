@@ -36,6 +36,7 @@ import (
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
 	"go.uber.org/zap/zaptest/observer"
+	"gopkg.in/natefinch/lumberjack.v2"
 	"gorm.io/gorm"
 	gormlogger "gorm.io/gorm/logger"
 )
@@ -57,7 +58,7 @@ func newLoggingSettings(path string) *settings.Settings {
 // newLogger builds the logger initLogger describes, which is what main does
 // with the core it returns.
 func newLogger(s *settings.Settings) (*zap.Logger, error) {
-	core, _, err := initLogger(s, "")
+	core, _, _, err := initLogger(s, "")
 	if err != nil {
 		return nil, err
 	}
@@ -323,7 +324,7 @@ func TestTheRotatedLogsAreClosedAsWell(t *testing.T) {
 	// The logger writes to the console as well as to the file, so the lines
 	// this has to write to reach a rotation are kept out of the test output.
 	withStdoutCaptured(t, func() {
-		core, _, err := initLogger(set, "")
+		core, _, _, err := initLogger(set, "")
 		if err != nil {
 			t.Errorf("failed to build the logger: %v", err)
 
@@ -518,7 +519,7 @@ func TestInitLoggerRefusesALevelItCannotRead(t *testing.T) {
 	set := newLoggingSettings(filepath.Join(t.TempDir(), "logs", "tunnel-manager.log"))
 	set.LoggingLevel = "chatty"
 
-	core, _, err := initLogger(set, "")
+	core, _, _, err := initLogger(set, "")
 	if err == nil {
 		t.Fatal("a log level that cannot be read was accepted")
 	}
@@ -562,7 +563,7 @@ func TestTheLoggersHandedOutBeforeTheSwapFollowIt(t *testing.T) {
 
 		logger.Info("a line from before the swap")
 
-		core, _, err := initLogger(newLoggingSettings(logFile), "")
+		core, _, _, err := initLogger(newLoggingSettings(logFile), "")
 		if err != nil {
 			buildErr = err
 			return
@@ -604,7 +605,7 @@ func TestTheLoggersHandedOutBeforeTheSwapFollowIt(t *testing.T) {
 func TestTheLevelHandleChangesWhatIsWrittenWithoutARestart(t *testing.T) {
 	logFile := filepath.Join(t.TempDir(), "logs", "tunnel-manager.log")
 
-	core, level, err := initLogger(newLoggingSettings(logFile), "")
+	core, level, _, err := initLogger(newLoggingSettings(logFile), "")
 	if err != nil {
 		t.Fatalf("failed to build the core: %v", err)
 	}
@@ -971,7 +972,7 @@ func TestTheLogFileIsWrittenBesideTheDatabase(t *testing.T) {
 
 	set := newLoggingSettings("logs/tunnel-manager.log")
 
-	core, _, err := initLogger(set, installDir)
+	core, _, _, err := initLogger(set, installDir)
 	if err != nil {
 		t.Fatalf("failed to build the logger: %v", err)
 	}
@@ -1716,5 +1717,94 @@ func TestALeafThatWasNotParsedYetIsStillRead(t *testing.T) {
 
 	if caIssuedCertificate(selfSigned) {
 		t.Error("a self-signed certificate was read as one somebody else signed")
+	}
+}
+
+// TestEmptyingTheLogLeavesTheWriterWritingToTheFile is the whole reason the
+// emptying goes through the writer rather than at the file.
+//
+// The writer holds the file open across writes and carries the size it last
+// wrote at. A file cut under it is still appended to correctly, because the
+// handle is opened O_APPEND, but the size it is carrying is the size the file
+// used to be: the next line of any length would be taken for one that fills the
+// file and would rotate it on the spot. What the file holds after this is one
+// line, and the directory holds one file.
+func TestEmptyingTheLogLeavesTheWriterWritingToTheFile(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "tunnel-manager.log")
+
+	writer := &lumberjack.Logger{
+		Filename: path,
+		// MaxSize is in megabytes and the smallest lumberjack takes is 1. The
+		// lines below are a few dozen bytes, so nothing here rotates by size
+		// unless the size the writer is carrying is wrong.
+		MaxSize:    1,
+		MaxBackups: 3,
+	}
+
+	_, err := writer.Write([]byte("a line from before the emptying\n"))
+	if err != nil {
+		t.Fatalf("failed to write the first line: %v", err)
+	}
+
+	err = emptyLogFile(writer, path)
+	if err != nil {
+		t.Fatalf("failed to empty the log: %v", err)
+	}
+
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Fatalf("failed to stat the emptied log: %v", err)
+	}
+
+	if info.Size() != 0 {
+		t.Fatalf("the emptied log is %d bytes, want 0", info.Size())
+	}
+
+	_, err = writer.Write([]byte("a line from after the emptying\n"))
+	if err != nil {
+		t.Fatalf("failed to write after the emptying: %v", err)
+	}
+
+	body, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("failed to read the log back: %v", err)
+	}
+
+	// A hole of NUL bytes is what a writer that kept its offset would leave in
+	// front of the line, and the line arriving after nothing at all is what
+	// says the append went to the beginning of the file.
+	if string(body) != "a line from after the emptying\n" {
+		t.Errorf("the log reads %q, want only the line written after the emptying", string(body))
+	}
+
+	// One rotated file here would be the stale size rotating the file on the
+	// first line after the emptying.
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		t.Fatalf("failed to read the directory: %v", err)
+	}
+
+	if len(entries) != 1 {
+		names := make([]string, 0, len(entries))
+		for _, entry := range entries {
+			names = append(names, entry.Name())
+		}
+
+		t.Errorf("the directory holds %v, want the log file alone", names)
+	}
+}
+
+// TestEmptyingTheLogSaysWhenTheFileIsGone is the failure the handler turns into
+// an answer. Nothing is silently taken for done.
+func TestEmptyingTheLogSaysWhenTheFileIsGone(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "tunnel-manager.log")
+
+	writer := &lumberjack.Logger{Filename: path, MaxSize: 1}
+
+	err := emptyLogFile(writer, filepath.Join(dir, "not-there", "tunnel-manager.log"))
+	if err == nil {
+		t.Error("emptying a file that is not there was reported as done")
 	}
 }

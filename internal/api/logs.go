@@ -14,6 +14,7 @@ import (
 	"github.com/jollaman999/tunnel-manager/internal/models"
 	"github.com/labstack/echo/v4"
 	"go.uber.org/zap"
+	"gorm.io/gorm"
 )
 
 // The log stays in the file it is written to and is read from there on every
@@ -127,12 +128,26 @@ type logsAnswer struct {
 type LogsHandler struct {
 	logger *zap.Logger
 	path   string
+	// db is here for the one thing this handler does that is not a read: the
+	// password of the account is what stands in front of emptying the log.
+	db *gorm.DB
+	// empty empties the file the logger writes to. It is handed in from the
+	// startup rather than done here, because the writer that rotates the log
+	// holds the file open across writes and keeps the size it last wrote at.
+	// A file emptied from under it would be appended to correctly and rotated
+	// far too early, so the emptying has to go through the writer first.
+	//
+	// It is nil when nothing is writing to a file, which is the same state the
+	// empty path above describes.
+	empty func() error
 }
 
-func NewLogsHandler(logger *zap.Logger, path string) *LogsHandler {
+func NewLogsHandler(logger *zap.Logger, path string, db *gorm.DB, empty func() error) *LogsHandler {
 	return &LogsHandler{
 		logger: logger,
 		path:   path,
+		db:     db,
+		empty:  empty,
 	}
 }
 
@@ -185,6 +200,97 @@ func (h *LogsHandler) GetLogs(c echo.Context) error {
 			Capped:    tail.capped,
 		},
 	})
+}
+
+// logsClearRequest is what the panel sends. The password is the password of the
+// account the session belongs to, the same one the uninstall asks for.
+type logsClearRequest struct {
+	Password string `json:"password"`
+}
+
+// ClearLogs empties the log file.
+//
+// What is emptied is the file this process is writing to and nothing else. The
+// rotated files beside it are left as they are: they are what the retention
+// settings were set to keep, and a press on the Logs screen is not the place
+// those are overruled. The screen reads only the current file, so emptying it
+// is what makes the screen empty, which is what the press is for.
+//
+// The password of the account is asked for. What this does cannot be taken
+// back, which is the line the uninstall is on rather than the line the restart
+// is on: after a restart the service is running again, and after this the lines
+// that were in the file are gone.
+func (h *LogsHandler) ClearLogs(c echo.Context) error {
+	var req logsClearRequest
+
+	err := c.Bind(&req)
+	if err != nil {
+		return failure(c, http.StatusBadRequest, errRequestBodyInvalid, errorArgs{"reason": err.Error()})
+	}
+
+	// A path that is empty means the logging settings name no file at all, and
+	// empty is nil for the same reason. Either one is the state GetLogs answers
+	// with the same refusal: there is no file, so there is nothing to empty.
+	if h.path == "" || h.empty == nil {
+		return failure(c, http.StatusNotFound, errLogsFileNotConfigured)
+	}
+
+	// An empty box is refused before the password is checked, so that a press
+	// with nothing typed is not answered as a password that is wrong.
+	if req.Password == "" {
+		return failure(c, http.StatusBadRequest, errLogsClearPasswordMissing)
+	}
+
+	refused := accountPasswordRefused(c, h.db, h.logger, req.Password, errLogsClearPasswordWrong)
+	if refused != nil {
+		// A password that does not open the account is written down. This is a
+		// call where a password stands between a session and something that
+		// cannot be taken back, so the attempt belongs in the log - which is,
+		// this once, the very file the call was about to empty.
+		if refused.code == errLogsClearPasswordWrong {
+			h.logger.Warn("the log was asked to be emptied with a password that does not open the "+
+				"account. The log was not touched",
+				logid.LoggingFileClearPasswordWrong.Field())
+		}
+
+		return refused.answer(c)
+	}
+
+	// The line goes in before the file is emptied, so that it is not the first
+	// line of the new file but the last of the old one. What the new file
+	// starts with is whatever the service logs next, and a reader who wants to
+	// know why the log begins where it does has the answer in the file that was
+	// kept if one was kept at all.
+	h.logger.Warn("the log file is being emptied from the Logs screen. The rotated files beside it "+
+		"are left as they are",
+		logid.LoggingFileCleared.Field(),
+		zap.String("path", h.path))
+
+	err = h.empty()
+	if err != nil {
+		h.logger.Error("failed to empty the log file",
+			logid.LoggingFileClearFailed.Field(),
+			zap.String("path", h.path),
+			zap.Error(err))
+
+		return failure(c, http.StatusInternalServerError, errLogsClearFailed,
+			errorArgs{"path": h.path, "reason": err.Error()})
+	}
+
+	return c.JSON(http.StatusOK, models.Response{
+		Success: true,
+		Data: logsClearedAnswer{
+			Path: h.path,
+		},
+	})
+}
+
+// logsClearedAnswer is what the press is answered with. The path is in it for
+// the reason it is in the answer of a read: the screen must not be the side
+// that decides where the log is, and what it says was emptied has to be what
+// the server emptied.
+type logsClearedAnswer struct {
+	Path string `json:"path"`
 }
 
 // logsLineCount reads the lines parameter. An empty one is the default, a count

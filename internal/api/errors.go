@@ -157,6 +157,10 @@ const (
 	errLogsFileMissing       errorCode = "logs.file.missing"
 	errLogsFileReadFailed    errorCode = "logs.file.read_failed"
 
+	errLogsClearPasswordMissing errorCode = "logs.clear.password_missing"
+	errLogsClearPasswordWrong   errorCode = "logs.clear.password_wrong"
+	errLogsClearFailed          errorCode = "logs.clear.failed"
+
 	errExportPasswordRequired  errorCode = "export.password.required"
 	errExportPasswordTooShort  errorCode = "export.password.too_short"
 	errExportPasswordTooLong   errorCode = "export.password.too_long"
@@ -339,6 +343,10 @@ var errorMessages = map[errorCode]string{
 	errLogsFileNotConfigured: "No log file is configured, so the logs are written to the console only. Set a log file on the Settings screen and start the server again.",
 	errLogsFileMissing:       "There is no file at {path}. Either nothing has been logged to it yet, or the server could not open it at startup and is writing to the console only.",
 	errLogsFileReadFailed:    "The log file at {path} cannot be read: {reason}",
+
+	errLogsClearPasswordMissing: "Enter the password of your account to empty the log",
+	errLogsClearPasswordWrong:   "That is not the password of this account. The log was not touched",
+	errLogsClearFailed:          "The log file at {path} could not be emptied: {reason}",
 
 	// The export half of the transfer screens.
 	errExportPasswordRequired:  "A password is required. It is what encrypts the file, and the file cannot be opened without it",
