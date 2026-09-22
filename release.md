@@ -1,3 +1,20 @@
+# v3.7.4
+
+## Add/fix features:
+
+- **A tunnel whose forwarded port the Host would not open says what that can be.** The row carried one line, in the English the SSH library wrote, naming neither who refused nor what to look at.
+  - The Status screen now says the refusal came from the Host, and lists what makes a server refuse with the likeliest first. The order is decided on what this end knows: the server that answered the handshake, and the port it was asked for.
+  - None of it is given as the cause. The refusal carries no reason with it, and the several settings behind it look identical from here, so the list is offered as a list.
+  - A Host running the Windows build of OpenSSH is told nothing about privileged ports, which that platform does not have.
+- **The box that takes a local port warns where it is below 1024, and stores it anyway.** Whether such a port can be opened is a fact about the far machine rather than about the value: the account the Host is registered with may be root, the Host may be Windows, and a Linux Host may be set to let ordinary accounts bind lower ports. Refusing the value would decide all of that from a screen that can see none of it.
+
+## Notes:
+
+- The upgrade note of v3.7.0 still holds: every Host stops until its key is approved, a stored path outside the data directory is put back to its default, and the data directory becomes 0700.
+- Nothing about which forwards are attempted has changed. A port that was refused before is refused now, and what is new is only what the screen says about it.
+- Only the Linux path of `-install` and `-uninstall` has been run. The macOS and the Windows backends are still held up by the compiler, by the vet tool for their platform, and by tests over the plist and the service configuration they produce.
+- None of the twelve translations has been read by a native speaker.
+
 # v3.7.3
 
 ## Bug fixes:
