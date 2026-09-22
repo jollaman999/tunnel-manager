@@ -2198,16 +2198,95 @@ function applyTheme(name) {
 // once it has what it needs.
 function labelThemeToggle() {
   const button = document.getElementById("themeToggle");
-  if (button === null || !textsLoaded()) {
+  if (button === null) {
     return;
   }
 
-  const next = currentTheme() === "dark" ? "light" : "dark";
-  const label = next === "dark" ? t("theme.dark.label") : t("theme.light.label");
+  const dark = currentTheme() === "dark";
 
-  button.textContent = label;
-  button.setAttribute("aria-label", t("theme.switch.aria", { theme: label }));
+  // The state goes on whatever the theme is, catalog or no catalog. It is an
+  // attribute and not a word, so it is right before the words have arrived,
+  // and it is what a reader that cannot see the knob move is told.
+  button.setAttribute("aria-pressed", dark ? "true" : "false");
+
+  if (!textsLoaded()) {
+    return;
+  }
+
+  // The words go in the two sides rather than over the button, which holds the
+  // drawing. Writing to the button itself would take the track and the knob
+  // out with the text it replaced.
+  const words = button.querySelectorAll("[data-theme-word]");
+
+  for (const word of words) {
+    word.textContent = word.dataset.themeWord === "dark"
+      ? t("theme.dark.label")
+      : t("theme.light.label");
+  }
+
+  const next = dark ? t("theme.light.label") : t("theme.dark.label");
+
+  button.setAttribute("aria-label", t("theme.switch.aria", { theme: next }));
   button.hidden = false;
+}
+
+// themeSwapClass is on <html> only while a change of theme is being drawn. The
+// stylesheet hangs the transitions on it, so the colours move for a change and
+// stay instant for everything else; see the rule it is named in.
+const themeSwapClass = "theme-swapping";
+
+// themeSwapEnding is the timer that takes the class off. It is held so a second
+// press does not leave the first press's timer to end the second one's move:
+// what the class is on for is the change that is happening now.
+let themeSwapEnding = null;
+
+// swapTheme changes the theme with the colours moving.
+//
+// It is apart from applyTheme because the first paint uses that one. There the
+// theme is settled before anything is on the screen, so there is nothing to
+// move from, and a page that faded in from the other theme on every load would
+// be the cost of writing it as one function.
+function swapTheme(name) {
+  if (name === currentTheme()) {
+    return;
+  }
+
+  const root = document.documentElement;
+
+  root.classList.add(themeSwapClass);
+
+  if (themeSwapEnding !== null) {
+    window.clearTimeout(themeSwapEnding);
+  }
+
+  applyTheme(name);
+
+  // The wait is read off the stylesheet rather than written twice. Somebody who
+  // asked for less movement has it at zero there, and this then takes the class
+  // off on the next turn of the loop instead of holding it for a third of a
+  // second over a change that already happened.
+  themeSwapEnding = window.setTimeout(function () {
+    root.classList.remove(themeSwapClass);
+    themeSwapEnding = null;
+  }, themeSwapMs());
+}
+
+// themeSwapMs is how long the stylesheet says a change of theme takes, in
+// milliseconds. A value it cannot read is treated as no wait at all, which
+// leaves the change instant rather than leaving the class on.
+function themeSwapMs() {
+  const said = window.getComputedStyle(document.documentElement)
+    .getPropertyValue("--theme-swap").trim();
+
+  if (said.endsWith("ms")) {
+    return Number(said.slice(0, -2)) || 0;
+  }
+
+  if (said.endsWith("s")) {
+    return (Number(said.slice(0, -1)) || 0) * 1000;
+  }
+
+  return 0;
 }
 
 // setUpTheme puts the switch to work. The theme is worked out again here rather
@@ -2225,7 +2304,7 @@ function setUpTheme() {
     button.addEventListener("click", function () {
       const next = currentTheme() === "dark" ? "light" : "dark";
 
-      applyTheme(next);
+      swapTheme(next);
       rememberTheme(next);
     });
   }
@@ -2241,7 +2320,7 @@ function setUpTheme() {
 
   watched.addEventListener("change", function () {
     if (storedTheme() === null) {
-      applyTheme(preferredTheme());
+      swapTheme(preferredTheme());
     }
   });
 }

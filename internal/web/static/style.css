@@ -39,6 +39,22 @@
   --accent-active: #152a40;
   --accent-ring: #c7d6ea;
 
+  /* The theme switch, and how long a change of theme takes.
+
+     The two switch colours are the only ones on the page that are not named by
+     what they are for on a screen: the track and the knob are a drawing of a
+     sky, so the light one is a daytime blue and the dark one is a night that
+     is darker than any surface, which is what lets a white moon sit on it.
+
+     The duration is one value for the whole page so that the switch, the
+     surfaces behind it and the text on them all land together. Measured
+     against the animation this was drawn from, which takes about a third of a
+     second from the first colour that moves to the last. */
+  --theme-track: #7fa7f2;
+  --theme-track-edge: #7fa7f2;
+  --theme-knob: #ffffff;
+  --theme-swap: 0.35s;
+
   /* What went wrong, and what cannot be taken back. */
   --danger: #8a2f2f;
   --danger-strong: #7a1f1f;
@@ -69,6 +85,9 @@
    at least 4.5:1. */
 [data-theme="dark"] {
   color-scheme: dark;
+
+  --theme-track: #16171d;
+  --theme-track-edge: #3a3f49;
 
   --bg-page: #15171b;
   --bg-surface: #1d2025;
@@ -194,10 +213,160 @@ h1 {
 
 /* The button is painted by the rules every other button is painted by; only
    how small it is is said here. */
+/* A change of theme moves every colour on the page together, rather than
+   swapping them in one frame.
+
+   The rule is only live while the change is happening: app.js puts the class
+   on before it swaps the attribute and takes it off once the change has had
+   its time. Left on, it would slow the colour of every hover and every focus
+   ring on the page to a third of a second, which is a different feel to work
+   in and not what was asked for. Off at rest, it also cannot fire on the first
+   paint, where the theme is settled before anything is drawn and there is
+   nothing to move from.
+
+   It names colours and nothing that lays out. A transition on a length here
+   would be every table on the page reflowing for a third of a second.
+
+   The switch has rules of its own further down, written against the id so they
+   are the more specific of the two: its knob has to keep the transform this
+   would otherwise write over. */
+html.theme-swapping * {
+  transition:
+    background-color var(--theme-swap) ease,
+    border-color var(--theme-swap) ease,
+    color var(--theme-swap) ease,
+    fill var(--theme-swap) ease,
+    stroke var(--theme-swap) ease,
+    box-shadow var(--theme-swap) ease;
+}
+
+/* Somebody who has asked for less movement gets the change and not the moving.
+   One value does it: every transition on the page is timed from it, the switch
+   among them, so nothing has to be turned off one rule at a time. */
+@media (prefers-reduced-motion: reduce) {
+  :root {
+    --theme-swap: 0s;
+  }
+}
+
+/* The theme switch: the two words, the track between them, the knob that
+   slides across it, and the stars that come out behind the knob.
+
+   It is drawn rather than written because the state it is in has to be legible
+   at a glance from the corner of a screen somebody is working in. What says
+   which theme is on is the side the knob is at and which of the two words is
+   the dark one, and neither has to be read to be seen.
+
+   Every length here is in em so the whole switch follows the font size set on
+   the button, and the one place to make it bigger or smaller is that. */
 #themeToggle {
-  padding: 0.15rem 0.5rem;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45em;
+  padding: 0.15rem 0.35rem;
   font-size: 12px;
   color: var(--text-muted);
+  background: none;
+  border: none;
+}
+
+#themeToggle:hover {
+  background: none;
+}
+
+/* The words on either side. The one the page is in is the one that is read,
+   and the other is dimmed rather than removed: a switch with one word beside
+   it says what it is, and a switch with both says what it is between. */
+#themeToggle .theme-word {
+  font-weight: 600;
+  color: var(--text-disabled);
+  transition: color var(--theme-swap) ease;
+}
+
+[data-theme="light"] #themeToggle .theme-word[data-theme-word="light"],
+:root:not([data-theme="dark"]) #themeToggle .theme-word[data-theme-word="light"],
+[data-theme="dark"] #themeToggle .theme-word[data-theme-word="dark"] {
+  color: var(--text);
+}
+
+#themeToggle .theme-track {
+  position: relative;
+  display: inline-block;
+  width: 2.9em;
+  height: 1.55em;
+  background: var(--theme-track);
+  /* The outline is what keeps the pill a shape in the dark. The night the
+     track is painted in is close to the page behind it there, close enough
+     that the switch would read as a moon and some stars floating between two
+     words, and the thing that is pressed would have no edge. In the light it
+     is the same border in a blue that the track already is, so it changes
+     nothing and there is one rule rather than two. */
+  border: 1px solid var(--theme-track-edge);
+  border-radius: 999px;
+  transition:
+    background-color var(--theme-swap) ease,
+    border-color var(--theme-swap) ease;
+}
+
+/* The knob. It slides with a transform rather than with left, so the move is
+   one the browser can hand to the compositor and not a run of layouts.
+
+   The crescent is the knob with a bite taken out of it, and the bite is an
+   inset shadow in the colour of the track: one circle, not two, so there is
+   nothing to keep lined up while it moves. In the light theme the bite is
+   pushed off the far edge, which leaves a full circle. */
+#themeToggle .theme-knob {
+  position: absolute;
+  top: 0.225em;
+  left: 0.225em;
+  width: 1.1em;
+  height: 1.1em;
+  border-radius: 50%;
+  /* The knob is not painted; what paints it is a circle of its own colour laid
+     inside it. In the light theme that circle is spread wide enough to fill the
+     knob, which is a disc. In the dark it is a plain circle pushed to one side,
+     and what is left uncovered on the other side is a lune: both of its edges
+     are curves, which is what a bite taken with a straight edge cannot give.
+
+     The two are the same shadow with other numbers, so one moves into the
+     other: a spread that shrinks while an offset grows. */
+  box-shadow: inset 0 0 0 0.62em var(--theme-knob);
+  transition:
+    transform var(--theme-swap) cubic-bezier(0.34, 1.2, 0.64, 1),
+    box-shadow var(--theme-swap) ease;
+}
+
+[data-theme="dark"] #themeToggle .theme-knob {
+  transform: translateX(1.35em);
+  /* The lit circle is pushed towards the leading edge, so the moon is full on
+     the side it is travelling to and hollow behind it, the way the drawing
+     this follows has it. */
+  box-shadow: inset 0.34em 0 0 0 var(--theme-knob);
+}
+
+/* The stars. They are one element carrying four dots as shadows, because four
+   dots that are never moved apart do not need four elements to be in.
+
+   They are behind the knob and only in the dark, and they fade rather than
+   appear: a star that switched on with the colour would read as a flicker. */
+#themeToggle .theme-stars {
+  position: absolute;
+  top: 0.42em;
+  left: 0.42em;
+  width: 0.16em;
+  height: 0.16em;
+  background: var(--theme-knob);
+  border-radius: 50%;
+  opacity: 0;
+  box-shadow:
+    0.42em 0.34em 0 -0.03em var(--theme-knob),
+    0.2em 0.62em 0 -0.05em var(--theme-knob),
+    0.72em 0.1em 0 -0.06em var(--theme-knob);
+  transition: opacity var(--theme-swap) ease;
+}
+
+[data-theme="dark"] #themeToggle .theme-stars {
+  opacity: 1;
 }
 
 /* The list of languages is held to the height of the switch beside it, so the

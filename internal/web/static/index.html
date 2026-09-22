@@ -133,7 +133,23 @@
          this whole arrangement is here to avoid. -->
     <div id="cornerControls">
       <select id="langPick" hidden></select>
-      <button id="themeToggle" type="button" hidden></button>
+      <!-- The switch is a button that holds its own parts: the two words it
+           sits between, the track, the knob that slides and turns from a full
+           circle into a crescent, and the stars that come out behind it. They
+           are here rather than built in app.js so the shape is painted with the
+           first frame, in the theme the script above already settled, and the
+           only thing left for the script is the words and what a press does.
+
+           aria-pressed says which of the two it is in, so a reader that cannot
+           see a moon slide is told the state and not only the label. -->
+      <button id="themeToggle" type="button" role="switch" aria-pressed="false" hidden>
+        <span class="theme-word" data-theme-word="light"></span>
+        <span class="theme-track">
+          <span class="theme-stars"></span>
+          <span class="theme-knob"></span>
+        </span>
+        <span class="theme-word" data-theme-word="dark"></span>
+      </button>
     </div>
     <!-- The ellipsis is not a word on purpose. It is painted before any script
          has run, so there is no catalog to take a word from, and "Loading..."
