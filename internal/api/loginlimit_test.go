@@ -19,10 +19,16 @@ import (
 // it is not sent anywhere.
 const mistypedPassword = "not-a-real-one-9" // hook:allow
 
-// tooManyAttemptsCode is the code a held login is refused under, written out
-// here so that the tests read the name a screen keys its phrase book by rather
-// than the identifier of the constant.
-const tooManyAttemptsCode = "auth.attempts.too_many"
+// tooManyAttemptsCode is the code a held login is refused under, and
+// passwordAttemptsCode the one a held call that asks for the account password
+// again is refused under. Both are written out here so that the tests read the
+// name a screen keys its phrase book by rather than the identifier of the
+// constant, and they are two names because the sentence behind them is two
+// sentences: one counter holds both, but only one of the two paths is a login.
+const (
+	tooManyAttemptsCode  = "auth.attempts.too_many"
+	passwordAttemptsCode = "auth.password_attempts.too_many"
+)
 
 // goodLogin and badLogin are the bodies of a login that has the password right
 // and one that has it wrong.
@@ -592,8 +598,8 @@ func TestTooManyWrongPasswordsOnACallThatAsksAgainAreRefused(t *testing.T) {
 	}
 
 	code := refusalCode(t, rec)
-	if code != tooManyAttemptsCode {
-		t.Errorf("error_code = %q, want %q", code, tooManyAttemptsCode)
+	if code != passwordAttemptsCode {
+		t.Errorf("error_code = %q, want %q", code, passwordAttemptsCode)
 	}
 
 	want := strconv.Itoa(int(loginAddressBlockFor / time.Second))
@@ -671,6 +677,59 @@ func TestTheLoginAndTheCallsThatAskAgainShareOneCounter(t *testing.T) {
 	}
 }
 
+// TestAHeldPasswordCheckAndAHeldLoginAreWordedApart is the other side of the
+// one counter: the hold is shared, and the sentence is not.
+//
+// A call that asks for the account password again is made by somebody who is
+// logged in and was asked for their password on the way to something else. Were
+// it refused under the login's code, the screen they are on would read the
+// login's phrase and tell them that signing in was blocked, which is a thing
+// they are not doing and, on the Logs screen, a thing they have no way to make
+// sense of. So the code is checked here on both paths at once, from the one set
+// of failures, which is the only place the two can be told apart.
+func TestAHeldPasswordCheckAndAHeldLoginAreWordedApart(t *testing.T) {
+	e, _, _ := newPasswordCheckServer(t)
+
+	const guesser = "198.51.100.35"
+
+	cookies := signInFrom(t, e, guesser)
+
+	failPasswordChecks(t, e, guesser, cookies, loginAddressFailureLimit)
+
+	held := clearLogsWith(e, guesser, mistypedPassword, cookies)
+	if held.Code != http.StatusTooManyRequests {
+		t.Fatalf("attempt %d at the log: status = %d, want %d, body: %s",
+			loginAddressFailureLimit+1, held.Code, http.StatusTooManyRequests, held.Body.String())
+	}
+
+	if code := refusalCode(t, held); code != passwordAttemptsCode {
+		t.Errorf("the held password check: error_code = %q, want %q", code, passwordAttemptsCode)
+	}
+
+	// The sentence the answer carries is the one a client that reads no catalog
+	// is left with, and it is the one the English catalog holds for that code.
+	if strings.Contains(held.Body.String(), "sign in") {
+		t.Errorf("the held password check speaks of signing in: %s", held.Body.String())
+	}
+
+	if want := strconv.Itoa(int(loginAddressBlockFor / time.Second)); !strings.Contains(held.Body.String(), want) {
+		t.Errorf("the held password check does not say how long to wait (%s): %s", want, held.Body.String())
+	}
+
+	// The same failures, met at the login, which is a login and says so.
+	login := loginFrom(e, guesser, goodLogin)
+	if login.Code != http.StatusTooManyRequests {
+		t.Fatalf("the login: status = %d, want %d, body: %s",
+			login.Code, http.StatusTooManyRequests, login.Body.String())
+	}
+
+	if code := refusalCode(t, login); code != tooManyAttemptsCode {
+		t.Errorf("the held login: error_code = %q, want %q", code, tooManyAttemptsCode)
+	}
+
+	t.Logf("one hold, two sentences: %s / %s", held.Body.String(), login.Body.String())
+}
+
 // TestAPasswordThatOpensTheAccountForgetsTheFailuresBeforeIt is what keeps the
 // limit off the operator who mistyped on their way to the right password.
 func TestAPasswordThatOpensTheAccountForgetsTheFailuresBeforeIt(t *testing.T) {
@@ -740,8 +799,8 @@ func TestTheAccountChangeIsHeldByTheSameCounter(t *testing.T) {
 	}
 
 	code := refusalCode(t, rec)
-	if code != tooManyAttemptsCode {
-		t.Errorf("error_code = %q, want %q", code, tooManyAttemptsCode)
+	if code != passwordAttemptsCode {
+		t.Errorf("error_code = %q, want %q", code, passwordAttemptsCode)
 	}
 
 	if rec.Result().Header.Get(echo.HeaderRetryAfter) == "" {

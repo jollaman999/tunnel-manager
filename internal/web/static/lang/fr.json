@@ -106,6 +106,7 @@
   "error.auth.csrf.refused.error": "La requête ne contient pas d'en-tête {header} valide. Envoyez le jeton de session, celui que renvoie la connexion et que contient le cookie {cookie}, avec chaque POST, PUT et DELETE",
   "error.auth.password.too_long.error": "Le mot de passe doit faire au plus {max} octets, car bcrypt ne lit pas au-delà",
   "error.auth.password.too_short.error": "Le mot de passe doit faire au moins {min} octets",
+  "error.auth.password_attempts.too_many.error": "Trop de tentatives de mot de passe échouées. La vérification du mot de passe est bloquée pendant {retry_after} secondes",
   "error.auth.session.create_failed.error": "La création d'une session a échoué",
   "error.auth.session.required.error": "Authentification requise",
   "error.auth.setup.already_done.error": "Le compte est déjà configuré",

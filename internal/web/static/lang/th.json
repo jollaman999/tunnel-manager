@@ -106,6 +106,7 @@
   "error.auth.csrf.refused.error": "คำขอนี้ไม่มีส่วนหัว {header} ที่ใช้ได้ ส่งโทเคนของเซสชัน ซึ่งได้จากการเข้าสู่ระบบและเก็บอยู่ในคุกกี้ {cookie} ไปกับทุกคำขอ POST, PUT และ DELETE",
   "error.auth.password.too_long.error": "รหัสผ่านต้องยาวไม่เกิน {max} ไบต์ เพราะ bcrypt อ่านได้แค่นั้น",
   "error.auth.password.too_short.error": "รหัสผ่านต้องยาวอย่างน้อย {min} ไบต์",
+  "error.auth.password_attempts.too_many.error": "ใส่รหัสผ่านไม่สำเร็จหลายครั้งเกินไป ระบบปิดการตรวจสอบรหัสผ่านเป็นเวลา {retry_after} วินาที",
   "error.auth.session.create_failed.error": "สร้างเซสชันไม่สำเร็จ",
   "error.auth.session.required.error": "ต้องเข้าสู่ระบบก่อน",
   "error.auth.setup.already_done.error": "บัญชีถูกตั้งค่าไว้แล้ว",

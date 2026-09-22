@@ -106,6 +106,7 @@
   "error.auth.csrf.refused.error": "La petición no incluye una cabecera {header} válida. Envíe en cada POST, PUT y DELETE el token de la sesión, que es el que devuelve el inicio de sesión y contiene la cookie {cookie}",
   "error.auth.password.too_long.error": "La contraseña puede tener {max} bytes como mucho, porque bcrypt no lee más allá",
   "error.auth.password.too_short.error": "La contraseña tiene que tener al menos {min} bytes",
+  "error.auth.password_attempts.too_many.error": "Demasiados intentos fallidos con la contraseña. La comprobación de la contraseña queda bloqueada durante {retry_after} segundos",
   "error.auth.session.create_failed.error": "No se pudo crear una sesión",
   "error.auth.session.required.error": "Hace falta autenticarse",
   "error.auth.setup.already_done.error": "La cuenta ya está configurada",

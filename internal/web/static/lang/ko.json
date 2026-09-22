@@ -106,6 +106,7 @@
   "error.auth.csrf.refused.error": "요청에 올바른 {header} 헤더가 없습니다. 로그인 응답으로 받고 {cookie} 쿠키에도 담기는 세션 토큰을 POST, PUT, DELETE 마다 함께 보내십시오",
   "error.auth.password.too_long.error": "비밀번호는 {max} 바이트 이하여야 합니다. bcrypt 가 거기까지만 읽습니다",
   "error.auth.password.too_short.error": "비밀번호는 {min} 바이트 이상이어야 합니다",
+  "error.auth.password_attempts.too_many.error": "비밀번호 실패가 너무 많습니다. {retry_after} 초 동안 비밀번호 확인이 차단됩니다",
   "error.auth.session.create_failed.error": "세션을 만들지 못했습니다",
   "error.auth.session.required.error": "로그인이 필요합니다",
   "error.auth.setup.already_done.error": "계정 설정은 이미 끝났습니다",

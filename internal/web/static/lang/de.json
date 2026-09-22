@@ -106,6 +106,7 @@
   "error.auth.csrf.refused.error": "Die Anfrage enthält keinen gültigen {header}-Header. Senden Sie bei jedem POST, PUT und DELETE das Token der Sitzung, das die Anmeldung zurückgibt und das im Cookie {cookie} enthalten ist",
   "error.auth.password.too_long.error": "Das Passwort darf höchstens {max} Bytes lang sein, weil bcrypt nicht weiter liest",
   "error.auth.password.too_short.error": "Das Passwort muss mindestens {min} Bytes lang sein",
+  "error.auth.password_attempts.too_many.error": "Zu viele fehlgeschlagene Passworteingaben. Die Passwortprüfung ist für {retry_after} Sekunden gesperrt",
   "error.auth.session.create_failed.error": "Die Sitzung konnte nicht angelegt werden",
   "error.auth.session.required.error": "Anmeldung erforderlich",
   "error.auth.setup.already_done.error": "Das Konto ist bereits eingerichtet",

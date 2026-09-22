@@ -448,6 +448,11 @@ func sessionOnContext(c echo.Context) (uint, accountPasswordLimiter, bool) {
 // It carries Retry-After for the reason refuseHeldLogin does, and it is a
 // refusal rather than an answer written out here because the callers hold one
 // until they have rolled back whatever they had open.
+//
+// The code is its own, and not the login's. The hold is the same hold and the
+// number is the same number, but whoever meets this is logged in already and
+// was asked for their password on the way to something else; a sentence that
+// told them signing in was blocked would name a thing they are not doing.
 func (h *AuthHandler) passwordHeld(c echo.Context, accountID uint) *refusal {
 	wait, held := h.logins.retryAfter(h.loginAddress(c), accountID)
 	if !held {
@@ -458,7 +463,7 @@ func (h *AuthHandler) passwordHeld(c echo.Context, accountID uint) *refusal {
 
 	c.Response().Header().Set(echo.HeaderRetryAfter, strconv.Itoa(seconds))
 
-	return refuse(http.StatusTooManyRequests, errAuthTooManyAttempts,
+	return refuse(http.StatusTooManyRequests, errAuthPasswordTooManyAttempts,
 		errorArgs{"retry_after": strconv.Itoa(seconds)})
 }
 

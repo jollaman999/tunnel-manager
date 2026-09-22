@@ -80,16 +80,17 @@ const (
 	errListPageNotANumber      errorCode = "list.page.not_a_number"
 	errListSizeUnsupported     errorCode = "list.size.unsupported"
 
-	errAuthRequired            errorCode = "auth.session.required"
-	errAuthCSRFRefused         errorCode = "auth.csrf.refused"
-	errAuthCredentialsInvalid  errorCode = "auth.credentials.invalid"
-	errAuthSessionCreateFailed errorCode = "auth.session.create_failed"
-	errAuthSetupRequired       errorCode = "auth.setup.required"
-	errAuthSetupAlreadyDone    errorCode = "auth.setup.already_done"
-	errAuthSetupFailed         errorCode = "auth.setup.failed"
-	errAuthPasswordTooShort    errorCode = "auth.password.too_short"
-	errAuthPasswordTooLong     errorCode = "auth.password.too_long"
-	errAuthTooManyAttempts     errorCode = "auth.attempts.too_many"
+	errAuthRequired                errorCode = "auth.session.required"
+	errAuthCSRFRefused             errorCode = "auth.csrf.refused"
+	errAuthCredentialsInvalid      errorCode = "auth.credentials.invalid"
+	errAuthSessionCreateFailed     errorCode = "auth.session.create_failed"
+	errAuthSetupRequired           errorCode = "auth.setup.required"
+	errAuthSetupAlreadyDone        errorCode = "auth.setup.already_done"
+	errAuthSetupFailed             errorCode = "auth.setup.failed"
+	errAuthPasswordTooShort        errorCode = "auth.password.too_short"
+	errAuthPasswordTooLong         errorCode = "auth.password.too_long"
+	errAuthTooManyAttempts         errorCode = "auth.attempts.too_many"
+	errAuthPasswordTooManyAttempts errorCode = "auth.password_attempts.too_many"
 
 	errAccountReadFailed        errorCode = "account.read_failed"
 	errAccountStoreFailed       errorCode = "account.store_failed"
@@ -268,6 +269,12 @@ var errorMessages = map[errorCode]string{
 	// this is raised. What the sentence leaves out it leaves out on purpose,
 	// so there is nothing here to put back.
 	errAuthTooManyAttempts: "Too many failed sign in attempts. Sign in is blocked for {retry_after} seconds",
+	// The same hold, met by a call that asks the operator for the account
+	// password again. It is one counter with the login, so the number is the
+	// login's number; the sentence is its own because the sender of this is
+	// already logged in, and a refusal that told them signing in was blocked
+	// would name something they are not doing.
+	errAuthPasswordTooManyAttempts: "Too many failed password attempts. Password checks are blocked for {retry_after} seconds",
 
 	// The one account this API is served behind.
 	errAccountReadFailed:        "Failed to read the account",

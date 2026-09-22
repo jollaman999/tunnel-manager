@@ -106,6 +106,7 @@
   "error.auth.csrf.refused.error": "Yêu cầu không có header {header} hợp lệ. Hãy gửi token của phiên - token mà lượt đăng nhập trả về và cookie {cookie} đang giữ - trong mọi POST, PUT và DELETE",
   "error.auth.password.too_long.error": "Mật khẩu dài nhất là {max} byte, vì bcrypt chỉ đọc tới đó",
   "error.auth.password.too_short.error": "Mật khẩu phải dài ít nhất {min} byte",
+  "error.auth.password_attempts.too_many.error": "Quá nhiều lượt nhập mật khẩu thất bại. Việc kiểm tra mật khẩu bị chặn trong {retry_after} giây",
   "error.auth.session.create_failed.error": "Không tạo được phiên làm việc",
   "error.auth.session.required.error": "Cần đăng nhập",
   "error.auth.setup.already_done.error": "Tài khoản đã được thiết lập rồi",

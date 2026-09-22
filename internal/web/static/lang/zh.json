@@ -106,6 +106,7 @@
   "error.auth.csrf.refused.error": "请求中没有有效的 {header} 头。每个 POST、PUT 和 DELETE 请求都要带上会话令牌，它在登录的响应里，也保存在 {cookie} cookie 里",
   "error.auth.password.too_long.error": "密码最多 {max} 个字节，因为 bcrypt 只读取到这个长度",
   "error.auth.password.too_short.error": "密码至少要有 {min} 个字节",
+  "error.auth.password_attempts.too_many.error": "密码错误次数太多。{retry_after} 秒内禁止验证密码",
   "error.auth.session.create_failed.error": "创建会话失败",
   "error.auth.session.required.error": "需要先登录",
   "error.auth.setup.already_done.error": "账号已经初始化",

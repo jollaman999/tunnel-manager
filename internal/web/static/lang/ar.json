@@ -106,6 +106,7 @@
   "error.auth.csrf.refused.error": "لا يتضمن الطلب ترويسة {header} صالحة. أرسل رمز الجلسة، وهو ما يجيب به تسجيل الدخول وتتضمنه الكوكي {cookie}، مع كل POST وPUT وDELETE",
   "error.auth.password.too_long.error": "يجب ألا تزيد كلمة المرور على {max} بايت، فهذا أقصى ما يقرؤه bcrypt",
   "error.auth.password.too_short.error": "يجب ألا تقل كلمة المرور عن {min} بايت",
+  "error.auth.password_attempts.too_many.error": "محاولات كلمة مرور فاشلة كثيرة جدًا. التحقق من كلمة المرور محجوب مدة بالثواني قدرها {retry_after}",
   "error.auth.session.create_failed.error": "تعذّر إنشاء جلسة",
   "error.auth.session.required.error": "الاستيثاق مطلوب",
   "error.auth.setup.already_done.error": "الحساب مُعد أصلًا",
