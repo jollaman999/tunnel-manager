@@ -296,6 +296,17 @@ func nextHostID(tx *gorm.DB) (uint, error) {
 	return last.ID + 1, nil
 }
 
+// @Summary      Register a Host
+// @Description  enabled is optional and a Host that does not say is enabled.
+// @Description  bind_scope is what every assignment this registration makes is opened to: loopback, wildcard, or left out for the wildcard. It is read only when the assignments are made.
+// @Tags         hosts
+// @Accept   json
+// @Produce  json
+// @Security  CSRFToken
+// @Param   body  body  models.CreateHostRequest  true  "The Host to register"
+// @Success  200  {object}  models.Response{data=api.hostView}
+// @Failure  400  {object}  api.errorBody  "The body is refused, or the private key cannot be read"
+// @Router       /host [post]
 func (h *Handler) CreateHost(c echo.Context) error {
 	var req models.CreateHostRequest
 	err := c.Bind(&req)
@@ -355,7 +366,6 @@ func (h *Handler) CreateHost(c echo.Context) error {
 		Password:      password,
 		PrivateKey:    privateKey,
 		KeyPassphrase: keyPassphrase,
-		BindAddress:   req.BindAddress,
 		Description:   req.Description,
 		Enabled:       enabled,
 	}
@@ -396,8 +406,13 @@ func (h *Handler) CreateHost(c echo.Context) error {
 			return failure(c, http.StatusInternalServerError, errHostCreateServicePortsRead)
 		}
 
+		// Every assignment of the batch is opened to what the request asked
+		// for. The Host holds no scope of its own, so an answer given while it
+		// is being registered has nowhere to be kept but on the rows it makes,
+		// and a batch written without it would be a Host on the wildcard that
+		// nobody asked to put there.
 		for _, spID := range spIDs {
-			err = tx.Create(&models.HostServicePort{HostID: host.ID, SPID: spID}).Error
+			err = tx.Create(&models.HostServicePort{HostID: host.ID, SPID: spID, BindScope: req.BindScope}).Error
 			if err != nil {
 				tx.Rollback()
 				h.logger.Error("failed to assign a service port to a new Host",
@@ -428,6 +443,15 @@ func (h *Handler) CreateHost(c echo.Context) error {
 // one read to the next would put one Host on two pages and another on none. The
 // id is what that order is taken from, since it is given out once, never
 // changes, and no two Hosts share one.
+//
+// @Summary      One page of the Hosts, oldest first
+// @Tags         hosts
+// @Produce  json
+// @Param   page  query  int  false  "The page, counted from 1. Below 1 is read as 1, and a page past the last one is answered with the last page"
+// @Param   size  query  int  false  "How many rows a page holds"  Enums(10, 20, 30, 50, 100)
+// @Success  200  {object}  models.Response{data=api.listPageOf{items=[]api.hostView}}
+// @Failure  400  {object}  api.errorBody  "page is not a number, or size is not one of the sizes taken"
+// @Router       /host [get]
 func (h *Handler) ListHosts(c echo.Context) error {
 	page, refused := readListPage(c)
 	if refused != nil {
@@ -464,6 +488,13 @@ func (h *Handler) ListHosts(c echo.Context) error {
 	})
 }
 
+// @Summary      Read one Host
+// @Tags         hosts
+// @Produce  json
+// @Param   id  path  int  true  "The id of the Host"
+// @Success  200  {object}  models.Response{data=api.hostView}
+// @Failure  404  {object}  api.errorBody  "No such Host"
+// @Router       /host/{id} [get]
 func (h *Handler) GetHost(c echo.Context) error {
 	id, err := strconv.ParseUint(c.Param("id"), 10, 32)
 	if err != nil {
@@ -492,6 +523,18 @@ func (h *Handler) GetHost(c echo.Context) error {
 	})
 }
 
+// @Summary      Update a Host
+// @Description  Every field is optional; enabled false stops its tunnels.
+// @Tags         hosts
+// @Accept   json
+// @Produce  json
+// @Security  CSRFToken
+// @Param   id    path  int  true  "The id of the Host"
+// @Param   body  body  models.UpdateHostRequest  true  "The fields to change"
+// @Success  200  {object}  models.Response{data=api.hostView}
+// @Failure  400  {object}  api.errorBody  "The body is refused"
+// @Failure  404  {object}  api.errorBody  "No such Host"
+// @Router       /host/{id} [put]
 func (h *Handler) UpdateHost(c echo.Context) error {
 	id, err := strconv.ParseUint(c.Param("id"), 10, 32)
 	if err != nil {
@@ -573,9 +616,6 @@ func (h *Handler) UpdateHost(c echo.Context) error {
 		tx.Rollback()
 		return failure(c, http.StatusBadRequest, errHostUpdatePassphraseAlone)
 	}
-	if req.BindAddress != "" {
-		host.BindAddress = req.BindAddress
-	}
 	if req.Description != "" {
 		host.Description = req.Description
 	}
@@ -604,6 +644,14 @@ func (h *Handler) UpdateHost(c echo.Context) error {
 	})
 }
 
+// @Summary      Delete a Host, and the assignments naming it
+// @Tags         hosts
+// @Produce  json
+// @Security  CSRFToken
+// @Param   id  path  int  true  "The id of the Host"
+// @Success  200  {object}  models.Response{data=string}
+// @Failure  404  {object}  api.errorBody  "No such Host"
+// @Router       /host/{id} [delete]
 func (h *Handler) DeleteHost(c echo.Context) error {
 	id, err := strconv.ParseUint(c.Param("id"), 10, 32)
 	if err != nil {
@@ -666,6 +714,17 @@ func (h *Handler) DeleteHost(c echo.Context) error {
 	})
 }
 
+// @Summary      Register a service port
+// @Description  assign_to_all_hosts is optional: left out, every stored Host is given it, and sent as false it is registered carried by none.
+// @Description  bind_scope is what the assignments it makes are opened to: loopback, wildcard, or left out for the wildcard.
+// @Tags         service ports
+// @Accept   json
+// @Produce  json
+// @Security  CSRFToken
+// @Param   body  body  models.CreateServicePortRequest  true  "The service port to register"
+// @Success  200  {object}  models.Response{data=models.ServicePort}
+// @Failure  400  {object}  api.errorBody  "The body is refused, or the local port is already taken"
+// @Router       /service-port [post]
 func (h *Handler) CreateServicePort(c echo.Context) error {
 	var req models.CreateServicePortRequest
 	err := c.Bind(&req)
@@ -718,8 +777,12 @@ func (h *Handler) CreateServicePort(c echo.Context) error {
 			return failure(c, http.StatusInternalServerError, errServicePortCreateHostsRead)
 		}
 
+		// The batch is opened to what the request asked for, as the batch a
+		// registration makes is. The two words name the same pair of addresses
+		// on every Host, which is what lets one answer stand for assignments
+		// spread over all of them.
 		for _, hostID := range hostIDs {
-			err = tx.Create(&models.HostServicePort{HostID: hostID, SPID: sp.ID}).Error
+			err = tx.Create(&models.HostServicePort{HostID: hostID, SPID: sp.ID, BindScope: req.BindScope}).Error
 			if err != nil {
 				tx.Rollback()
 				h.logger.Error("failed to assign a new service port to a Host",
@@ -748,6 +811,15 @@ func (h *Handler) CreateServicePort(c echo.Context) error {
 
 // ListServicePorts answers one page of the service ports, ordered by id for the
 // reason ListHosts is.
+//
+// @Summary      One page of the service ports, oldest first
+// @Tags         service ports
+// @Produce  json
+// @Param   page  query  int  false  "The page, counted from 1. Below 1 is read as 1, and a page past the last one is answered with the last page"
+// @Param   size  query  int  false  "How many rows a page holds"  Enums(10, 20, 30, 50, 100)
+// @Success  200  {object}  models.Response{data=api.listPageOf{items=[]models.ServicePort}}
+// @Failure  400  {object}  api.errorBody  "page is not a number, or size is not one of the sizes taken"
+// @Router       /service-port [get]
 func (h *Handler) ListServicePorts(c echo.Context) error {
 	page, refused := readListPage(c)
 	if refused != nil {
@@ -785,6 +857,13 @@ func (h *Handler) ListServicePorts(c echo.Context) error {
 	})
 }
 
+// @Summary      Read one service port
+// @Tags         service ports
+// @Produce  json
+// @Param   id  path  int  true  "The id of the service port"
+// @Success  200  {object}  models.Response{data=models.ServicePort}
+// @Failure  404  {object}  api.errorBody  "No such service port"
+// @Router       /service-port/{id} [get]
 func (h *Handler) GetServicePort(c echo.Context) error {
 	id, err := strconv.ParseUint(c.Param("id"), 10, 32)
 	if err != nil {
@@ -807,6 +886,18 @@ func (h *Handler) GetServicePort(c echo.Context) error {
 	})
 }
 
+// @Summary      Update a service port
+// @Description  service_ip, service_port and local_port are all required.
+// @Tags         service ports
+// @Accept   json
+// @Produce  json
+// @Security  CSRFToken
+// @Param   id    path  int  true  "The id of the service port"
+// @Param   body  body  models.CreateServicePortRequest  true  "The service port as it should stand"
+// @Success  200  {object}  models.Response{data=models.ServicePort}
+// @Failure  400  {object}  api.errorBody  "The body is refused, or the local port is already taken"
+// @Failure  404  {object}  api.errorBody  "No such service port"
+// @Router       /service-port/{id} [put]
 func (h *Handler) UpdateServicePort(c echo.Context) error {
 	id, err := strconv.ParseUint(c.Param("id"), 10, 32)
 	if err != nil {
@@ -872,6 +963,14 @@ func (h *Handler) UpdateServicePort(c echo.Context) error {
 	})
 }
 
+// @Summary      Delete a service port, and the assignments naming it
+// @Tags         service ports
+// @Produce  json
+// @Security  CSRFToken
+// @Param   id  path  int  true  "The id of the service port"
+// @Success  200  {object}  models.Response{data=string}
+// @Failure  404  {object}  api.errorBody  "No such service port"
+// @Router       /service-port/{id} [delete]
 func (h *Handler) DeleteServicePort(c echo.Context) error {
 	id, err := strconv.ParseUint(c.Param("id"), 10, 32)
 	if err != nil {
@@ -943,6 +1042,12 @@ func (h *Handler) DeleteServicePort(c echo.Context) error {
 type hostServicePortItem struct {
 	models.ServicePort
 	Assigned bool `json:"assigned"`
+	// BindScope is what the assignment of this Host is opened to, and is the
+	// empty value on a row the Host does not carry: the scope is held by the
+	// assignment, so a service port that is not assigned has none. The empty
+	// value is the wildcard wherever it is stored, which is what the row this
+	// screen would make carries until something else is chosen.
+	BindScope string `json:"bind_scope"`
 }
 
 // ListHostServicePorts answers one page of the service ports with the
@@ -951,6 +1056,19 @@ type hostServicePortItem struct {
 // The page is taken over the service ports and not over the assignments, and
 // ordered by id as ListServicePorts is, so that a row sits on the same page of
 // both lists whether this Host carries it or not.
+//
+// @Summary      One page of the service ports, with assigned saying whether this Host carries each
+// @Description  The page is taken over the service ports and not over the assignments, so a row sits on the same page of this list and of GET /api/service-port whether the Host carries it or not.
+// @Description  bind_scope is what the assignment of this Host is opened to, and is empty on a row the Host does not carry.
+// @Tags         assignments
+// @Produce  json
+// @Param   page  query  int  false  "The page, counted from 1. Below 1 is read as 1, and a page past the last one is answered with the last page"
+// @Param   size  query  int  false  "How many rows a page holds"  Enums(10, 20, 30, 50, 100)
+// @Param   id  path  int  true  "The id of the Host"
+// @Success  200  {object}  models.Response{data=api.listPageOf{items=[]api.hostServicePortItem}}
+// @Failure  400  {object}  api.errorBody  "page is not a number, or size is not one of the sizes taken"
+// @Failure  404  {object}  api.errorBody  "No such Host"
+// @Router       /host/{id}/service-port [get]
 func (h *Handler) ListHostServicePorts(c echo.Context) error {
 	id, err := strconv.ParseUint(c.Param("id"), 10, 32)
 	if err != nil {
@@ -1000,11 +1118,15 @@ func (h *Handler) ListHostServicePorts(c echo.Context) error {
 		ids = append(ids, sp.ID)
 	}
 
-	assigned := make(map[uint]bool, len(ids))
+	// The whole row is read and not the identifier alone, because what an
+	// assignment is opened to is on it and the screen draws that beside the
+	// box. Whether the Host carries the service port is then whether the row
+	// is there, which the scope cannot answer: the empty value is a scope a
+	// stored assignment may hold.
+	assigned := make(map[uint]models.HostServicePort, len(ids))
 	if len(ids) > 0 {
-		var spIDs []uint
-		err = h.db.Model(&models.HostServicePort{}).
-			Where("host_id = ? AND sp_id IN ?", host.ID, ids).Pluck("sp_id", &spIDs).Error
+		var rows []models.HostServicePort
+		err = h.db.Where("host_id = ? AND sp_id IN ?", host.ID, ids).Find(&rows).Error
 		if err != nil {
 			h.logger.Error("failed to fetch the service port assignments of a Host",
 				logid.HostServicePortAssignmentsFetchFailed.Field(),
@@ -1012,15 +1134,20 @@ func (h *Handler) ListHostServicePorts(c echo.Context) error {
 			return failure(c, http.StatusInternalServerError, errServicePortListFailed)
 		}
 
-		for _, spID := range spIDs {
-			assigned[spID] = true
+		for _, row := range rows {
+			assigned[row.SPID] = row
 		}
 	}
 
 	// An empty page is an array and not null, for the reason ListHosts says.
 	items := make([]hostServicePortItem, 0, len(sps))
 	for _, sp := range sps {
-		items = append(items, hostServicePortItem{ServicePort: sp, Assigned: assigned[sp.ID]})
+		row, carried := assigned[sp.ID]
+		items = append(items, hostServicePortItem{
+			ServicePort: sp,
+			Assigned:    carried,
+			BindScope:   row.BindScope,
+		})
 	}
 
 	return c.JSON(http.StatusOK, models.Response{
@@ -1046,6 +1173,27 @@ func (h *Handler) ListHostServicePorts(c echo.Context) error {
 type hostServicePortChange struct {
 	Add    []uint `json:"add"`
 	Remove []uint `json:"remove"`
+	// BindScope is what the assignments this change writes are opened to, and
+	// what the ones named in Rescope are moved to. An empty value is the
+	// wildcard, the way it is on the column itself, so a client written before
+	// the field existed writes what it always wrote.
+	BindScope string `json:"bind_scope" validate:"omitempty,oneof=loopback wildcard"`
+	// Rescope names the assignments to move to BindScope, which is how one is
+	// changed without being taken away and put back: an identifier on its own
+	// is the row edited by itself, and several of them are the scope applied
+	// to everything that was ticked.
+	//
+	// It is a list of its own rather than Add doing the moving, because Add
+	// leaves an assignment that is already there exactly as it is. Read the
+	// other way, a client that ticks a box which was ticked already, or one
+	// written before any of this existed, would widen to the wildcard an
+	// assignment somebody had pinned to loopback, and a reach given away by a
+	// request that did not mention it is the one thing this must not do.
+	//
+	// An identifier here that the Host does not carry moves nothing, the way
+	// Remove takes no row that is not there. What the answer reports is rows
+	// and not identifiers.
+	Rescope []uint `json:"rescope"`
 }
 
 // hostServicePortChanged is what the change did: how many assignments it wrote
@@ -1055,14 +1203,34 @@ type hostServicePortChange struct {
 type hostServicePortChanged struct {
 	Added   int `json:"added"`
 	Removed int `json:"removed"`
+	// Rescoped is how many assignments were moved to the scope the change
+	// named, counted over the rows for the same reason: an identifier naming a
+	// service port this Host does not carry moves nothing.
+	Rescoped int `json:"rescoped"`
 }
 
-// UpdateHostServicePorts adds and removes assignments of one Host.
+// UpdateHostServicePorts adds and removes assignments of one Host, and moves
+// the ones it is told to move to the bind scope the change carries.
 //
 // The whole of the change lands or none of it does. The reconcile loop reads
 // these rows to decide which tunnels to run, so a change that landed in part
 // would leave the installation carrying traffic over a set of tunnels that no
 // request asked for, and nothing later would put it right.
+//
+// @Summary      Add and remove assignments of this Host
+// @Description  Takes a change and not the whole set: both lists are optional, and a request that changes nothing is answered rather than refused.
+// @Description  added, removed and rescoped count the rows written and not the ids sent.
+// @Description  bind_scope is what the added assignments are opened to and what the ones named in rescope are moved to: loopback, wildcard, or left out for the wildcard. An assignment that is already there is left on the scope it holds unless rescope names it.
+// @Tags         assignments
+// @Accept   json
+// @Produce  json
+// @Security  CSRFToken
+// @Param   id    path  int  true  "The id of the Host"
+// @Param   body  body  api.hostServicePortChange  true  "The service port ids to add, to remove and to move to bind_scope"
+// @Success  200  {object}  models.Response{data=api.hostServicePortChanged}
+// @Failure  400  {object}  api.errorBody  "The same service port is in both lists, an id is not stored, or bind_scope is neither loopback nor wildcard"
+// @Failure  404  {object}  api.errorBody  "No such Host"
+// @Router       /host/{id}/service-port [put]
 func (h *Handler) UpdateHostServicePorts(c echo.Context) error {
 	id, err := strconv.ParseUint(c.Param("id"), 10, 32)
 	if err != nil {
@@ -1078,8 +1246,17 @@ func (h *Handler) UpdateHostServicePorts(c echo.Context) error {
 		return failure(c, http.StatusBadRequest, errRequestBodyInvalid, errorArgs{"reason": err.Error()})
 	}
 
+	// The scope is held to the two words it may be. The column is under the
+	// same rule in the database, which would refuse a third one with a failure
+	// that says nothing to whoever sent it, and this refusal names the field.
+	err = c.Validate(&req)
+	if err != nil {
+		return failure(c, http.StatusBadRequest, errRequestValidationFailed, errorArgs{"reason": err.Error()})
+	}
+
 	add := sortedIDs(req.Add)
 	remove := sortedIDs(req.Remove)
+	rescope := sortedIDs(req.Rescope)
 
 	// A service port named on both sides is refused rather than settled here.
 	// Which of the two would win is a guess at what the request meant, and what
@@ -1148,7 +1325,7 @@ func (h *Handler) UpdateHostServicePorts(c echo.Context) error {
 		}
 
 		for _, spID := range idsNotIn(add, carried) {
-			err = tx.Create(&models.HostServicePort{HostID: host.ID, SPID: spID}).Error
+			err = tx.Create(&models.HostServicePort{HostID: host.ID, SPID: spID, BindScope: req.BindScope}).Error
 			if err != nil {
 				tx.Rollback()
 				h.logger.Error("failed to assign a service port to a Host",
@@ -1159,6 +1336,32 @@ func (h *Handler) UpdateHostServicePorts(c echo.Context) error {
 
 			added++
 		}
+	}
+
+	// The assignments named are moved to the scope the change carries. It runs
+	// after the adds, so that a request adding an assignment and naming it here
+	// as well leaves it on that scope either way, and before the removes, so
+	// that an identifier on both sides ends up gone: taking an assignment away
+	// is the larger of the two statements, and the row moved first is the row
+	// removed second.
+	//
+	// The update is written straight to the column rather than read and saved
+	// back. The rows are the ones the change named, the value is the one it
+	// carries, and what is counted is how many rows the database wrote.
+	rescoped := 0
+	if len(rescope) > 0 {
+		result := tx.Model(&models.HostServicePort{}).
+			Where("host_id = ? AND sp_id IN ?", host.ID, rescope).
+			Update("bind_scope", req.BindScope)
+		if result.Error != nil {
+			tx.Rollback()
+			h.logger.Error("failed to move the service port assignments of a Host to a bind scope",
+				logid.HostServicePortAssignFailed.Field(),
+				zap.Error(result.Error), zap.Uint64("host_id", id))
+			return failure(c, http.StatusInternalServerError, errAssignmentUpdateFailed)
+		}
+
+		rescoped = int(result.RowsAffected)
 	}
 
 	// A service port that is not assigned is removed without a row going, and
@@ -1188,13 +1391,16 @@ func (h *Handler) UpdateHostServicePorts(c echo.Context) error {
 	// and only when a row was written: a change that left the table as it was
 	// leaves the tunnels the loop wants as they were, so there is nothing for a
 	// pass to do about it.
-	if added > 0 || removed > 0 {
+	// A scope that was moved wakes it as well. How far a forwarded port reaches
+	// is what the loop asks the far side for, so a row that changed scope is a
+	// tunnel that has to be made again.
+	if added > 0 || removed > 0 || rescoped > 0 {
 		h.manager.WakeReconcile()
 	}
 
 	return c.JSON(http.StatusOK, models.Response{
 		Success: true,
-		Data:    hostServicePortChanged{Added: added, Removed: removed},
+		Data:    hostServicePortChanged{Added: added, Removed: removed, Rescoped: rescoped},
 	})
 }
 
@@ -1269,6 +1475,16 @@ func idList(ids []uint) string {
 // first, so that the order is one the database states rather than one it
 // happens to return. See ListHosts for what an order that is not stated does to
 // LIMIT and OFFSET.
+//
+// @Summary      The counts of the installation and one page of the tunnel rows
+// @Description  The three counts are over every row and not over the page: they say what the installation is doing, not what is on the page being looked at.
+// @Tags         status
+// @Produce  json
+// @Param   page  query  int  false  "The page, counted from 1. Below 1 is read as 1, and a page past the last one is answered with the last page"
+// @Param   size  query  int  false  "How many rows a page holds"  Enums(10, 20, 30, 50, 100)
+// @Success  200  {object}  models.Response  "counts, and tunnels holding one page of the tunnel rows"
+// @Failure  400  {object}  api.errorBody  "page is not a number, or size is not one of the sizes taken"
+// @Router       /status [get]
 func (h *Handler) GetStatus(c echo.Context) error {
 	page, refused := readListPage(c)
 	if refused != nil {
@@ -1358,6 +1574,14 @@ func (h *Handler) GetStatus(c echo.Context) error {
 	})
 }
 
+// @Summary      The Host and the tunnels of that Host
+// @Description  Not paged: a Host holds one tunnel per service port it carries.
+// @Tags         status
+// @Produce  json
+// @Param   hostId  path  int  true  "The id of the Host"
+// @Success  200  {object}  models.Response  "host, total_tunnels, connected_tunnels and tunnels"
+// @Failure  404  {object}  api.errorBody  "No such Host"
+// @Router       /status/{hostId} [get]
 func (h *Handler) GetHostStatus(c echo.Context) error {
 	hostID, err := strconv.ParseUint(c.Param("hostId"), 10, 32)
 	if err != nil {

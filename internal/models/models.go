@@ -212,6 +212,20 @@ type CreateHostRequest struct {
 	// with no assignments has to be told apart from one that says nothing, and
 	// on a plain bool the two arrive the same.
 	AssignAllServicePorts *bool `json:"assign_all_service_ports"`
+	// BindScope is what every assignment this registration makes is opened to.
+	// A Host is registered before anything has been said about its service
+	// ports one at a time, so the one answer given here is what the whole batch
+	// starts on, and each assignment is moved on its own afterwards on the
+	// assignment screen of the Host.
+	//
+	// It is read only where those assignments are written, which is when
+	// AssignAllServicePorts asks for them. The Host itself holds no scope:
+	// there is nowhere else for this to be kept.
+	//
+	// An empty value is the wildcard, which is what an empty column means on
+	// HostServicePort above, so the rule takes a request that leaves the field
+	// out and refuses a word that is neither of the two.
+	BindScope string `json:"bind_scope" validate:"omitempty,oneof=loopback wildcard"`
 }
 
 // UpdateHostRequest changes a Host. A field the request leaves out is left as
@@ -238,6 +252,15 @@ type CreateServicePortRequest struct {
 	// that leaves it out asks for the assignments, for the reasons given on
 	// CreateHostRequest.AssignAllServicePorts above.
 	AssignToAllHosts *bool `json:"assign_to_all_hosts"`
+	// BindScope is what the assignments AssignToAllHosts makes are opened to,
+	// the batch of them, for the reason CreateHostRequest.BindScope carries
+	// one.
+	//
+	// One answer can stand for a batch that reaches every Host because the two
+	// words mean the same thing on every machine. An address typed in by hand
+	// would not: it would name an interface of one of them, and the rest would
+	// be asked to open a port on an address they do not have.
+	BindScope string `json:"bind_scope" validate:"omitempty,oneof=loopback wildcard"`
 }
 
 type Response struct {

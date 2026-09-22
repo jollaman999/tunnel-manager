@@ -2302,18 +2302,21 @@ func TestReadHandlersKeepTheCauseOutOfTheAnswer(t *testing.T) {
 	}
 }
 
-// TestTheBindAddressIsStoredOrRefusedAsAnAddress holds the one field of a Host
-// that decides how far every port forwarded to it reaches.
+// TestTheBindScopeOfARegistrationIsCarriedOntoItsAssignments holds what a Host
+// registered with a scope leaves behind. The Host itself keeps no scope, so the
+// one answer a registration gives has nowhere to be written but the assignments
+// it makes, and a batch written without it is a Host on the wildcard that
+// nobody asked to put there.
 //
-// A name is refused along with the nonsense. The string is handed to the sshd
-// on the Host exactly as it is stored, so a name would be resolved over there,
-// by a resolver this end cannot see, and a name that resolves to nothing is
-// answered one refused connection at a time with nothing here saying why.
+// A word that is neither of the two is refused, an address among them. The
+// stored row is read back into a pair of addresses rather than used as one, so
+// a value that is neither has no answer, and the column is under the same rule
+// in the database.
 //
-// The field left out is the row every installation had before there was a
-// column, and it has to be taken rather than refused: it means the wildcard,
-// which is what those rows were already running on.
-func TestTheBindAddressIsStoredOrRefusedAsAnAddress(t *testing.T) {
+// The field left out is taken and not refused. It means the wildcard, which is
+// what every client written before the field existed asks for by saying
+// nothing, and what the rows of those installations already hold.
+func TestTheBindScopeOfARegistrationIsCarriedOntoItsAssignments(t *testing.T) {
 	cases := []struct {
 		name  string
 		sent  string
@@ -2321,19 +2324,18 @@ func TestTheBindAddressIsStoredOrRefusedAsAnAddress(t *testing.T) {
 		taken bool
 	}{
 		{"left out", "", "", true},
-		{"an empty value", `,"bind_address":""`, "", true},
-		{"the wildcard", `,"bind_address":"0.0.0.0"`, "0.0.0.0", true},
-		{"loopback", `,"bind_address":"127.0.0.1"`, "127.0.0.1", true},
-		{"IPv6 loopback", `,"bind_address":"::1"`, "::1", true},
-		{"one interface of the Host", `,"bind_address":"192.0.2.7"`, "192.0.2.7", true},
-		{"a name", `,"bind_address":"localhost"`, "", false},
-		{"an address carrying a port", `,"bind_address":"127.0.0.1:80"`, "", false},
-		{"nonsense", `,"bind_address":"not an address"`, "", false},
+		{"an empty value", `,"bind_scope":""`, "", true},
+		{"the loopback", `,"bind_scope":"loopback"`, models.BindScopeLoopback, true},
+		{"the wildcard", `,"bind_scope":"wildcard"`, models.BindScopeWildcard, true},
+		{"an address", `,"bind_scope":"127.0.0.1"`, "", false},
+		{"a word that is neither", `,"bind_scope":"local"`, "", false},
 	}
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			f := newHostFixture(t)
+			f.registerServicePort(t, 18080)
+			f.registerServicePort(t, 18081)
 
 			body := `{"ip":"192.0.2.10","port":22,"user":"operator","password":"a password"` +
 				tc.sent + `}`
@@ -2358,68 +2360,210 @@ func TestTheBindAddressIsStoredOrRefusedAsAnAddress(t *testing.T) {
 					rec.Body.String())
 			}
 
-			stored := f.storedHostRow(t, 1)
+			scopes := strings.Join(f.assignmentScopes(t), ",")
+			want := "1-1=" + tc.want + ",1-2=" + tc.want
 
-			if stored.BindAddress != tc.want {
-				t.Fatalf("the stored bind address = %q, want %q", stored.BindAddress, tc.want)
+			if scopes != want {
+				t.Fatalf("the assignments of the new Host are %q, want %q", scopes, want)
 			}
 		})
 	}
 }
 
-// TestAnUpdateCarriesTheBindAddressTheRequestNames is the edit half of the
-// check above. The update leaves out what it does not mention, the rule the
-// rest of UpdateHostRequest is under, so a request naming an address replaces
-// what is stored and one naming none keeps it.
-//
-// Going back to the wildcard is asked for by naming 0.0.0.0, which reaches what
-// the empty value reaches, so nothing about leaving an absent field alone puts
-// an address out of reach.
-func TestAnUpdateCarriesTheBindAddressTheRequestNames(t *testing.T) {
+// TestTheBindScopeOfANewServicePortIsCarriedOntoItsAssignments is the other
+// batch: a service port registered to be carried by every Host makes one
+// assignment per Host, and the scope the request named is what each of them is
+// opened to.
+func TestTheBindScopeOfANewServicePortIsCarriedOntoItsAssignments(t *testing.T) {
 	f := newHostFixture(t)
 
-	rec := f.createHost(t,
-		`{"ip":"192.0.2.10","port":22,"user":"operator","password":"a password","bind_address":"127.0.0.1"}`)
+	for _, ip := range []string{"192.0.2.10", "192.0.2.11"} {
+		rec := f.createHost(t, `{"ip":"`+ip+`","port":22,"user":"operator","password":"a password"}`)
+		if rec.Code != http.StatusCreated {
+			t.Fatalf("the Host %s was answered %d: %s", ip, rec.Code, rec.Body.String())
+		}
+	}
+
+	rec := f.createServicePort(t,
+		`{"service_ip":"192.0.2.20","service_port":80,"local_port":18080,"bind_scope":"loopback"}`)
 	if rec.Code != http.StatusCreated {
 		t.Fatalf("status = %d, want %d, body: %s", rec.Code, http.StatusCreated, rec.Body.String())
 	}
 
-	rec = f.updateHost(t, "1", `{"bind_address":"::1"}`)
-	if rec.Code != http.StatusOK {
-		t.Fatalf("status = %d, want %d, body: %s", rec.Code, http.StatusOK, rec.Body.String())
+	scopes := strings.Join(f.assignmentScopes(t), ",")
+	want := "1-1=" + models.BindScopeLoopback + ",2-1=" + models.BindScopeLoopback
+
+	if scopes != want {
+		t.Fatalf("the assignments the service port made are %q, want %q", scopes, want)
 	}
 
-	if stored := f.storedHostRow(t, 1); stored.BindAddress != "::1" {
-		t.Fatalf("the stored bind address = %q, want %q", stored.BindAddress, "::1")
-	}
-
-	rec = f.updateHost(t, "1", `{"description":"the host of the test"}`)
-	if rec.Code != http.StatusOK {
-		t.Fatalf("status = %d, want %d, body: %s", rec.Code, http.StatusOK, rec.Body.String())
-	}
-
-	if stored := f.storedHostRow(t, 1); stored.BindAddress != "::1" {
-		t.Fatalf("an update that named no address left the bind address at %q, want %q",
-			stored.BindAddress, "::1")
-	}
-
-	rec = f.updateHost(t, "1", `{"bind_address":"0.0.0.0"}`)
-	if rec.Code != http.StatusOK {
-		t.Fatalf("status = %d, want %d, body: %s", rec.Code, http.StatusOK, rec.Body.String())
-	}
-
-	if stored := f.storedHostRow(t, 1); stored.BindAddress != "0.0.0.0" {
-		t.Fatalf("the stored bind address = %q, want %q", stored.BindAddress, "0.0.0.0")
-	}
-
-	rec = f.updateHost(t, "1", `{"bind_address":"over there"}`)
+	rec = f.createServicePort(t,
+		`{"service_ip":"192.0.2.20","service_port":81,"local_port":18081,"bind_scope":"everywhere"}`)
 	if rec.Code != http.StatusBadRequest {
-		t.Fatalf("status = %d, want %d, body: %s", rec.Code, http.StatusBadRequest, rec.Body.String())
+		t.Fatalf("a scope that is neither was answered %d, want %d, body: %s",
+			rec.Code, http.StatusBadRequest, rec.Body.String())
+	}
+}
+
+// TestAChangeOpensWhatItAddsAndMovesWhatItNames is the assignment screen of a
+// Host: an assignment is made on a scope, moved to another one on its own, and
+// left alone by a change that does not name it.
+//
+// The change that ticks a box which was ticked already is the case that matters
+// most. It arrives from a screen that was drawn before the scope was chosen,
+// and from every client written before any of this existed, so an add that
+// wrote the scope of the request over what is stored would widen to the
+// wildcard an assignment somebody had pinned to the loopback.
+func TestAChangeOpensWhatItAddsAndMovesWhatItNames(t *testing.T) {
+	f := newHostFixture(t)
+
+	rec := f.createHost(t, `{"ip":"192.0.2.10","port":22,"user":"operator","password":"a password"}`)
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("the Host was answered %d: %s", rec.Code, rec.Body.String())
 	}
 
-	if stored := f.storedHostRow(t, 1); stored.BindAddress != "0.0.0.0" {
-		t.Fatalf("a refused update left the bind address at %q, want %q",
-			stored.BindAddress, "0.0.0.0")
+	f.registerServicePort(t, 18080)
+	f.registerServicePort(t, 18081)
+	f.registerServicePort(t, 18082)
+
+	rec = f.updateHostServicePorts(t, "1", `{"add":[1,2],"bind_scope":"loopback"}`)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d, body: %s", rec.Code, http.StatusOK, rec.Body.String())
+	}
+
+	_, data := decodeResponse(t, rec)
+	if answerNumber(t, rec, data, "added") != 2 || answerNumber(t, rec, data, "rescoped") != 0 {
+		t.Errorf("the answer reports %v, want two added and none moved", data)
+	}
+
+	scopes := strings.Join(f.assignmentScopes(t), ",")
+	want := "1-1=" + models.BindScopeLoopback + ",1-2=" + models.BindScopeLoopback
+
+	if scopes != want {
+		t.Fatalf("the assignments the change made are %q, want %q", scopes, want)
+	}
+
+	rec = f.updateHostServicePorts(t, "1", `{"add":[1],"bind_scope":"wildcard"}`)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d, body: %s", rec.Code, http.StatusOK, rec.Body.String())
+	}
+
+	if after := strings.Join(f.assignmentScopes(t), ","); after != want {
+		t.Fatalf("an add of an assignment that is already there left %q, want %q", after, want)
+	}
+
+	rec = f.updateHostServicePorts(t, "1", `{"rescope":[1],"bind_scope":"wildcard"}`)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d, body: %s", rec.Code, http.StatusOK, rec.Body.String())
+	}
+
+	_, data = decodeResponse(t, rec)
+	if answerNumber(t, rec, data, "rescoped") != 1 {
+		t.Errorf("the answer reports %v, want one assignment moved", data)
+	}
+
+	moved := "1-1=" + models.BindScopeWildcard + ",1-2=" + models.BindScopeLoopback
+	if after := strings.Join(f.assignmentScopes(t), ","); after != moved {
+		t.Fatalf("the assignments after the move are %q, want %q", after, moved)
+	}
+
+	// An identifier naming a service port the Host does not carry moves
+	// nothing, the way a remove of one takes no row.
+	rec = f.updateHostServicePorts(t, "1", `{"rescope":[3],"bind_scope":"loopback"}`)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d, body: %s", rec.Code, http.StatusOK, rec.Body.String())
+	}
+
+	_, data = decodeResponse(t, rec)
+	if answerNumber(t, rec, data, "rescoped") != 0 {
+		t.Errorf("the answer reports %v, want nothing moved", data)
+	}
+
+	if after := strings.Join(f.assignmentScopes(t), ","); after != moved {
+		t.Fatalf("a move of an assignment that is not there left %q, want %q", after, moved)
+	}
+
+	// The whole batch is moved at once, which is what the panel does with the
+	// rows that are ticked.
+	rec = f.updateHostServicePorts(t, "1", `{"rescope":[1,2],"bind_scope":"loopback"}`)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d, body: %s", rec.Code, http.StatusOK, rec.Body.String())
+	}
+
+	if after := strings.Join(f.assignmentScopes(t), ","); after != want {
+		t.Fatalf("the assignments after the batch are %q, want %q", after, want)
+	}
+
+	rec = f.updateHostServicePorts(t, "1", `{"rescope":[1],"bind_scope":"127.0.0.1"}`)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("a scope that is neither was answered %d, want %d, body: %s",
+			rec.Code, http.StatusBadRequest, rec.Body.String())
+	}
+
+	if after := strings.Join(f.assignmentScopes(t), ","); after != want {
+		t.Fatalf("a refused change left the assignments at %q, want %q", after, want)
+	}
+}
+
+// TestTheServicePortListSaysWhatEachAssignmentIsOpenedTo covers the other half
+// of that screen: the scope is drawn beside the box, so it has to arrive with
+// the row rather than be guessed at from anything else on it.
+func TestTheServicePortListSaysWhatEachAssignmentIsOpenedTo(t *testing.T) {
+	f := newHostFixture(t)
+
+	rec := f.createHost(t, `{"ip":"192.0.2.10","port":22,"user":"operator","password":"a password"}`)
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("the Host was answered %d: %s", rec.Code, rec.Body.String())
+	}
+
+	f.registerServicePort(t, 18080)
+	f.registerServicePort(t, 18081)
+	f.registerServicePort(t, 18082)
+
+	rec = f.updateHostServicePorts(t, "1", `{"add":[1],"bind_scope":"loopback"}`)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("the change was answered %d: %s", rec.Code, rec.Body.String())
+	}
+
+	rec = f.updateHostServicePorts(t, "1", `{"add":[2],"bind_scope":"wildcard"}`)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("the change was answered %d: %s", rec.Code, rec.Body.String())
+	}
+
+	rec = f.listHostServicePorts(t, "1")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d, body: %s", rec.Code, http.StatusOK, rec.Body.String())
+	}
+
+	_, data := decodeResponse(t, rec)
+
+	rows, ok := data["items"].([]interface{})
+	if !ok {
+		t.Fatalf("the answer carries no items array, body: %s", rec.Body.String())
+	}
+
+	drawn := make([]string, 0, len(rows))
+
+	for _, row := range rows {
+		fields, ok := row.(map[string]interface{})
+		if !ok {
+			t.Fatalf("a row of the page is not an object, body: %s", rec.Body.String())
+		}
+
+		scope, ok := fields["bind_scope"].(string)
+		if !ok {
+			t.Fatalf("a row of the page does not say what it is opened to, body: %s", rec.Body.String())
+		}
+
+		drawn = append(drawn, fmt.Sprintf("%v=%s", fields["id"], scope))
+	}
+
+	// The third service port is one the Host does not carry, and it has no
+	// scope: the scope is held by the assignment, and there is no assignment.
+	want := "1=" + models.BindScopeLoopback + ",2=" + models.BindScopeWildcard + ",3="
+
+	if strings.Join(drawn, ",") != want {
+		t.Fatalf("the page says %q, want %q", strings.Join(drawn, ","), want)
 	}
 }
 
@@ -2498,6 +2642,65 @@ func (f *hostFixture) updateHost(t *testing.T, id, body string) *httptest.Respon
 	t.Helper()
 
 	return f.call(t, http.MethodPut, "/api/host/"+id, body, "id", id, f.h.UpdateHost)
+}
+
+func (f *hostFixture) createServicePort(t *testing.T, body string) *httptest.ResponseRecorder {
+	t.Helper()
+
+	return f.call(t, http.MethodPost, "/api/service-port", body, "", "", f.h.CreateServicePort)
+}
+
+func (f *hostFixture) listHostServicePorts(t *testing.T, id string) *httptest.ResponseRecorder {
+	t.Helper()
+
+	return f.call(t, http.MethodGet, "/api/host/"+id+"/service-port", "", "id", id,
+		f.h.ListHostServicePorts)
+}
+
+func (f *hostFixture) updateHostServicePorts(t *testing.T, id, body string) *httptest.ResponseRecorder {
+	t.Helper()
+
+	return f.call(t, http.MethodPut, "/api/host/"+id+"/service-port", body, "id", id,
+		f.h.UpdateHostServicePorts)
+}
+
+// registerServicePort stores one service port straight into the database, so
+// that what a request does with the assignments has rows to be about. The
+// service address is built from the local port, which is what keeps two of them
+// from meeting the rule that no two service ports name the same service.
+func (f *hostFixture) registerServicePort(t *testing.T, localPort int) {
+	t.Helper()
+
+	err := f.db.Create(&models.ServicePort{
+		ServiceIP:   "192.0.2.20",
+		ServicePort: localPort,
+		LocalPort:   localPort,
+	}).Error
+	if err != nil {
+		t.Fatalf("failed to store the service port on %d: %v", localPort, err)
+	}
+}
+
+// assignmentScopes is every assignment stored, as "<host>-<service port>=<what
+// it is opened to>". The scope is read off the row rather than out of an
+// answer: what a screen is shown is one question, and what the reconcile loop
+// will ask the far side for is this.
+func (f *hostFixture) assignmentScopes(t *testing.T) []string {
+	t.Helper()
+
+	var rows []models.HostServicePort
+
+	err := f.db.Order("host_id, sp_id").Find(&rows).Error
+	if err != nil {
+		t.Fatalf("failed to read the assignments: %v", err)
+	}
+
+	scopes := make([]string, 0, len(rows))
+	for _, row := range rows {
+		scopes = append(scopes, fmt.Sprintf("%d-%d=%s", row.HostID, row.SPID, row.BindScope))
+	}
+
+	return scopes
 }
 
 // storedHostRow is the row as the database holds it, secrets and all.

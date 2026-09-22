@@ -198,7 +198,6 @@ func (i *transferInstall) registerHost(t *testing.T, host hostContent) models.Ho
 		PrivateKey:    privateKey,
 		KeyPassphrase: keyPassphrase,
 		HostKey:       host.HostKey,
-		BindAddress:   host.BindAddress,
 		Description:   host.Description,
 		Enabled:       host.Enabled,
 	}
@@ -266,7 +265,6 @@ func twoHosts(t *testing.T) (withKey hostContent, withPassword hostContent) {
 		User:          "operator",
 		PrivateKey:    testPrivateKeyPEM(t, "the passphrase of the key"),
 		KeyPassphrase: "the passphrase of the key",
-		BindAddress:   "127.0.0.1",
 		Description:   "the Host with a key",
 		Enabled:       true,
 	}
@@ -530,15 +528,6 @@ func TestAnExportedConfigurationIsReadableOnAnotherInstallation(t *testing.T) {
 		if stored.Port != want.Port || stored.User != want.User ||
 			stored.Description != want.Description || stored.Enabled != want.Enabled {
 			t.Errorf("the Host %s came across with other fields than it was exported with", want.IP)
-		}
-
-		// The address the forwarded ports are asked for on has to come across
-		// as it was. Dropped, it would read as the wildcard, and the
-		// installation that took the file in would open on every interface of
-		// the Host what the one it came from had on loopback alone.
-		if stored.BindAddress != want.BindAddress {
-			t.Errorf("the Host %s came across bound to %q, want %q",
-				want.IP, stored.BindAddress, want.BindAddress)
 		}
 	}
 
@@ -1660,6 +1649,71 @@ func (i *transferInstall) assign(t *testing.T, hostIP string, localPort int) {
 	}
 }
 
+// openTo moves one stored assignment of this installation to a bind scope, the
+// way the assignment screen of a Host does. It is written here rather than
+// given to assign, because most of these tests are about what a Host carries
+// and not about how far it reaches, and those read better with the scopes left
+// where every installation starts: on the wildcard.
+func (i *transferInstall) openTo(t *testing.T, hostIP string, localPort int, scope string) {
+	t.Helper()
+
+	var host models.Host
+
+	err := i.db.Where("ip = ?", hostIP).First(&host).Error
+	if err != nil {
+		t.Fatalf("the Host %s is not registered here: %v", hostIP, err)
+	}
+
+	var sp models.ServicePort
+
+	err = i.db.Where("local_port = ?", localPort).First(&sp).Error
+	if err != nil {
+		t.Fatalf("no service port is on the local port %d here: %v", localPort, err)
+	}
+
+	result := i.db.Model(&models.HostServicePort{}).
+		Where("host_id = ? AND sp_id = ?", host.ID, sp.ID).Update("bind_scope", scope)
+	if result.Error != nil {
+		t.Fatalf("failed to open the assignment to %s: %v", scope, result.Error)
+	}
+
+	if result.RowsAffected != 1 {
+		t.Fatalf("the assignment of %s to %d is not stored here", hostIP, localPort)
+	}
+}
+
+// carriedScopes is every assignment stored with what it is opened to, as
+// "<Host IP> carries <local port> on <scope>", and an assignment on the
+// wildcard by the empty column reads as "on ". The pairs are named the way
+// carried names them, for the same reason.
+func (i *transferInstall) carriedScopes(t *testing.T) []string {
+	t.Helper()
+
+	var rows []struct {
+		IP        string
+		LocalPort int
+		BindScope string
+	}
+
+	err := i.db.Model(&models.HostServicePort{}).
+		Select("hosts.ip AS ip, service_ports.local_port AS local_port, " +
+			"host_service_ports.bind_scope AS bind_scope").
+		Joins("JOIN hosts ON hosts.id = host_service_ports.host_id").
+		Joins("JOIN service_ports ON service_ports.id = host_service_ports.sp_id").
+		Order("hosts.ip, service_ports.local_port").
+		Scan(&rows).Error
+	if err != nil {
+		t.Fatalf("failed to read the assignments: %v", err)
+	}
+
+	pairs := make([]string, 0, len(rows))
+	for _, row := range rows {
+		pairs = append(pairs, row.IP+" carries "+strconv.Itoa(row.LocalPort)+" on "+row.BindScope)
+	}
+
+	return pairs
+}
+
 // carried is every assignment stored, as "<Host IP> carries <local port>". The
 // ids differ between two installations and say nothing to whoever reads a
 // failure, so the pairs are named by what means the same on both sides, which
@@ -1855,6 +1909,140 @@ func TestTheServicePortsAHostCarriesCrossToAnotherInstallation(t *testing.T) {
 
 	if strings.Contains(opened, `"sp_id"`) || strings.Contains(opened, `"host_id"`) {
 		t.Errorf("the file carries the row ids of the installation it came from: %s", opened)
+	}
+}
+
+// TestHowFarEachAssignmentReachesCrossesToAnotherInstallation is the half of
+// the assignments that is not which service ports a Host carries but how far
+// each of them is opened. Dropped on the way, every one of them would come up
+// on the wildcard, and the installation that took the file in would be opening
+// on every interface of a Host what the one it came from had on loopback alone.
+func TestHowFarEachAssignmentReachesCrossesToAnotherInstallation(t *testing.T) {
+	source := partlyAssigned(t)
+	target := newTransferInstall(t)
+
+	source.openTo(t, "192.0.2.10", 18080, models.BindScopeLoopback)
+	source.openTo(t, "192.0.2.11", 18082, models.BindScopeWildcard)
+
+	want := []string{
+		"192.0.2.10 carries 18080 on " + models.BindScopeLoopback,
+		"192.0.2.10 carries 18081 on ",
+		"192.0.2.11 carries 18081 on ",
+		"192.0.2.11 carries 18082 on " + models.BindScopeWildcard,
+	}
+
+	if !reflect.DeepEqual(source.carriedScopes(t), want) {
+		t.Fatalf("the installation that is exported holds %v, want %v", source.carriedScopes(t), want)
+	}
+
+	file := source.exportTunnels(t, testExportPassword)
+
+	rec := target.importTunnels(t, file, testExportPassword, false)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("the import answered %d: %s", rec.Code, rec.Body.String())
+	}
+
+	if !reflect.DeepEqual(target.carriedScopes(t), want) {
+		t.Fatalf("the installation that took the file in holds %v, want %v",
+			target.carriedScopes(t), want)
+	}
+
+	opened, err := crypto.DecryptWithPassword(file, testExportPassword)
+	if err != nil {
+		t.Fatalf("the file does not open: %v", err)
+	}
+
+	// The scopes are named by the local port, as the assignments themselves
+	// are: the row ids belong to the installation the file came from.
+	if !strings.Contains(opened, `"assigned_bind_scopes":{"18080":"loopback"}`) {
+		t.Errorf("the file does not name what the assignments are opened to: %s", opened)
+	}
+
+	// An assignment on the wildcard needs no entry, which is why the second
+	// Host has none: the empty column is the wildcard at both ends.
+	if strings.Contains(opened, `"18081":`) {
+		t.Errorf("the file names a scope for an assignment that is on the wildcard: %s", opened)
+	}
+
+	// The file of the release before this one held one address for the whole
+	// Host. Writing it again would be an answer this version does not keep,
+	// read back by nothing.
+	if strings.Contains(opened, `"bind_address"`) {
+		t.Errorf("the file carries a bind address of its own on a Host: %s", opened)
+	}
+}
+
+// TestAFileFromWhenTheHostHeldTheAddressOpensItsAssignmentsThere is the import
+// half of what database.fillBindScopes does for an upgrade. The release before
+// this one kept one address for the whole Host and wrote it into its files, and
+// an import that passed over it would take an installation that had every port
+// of that Host on the loopback and put the lot on the wildcard.
+//
+// Only a loopback address is carried over. Every other answer, an address of
+// some interface of the machine among them, is the wildcard, which is what the
+// empty scope already means, so nothing is written for those.
+func TestAFileFromWhenTheHostHeldTheAddressOpensItsAssignmentsThere(t *testing.T) {
+	source := partlyAssigned(t)
+	target := newTransferInstall(t)
+
+	older := rewriteHosts(t, source.exportTunnels(t, testExportPassword), testExportPassword,
+		func(host map[string]interface{}) {
+			delete(host, "assigned_bind_scopes")
+
+			if host["ip"] == "192.0.2.10" {
+				host["bind_address"] = "127.0.0.1"
+
+				return
+			}
+
+			host["bind_address"] = "192.0.2.11"
+		})
+
+	rec := target.importTunnels(t, older, testExportPassword, false)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("the import answered %d: %s", rec.Code, rec.Body.String())
+	}
+
+	want := []string{
+		"192.0.2.10 carries 18080 on " + models.BindScopeLoopback,
+		"192.0.2.10 carries 18081 on " + models.BindScopeLoopback,
+		"192.0.2.11 carries 18081 on ",
+		"192.0.2.11 carries 18082 on ",
+	}
+
+	if !reflect.DeepEqual(target.carriedScopes(t), want) {
+		t.Fatalf("a file that held the address on the Host left the installation holding %v, want %v",
+			target.carriedScopes(t), want)
+	}
+}
+
+// TestAFileNamingAScopeThatIsNeitherIsRefused holds a hand-written file to the
+// rule the screens are under. The column is under it in the database as well,
+// which would stop the import halfway with a failed write naming the row and
+// not what is wrong with it, and the whole file has to be refused before
+// anything of it is stored.
+func TestAFileNamingAScopeThatIsNeitherIsRefused(t *testing.T) {
+	source := partlyAssigned(t)
+	target := newTransferInstall(t)
+
+	byHand := rewriteHosts(t, source.exportTunnels(t, testExportPassword), testExportPassword,
+		func(host map[string]interface{}) {
+			if host["ip"] != "192.0.2.10" {
+				return
+			}
+
+			host["assigned_bind_scopes"] = map[string]interface{}{"18080": "everywhere"}
+		})
+
+	rec := target.importTunnels(t, byHand, testExportPassword, false)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("the import answered %d, want %d: %s", rec.Code, http.StatusBadRequest,
+			rec.Body.String())
+	}
+
+	if target.count(t, &models.Host{}) != 0 || target.count(t, &models.ServicePort{}) != 0 {
+		t.Fatalf("the refused file left %d Hosts and %d service ports, want none of either",
+			target.count(t, &models.Host{}), target.count(t, &models.ServicePort{}))
 	}
 }
 

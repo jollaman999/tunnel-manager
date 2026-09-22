@@ -3,6 +3,7 @@ package api
 import (
 	"encoding/json"
 	"errors"
+	"net"
 	"net/http"
 	"sort"
 	"strconv"
@@ -108,17 +109,20 @@ type hostContent struct {
 	// nothing there ever saw. The import drops it for the same reason:
 	// importHost.
 	HostKey string `json:"host_key"`
-	// BindAddress is carried because it is what the operator asked for and not
-	// what this installation made of it, the rule every other field here is
-	// under. It also decides how far every port forwarded to this Host
-	// reaches, so a file that left it out would rebuild an installation with
-	// every Host back on the wildcard, which is wider than what was exported
-	// and says nothing about having widened it.
+	// BindAddress is read and never written. The release before this one kept
+	// how far the forwarded ports of a Host reach on the Host itself, as one
+	// address for all of them, and wrote it into the files it exported. The
+	// answer lives on the assignment now, so the export writes it there
+	// instead and leaves this field empty, which keeps it out of the file.
 	//
-	// A file written before the field existed carries none, which reads back
-	// as the empty value, and the empty value is the wildcard. That is what
-	// those installations were running, so such a file imports as itself.
-	BindAddress string `json:"bind_address"`
+	// It is still read, because a file from that release is the only place
+	// that answer is written, and an import that passed over it would put an
+	// installation that had every port of a Host on loopback back on the
+	// wildcard. That is reach handed out by an import rather than by a person,
+	// which is what database.fillBindScopes refuses to let an upgrade do, and
+	// a file is the same question arriving by another road. What is made of it
+	// is in importAssignments.
+	BindAddress string `json:"bind_address,omitempty"`
 	Description string `json:"description"`
 	Enabled     bool   `json:"enabled"`
 	// AssignedLocalPorts is which service ports this Host carries, named by
@@ -146,6 +150,25 @@ type hostContent struct {
 	// carries nothing goes into the file as "[]", because a nil slice marshals
 	// to null, which reads back as the file not naming the assignments at all.
 	AssignedLocalPorts []int `json:"assigned_local_ports"`
+	// AssignedBindScopes is how far each of those assignments reaches, under
+	// the local port it is named by above, written as text because that is
+	// what a JSON object has for a key. The local port is what means the same
+	// on both installations, so the scopes are keyed by it for the reason the
+	// assignments themselves are named by it.
+	//
+	// An assignment with no entry here is on the wildcard, which is what an
+	// empty column means (models.HostServicePort), so the export writes an
+	// entry only where there is an answer other than that one. A file from
+	// before this field carries none at all, and the Host-wide bind address
+	// above is what such a file says instead.
+	//
+	// It is a second field rather than assigned_local_ports becoming a list of
+	// objects, so that a reader of the release before this one goes on reading
+	// which service ports a Host carries out of the file it knows. Changing
+	// the shape of that field would have it read a Host that carries nothing
+	// as a Host that carries everything, which is what transferFormatVersion
+	// would then have to be raised for.
+	AssignedBindScopes map[string]string `json:"assigned_bind_scopes,omitempty"`
 }
 
 // servicePortContent is one service port as it is carried in a file. It holds
@@ -704,24 +727,35 @@ func (h *TransferHandler) unsealHost(host models.Host) (hostContent, error) {
 		PrivateKey:    privateKey,
 		KeyPassphrase: keyPassphrase,
 		HostKey:       host.HostKey,
-		BindAddress:   host.BindAddress,
 		Description:   host.Description,
 		Enabled:       host.Enabled,
 	}, nil
 }
 
-// assignedLocalPortsByHost reads the assignments and returns, for each Host id,
-// the local ports of the service ports that Host carries. The service ports are
-// handed in rather than read again, since the export has them already and the
-// two reads have to agree on what is stored.
+// hostAssignments is what one Host carries as a file says it: the local ports
+// of the service ports assigned to it, and how far each of those assignments
+// reaches, keyed by the local port written as text.
+type hostAssignments struct {
+	localPorts []int
+	bindScopes map[string]string
+}
+
+// assignedByHost reads the assignments and returns that for each Host id. The
+// service ports are handed in rather than read again, since the export has them
+// already and the two reads have to agree on what is stored.
 //
 // An assignment whose service port is not among them is left out. It points at
 // a row that is not there, so there is no local port to write it as, and an id
 // carried across would name a different service port at the other installation.
 //
 // The lists are sorted, so that exporting the same configuration twice gives
-// the same file rather than whatever order the rows came back in.
-func assignedLocalPortsByHost(db *gorm.DB, sps []models.ServicePort) (map[uint][]int, error) {
+// the same file rather than whatever order the rows came back in. The scopes
+// need no sorting: encoding/json writes the keys of a map in order.
+//
+// A scope that is the empty value gets no entry. It is the wildcard, which is
+// what an assignment with nothing said about it is on at the other end too, so
+// the file says only what was chosen.
+func assignedByHost(db *gorm.DB, sps []models.ServicePort) (map[uint]hostAssignments, error) {
 	var assignments []models.HostServicePort
 
 	err := db.Find(&assignments).Error
@@ -734,7 +768,7 @@ func assignedLocalPortsByHost(db *gorm.DB, sps []models.ServicePort) (map[uint][
 		localPortOf[sp.ID] = sp.LocalPort
 	}
 
-	byHost := make(map[uint][]int)
+	byHost := make(map[uint]hostAssignments)
 
 	for _, assignment := range assignments {
 		localPort, known := localPortOf[assignment.SPID]
@@ -742,11 +776,23 @@ func assignedLocalPortsByHost(db *gorm.DB, sps []models.ServicePort) (map[uint][
 			continue
 		}
 
-		byHost[assignment.HostID] = append(byHost[assignment.HostID], localPort)
+		carried := byHost[assignment.HostID]
+		carried.localPorts = append(carried.localPorts, localPort)
+
+		if assignment.BindScope != "" {
+			if carried.bindScopes == nil {
+				carried.bindScopes = make(map[string]string)
+			}
+
+			carried.bindScopes[strconv.Itoa(localPort)] = assignment.BindScope
+		}
+
+		byHost[assignment.HostID] = carried
 	}
 
-	for _, localPorts := range byHost {
-		sort.Ints(localPorts)
+	for hostID, carried := range byHost {
+		sort.Ints(carried.localPorts)
+		byHost[hostID] = carried
 	}
 
 	return byHost, nil
@@ -754,6 +800,18 @@ func assignedLocalPortsByHost(db *gorm.DB, sps []models.ServicePort) (map[uint][
 
 // ExportTunnels hands out every Host and every service port, sealed with the
 // password in the body.
+//
+// @Summary      Every Host and every service port, encrypted into one file
+// @Description  A POST and not a GET because the password that seals the file is in the body.
+// @Description  Inside the file the SSH password, the private key and the key passphrase of every Host are in the clear, so treat it as the credentials of every Host it names.
+// @Tags         export and import
+// @Accept   json
+// @Produce  json
+// @Security  CSRFToken
+// @Param   body  body  api.exportRequest  true  "The password that encrypts the file"
+// @Success  200  {object}  models.Response{data=api.exportedTunnels}
+// @Failure  400  {object}  api.errorBody  "The password is refused"
+// @Router       /export/tunnels [post]
 func (h *TransferHandler) ExportTunnels(c echo.Context) error {
 	var req exportRequest
 
@@ -785,7 +843,7 @@ func (h *TransferHandler) ExportTunnels(c echo.Context) error {
 		return failure(c, http.StatusInternalServerError, errExportServicePortsRead)
 	}
 
-	assigned, err := assignedLocalPortsByHost(h.hosts.db, sps)
+	assigned, err := assignedByHost(h.hosts.db, sps)
 	if err != nil {
 		h.hosts.logger.Error("failed to read the service port assignments for an export",
 			logid.TransferAssignmentsReadFailed.Field(),
@@ -815,10 +873,15 @@ func (h *TransferHandler) ExportTunnels(c echo.Context) error {
 
 		// A Host that carries nothing is written as an empty list and never as
 		// nil, which is the difference the import reads: see hostContent.
-		opened.AssignedLocalPorts = assigned[host.ID]
+		opened.AssignedLocalPorts = assigned[host.ID].localPorts
 		if opened.AssignedLocalPorts == nil {
 			opened.AssignedLocalPorts = []int{}
 		}
+
+		// The scopes are the other way about: a nil map is left nil so that the
+		// field stays out of the file altogether, because every assignment
+		// being on the wildcard is what no entry means.
+		opened.AssignedBindScopes = assigned[host.ID].bindScopes
 
 		content.Hosts = append(content.Hosts, opened)
 	}
@@ -870,6 +933,18 @@ func (h *TransferHandler) ExportTunnels(c echo.Context) error {
 // whole of it back: a configuration that landed half way is one the operator
 // has to take apart by hand before trying again, and the row that stopped the
 // import is not always the last one.
+//
+// @Summary      Write what an exported tunnels file holds
+// @Description  Adds what is not registered here and skips what is, naming in the answer what it skipped and why. Send the same file again with overwrite true to replace those rows instead.
+// @Description  The whole import is one transaction: a file that is refused half way through leaves the database exactly as it was.
+// @Tags         export and import
+// @Accept   json
+// @Produce  json
+// @Security  CSRFToken
+// @Param   body  body  api.importRequest  true  "The password, the file and whether to overwrite"
+// @Success  200  {object}  models.Response{data=api.importedTunnels}
+// @Failure  400  {object}  api.errorBody  "The password is wrong, the file is damaged, it is not a file this program wrote, or it holds the other kind"
+// @Router       /import/tunnels [post]
 func (h *TransferHandler) ImportTunnels(c echo.Context) error {
 	var req importRequest
 
@@ -1006,11 +1081,19 @@ func (h *TransferHandler) importHost(c echo.Context, tx *gorm.DB, host hostConte
 		Password:      host.Password,
 		PrivateKey:    host.PrivateKey,
 		KeyPassphrase: host.KeyPassphrase,
-		BindAddress:   host.BindAddress,
 		Description:   host.Description,
 	})
 	if err != nil {
 		return nil, refuse(http.StatusBadRequest, errImportHostRefused, errorArgs{"host": name, "reason": err.Error()})
+	}
+
+	// The scopes the file names are held to the two words as well. The column
+	// is under the same rule in the database, and a third word would otherwise
+	// be met as a failed write halfway through the import, which names the row
+	// and not what is wrong with it.
+	unknown := unknownBindScope(host.AssignedBindScopes)
+	if unknown != "" {
+		return nil, refuse(http.StatusBadRequest, errImportHostRefused, errorArgs{"host": name, "reason": unknown})
 	}
 
 	if host.Password == "" && strings.TrimSpace(host.PrivateKey) == "" {
@@ -1082,7 +1165,6 @@ func (h *TransferHandler) importHost(c echo.Context, tx *gorm.DB, host hostConte
 		// something other than the imported key writes the pending key again
 		// on the next connection, with what it presents now.
 		stored.PendingHostKey = ""
-		stored.BindAddress = host.BindAddress
 		stored.Description = host.Description
 		stored.Enabled = host.Enabled
 
@@ -1105,7 +1187,6 @@ func (h *TransferHandler) importHost(c echo.Context, tx *gorm.DB, host hostConte
 		PrivateKey:    privateKey,
 		KeyPassphrase: keyPassphrase,
 		HostKey:       host.HostKey,
-		BindAddress:   host.BindAddress,
 		Description:   host.Description,
 		Enabled:       host.Enabled,
 	}
@@ -1244,6 +1325,62 @@ func (h *TransferHandler) importServicePort(c echo.Context, tx *gorm.DB, sp serv
 	return &transferItem{Kind: "service_port", Name: name, Action: transferReplaced}, nil
 }
 
+// unknownBindScope names the first entry of a file that is not a scope an
+// assignment may be on, and is empty when every one of them is.
+//
+// The keys are walked in order, so that a file with several of them is refused
+// with the same one named on every run: a map is walked in whatever order it
+// happens to be in, and a refusal that names a different entry each time reads
+// as more than one fault.
+func unknownBindScope(scopes map[string]string) string {
+	localPorts := make([]string, 0, len(scopes))
+	for localPort := range scopes {
+		localPorts = append(localPorts, localPort)
+	}
+
+	sort.Strings(localPorts)
+
+	for _, localPort := range localPorts {
+		switch scopes[localPort] {
+		case "", models.BindScopeLoopback, models.BindScopeWildcard:
+			continue
+		}
+
+		return "the assignment on the local port " + localPort + " is opened to " +
+			scopes[localPort] + ", which is neither " + models.BindScopeLoopback + " nor " +
+			models.BindScopeWildcard
+	}
+
+	return ""
+}
+
+// bindScopeOf is how far one assignment of a file reaches.
+//
+// What the file names under that local port is the answer. A file that names
+// none falls back to the bind address of the Host, which is what a file from
+// the release that kept one answer for the whole Host carries: a loopback
+// address there means every assignment of that Host was on loopback, and every
+// other answer, an address of some interface of the machine among them, means
+// the wildcard. That is what database.fillBindScopes makes of the same column
+// on an upgrade, and a file from that release has to say what the database of
+// it said.
+//
+// A file this version wrote carries no bind address at all, so the fallback is
+// the empty value there, which is the wildcard.
+func bindScopeOf(host hostContent, localPort int) string {
+	scope, named := host.AssignedBindScopes[strconv.Itoa(localPort)]
+	if named {
+		return scope
+	}
+
+	address := net.ParseIP(host.BindAddress)
+	if address != nil && address.IsLoopback() {
+		return models.BindScopeLoopback
+	}
+
+	return ""
+}
+
 // importAssignments makes one Host of the file carry the service ports the file
 // says it carries, and reports the ones it could not.
 //
@@ -1330,7 +1467,11 @@ func (h *TransferHandler) importAssignments(tx *gorm.DB, host hostContent,
 
 		assigned[sp.ID] = true
 
-		err = tx.Create(&models.HostServicePort{HostID: stored.ID, SPID: sp.ID}).Error
+		// Each assignment is written on the scope the file gives it, which a
+		// file from before the scopes were stored answers with the bind
+		// address it carries for the whole Host.
+		err = tx.Create(&models.HostServicePort{HostID: stored.ID, SPID: sp.ID,
+			BindScope: bindScopeOf(host, localPort)}).Error
 		if err != nil {
 			h.hosts.logger.Error("failed to store an assignment while importing",
 				logid.TransferAssignmentStoreFailed.Field(),
@@ -1349,6 +1490,17 @@ func (h *TransferHandler) importAssignments(tx *gorm.DB, host hostContent,
 // same: it is one format, one password and one thing to explain, and a second
 // format that happens not to need a password today would be the one somebody
 // puts a secret into tomorrow.
+//
+// @Summary      The stored settings, encrypted into one file
+// @Description  A POST and not a GET because the password that seals the file is in the body.
+// @Tags         export and import
+// @Accept   json
+// @Produce  json
+// @Security  CSRFToken
+// @Param   body  body  api.exportRequest  true  "The password that encrypts the file"
+// @Success  200  {object}  models.Response{data=api.exportedSettings}
+// @Failure  400  {object}  api.errorBody  "The password is refused"
+// @Router       /export/settings [post]
 func (h *TransferHandler) ExportSettings(c echo.Context) error {
 	var req exportRequest
 
@@ -1404,6 +1556,17 @@ func (h *TransferHandler) ExportSettings(c echo.Context) error {
 // logging.level is the one setting that is neither put into place nor reported
 // as waiting, because a read leaves out of pending_restart the settings a save
 // normally applies at once. It takes hold at the next restart like the rest.
+//
+// @Summary      Store the settings an exported settings file holds
+// @Description  It stores them and puts none of them onto the running process, api_port and api_https_enabled included. GET /api/settings reports the difference in pending_restart until the next startup.
+// @Tags         export and import
+// @Accept   json
+// @Produce  json
+// @Security  CSRFToken
+// @Param   body  body  api.importRequest  true  "The password and the file"
+// @Success  200  {object}  models.Response{data=api.importedSettings}
+// @Failure  400  {object}  api.errorBody  "The file does not open, or its settings do not pass the rules of the Settings screen"
+// @Router       /import/settings [post]
 func (h *TransferHandler) ImportSettings(c echo.Context) error {
 	var req importRequest
 

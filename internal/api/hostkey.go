@@ -47,7 +47,6 @@ type hostView struct {
 	// presented a key other than the one it is trusted on.
 	HostKeyFingerprint        string    `json:"host_key_fingerprint"`
 	PendingHostKeyFingerprint string    `json:"pending_host_key_fingerprint"`
-	BindAddress               string    `json:"bind_address"`
 	Description               string    `json:"description"`
 	Enabled                   bool      `json:"enabled"`
 	CreatedAt                 time.Time `json:"created_at"`
@@ -63,7 +62,6 @@ func hostViewOf(host models.Host) hostView {
 		User:                      host.User,
 		HostKeyFingerprint:        tunnel.HostKeyFingerprint(host.HostKey),
 		PendingHostKeyFingerprint: tunnel.HostKeyFingerprint(host.PendingHostKey),
-		BindAddress:               host.BindAddress,
 		Description:               host.Description,
 		Enabled:                   host.Enabled,
 		CreatedAt:                 host.CreatedAt,
@@ -162,6 +160,16 @@ func hostKeyWaitingOf(host models.Host) hostKeyWaiting {
 // The order is the id, as ListHosts orders, and for the same reason: LIMIT and
 // OFFSET cut a page out of an order, so an order the database is not told would
 // put one Host on two pages and another on none.
+//
+// @Summary      One page of the host keys waiting to be approved, across every Host
+// @Description  A row carries the pair of fingerprints and nothing else of the Host.
+// @Tags         host keys
+// @Produce  json
+// @Param   page  query  int  false  "The page, counted from 1. Below 1 is read as 1, and a page past the last one is answered with the last page"
+// @Param   size  query  int  false  "How many rows a page holds"  Enums(10, 20, 30, 50, 100)
+// @Success  200  {object}  models.Response{data=api.listPageOf{items=[]api.hostKeyWaiting}}
+// @Failure  400  {object}  api.errorBody  "page is not a number, or size is not one of the sizes taken"
+// @Router       /host-key [get]
 func (h *Handler) ListHostKeysWaiting(c echo.Context) error {
 	page, refused := readListPage(c)
 	if refused != nil {
@@ -235,6 +243,20 @@ type hostKeyApproval struct {
 // happens here is a person saying that they compared the fingerprint with the
 // server. There is no call that refuses a key on purpose: a key that is not
 // approved is already refused, and the Host stays where it is.
+//
+// @Summary      Approve the host key of one Host
+// @Description  A POST carrying a body, because a Host whose trusted key is being replaced is approved with the password of the account, and a password in a URL is written to the access log and to the history of the browser.
+// @Tags         host keys
+// @Accept   json
+// @Produce  json
+// @Security  CSRFToken
+// @Param   id    path  int  true  "The id of the Host"
+// @Param   body  body  api.hostKeyApproval  true  "The fingerprint being approved, and the account password when a trusted key is being replaced"
+// @Success  200  {object}  models.Response{data=api.hostView}
+// @Failure  400  {object}  api.errorBody  "The fingerprint does not match the one waiting"
+// @Failure  401  {object}  api.errorBody  "The password does not open this account"
+// @Failure  404  {object}  api.errorBody  "No such Host, or no key is waiting on it"
+// @Router       /host/{id}/host-key [post]
 func (h *Handler) ApproveHostKey(c echo.Context) error {
 	id, err := strconv.ParseUint(c.Param("id"), 10, 32)
 	if err != nil {
@@ -581,6 +603,18 @@ func hostKeysChangedAmong(db *gorm.DB, ids []uint) ([]uint, error) {
 // one refusal that says nothing about any particular Host, and an approval that
 // landed in part on it would leave the operator to work out which of two
 // hundred Hosts went through before trying again.
+//
+// @Summary      Approve the host keys of several Hosts at once
+// @Description  Carries a body for the reason the single approval does.
+// @Tags         host keys
+// @Accept   json
+// @Produce  json
+// @Security  CSRFToken
+// @Param   body  body  api.hostKeyApprovals  true  "The Hosts and fingerprints being approved, and the account password"
+// @Success  200  {object}  models.Response{data=api.hostKeyApprovalsDone}
+// @Failure  400  {object}  api.errorBody  "A fingerprint does not match the one waiting"
+// @Failure  401  {object}  api.errorBody  "The password does not open this account"
+// @Router       /host-key [post]
 func (h *Handler) ApproveHostKeys(c echo.Context) error {
 	var req hostKeyApprovals
 
