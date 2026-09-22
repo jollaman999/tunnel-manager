@@ -121,6 +121,21 @@ type Tunnel struct {
 	// the same to a connection that does not arrive, so the two cannot be told
 	// apart from here and neither may be reported as the cause.
 	ForwardReach string `json:"forward_reach"`
+	// ErrorKind names what sort of failure LastError is, for the one sort the
+	// screen has something to say about: "forward_denied" is the SSH server
+	// refusing to open the forwarded port, and an empty value is every other
+	// failure and every row that is not in error.
+	//
+	// It is here so that the screen decides on a name this program chose
+	// rather than on the sentence the SSH library wrote. That sentence is a
+	// plain errors.New with nothing exported to compare against, so it is
+	// matched once, in the one place that makes the call, and what travels is
+	// this.
+	//
+	// Like ForwardReach it says what happened and not why. The server refuses
+	// without giving a reason, and the several settings that make it refuse
+	// look identical from here, so none of them may be reported as the cause.
+	ErrorKind string `json:"error_kind"`
 }
 
 // CreateHostRequest registers a Host. The password is no longer required on its

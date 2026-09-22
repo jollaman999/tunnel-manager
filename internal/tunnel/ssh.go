@@ -282,6 +282,34 @@ const (
 	forwardReachUnknown = "unknown"
 )
 
+// errorKindForwardDenied is the one reading models.Tunnel.ErrorKind carries. It
+// is the SSH server refusing to open the forwarded port, which is the failure
+// the screen has somewhere to send the operator for.
+const errorKindForwardDenied = "forward_denied"
+
+// listenDeniedMessage is what x/crypto/ssh says when the server answers the
+// request to open the port with a refusal (ssh/tcpip.go, Client.ListenTCP).
+//
+// It is compared as text because the library raises it with errors.New and
+// exports nothing to compare against, so there is no sentinel and no type. That
+// makes the comparison a thing that a new version of the library can quietly
+// break, which is why it is written down once, here, rather than at the screen:
+// a test holds this string to the library, and everything else reads the name
+// this program gives it.
+const listenDeniedMessage = "ssh: tcpip-forward request denied by peer"
+
+// listenErrorKind names the failure of opening the forwarded port, for the one
+// failure that is named. Everything else is left unnamed rather than guessed
+// at: a write that failed on the way and a server that refused are not the same
+// thing to tell an operator about.
+func listenErrorKind(err error) string {
+	if err != nil && strings.Contains(err.Error(), listenDeniedMessage) {
+		return errorKindForwardDenied
+	}
+
+	return ""
+}
+
 // forwardProbeTimeout bounds the TCP handshake of the reachability probe, and
 // it is there for the reason forwardDialTimeout above is.
 //
@@ -569,6 +597,12 @@ func (t *SSHTunnel) establishConnection(m *Manager, tunnel *models.Tunnel) error
 		t.tunnelMu.Lock()
 		tunnel.Status = "error"
 		tunnel.LastError = err.Error()
+		tunnel.ErrorKind = listenErrorKind(err)
+		// The banner is written on the way out as well as on the way in. What
+		// the screen says about a refusal differs by which server refused, and
+		// the handshake is behind us by the time we are here, so the one thing
+		// that tells them apart is known and would otherwise be thrown away.
+		tunnel.ServerBanner = string(client.ServerVersion())
 		t.saveTunnelStatus(m, tunnel)
 		t.tunnelMu.Unlock()
 
@@ -601,6 +635,7 @@ func (t *SSHTunnel) establishConnection(m *Manager, tunnel *models.Tunnel) error
 	tunnel.Status = "connected"
 	tunnel.RetryCount = 0
 	tunnel.LastError = ""
+	tunnel.ErrorKind = ""
 	tunnel.LastConnectedAt = time.Now()
 	tunnel.ServerBanner = string(client.ServerVersion())
 	// What the last connection measured says nothing about this one, which may

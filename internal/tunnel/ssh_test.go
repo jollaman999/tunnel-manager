@@ -2220,3 +2220,46 @@ func TestRecordForwardReachDropsAReadingOfAnOlderConnection(t *testing.T) {
 			reach, forwardUnreachable)
 	}
 }
+
+// TestADeniedForwardIsNamed holds listenErrorKind to what the SSH library
+// actually says.
+//
+// The library raises the refusal with errors.New and exports nothing to compare
+// against, so the only handle on it is the sentence, and a sentence is a thing a
+// new version of the library can reword without anything failing to compile.
+// What is asked here is not whether the constant matches a string written out
+// beside it, which would prove nothing, but whether a server that refuses the
+// request produces an error this names: newLoopbackSSHClient answers global
+// requests with ssh.DiscardRequests, which replies to every one of them with a
+// failure, and that is exactly the refusal.
+func TestADeniedForwardIsNamed(t *testing.T) {
+	client, done := newLoopbackSSHClient(t)
+	defer done()
+
+	listener, err := client.Listen("tcp", "127.0.0.1:0")
+	if err == nil {
+		_ = listener.Close()
+		t.Fatal("the server granted a forward it was meant to refuse")
+	}
+
+	if got := listenErrorKind(err); got != errorKindForwardDenied {
+		t.Errorf("listenErrorKind(%q) = %q, want %q", err.Error(), got, errorKindForwardDenied)
+	}
+}
+
+// TestAFailureThatIsNotARefusalIsLeftUnnamed keeps the name off everything
+// else. A write that failed on the way out and a server that said no are not
+// the same thing to put in front of an operator, and naming both would send the
+// screen to advise about settings that had nothing to do with it.
+func TestAFailureThatIsNotARefusalIsLeftUnnamed(t *testing.T) {
+	for _, err := range []error{
+		nil,
+		errors.New("ssh: unexpected packet in response to channel open: <nil>"),
+		errors.New("use of closed network connection"),
+		errors.New("EOF"),
+	} {
+		if got := listenErrorKind(err); got != "" {
+			t.Errorf("listenErrorKind(%v) = %q, want it left unnamed", err, got)
+		}
+	}
+}

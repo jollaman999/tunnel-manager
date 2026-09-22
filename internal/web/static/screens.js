@@ -426,6 +426,11 @@ async function drawStatus() {
         under.push(advice);
       }
 
+      const denied = forwardAdvice(tunnel);
+      if (denied !== null) {
+        under.push(denied);
+      }
+
       if (under.length === 0) {
         return cells;
       }
@@ -526,6 +531,14 @@ function reachClass(reach) {
 function sshServerKind(banner) {
   const said = typeof banner === "string" ? banner.toLowerCase() : "";
 
+  // Windows is asked about before OpenSSH, because the build that runs there
+  // calls itself OpenSSH too and the two are not the same machine to advise
+  // about: there is no privileged port on Windows, so nothing there is opened
+  // only by an administrator.
+  if (said.indexOf("openssh_for_windows") !== -1 || said.indexOf("windows") !== -1) {
+    return "windows";
+  }
+
   if (said.indexOf("openssh") !== -1) {
     return "openssh";
   }
@@ -609,6 +622,68 @@ function reachAdvice(tunnel) {
   box.appendChild(element("p", t("status.reach-firewall.text")));
 
   return box;
+}
+
+// forwardAdvice is what is said under a tunnel whose forwarded port the SSH
+// server would not open. It is the other half of reachAdvice above: that one is
+// for a port that was opened and cannot be reached, this one for a port that
+// was never opened.
+//
+// It names no cause. The refusal carries no reason, and the several settings
+// that produce it look identical from here, so what is offered is the list of
+// them with the likeliest first. Which one goes first is decided on what this
+// end does know: which server refused, and which port it was asked for.
+function forwardAdvice(tunnel) {
+  if (tunnel.error_kind !== "forward_denied") {
+    return null;
+  }
+
+  const kind = sshServerKind(tunnel.server_banner);
+  const port = forwardedPort(tunnel.local);
+  const box = document.createElement("div");
+
+  box.className = "reach-advice";
+  box.dataset.forwardAdvice = kind;
+
+  box.appendChild(element("strong", t("status.denied.text")));
+  box.appendChild(element("p", t("status.denied-cause.text")));
+
+  const causes = [];
+
+  // A Windows Host is told nothing about privileged ports, which it does not
+  // have. Saying it there would send the operator looking for an account that
+  // would change nothing.
+  if (kind !== "windows" && port !== null && port < 1024) {
+    causes.push(t("status.denied-privileged.text", { port: String(port) }));
+  }
+
+  causes.push(t("status.denied-forwarding.text"));
+  causes.push(t("status.denied-permitlisten.text"));
+  causes.push(t("status.denied-authorized-keys.text"));
+  causes.push(t("status.denied-in-use.text"));
+
+  box.appendChild(bulletList(causes));
+
+  return box;
+}
+
+// forwardedPort is the port the Host was asked to open, out of the local
+// column. It is cut at the last colon, which is what separates a port from an
+// address that has colons of its own, and a value that does not read as a port
+// gives nothing back so that the advice is written without it.
+function forwardedPort(local) {
+  if (typeof local !== "string") {
+    return null;
+  }
+
+  const at = local.lastIndexOf(":");
+  if (at < 0) {
+    return null;
+  }
+
+  const port = Number(local.slice(at + 1));
+
+  return Number.isInteger(port) && port > 0 && port <= 65535 ? port : null;
 }
 
 // hostKeyState is what a status the host key check left behind is drawn as,
@@ -1742,8 +1817,8 @@ function ipField(name, label, value) {
   };
 }
 
-function portField(name, label, value) {
-  return {
+function portField(name, label, value, advise) {
+  const field = {
     name: name,
     label: label,
     value: value,
@@ -1752,6 +1827,34 @@ function portField(name, label, value) {
     filter: portCharacters,
     check: checkPort
   };
+
+  if (advise !== undefined) {
+    field.advise = advise;
+  }
+
+  return field;
+}
+
+// privilegedPortAdvice warns about a port the Host may not let this program
+// open, without refusing it.
+//
+// It is a warning and not a check because whether the port can be opened is a
+// fact about the far machine, not about the value: the account this Host is
+// registered with may be root, the Host may be Windows, where the rule does not
+// exist at all, and a Linux Host may have been told to let ordinary accounts
+// open lower ports. Refusing here would be deciding all of that from a screen
+// that cannot see any of it.
+//
+// It says nothing about the service port, which is the port this program
+// connects out to rather than the one the Host is asked to open.
+function privilegedPortAdvice(value) {
+  const port = Number(String(value).trim());
+
+  if (!Number.isInteger(port) || port < 1 || port >= 1024) {
+    return "";
+  }
+
+  return t("service-ports.local-port-privileged.hint");
 }
 
 // privateKeyField and keyPassphraseField are the key half of how a host is
@@ -2295,7 +2398,8 @@ function servicePortCreateForm() {
     fields: [
       ipField("service_ip", t("service-ports.service-ip.label")),
       portField("service_port", t("service-ports.service-port.label")),
-      portField("local_port", t("service-ports.local-port.label")),
+      portField("local_port", t("service-ports.local-port.label"), undefined,
+        privilegedPortAdvice),
       { name: "description", label: t("service-ports.description.label") },
       // The other half of the pair on the host form, ticked to begin with for
       // the same reason, and on the add form alone for the same reason.
@@ -2319,7 +2423,8 @@ function servicePortEditForm(port) {
     fields: [
       ipField("service_ip", t("service-ports.service-ip.label"), port.service_ip),
       portField("service_port", t("service-ports.service-port.label"), port.service_port),
-      portField("local_port", t("service-ports.local-port.label"), port.local_port),
+      portField("local_port", t("service-ports.local-port.label"), port.local_port,
+        privilegedPortAdvice),
       { name: "description", label: t("service-ports.description.label"), value: port.description }
     ],
     onSubmit: function (values) {

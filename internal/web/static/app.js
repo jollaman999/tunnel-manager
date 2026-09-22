@@ -1342,6 +1342,33 @@ function buildForm(spec) {
       row.appendChild(element("small", field.note));
     }
 
+    // A field may warn about a value without refusing it. check is the other
+    // one, and it stops the form: nothing is sent while it has something to
+    // say. This one is for a value that is allowed and worth a second look,
+    // where refusing would be deciding for the operator something only they
+    // can know about the machine on the other end.
+    //
+    // It is drawn again on every keystroke, so what it says is about the value
+    // in the box rather than about the one the form was opened with.
+    if (field.advise !== undefined) {
+      const advice = element("small", "");
+
+      advice.className = "advice";
+      advice.dataset.advice = field.name;
+
+      const sayAdvice = function () {
+        const said = field.advise(input.value);
+
+        advice.textContent = said;
+        advice.hidden = said === "";
+      };
+
+      input.addEventListener("input", sayAdvice);
+      sayAdvice();
+
+      row.appendChild(advice);
+    }
+
     // The length is counted in bytes because that is the unit the server
     // refuses a password in, and one Hangul syllable is three of them.
     if (field.countBytes) {
