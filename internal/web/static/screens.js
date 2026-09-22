@@ -3124,7 +3124,13 @@ function updateVersions(update) {
 
   const counts = document.createElement("div");
   counts.className = "counts";
-  counts.appendChild(countBox(t("update.running.label"), update.version, "update-running"));
+  // The running version is drawn with the v the tag carries. The two boxes sit
+  // side by side and are compared at a glance, and one written 3.8.0 against
+  // one written v3.8.0 reads as two different things. The constant itself is
+  // left alone: what the API answers is the version as this program holds it,
+  // and the v belongs to how a release is named.
+  counts.appendChild(countBox(t("update.running.label"), versionTag(update.version),
+    "update-running"));
   counts.appendChild(countBox(t("update.latest.label"),
     update.tag === "" ? t("update.latest-unknown.text") : update.tag, "update-latest"));
   card.appendChild(counts);
@@ -3154,6 +3160,19 @@ function updateVersions(update) {
   }
 
   return card;
+}
+
+// versionTag writes a version the way a release tag is written. A value that
+// already carries the v is left as it is, so this says the same thing whether
+// it is handed the constant or a tag.
+function versionTag(version) {
+  const said = String(version === null || version === undefined ? "" : version).trim();
+
+  if (said === "" || said.charAt(0) === "v") {
+    return said;
+  }
+
+  return "v" + said;
 }
 
 // submitUpdateCheck looks now and draws what came back.
