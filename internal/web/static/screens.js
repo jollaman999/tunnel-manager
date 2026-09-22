@@ -365,7 +365,12 @@ async function drawStatus() {
     ));
   }
 
-  if (missing === 0 && down === 0) {
+  // Nothing at all is not the same as everything connected. An installation
+  // with no Host or no service port has no tunnel for the line to be about,
+  // and the empty list under it is what says so.
+  const anyTunnels = data.desired_tunnels > 0 || data.total_tunnels > 0;
+
+  if (anyTunnels && missing === 0 && down === 0) {
     nodes.push(statusLine(t("status.all-connected.notice"), "ok"));
   }
 
