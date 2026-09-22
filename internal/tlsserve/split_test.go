@@ -64,7 +64,7 @@ func newHarness(t *testing.T) *harness {
 		_ = tlsServer.Serve(tls.NewListener(split.TLS(), tlsCfg))
 	}()
 
-	redirectServer := NewRedirectServer(port, zap.NewNop())
+	redirectServer := NewRedirectServer(port, NewHolder(&keyPair), zap.NewNop())
 
 	go func() {
 		_ = redirectServer.Serve(split.Plain())

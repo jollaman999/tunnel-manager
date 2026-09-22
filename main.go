@@ -1797,7 +1797,7 @@ func serve() {
 			serverErr <- fmt.Errorf("failed to listen on %s: %w", address, listenErr)
 		} else {
 			portSplit = tlsserve.NewSplitter(listener, logger)
-			redirectServer = tlsserve.NewRedirectServer(set.APIPort, logger)
+			redirectServer = tlsserve.NewRedirectServer(set.APIPort, certHolder, logger)
 
 			// echo is handed a listener that is already wrapped in TLS, which
 			// is what it does for itself in StartTLS. It keeps its own server
