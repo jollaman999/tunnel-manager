@@ -257,11 +257,16 @@ let periodicDraw = false;
 let heldScreen = null;
 let heldScreenTimer = null;
 
-// fingerDown is whether a touch is on the screen right now. It is counted apart
-// from the scroll because the two are not the same thing: a finger can be down
-// for a while before the page moves, and that is the whole of the time the
-// reader is about to drag it.
-let fingerDown = false;
+// pointerDown is whether a finger, a pen or a mouse button is held on the page
+// right now. It is counted apart from the scroll because the two are not the
+// same thing: a pointer can be down for a while before the page moves, and that
+// is the whole of the time the reader is about to drag it.
+//
+// A mouse counts and not only a finger. A held mouse button over a row is a
+// drag of an inner scroller or a selection being made, and both are undone by a
+// screen that is rebuilt underneath them; a reader holding one is as much in
+// the middle of something as a reader with a finger down.
+let pointerDown = false;
 
 // drawnScreen is the screen the last render drew. It is what tells a refresh of
 // the screen that is up from the first draw of one that has just been moved to,
@@ -404,7 +409,7 @@ function putUpHeldScreen() {
       return;
     }
 
-    if (scrolling()) {
+    if (pageIsHeld()) {
       putUpHeldScreen();
 
       return;
@@ -421,7 +426,7 @@ function putUpHeldScreen() {
   }, scrollQuietMs);
 }
 
-// scrolling reports whether the reader has hold of the page at this moment.
+// pageIsHeld reports whether the reader has hold of the page at this moment.
 //
 // A finger resting on the screen counts, and it has to. Watching the scroll
 // alone watches the effect and not the cause: a finger that is down but has not
@@ -429,8 +434,36 @@ function putUpHeldScreen() {
 // replaced under the hand that is about to drag it, and the drag begins on
 // something that was rebuilt a moment ago. What was reported was exactly that,
 // a refresh while touching rather than while scrolling.
-function scrolling() {
-  return fingerDown || Date.now() - scrolledAt < scrollQuietMs;
+//
+// Text that has been dragged over counts too, and for longer than the drag.
+// Selecting the sentence under an error is how it gets copied into a search or
+// a message, and a draw that replaces the screen drops the selection: the words
+// are still there and the highlight is not, so the copy takes nothing. The hold
+// lasts as long as the selection does, which the next click anywhere ends.
+function pageIsHeld() {
+  return pointerDown || textIsSelected() || Date.now() - scrolledAt < scrollQuietMs;
+}
+
+// textIsSelected is whether the reader has some of the screen highlighted.
+//
+// Only a selection inside the screen counts. One in the address bar or in
+// another frame is not something a draw of this page would take away, and
+// getSelection is allowed to answer with nothing at all, which is read here as
+// nothing selected rather than as a reason to fail a draw.
+function textIsSelected() {
+  const app = document.getElementById("app");
+
+  if (app === null || window.getSelection === undefined) {
+    return false;
+  }
+
+  const picked = window.getSelection();
+
+  if (picked === null || picked.isCollapsed || picked.rangeCount === 0) {
+    return false;
+  }
+
+  return app.contains(picked.getRangeAt(0).commonAncestorContainer);
 }
 
 // refreshWhenStill takes a tick of the periodic refresh, once the page has
@@ -445,7 +478,7 @@ function refreshWhenStill(draw) {
     return;
   }
 
-  if (!scrolling()) {
+  if (!pageIsHeld()) {
     periodicDraw = true;
 
     const started = draw();
@@ -504,7 +537,7 @@ function render(title, nodes) {
   // so holding it here is the last place it can be stopped and the only one
   // that matters. A draw the operator asked for goes up whatever the page is
   // doing: they are waiting for it.
-  if (periodicDraw && scrolling()) {
+  if (periodicDraw && pageIsHeld()) {
     heldScreen = { title: title, nodes: nodes, screen: currentScreen };
 
     if (heldScreenTimer === null) {
@@ -2186,9 +2219,11 @@ function applyTheme(name) {
   labelThemeToggle();
 }
 
-// labelThemeToggle puts the words on the switch. The label names where a press
-// goes rather than where the page is, because that is what the operator is
-// deciding.
+// labelThemeToggle says what the switch is and what a press would do, for a
+// reader that is not looking at it. The label names where a press goes rather
+// than where the page is, because that is what the operator is deciding; what
+// the page is in now is aria-pressed, which is a different question and is
+// answered separately.
 //
 // It is apart from applyTheme because the two happen at different moments. The
 // colour is settled before anything is painted, and the words wait on a catalog
@@ -2213,17 +2248,9 @@ function labelThemeToggle() {
     return;
   }
 
-  // The words go in the two sides rather than over the button, which holds the
-  // drawing. Writing to the button itself would take the track and the knob
-  // out with the text it replaced.
-  const words = button.querySelectorAll("[data-theme-word]");
-
-  for (const word of words) {
-    word.textContent = word.dataset.themeWord === "dark"
-      ? t("theme.dark.label")
-      : t("theme.light.label");
-  }
-
+  // Nothing is written into the button: it holds a drawing, and text put on it
+  // would replace the track and the knob. What the switch says in words it says
+  // to a reader, through the label below.
   const next = dark ? t("theme.light.label") : t("theme.dark.label");
 
   button.setAttribute("aria-label", t("theme.switch.aria", { theme: next }));
@@ -2235,10 +2262,22 @@ function labelThemeToggle() {
 // stay instant for everything else; see the rule it is named in.
 const themeSwapClass = "theme-swapping";
 
-// themeSwapEnding is the timer that takes the class off. It is held so a second
-// press does not leave the first press's timer to end the second one's move:
-// what the class is on for is the change that is happening now.
+// themeSkyClass is on while the sky of the switch is moving: the clouds drift
+// and the stars twinkle under it. It is apart from the class above because it
+// lasts far longer than the colours take, and because what it turns on is the
+// one thing here that would otherwise never stop.
+const themeSkyClass = "theme-sky-live";
+
+// themeSkyMs is how long the sky is given. It covers the longest of the
+// animations the stylesheet hangs on the class, so nothing is cut off part way
+// through and left holding a position it was passing through.
+const themeSkyMs = 9000;
+
+// The two timers that take the classes off. They are held so a second press
+// does not leave the first press's timer to end the second one's turn: what a
+// class is on for is the change that is happening now.
 let themeSwapEnding = null;
+let themeSkyEnding = null;
 
 // swapTheme changes the theme with the colours moving.
 //
@@ -2259,16 +2298,39 @@ function swapTheme(name) {
     window.clearTimeout(themeSwapEnding);
   }
 
+  // The sky is started again from the beginning on every press. Taking the
+  // class off and putting it back in the same turn would leave it on as far as
+  // the browser is concerned and the animations would carry on from where they
+  // were, so the frame between the two is what makes them begin again.
+  if (themeSkyEnding !== null) {
+    window.clearTimeout(themeSkyEnding);
+  }
+
+  root.classList.remove(themeSkyClass);
+
+  window.requestAnimationFrame(function () {
+    root.classList.add(themeSkyClass);
+  });
+
+  themeSkyEnding = window.setTimeout(function () {
+    root.classList.remove(themeSkyClass);
+    themeSkyEnding = null;
+  }, themeSkyMs);
+
   applyTheme(name);
 
   // The wait is read off the stylesheet rather than written twice. Somebody who
   // asked for less movement has it at zero there, and this then takes the class
   // off on the next turn of the loop instead of holding it for a third of a
   // second over a change that already happened.
+  // A little longer than the change is given, so that nothing is still moving
+  // when the class goes: a transition cut short jumps the rest of the way, and
+  // the jump is what would read as the change being late. The margin costs
+  // nothing, because what the class does while nothing is moving is nothing.
   themeSwapEnding = window.setTimeout(function () {
     root.classList.remove(themeSwapClass);
     themeSwapEnding = null;
-  }, themeSwapMs());
+  }, themeSwapMs() * 2);
 }
 
 // themeSwapMs is how long the stylesheet says a change of theme takes, in
@@ -2727,24 +2789,68 @@ function setUpLanguage() {
 
 // The scroll is watched for one thing: when it last happened. The listener is
 // passive, so nothing it does can hold up the scrolling it is watching.
-window.addEventListener("scroll", function () {
+//
+// It is caught on the way down and not on the way up. A scroll event does not
+// bubble when what scrolled is an element rather than the document, so a
+// listener waiting at the window never hears the ones that matter most here:
+// the wide table on the status screen is inside a scroller of its own, and
+// dragging that sideways to read the end of an error was a movement this could
+// not see. Capturing puts the listener on the path the event does take.
+document.addEventListener("scroll", function () {
   scrolledAt = Date.now();
-}, { passive: true });
+}, { capture: true, passive: true });
 
-// A touch is watched for the same reason the scroll is, and before it: the
-// finger comes down first. Lifting it starts the quiet time rather than ending
-// the wait, because what a phone does when a finger leaves is carry on moving.
-window.addEventListener("touchstart", function () {
-  fingerDown = true;
-  scrolledAt = Date.now();
-}, { passive: true });
+// A pointer is watched for the same reason the scroll is, and before it: it
+// comes down first. Lifting it starts the quiet time rather than ending the
+// wait, because what a phone does when a finger leaves is carry on moving.
+//
+// Pointer events and not touch events, so that a mouse is watched as well as a
+// finger. Where there are no pointer events there are touch events, and the
+// pair below is the same pair under other names.
+const pointerDownNames = window.PointerEvent === undefined
+  ? ["touchstart"]
+  : ["pointerdown"];
+const pointerUpNames = window.PointerEvent === undefined
+  ? ["touchend", "touchcancel"]
+  : ["pointerup", "pointercancel"];
 
-for (const name of ["touchend", "touchcancel"]) {
+for (const name of pointerDownNames) {
   window.addEventListener(name, function () {
-    fingerDown = false;
+    pointerDown = true;
     scrolledAt = Date.now();
   }, { passive: true });
 }
+
+for (const name of pointerUpNames) {
+  window.addEventListener(name, function () {
+    pointerDown = false;
+    scrolledAt = Date.now();
+  }, { passive: true });
+}
+
+// What clears a press that was never let go of over this page.
+//
+// A mouse pressed on a row and released somewhere else - over another window,
+// or past the edge of this one - sends its release to whatever it was over, and
+// this page hears nothing. Without something to put the flag back, the refresh
+// of the status screen would be stopped for as long as the page stayed open.
+//
+// The move is the cheaper of the two to trust: it says which buttons are held
+// at the moment it fires, so the first move back over the page corrects the
+// flag whatever happened while the pointer was away. Losing the window clears
+// it as well, for the case where the pointer does not come back.
+if (window.PointerEvent !== undefined) {
+  window.addEventListener("pointermove", function (event) {
+    if (pointerDown && event.buttons === 0) {
+      pointerDown = false;
+      scrolledAt = Date.now();
+    }
+  }, { passive: true });
+}
+
+window.addEventListener("blur", function () {
+  pointerDown = false;
+});
 
 window.addEventListener("popstate", function () {
   notice = null;
