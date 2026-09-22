@@ -1,3 +1,19 @@
+# v3.7.3
+
+## Bug fixes:
+
+- A Host registered after another was deleted took the number the deleted one had climbed past, rather than the one it gave up. An installation where the single Host had been removed and registered again showed Host 2 with no Host 1, and the numbers went on climbing away from how many Hosts there are.
+  - The number of a new Host is now one past the largest in use. A number given up from the end comes back, so removing a Host and registering another hands out the number that was just freed.
+  - A gap in the middle is left as it is. The number of a Host is what the Status screen, the host key panel and the log file call it by, and one handed back in the middle would put a newly registered Host among the older ones on every screen that lists them by number, under a number an older log line already used for something else. Taken from the end, a new Host is still the last of the list.
+  - An import numbers the Hosts it adds the same way, so which of the two registered a Host does not decide whether the numbers have a gap in them.
+
+## Notes:
+
+- The upgrade note of v3.7.0 still holds: every Host stops until its key is approved, a stored path outside the data directory is put back to its default, and the data directory becomes 0700.
+- Nothing is renumbered. The Hosts an installation already has keep the numbers they were registered under, and the change is only in what the next registration is given.
+- Only the Linux path of `-install` and `-uninstall` has been run. The macOS and the Windows backends are still held up by the compiler, by the vet tool for their platform, and by tests over the plist and the service configuration they produce.
+- None of the twelve translations has been read by a native speaker.
+
 # v3.7.2
 
 ## Add/fix features:
