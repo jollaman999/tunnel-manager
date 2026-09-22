@@ -7,6 +7,7 @@
   - Where the release is newer, and this process is what a service registration starts, the screen offers to install it. That takes the password of the account: it replaces the executable and ends with a restart that drops every tunnel. It cannot report that it finished, because the process that would report it is the one being restarted, so it says that it started and what to look at to see that it went through.
   - Looking is on by default. Installing without anybody asking is off by default, and turning it on says what it does: a release that appears is installed and the service restarts itself, at an hour nobody chose.
   - A tag that cannot be read as three numbers is never treated as newer. An answer of newer is what starts an install on its own, and a version this does not understand is not grounds for replacing the executable of a running service.
+  - The version that is running is written the way a release tag is written, with the v. The two sit side by side and are read against each other, and one written 3.8.0 beside one written v3.8.0 reads as two different things.
 
 ## Notes:
 
