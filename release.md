@@ -1,3 +1,24 @@
+# v3.7.1
+
+## Add/fix features:
+
+- **The Status screen asks about a waiting host key once, not once for every tunnel.** The notice sat under every tunnel row, so a Host carrying four service ports asked the same question four times. It is a fact about the Host rather than about the tunnel.
+  - What the screen carries now is one line with two counts, how many Hosts have never been approved and how many presented a key other than the one they are trusted on. The counts are of the installation and not of the page the table happens to be on, so a Host with no tunnel row yet is in them too.
+  - Behind that line is a panel of the Hosts that are waiting. It pages the way the other lists do, and the fingerprint is on the row beside the tick: a tick means the fingerprint was looked at, and it cannot mean that if looking costs another click.
+  - Ticks survive turning the page, and what they add up to is listed once more, with the fingerprints, before any of it is sent.
+  - Ticking a whole page takes only the Hosts being approved for the first time. A key that replaced a trusted one is a server that changed, which is read one at a time, and a batch holding one of those takes the password of the account. A password that does not open the account approves none of the batch; a fingerprint that is no longer the one waiting refuses that Host and leaves the rest.
+
+## Bug fixes:
+
+- A wrong password on a host key approval threw the operator out to the login screen with the panel gone, saying the session had ended. It had not: the server refuses that one approval and changes nothing. Every refusal that carries a 401 but the three that ask for the account password again was read as a session that had ended, and approving a host key is a fourth.
+
+## Notes:
+
+- The upgrade note of v3.7.0 still holds: every Host stops until its key is approved, a stored path outside the data directory is put back to its default, and the data directory becomes 0700.
+- A batch takes at most a thousand Hosts, which is ten times the largest page the panel sends. A request over that is refused rather than held, since the database this program uses serves one connection at a time and a batch of ten thousand would hold it for all of them.
+- Only the Linux path of `-install` and `-uninstall` has been run. The macOS and the Windows backends are still held up by the compiler, by the vet tool for their platform, and by tests over the plist and the service configuration they produce.
+- None of the twelve translations has been read by a native speaker.
+
 # v3.7.0
 
 ## Add/fix features:
