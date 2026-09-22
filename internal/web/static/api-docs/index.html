@@ -1,0 +1,30 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Tunnel Manager API</title>
+
+    <!--
+      The stylesheet and the scripts are files this server holds. Nothing here
+      is fetched from a content delivery network: an installation that reaches
+      nothing but the hosts it forwards to still has to be able to open this
+      page, which is the same reason the operator UI is built into the binary.
+    -->
+    <link rel="stylesheet" href="swagger-ui.css" />
+  </head>
+
+  <body>
+    <div id="swagger-ui"></div>
+
+    <script src="swagger-ui-bundle.js"></script>
+
+    <!--
+      The configuration is a file of its own rather than a script written into
+      this page. An inline script has to be named by its hash in the policy
+      that guards this page, and that hash then has to be produced wherever the
+      page is served from; a file only has to be allowed once, as 'self'.
+    -->
+    <script src="init.js"></script>
+  </body>
+</html>

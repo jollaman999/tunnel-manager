@@ -79,6 +79,13 @@ type accountChanged struct {
 // until something is typed into it does not say what it is replacing, and the
 // username is not written down anywhere the page can read after a reload: the
 // session cookie carries a token and nothing else.
+//
+// @Summary      What the account is called
+// @Tags         account
+// @Produce  json
+// @Success  200  {object}  models.Response{data=api.accountView}
+// @Failure  401  {object}  api.errorBody  "Authentication required"
+// @Router       /account [get]
 func (h *AuthHandler) GetAccount(c echo.Context) error {
 	userID, ok := c.Get(contextUserIDKey).(uint)
 	if !ok {
@@ -109,6 +116,18 @@ func (h *AuthHandler) GetAccount(c echo.Context) error {
 // compared against before the current password has been proved, and no session
 // is dropped before the row has been written: a change that failed to store
 // must not be one that logged everybody out.
+//
+// @Summary      Change the username, the password or both
+// @Description  Takes current_password and username, new_password or both, changes them and signs out every other session.
+// @Tags         account
+// @Accept   json
+// @Produce  json
+// @Security  CSRFToken
+// @Param   body  body  api.accountRequest  true  "The current password, and what to change"
+// @Success  200  {object}  models.Response{data=api.accountChanged}
+// @Failure  400  {object}  api.errorBody  "Nothing was asked for, or the new password is refused"
+// @Failure  401  {object}  api.errorBody  "The current password is wrong"
+// @Router       /account [put]
 func (h *AuthHandler) ChangeAccount(c echo.Context) error {
 	var req accountRequest
 

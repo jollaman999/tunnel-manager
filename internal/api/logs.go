@@ -152,6 +152,14 @@ func NewLogsHandler(logger *zap.Logger, path string, db *gorm.DB, empty func() e
 }
 
 // GetLogs answers with the last lines of the log file.
+//
+// @Summary      The end of the log file
+// @Description  The file is read from the end, so read stays small however large the file is.
+// @Tags         logs
+// @Produce  json
+// @Param   lines  query  int  false  "How many lines, up to 2000"
+// @Success  200  {object}  models.Response{data=api.logsAnswer}
+// @Router       /logs [get]
 func (h *LogsHandler) GetLogs(c echo.Context) error {
 	count, refused := logsLineCount(c.QueryParam("lines"))
 	if refused != nil {
@@ -220,6 +228,17 @@ type logsClearRequest struct {
 // back, which is the line the uninstall is on rather than the line the restart
 // is on: after a restart the service is running again, and after this the lines
 // that were in the file are gone.
+//
+// @Summary      Empty the file the log is being written to
+// @Description  Takes the account password, and leaves the rotated files beside it alone.
+// @Tags         logs
+// @Accept   json
+// @Produce  json
+// @Security  CSRFToken
+// @Param   body  body  api.logsClearRequest  true  "The account password"
+// @Success  200  {object}  models.Response{data=api.logsClearedAnswer}
+// @Failure  401  {object}  api.errorBody  "The password does not open this account"
+// @Router       /logs/clear [post]
 func (h *LogsHandler) ClearLogs(c echo.Context) error {
 	var req logsClearRequest
 

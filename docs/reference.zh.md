@@ -52,6 +52,7 @@ Tunnel Manager 建立 SSH 隧道，并让它们保持连接。你注册它要登
 - [设置](#设置)
 - [卸载](#卸载)
 - [在脚本里调用 API](#在脚本里调用-api)
+- [OpenAPI 与 Swagger UI](#openapi-与-swagger-ui)
 - [API 接口](#api-接口)
 - [读懂隧道状态](#读懂隧道状态)
 - [加密密钥](#加密密钥)
@@ -1088,6 +1089,72 @@ curl -s -b cookies.txt -X POST "$BASE/api/setup" \
 }
 ```
 
+## OpenAPI 与 Swagger UI
+
+**用浏览器打开 `https://<这台服务器>:8888/ui/api-docs/`。** 下面表里的每个调用都在那一页
+上，连同它接受的字段和给出的回答，每个调用上的 **Try it out** 按钮会向这台服务器发出真实
+的请求。
+
+这一页和那些界面一样来自二进制本身。画它不需要从网络上取任何东西，所以在一台只能连到这台
+服务器、别处都到不了的机器上也能打开。页面本身不需要会话：它显示的内容对每套安装都一样，
+而且就写在你正在读的这份文档里。需要会话的是它发出的那些调用。
+
+**那些请求是真的。** 在那一页上按 `POST /api/uninstall` 会把这套安装删掉，按
+`DELETE /api/host/{id}` 会把 Host 删掉。按钮后面没有演练场。
+
+### 在那一页上登录
+
+没有一个贴上去就完事的令牌。这个 API 用的是会话 cookie 加 CSRF 头，所以分两步。
+
+1. 找到 `POST /api/login`，按 **Try it out**，把用户名和密码填进请求体，按 **Execute**。
+   回答设下的 cookie 由浏览器保存，和从登录界面登录完全一样，回答里带着
+   `data.csrf_token`。
+2. 把那个令牌复制下来，按页面顶部的 **Authorize** 粘进去。从那以后它会作为
+   `X-CSRF-Token` 头发出去。
+
+只做第一步，所有 `GET` 就都能用了：读取只需要 cookie，浏览器不用人说就会带上。第二步是
+`POST`、`PUT` 和 `DELETE` 需要的，不做的话它们会带着 `auth.csrf.refused` 返回 `403`，
+和脚本因为同样的原因收到的是同一个拒绝。见
+[在脚本里调用 API](#在脚本里调用-api)。
+
+已经在界面上登录过的浏览器，在这里也是登录着的：同一个来源，同一个 cookie。令牌仍然要手动
+放进 **Authorize**，而拿一个新令牌最快的路就是第一步。令牌也在 `tm_csrf` cookie 里（走
+HTTPS 时是 `__Host-tm_csrf`），那个 cookie 没有标 `HttpOnly` 正是为了这个，而会话 cookie
+标了，任何页面都读不到。
+
+### 描述文件
+
+这一页是根据一份描述 `/api` 下每条路径的文件画出来的。它是 OpenAPI 2.0，从源码生成、提交
+进仓库、并编进二进制，所以下面这两处是同一个文件：
+
+| 在哪里 | 读什么 |
+|--------|--------|
+| 仓库里 | `internal/web/static/openapi.json` |
+| 运行中的服务器 | `https://<这台服务器>:8888/ui/openapi.json` |
+
+```bash
+curl -sk https://127.0.0.1:8888/ui/openapi.json > openapi.json
+```
+
+这个也不需要会话。仓库里有一个测试：路由里注册了描述文件里没有的路径，或者描述文件里留着
+没有任何路由回答的路径，它都会失败，所以两边不会悄悄对不上。
+
+### 放进工具里
+
+**Postman**：*Import*，选这个文件，每个调用都会变成集合里的一个请求。**Insomnia**：
+*Import From* → *File*。两个都不会替你登录。先调 `POST /api/login`，之后 cookie 就留在
+客户端里了；写操作要加上 `X-CSRF-Token` 头，值就是登录回答里的那个令牌。描述文件把这个头
+声明成了名为 `CSRFToken` 的 API key，所以会读安全定义的工具会给你一个填它的地方。
+
+**生成客户端**：`openapi-generator` 直接就能读这个文件。
+
+```bash
+openapi-generator-cli generate -i openapi.json -g python -o ./client
+```
+
+生成出来的代码知道路径、请求体和回答，但不知道会话在 cookie 里。把它所基于的那个 HTTP 库
+的 cookie 保存打开，否则登录之后的每个调用都会收到 `401`。
+
 ## API 接口
 
 `/api` 下面的一切都需要会话，只有 `POST /api/login` 例外。不是 `GET` 的一切都需要
@@ -1396,6 +1463,8 @@ curl -s -b cookies.txt -X POST "$BASE/api/import/tunnels" \
 | `GET` | `/ui` | 用 `302` 重定向到 `/ui/` |
 | `GET` | `/ui/version.json` | 可执行文件的版本号，形如 `{"version":"3.0.0"}` |
 | `GET` | `/ui/lang/<code>.json` | 一种语言的目录，从 `en` 到 `th`；见[页面的语言](#页面的语言) |
+| `GET` | `/ui/openapi.json` | `/api` 的 OpenAPI 描述；见 [OpenAPI 与 Swagger UI](#openapi-与-swagger-ui) |
+| `GET` | `/ui/api-docs/` | 用那份描述画出来的 Swagger UI |
 | `GET` | `/ui/*` | 从可执行文件里提供界面 |
 
 `/ui/version.json` 和 `/ui/` 下面其余的内容一样，不需要会话。登录页面上也显示版本号，何况

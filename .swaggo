@@ -1,0 +1,16 @@
+// What swag is told to describe differently from what the Go type says. It is
+// read by `make openapi`; see the target in the Makefile.
+
+// textCode names a string the server sends that is not a refusal. Described as
+// itself it becomes an enumeration of every code, and the order swag writes
+// those in is not stable: the constants are declared beside the handler that
+// sends each one, across several files, and the file order swag collects them
+// in changes from run to run. The generated file is committed, so that shows up
+// as a diff nobody made, five runs of the generator producing three different
+// files.
+//
+// errorCode is left alone on purpose. Its constants are all in one block in
+// internal/api/errors.go, so its order is settled by the source, and it is the
+// list worth having in the description: error_code is what a script matches a
+// refusal on.
+replace github.com/jollaman999/tunnel-manager/internal/api.textCode string

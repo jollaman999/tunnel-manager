@@ -536,6 +536,19 @@ func (h *AuthHandler) readUser(conds ...interface{}) (*models.User, error) {
 }
 
 // Login checks the credentials and hands out a session.
+//
+// @Summary      Log in
+// @Description  Takes username and password, sets the session and CSRF cookies, and answers with setup_required and csrf_token.
+// @Description  On the very first sign in the username is empty and the password is the one in the initial-password file.
+// @Tags         account
+// @Accept   json
+// @Produce  json
+// @Param   body  body  api.loginRequest  true  "The username and the password"
+// @Success  200  {object}  models.Response{data=api.loginResponse}
+// @Failure  400  {object}  api.errorBody  "The body could not be read"
+// @Failure  401  {object}  api.errorBody  "Invalid username or password"
+// @Failure  429  {object}  api.errorBody  "Too many failed attempts: the login is held"
+// @Router       /login [post]
 func (h *AuthHandler) Login(c echo.Context) error {
 	var req loginRequest
 
@@ -605,6 +618,15 @@ func (h *AuthHandler) Login(c echo.Context) error {
 // Logout drops the session and expires the cookie. A request that carries no
 // session, or one that has already run out, is answered the same way: what it
 // asked for is the state it is left in.
+//
+// @Summary      Log out
+// @Description  Drops the session and expires both cookies.
+// @Tags         account
+// @Produce  json
+// @Security  CSRFToken
+// @Success  200  {object}  models.Response
+// @Failure  403  {object}  api.errorBody  "The request carries no valid X-CSRF-Token header"
+// @Router       /logout [post]
 func (h *AuthHandler) Logout(c echo.Context) error {
 	token := cookieValue(c, sessionCookieName)
 	if token != "" {
@@ -630,6 +652,13 @@ type setupState struct {
 // password. It answers without a session: the login screen asks it before
 // anyone has signed in, to decide whether the hint about the first sign in is
 // still true.
+//
+// @Summary      Whether the account still needs a username and a password
+// @Description  Answers without a session, for the login screen.
+// @Tags         account
+// @Produce  json
+// @Success  200  {object}  models.Response{data=api.setupState}
+// @Router       /setup [get]
 func (h *AuthHandler) GetSetup(c echo.Context) error {
 	user, err := h.readUser()
 	if err != nil {
@@ -643,6 +672,17 @@ func (h *AuthHandler) GetSetup(c echo.Context) error {
 	})
 }
 
+// @Summary      Finish the account setup
+// @Description  Sets the username and the password once, on the account that still needs them.
+// @Tags         account
+// @Accept   json
+// @Produce  json
+// @Security  CSRFToken
+// @Param   body  body  api.setupRequest  true  "The username and the password to set"
+// @Success  200  {object}  models.Response
+// @Failure  400  {object}  api.errorBody  "The password is too short or too long"
+// @Failure  403  {object}  api.errorBody  "The setup is already done, or no valid X-CSRF-Token header"
+// @Router       /setup [post]
 func (h *AuthHandler) Setup(c echo.Context) error {
 	var req setupRequest
 

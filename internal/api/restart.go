@@ -78,6 +78,13 @@ type restartView struct {
 // the press, that warning would arrive once it was too late to act on, and a
 // screen that always warned would be warning most operators about something
 // that does not happen to them.
+//
+// @Summary      What a restart would do here
+// @Description  How long before the service goes and whether it comes back on its own.
+// @Tags         restart
+// @Produce  json
+// @Success  200  {object}  models.Response{data=api.restartView}
+// @Router       /restart [get]
 func (h *RestartHandler) GetRestart(c echo.Context) error {
 	return c.JSON(http.StatusOK, models.Response{
 		Success: true,
@@ -90,6 +97,15 @@ func (h *RestartHandler) GetRestart(c echo.Context) error {
 // The password of the account is not asked for. The uninstall asks because what
 // it does cannot be taken back; this one ends in the service running again, and
 // a question that is put to every action is one that stops being read.
+//
+// @Summary      Take the service down in order and run the program again in place of this process
+// @Description  Where the platform has exec. The answer is written before the process goes.
+// @Tags         restart
+// @Produce  json
+// @Security  CSRFToken
+// @Success  200  {object}  models.Response{data=api.restartView}
+// @Failure  409  {object}  api.errorBody  "This build cannot restart itself"
+// @Router       /restart [post]
 func (h *RestartHandler) Restart(c echo.Context) error {
 	h.logger.Warn("a restart was asked for on the Settings screen. The API stops answering, "+
 		"every tunnel comes down and this program runs again",

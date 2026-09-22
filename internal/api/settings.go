@@ -125,6 +125,12 @@ type settingsView struct {
 
 // GetSettings answers with what is stored, along with what is stored but not
 // being run on.
+//
+// @Summary      The stored settings, and in pending_restart the ones this process is not running on
+// @Tags         settings
+// @Produce  json
+// @Success  200  {object}  models.Response{data=api.settingsView}
+// @Router       /settings [get]
 func (h *SettingsHandler) GetSettings(c echo.Context) error {
 	stored, err := settings.Load(h.db)
 	if err != nil {
@@ -144,6 +150,17 @@ func (h *SettingsHandler) GetSettings(c echo.Context) error {
 
 // UpdateSettings stores what the request carries and puts into place whatever
 // the running process can take on.
+//
+// @Summary      Store the settings in the body over the stored ones
+// @Description  Answers with what changed and whether a restart is needed. logging.level is the one setting this process takes on without being started again.
+// @Tags         settings
+// @Accept   json
+// @Produce  json
+// @Security  CSRFToken
+// @Param   body  body  settings.Settings  true  "The settings as they should stand"
+// @Success  200  {object}  models.Response{data=api.settingsSaved}
+// @Failure  400  {object}  api.errorBody  "A setting broke one of the rules. Nothing was stored"
+// @Router       /settings [put]
 func (h *SettingsHandler) UpdateSettings(c echo.Context) error {
 	stored, err := settings.Load(h.db)
 	if err != nil {

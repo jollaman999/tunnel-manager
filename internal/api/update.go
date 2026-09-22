@@ -170,11 +170,26 @@ func (h *UpdateHandler) StartInstall() error {
 }
 
 // GetUpdate answers with what is known, without looking again.
+//
+// @Summary      What the last look for a newer release found
+// @Description  The version running, the newest release, whether it is newer, and whether an install can be started from here.
+// @Tags         update
+// @Produce  json
+// @Success  200  {object}  models.Response{data=api.updateView}
+// @Router       /update [get]
 func (h *UpdateHandler) GetUpdate(c echo.Context) error {
 	return c.JSON(http.StatusOK, models.Response{Success: true, Data: h.view()})
 }
 
 // CheckUpdate looks now.
+//
+// @Summary      Read the newest release now
+// @Description  Answers what GET /api/update would then answer. A POST because it makes a request to another host, which is not a thing a link or a prefetch may set off.
+// @Tags         update
+// @Produce  json
+// @Security  CSRFToken
+// @Success  200  {object}  models.Response{data=api.updateView}
+// @Router       /update/check [post]
 func (h *UpdateHandler) CheckUpdate(c echo.Context) error {
 	result := h.Look(c.Request().Context())
 
@@ -201,6 +216,18 @@ type updateInstallRequest struct {
 //
 // The password of the account is asked for because what this starts replaces
 // the executable and takes every tunnel down with the restart.
+//
+// @Summary      Start the install of the newest release
+// @Description  Takes the account password. It answers that the install started and never that it finished: what the install ends with is a restart of the service answering the request.
+// @Tags         update
+// @Accept   json
+// @Produce  json
+// @Security  CSRFToken
+// @Param   body  body  api.updateInstallRequest  true  "The account password"
+// @Success  200  {object}  models.Response{data=api.updateView}
+// @Failure  401  {object}  api.errorBody  "The password does not open this account"
+// @Failure  409  {object}  api.errorBody  "There is nothing newer, or this build cannot install one"
+// @Router       /update/install [post]
 func (h *UpdateHandler) InstallUpdate(c echo.Context) error {
 	var req updateInstallRequest
 

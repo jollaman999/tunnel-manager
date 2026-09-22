@@ -30,6 +30,14 @@ jobs:
     - name: Build
       run: make
 
+    # The description of the API and the copy of Swagger UI that reads it are
+    # generated, committed, and easy to forget to regenerate. This runs the
+    # generators and fails if either moved, so a handler that changed shape
+    # without the description following it is caught here rather than by
+    # whoever reads the documentation next.
+    - name: Check the generated documentation
+      run: make docs-check
+
     - name: Vet
       run: go vet ./...
 

@@ -145,6 +145,17 @@ type uninstallResult struct {
 // is left on a remote host, and the loop that would build them again is stopped
 // first of all. The answer is written while the process is still up, and the
 // process ends a few seconds later.
+//
+// @Summary      Remove the installation and end the process
+// @Description  Takes the account password. The tunnels come down, the files this installation is made of are removed, and the answer is written before the process goes.
+// @Tags         uninstall
+// @Accept   json
+// @Produce  json
+// @Security  CSRFToken
+// @Param   body  body  api.uninstallRequest  true  "The account password"
+// @Success  200  {object}  models.Response{data=api.uninstallResult}
+// @Failure  401  {object}  api.errorBody  "The password does not open this account. Nothing was stopped and nothing was removed"
+// @Router       /uninstall [post]
 func (h *UninstallHandler) Uninstall(c echo.Context) error {
 	var req uninstallRequest
 

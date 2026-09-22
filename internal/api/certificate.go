@@ -117,6 +117,14 @@ type certificateInstall struct {
 }
 
 // GetCertificate answers with the certificate this process is serving with.
+//
+// @Summary      The certificate being served
+// @Description  Fingerprint, subject, issuer, the names it covers, the validity and the days left. The private key is never in the answer.
+// @Tags         certificate
+// @Produce  json
+// @Success  200  {object}  models.Response{data=api.certificateView}
+// @Failure  409  {object}  api.errorBody  "api_https_enabled is off, so no certificate is in use"
+// @Router       /certificate [get]
 func (h *CertificateHandler) GetCertificate(c echo.Context) error {
 	current := h.holder.Current()
 	if current == nil {
@@ -140,6 +148,15 @@ func (h *CertificateHandler) GetCertificate(c echo.Context) error {
 
 // RenewCertificate makes another self-signed certificate and puts it in front
 // of the clients that connect from here on.
+//
+// @Summary      Make another self-signed certificate and serve it from the next connection on
+// @Description  A replacement takes effect on the next connection and not on the ones already open, so the answer to this arrives over the old certificate.
+// @Tags         certificate
+// @Produce  json
+// @Security  CSRFToken
+// @Success  200  {object}  models.Response{data=api.certificateReplaced}
+// @Failure  409  {object}  api.errorBody  "api_https_enabled is off, so no certificate is in use"
+// @Router       /certificate/renew [post]
 func (h *CertificateHandler) RenewCertificate(c echo.Context) error {
 	previous := h.holder.Current()
 	if previous == nil {
@@ -160,6 +177,18 @@ func (h *CertificateHandler) RenewCertificate(c echo.Context) error {
 
 // InstallCertificate stores the pair the request carries and puts it in front
 // of the clients that connect from here on.
+//
+// @Summary      Register a certificate of your own
+// @Description  Takes cert_pem and key_pem, stores them and serves them from the next connection on. cert_pem may be a chain, with the server certificate first and the intermediates behind it.
+// @Tags         certificate
+// @Accept   json
+// @Produce  json
+// @Security  CSRFToken
+// @Param   body  body  api.certificateInstall  true  "The certificate and its private key, as PEM"
+// @Success  200  {object}  models.Response{data=api.certificateReplaced}
+// @Failure  400  {object}  api.errorBody  "The PEM could not be read, or the key does not match the certificate"
+// @Failure  409  {object}  api.errorBody  "api_https_enabled is off, so no certificate is in use"
+// @Router       /certificate [put]
 func (h *CertificateHandler) InstallCertificate(c echo.Context) error {
 	previous := h.holder.Current()
 	if previous == nil {

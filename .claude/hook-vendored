@@ -1,0 +1,11 @@
+# 남의 코드를 그대로 들여온 파일. 커밋 훅이 내용 검사에서 뺀다.
+# (개인키 검사는 여기 적혀 있어도 그대로 돈다)
+#
+# 한 줄에 경로 정규식 하나. 왜 뺄 수 없는지도 같이 적는다.
+
+# swagger-ui-dist 를 make swagger-ui 가 받아 둔 것. 받은 tarball 의 해시를
+# 대조해서 쓰므로 한 글자도 고칠 수 없다. 압축된 번들이라, 비밀번호를 별표로
+# 가리는 함수 하나가 npm 토큰 규칙에 걸리고 예제 주소들이 IP 규칙에 걸린다.
+^internal/web/static/api-docs/swagger-ui-bundle\.js$
+^internal/web/static/api-docs/swagger-ui\.css$
+^internal/web/static/api-docs/LICENSE$

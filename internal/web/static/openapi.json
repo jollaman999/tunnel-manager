@@ -1,0 +1,3433 @@
+{
+    "swagger": "2.0",
+    "info": {
+        "description": "The API the Tunnel Manager screens are built on. Every path\nbelow sits under /api and needs a session, except POST\n/api/login and GET /api/setup.\n\nLogging in sets two cookies. Over HTTPS they are named\n__Host-tm_session and __Host-tm_csrf, and over plain HTTP they\nare tm_session and tm_csrf. A browser sends them back on its\nown, so \"Try it out\" on this page works as soon as you are\nlogged in to the screens in the same browser.\n\nEvery POST, PUT and DELETE also needs the token of the session\nin an X-CSRF-Token header. POST /api/login answers with it in\ndata.csrf_token; paste it into Authorize above and this page\nsends it. A GET needs no token.\n\nEvery answer has the same shape: {\"success\":true,\"data\":...}\nor {\"success\":false,\"error\":\"...\"}. An answer that says no\ncarries error_code, which names the refusal and is what a\nscript should match on, and error_args, the values its English\nsentence was written with.",
+        "title": "Tunnel Manager API",
+        "contact": {},
+        "license": {
+            "name": "Apache 2.0"
+        },
+        "version": "3.8.3"
+    },
+    "basePath": "/api",
+    "paths": {
+        "/account": {
+            "get": {
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "account"
+                ],
+                "summary": "What the account is called",
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/models.Response"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "data": {
+                                            "$ref": "#/definitions/api.accountView"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "401": {
+                        "description": "Authentication required",
+                        "schema": {
+                            "$ref": "#/definitions/api.errorBody"
+                        }
+                    }
+                }
+            },
+            "put": {
+                "security": [
+                    {
+                        "CSRFToken": []
+                    }
+                ],
+                "description": "Takes current_password and username, new_password or both, changes them and signs out every other session.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "account"
+                ],
+                "summary": "Change the username, the password or both",
+                "parameters": [
+                    {
+                        "description": "The current password, and what to change",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/api.accountRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/models.Response"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "data": {
+                                            "$ref": "#/definitions/api.accountChanged"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "400": {
+                        "description": "Nothing was asked for, or the new password is refused",
+                        "schema": {
+                            "$ref": "#/definitions/api.errorBody"
+                        }
+                    },
+                    "401": {
+                        "description": "The current password is wrong",
+                        "schema": {
+                            "$ref": "#/definitions/api.errorBody"
+                        }
+                    }
+                }
+            }
+        },
+        "/certificate": {
+            "get": {
+                "description": "Fingerprint, subject, issuer, the names it covers, the validity and the days left. The private key is never in the answer.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "certificate"
+                ],
+                "summary": "The certificate being served",
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/models.Response"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "data": {
+                                            "$ref": "#/definitions/api.certificateView"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "409": {
+                        "description": "api_https_enabled is off, so no certificate is in use",
+                        "schema": {
+                            "$ref": "#/definitions/api.errorBody"
+                        }
+                    }
+                }
+            },
+            "put": {
+                "security": [
+                    {
+                        "CSRFToken": []
+                    }
+                ],
+                "description": "Takes cert_pem and key_pem, stores them and serves them from the next connection on. cert_pem may be a chain, with the server certificate first and the intermediates behind it.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "certificate"
+                ],
+                "summary": "Register a certificate of your own",
+                "parameters": [
+                    {
+                        "description": "The certificate and its private key, as PEM",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/api.certificateInstall"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/models.Response"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "data": {
+                                            "$ref": "#/definitions/api.certificateReplaced"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "400": {
+                        "description": "The PEM could not be read, or the key does not match the certificate",
+                        "schema": {
+                            "$ref": "#/definitions/api.errorBody"
+                        }
+                    },
+                    "409": {
+                        "description": "api_https_enabled is off, so no certificate is in use",
+                        "schema": {
+                            "$ref": "#/definitions/api.errorBody"
+                        }
+                    }
+                }
+            }
+        },
+        "/certificate/renew": {
+            "post": {
+                "security": [
+                    {
+                        "CSRFToken": []
+                    }
+                ],
+                "description": "A replacement takes effect on the next connection and not on the ones already open, so the answer to this arrives over the old certificate.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "certificate"
+                ],
+                "summary": "Make another self-signed certificate and serve it from the next connection on",
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/models.Response"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "data": {
+                                            "$ref": "#/definitions/api.certificateReplaced"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "409": {
+                        "description": "api_https_enabled is off, so no certificate is in use",
+                        "schema": {
+                            "$ref": "#/definitions/api.errorBody"
+                        }
+                    }
+                }
+            }
+        },
+        "/export/settings": {
+            "post": {
+                "security": [
+                    {
+                        "CSRFToken": []
+                    }
+                ],
+                "description": "A POST and not a GET because the password that seals the file is in the body.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "export and import"
+                ],
+                "summary": "The stored settings, encrypted into one file",
+                "parameters": [
+                    {
+                        "description": "The password that encrypts the file",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/api.exportRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/models.Response"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "data": {
+                                            "$ref": "#/definitions/api.exportedSettings"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "400": {
+                        "description": "The password is refused",
+                        "schema": {
+                            "$ref": "#/definitions/api.errorBody"
+                        }
+                    }
+                }
+            }
+        },
+        "/export/tunnels": {
+            "post": {
+                "security": [
+                    {
+                        "CSRFToken": []
+                    }
+                ],
+                "description": "A POST and not a GET because the password that seals the file is in the body.\nInside the file the SSH password, the private key and the key passphrase of every Host are in the clear, so treat it as the credentials of every Host it names.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "export and import"
+                ],
+                "summary": "Every Host and every service port, encrypted into one file",
+                "parameters": [
+                    {
+                        "description": "The password that encrypts the file",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/api.exportRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/models.Response"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "data": {
+                                            "$ref": "#/definitions/api.exportedTunnels"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "400": {
+                        "description": "The password is refused",
+                        "schema": {
+                            "$ref": "#/definitions/api.errorBody"
+                        }
+                    }
+                }
+            }
+        },
+        "/host": {
+            "get": {
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "hosts"
+                ],
+                "summary": "One page of the Hosts, oldest first",
+                "parameters": [
+                    {
+                        "type": "integer",
+                        "description": "The page, counted from 1. Below 1 is read as 1, and a page past the last one is answered with the last page",
+                        "name": "page",
+                        "in": "query"
+                    },
+                    {
+                        "enum": [
+                            10,
+                            20,
+                            30,
+                            50,
+                            100
+                        ],
+                        "type": "integer",
+                        "description": "How many rows a page holds",
+                        "name": "size",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/models.Response"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "data": {
+                                            "allOf": [
+                                                {
+                                                    "$ref": "#/definitions/api.listPageOf"
+                                                },
+                                                {
+                                                    "type": "object",
+                                                    "properties": {
+                                                        "items": {
+                                                            "type": "array",
+                                                            "items": {
+                                                                "$ref": "#/definitions/api.hostView"
+                                                            }
+                                                        }
+                                                    }
+                                                }
+                                            ]
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "400": {
+                        "description": "page is not a number, or size is not one of the sizes taken",
+                        "schema": {
+                            "$ref": "#/definitions/api.errorBody"
+                        }
+                    }
+                }
+            },
+            "post": {
+                "security": [
+                    {
+                        "CSRFToken": []
+                    }
+                ],
+                "description": "enabled is optional and a Host that does not say is enabled.\nbind_scope is what every assignment this registration makes is opened to: loopback, wildcard, or left out for the wildcard. It is read only when the assignments are made.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "hosts"
+                ],
+                "summary": "Register a Host",
+                "parameters": [
+                    {
+                        "description": "The Host to register",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/models.CreateHostRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/models.Response"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "data": {
+                                            "$ref": "#/definitions/api.hostView"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "400": {
+                        "description": "The body is refused, or the private key cannot be read",
+                        "schema": {
+                            "$ref": "#/definitions/api.errorBody"
+                        }
+                    }
+                }
+            }
+        },
+        "/host-key": {
+            "get": {
+                "description": "A row carries the pair of fingerprints and nothing else of the Host.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "host keys"
+                ],
+                "summary": "One page of the host keys waiting to be approved, across every Host",
+                "parameters": [
+                    {
+                        "type": "integer",
+                        "description": "The page, counted from 1. Below 1 is read as 1, and a page past the last one is answered with the last page",
+                        "name": "page",
+                        "in": "query"
+                    },
+                    {
+                        "enum": [
+                            10,
+                            20,
+                            30,
+                            50,
+                            100
+                        ],
+                        "type": "integer",
+                        "description": "How many rows a page holds",
+                        "name": "size",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/models.Response"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "data": {
+                                            "allOf": [
+                                                {
+                                                    "$ref": "#/definitions/api.listPageOf"
+                                                },
+                                                {
+                                                    "type": "object",
+                                                    "properties": {
+                                                        "items": {
+                                                            "type": "array",
+                                                            "items": {
+                                                                "$ref": "#/definitions/api.hostKeyWaiting"
+                                                            }
+                                                        }
+                                                    }
+                                                }
+                                            ]
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "400": {
+                        "description": "page is not a number, or size is not one of the sizes taken",
+                        "schema": {
+                            "$ref": "#/definitions/api.errorBody"
+                        }
+                    }
+                }
+            },
+            "post": {
+                "security": [
+                    {
+                        "CSRFToken": []
+                    }
+                ],
+                "description": "Carries a body for the reason the single approval does.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "host keys"
+                ],
+                "summary": "Approve the host keys of several Hosts at once",
+                "parameters": [
+                    {
+                        "description": "The Hosts and fingerprints being approved, and the account password",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/api.hostKeyApprovals"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/models.Response"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "data": {
+                                            "$ref": "#/definitions/api.hostKeyApprovalsDone"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "400": {
+                        "description": "A fingerprint does not match the one waiting",
+                        "schema": {
+                            "$ref": "#/definitions/api.errorBody"
+                        }
+                    },
+                    "401": {
+                        "description": "The password does not open this account",
+                        "schema": {
+                            "$ref": "#/definitions/api.errorBody"
+                        }
+                    }
+                }
+            }
+        },
+        "/host/{id}": {
+            "get": {
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "hosts"
+                ],
+                "summary": "Read one Host",
+                "parameters": [
+                    {
+                        "type": "integer",
+                        "description": "The id of the Host",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/models.Response"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "data": {
+                                            "$ref": "#/definitions/api.hostView"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "404": {
+                        "description": "No such Host",
+                        "schema": {
+                            "$ref": "#/definitions/api.errorBody"
+                        }
+                    }
+                }
+            },
+            "put": {
+                "security": [
+                    {
+                        "CSRFToken": []
+                    }
+                ],
+                "description": "Every field is optional; enabled false stops its tunnels.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "hosts"
+                ],
+                "summary": "Update a Host",
+                "parameters": [
+                    {
+                        "type": "integer",
+                        "description": "The id of the Host",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "The fields to change",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/models.UpdateHostRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/models.Response"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "data": {
+                                            "$ref": "#/definitions/api.hostView"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "400": {
+                        "description": "The body is refused",
+                        "schema": {
+                            "$ref": "#/definitions/api.errorBody"
+                        }
+                    },
+                    "404": {
+                        "description": "No such Host",
+                        "schema": {
+                            "$ref": "#/definitions/api.errorBody"
+                        }
+                    }
+                }
+            },
+            "delete": {
+                "security": [
+                    {
+                        "CSRFToken": []
+                    }
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "hosts"
+                ],
+                "summary": "Delete a Host, and the assignments naming it",
+                "parameters": [
+                    {
+                        "type": "integer",
+                        "description": "The id of the Host",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/models.Response"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "data": {
+                                            "type": "string"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "404": {
+                        "description": "No such Host",
+                        "schema": {
+                            "$ref": "#/definitions/api.errorBody"
+                        }
+                    }
+                }
+            }
+        },
+        "/host/{id}/host-key": {
+            "post": {
+                "security": [
+                    {
+                        "CSRFToken": []
+                    }
+                ],
+                "description": "A POST carrying a body, because a Host whose trusted key is being replaced is approved with the password of the account, and a password in a URL is written to the access log and to the history of the browser.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "host keys"
+                ],
+                "summary": "Approve the host key of one Host",
+                "parameters": [
+                    {
+                        "type": "integer",
+                        "description": "The id of the Host",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "The fingerprint being approved, and the account password when a trusted key is being replaced",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/api.hostKeyApproval"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/models.Response"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "data": {
+                                            "$ref": "#/definitions/api.hostView"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "400": {
+                        "description": "The fingerprint does not match the one waiting",
+                        "schema": {
+                            "$ref": "#/definitions/api.errorBody"
+                        }
+                    },
+                    "401": {
+                        "description": "The password does not open this account",
+                        "schema": {
+                            "$ref": "#/definitions/api.errorBody"
+                        }
+                    },
+                    "404": {
+                        "description": "No such Host, or no key is waiting on it",
+                        "schema": {
+                            "$ref": "#/definitions/api.errorBody"
+                        }
+                    }
+                }
+            }
+        },
+        "/host/{id}/service-port": {
+            "get": {
+                "description": "The page is taken over the service ports and not over the assignments, so a row sits on the same page of this list and of GET /api/service-port whether the Host carries it or not.\nbind_scope is what the assignment of this Host is opened to, and is empty on a row the Host does not carry.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "assignments"
+                ],
+                "summary": "One page of the service ports, with assigned saying whether this Host carries each",
+                "parameters": [
+                    {
+                        "type": "integer",
+                        "description": "The page, counted from 1. Below 1 is read as 1, and a page past the last one is answered with the last page",
+                        "name": "page",
+                        "in": "query"
+                    },
+                    {
+                        "enum": [
+                            10,
+                            20,
+                            30,
+                            50,
+                            100
+                        ],
+                        "type": "integer",
+                        "description": "How many rows a page holds",
+                        "name": "size",
+                        "in": "query"
+                    },
+                    {
+                        "type": "integer",
+                        "description": "The id of the Host",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/models.Response"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "data": {
+                                            "allOf": [
+                                                {
+                                                    "$ref": "#/definitions/api.listPageOf"
+                                                },
+                                                {
+                                                    "type": "object",
+                                                    "properties": {
+                                                        "items": {
+                                                            "type": "array",
+                                                            "items": {
+                                                                "$ref": "#/definitions/api.hostServicePortItem"
+                                                            }
+                                                        }
+                                                    }
+                                                }
+                                            ]
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "400": {
+                        "description": "page is not a number, or size is not one of the sizes taken",
+                        "schema": {
+                            "$ref": "#/definitions/api.errorBody"
+                        }
+                    },
+                    "404": {
+                        "description": "No such Host",
+                        "schema": {
+                            "$ref": "#/definitions/api.errorBody"
+                        }
+                    }
+                }
+            },
+            "put": {
+                "security": [
+                    {
+                        "CSRFToken": []
+                    }
+                ],
+                "description": "Takes a change and not the whole set: both lists are optional, and a request that changes nothing is answered rather than refused.\nadded, removed and rescoped count the rows written and not the ids sent.\nbind_scope is what the added assignments are opened to and what the ones named in rescope are moved to: loopback, wildcard, or left out for the wildcard. An assignment that is already there is left on the scope it holds unless rescope names it.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "assignments"
+                ],
+                "summary": "Add and remove assignments of this Host",
+                "parameters": [
+                    {
+                        "type": "integer",
+                        "description": "The id of the Host",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "The service port ids to add, to remove and to move to bind_scope",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/api.hostServicePortChange"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/models.Response"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "data": {
+                                            "$ref": "#/definitions/api.hostServicePortChanged"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "400": {
+                        "description": "The same service port is in both lists, an id is not stored, or bind_scope is neither loopback nor wildcard",
+                        "schema": {
+                            "$ref": "#/definitions/api.errorBody"
+                        }
+                    },
+                    "404": {
+                        "description": "No such Host",
+                        "schema": {
+                            "$ref": "#/definitions/api.errorBody"
+                        }
+                    }
+                }
+            }
+        },
+        "/import/settings": {
+            "post": {
+                "security": [
+                    {
+                        "CSRFToken": []
+                    }
+                ],
+                "description": "It stores them and puts none of them onto the running process, api_port and api_https_enabled included. GET /api/settings reports the difference in pending_restart until the next startup.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "export and import"
+                ],
+                "summary": "Store the settings an exported settings file holds",
+                "parameters": [
+                    {
+                        "description": "The password and the file",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/api.importRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/models.Response"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "data": {
+                                            "$ref": "#/definitions/api.importedSettings"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "400": {
+                        "description": "The file does not open, or its settings do not pass the rules of the Settings screen",
+                        "schema": {
+                            "$ref": "#/definitions/api.errorBody"
+                        }
+                    }
+                }
+            }
+        },
+        "/import/tunnels": {
+            "post": {
+                "security": [
+                    {
+                        "CSRFToken": []
+                    }
+                ],
+                "description": "Adds what is not registered here and skips what is, naming in the answer what it skipped and why. Send the same file again with overwrite true to replace those rows instead.\nThe whole import is one transaction: a file that is refused half way through leaves the database exactly as it was.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "export and import"
+                ],
+                "summary": "Write what an exported tunnels file holds",
+                "parameters": [
+                    {
+                        "description": "The password, the file and whether to overwrite",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/api.importRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/models.Response"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "data": {
+                                            "$ref": "#/definitions/api.importedTunnels"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "400": {
+                        "description": "The password is wrong, the file is damaged, it is not a file this program wrote, or it holds the other kind",
+                        "schema": {
+                            "$ref": "#/definitions/api.errorBody"
+                        }
+                    }
+                }
+            }
+        },
+        "/login": {
+            "post": {
+                "description": "Takes username and password, sets the session and CSRF cookies, and answers with setup_required and csrf_token.\nOn the very first sign in the username is empty and the password is the one in the initial-password file.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "account"
+                ],
+                "summary": "Log in",
+                "parameters": [
+                    {
+                        "description": "The username and the password",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/api.loginRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/models.Response"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "data": {
+                                            "$ref": "#/definitions/api.loginResponse"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "400": {
+                        "description": "The body could not be read",
+                        "schema": {
+                            "$ref": "#/definitions/api.errorBody"
+                        }
+                    },
+                    "401": {
+                        "description": "Invalid username or password",
+                        "schema": {
+                            "$ref": "#/definitions/api.errorBody"
+                        }
+                    },
+                    "429": {
+                        "description": "Too many failed attempts: the login is held",
+                        "schema": {
+                            "$ref": "#/definitions/api.errorBody"
+                        }
+                    }
+                }
+            }
+        },
+        "/logout": {
+            "post": {
+                "security": [
+                    {
+                        "CSRFToken": []
+                    }
+                ],
+                "description": "Drops the session and expires both cookies.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "account"
+                ],
+                "summary": "Log out",
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/models.Response"
+                        }
+                    },
+                    "403": {
+                        "description": "The request carries no valid X-CSRF-Token header",
+                        "schema": {
+                            "$ref": "#/definitions/api.errorBody"
+                        }
+                    }
+                }
+            }
+        },
+        "/logs": {
+            "get": {
+                "description": "The file is read from the end, so read stays small however large the file is.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "logs"
+                ],
+                "summary": "The end of the log file",
+                "parameters": [
+                    {
+                        "type": "integer",
+                        "description": "How many lines, up to 2000",
+                        "name": "lines",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/models.Response"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "data": {
+                                            "$ref": "#/definitions/api.logsAnswer"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    }
+                }
+            }
+        },
+        "/logs/clear": {
+            "post": {
+                "security": [
+                    {
+                        "CSRFToken": []
+                    }
+                ],
+                "description": "Takes the account password, and leaves the rotated files beside it alone.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "logs"
+                ],
+                "summary": "Empty the file the log is being written to",
+                "parameters": [
+                    {
+                        "description": "The account password",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/api.logsClearRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/models.Response"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "data": {
+                                            "$ref": "#/definitions/api.logsClearedAnswer"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "401": {
+                        "description": "The password does not open this account",
+                        "schema": {
+                            "$ref": "#/definitions/api.errorBody"
+                        }
+                    }
+                }
+            }
+        },
+        "/restart": {
+            "get": {
+                "description": "How long before the service goes and whether it comes back on its own.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "restart"
+                ],
+                "summary": "What a restart would do here",
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/models.Response"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "data": {
+                                            "$ref": "#/definitions/api.restartView"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    }
+                }
+            },
+            "post": {
+                "security": [
+                    {
+                        "CSRFToken": []
+                    }
+                ],
+                "description": "Where the platform has exec. The answer is written before the process goes.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "restart"
+                ],
+                "summary": "Take the service down in order and run the program again in place of this process",
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/models.Response"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "data": {
+                                            "$ref": "#/definitions/api.restartView"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "409": {
+                        "description": "This build cannot restart itself",
+                        "schema": {
+                            "$ref": "#/definitions/api.errorBody"
+                        }
+                    }
+                }
+            }
+        },
+        "/service-port": {
+            "get": {
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "service ports"
+                ],
+                "summary": "One page of the service ports, oldest first",
+                "parameters": [
+                    {
+                        "type": "integer",
+                        "description": "The page, counted from 1. Below 1 is read as 1, and a page past the last one is answered with the last page",
+                        "name": "page",
+                        "in": "query"
+                    },
+                    {
+                        "enum": [
+                            10,
+                            20,
+                            30,
+                            50,
+                            100
+                        ],
+                        "type": "integer",
+                        "description": "How many rows a page holds",
+                        "name": "size",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/models.Response"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "data": {
+                                            "allOf": [
+                                                {
+                                                    "$ref": "#/definitions/api.listPageOf"
+                                                },
+                                                {
+                                                    "type": "object",
+                                                    "properties": {
+                                                        "items": {
+                                                            "type": "array",
+                                                            "items": {
+                                                                "$ref": "#/definitions/models.ServicePort"
+                                                            }
+                                                        }
+                                                    }
+                                                }
+                                            ]
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "400": {
+                        "description": "page is not a number, or size is not one of the sizes taken",
+                        "schema": {
+                            "$ref": "#/definitions/api.errorBody"
+                        }
+                    }
+                }
+            },
+            "post": {
+                "security": [
+                    {
+                        "CSRFToken": []
+                    }
+                ],
+                "description": "assign_to_all_hosts is optional: left out, every stored Host is given it, and sent as false it is registered carried by none.\nbind_scope is what the assignments it makes are opened to: loopback, wildcard, or left out for the wildcard.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "service ports"
+                ],
+                "summary": "Register a service port",
+                "parameters": [
+                    {
+                        "description": "The service port to register",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/models.CreateServicePortRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/models.Response"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "data": {
+                                            "$ref": "#/definitions/models.ServicePort"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "400": {
+                        "description": "The body is refused, or the local port is already taken",
+                        "schema": {
+                            "$ref": "#/definitions/api.errorBody"
+                        }
+                    }
+                }
+            }
+        },
+        "/service-port/{id}": {
+            "get": {
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "service ports"
+                ],
+                "summary": "Read one service port",
+                "parameters": [
+                    {
+                        "type": "integer",
+                        "description": "The id of the service port",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/models.Response"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "data": {
+                                            "$ref": "#/definitions/models.ServicePort"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "404": {
+                        "description": "No such service port",
+                        "schema": {
+                            "$ref": "#/definitions/api.errorBody"
+                        }
+                    }
+                }
+            },
+            "put": {
+                "security": [
+                    {
+                        "CSRFToken": []
+                    }
+                ],
+                "description": "service_ip, service_port and local_port are all required.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "service ports"
+                ],
+                "summary": "Update a service port",
+                "parameters": [
+                    {
+                        "type": "integer",
+                        "description": "The id of the service port",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "The service port as it should stand",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/models.CreateServicePortRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/models.Response"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "data": {
+                                            "$ref": "#/definitions/models.ServicePort"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "400": {
+                        "description": "The body is refused, or the local port is already taken",
+                        "schema": {
+                            "$ref": "#/definitions/api.errorBody"
+                        }
+                    },
+                    "404": {
+                        "description": "No such service port",
+                        "schema": {
+                            "$ref": "#/definitions/api.errorBody"
+                        }
+                    }
+                }
+            },
+            "delete": {
+                "security": [
+                    {
+                        "CSRFToken": []
+                    }
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "service ports"
+                ],
+                "summary": "Delete a service port, and the assignments naming it",
+                "parameters": [
+                    {
+                        "type": "integer",
+                        "description": "The id of the service port",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/models.Response"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "data": {
+                                            "type": "string"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "404": {
+                        "description": "No such service port",
+                        "schema": {
+                            "$ref": "#/definitions/api.errorBody"
+                        }
+                    }
+                }
+            }
+        },
+        "/settings": {
+            "get": {
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "settings"
+                ],
+                "summary": "The stored settings, and in pending_restart the ones this process is not running on",
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/models.Response"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "data": {
+                                            "$ref": "#/definitions/api.settingsView"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    }
+                }
+            },
+            "put": {
+                "security": [
+                    {
+                        "CSRFToken": []
+                    }
+                ],
+                "description": "Answers with what changed and whether a restart is needed. logging.level is the one setting this process takes on without being started again.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "settings"
+                ],
+                "summary": "Store the settings in the body over the stored ones",
+                "parameters": [
+                    {
+                        "description": "The settings as they should stand",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/settings.Settings"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/models.Response"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "data": {
+                                            "$ref": "#/definitions/api.settingsSaved"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "400": {
+                        "description": "A setting broke one of the rules. Nothing was stored",
+                        "schema": {
+                            "$ref": "#/definitions/api.errorBody"
+                        }
+                    }
+                }
+            }
+        },
+        "/setup": {
+            "get": {
+                "description": "Answers without a session, for the login screen.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "account"
+                ],
+                "summary": "Whether the account still needs a username and a password",
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/models.Response"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "data": {
+                                            "$ref": "#/definitions/api.setupState"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    }
+                }
+            },
+            "post": {
+                "security": [
+                    {
+                        "CSRFToken": []
+                    }
+                ],
+                "description": "Sets the username and the password once, on the account that still needs them.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "account"
+                ],
+                "summary": "Finish the account setup",
+                "parameters": [
+                    {
+                        "description": "The username and the password to set",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/api.setupRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/models.Response"
+                        }
+                    },
+                    "400": {
+                        "description": "The password is too short or too long",
+                        "schema": {
+                            "$ref": "#/definitions/api.errorBody"
+                        }
+                    },
+                    "403": {
+                        "description": "The setup is already done, or no valid X-CSRF-Token header",
+                        "schema": {
+                            "$ref": "#/definitions/api.errorBody"
+                        }
+                    }
+                }
+            }
+        },
+        "/status": {
+            "get": {
+                "description": "The three counts are over every row and not over the page: they say what the installation is doing, not what is on the page being looked at.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "status"
+                ],
+                "summary": "The counts of the installation and one page of the tunnel rows",
+                "parameters": [
+                    {
+                        "type": "integer",
+                        "description": "The page, counted from 1. Below 1 is read as 1, and a page past the last one is answered with the last page",
+                        "name": "page",
+                        "in": "query"
+                    },
+                    {
+                        "enum": [
+                            10,
+                            20,
+                            30,
+                            50,
+                            100
+                        ],
+                        "type": "integer",
+                        "description": "How many rows a page holds",
+                        "name": "size",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "counts, and tunnels holding one page of the tunnel rows",
+                        "schema": {
+                            "$ref": "#/definitions/models.Response"
+                        }
+                    },
+                    "400": {
+                        "description": "page is not a number, or size is not one of the sizes taken",
+                        "schema": {
+                            "$ref": "#/definitions/api.errorBody"
+                        }
+                    }
+                }
+            }
+        },
+        "/status/{hostId}": {
+            "get": {
+                "description": "Not paged: a Host holds one tunnel per service port it carries.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "status"
+                ],
+                "summary": "The Host and the tunnels of that Host",
+                "parameters": [
+                    {
+                        "type": "integer",
+                        "description": "The id of the Host",
+                        "name": "hostId",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "host, total_tunnels, connected_tunnels and tunnels",
+                        "schema": {
+                            "$ref": "#/definitions/models.Response"
+                        }
+                    },
+                    "404": {
+                        "description": "No such Host",
+                        "schema": {
+                            "$ref": "#/definitions/api.errorBody"
+                        }
+                    }
+                }
+            }
+        },
+        "/uninstall": {
+            "post": {
+                "security": [
+                    {
+                        "CSRFToken": []
+                    }
+                ],
+                "description": "Takes the account password. The tunnels come down, the files this installation is made of are removed, and the answer is written before the process goes.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "uninstall"
+                ],
+                "summary": "Remove the installation and end the process",
+                "parameters": [
+                    {
+                        "description": "The account password",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/api.uninstallRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/models.Response"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "data": {
+                                            "$ref": "#/definitions/api.uninstallResult"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "401": {
+                        "description": "The password does not open this account. Nothing was stopped and nothing was removed",
+                        "schema": {
+                            "$ref": "#/definitions/api.errorBody"
+                        }
+                    }
+                }
+            }
+        },
+        "/update": {
+            "get": {
+                "description": "The version running, the newest release, whether it is newer, and whether an install can be started from here.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "update"
+                ],
+                "summary": "What the last look for a newer release found",
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/models.Response"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "data": {
+                                            "$ref": "#/definitions/api.updateView"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    }
+                }
+            }
+        },
+        "/update/check": {
+            "post": {
+                "security": [
+                    {
+                        "CSRFToken": []
+                    }
+                ],
+                "description": "Answers what GET /api/update would then answer. A POST because it makes a request to another host, which is not a thing a link or a prefetch may set off.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "update"
+                ],
+                "summary": "Read the newest release now",
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/models.Response"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "data": {
+                                            "$ref": "#/definitions/api.updateView"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    }
+                }
+            }
+        },
+        "/update/install": {
+            "post": {
+                "security": [
+                    {
+                        "CSRFToken": []
+                    }
+                ],
+                "description": "Takes the account password. It answers that the install started and never that it finished: what the install ends with is a restart of the service answering the request.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "update"
+                ],
+                "summary": "Start the install of the newest release",
+                "parameters": [
+                    {
+                        "description": "The account password",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/api.updateInstallRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/models.Response"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "data": {
+                                            "$ref": "#/definitions/api.updateView"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "401": {
+                        "description": "The password does not open this account",
+                        "schema": {
+                            "$ref": "#/definitions/api.errorBody"
+                        }
+                    },
+                    "409": {
+                        "description": "There is nothing newer, or this build cannot install one",
+                        "schema": {
+                            "$ref": "#/definitions/api.errorBody"
+                        }
+                    }
+                }
+            }
+        }
+    },
+    "definitions": {
+        "api.accountChanged": {
+            "type": "object",
+            "properties": {
+                "password_changed": {
+                    "type": "boolean"
+                },
+                "sessions_ended": {
+                    "type": "integer"
+                },
+                "username": {
+                    "type": "string"
+                },
+                "username_changed": {
+                    "type": "boolean"
+                }
+            }
+        },
+        "api.accountRequest": {
+            "type": "object",
+            "properties": {
+                "current_password": {
+                    "type": "string"
+                },
+                "new_password": {
+                    "type": "string"
+                },
+                "username": {
+                    "type": "string"
+                }
+            }
+        },
+        "api.accountView": {
+            "type": "object",
+            "properties": {
+                "username": {
+                    "type": "string"
+                }
+            }
+        },
+        "api.certificateInstall": {
+            "type": "object",
+            "properties": {
+                "cert_pem": {
+                    "type": "string"
+                },
+                "key_pem": {
+                    "type": "string"
+                }
+            }
+        },
+        "api.certificateReplaced": {
+            "type": "object",
+            "properties": {
+                "certificate": {
+                    "$ref": "#/definitions/api.certificateView"
+                },
+                "note": {
+                    "type": "string"
+                },
+                "note_code": {
+                    "description": "NoteCode names the note, so that a screen says it in the language it is\ndrawn in instead of showing the English above.",
+                    "type": "string"
+                },
+                "previous_fingerprint_sha256": {
+                    "type": "string"
+                },
+                "warning": {
+                    "description": "Warning is what is wrong with a certificate that was stored anyway, or \"\"\nwhen there is nothing to say. Install fills it for a certificate whose\nvalidity has not started yet.",
+                    "type": "string"
+                },
+                "warning_args": {
+                    "$ref": "#/definitions/api.textArgs"
+                },
+                "warning_code": {
+                    "description": "WarningCode names that warning and WarningArgs holds the value written\ninto it. Both are left out where there is no warning, and the code is\nleft out for a warning this file has no name for, which is the case the\nscreen shows the English sentence for.",
+                    "type": "string"
+                }
+            }
+        },
+        "api.certificateView": {
+            "type": "object",
+            "properties": {
+                "cert_pem": {
+                    "description": "CertPEM is here so that an operator can take the self-signed certificate\ninto the trust store of a machine without going to the database for it.\nIt is what the server hands to every client during the handshake anyway.",
+                    "type": "string"
+                },
+                "days_remaining": {
+                    "type": "integer"
+                },
+                "fingerprint_sha256": {
+                    "type": "string"
+                },
+                "hosts": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "issuer": {
+                    "type": "string"
+                },
+                "not_after": {
+                    "type": "string"
+                },
+                "not_before": {
+                    "type": "string"
+                },
+                "self_signed": {
+                    "type": "boolean"
+                },
+                "subject": {
+                    "type": "string"
+                }
+            }
+        },
+        "api.errorArgs": {
+            "type": "object",
+            "additionalProperties": {
+                "type": "string"
+            }
+        },
+        "api.errorBody": {
+            "type": "object",
+            "properties": {
+                "data": {},
+                "error": {
+                    "type": "string"
+                },
+                "error_args": {
+                    "$ref": "#/definitions/api.errorArgs"
+                },
+                "error_code": {
+                    "$ref": "#/definitions/api.errorCode"
+                },
+                "success": {
+                    "type": "boolean"
+                }
+            }
+        },
+        "api.errorCode": {
+            "type": "string",
+            "enum": [
+                "unspecified",
+                "request.body.invalid",
+                "request.validation.failed",
+                "db.transaction.begin_failed",
+                "db.transaction.commit_failed",
+                "list.page.not_a_number",
+                "list.size.unsupported",
+                "auth.session.required",
+                "auth.csrf.refused",
+                "auth.credentials.invalid",
+                "auth.session.create_failed",
+                "auth.setup.required",
+                "auth.setup.already_done",
+                "auth.setup.failed",
+                "auth.password.too_short",
+                "auth.password.too_long",
+                "auth.attempts.too_many",
+                "auth.password_attempts.too_many",
+                "account.read_failed",
+                "account.store_failed",
+                "account.password.hash_failed",
+                "account.username.empty",
+                "account.request.invalid",
+                "account.nothing_to_change",
+                "account.current_password.wrong",
+                "account.username.unchanged",
+                "account.new_password.unchanged",
+                "account.new_password.too_short",
+                "account.new_password.too_long",
+                "host.id.invalid",
+                "host.not_found",
+                "host.fetch_failed",
+                "host.list_failed",
+                "host.create_failed",
+                "host.update_failed",
+                "host.delete_failed",
+                "host.password.encrypt_failed",
+                "host.private_key.encrypt_failed",
+                "host.create.no_login",
+                "host.create.key_refused",
+                "host.create.service_ports_read_failed",
+                "host.create.service_ports_store_failed",
+                "host.update.key_refused",
+                "host.update.passphrase_without_key",
+                "host.host_key.nothing_to_approve",
+                "host.host_key.fingerprint_changed",
+                "host.host_key.password_wrong",
+                "service_port.id.invalid",
+                "service_port.not_found",
+                "service_port.fetch_failed",
+                "service_port.list_failed",
+                "service_port.create_failed",
+                "service_port.update_failed",
+                "service_port.delete_failed",
+                "service_port.create.hosts_read_failed",
+                "service_port.create.hosts_store_failed",
+                "assignment.add_and_remove",
+                "assignment.service_port.not_found",
+                "assignment.update_failed",
+                "status.desired_count_failed",
+                "status.fetch_failed",
+                "settings.read_failed",
+                "settings.store_failed",
+                "settings.refused",
+                "settings.ui_language.unsupported",
+                "certificate.https_off",
+                "certificate.served.read_failed",
+                "certificate.renew_failed",
+                "certificate.install.refused",
+                "certificate.store_failed",
+                "certificate.read_back_failed",
+                "logs.lines.not_a_number",
+                "logs.lines.below_one",
+                "logs.file.not_configured",
+                "logs.file.missing",
+                "logs.file.read_failed",
+                "logs.clear.password_missing",
+                "logs.clear.password_wrong",
+                "logs.clear.failed",
+                "update.check_failed",
+                "update.not_installable",
+                "update.password_missing",
+                "update.password_wrong",
+                "update.install_failed",
+                "export.password.required",
+                "export.password.too_short",
+                "export.password.too_long",
+                "export.hosts.read_failed",
+                "export.service_ports.read_failed",
+                "export.assignments.read_failed",
+                "export.host.secrets_unreadable",
+                "export.seal_failed",
+                "import.file.missing",
+                "import.password.required",
+                "import.file.not_an_export",
+                "import.file.damaged",
+                "import.password.wrong",
+                "import.file.open_failed",
+                "import.file.not_ours",
+                "import.file.wrong_kind",
+                "import.file.newer_format",
+                "import.file.newer_format_by",
+                "import.file.empty",
+                "import.tunnels.unreadable",
+                "import.host.refused",
+                "import.host.no_login",
+                "import.hosts.read_failed",
+                "import.host.password_encrypt_failed",
+                "import.host.key_refused",
+                "import.host.private_key_encrypt_failed",
+                "import.host.replace_failed",
+                "import.host.create_failed",
+                "import.service_port.refused",
+                "import.service_ports.read_failed",
+                "import.service_port.create_failed",
+                "import.service_port.two_rows",
+                "import.service_port.replace_failed",
+                "import.assignments.host_read_failed",
+                "import.assignments.clear_failed",
+                "import.assignments.store_failed",
+                "import.settings.unreadable",
+                "import.settings.refused",
+                "uninstall.password.wrong"
+            ],
+            "x-enum-varnames": [
+                "errorCodeUnspecified",
+                "errRequestBodyInvalid",
+                "errRequestValidationFailed",
+                "errTransactionBeginFailed",
+                "errTransactionCommitFailed",
+                "errListPageNotANumber",
+                "errListSizeUnsupported",
+                "errAuthRequired",
+                "errAuthCSRFRefused",
+                "errAuthCredentialsInvalid",
+                "errAuthSessionCreateFailed",
+                "errAuthSetupRequired",
+                "errAuthSetupAlreadyDone",
+                "errAuthSetupFailed",
+                "errAuthPasswordTooShort",
+                "errAuthPasswordTooLong",
+                "errAuthTooManyAttempts",
+                "errAuthPasswordTooManyAttempts",
+                "errAccountReadFailed",
+                "errAccountStoreFailed",
+                "errAccountHashFailed",
+                "errAccountUsernameEmpty",
+                "errAccountRequestInvalid",
+                "errAccountNothingToChange",
+                "errAccountPasswordWrong",
+                "errAccountUsernameUnchanged",
+                "errAccountPasswordUnchanged",
+                "errAccountNewPasswordShort",
+                "errAccountNewPasswordLong",
+                "errHostIDInvalid",
+                "errHostNotFound",
+                "errHostFetchFailed",
+                "errHostListFailed",
+                "errHostCreateFailed",
+                "errHostUpdateFailed",
+                "errHostDeleteFailed",
+                "errHostPasswordEncryptFailed",
+                "errHostKeyEncryptFailed",
+                "errHostCreateNoLogin",
+                "errHostCreateKeyRefused",
+                "errHostCreateServicePortsRead",
+                "errHostCreateServicePortsStore",
+                "errHostUpdateKeyRefused",
+                "errHostUpdatePassphraseAlone",
+                "errHostKeyNothingToApprove",
+                "errHostKeyFingerprintChanged",
+                "errHostKeyPasswordWrong",
+                "errServicePortIDInvalid",
+                "errServicePortNotFound",
+                "errServicePortFetchFailed",
+                "errServicePortListFailed",
+                "errServicePortCreateFailed",
+                "errServicePortUpdateFailed",
+                "errServicePortDeleteFailed",
+                "errServicePortCreateHostsRead",
+                "errServicePortCreateHostsStore",
+                "errAssignmentAddAndRemove",
+                "errAssignmentServicePortsMissing",
+                "errAssignmentUpdateFailed",
+                "errStatusDesiredCountFailed",
+                "errStatusFetchFailed",
+                "errSettingsReadFailed",
+                "errSettingsStoreFailed",
+                "errSettingsRefused",
+                "errSettingsLanguageUnsupported",
+                "errCertificateHTTPSOff",
+                "errCertificateServedUnread",
+                "errCertificateRenewFailed",
+                "errCertificateInstallRefused",
+                "errCertificateStoreFailed",
+                "errCertificateReadBackFailed",
+                "errLogsLinesNotANumber",
+                "errLogsLinesBelowOne",
+                "errLogsFileNotConfigured",
+                "errLogsFileMissing",
+                "errLogsFileReadFailed",
+                "errLogsClearPasswordMissing",
+                "errLogsClearPasswordWrong",
+                "errLogsClearFailed",
+                "errUpdateCheckFailed",
+                "errUpdateNotInstallable",
+                "errUpdatePasswordMissing",
+                "errUpdatePasswordWrong",
+                "errUpdateInstallFailed",
+                "errExportPasswordRequired",
+                "errExportPasswordTooShort",
+                "errExportPasswordTooLong",
+                "errExportHostsReadFailed",
+                "errExportServicePortsRead",
+                "errExportAssignmentsRead",
+                "errExportHostSecretsSealed",
+                "errExportSealFailed",
+                "errImportFileMissing",
+                "errImportPasswordRequired",
+                "errImportFileNotAnExport",
+                "errImportFileDamaged",
+                "errImportPasswordWrong",
+                "errImportFileOpenFailed",
+                "errImportFileNotOurs",
+                "errImportFileWrongKind",
+                "errImportFileNewerFormat",
+                "errImportFileNewerFormatBy",
+                "errImportFileEmpty",
+                "errImportTunnelsUnreadable",
+                "errImportHostRefused",
+                "errImportHostNoLogin",
+                "errImportHostsReadFailed",
+                "errImportHostPasswordEncrypt",
+                "errImportHostKeyRefused",
+                "errImportHostKeyEncrypt",
+                "errImportHostReplaceFailed",
+                "errImportHostCreateFailed",
+                "errImportServicePortRefused",
+                "errImportServicePortsReadFailed",
+                "errImportServicePortCreate",
+                "errImportServicePortTwoRows",
+                "errImportServicePortReplace",
+                "errImportAssignmentsHostRead",
+                "errImportAssignmentsClearFailed",
+                "errImportAssignmentsStoreFailed",
+                "errImportSettingsUnreadable",
+                "errImportSettingsRefused",
+                "errUninstallPasswordWrong"
+            ]
+        },
+        "api.exportRequest": {
+            "type": "object",
+            "properties": {
+                "password": {
+                    "type": "string"
+                }
+            }
+        },
+        "api.exportedSettings": {
+            "type": "object",
+            "properties": {
+                "exported_at": {
+                    "type": "string"
+                },
+                "file": {
+                    "type": "string"
+                },
+                "kind": {
+                    "type": "string"
+                }
+            }
+        },
+        "api.exportedTunnels": {
+            "type": "object",
+            "properties": {
+                "exported_at": {
+                    "type": "string"
+                },
+                "file": {
+                    "type": "string"
+                },
+                "hosts": {
+                    "type": "integer"
+                },
+                "kind": {
+                    "type": "string"
+                },
+                "service_ports": {
+                    "type": "integer"
+                }
+            }
+        },
+        "api.hostKeyApproval": {
+            "type": "object",
+            "properties": {
+                "fingerprint": {
+                    "type": "string"
+                },
+                "password": {
+                    "type": "string"
+                }
+            }
+        },
+        "api.hostKeyApprovalOf": {
+            "type": "object",
+            "properties": {
+                "fingerprint": {
+                    "type": "string"
+                },
+                "host_id": {
+                    "type": "integer"
+                }
+            }
+        },
+        "api.hostKeyApprovalResult": {
+            "type": "object",
+            "properties": {
+                "approved": {
+                    "type": "boolean"
+                },
+                "error": {
+                    "type": "string"
+                },
+                "error_args": {
+                    "$ref": "#/definitions/api.errorArgs"
+                },
+                "error_code": {
+                    "$ref": "#/definitions/api.errorCode"
+                },
+                "fingerprint": {
+                    "type": "string"
+                },
+                "host_id": {
+                    "type": "integer"
+                }
+            }
+        },
+        "api.hostKeyApprovals": {
+            "type": "object",
+            "properties": {
+                "hosts": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/api.hostKeyApprovalOf"
+                    }
+                },
+                "password": {
+                    "type": "string"
+                }
+            }
+        },
+        "api.hostKeyApprovalsDone": {
+            "type": "object",
+            "properties": {
+                "approved": {
+                    "type": "integer"
+                },
+                "hosts": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/api.hostKeyApprovalResult"
+                    }
+                },
+                "refused": {
+                    "type": "integer"
+                }
+            }
+        },
+        "api.hostKeyWaiting": {
+            "type": "object",
+            "properties": {
+                "fingerprint": {
+                    "type": "string"
+                },
+                "host_id": {
+                    "type": "integer"
+                },
+                "ip": {
+                    "type": "string"
+                },
+                "mismatch": {
+                    "type": "boolean"
+                },
+                "trusted_fingerprint": {
+                    "type": "string"
+                }
+            }
+        },
+        "api.hostServicePortChange": {
+            "type": "object",
+            "properties": {
+                "add": {
+                    "type": "array",
+                    "items": {
+                        "type": "integer"
+                    }
+                },
+                "bind_scope": {
+                    "description": "BindScope is what the assignments this change writes are opened to, and\nwhat the ones named in Rescope are moved to. An empty value is the\nwildcard, the way it is on the column itself, so a client written before\nthe field existed writes what it always wrote.",
+                    "type": "string",
+                    "enum": [
+                        "loopback",
+                        "wildcard"
+                    ]
+                },
+                "remove": {
+                    "type": "array",
+                    "items": {
+                        "type": "integer"
+                    }
+                },
+                "rescope": {
+                    "description": "Rescope names the assignments to move to BindScope, which is how one is\nchanged without being taken away and put back: an identifier on its own\nis the row edited by itself, and several of them are the scope applied\nto everything that was ticked.\n\nIt is a list of its own rather than Add doing the moving, because Add\nleaves an assignment that is already there exactly as it is. Read the\nother way, a client that ticks a box which was ticked already, or one\nwritten before any of this existed, would widen to the wildcard an\nassignment somebody had pinned to loopback, and a reach given away by a\nrequest that did not mention it is the one thing this must not do.\n\nAn identifier here that the Host does not carry moves nothing, the way\nRemove takes no row that is not there. What the answer reports is rows\nand not identifiers.",
+                    "type": "array",
+                    "items": {
+                        "type": "integer"
+                    }
+                }
+            }
+        },
+        "api.hostServicePortChanged": {
+            "type": "object",
+            "properties": {
+                "added": {
+                    "type": "integer"
+                },
+                "removed": {
+                    "type": "integer"
+                },
+                "rescoped": {
+                    "description": "Rescoped is how many assignments were moved to the scope the change\nnamed, counted over the rows for the same reason: an identifier naming a\nservice port this Host does not carry moves nothing.",
+                    "type": "integer"
+                }
+            }
+        },
+        "api.hostServicePortItem": {
+            "type": "object",
+            "properties": {
+                "assigned": {
+                    "type": "boolean"
+                },
+                "bind_scope": {
+                    "description": "BindScope is what the assignment of this Host is opened to, and is the\nempty value on a row the Host does not carry: the scope is held by the\nassignment, so a service port that is not assigned has none. The empty\nvalue is the wildcard wherever it is stored, which is what the row this\nscreen would make carries until something else is chosen.",
+                    "type": "string"
+                },
+                "created_at": {
+                    "type": "string"
+                },
+                "description": {
+                    "type": "string"
+                },
+                "id": {
+                    "type": "integer"
+                },
+                "local_port": {
+                    "type": "integer"
+                },
+                "service_ip": {
+                    "type": "string"
+                },
+                "service_port": {
+                    "type": "integer"
+                },
+                "updated_at": {
+                    "type": "string"
+                }
+            }
+        },
+        "api.hostView": {
+            "type": "object",
+            "properties": {
+                "created_at": {
+                    "type": "string"
+                },
+                "description": {
+                    "type": "string"
+                },
+                "enabled": {
+                    "type": "boolean"
+                },
+                "host_key_fingerprint": {
+                    "description": "HostKeyFingerprint is the fingerprint of the key this Host is trusted\non, and is empty for one that has never been approved.\n\nPendingHostKeyFingerprint is the fingerprint of the key the SSH server\npresented on a connection that was refused, and is empty when there is\nnothing waiting. The two are next to each other because the question the\noperator answers is a comparison of them: a Host that carries both was\npresented a key other than the one it is trusted on.",
+                    "type": "string"
+                },
+                "id": {
+                    "type": "integer"
+                },
+                "ip": {
+                    "type": "string"
+                },
+                "pending_host_key_fingerprint": {
+                    "type": "string"
+                },
+                "port": {
+                    "type": "integer"
+                },
+                "updated_at": {
+                    "type": "string"
+                },
+                "user": {
+                    "type": "string"
+                }
+            }
+        },
+        "api.importRequest": {
+            "type": "object",
+            "properties": {
+                "file": {
+                    "type": "string"
+                },
+                "overwrite": {
+                    "type": "boolean"
+                },
+                "password": {
+                    "type": "string"
+                }
+            }
+        },
+        "api.importedSettings": {
+            "type": "object",
+            "properties": {
+                "changes": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/api.settingsChange"
+                    }
+                },
+                "items": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/api.transferItem"
+                    }
+                },
+                "restart_required": {
+                    "type": "boolean"
+                },
+                "settings": {
+                    "$ref": "#/definitions/settings.Settings"
+                }
+            }
+        },
+        "api.importedTunnels": {
+            "type": "object",
+            "properties": {
+                "added": {
+                    "type": "integer"
+                },
+                "items": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/api.transferItem"
+                    }
+                },
+                "replaced": {
+                    "type": "integer"
+                },
+                "skipped": {
+                    "type": "integer"
+                }
+            }
+        },
+        "api.listPageOf": {
+            "type": "object",
+            "properties": {
+                "items": {},
+                "page": {
+                    "type": "integer"
+                },
+                "size": {
+                    "type": "integer"
+                },
+                "total": {
+                    "type": "integer"
+                }
+            }
+        },
+        "api.logLine": {
+            "type": "object",
+            "properties": {
+                "caller": {
+                    "type": "string"
+                },
+                "extra": {
+                    "description": "Extra is whatever the line carried besides the four fields above: the\ncontext fields of a zap line. It is kept as it was written so that no\nvalue a line reported is dropped on the way to the screen.",
+                    "type": "string"
+                },
+                "level": {
+                    "type": "string"
+                },
+                "message": {
+                    "type": "string"
+                },
+                "parsed": {
+                    "type": "boolean"
+                },
+                "raw": {
+                    "type": "string"
+                },
+                "time": {
+                    "type": "string"
+                }
+            }
+        },
+        "api.loginRequest": {
+            "type": "object",
+            "properties": {
+                "password": {
+                    "type": "string"
+                },
+                "username": {
+                    "type": "string"
+                }
+            }
+        },
+        "api.loginResponse": {
+            "type": "object",
+            "properties": {
+                "csrf_token": {
+                    "type": "string"
+                },
+                "setup_required": {
+                    "type": "boolean"
+                }
+            }
+        },
+        "api.logsAnswer": {
+            "type": "object",
+            "properties": {
+                "capped": {
+                    "description": "Capped is set when logsMaxBytes ended the walk before the asked for\nnumber of lines was found, so the screen can say that the oldest line it\nshows is not as far back as was asked for.",
+                    "type": "boolean"
+                },
+                "lines": {
+                    "description": "Lines are oldest first, the order they are in the file. The screen is the\nside that decides which end it draws first.",
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/api.logLine"
+                    }
+                },
+                "max_lines": {
+                    "type": "integer"
+                },
+                "path": {
+                    "type": "string"
+                },
+                "read": {
+                    "type": "integer"
+                },
+                "requested": {
+                    "description": "Requested is the count the read was carried out with, after the bound\nabove was applied. A screen that asked for more than logsMaxLines sees\nhere what it was cut down to.",
+                    "type": "integer"
+                },
+                "size": {
+                    "description": "Size is the length of the file, and Read is how much of it was touched to\nanswer. The two together are what says the file is not read whole.",
+                    "type": "integer"
+                }
+            }
+        },
+        "api.logsClearRequest": {
+            "type": "object",
+            "properties": {
+                "password": {
+                    "type": "string"
+                }
+            }
+        },
+        "api.logsClearedAnswer": {
+            "type": "object",
+            "properties": {
+                "path": {
+                    "type": "string"
+                }
+            }
+        },
+        "api.pendingSetting": {
+            "type": "object",
+            "properties": {
+                "name": {
+                    "type": "string"
+                },
+                "running": {
+                    "type": "string"
+                },
+                "stored": {
+                    "type": "string"
+                }
+            }
+        },
+        "api.removedFile": {
+            "type": "object",
+            "properties": {
+                "error": {
+                    "description": "Error is filled in only for a file that could not be removed.",
+                    "type": "string"
+                },
+                "path": {
+                    "type": "string"
+                },
+                "what": {
+                    "type": "string"
+                },
+                "what_code": {
+                    "description": "WhatCode names What, so that a screen says it in the language it is\ndrawn in instead of showing the English above.",
+                    "type": "string"
+                }
+            }
+        },
+        "api.restartView": {
+            "type": "object",
+            "properties": {
+                "comes_back": {
+                    "description": "ComesBack is whether this process runs this program again in place of\nitself. It is false on a platform without exec, where the restart is an\nordered stop and nothing more.",
+                    "type": "boolean"
+                },
+                "exit_in_sec": {
+                    "description": "ExitInSec is how long the process stays up after the answer. The screen\nsays it and waits it out, so the number comes from the side that decides\nit.",
+                    "type": "integer"
+                }
+            }
+        },
+        "api.settingsChange": {
+            "type": "object",
+            "properties": {
+                "applied": {
+                    "type": "string"
+                },
+                "from": {
+                    "type": "string"
+                },
+                "name": {
+                    "type": "string"
+                },
+                "to": {
+                    "type": "string"
+                }
+            }
+        },
+        "api.settingsSaved": {
+            "type": "object",
+            "properties": {
+                "changes": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/api.settingsChange"
+                    }
+                },
+                "restart_required": {
+                    "type": "boolean"
+                },
+                "settings": {
+                    "$ref": "#/definitions/settings.Settings"
+                }
+            }
+        },
+        "api.settingsView": {
+            "type": "object",
+            "properties": {
+                "api_https_enabled": {
+                    "description": "APIHTTPSEnabled is what decides whether the port above is served over\nTLS. It is stored with a column default of true so that a database\nwritten by a version that had no such column reads back as HTTPS on:\nSQLite fills the rows that are already there with the default as the\ncolumn is added, and an installation that is upgraded gets the same\nanswer a fresh one does.\n\nThe column is named here because the name gorm works out from the field\nis api_http_s_enabled: it knows HTTP as one word and leaves the S of\nHTTPS on its own.",
+                    "type": "boolean"
+                },
+                "api_port": {
+                    "type": "integer"
+                },
+                "install_dir": {
+                    "description": "InstallDir is the directory a stored path that is not absolute is read\nagainst. It is here so that the screen can say which directory that is\nrather than describe it, since what it is depends on how the service was\nstarted and the operator cannot see it from a browser.",
+                    "type": "string"
+                },
+                "logging_file_compress": {
+                    "description": "LoggingFileCompress is on by default. What it compresses is a log that\nhas already been rotated, which nothing reads again except when something\nhas gone wrong, and the text of a log is most of its size: five backups\nof 100MB come down to a fraction of that. The cost is paid once per\nrotation, on a file nobody is writing to any more.",
+                    "type": "boolean"
+                },
+                "logging_file_max_age": {
+                    "type": "integer"
+                },
+                "logging_file_max_backups": {
+                    "type": "integer"
+                },
+                "logging_file_max_size": {
+                    "type": "integer"
+                },
+                "logging_file_path": {
+                    "type": "string"
+                },
+                "logging_format": {
+                    "type": "string"
+                },
+                "logging_level": {
+                    "type": "string"
+                },
+                "monitoring_interval_sec": {
+                    "type": "integer"
+                },
+                "pending_restart": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/api.pendingSetting"
+                    }
+                },
+                "reconcile_interval_sec": {
+                    "type": "integer"
+                },
+                "security_key_file": {
+                    "type": "string"
+                },
+                "ui_default_language": {
+                    "description": "UIDefaultLanguage is the language a browser that has picked none of its\nown is shown. A browser that has picked one keeps it: the pick belongs to\nthe person reading the screen, and this is what the installation shows\neverybody else.\n\nIt is empty by default, and empty is a value rather than a gap: it means\nthis installation names no language, so a browser falls back to the one\nit asks for, which is what every browser did before this setting existed.\nDefaulting it to \"en\" would read the same way to Go and mean something\nelse entirely on screen, turning a Korean browser English at the upgrade\nthat added the column. The two cases have to be told apart, so the\nabsence is spelled as the absence.\n\nThat is also what a row written before the column existed reads back as.\nThe column carries no default, so SQLite fills such a row with NULL and\ngorm reads NULL into a string as the empty one: an installation that is\nupgraded names no language, which is the same answer a fresh one gives.\n\nThe column is named here for the reason the HTTPS one is: the name gorm\nworks out from the field is uidefault_language, because it knows UI as\none word and then runs it into what follows. Every other column is words\ndivided by underscores, and this one would be the exception nobody\nremembers when they come to write it in a query.",
+                    "type": "string"
+                },
+                "update_auto_install": {
+                    "description": "UpdateAutoInstall is whether a release that is newer is installed without\nanybody pressing anything. It is off by default, and that default is the\ndecision this setting exists to leave with the operator.\n\nWhat an install does is replace the executable and restart the service,\nwhich takes down every tunnel that is up. When that may happen is not\nsomething this program can work out: it depends on what runs over those\ntunnels and who is relying on them at the time. An operator who knows\nthat can turn this on; one who has not thought about it gets a service\nthat stays where they left it.",
+                    "type": "boolean"
+                },
+                "update_check_enabled": {
+                    "description": "UpdateCheckEnabled is whether the newest release is read on a timer. It\nis on by default: what it costs is one small answer from a public API,\nnothing is downloaded and nothing is written, and an installation that\ndoes not know a release exists is one whose operator finds out from\nsomewhere else or not at all.\n\nThe column carries its default so that an installation upgraded onto\nthis version reads back the same answer a fresh one gives.",
+                    "type": "boolean"
+                },
+                "update_check_interval_hours": {
+                    "description": "UpdateCheckIntervalHours is how often that read happens. Releases are\nnot a thing that happens by the minute, and the answer is only ever used\nto draw a line on a screen or, where the setting below is on, to start\nan install that takes the service down: a day is often enough for both\nand rare enough that nobody is rate limited for it.",
+                    "type": "integer"
+                }
+            }
+        },
+        "api.setupRequest": {
+            "type": "object",
+            "properties": {
+                "password": {
+                    "type": "string"
+                },
+                "username": {
+                    "type": "string"
+                }
+            }
+        },
+        "api.setupState": {
+            "type": "object",
+            "properties": {
+                "setup_required": {
+                    "type": "boolean"
+                }
+            }
+        },
+        "api.textArgs": {
+            "type": "object",
+            "additionalProperties": {
+                "type": "string"
+            }
+        },
+        "api.transferItem": {
+            "type": "object",
+            "properties": {
+                "action": {
+                    "type": "string"
+                },
+                "kind": {
+                    "type": "string"
+                },
+                "name": {
+                    "type": "string"
+                },
+                "reason": {
+                    "type": "string"
+                }
+            }
+        },
+        "api.uninstallRequest": {
+            "type": "object",
+            "properties": {
+                "password": {
+                    "type": "string"
+                }
+            }
+        },
+        "api.uninstallResult": {
+            "type": "object",
+            "properties": {
+                "exit_in_sec": {
+                    "description": "ExitInSec is how long the process stays up after this answer. The screen\nsays it, so the number comes from the side that waits it out.",
+                    "type": "integer"
+                },
+                "failed": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/api.removedFile"
+                    }
+                },
+                "removed": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/api.removedFile"
+                    }
+                }
+            }
+        },
+        "api.updateInstallRequest": {
+            "type": "object",
+            "properties": {
+                "password": {
+                    "type": "string"
+                }
+            }
+        },
+        "api.updateView": {
+            "type": "object",
+            "properties": {
+                "checked_at": {
+                    "description": "Checked is when the last look happened, and the three fields under it are\nwhat it found. Checked is the zero time where nothing has looked yet,\nwhich the screen draws as never rather than as 1970.",
+                    "type": "string"
+                },
+                "comparable": {
+                    "type": "boolean"
+                },
+                "installable": {
+                    "description": "Installable says whether the press that installs is offered. See the\nfield of the same name on the handler.",
+                    "type": "boolean"
+                },
+                "newer": {
+                    "type": "boolean"
+                },
+                "problem": {
+                    "description": "Problem is why the last look found nothing, empty where it worked. A\ncheck that failed is not a version that is up to date, and this is what\nkeeps the two apart on the screen.",
+                    "type": "string"
+                },
+                "tag": {
+                    "type": "string"
+                },
+                "version": {
+                    "description": "Version is what this process is running, without the leading v, the way\nthe version constant carries it.",
+                    "type": "string"
+                }
+            }
+        },
+        "models.CreateHostRequest": {
+            "type": "object",
+            "required": [
+                "ip",
+                "port",
+                "user"
+            ],
+            "properties": {
+                "assign_all_service_ports": {
+                    "description": "AssignAllServicePorts is whether the Host is to carry every service port\nthat is stored when it is registered. A Host with no assignment runs no\ntunnel at all, and carrying everything is what an installation did before\nthe assignments were rows of their own, so a request that does not\nmention the field is answered that way.\n\nIt is a pointer for the reason Enabled is: a request asking for a Host\nwith no assignments has to be told apart from one that says nothing, and\non a plain bool the two arrive the same.",
+                    "type": "boolean"
+                },
+                "bind_scope": {
+                    "description": "BindScope is what every assignment this registration makes is opened to.\nA Host is registered before anything has been said about its service\nports one at a time, so the one answer given here is what the whole batch\nstarts on, and each assignment is moved on its own afterwards on the\nassignment screen of the Host.\n\nIt is read only where those assignments are written, which is when\nAssignAllServicePorts asks for them. The Host itself holds no scope:\nthere is nowhere else for this to be kept.\n\nAn empty value is the wildcard, which is what an empty column means on\nHostServicePort above, so the rule takes a request that leaves the field\nout and refuses a word that is neither of the two.",
+                    "type": "string",
+                    "enum": [
+                        "loopback",
+                        "wildcard"
+                    ]
+                },
+                "description": {
+                    "type": "string"
+                },
+                "enabled": {
+                    "description": "Enabled is a pointer so that a Host asked for as disabled can be told\nfrom one that did not mention it. A plain bool cannot say the difference,\nand the two mean different things: the second one is enabled.",
+                    "type": "boolean"
+                },
+                "ip": {
+                    "type": "string"
+                },
+                "key_passphrase": {
+                    "type": "string"
+                },
+                "password": {
+                    "type": "string"
+                },
+                "port": {
+                    "type": "integer",
+                    "maximum": 65535,
+                    "minimum": 1
+                },
+                "private_key": {
+                    "type": "string"
+                },
+                "user": {
+                    "type": "string"
+                }
+            }
+        },
+        "models.CreateServicePortRequest": {
+            "type": "object",
+            "required": [
+                "local_port",
+                "service_ip",
+                "service_port"
+            ],
+            "properties": {
+                "assign_to_all_hosts": {
+                    "description": "AssignToAllHosts is whether every stored Host is to carry this service\nport from the moment it is registered. It is a pointer, and a request\nthat leaves it out asks for the assignments, for the reasons given on\nCreateHostRequest.AssignAllServicePorts above.",
+                    "type": "boolean"
+                },
+                "bind_scope": {
+                    "description": "BindScope is what the assignments AssignToAllHosts makes are opened to,\nthe batch of them, for the reason CreateHostRequest.BindScope carries\none.\n\nOne answer can stand for a batch that reaches every Host because the two\nwords mean the same thing on every machine. An address typed in by hand\nwould not: it would name an interface of one of them, and the rest would\nbe asked to open a port on an address they do not have.",
+                    "type": "string",
+                    "enum": [
+                        "loopback",
+                        "wildcard"
+                    ]
+                },
+                "description": {
+                    "type": "string"
+                },
+                "local_port": {
+                    "type": "integer",
+                    "maximum": 65535,
+                    "minimum": 1
+                },
+                "service_ip": {
+                    "type": "string"
+                },
+                "service_port": {
+                    "type": "integer",
+                    "maximum": 65535,
+                    "minimum": 1
+                }
+            }
+        },
+        "models.Response": {
+            "type": "object",
+            "properties": {
+                "data": {},
+                "error": {
+                    "type": "string"
+                },
+                "success": {
+                    "type": "boolean"
+                }
+            }
+        },
+        "models.ServicePort": {
+            "type": "object",
+            "properties": {
+                "created_at": {
+                    "type": "string"
+                },
+                "description": {
+                    "type": "string"
+                },
+                "id": {
+                    "type": "integer"
+                },
+                "local_port": {
+                    "type": "integer"
+                },
+                "service_ip": {
+                    "type": "string"
+                },
+                "service_port": {
+                    "type": "integer"
+                },
+                "updated_at": {
+                    "type": "string"
+                }
+            }
+        },
+        "models.UpdateHostRequest": {
+            "type": "object",
+            "properties": {
+                "description": {
+                    "type": "string"
+                },
+                "enabled": {
+                    "type": "boolean"
+                },
+                "ip": {
+                    "type": "string"
+                },
+                "key_passphrase": {
+                    "type": "string"
+                },
+                "password": {
+                    "type": "string"
+                },
+                "port": {
+                    "type": "integer",
+                    "maximum": 65535,
+                    "minimum": 1
+                },
+                "private_key": {
+                    "type": "string"
+                },
+                "user": {
+                    "type": "string"
+                }
+            }
+        },
+        "settings.Settings": {
+            "type": "object",
+            "properties": {
+                "api_https_enabled": {
+                    "description": "APIHTTPSEnabled is what decides whether the port above is served over\nTLS. It is stored with a column default of true so that a database\nwritten by a version that had no such column reads back as HTTPS on:\nSQLite fills the rows that are already there with the default as the\ncolumn is added, and an installation that is upgraded gets the same\nanswer a fresh one does.\n\nThe column is named here because the name gorm works out from the field\nis api_http_s_enabled: it knows HTTP as one word and leaves the S of\nHTTPS on its own.",
+                    "type": "boolean"
+                },
+                "api_port": {
+                    "type": "integer"
+                },
+                "logging_file_compress": {
+                    "description": "LoggingFileCompress is on by default. What it compresses is a log that\nhas already been rotated, which nothing reads again except when something\nhas gone wrong, and the text of a log is most of its size: five backups\nof 100MB come down to a fraction of that. The cost is paid once per\nrotation, on a file nobody is writing to any more.",
+                    "type": "boolean"
+                },
+                "logging_file_max_age": {
+                    "type": "integer"
+                },
+                "logging_file_max_backups": {
+                    "type": "integer"
+                },
+                "logging_file_max_size": {
+                    "type": "integer"
+                },
+                "logging_file_path": {
+                    "type": "string"
+                },
+                "logging_format": {
+                    "type": "string"
+                },
+                "logging_level": {
+                    "type": "string"
+                },
+                "monitoring_interval_sec": {
+                    "type": "integer"
+                },
+                "reconcile_interval_sec": {
+                    "type": "integer"
+                },
+                "security_key_file": {
+                    "type": "string"
+                },
+                "ui_default_language": {
+                    "description": "UIDefaultLanguage is the language a browser that has picked none of its\nown is shown. A browser that has picked one keeps it: the pick belongs to\nthe person reading the screen, and this is what the installation shows\neverybody else.\n\nIt is empty by default, and empty is a value rather than a gap: it means\nthis installation names no language, so a browser falls back to the one\nit asks for, which is what every browser did before this setting existed.\nDefaulting it to \"en\" would read the same way to Go and mean something\nelse entirely on screen, turning a Korean browser English at the upgrade\nthat added the column. The two cases have to be told apart, so the\nabsence is spelled as the absence.\n\nThat is also what a row written before the column existed reads back as.\nThe column carries no default, so SQLite fills such a row with NULL and\ngorm reads NULL into a string as the empty one: an installation that is\nupgraded names no language, which is the same answer a fresh one gives.\n\nThe column is named here for the reason the HTTPS one is: the name gorm\nworks out from the field is uidefault_language, because it knows UI as\none word and then runs it into what follows. Every other column is words\ndivided by underscores, and this one would be the exception nobody\nremembers when they come to write it in a query.",
+                    "type": "string"
+                },
+                "update_auto_install": {
+                    "description": "UpdateAutoInstall is whether a release that is newer is installed without\nanybody pressing anything. It is off by default, and that default is the\ndecision this setting exists to leave with the operator.\n\nWhat an install does is replace the executable and restart the service,\nwhich takes down every tunnel that is up. When that may happen is not\nsomething this program can work out: it depends on what runs over those\ntunnels and who is relying on them at the time. An operator who knows\nthat can turn this on; one who has not thought about it gets a service\nthat stays where they left it.",
+                    "type": "boolean"
+                },
+                "update_check_enabled": {
+                    "description": "UpdateCheckEnabled is whether the newest release is read on a timer. It\nis on by default: what it costs is one small answer from a public API,\nnothing is downloaded and nothing is written, and an installation that\ndoes not know a release exists is one whose operator finds out from\nsomewhere else or not at all.\n\nThe column carries its default so that an installation upgraded onto\nthis version reads back the same answer a fresh one gives.",
+                    "type": "boolean"
+                },
+                "update_check_interval_hours": {
+                    "description": "UpdateCheckIntervalHours is how often that read happens. Releases are\nnot a thing that happens by the minute, and the answer is only ever used\nto draw a line on a screen or, where the setting below is on, to start\nan install that takes the service down: a day is often enough for both\nand rare enough that nobody is rate limited for it.",
+                    "type": "integer"
+                }
+            }
+        }
+    },
+    "securityDefinitions": {
+        "CSRFToken": {
+            "description": "The token POST /api/login answers with, in\ndata.csrf_token. Required on every POST, PUT\nand DELETE. The session cookie goes with it and\nis sent by the browser on its own.",
+            "type": "apiKey",
+            "name": "X-CSRF-Token",
+            "in": "header"
+        }
+    }
+}

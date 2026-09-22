@@ -70,6 +70,7 @@ server, no configuration file, no directory that has to travel next to it.
 - [Updates](#updates)
 - [Uninstall](#uninstall)
 - [Calling the API from a script](#calling-the-api-from-a-script)
+- [OpenAPI and the Swagger UI](#openapi-and-the-swagger-ui)
 - [API endpoints](#api-endpoints)
 - [Reading the tunnel status](#reading-the-tunnel-status)
 - [Encryption key](#encryption-key)
@@ -1339,6 +1340,87 @@ words.
 }
 ```
 
+## OpenAPI and the Swagger UI
+
+**Open `https://<this server>:8888/ui/api-docs/` in a browser.** Every call in
+the tables below is on that page, with the fields it takes and the answers it
+gives, and the **Try it out** button on each of them sends a real request to
+this server.
+
+The page comes out of the binary, the way the screens do. Nothing is fetched
+from the network to draw it, so it comes up on a machine that reaches this
+server and nowhere else. It needs no session of its own: what it shows is the
+same for every installation and is in the reference you are reading. It is the
+calls it sends that need one.
+
+**Those calls are the real thing.** `POST /api/uninstall` on that page removes
+the installation and `DELETE /api/host/{id}` deletes the Host. There is nothing
+practising behind the button.
+
+### Logging in on that page
+
+There is no single token to paste and be done with. This API is a session cookie
+and a CSRF header, so it takes two steps.
+
+1. Find `POST /api/login`, press **Try it out**, put your username and password
+   into the body and press **Execute**. The browser keeps the cookies the answer
+   sets, exactly as it would after the login screen, and the answer shows
+   `data.csrf_token`.
+2. Copy that token, press **Authorize** at the top of the page and paste it in.
+   It goes out as an `X-CSRF-Token` header from then on.
+
+Step 1 is enough for every `GET`: the cookie is all a read needs and the browser
+sends it without being asked. Step 2 is what a `POST`, `PUT` or `DELETE` needs,
+and without it those come back `403` with `auth.csrf.refused`, which is the same
+refusal a script gets for the same reason. See
+[Calling the API from a script](#calling-the-api-from-a-script).
+
+A browser already logged in to the screens is logged in here too: same origin,
+same cookie. The token still has to go into **Authorize** by hand, and step 1 is
+the shortest way to a fresh one. It is also in the `tm_csrf` cookie
+(`__Host-tm_csrf` over HTTPS), which is why that cookie is not marked
+`HttpOnly`, while the session cookie is and no page can read it.
+
+### The description file
+
+The page is drawn from a description of every path under `/api`. It is OpenAPI
+2.0, generated from the source, committed, and built into the binary, so these
+two are the same file:
+
+| Where | What to read |
+|-------|--------------|
+| In the repository | `internal/web/static/openapi.json` |
+| From a running server | `https://<this server>:8888/ui/openapi.json` |
+
+```bash
+curl -sk https://127.0.0.1:8888/ui/openapi.json > openapi.json
+```
+
+That one needs no session either. A test in this repository fails when a route
+is registered that the description does not carry, and when the description
+carries one no route answers, so the two do not drift apart quietly.
+
+### Putting it into a tool
+
+**Postman**: *Import*, then the file. Every call arrives as a request in a
+collection. **Insomnia**: *Import From*, then *File*. Neither of them carries
+the login. Call `POST /api/login` first and the cookies stay in the client from
+then on; for a write, add the `X-CSRF-Token` header with the token that login
+answered with. The description declares that header as an API key named
+`CSRFToken`, so a tool that reads security definitions gives you a field to put
+it in.
+
+**Generating a client**: `openapi-generator` reads the file as it stands.
+
+```bash
+openapi-generator-cli generate -i openapi.json -g python -o ./client
+```
+
+What comes out knows the paths, the bodies and the answers. It does not know
+that the session lives in a cookie, so turn on the cookie jar of whatever HTTP
+library it was generated against, or every call after the login is answered
+`401`.
+
 ## API endpoints
 
 Everything under `/api` requires a session, except `POST /api/login`. Everything
@@ -1706,6 +1788,8 @@ curl -s -b cookies.txt -X POST "$BASE/api/import/tunnels" \
 | `GET` | `/ui` | Redirects to `/ui/` with a `302` |
 | `GET` | `/ui/version.json` | The version of the binary, as `{"version":"3.0.0"}` |
 | `GET` | `/ui/lang/<code>.json` | The catalog of one language, `en` to `th`; see [The language of the screens](#the-language-of-the-screens) |
+| `GET` | `/ui/openapi.json` | The OpenAPI description of `/api`; see [OpenAPI and the Swagger UI](#openapi-and-the-swagger-ui) |
+| `GET` | `/ui/api-docs/` | The Swagger UI, drawn from that description |
 | `GET` | `/ui/*` | Serves the UI out of the binary |
 
 `/ui/version.json` is answered without a session, like the rest of `/ui/`. The

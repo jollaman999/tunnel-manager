@@ -716,6 +716,41 @@ func contentSecurityPolicy(html []byte) string {
 	}, "; ")
 }
 
+// apiDocsContentSecurityPolicy is what the documentation page carries instead.
+// It is built here beside the policy above so that the two are read together,
+// and it is put on by the route that serves that page and by nothing else: the
+// screens of this product keep the policy above, and what is widened below is
+// widened for /ui/api-docs/ alone.
+//
+// Swagger UI is somebody else's code and does not come up under the policy the
+// screens run under. Each difference is a thing it does, read off the files it
+// is made of and confirmed by opening the page in a browser with the console
+// watched.
+//
+//   - script-src is 'self' and nothing else. The page names its two scripts as
+//     files rather than writing either of them inside itself, so there is no
+//     hash to list and no reason for 'unsafe-inline' to appear here, which is
+//     the one entry that would let anything at all run on this origin.
+//   - style-src has to carry 'unsafe-inline'. The bundle writes style elements
+//     into the document while it runs, and there is no hash that covers what a
+//     script writes after the page has loaded, so a policy that omits this
+//     leaves the documentation unreadable rather than unsafe.
+//   - img-src has to carry data:, because the icons of Swagger UI are written
+//     into swagger-ui.css as data URLs rather than fetched as files.
+//   - connect-src is 'self' and no more. That is what "Try it out" calls, and
+//     it reaches this server and nowhere else.
+//
+// Nothing in the list reaches off this origin. That is the point of serving
+// the files out of the binary, and the test over this policy holds it to it.
+const apiDocsContentSecurityPolicy = "default-src 'none'; " +
+	"script-src 'self'; " +
+	"style-src 'self' 'unsafe-inline'; " +
+	"img-src 'self' data:; " +
+	"connect-src 'self'; " +
+	"base-uri 'none'; " +
+	"form-action 'self'; " +
+	"frame-ancestors 'none'"
+
 // caIssuedCertificate reports whether the certificate being served was signed
 // by somebody other than itself, which is to say that the operator registered
 // one rather than letting this installation make its own.
@@ -1204,6 +1239,50 @@ func endOnServiceStop() {
 	})
 }
 
+// The general information the OpenAPI description carries. It sits above main
+// because that is the file `make openapi` points swag at, and swag reads the
+// general information from the file it was given and the operations from the
+// handlers.
+//
+// @title        Tunnel Manager API
+// @version      3.8.3
+// @description  The API the Tunnel Manager screens are built on. Every path
+// @description  below sits under /api and needs a session, except POST
+// @description  /api/login and GET /api/setup.
+// @description
+// @description  Logging in sets two cookies. Over HTTPS they are named
+// @description  __Host-tm_session and __Host-tm_csrf, and over plain HTTP they
+// @description  are tm_session and tm_csrf. A browser sends them back on its
+// @description  own, so "Try it out" on this page works as soon as you are
+// @description  logged in to the screens in the same browser.
+// @description
+// @description  Every POST, PUT and DELETE also needs the token of the session
+// @description  in an X-CSRF-Token header. POST /api/login answers with it in
+// @description  data.csrf_token; paste it into Authorize above and this page
+// @description  sends it. A GET needs no token.
+// @description
+// @description  Every answer has the same shape: {"success":true,"data":...}
+// @description  or {"success":false,"error":"..."}. An answer that says no
+// @description  carries error_code, which names the refusal and is what a
+// @description  script should match on, and error_args, the values its English
+// @description  sentence was written with.
+//
+// The licence is named and not linked. The generated file lands inside the
+// directory internal/web embeds, where TestNothingIsFetchedFromTheNetwork holds
+// every file to naming nothing outside this server, and the licence is in the
+// LICENSE file of the repository anyway.
+//
+// @license.name  Apache 2.0
+//
+// @BasePath  /api
+//
+// @securityDefinitions.apikey  CSRFToken
+// @in                          header
+// @name                        X-CSRF-Token
+// @description                 The token POST /api/login answers with, in
+// @description                 data.csrf_token. Required on every POST, PUT
+// @description                 and DELETE. The session cookie goes with it and
+// @description                 is sent by the browser on its own.
 func main() {
 	if runningAsService() {
 		// Started by a service manager that expects a protocol of it, which is
@@ -1738,6 +1817,13 @@ func serve() {
 	// the same bytes for every client and carries no data of its own, while
 	// everything it shows comes from /api/**, which stays behind the session.
 	web.RegisterRoutes(e, version)
+
+	// The API documentation goes on beside it, on the instance and not on the
+	// group, so that it is reachable without a session: it describes the login
+	// call among the rest, and a client reading it to find out how to log in
+	// has none yet. The policy it needs is built here, where every other
+	// header this server sends is decided, and it reaches that prefix alone.
+	web.RegisterAPIDocs(e, apiDocsContentSecurityPolicy)
 
 	// A server that never comes up must not end the process on the spot. The
 	// tunnels are restored by now and their rows are in the database, and
