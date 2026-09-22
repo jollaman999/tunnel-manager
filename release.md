@@ -1,3 +1,21 @@
+# v3.8.0
+
+## Add/fix features:
+
+- **An Update screen says what the newest release is.** The program knew how to install it and only from the command line, so an installation found out that a release existed from somewhere else or not at all.
+  - The screen shows what is running beside what was released. The reading is taken on a timer rather than when the screen is drawn, so opening it costs the release API nothing and two people opening it do not make two requests; a press takes the reading now.
+  - Where the release is newer, and this process is what a service registration starts, the screen offers to install it. That takes the password of the account: it replaces the executable and ends with a restart that drops every tunnel. It cannot report that it finished, because the process that would report it is the one being restarted, so it says that it started and what to look at to see that it went through.
+  - Looking is on by default. Installing without anybody asking is off by default, and turning it on says what it does: a release that appears is installed and the service restarts itself, at an hour nobody chose.
+  - A tag that cannot be read as three numbers is never treated as newer. An answer of newer is what starts an install on its own, and a version this does not understand is not grounds for replacing the executable of a running service.
+
+## Notes:
+
+- The upgrade note of v3.7.0 still holds: every Host stops until its key is approved, a stored path outside the data directory is put back to its default, and the data directory becomes 0700.
+- Installing from the screen is running this program again with `-install`, as its own process, which is the command an operator types by hand. A process that replaced its own file cannot run itself again, so the work is handed to one that has not.
+- An exported configuration carries the three update settings, the automatic install among them. A file exported from an installation that has it on turns it on wherever the file is taken in.
+- Only the Linux path of `-install` and `-uninstall` has been run. The macOS and the Windows backends are still held up by the compiler, by the vet tool for their platform, and by tests over the plist and the service configuration they produce.
+- None of the twelve translations has been read by a native speaker.
+
 # v3.7.4
 
 ## Add/fix features:
