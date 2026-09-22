@@ -198,6 +198,7 @@ func (i *transferInstall) registerHost(t *testing.T, host hostContent) models.Ho
 		PrivateKey:    privateKey,
 		KeyPassphrase: keyPassphrase,
 		HostKey:       host.HostKey,
+		BindAddress:   host.BindAddress,
 		Description:   host.Description,
 		Enabled:       host.Enabled,
 	}
@@ -217,7 +218,6 @@ func (i *transferInstall) registerServicePort(t *testing.T, sp servicePortConten
 		ServiceIP:   sp.ServiceIP,
 		ServicePort: sp.ServicePort,
 		LocalPort:   sp.LocalPort,
-		BindAddress: sp.BindAddress,
 		Description: sp.Description,
 	}
 
@@ -266,6 +266,7 @@ func twoHosts(t *testing.T) (withKey hostContent, withPassword hostContent) {
 		User:          "operator",
 		PrivateKey:    testPrivateKeyPEM(t, "the passphrase of the key"),
 		KeyPassphrase: "the passphrase of the key",
+		BindAddress:   "127.0.0.1",
 		Description:   "the Host with a key",
 		Enabled:       true,
 	}
@@ -453,8 +454,7 @@ func TestAnExportedConfigurationIsReadableOnAnotherInstallation(t *testing.T) {
 	source.registerHost(t, withKey)
 	source.registerHost(t, withPassword)
 	source.registerServicePort(t, servicePortContent{
-		ServiceIP: "192.0.2.20", ServicePort: 80, LocalPort: 18080,
-		BindAddress: "127.0.0.1", Description: "a service",
+		ServiceIP: "192.0.2.20", ServicePort: 80, LocalPort: 18080, Description: "a service",
 	})
 
 	file := source.exportTunnels(t, testExportPassword)
@@ -531,6 +531,15 @@ func TestAnExportedConfigurationIsReadableOnAnotherInstallation(t *testing.T) {
 			stored.Description != want.Description || stored.Enabled != want.Enabled {
 			t.Errorf("the Host %s came across with other fields than it was exported with", want.IP)
 		}
+
+		// The address the forwarded ports are asked for on has to come across
+		// as it was. Dropped, it would read as the wildcard, and the
+		// installation that took the file in would open on every interface of
+		// the Host what the one it came from had on loopback alone.
+		if stored.BindAddress != want.BindAddress {
+			t.Errorf("the Host %s came across bound to %q, want %q",
+				want.IP, stored.BindAddress, want.BindAddress)
+		}
 	}
 
 	var sp models.ServicePort
@@ -542,14 +551,6 @@ func TestAnExportedConfigurationIsReadableOnAnotherInstallation(t *testing.T) {
 
 	if sp.ServiceIP != "192.0.2.20" || sp.ServicePort != 80 {
 		t.Errorf("the service port came across as %s:%d", sp.ServiceIP, sp.ServicePort)
-	}
-
-	// The address the forwarded port is asked for on has to come across as it
-	// was. Dropped, it would read as the wildcard, and the installation that
-	// took the file in would open on every interface of every Host what the
-	// one it came from had on loopback alone.
-	if sp.BindAddress != "127.0.0.1" {
-		t.Errorf("the service port came across bound to %q, want %q", sp.BindAddress, "127.0.0.1")
 	}
 
 	if target.manager.count() != 1 {

@@ -107,7 +107,18 @@ type hostContent struct {
 	// would put an approval on the screen of the other installation for a key
 	// nothing there ever saw. The import drops it for the same reason:
 	// importHost.
-	HostKey     string `json:"host_key"`
+	HostKey string `json:"host_key"`
+	// BindAddress is carried because it is what the operator asked for and not
+	// what this installation made of it, the rule every other field here is
+	// under. It also decides how far every port forwarded to this Host
+	// reaches, so a file that left it out would rebuild an installation with
+	// every Host back on the wildcard, which is wider than what was exported
+	// and says nothing about having widened it.
+	//
+	// A file written before the field existed carries none, which reads back
+	// as the empty value, and the empty value is the wildcard. That is what
+	// those installations were running, so such a file imports as itself.
+	BindAddress string `json:"bind_address"`
 	Description string `json:"description"`
 	Enabled     bool   `json:"enabled"`
 	// AssignedLocalPorts is which service ports this Host carries, named by
@@ -144,17 +155,6 @@ type servicePortContent struct {
 	ServiceIP   string `json:"service_ip"`
 	ServicePort int    `json:"service_port"`
 	LocalPort   int    `json:"local_port"`
-	// BindAddress is carried because it is what the operator asked for and not
-	// what this installation made of it, the rule every other field here is
-	// under. It also decides how far the forwarded port reaches, so a file
-	// that left it out would rebuild an installation with every service port
-	// back on the wildcard, which is wider than what was exported and says
-	// nothing about having widened it.
-	//
-	// A file written before the field existed carries none, which reads back
-	// as the empty value, and the empty value is the wildcard. That is what
-	// those installations were running, so such a file imports as itself.
-	BindAddress string `json:"bind_address"`
 	Description string `json:"description"`
 }
 
@@ -704,6 +704,7 @@ func (h *TransferHandler) unsealHost(host models.Host) (hostContent, error) {
 		PrivateKey:    privateKey,
 		KeyPassphrase: keyPassphrase,
 		HostKey:       host.HostKey,
+		BindAddress:   host.BindAddress,
 		Description:   host.Description,
 		Enabled:       host.Enabled,
 	}, nil
@@ -827,7 +828,6 @@ func (h *TransferHandler) ExportTunnels(c echo.Context) error {
 			ServiceIP:   sp.ServiceIP,
 			ServicePort: sp.ServicePort,
 			LocalPort:   sp.LocalPort,
-			BindAddress: sp.BindAddress,
 			Description: sp.Description,
 		})
 	}
@@ -1006,6 +1006,7 @@ func (h *TransferHandler) importHost(c echo.Context, tx *gorm.DB, host hostConte
 		Password:      host.Password,
 		PrivateKey:    host.PrivateKey,
 		KeyPassphrase: host.KeyPassphrase,
+		BindAddress:   host.BindAddress,
 		Description:   host.Description,
 	})
 	if err != nil {
@@ -1081,6 +1082,7 @@ func (h *TransferHandler) importHost(c echo.Context, tx *gorm.DB, host hostConte
 		// something other than the imported key writes the pending key again
 		// on the next connection, with what it presents now.
 		stored.PendingHostKey = ""
+		stored.BindAddress = host.BindAddress
 		stored.Description = host.Description
 		stored.Enabled = host.Enabled
 
@@ -1103,6 +1105,7 @@ func (h *TransferHandler) importHost(c echo.Context, tx *gorm.DB, host hostConte
 		PrivateKey:    privateKey,
 		KeyPassphrase: keyPassphrase,
 		HostKey:       host.HostKey,
+		BindAddress:   host.BindAddress,
 		Description:   host.Description,
 		Enabled:       host.Enabled,
 	}
@@ -1143,7 +1146,6 @@ func (h *TransferHandler) importServicePort(c echo.Context, tx *gorm.DB, sp serv
 		ServiceIP:   sp.ServiceIP,
 		ServicePort: sp.ServicePort,
 		LocalPort:   sp.LocalPort,
-		BindAddress: sp.BindAddress,
 		Description: sp.Description,
 	})
 	if err != nil {
@@ -1180,7 +1182,6 @@ func (h *TransferHandler) importServicePort(c echo.Context, tx *gorm.DB, sp serv
 			ServiceIP:   sp.ServiceIP,
 			ServicePort: sp.ServicePort,
 			LocalPort:   sp.LocalPort,
-			BindAddress: sp.BindAddress,
 			Description: sp.Description,
 		}
 
@@ -1230,7 +1231,6 @@ func (h *TransferHandler) importServicePort(c echo.Context, tx *gorm.DB, sp serv
 	stored.ServiceIP = sp.ServiceIP
 	stored.ServicePort = sp.ServicePort
 	stored.LocalPort = sp.LocalPort
-	stored.BindAddress = sp.BindAddress
 	stored.Description = sp.Description
 
 	err = tx.Save(&stored).Error

@@ -15,8 +15,8 @@ Tunnel Manager 建立 SSH 隧道，并让它们保持连接。你注册它要登
 
 | 你注册的内容 | 字段 | 是什么 |
 |--------------|------|--------|
-| Host | `ip`、`port`、`user`、`private_key`、`key_passphrase`、`password`、`description`、`enabled` | Tunnel Manager 要登录的 SSH 服务器。可以用私钥登录，可以用密码登录，也可以两个都注册，但至少要有一个。密钥、密钥的密码和登录密码都加密保存。 |
-| 服务端口 | `service_ip`、`service_port`、`local_port`、`bind_address` | 要发布的服务，以及在负责它的每台 Host 上打开的端口。`bind_address` 是请求把那个端口开在 Host 的哪个地址上，不给就是 `0.0.0.0`。 |
+| Host | `ip`、`port`、`user`、`private_key`、`key_passphrase`、`password`、`bind_address`、`description`、`enabled` | Tunnel Manager 要登录的 SSH 服务器。可以用私钥登录，可以用密码登录，也可以两个都注册，但至少要有一个。密钥、密钥的密码和登录密码都加密保存。`bind_address` 是请求把转发端口开在这台 Host 的哪个地址上，不给就是 `0.0.0.0`。 |
+| 服务端口 | `service_ip`、`service_port`、`local_port` | 要发布的服务，以及在负责它的每台 Host 上打开的端口。 |
 | 分配关系 | `host_id`、`sp_id` | 一台 Host 配一个服务端口，表示这台 Host 负责它。隧道就是根据它建立的，你注册 Host 或服务端口时它会自动生成。 |
 
 `ip` 和 `service_ip` 都收 IPv4 或 IPv6 地址。IPv6 地址照原样写成 `2001:db8::1`，建立连接时需要
@@ -191,7 +191,7 @@ sequenceDiagram
     end
 ```
 
-请求的地址是服务端口上的 `bind_address`，没给就是 `0.0.0.0`，见[服务端口](#服务端口)。
+请求的地址是 Host 上的 `bind_address`，没给就是 `0.0.0.0`，见 [Host](#host)。
 Host 上的监听到底会不会开在那个地址上，由 Host 上的 SSH 服务器说了算。它的 `GatewayPorts`
 关闭时，不管请求的是哪个地址，监听都绑定在回环地址上，日志里会记录。隧道建立后，
 tunnel-manager 会自行测试那个转发端口，并报告结果，见
@@ -1155,7 +1155,7 @@ curl -s -b cookies.txt "$BASE/api/status?page=99999&size=10"
 
 | 方法 | 路径 | 做什么 |
 |------|------|--------|
-| `POST` | `/api/host` | 创建一台 Host。`enabled` 可以不填，未指定时 Host 为启用状态 |
+| `POST` | `/api/host` | 创建一台 Host。`enabled` 可以不填，未指定时 Host 为启用状态；`bind_address` 也可以不填，不填就是 `0.0.0.0` |
 | `GET` | `/api/host` | Host 的一页，旧的在前。收 `page` 和 `size`，见[分页](#分页) |
 | `GET` | `/api/host/:id` | 读一台 Host |
 | `PUT` | `/api/host/:id` | 更新一台 Host。每个字段都可以不填；`enabled` 为 false 会停止它的隧道 |
@@ -1171,6 +1171,7 @@ curl -s -b cookies.txt "$BASE/api/status?page=99999&size=10"
 | `private_key` | PEM 私钥文件的文本内容。给了 `password` 就可以不填 | 空的或者没发，保留已保存的密钥。发送的密钥会把已保存的密钥连同它的密码一起替换 |
 | `key_passphrase` | 只有带密码保护的密钥才要填 | 跟着它所属的密钥一起发。单独发而没有 `private_key`，会被拒绝 |
 | `password` | 给了 `private_key` 就可以不填 | 空的或者没发，保留已保存的密码 |
+| `bind_address` | 可不填。不填或发成空就是 `0.0.0.0` | 可不填；没写的保持原样。要改回通配地址，发 `0.0.0.0` |
 | `description`、`enabled` | 可不填 | 可不填 |
 | `assign_all_service_ports` | 可不填。不填的话，现存的服务端口全部分给这台 Host。发成 false 则注册一台不负责任何服务端口的 Host | 不读取。一台 Host 负责什么，通过 `PUT /api/host/:id/service-port` 修改 |
 
@@ -1179,6 +1180,27 @@ PEM、密钥有密码保护但没把密码发来、或者密码打不开这把�
 
 **任何响应里都不会有 `private_key`、`key_passphrase` 或 `password`**，包括这里的。保存的
 内容是否正确，由 Host 是否连接成功来确认，状态里有记录。
+
+**`bind_address` 是请求把转发端口开在这台 Host 的哪个地址上。**只收 IPv4 或 IPv6 地址。这个
+字符串会原样交给 Host 上的 sshd，所以写成名字就要由那边的、这边看不到的解析器去解析，解析
+不出来的名字只会一次次以被拒绝的连接显现出来。不填或发成空就是 `0.0.0.0`，这也是这个字段
+出现之前每条转发所请求的值，因此早先版本保存的 Host，可达范围一点没变。
+
+它放在 Host 上而不是服务端口上，是因为这个地址指的是那台机器的接口。一个服务端口由三台 Host
+负责，就是三台机器上的三个监听，而其中可能只有一台有对外的接口。放在服务端口上，对这三台的
+答案就被强行合成了一个。
+
+界面提供 `0.0.0.0`、`127.0.0.1` 和 `::1`，其他地址可以自己输入。这份列表不会去问 Host：某个
+地址属于哪台机器的哪个接口，是那台机器自己的事实，要读它就得在那边执行命令，而这个程序没有
+这种手段。
+
+这个地址到底起什么作用，仍然由 SSH 服务器决定。`127.0.0.1` 不管 `GatewayPorts` 是什么，都把
+端口留在 Host 自己身上；`0.0.0.0` 则把端口开给所有能访问到 Host 的人，但也只在服务器允许时
+才如此，见[转发端口是否可达](#转发端口是否可达)。绑在回环地址上的 Host，它的隧道在那里会报成
+`unreachable`，这正是该读数正常工作的样子：它是从本进程向 Host 发起连接量出来的，而开在
+回环地址上的端口不会应答。
+
+改动这个地址会重建这台 Host 的全部隧道，因为地址是构成一条隧道的值的一部分。
 
 ```bash
 # 一台用密钥登录的 Host。密钥是按文件的文本内容发的，所以里面的换行必须原样保留：
@@ -1245,28 +1267,11 @@ curl -s -b cookies.txt -X PUT "$BASE/api/host/1/service-port" \
 
 | 方法 | 路径 | 做什么 |
 |------|------|--------|
-| `POST` | `/api/service-port` | 创建一个服务端口。`bind_address` 可以不填，不填就是 `0.0.0.0`。`assign_to_all_hosts` 也可以不填：不填时，现存的每台 Host 都分到它；发成 false 则注册成没有 Host 负责 |
+| `POST` | `/api/service-port` | 创建一个服务端口。`assign_to_all_hosts` 可以不填：不填时，现存的每台 Host 都分到它；发成 false 则注册成没有 Host 负责 |
 | `GET` | `/api/service-port` | 服务端口的一页，旧的在前。收 `page` 和 `size`，见[分页](#分页) |
 | `GET` | `/api/service-port/:id` | 读一个服务端口 |
-| `PUT` | `/api/service-port/:id` | 更新一个服务端口。`service_ip`、`service_port` 和 `local_port` 都是必填的，`bind_address` 不填就是 `0.0.0.0` |
+| `PUT` | `/api/service-port/:id` | 更新一个服务端口。`service_ip`、`service_port` 和 `local_port` 都是必填的 |
 | `DELETE` | `/api/service-port/:id` | 删除一个服务端口，以及涉及它的分配关系 |
-
-**`bind_address` 是请求把转发端口开在 Host 的哪个地址上。**只收 IPv4 或 IPv6 地址。这个字符串
-会原样交给 Host 上的 sshd，所以写成名字就要由那边的、这边看不到的解析器去解析，解析不出来的
-名字只会一次次以被拒绝的连接显现出来。不填或发成空就是 `0.0.0.0`，这也是这个字段出现之前每个
-服务端口所请求的值，因此早先版本保存的服务端口，可达范围一点没变。
-
-界面提供 `0.0.0.0`、`127.0.0.1` 和 `::1`，其他地址可以自己输入。这份列表不会去问 Host：某个
-地址属于哪台机器的哪个接口，是那台机器自己的事实，要读它就得在那边执行命令，而这个程序没有
-这种手段。
-
-这个地址到底起什么作用，仍然由 SSH 服务器决定。`127.0.0.1` 不管 `GatewayPorts` 是什么，都把
-端口留在 Host 自己身上；`0.0.0.0` 则把端口开给所有能访问到 Host 的人，但也只在服务器允许时
-才如此，见[转发端口是否可达](#转发端口是否可达)。绑在回环地址上的服务端口在那里会报成
-`unreachable`，这正是该读数正常工作的样子：它是从本进程向 Host 发起连接量出来的，而开在
-回环地址上的端口不会应答。
-
-改动这个地址会重建负责该服务端口的隧道，因为地址是构成一条隧道的值的一部分。
 
 ### 状态
 
@@ -1462,7 +1467,7 @@ curl -s -b cookies.txt https://127.0.0.1:8888/api/status
 
 写着 `connected` 的隧道，说明 SSH 连接已建立。这不等于转发端口可以连接：监听是由 **SSH
 服务器**打开的，它绑定哪个地址是那台服务器的决定，不是这边的。tunnel-manager 请求的是
-`<绑定地址>:<本地端口>`，服务端口没写别的地址时就是 `0.0.0.0`；而 OpenSSH 保持默认的
+`<绑定地址>:<本地端口>`，Host 没写别的地址时就是 `0.0.0.0`；而 OpenSSH 保持默认的
 `GatewayPorts no`，或者 Dropbear 不带 `-a` 启动时，服务器只绑定回环地址。这样这个端口只在 Host 本机上响应，从其他地方无法访问。
 
 每条隧道行上有两个字段，说明对这件事已知的信息。

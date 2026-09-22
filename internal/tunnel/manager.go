@@ -352,11 +352,11 @@ func (m *Manager) hostSealed(host *models.Host, what string, stored string) (str
 	return "", fmt.Errorf("failed to decrypt the stored %s of the Host (host_id=%d): %w", what, host.ID, err)
 }
 
-// defaultBindAddress is what a service port that names no address is asked for
-// on. It is the wildcard because that is what every forward was requested on
-// before there was a column to say otherwise, and a stored row from then holds
-// the empty value: reading it as anything else would narrow what those tunnels
-// reach without anybody having asked.
+// defaultBindAddress is what a Host that names no address is asked to open the
+// forwarded ports on. It is the wildcard because that is what every forward was
+// requested on before there was a column to say otherwise, and a stored row
+// from then holds the empty value: reading it as anything else would narrow
+// what those tunnels reach without anybody having asked.
 const defaultBindAddress = "0.0.0.0"
 
 // tunnelAddresses returns the local, server and remote addresses a tunnel for
@@ -367,16 +367,17 @@ const defaultBindAddress = "0.0.0.0"
 // because an IPv6 address has colons of its own: "2001:db8::1" and port 22
 // written plainly reads "2001:db8::1:22", which no dialer can take apart.
 // JoinHostPort puts the brackets in, giving "[2001:db8::1]:22". The local
-// address goes through it too, since ::1 is one of the addresses a service
-// port may be bound to.
+// address goes through it too, since ::1 is one of the addresses a Host may be
+// asked to bind.
 //
-// The local address is the one the sshd on the Host is asked to open the
-// forwarded port on, and it is an address over there rather than one of ours,
-// so nothing here resolves it or holds it against an interface of this
-// machine. A service port that names none is asked for on the wildcard, which
-// is what every service port was asked for before the address could be chosen.
+// The local address is read off the Host and not off the service port, because
+// it is an address over there: it names an interface of that machine, so the
+// same service port carried by two Hosts is asked for on whatever each of them
+// was given. Nothing here resolves it or holds it against an interface of this
+// machine. A Host that names none is asked for on the wildcard, which is what
+// every forward was asked for before the address could be chosen.
 func tunnelAddresses(host *models.Host, sp *models.ServicePort) (local, server, remote string) {
-	bind := sp.BindAddress
+	bind := host.BindAddress
 	if bind == "" {
 		bind = defaultBindAddress
 	}

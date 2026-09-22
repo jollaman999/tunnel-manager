@@ -51,23 +51,16 @@ type Host struct {
 	// Neither carries "not null". The columns are added to installations
 	// whose rows were written before they existed, and AutoMigrate fills
 	// those with NULL, the way it did for Tunnel.ServerBanner below.
-	HostKey        string    `json:"host_key"`
-	PendingHostKey string    `json:"pending_host_key"`
-	Description    string    `json:"description"`
-	Enabled        bool      `json:"enabled"`
-	CreatedAt      time.Time `json:"created_at"`
-	UpdatedAt      time.Time `json:"updated_at"`
-}
-
-type ServicePort struct {
-	ID          uint   `gorm:"primaryKey;autoIncrement" json:"id"`
-	ServiceIP   string `gorm:"uniqueIndex:idx_service_ip_port;not null" json:"service_ip"`
-	ServicePort int    `gorm:"uniqueIndex:idx_service_ip_port;not null" json:"service_port"`
-	LocalPort   int    `gorm:"uniqueIndex:idx_service_local_port;not null" json:"local_port"`
-	// BindAddress is the address on the Host the forwarded port is asked to be
-	// opened on. It is not part of either unique index: the same local port is
-	// one listener on the Host however narrowly it is bound, so two rows
-	// naming it are still two rows asking for the same socket.
+	HostKey        string `json:"host_key"`
+	PendingHostKey string `json:"pending_host_key"`
+	// BindAddress is the address on this Host the ports forwarded to it are
+	// asked to be opened on. It belongs to the Host rather than to a service
+	// port because it is a fact about this machine: which interfaces it has,
+	// and which of them a forwarded port may be reached over, is answered here
+	// and nowhere else. The same service port carried by three Hosts is three
+	// listeners on three machines, and one of them being the only one with an
+	// interface facing a network nobody else should reach in over is a reason
+	// to answer it differently on that one.
 	//
 	// An empty value means 0.0.0.0, and that is what a row written before the
 	// column existed holds: AutoMigrate adds the column and leaves what is
@@ -82,8 +75,19 @@ type ServicePort struct {
 	// the listener really is, which is why the reach is measured rather than
 	// declared (Tunnel.ForwardReach).
 	//
-	// It carries no "not null" for the reason Tunnel.ServerBanner does not.
+	// It carries no "not null" for the reason the two keys above do not.
 	BindAddress string    `json:"bind_address"`
+	Description string    `json:"description"`
+	Enabled     bool      `json:"enabled"`
+	CreatedAt   time.Time `json:"created_at"`
+	UpdatedAt   time.Time `json:"updated_at"`
+}
+
+type ServicePort struct {
+	ID          uint      `gorm:"primaryKey;autoIncrement" json:"id"`
+	ServiceIP   string    `gorm:"uniqueIndex:idx_service_ip_port;not null" json:"service_ip"`
+	ServicePort int       `gorm:"uniqueIndex:idx_service_ip_port;not null" json:"service_port"`
+	LocalPort   int       `gorm:"uniqueIndex:idx_service_local_port;not null" json:"local_port"`
 	Description string    `json:"description"`
 	CreatedAt   time.Time `json:"created_at"`
 	UpdatedAt   time.Time `json:"updated_at"`
@@ -169,7 +173,14 @@ type CreateHostRequest struct {
 	Password      string `json:"password" validate:"omitempty"`
 	PrivateKey    string `json:"private_key" validate:"omitempty"`
 	KeyPassphrase string `json:"key_passphrase" validate:"omitempty"`
-	Description   string `json:"description"`
+	// BindAddress is omitempty and not required, because leaving it out is how
+	// a caller asks for the wildcard and is what every request written before
+	// the field existed does. What it does hold has to be an address: a name
+	// would be resolved on the Host, by an sshd that is given the string as it
+	// stands, so a request naming one would be stored here and refused over
+	// there, one connection at a time, with nothing on this end saying why.
+	BindAddress string `json:"bind_address" validate:"omitempty,ip"`
+	Description string `json:"description"`
 	// Enabled is a pointer so that a Host asked for as disabled can be told
 	// from one that did not mention it. A plain bool cannot say the difference,
 	// and the two mean different things: the second one is enabled.
@@ -196,21 +207,19 @@ type UpdateHostRequest struct {
 	Password      string `json:"password" validate:"omitempty"`
 	PrivateKey    string `json:"private_key" validate:"omitempty"`
 	KeyPassphrase string `json:"key_passphrase" validate:"omitempty"`
-	Description   string `json:"description"`
-	Enabled       *bool  `json:"enabled"`
+	// BindAddress left out keeps the address that is stored, which is the rule
+	// the rest of this struct is under. It costs nothing here: the wildcard is
+	// asked for by naming 0.0.0.0, which reaches exactly what the empty value
+	// reaches, so no address a Host can be put on is out of reach of an update.
+	BindAddress string `json:"bind_address" validate:"omitempty,ip"`
+	Description string `json:"description"`
+	Enabled     *bool  `json:"enabled"`
 }
 
 type CreateServicePortRequest struct {
 	ServiceIP   string `json:"service_ip" validate:"required,ip"`
 	ServicePort int    `json:"service_port" validate:"required,min=1,max=65535"`
 	LocalPort   int    `json:"local_port" validate:"required,min=1,max=65535"`
-	// BindAddress is omitempty and not required, because leaving it out is how
-	// a caller asks for the wildcard and is what every request written before
-	// the field existed does. What it does hold has to be an address: a name
-	// would be resolved on the Host, by an sshd that is given the string as it
-	// stands, so a request naming one would be stored here and refused over
-	// there, one connection at a time, with nothing on this end saying why.
-	BindAddress string `json:"bind_address" validate:"omitempty,ip"`
 	Description string `json:"description"`
 	// AssignToAllHosts is whether every stored Host is to carry this service
 	// port from the moment it is registered. It is a pointer, and a request

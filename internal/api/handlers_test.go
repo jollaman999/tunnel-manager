@@ -2302,8 +2302,8 @@ func TestReadHandlersKeepTheCauseOutOfTheAnswer(t *testing.T) {
 	}
 }
 
-// TestTheBindAddressIsStoredOrRefusedAsAnAddress holds the one field of a
-// service port that decides how far the forwarded port reaches.
+// TestTheBindAddressIsStoredOrRefusedAsAnAddress holds the one field of a Host
+// that decides how far every port forwarded to it reaches.
 //
 // A name is refused along with the nonsense. The string is handed to the sshd
 // on the Host exactly as it is stored, so a name would be resolved over there,
@@ -2335,11 +2335,10 @@ func TestTheBindAddressIsStoredOrRefusedAsAnAddress(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			f := newHostFixture(t)
 
-			body := `{"service_ip":"203.0.113.5","service_port":8080,"local_port":18080` +
+			body := `{"ip":"192.0.2.10","port":22,"user":"operator","password":"a password"` +
 				tc.sent + `}`
 
-			rec := f.call(t, http.MethodPost, "/api/service-port", body, "", "",
-				f.h.CreateServicePort)
+			rec := f.createHost(t, body)
 
 			if !tc.taken {
 				if rec.Code != http.StatusBadRequest {
@@ -2347,12 +2346,8 @@ func TestTheBindAddressIsStoredOrRefusedAsAnAddress(t *testing.T) {
 						rec.Body.String())
 				}
 
-				var count int64
-				if err := f.db.Model(&models.ServicePort{}).Count(&count).Error; err != nil {
-					t.Fatalf("failed to count the service ports: %v", err)
-				}
-				if count != 0 {
-					t.Fatalf("a service port was stored although the request was refused")
+				if f.hostCount(t) != 0 {
+					t.Fatalf("a Host was stored although the request was refused")
 				}
 
 				return
@@ -2363,10 +2358,7 @@ func TestTheBindAddressIsStoredOrRefusedAsAnAddress(t *testing.T) {
 					rec.Body.String())
 			}
 
-			var stored models.ServicePort
-			if err := f.db.First(&stored, 1).Error; err != nil {
-				t.Fatalf("failed to read the stored service port: %v", err)
-			}
+			stored := f.storedHostRow(t, 1)
 
 			if stored.BindAddress != tc.want {
 				t.Fatalf("the stored bind address = %q, want %q", stored.BindAddress, tc.want)
@@ -2375,49 +2367,59 @@ func TestTheBindAddressIsStoredOrRefusedAsAnAddress(t *testing.T) {
 	}
 }
 
-// TestAnUpdateCarriesTheBindAddressTheWholeRecordNames is the edit half of the
-// check above. The update takes the whole record, so the field is stored from
-// the same rule the rest of it is, the one that reads a field left out as
-// asked for empty rather than as left alone.
-func TestAnUpdateCarriesTheBindAddressTheWholeRecordNames(t *testing.T) {
+// TestAnUpdateCarriesTheBindAddressTheRequestNames is the edit half of the
+// check above. The update leaves out what it does not mention, the rule the
+// rest of UpdateHostRequest is under, so a request naming an address replaces
+// what is stored and one naming none keeps it.
+//
+// Going back to the wildcard is asked for by naming 0.0.0.0, which reaches what
+// the empty value reaches, so nothing about leaving an absent field alone puts
+// an address out of reach.
+func TestAnUpdateCarriesTheBindAddressTheRequestNames(t *testing.T) {
 	f := newHostFixture(t)
 
-	rec := f.call(t, http.MethodPost, "/api/service-port",
-		`{"service_ip":"203.0.113.5","service_port":8080,"local_port":18080,"bind_address":"127.0.0.1"}`,
-		"", "", f.h.CreateServicePort)
+	rec := f.createHost(t,
+		`{"ip":"192.0.2.10","port":22,"user":"operator","password":"a password","bind_address":"127.0.0.1"}`)
 	if rec.Code != http.StatusCreated {
 		t.Fatalf("status = %d, want %d, body: %s", rec.Code, http.StatusCreated, rec.Body.String())
 	}
 
-	rec = f.call(t, http.MethodPut, "/api/service-port/1",
-		`{"service_ip":"203.0.113.5","service_port":8080,"local_port":18080,"bind_address":"::1"}`,
-		"id", "1", f.h.UpdateServicePort)
+	rec = f.updateHost(t, "1", `{"bind_address":"::1"}`)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d, want %d, body: %s", rec.Code, http.StatusOK, rec.Body.String())
 	}
 
-	var stored models.ServicePort
-	if err := f.db.First(&stored, 1).Error; err != nil {
-		t.Fatalf("failed to read the stored service port: %v", err)
-	}
-
-	if stored.BindAddress != "::1" {
+	if stored := f.storedHostRow(t, 1); stored.BindAddress != "::1" {
 		t.Fatalf("the stored bind address = %q, want %q", stored.BindAddress, "::1")
 	}
 
-	rec = f.call(t, http.MethodPut, "/api/service-port/1",
-		`{"service_ip":"203.0.113.5","service_port":8080,"local_port":18080,"bind_address":"over there"}`,
-		"id", "1", f.h.UpdateServicePort)
+	rec = f.updateHost(t, "1", `{"description":"the host of the test"}`)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d, body: %s", rec.Code, http.StatusOK, rec.Body.String())
+	}
+
+	if stored := f.storedHostRow(t, 1); stored.BindAddress != "::1" {
+		t.Fatalf("an update that named no address left the bind address at %q, want %q",
+			stored.BindAddress, "::1")
+	}
+
+	rec = f.updateHost(t, "1", `{"bind_address":"0.0.0.0"}`)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d, body: %s", rec.Code, http.StatusOK, rec.Body.String())
+	}
+
+	if stored := f.storedHostRow(t, 1); stored.BindAddress != "0.0.0.0" {
+		t.Fatalf("the stored bind address = %q, want %q", stored.BindAddress, "0.0.0.0")
+	}
+
+	rec = f.updateHost(t, "1", `{"bind_address":"over there"}`)
 	if rec.Code != http.StatusBadRequest {
 		t.Fatalf("status = %d, want %d, body: %s", rec.Code, http.StatusBadRequest, rec.Body.String())
 	}
 
-	if err := f.db.First(&stored, 1).Error; err != nil {
-		t.Fatalf("failed to read the stored service port: %v", err)
-	}
-
-	if stored.BindAddress != "::1" {
-		t.Fatalf("a refused update left the bind address at %q, want %q", stored.BindAddress, "::1")
+	if stored := f.storedHostRow(t, 1); stored.BindAddress != "0.0.0.0" {
+		t.Fatalf("a refused update left the bind address at %q, want %q",
+			stored.BindAddress, "0.0.0.0")
 	}
 }
 

@@ -47,6 +47,7 @@ type hostView struct {
 	// presented a key other than the one it is trusted on.
 	HostKeyFingerprint        string    `json:"host_key_fingerprint"`
 	PendingHostKeyFingerprint string    `json:"pending_host_key_fingerprint"`
+	BindAddress               string    `json:"bind_address"`
 	Description               string    `json:"description"`
 	Enabled                   bool      `json:"enabled"`
 	CreatedAt                 time.Time `json:"created_at"`
@@ -62,6 +63,7 @@ func hostViewOf(host models.Host) hostView {
 		User:                      host.User,
 		HostKeyFingerprint:        tunnel.HostKeyFingerprint(host.HostKey),
 		PendingHostKeyFingerprint: tunnel.HostKeyFingerprint(host.PendingHostKey),
+		BindAddress:               host.BindAddress,
 		Description:               host.Description,
 		Enabled:                   host.Enabled,
 		CreatedAt:                 host.CreatedAt,

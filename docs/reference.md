@@ -20,8 +20,8 @@ made reachable from the Host.
 
 | What you register | Fields | What it is |
 |-------------------|--------|------------|
-| Host | `ip`, `port`, `user`, `private_key`, `key_passphrase`, `password`, `description`, `enabled` | An SSH server Tunnel Manager logs in to. It logs in with a private key, with a password, or with both; at least one of the two is required. The key, its passphrase and the password are all stored encrypted. |
-| Service port | `service_ip`, `service_port`, `local_port`, `bind_address` | The service to publish, and the port opened on every Host that carries it. `bind_address` is the address on the Host that port is asked for, `0.0.0.0` where it is not given. |
+| Host | `ip`, `port`, `user`, `private_key`, `key_passphrase`, `password`, `bind_address`, `description`, `enabled` | An SSH server Tunnel Manager logs in to. It logs in with a private key, with a password, or with both; at least one of the two is required. The key, its passphrase and the password are all stored encrypted. `bind_address` is the address on this Host the forwarded ports are asked for, `0.0.0.0` where it is not given. |
+| Service port | `service_ip`, `service_port`, `local_port` | The service to publish, and the port opened on every Host that carries it. |
 | Assignment | `host_id`, `sp_id` | One Host paired with one service port: this Host is to carry it. It is what a tunnel is built from, and it is made for you as a Host or a service port is registered. |
 
 Both `ip` and `service_ip` take an IPv4 or an IPv6 address. An IPv6 address is
@@ -223,9 +223,9 @@ sequenceDiagram
     end
 ```
 
-Which address is asked for is `bind_address` on the service port, `0.0.0.0`
-where none was given, see [Service ports](#service-ports). Whether the listener
-on the Host really opens there is up to the SSH server on the Host. When its
+Which address is asked for is `bind_address` on the Host, `0.0.0.0` where none
+was given, see [Hosts](#hosts). Whether the listener on the Host really opens
+there is up to the SSH server on the Host. When its
 `GatewayPorts` is off, the listener is bound to the loopback address whatever
 address was asked for, and the log says so. Once the tunnel is up,
 tunnel-manager tries the forwarded port itself and reports what it found, see
@@ -1411,7 +1411,7 @@ curl -s -b cookies.txt "$BASE/api/status?page=99999&size=10"
 
 | Method | Path | What it does |
 |--------|------|--------------|
-| `POST` | `/api/host` | Creates a Host. `enabled` is optional and a Host that does not say is enabled |
+| `POST` | `/api/host` | Creates a Host. `enabled` is optional and a Host that does not say is enabled, and `bind_address` is optional and is `0.0.0.0` when it is left out |
 | `GET` | `/api/host` | One page of the Hosts, oldest first. Takes `page` and `size`, see [Paging](#paging) |
 | `GET` | `/api/host/:id` | Reads one Host |
 | `PUT` | `/api/host/:id` | Updates a Host. Every field is optional; `enabled` false stops its tunnels |
@@ -1427,6 +1427,7 @@ The body of a create and of an update takes these fields.
 | `private_key` | The text of a PEM private key file. Optional if a `password` is given | An empty or missing value keeps the stored key. A key that is sent replaces the stored key and its passphrase together |
 | `key_passphrase` | Required only for a key that is protected by one | Sent with the key it belongs to. On its own, without `private_key`, it is refused |
 | `password` | Optional if a `private_key` is given | An empty or missing value keeps the stored password |
+| `bind_address` | Optional. Left out or sent empty, it is `0.0.0.0` | Optional; what is left out stays as it is. Send `0.0.0.0` to go back to the wildcard |
 | `description`, `enabled` | Optional | Optional |
 | `assign_all_service_ports` | Optional. Left out, and the Host is given every service port that is stored. Send it as false to register a Host that carries none | Not read. What a Host carries is changed through `PUT /api/host/:id/service-port` |
 
@@ -1438,6 +1439,36 @@ passphrase does not open the key. Nothing is stored in any of those cases.
 **No answer ever carries `private_key`, `key_passphrase` or `password`**, this
 one included. What was stored is confirmed by the Host connecting, which the
 status says.
+
+**`bind_address` is the address on this Host the forwarded ports are asked to be
+opened on.** It takes an IPv4 or an IPv6 address and nothing else. The string is
+handed to the sshd on the Host as it stands, so a name would be resolved over
+there, by a resolver this end cannot see, and a name that resolves to nothing is
+answered one refused connection at a time. Left out or sent empty it is
+`0.0.0.0`, which is what every forward asked for before the field existed, so a
+Host stored by an earlier version reaches exactly as far as it did.
+
+It is held on the Host rather than on the service port because it names an
+interface of that machine. The same service port carried by three Hosts is three
+listeners on three machines, and one of them may be the only one with an
+interface facing a network the forwarded port has no business being reachable
+from; on the service port there would be one answer for all three.
+
+The screens offer `0.0.0.0`, `127.0.0.1` and `::1`, and take any other address
+typed in. The list is not asked of the Host: an address that belongs to one
+interface of one machine is a fact about that machine, and reading it would mean
+running a command over there, which this program has no way of doing.
+
+What the address does is still the SSH server's decision. `127.0.0.1` keeps the
+port on the Host itself whatever `GatewayPorts` says, while `0.0.0.0` opens it
+to everything that can reach the Host, but only where the server allows that,
+see [Whether the forwarded port can be reached](#whether-the-forwarded-port-can-be-reached).
+A Host bound to loopback has its tunnels reported `unreachable` there, and that
+is the reading working as intended: it is taken by connecting from this process
+to the Host, and a port on loopback does not answer that.
+
+Changing the address rebuilds every tunnel of that Host, because the address is
+part of what a tunnel is built from.
 
 ```bash
 # A Host that is logged in to with a key. The key is sent as the text of the
@@ -1511,35 +1542,11 @@ woken once it is committed, so the tunnels follow within the moment.
 
 | Method | Path | What it does |
 |--------|------|--------------|
-| `POST` | `/api/service-port` | Creates a service port. `bind_address` is optional and is `0.0.0.0` when it is left out. `assign_to_all_hosts` is optional: left out, every stored Host is given it, and sent as false it is registered carried by none |
+| `POST` | `/api/service-port` | Creates a service port. `assign_to_all_hosts` is optional: left out, every stored Host is given it, and sent as false it is registered carried by none |
 | `GET` | `/api/service-port` | One page of the service ports, oldest first. Takes `page` and `size`, see [Paging](#paging) |
 | `GET` | `/api/service-port/:id` | Reads one service port |
-| `PUT` | `/api/service-port/:id` | Updates a service port. `service_ip`, `service_port` and `local_port` are all required, and `bind_address` left out is `0.0.0.0` |
+| `PUT` | `/api/service-port/:id` | Updates a service port. `service_ip`, `service_port` and `local_port` are all required |
 | `DELETE` | `/api/service-port/:id` | Deletes a service port, and the assignments naming it |
-
-**`bind_address` is the address on the Host the forwarded port is asked to be
-opened on.** It takes an IPv4 or an IPv6 address and nothing else. The string is
-handed to the sshd on the Host as it stands, so a name would be resolved over
-there, by a resolver this end cannot see, and a name that resolves to nothing is
-answered one refused connection at a time. Left out or sent empty it is
-`0.0.0.0`, which is what every service port asked for before the field existed,
-so a service port stored by an earlier version reaches exactly as far as it did.
-
-The screens offer `0.0.0.0`, `127.0.0.1` and `::1`, and take any other address
-typed in. The list is not asked of the Host: an address that belongs to one
-interface of one machine is a fact about that machine, and reading it would mean
-running a command over there, which this program has no way of doing.
-
-What the address does is still the SSH server's decision. `127.0.0.1` keeps the
-port on the Host itself whatever `GatewayPorts` says, while `0.0.0.0` opens it
-to everything that can reach the Host, but only where the server allows that,
-see [Whether the forwarded port can be reached](#whether-the-forwarded-port-can-be-reached).
-A service port bound to loopback is reported `unreachable` there, and that is
-the reading working as intended: it is taken by connecting from this process to
-the Host, and a port on loopback does not answer that.
-
-Changing the address rebuilds the tunnels that carry the service port, because
-the address is part of what a tunnel is built from.
 
 ### Status
 
@@ -1778,7 +1785,7 @@ A tunnel that says `connected` is one the SSH connection stands for. It does not
 mean the forwarded port can be reached: the listener is opened by the **SSH
 server**, and which address it binds is that server's decision, not this one's.
 tunnel-manager asks for `<bind address>:<local port>`, the wildcard `0.0.0.0`
-unless the service port names another address, and with OpenSSH left at its
+unless the Host names another address, and with OpenSSH left at its
 default of `GatewayPorts no`, or Dropbear started without `-a`, the server binds
 loopback alone. The port then answers on the Host itself and nowhere else.
 

@@ -355,6 +355,7 @@ func (h *Handler) CreateHost(c echo.Context) error {
 		Password:      password,
 		PrivateKey:    privateKey,
 		KeyPassphrase: keyPassphrase,
+		BindAddress:   req.BindAddress,
 		Description:   req.Description,
 		Enabled:       enabled,
 	}
@@ -572,6 +573,9 @@ func (h *Handler) UpdateHost(c echo.Context) error {
 		tx.Rollback()
 		return failure(c, http.StatusBadRequest, errHostUpdatePassphraseAlone)
 	}
+	if req.BindAddress != "" {
+		host.BindAddress = req.BindAddress
+	}
 	if req.Description != "" {
 		host.Description = req.Description
 	}
@@ -678,7 +682,6 @@ func (h *Handler) CreateServicePort(c echo.Context) error {
 		ServiceIP:   req.ServiceIP,
 		ServicePort: req.ServicePort,
 		LocalPort:   req.LocalPort,
-		BindAddress: req.BindAddress,
 		Description: req.Description,
 	}
 
@@ -846,7 +849,6 @@ func (h *Handler) UpdateServicePort(c echo.Context) error {
 	sp.ServiceIP = req.ServiceIP
 	sp.ServicePort = req.ServicePort
 	sp.LocalPort = req.LocalPort
-	sp.BindAddress = req.BindAddress
 	sp.Description = req.Description
 
 	err = tx.Save(&sp).Error

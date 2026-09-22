@@ -1109,16 +1109,16 @@ func TestTunnelAddressesBracketAnIPv6Host(t *testing.T) {
 	}
 }
 
-// TestTunnelAddressesBindWhereTheServicePortAsks pins what the forward is
-// requested on. The address is the one thing that decides how far the forwarded
-// port reaches once the SSH server allows a choice at all, so a change to it is
-// a change to who can connect, and it is held here rather than read off the
+// TestTunnelAddressesBindWhereTheHostAsks pins what the forward is requested
+// on. The address is the one thing that decides how far the forwarded port
+// reaches once the SSH server allows a choice at all, so a change to it is a
+// change to who can connect, and it is held here rather than read off the
 // screen that sets it.
 //
 // The empty value is the row written before the column existed, and it has to
 // go on asking for the wildcard. Anything else would narrow the reach of
 // tunnels that are already running, which is a migration this does not do.
-func TestTunnelAddressesBindWhereTheServicePortAsks(t *testing.T) {
+func TestTunnelAddressesBindWhereTheHostAsks(t *testing.T) {
 	cases := []struct {
 		name      string
 		bind      string
@@ -1133,12 +1133,11 @@ func TestTunnelAddressesBindWhereTheServicePortAsks(t *testing.T) {
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			host := &models.Host{IP: "192.0.2.1", Port: 22}
+			host := &models.Host{IP: "192.0.2.1", Port: 22, BindAddress: tc.bind}
 			sp := &models.ServicePort{
 				ServiceIP:   "203.0.113.5",
 				ServicePort: 8080,
 				LocalPort:   18080,
-				BindAddress: tc.bind,
 			}
 
 			local, _, _ := tunnelAddresses(host, sp)
@@ -1154,6 +1153,38 @@ func TestTunnelAddressesBindWhereTheServicePortAsks(t *testing.T) {
 				t.Errorf("the local address %q cannot be split into a host and a port: %v", local, err)
 			}
 		})
+	}
+}
+
+// TestOneServicePortBindsPerHost is why the address is on the Host. A service
+// port is carried by every Host it is assigned to, and each of those is a
+// different machine: one may have nothing but loopback and another an interface
+// facing a network the forwarded port has no business being reachable from.
+//
+// Held on the service port, the answer would be one answer for all of them, and
+// narrowing it for the exposed machine would narrow it everywhere. Here the
+// same service port goes to two Hosts and each is asked for what it was given.
+func TestOneServicePortBindsPerHost(t *testing.T) {
+	sp := &models.ServicePort{ServiceIP: "203.0.113.5", ServicePort: 8080, LocalPort: 18080}
+
+	narrow := &models.Host{IP: "192.0.2.1", Port: 22, BindAddress: "127.0.0.1"}
+	wide := &models.Host{IP: "192.0.2.2", Port: 22, BindAddress: "0.0.0.0"}
+
+	narrowLocal, _, narrowRemote := tunnelAddresses(narrow, sp)
+	wideLocal, _, wideRemote := tunnelAddresses(wide, sp)
+
+	if narrowLocal != "127.0.0.1:18080" {
+		t.Errorf("the narrow Host binds %q, want %q", narrowLocal, "127.0.0.1:18080")
+	}
+	if wideLocal != "0.0.0.0:18080" {
+		t.Errorf("the wide Host binds %q, want %q", wideLocal, "0.0.0.0:18080")
+	}
+
+	// The service port is the same one on both, so what it names has to be
+	// reached the same way from either. Only where the port is opened differs.
+	if narrowRemote != wideRemote {
+		t.Errorf("the same service port is reached at %q on one Host and %q on the other",
+			narrowRemote, wideRemote)
 	}
 }
 
