@@ -151,9 +151,19 @@ type SessionStore struct {
 
 // NewSessionStore returns an empty store with the default lifetime.
 //
-// No goroutine sweeps the map. A session that has run out is dropped by the
-// lookup that finds it, and the map holds at most one entry per logged in
-// client of the single account, so nothing piles up that a sweep would clear.
+// No goroutine sweeps the map and no timer fires on it. What clears it is the
+// two calls that hold the lock anyway: Lookup drops the session it was asked
+// for once that one has run out, and Create drops every session that has.
+//
+// Create is there because Lookup only ever visits the token it was handed. A
+// client that closes its window instead of logging out leaves a token that is
+// never sent again, and a session nobody asks about is a session no lookup
+// will ever throw out. Its two deadlines pass with nothing reading them.
+//
+// So between one login and the next the map holds the sessions that are still
+// good, plus those that ran out since the last login. Both are bounded by how
+// often the account password is sent correctly, and the login is what runs the
+// sweep, so the map cannot grow without the thing that empties it running too.
 func NewSessionStore() *SessionStore {
 	return &SessionStore{
 		sessions:         make(map[string]session),
@@ -180,6 +190,23 @@ func (s *SessionStore) Create(userID uint) (string, string, error) {
 	defer s.mu.Unlock()
 
 	now := s.now()
+
+	// Every session that has run out goes here, not only the one this login
+	// replaces. NewSessionStore says why this is the place: the write lock is
+	// already held and a login is the one moment that is certain to come
+	// before the map grows by an entry.
+	//
+	// The whole map is walked rather than a part of it. What is in it is the
+	// sessions of the one account that were opened inside a sliding lifetime,
+	// each of which cost a correct password and a bcrypt compare to make, so
+	// the walk is over a handful of entries on a path that has just spent tens
+	// of milliseconds in bcrypt. Walking a sample of the map instead would
+	// trade a cost too small to measure for entries left behind.
+	for other, found := range s.sessions {
+		if s.expired(found, now) {
+			delete(s.sessions, other)
+		}
+	}
 
 	s.sessions[token] = session{
 		userID:    userID,
@@ -218,15 +245,11 @@ func (s *SessionStore) Lookup(token string) (uint, string, bool) {
 		return 0, "", false
 	}
 
-	// Two deadlines are checked and both end the session the same way, because
-	// to the client there is no difference between the two: the session is not
-	// there any more and the answer is the one a request with no session gets.
-	// The first is the sliding one, which says the session has been left alone
-	// for too long. The second is counted from the login and is not moved by
-	// anything, which is what stops a token that is used often enough from
-	// living for as long as the process does.
+	// Either deadline ends the session the same way, because to the client
+	// there is no difference between the two: the session is not there any
+	// more and the answer is the one a request with no session gets.
 	now := s.now()
-	if !now.Before(found.expiresAt) || !now.Before(found.createdAt.Add(s.absoluteLifetime)) {
+	if s.expired(found, now) {
 		delete(s.sessions, token)
 		return 0, "", false
 	}
@@ -235,6 +258,22 @@ func (s *SessionStore) Lookup(token string) (uint, string, bool) {
 	s.sessions[token] = found
 
 	return found.userID, found.csrfToken, true
+}
+
+// expired reports whether found has run out at now.
+//
+// The first deadline is the sliding one, which says the session has been left
+// alone for too long. The second is counted from the login and is moved by
+// nothing, which is what stops a token that is used often enough from living
+// for as long as the process does. A session that is past either one is over.
+//
+// It is one function rather than the same test written out at both callers,
+// because Lookup and the sweep in Create have to agree on what has run out. A
+// sweep that dropped what Lookup still takes would sign a working client out
+// of the session it is using, and one that kept what Lookup drops would leave
+// behind exactly the entries it exists to clear.
+func (s *SessionStore) expired(found session, now time.Time) bool {
+	return !now.Before(found.expiresAt) || !now.Before(found.createdAt.Add(s.absoluteLifetime))
 }
 
 // Delete drops the session token stands for. A token that is not there is not

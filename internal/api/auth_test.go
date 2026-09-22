@@ -608,6 +608,148 @@ func TestASessionInConstantUseIsRefusedOnceItIsTooOld(t *testing.T) {
 	}
 }
 
+// TestALoginDropsTheSessionsThatRanOutUnseen pins down what Lookup cannot do.
+// A session whose token is never sent again is never looked up again, so the
+// only thing that ever visits that entry is the login of somebody else.
+//
+// The store is read through the map rather than through Lookup, because a
+// Lookup would drop the entry itself and the test would then pass with no
+// sweep in Create at all.
+func TestALoginDropsTheSessionsThatRanOutUnseen(t *testing.T) {
+	store := NewSessionStore()
+
+	now := time.Now()
+	store.now = func() time.Time { return now }
+
+	first, _, err := store.Create(1)
+	if err != nil {
+		t.Fatalf("Create returned an error: %v", err)
+	}
+
+	second, _, err := store.Create(1)
+	if err != nil {
+		t.Fatalf("Create returned an error: %v", err)
+	}
+
+	now = now.Add(sessionLifetime)
+
+	third, _, err := store.Create(1)
+	if err != nil {
+		t.Fatalf("Create returned an error: %v", err)
+	}
+
+	store.mu.RLock()
+	defer store.mu.RUnlock()
+
+	gone := map[string]string{"first": first, "second": second}
+	for name, token := range gone {
+		_, ok := store.sessions[token]
+		if ok {
+			t.Errorf("the %s session was still in the store one sliding lifetime (%v) after it was made, "+
+				"having never been looked up", name, sessionLifetime)
+		}
+	}
+
+	_, ok := store.sessions[third]
+	if !ok {
+		t.Errorf("the session the login just made is not in the store")
+	}
+
+	if len(store.sessions) != 1 {
+		t.Errorf("the store holds %d sessions, want the 1 that has not run out", len(store.sessions))
+	}
+}
+
+// TestALoginKeepsTheSessionsThatAreStillLive is the other half of the sweep:
+// it drops what has run out and nothing else, so one client signing in does
+// not sign another one out. That is what DeleteAllExcept is for, and it is
+// called where the credentials changed rather than on every login.
+func TestALoginKeepsTheSessionsThatAreStillLive(t *testing.T) {
+	store := NewSessionStore()
+
+	now := time.Now()
+	store.now = func() time.Time { return now }
+
+	first, csrfToken, err := store.Create(1)
+	if err != nil {
+		t.Fatalf("Create returned an error: %v", err)
+	}
+
+	now = now.Add(sessionLifetime - time.Hour)
+
+	_, _, err = store.Create(2)
+	if err != nil {
+		t.Fatalf("Create returned an error: %v", err)
+	}
+
+	userID, csrf, ok := store.Lookup(first)
+	if !ok {
+		t.Fatalf("the session was dropped by a login an hour before its deadline of %v", sessionLifetime)
+	}
+
+	if userID != 1 || csrf != csrfToken {
+		t.Errorf("the session came back as account %d with CSRF token %q, want account 1 with %q",
+			userID, csrf, csrfToken)
+	}
+}
+
+// TestALoginDropsASessionPastOnlyTheAbsoluteDeadline pins that the sweep
+// weighs both deadlines and not the sliding one alone.
+//
+// The session is kept alive by lookups until it is a week old, so its sliding
+// deadline is still in the future at the point the login below runs and the
+// only thing that has run out is the deadline counted from the login. That is
+// checked before the login rather than assumed, so a change to either lifetime
+// cannot leave this test passing for the other reason.
+func TestALoginDropsASessionPastOnlyTheAbsoluteDeadline(t *testing.T) {
+	store := NewSessionStore()
+
+	start := time.Now()
+	now := start
+	store.now = func() time.Time { return now }
+
+	token, _, err := store.Create(1)
+	if err != nil {
+		t.Fatalf("Create returned an error: %v", err)
+	}
+
+	step := sessionLifetime - time.Hour
+	for now.Add(step).Sub(start) < sessionAbsoluteLifetime {
+		now = now.Add(step)
+
+		_, _, ok := store.Lookup(token)
+		if !ok {
+			t.Fatalf("the session was refused %v after the login, which is inside the absolute lifetime of %v",
+				now.Sub(start), sessionAbsoluteLifetime)
+		}
+	}
+
+	store.mu.RLock()
+	sliding := store.sessions[token].expiresAt
+	store.mu.RUnlock()
+
+	now = start.Add(sessionAbsoluteLifetime)
+
+	if !now.Before(sliding) {
+		t.Fatalf("the sliding deadline %v had already run out at %v, so the entry going below would not be "+
+			"the absolute deadline doing it", sliding.Sub(start), now.Sub(start))
+	}
+
+	_, _, err = store.Create(1)
+	if err != nil {
+		t.Fatalf("Create returned an error: %v", err)
+	}
+
+	store.mu.RLock()
+	defer store.mu.RUnlock()
+
+	_, ok := store.sessions[token]
+	if ok {
+		t.Errorf("the session was still in the store %v after the login that made it, with an absolute "+
+			"lifetime of %v", now.Sub(start), sessionAbsoluteLifetime)
+	}
+}
+
 // TestTheCookieSecureFlagFollowsTheProxySwitch covers what decides Secure on
 // the two cookies the login hands out.
 //
