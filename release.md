@@ -1,3 +1,27 @@
+# v3.8.1
+
+## Add/fix features:
+
+- **The screens are drawn as panes of glass.** Every surface was a flat fill, and the one colour the UI carried was a navy that had been chosen before any of the screens above the Status one existed.
+  - A card and the page it is on are tinted, blurred over whatever is behind them, and lit along the top rim. A browser that does not know how to take that blur is left with the tint, which is opaque enough to stand on its own: the page is flat there rather than broken.
+  - The accent is a violet, and the press a card is there for is filled with a gradient of it and throws a little of that colour onto what is under it. A press that is not the main one is a tint of the same violet rather than the colour of the pane it sits on, which is how it came to be invisible.
+  - Green and amber are mixed again as tints of the same kind, so what is said in them reads as belonging to the page rather than as having been pasted onto it. Every pair of text and fill was measured on the drawn screen and not on the values: the least of them is 4.5 to 1.
+  - A ticked box is the colour of the press beside it, in a deeper mix than the accent: the accent is made to be read as text on a pane, and a box a few millimetres across filled with it is a smudge of colour rather than a tick.
+- **A first visit starts in the dark.** What the browser prefers is a guess made about every page at once, and this one is a console left open beside other work. What is picked here is still kept and is still what the next visit starts from.
+- **The theme switch is a knob on a track.** It carried a sun that set into a crescent moon, clouds that drifted and stars that came out behind it. At the size it is drawn none of it read as what it was meant to be.
+- **The language list and the theme switch sit on the row the name is on.** They were fixed to the corner of the window, so they stayed over the page while it scrolled and sat on top of whatever was under them.
+- **A refresh of the Status screen no longer takes back what was dragged into view.** A wide table is in a scroller of its own and the message under a failing tunnel is read by dragging it sideways; every refresh built a new scroller, which starts at its beginning, so five seconds later the end of the message had slid back off the screen.
+- **A refresh waits while the page is being handled.** A scroll inside a box does not reach a listener waiting at the window, a mouse held down was not watched at all, and text that has been selected was dropped by the next draw with the sentence still on the screen and the highlight gone.
+- **The note under the update presses is no longer against them.** It read as part of the press rather than as a note about it.
+
+## Notes:
+
+- The upgrade note of v3.7.0 still holds: every Host stops until its key is approved, a stored path outside the data directory is put back to its default, and the data directory becomes 0700.
+- Nothing about what this program does to a Host has changed in this release. It is the screens, and what they do while they are being read.
+- The reference is written up to the Update screen of v3.8.0 in all four languages, the three settings behind it and the four calls it is served by among them.
+- Only the Linux path of `-install` and `-uninstall` has been run. The macOS and the Windows backends are still held up by the compiler, by the vet tool for their platform, and by tests over the plist and the service configuration they produce.
+- None of the twelve translations has been read by a native speaker.
+
 # v3.8.0
 
 ## Add/fix features:
