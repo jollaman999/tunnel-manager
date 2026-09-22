@@ -503,6 +503,30 @@ html.theme-swapping * {
   transform: translateX(1.45em);
 }
 
+/* What is on the knob: the sun by day and the moon by night.
+
+   They are written as content here rather than put in index.html, because what
+   the switch is showing is decided by the same attribute that paints the rest
+   of the page and nothing has to run for it to be right on the first frame.
+   A browser with no emoji font draws a box; the knob still slides and the side
+   it is on is still what says which theme is up, which is what the switch is
+   read by. */
+#themeToggle .theme-knob::after {
+  content: "\2600\FE0F";
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  /* Against the knob, which is 1.22em of the size the switch is set at. */
+  font-size: 0.78em;
+  line-height: 1;
+}
+
+[data-theme="dark"] #themeToggle .theme-knob::after {
+  content: "\1F319";
+}
+
 /* The list of languages is held to the height of the switch beside it, so the
    two read as one row of controls and not as a control with a form next to it.
 
