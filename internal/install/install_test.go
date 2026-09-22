@@ -284,6 +284,77 @@ func TestInstallFresh(t *testing.T) {
 	}
 }
 
+// TestInstallPutsTheServiceBackWhenItFailsAfterStoppingIt covers the way out of
+// an upgrade that fails between the stop and the start.
+//
+// A service manager does not bring back a service that was stopped on purpose,
+// so every failure in that stretch used to leave the machine with the service
+// down and nothing about to start it. What is reported is still the failure
+// that happened.
+func TestInstallPutsTheServiceBackWhenItFailsAfterStoppingIt(t *testing.T) {
+	allowPrivilege(t)
+
+	plan := planIn(t)
+	writeFile(t, plan.ExecutablePath, "the old build")
+	source := writeFile(t, filepath.Join(t.TempDir(), "downloaded"), "the new build")
+
+	registered := Installed{
+		ExecutablePath: plan.ExecutablePath,
+		DatabaseFile:   plan.DatabaseFile,
+		DefinitionPath: "/usr/lib/systemd/system/tunnel-manager.service",
+	}
+
+	svc := &fakeService{
+		current:       registered,
+		afterRegister: registered,
+		registerErr:   errors.New("the definition could not be written"),
+	}
+
+	var out strings.Builder
+
+	_, err := install(svc, plan, source, "the release", &out)
+	if err == nil {
+		t.Fatal("the install reported no failure, want the one the registration raised")
+	}
+
+	if !strings.Contains(err.Error(), "the definition could not be written") {
+		t.Errorf("the failure reported is %v, want the one the registration raised", err)
+	}
+
+	want := []string{"current", "checkplan", "stop", "register", "start"}
+	if strings.Join(svc.calls, ",") != strings.Join(want, ",") {
+		t.Errorf("the backend was used as %v, want %v: the service has to be started again", svc.calls, want)
+	}
+}
+
+// TestInstallDoesNotStartAServiceItNeverStopped covers a first install that
+// fails. There was nothing running, so there is nothing to put back, and a
+// start here would leave a service up that the operator never had.
+func TestInstallDoesNotStartAServiceItNeverStopped(t *testing.T) {
+	allowPrivilege(t)
+
+	plan := planIn(t)
+	source := writeFile(t, filepath.Join(t.TempDir(), "downloaded"), "the new build")
+
+	svc := &fakeService{
+		currentErr:  ErrNotInstalled,
+		registerErr: errors.New("the definition could not be written"),
+	}
+
+	var out strings.Builder
+
+	_, err := install(svc, plan, source, "the release", &out)
+	if err == nil {
+		t.Fatal("the install reported no failure, want the one the registration raised")
+	}
+
+	for _, call := range svc.calls {
+		if call == "start" {
+			t.Fatalf("the backend was used as %v, want no start: nothing was stopped", svc.calls)
+		}
+	}
+}
+
 // TestInstallOverTheSamePaths covers an upgrade. The service has to be stopped
 // before its executable is written, since a service that is up holds that file.
 func TestInstallOverTheSamePaths(t *testing.T) {

@@ -427,6 +427,22 @@ func install(svc service, plan Plan, executable string, source string, out io.Wr
 		return Outcome{}, err
 	}
 
+	// What a failure from here on has to undo. The service is about to be
+	// stopped, and every way out between that and the start at the end leaves
+	// it down: an explicit stop is not a failure to a service manager, so
+	// nothing brings it back on its own. It is put back up on the way out and
+	// the failure that is reported is the one that happened, not what putting
+	// it back said.
+	stopped := false
+
+	failed := func(err error) (Outcome, error) {
+		if stopped {
+			_ = svc.Start()
+		}
+
+		return Outcome{}, err
+	}
+
 	if existing != nil {
 		// The running service holds its own executable open, and on Linux a
 		// file that is open for execution cannot be written to at all. It is
@@ -436,32 +452,34 @@ func install(svc service, plan Plan, executable string, source string, out io.Wr
 		if err != nil {
 			return Outcome{}, fmt.Errorf("failed to stop the service before replacing its executable: %w", err)
 		}
+
+		stopped = true
 	}
 
 	err = os.MkdirAll(plan.DataDir, dataDirMode)
 	if err != nil {
-		return Outcome{}, fmt.Errorf("failed to make the data directory %s: %w", plan.DataDir, err)
+		return failed(fmt.Errorf("failed to make the data directory %s: %w", plan.DataDir, err))
 	}
 
 	err = os.MkdirAll(filepath.Dir(plan.ExecutablePath), executableMode)
 	if err != nil {
-		return Outcome{}, fmt.Errorf("failed to make the directory the executable goes in, %s: %w",
-			filepath.Dir(plan.ExecutablePath), err)
+		return failed(fmt.Errorf("failed to make the directory the executable goes in, %s: %w",
+			filepath.Dir(plan.ExecutablePath), err))
 	}
 
 	err = copyExecutable(executable, plan.ExecutablePath)
 	if err != nil {
-		return Outcome{}, err
+		return failed(err)
 	}
 
 	outcome.DigestAfter, err = fileDigest(plan.ExecutablePath)
 	if err != nil {
-		return Outcome{}, err
+		return failed(err)
 	}
 
 	err = svc.Register(plan, existing)
 	if err != nil {
-		return Outcome{}, fmt.Errorf("failed to register the service: %w", err)
+		return failed(fmt.Errorf("failed to register the service: %w", err))
 	}
 
 	// Read back rather than assumed. The registration is the only record of
@@ -469,7 +487,7 @@ func install(svc service, plan Plan, executable string, source string, out io.Wr
 	// registration afterwards has left behind something no uninstall can find.
 	registered, err := svc.Current()
 	if err != nil {
-		return Outcome{}, fmt.Errorf("the service was registered but reading the registration back failed: %w", err)
+		return failed(fmt.Errorf("the service was registered but reading the registration back failed: %w", err))
 	}
 
 	outcome.Definition = registered.DefinitionPath

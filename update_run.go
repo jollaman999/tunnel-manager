@@ -57,8 +57,8 @@ func canInstallUpdate(databaseFile string) bool {
 	return running == planned
 }
 
-// startUpdateInstall runs this program again with -install, as a process of its
-// own, and comes back as soon as it has started.
+// startUpdateInstall runs this program again with -install, outside this
+// service, and comes back as soon as it has started.
 //
 // It is a separate process and not work done here on purpose. What an install
 // does at the end is replace the executable at the path this process was
@@ -67,27 +67,29 @@ func canInstallUpdate(databaseFile string) bool {
 // file having been deleted once something has been renamed over it, and the
 // exec of that name fails. The service would go down and stay down.
 //
-// So the install is left to the same command an operator types, which puts the
-// file in place and has the service manager restart the service. That restart
-// ends this process, and the child with it: a child is in the cgroup of this
-// unit, and systemd takes down what is in the cgroup of a unit it is stopping.
-// Nothing is lost by that. The executable is written to a file beside its
-// destination and renamed over, which is a step that either happened or did
-// not, so a child that is killed leaves either the release or what was there
-// before, and the service manager starts whichever it is.
+// Outside this service, and not merely a child of it. An install stops the
+// service before it puts the new executable in place, because a file that is
+// open for execution cannot be written to; systemd stops a unit by signalling
+// everything in its cgroup, and a child of this process is in that cgroup. Left
+// as a plain child, the install was killed by the very stop it had just asked
+// for, three lines before the copy it was there to do. What it left behind was
+// the release downloaded to a temporary directory, the old executable still in
+// place, and a service that stays down: an explicit stop is not a failure, so
+// Restart=always does not bring it back.
+//
+// So on a systemd machine the install is handed to systemd as a transient unit
+// of its own. Stopping this service then does not touch it, and it runs the
+// same steps in the same order as the install an operator types by hand.
 func startUpdateInstall(logger *zap.Logger, databaseFile string) error {
 	running, err := os.Executable()
 	if err != nil {
 		return fmt.Errorf("failed to find the file this process was started from: %w", err)
 	}
 
-	command := exec.Command(running, "-install", "-db", databaseFile)
-
-	// The child writes its report to nothing. Whoever asked is holding a
-	// screen, not this terminal, and the lines that matter are the ones this
-	// process logged before handing over.
-	command.Stdout = nil
-	command.Stderr = nil
+	command, apart, err := installCommand(running, databaseFile)
+	if err != nil {
+		return err
+	}
 
 	err = command.Start()
 	if err != nil {
@@ -97,7 +99,9 @@ func startUpdateInstall(logger *zap.Logger, databaseFile string) error {
 	logger.Info("the install is running as a process of its own. This service is restarted at the "+
 		"end of it, which is what ends this process",
 		logid.UpdateInstallAsked.Field(),
-		zap.Int("pid", command.Process.Pid))
+		zap.Int("pid", command.Process.Pid),
+		zap.Bool("outside_this_service", apart),
+		zap.String("writes_its_report_to", installReportPath(databaseFile, apart)))
 
 	// The child is not waited for. It outlives the wait by design: what it does
 	// last is restart this service, and a wait would be this process sitting on
@@ -107,6 +111,64 @@ func startUpdateInstall(logger *zap.Logger, databaseFile string) error {
 	}()
 
 	return nil
+}
+
+// installCommand is the command that runs the install, and whether it will run
+// outside this service.
+//
+// Where systemd is the service manager and systemd-run is on the machine, the
+// install is asked for as a transient unit. --collect has systemd forget the
+// unit once it has exited, so a failed install does not leave a unit behind
+// that the next one would collide with, and the name carries the process that
+// asked so that two of them could never be the same unit.
+//
+// Everywhere else the install is a plain child, which is what it was before and
+// is right on a platform whose service manager does not take down a tree. Its
+// report then goes to a file rather than to nothing: an install that fails is
+// the one moment those lines are worth having, and the process that would have
+// read them from a terminal is not there.
+func installCommand(running string, databaseFile string) (*exec.Cmd, bool, error) {
+	if runtime.GOOS == "linux" {
+		runner, err := exec.LookPath("systemd-run")
+		if err == nil {
+			unit := fmt.Sprintf("tunnel-manager-install-%d", os.Getpid())
+
+			return exec.Command(runner, "--collect", "--quiet", "--unit", unit,
+				running, "-install", "-db", databaseFile), true, nil
+		}
+	}
+
+	command := exec.Command(running, "-install", "-db", databaseFile)
+
+	report, err := os.OpenFile(installReportPath(databaseFile, false),
+		os.O_CREATE|os.O_WRONLY|os.O_TRUNC, installReportMode)
+	if err != nil {
+		return nil, false, fmt.Errorf("failed to open the file the install writes its report to: %w", err)
+	}
+
+	command.Stdout = report
+	command.Stderr = report
+
+	return command, false, nil
+}
+
+// installReportMode is what the file the install writes its report to is made
+// with. It is read by whoever is looking into an install that did not finish,
+// and it sits in the data directory, which is the account the service runs as
+// and nobody else.
+const installReportMode = 0o600
+
+// installReportPath is where the report of an install can be read.
+//
+// A transient unit writes to the journal, which is where everything else this
+// service says goes, so there is nothing to name. A plain child writes to a
+// file beside the log of the service.
+func installReportPath(databaseFile string, apart bool) string {
+	if apart {
+		return "the journal"
+	}
+
+	return filepath.Join(filepath.Dir(databaseFile), "logs", "update-install.log")
 }
 
 // runUpdateChecks looks for a newer release on a timer, and installs one where
