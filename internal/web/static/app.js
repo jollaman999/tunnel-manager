@@ -598,7 +598,10 @@ function paint(title, nodes) {
 
   const heading = document.createElement("h1");
   heading.textContent = title;
-  app.appendChild(heading);
+
+  // On a screen with no navigation there is no name above the heading, so the
+  // two switches go on the heading's own row instead.
+  app.appendChild(screen !== undefined && screen.nav ? heading : topLine(heading));
 
   if (notice !== null) {
     const line = document.createElement("p");
@@ -644,6 +647,41 @@ function insideScrolls(app) {
   return found;
 }
 
+// cornerControls is the box holding the language picker and the theme switch.
+//
+// It is held here rather than looked up when it is wanted. It is built in
+// index.html and then moved into whichever row is being drawn, which puts it
+// inside #app; emptying #app to draw the next screen takes it out of the
+// document, and a lookup by id after that finds nothing. Holding the element
+// keeps it alive between screens: it is out of the document for the moment a
+// screen is being built and back in it before the frame is painted.
+const cornerControls = document.getElementById("cornerControls");
+
+// topLine puts the language picker and the theme switch on the end of the row
+// that carries the name of the page.
+//
+// The two are moved into the row rather than copied into it. They are built
+// once in index.html, before any script has run, and carry the listeners set on
+// them there and then; appending an element that is already somewhere else
+// moves it, with everything hung on it, so there is one of each for the life of
+// the tab however many times the screen is drawn.
+//
+// They sit in the flow and are not fixed to the corner of the window. Fixed,
+// they stayed over the page while it scrolled and sat on top of whatever was
+// under them; here they go up with the name they belong to.
+function topLine(node) {
+  const row = document.createElement("div");
+
+  row.className = "topline";
+  row.appendChild(node);
+
+  if (cornerControls !== null) {
+    row.appendChild(cornerControls);
+  }
+
+  return row;
+}
+
 // navigation is the top of every screen: the product name on one row and the
 // links the screens are reached from on the next. The links carry an href so
 // they can be opened in a new tab, and the click is taken over so that moving
@@ -662,7 +700,7 @@ function navigation() {
   const brand = document.createElement("div");
   brand.className = "brand";
   brand.textContent = t("common.brand.text");
-  top.appendChild(brand);
+  top.appendChild(topLine(brand));
 
   const bar = document.createElement("nav");
 
@@ -2235,14 +2273,14 @@ function rememberTheme(name) {
   }
 }
 
-// preferredTheme is what the browser is set to, which is what is used until the
-// operator says otherwise.
-function preferredTheme() {
-  if (window.matchMedia === undefined) {
-    return "light";
-  }
-
-  return window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+// defaultTheme is what a browser that has not been told otherwise gets. It is
+// the dark one, and it is not read off what the browser prefers: this page is a
+// console left open beside other work and is drawn for the dark side, where
+// what a browser prefers is a guess made about every page at once. The same
+// name is written into index.html, which settles the theme before the first
+// paint; the two have to say the same thing.
+function defaultTheme() {
+  return "dark";
 }
 
 // currentTheme is what the page is in now. It is read off <html>, which is the
@@ -2302,22 +2340,10 @@ function labelThemeToggle() {
 // stay instant for everything else; see the rule it is named in.
 const themeSwapClass = "theme-swapping";
 
-// themeSkyClass is on while the sky of the switch is moving: the clouds drift
-// and the stars twinkle under it. It is apart from the class above because it
-// lasts far longer than the colours take, and because what it turns on is the
-// one thing here that would otherwise never stop.
-const themeSkyClass = "theme-sky-live";
-
-// themeSkyMs is how long the sky is given. It covers the longest of the
-// animations the stylesheet hangs on the class, so nothing is cut off part way
-// through and left holding a position it was passing through.
-const themeSkyMs = 9000;
-
-// The two timers that take the classes off. They are held so a second press
-// does not leave the first press's timer to end the second one's turn: what a
-// class is on for is the change that is happening now.
+// The timer that takes the class off. It is held so a second press does not
+// leave the first press's timer to end the second one's turn: what the class is
+// on for is the change that is happening now.
 let themeSwapEnding = null;
-let themeSkyEnding = null;
 
 // swapTheme changes the theme with the colours moving.
 //
@@ -2337,25 +2363,6 @@ function swapTheme(name) {
   if (themeSwapEnding !== null) {
     window.clearTimeout(themeSwapEnding);
   }
-
-  // The sky is started again from the beginning on every press. Taking the
-  // class off and putting it back in the same turn would leave it on as far as
-  // the browser is concerned and the animations would carry on from where they
-  // were, so the frame between the two is what makes them begin again.
-  if (themeSkyEnding !== null) {
-    window.clearTimeout(themeSkyEnding);
-  }
-
-  root.classList.remove(themeSkyClass);
-
-  window.requestAnimationFrame(function () {
-    root.classList.add(themeSkyClass);
-  });
-
-  themeSkyEnding = window.setTimeout(function () {
-    root.classList.remove(themeSkyClass);
-    themeSkyEnding = null;
-  }, themeSkyMs);
 
   applyTheme(name);
 
@@ -2399,7 +2406,7 @@ function themeSwapMs() {
 function setUpTheme() {
   const picked = storedTheme();
 
-  applyTheme(picked === null ? preferredTheme() : picked);
+  applyTheme(picked === null ? defaultTheme() : picked);
 
   const button = document.getElementById("themeToggle");
   if (button !== null) {
@@ -2411,20 +2418,6 @@ function setUpTheme() {
     });
   }
 
-  if (window.matchMedia === undefined) {
-    return;
-  }
-
-  const watched = window.matchMedia("(prefers-color-scheme: dark)");
-  if (watched.addEventListener === undefined) {
-    return;
-  }
-
-  watched.addEventListener("change", function () {
-    if (storedTheme() === null) {
-      swapTheme(preferredTheme());
-    }
-  });
 }
 
 // t is the word a key stands for, in the language the page is in. It is one
@@ -2880,6 +2873,7 @@ for (const name of ["touchmove", "wheel"]) {
     scrolledAt = Date.now();
   }, { capture: true, passive: true });
 }
+
 // What clears a press that was never let go of over this page.
 //
 // A mouse pressed on a row and released somewhere else - over another window,

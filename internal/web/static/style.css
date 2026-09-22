@@ -13,7 +13,7 @@
   color-scheme: light;
 
   /* Surfaces, from the paper the page is on up to what is laid on top of it. */
-  --bg-page: #f6f7f9;
+  --bg-page: #eceef4;
   --bg-surface: #ffffff;
   --bg-raised: #fbfcfd;
   --bg-sunken: #f0f1f3;
@@ -34,79 +34,33 @@
 
   /* The one colour the UI carries: links, the screen that is up, the press that
      stores what was typed, and the ring around whatever has the focus. */
-  --accent: #24456b;
-  --accent-hover: #1b3652;
-  --accent-active: #152a40;
-  --accent-ring: #c7d6ea;
+  --accent: #6f52e0;
+  --accent-hover: #5e41d2;
+  --accent-active: #4d33b8;
+  --accent-ring: #cdbdfb;
+
+  /* What fills the press a card is there for. Two stops and not one, because
+     the drawing this follows lights every solid thing from its top left, and a
+     flat fill under a lit edge reads as a sticker on the glass rather than as
+     a piece of it. */
+  --accent-fill: linear-gradient(140deg, #8058e6, #6141d6);
+  --accent-fill-hover: linear-gradient(140deg, #744ae0, #5536c9);
+  --accent-fill-active: linear-gradient(140deg, #663cd4, #482bb2);
+  /* The colour a press throws onto what is behind it. */
+  --accent-cast: rgba(111, 82, 224, 0.32);
 
 
   /* The theme switch, and how long a change of theme takes.
 
-     The switch colours are the only ones on the page that are not named by
-     what they are for on a screen: the track and the knob are a drawing of a
-     sky. The daytime one is white with blue clouds on it rather than blue with
-     white ones, which is the way round that lets the sun keep its light: a
-     yellow glow spreads into white and is swallowed by blue. The night is
-     darker than any surface, which is what lets a moon sit on it.
+     The three switch colours are the only ones on the page that are not named
+     by what they are for on a screen: they are the track, the line around it
+     and the knob that slides along it, and none of those is anything else.
 
      The duration is one value for the whole page so that the switch, the
-     surfaces behind it and the text on them all land together. Measured
-     against the animation this was drawn from, which takes about a third of a
-     second from the first colour that moves to the last. */
-  /* White, so the sun on it can throw light. The track is then close enough to
-     the page behind it that it needs a line of its own to stay a pill, which
-     is the edge below and the one thing the two themes do not share. */
-  --theme-track: #ffffff;
-  --theme-track-edge: #cfd5de;
-  --theme-cloud: #c9e7fb;
-  /* How a cloud is softened at the edge, so that the bar and the two circles it
-     is built from read as one shape and not as a row of pills.
-
-     It is a shadow in the cloud's own colour and not a blur of the cloud.
-     A blur puts the shape in a layer of its own and composites it back through
-     an alpha ramp, and a ramp is where a browser's choice of colour space
-     shows: the same pale blue came back with a pink cast down the soft edge.
-     A shadow is painted in the page's own space with the rest of the switch,
-     so there is no second space for it to come back from. The three parts
-     overlap, and where two of these meet there is more of one colour rather
-     than a mix of two. */
-  --theme-cloud-soft: 0 0 0.15em 0.03em var(--theme-cloud);
-  /* The sun and the moon are the one body: it is the same yellow that rises on
-     one side of the switch and sets on the other, and what tells the two apart
-     is the shape and what is around it, not the colour. */
-  --theme-orb: #ffd84d;
-  /* What the sun throws off. It is the orb again with most of it taken away,
-     so a change to the yellow carries into the light around it, and it goes to
-     nothing in the dark.
-
-     The moon cannot wear it. The knob is not painted; what paints it is a
-     circle laid inside it, and the hollow side of a crescent is the part of
-     the knob that circle does not cover. A glow is drawn behind the whole
-     knob, so it shows through that hollow and fills the crescent back in to a
-     disc. Tried at four strengths and the moon was a bitten disc at every one
-     of them. */
-  --theme-glow: rgba(255, 216, 77, 0.9);
-  /* The halo the orb wears while it is twinkling. It is apart from the glow
-     above because that one is the sun's alone and goes out at night, and this
-     one is worn by whichever of the two is up: a moon that brightens for a
-     moment is a moon catching the light, and it wants an edge to catch it on. */
-  --theme-orb-halo: rgba(255, 216, 77, 0.55);
-  --theme-star: #f3f5f9;
-  --theme-star-rest: blur(0.017em);
-  /* How soft the body of light is, at every moment: it does not move while the
-     orb twinkles, because a moon that went in and out of focus would read as a
-     lens and not as a moon. What the twinkle moves is the brightness and the
-     halo.
-
-     The radius is the narrowest one that draws anything at all. Measured on
-     this drawing, anything under about a fifth of a pixel is rounded away and
-     comes out the same as no filter; the step above this one takes an eighth
-     of the edge off a shape that is only a few pixels across. There is one
-     value between doing nothing and smudging, and this is it.
-
-     Nothing in the day: the sun has rays, and a ray that is blurred is a
-     smudge. */
-  --theme-orb-rest: blur(0);
+     surfaces behind it and the text on them all land together. */
+  --theme-track: #eceaf6;
+  --theme-track-edge: #ffffff;
+  --theme-knob: #ffffff;
   --theme-swap: 0.35s;
 
   /* How round a corner is, by what it is a corner of. Two values and not
@@ -116,26 +70,73 @@
 
      They are here with the colours because they are the same kind of thing: a
      decision about how the page looks, made once, named by what it is for. */
-  --radius-control: 12px;
-  --radius-surface: 20px;
+  --radius-control: 14px;
+  --radius-surface: 24px;
+  /* A press and a switch are drawn as lozenges rather than as squares with the
+     corners taken off, which is the one shape the drawing this follows uses
+     for everything that is pressed. */
+  --radius-pill: 999px;
 
   /* What went wrong, and what cannot be taken back. */
-  --danger: #8a2f2f;
-  --danger-strong: #7a1f1f;
-  --danger-active: #6b1a1a;
-  --danger-bg: #fdeeee;
-  --danger-bg-soft: #fdf7f7;
-  --danger-border: #e0bcbc;
+  --danger: #a32b3d;
+  --danger-strong: #8e2234;
+  --danger-active: #78192a;
+  --danger-bg: rgba(196, 59, 80, 0.1);
+  --danger-bg-soft: rgba(196, 59, 80, 0.05);
+  --danger-border: rgba(196, 59, 80, 0.3);
 
   /* Something is not as it should be, but nothing failed. */
-  --warn: #7a4a10;
-  --warn-bg: #fdf4e6;
-  --warn-border: #f0d9ae;
+  --warn: #8d5a0b;
+  --warn-bg: rgba(245, 158, 11, 0.12);
+  --warn-border: rgba(245, 158, 11, 0.3);
 
   /* It is as it should be. */
-  --ok: #1f4d2b;
-  --ok-bg: #eefaf0;
-  --ok-border: #bfe3c8;
+  --ok: #0d6f66;
+  --ok-bg: rgba(45, 212, 191, 0.16);
+  --ok-border: rgba(45, 212, 191, 0.4);
+
+  /* Glass: what a surface is made of here.
+
+     A card is not a colour on this page, it is a pane held over the page with
+     what is behind it showing through, blurred. Three parts make one pane and
+     they are named apart because each is a different thing: what tints it, the
+     lit line along its edge, and the blur that is taken of whatever it is over.
+
+     The tint has to carry the text on it, so it is far more opaque than glass
+     in a picture would be: every pair of text and pane below is still at least
+     4.5:1, which is the whole of why this is a tint and not a wash. */
+  --glass: rgba(255, 255, 255, 0.74);
+  --glass-deep: rgba(255, 255, 255, 0.62);
+  --glass-edge: rgba(255, 255, 255, 0.9);
+  --glass-blur: blur(22px) saturate(1.6);
+  --glass-cast: rgba(86, 74, 130, 0.16);
+  /* The light caught along the top rim of a pane. A pane on a white page has
+     nothing behind it to refract, so this line and the shade below are the
+     whole of what says it is glass and not paper. */
+  --glass-sheen: linear-gradient(160deg, rgba(255, 255, 255, 0.95) 0%, rgba(255, 255, 255, 0) 38%);
+  /* What a press that is not the main one is filled with. It is a tint of the
+     accent and not a pane, because a pane on a pane is two sheets of the same
+     white and the press has no edge of its own to be seen by. */
+  --control: rgba(111, 82, 224, 0.09);
+  --control-hover: rgba(111, 82, 224, 0.16);
+  --control-active: rgba(111, 82, 224, 0.24);
+  --control-edge: rgba(111, 82, 224, 0.26);
+  /* What the browser fills a ticked box with. It is the deeper of the two
+     stops the main press is filled with and not the accent itself: the accent
+     is mixed to be read as text on a pane, and a box a few millimetres across
+     filled with it is a smudge of colour rather than a tick. */
+  --control-tick: #6141d6;
+  /* Every other row of a table, and the row under the pointer. They are tints
+     and not colours: a row is drawn over a pane that is itself see-through, and
+     a flat fill there covers the pane instead of shading it. */
+  --row-band: rgba(38, 30, 74, 0.045);
+  --row-hover: rgba(111, 82, 224, 0.11);
+
+  /* The page the panes are held over. It is a shade off white and not white:
+     a pane is read by being lighter than what it is over and by the line caught
+     along its rim, and over white there is nothing for either to show against.
+     The wash is faint enough that the page still reads as a light one. */
+  --page-wash: linear-gradient(160deg, #eef0f6 0%, #e7eaf3 52%, #eceaf3 100%);
 
   /* The sheet a panel is opened over, and what a panel casts on the page. */
   --overlay: rgba(28, 28, 28, 0.45);
@@ -155,11 +156,9 @@
 [data-theme="dark"] {
   color-scheme: dark;
 
-  --theme-track: #16171d;
-  --theme-track-edge: #3a3f49;
-  --theme-glow: rgba(255, 201, 60, 0);
-  --theme-orb-halo: rgba(255, 213, 110, 0.45);
-  --theme-orb-rest: blur(0.017em);
+  --theme-track: rgba(255, 255, 255, 0.12);
+  --theme-track-edge: rgba(255, 255, 255, 0.22);
+  --theme-knob: #cdc2f5;
 
   --bg-page: #15171b;
   --bg-surface: #1d2025;
@@ -179,25 +178,46 @@
   --border-strong: #464d58;
   --border-soft: #2b3038;
 
-  --accent: #7aa7e0;
-  --accent-hover: #93b8e8;
-  --accent-active: #a9c7ee;
-  --accent-ring: #4d6f9f;
+  --accent: #b6a0fb;
+  --accent-hover: #c5b3fc;
+  --accent-active: #d2c4fd;
+  --accent-ring: #6f52e0;
+  --accent-fill: linear-gradient(140deg, #c3adfd, #9077f4);
+  --accent-fill-hover: linear-gradient(140deg, #cfbdfe, #a189f7);
+  --accent-fill-active: linear-gradient(140deg, #dbcefe, #b29cf9);
+  --accent-cast: rgba(144, 119, 244, 0.34);
 
-  --danger: #ef9a9a;
-  --danger-strong: #ffb4b4;
-  --danger-active: #ffd0d0;
-  --danger-bg: #3a2023;
-  --danger-bg-soft: #2a1d1f;
-  --danger-border: #6e3a3a;
+  /* Glass in the dark is a tint that is darker than the page and not lighter,
+     and the lit edge is a hairline of white rather than a sheet of it: a pane
+     at night is seen by the light caught on its rim. */
+  --glass: rgba(29, 32, 43, 0.72);
+  --glass-deep: rgba(34, 38, 51, 0.6);
+  --glass-edge: rgba(255, 255, 255, 0.11);
+  --glass-cast: rgba(0, 0, 0, 0.45);
+  --glass-sheen: linear-gradient(160deg, rgba(255, 255, 255, 0.14) 0%, rgba(255, 255, 255, 0) 38%);
+  --control: rgba(182, 160, 251, 0.12);
+  --control-hover: rgba(182, 160, 251, 0.2);
+  --control-active: rgba(182, 160, 251, 0.3);
+  --control-edge: rgba(182, 160, 251, 0.3);
+  --control-tick: #8d72f2;
+  --row-band: rgba(255, 255, 255, 0.055);
+  --row-hover: rgba(182, 160, 251, 0.14);
+  --page-wash: linear-gradient(145deg, #191722 0%, #14161f 46%, #101620 100%);
 
-  --warn: #e8b465;
-  --warn-bg: #3a2e18;
-  --warn-border: #6b5327;
+  --danger: #ff9aa9;
+  --danger-strong: #ffb2be;
+  --danger-active: #ffcdd5;
+  --danger-bg: rgba(255, 95, 120, 0.15);
+  --danger-bg-soft: rgba(255, 95, 120, 0.07);
+  --danger-border: rgba(255, 95, 120, 0.32);
 
-  --ok: #8fd6a2;
-  --ok-bg: #18301f;
-  --ok-border: #2f5c3c;
+  --warn: #fcd28a;
+  --warn-bg: rgba(245, 158, 11, 0.11);
+  --warn-border: rgba(245, 158, 11, 0.26);
+
+  --ok: #5eead4;
+  --ok-bg: rgba(45, 212, 191, 0.14);
+  --ok-border: rgba(45, 212, 191, 0.32);
 
   --overlay: rgba(0, 0, 0, 0.6);
   --shadow: rgba(0, 0, 0, 0.5);
@@ -216,6 +236,24 @@ html {
   text-size-adjust: 100%;
 }
 
+/* The controls the browser paints itself - the tick in a checkbox, the caret
+   in a list - are painted in the colour of the press beside them rather than in
+   whatever the platform picked. */
+:root {
+  accent-color: var(--control-tick);
+}
+
+/* Every box that is ticked on these screens, wherever it is. The size is set
+   in one place because a box is the smallest thing on the page that is pressed
+   and the default is smaller still, and the rules below that place one only
+   say where it goes. */
+input[type="checkbox"],
+input[type="radio"] {
+  width: 1.1rem;
+  height: 1.1rem;
+  accent-color: var(--control-tick);
+}
+
 body {
   margin: 0;
   /* The extra room at the bottom is for the version, which is fixed to the
@@ -227,6 +265,8 @@ body {
   line-height: 1.5;
   color: var(--text);
   background: var(--bg-page);
+  background-image: var(--page-wash);
+  background-attachment: fixed;
 }
 
 h1 {
@@ -238,10 +278,16 @@ h1 {
   max-width: 60rem;
   margin: 0 auto;
   padding: 1.25rem;
-  background: var(--bg-surface);
-  border: 1px solid var(--border);
+  background: var(--glass-sheen), var(--glass);
+  /* Whatever is behind the pane, blurred. A browser that does not know the
+     property ignores this line and is left with the tint above, which is
+     opaque enough to stand on its own: the page is then flat rather than
+     broken. */
+  backdrop-filter: var(--glass-blur);
+  -webkit-backdrop-filter: var(--glass-blur);
+  border: 1px solid var(--glass-edge);
   border-radius: var(--radius-surface);
-  box-shadow: 0 1px 2px var(--shadow-raised), 0 8px 24px var(--shadow-raised);
+  box-shadow: 0 1px 1px var(--glass-edge) inset, 0 24px 64px var(--glass-cast);
 }
 
 /* The version is fixed to the corner of every screen, the login included. It
@@ -293,13 +339,27 @@ h1 {
    they are certainly not on top of it: the card is as wide as the window lets
    it be, and on a narrow one there is no margin beside it to stand in. */
 #cornerControls {
-  position: fixed;
-  top: 8px;
-  inset-inline-end: 12px;
-  z-index: 1;
+  flex: none;
   display: flex;
   align-items: center;
   gap: 0.4rem;
+}
+
+/* The row the name of the page sits on, with the two switches at the far end
+   of it. They are centred on the name rather than on the row, so the switch and
+   the list of languages line up with the word beside them whatever the two
+   heights turn out to be. */
+.topline {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  /* The row of screens goes under this one, and the two are different things:
+     what this page belongs to, and which of its screens is up. The gap is what
+     says so, and it is set here because the switches make this row taller than
+     the name alone and a margin on the name would be measured from the wrong
+     thing. */
+  margin-bottom: 1rem;
 }
 
 /* Where there is room beside the card, they drop to the line the name of the
@@ -315,12 +375,6 @@ h1 {
 
    The 41px is the card's own first line: it begins 24px down and carries 20px
    of padding above the name. Anything that changes that padding moves this. */
-@media (min-width: 1400px) {
-  #cornerControls {
-    top: 41px;
-  }
-}
-
 /* The button is painted by the rules every other button is painted by; only
    how small it is is said here. */
 /* A change of theme moves every colour on the page together, rather than
@@ -379,23 +433,15 @@ html.theme-swapping * {
   :root {
     --theme-swap: 0s;
   }
-
-  /* The twinkle is movement too, and it is the one thing here that does not
-     stop on its own: it runs for as long as the night is up. */
-  html.theme-sky-live #themeToggle .theme-star,
-  html.theme-sky-live #themeToggle .theme-cloud,
-  html.theme-sky-live #themeToggle .theme-knob {
-    animation: none;
-  }
 }
 
-/* The theme switch: the two words, the track between them, the knob that
-   slides across it, and the stars that come out behind the knob.
+/* The theme switch: a track with a round knob that slides from one end of it
+   to the other.
 
    It is drawn rather than written because the state it is in has to be legible
-   at a glance from the corner of a screen somebody is working in. What says
-   which theme is on is the side the knob is at and which of the two words is
-   the dark one, and neither has to be read to be seen.
+   at a glance from the corner of a screen somebody is working in: what says
+   which theme is on is the side the knob is at, and the side does not have to
+   be read to be seen.
 
    Every length here is in em so the whole switch follows the font size set on
    the button, and the one place to make it bigger or smaller is that. */
@@ -408,9 +454,9 @@ html.theme-swapping * {
   padding: 0 0.15rem;
   line-height: 0;
   font-size: 12px;
-  color: var(--text-muted);
   background: none;
   border: none;
+  box-shadow: none;
 }
 
 #themeToggle:hover {
@@ -423,413 +469,39 @@ html.theme-swapping * {
   width: 3.15em;
   height: 1.7em;
   background: var(--theme-track);
-  /* The outline is what keeps the pill a shape in the dark. The night the
-     track is painted in is close to the page behind it there, close enough
-     that the switch would read as a moon and some stars floating between two
-     words, and the thing that is pressed would have no edge. In the light it
-     is the same border in a blue that the track already is, so it changes
-     nothing and there is one rule rather than two. */
+  /* The rim is what keeps the pill a shape. The track is a pane like the rest
+     of the page, so what is behind it shows through and the edge is the only
+     line there is. */
   border: 1px solid var(--theme-track-edge);
-  border-radius: 999px;
+  border-radius: var(--radius-pill);
+  backdrop-filter: var(--glass-blur);
+  -webkit-backdrop-filter: var(--glass-blur);
+  box-shadow: 0 1px 2px var(--glass-cast) inset;
   transition:
     background-color var(--theme-swap) ease,
     border-color var(--theme-swap) ease;
 }
 
-/* The knob. It slides with a transform rather than with left, so the move is
-   one the browser can hand to the compositor and not a run of layouts.
-
-   The crescent is the knob with a bite taken out of it, and the bite is an
-   inset shadow in the colour of the track: one circle, not two, so there is
-   nothing to keep lined up while it moves. In the light theme the bite is
-   pushed off the far edge, which leaves a full circle. */
+/* The knob slides with a transform rather than with left, so the move is one
+   the browser can hand to the compositor and not a run of layouts. */
 #themeToggle .theme-knob {
   position: absolute;
-  top: 0.44em;
-  left: 0.44em;
-  width: 0.78em;
-  height: 0.78em;
+  top: 0.22em;
+  left: 0.22em;
+  width: 1.22em;
+  height: 1.22em;
+  background: var(--theme-knob);
   border-radius: 50%;
-  /* The knob is not painted; what paints it is a circle of its own colour laid
-     inside it. In the light theme that circle is spread wide enough to fill the
-     knob, which is a disc. In the dark it is a plain circle pushed to one side,
-     and what is left uncovered on the other side is a lune: both of its edges
-     are curves, which is what a bite taken with a straight edge cannot give.
-
-     The two are the same shadow with other numbers, so one moves into the
-     other: a spread that shrinks while an offset grows. */
-  /* Two shadows, in both themes, so the one turns into the other rather than
-     being swapped for it: the inset that paints the body, and the one outside
-     it that is the light it throws. A list of a different length in the two
-     states is a list that cannot be interpolated. */
-  box-shadow:
-    inset 0 0 0 0.45em var(--theme-orb),
-    0 0 0.55em 0.26em var(--theme-glow);
-  filter: var(--theme-orb-rest);
+  box-shadow: 0 1px 3px var(--glass-cast);
   transition:
     transform var(--theme-swap) cubic-bezier(0.34, 1.2, 0.64, 1),
+    background-color var(--theme-swap) ease,
     box-shadow var(--theme-swap) ease;
 }
 
-/* The rays of the sun, which are the knob's own and travel with it.
-
-   Eight of them, as shadows of one dot rather than eight elements: they never
-   move apart, so what would be eight things to keep in a ring is one thing
-   with a ring around it. They are drawn a little away from the knob and go as
-   the moon comes, which is what makes the one shape read as two.
-
-   The dot itself is put where the knob's centre is and given no size of its
-   own; every ray is a spread on a shadow of it. */
-#themeToggle .theme-knob::after {
-  content: "";
-  position: absolute;
-  top: 50%;
-  left: 50%;
-  /* A ray has a size of its own and is round. A shadow of a box with no size
-     is a square however the radius is set, because there is no corner for the
-     radius to cut: what makes eight round rays is one round dot cast eight
-     times. The dot itself is not painted; only its shadows are. */
-  width: 0.15em;
-  height: 0.15em;
-  margin: -0.075em 0 0 -0.075em;
-  border-radius: 50%;
-  opacity: 1;
-  box-shadow:
-    0 -0.62em 0 0 var(--theme-orb),
-    0.44em -0.44em 0 -0.012em var(--theme-orb),
-    0.62em 0 0 0 var(--theme-orb),
-    0.44em 0.44em 0 -0.012em var(--theme-orb),
-    0 0.62em 0 0 var(--theme-orb),
-    -0.44em 0.44em 0 -0.012em var(--theme-orb),
-    -0.62em 0 0 0 var(--theme-orb),
-    -0.44em -0.44em 0 -0.012em var(--theme-orb);
-  transition: opacity var(--theme-swap) ease, transform var(--theme-swap) ease;
-}
-
-/* The rays turn a little as they go, so the sun sets rather than switching
-   off. It is a sixteenth of a turn, which is half the angle between two rays:
-   enough to be movement and not enough to look like a wheel. */
-[data-theme="dark"] #themeToggle .theme-knob::after {
-  opacity: 0;
-  transform: rotate(22.5deg);
-}
-
-/* The dot is at the middle of the knob and the rays are measured from it, so
-   nothing here is nudged into place by hand: the ring is centred because its
-   centre is. */
-
-
 [data-theme="dark"] #themeToggle .theme-knob {
   transform: translateX(1.45em);
-  /* The lit circle is pushed towards the leading edge, so the moon is full on
-     the side it is travelling to and hollow behind it, the way the drawing
-     this follows has it. */
-  box-shadow:
-    inset 0.26em 0 0 0 var(--theme-orb),
-    0 0 0.62em 0.12em var(--theme-glow);
 }
-
-/* The stars. They are one element carrying four dots as shadows, because four
-   dots that are never moved apart do not need four elements to be in.
-
-   They are behind the knob and only in the dark, and they fade rather than
-   appear: a star that switched on with the colour would read as a flicker. */
-/* The sky behind the body of light: clouds while it is day, stars once it is
-   night. Each is a layer that covers the track and holds what is in it, so a
-   thing in the sky is placed against the sky and not against the switch.
-
-   A layer fades as a whole. What is in it keeps its own life, which is how a
-   star can be twinkling while the night it is in is still arriving. */
-#themeToggle .theme-sky {
-  position: absolute;
-  inset: 0;
-  /* Cut to the pill. A cloud drifts, and what drifts has to stop at the edge of
-     the sky rather than out over the page. The knob is not in here, so its
-     glow is not cut with them. */
-  overflow: hidden;
-  border-radius: 999px;
-  transition: opacity var(--theme-swap) ease;
-}
-
-#themeToggle .theme-clouds {
-  opacity: 1;
-}
-
-[data-theme="dark"] #themeToggle .theme-clouds {
-  opacity: 0;
-}
-
-#themeToggle .theme-stars {
-  opacity: 0;
-}
-
-[data-theme="dark"] #themeToggle .theme-stars {
-  opacity: 1;
-}
-
-/* A cloud is a flat bottom with lumps on it. The element is the bottom, a pill
-   lying on its side, and the two lumps are circles raised off it: that is what
-   gives the shape a straight underside and a bumpy top, which is what tells a
-   cloud from a row of circles. */
-#themeToggle .theme-cloud {
-  position: absolute;
-  background: var(--theme-cloud);
-  border-radius: 999px;
-  box-shadow: var(--theme-cloud-soft);
-}
-
-#themeToggle .theme-cloud::before,
-#themeToggle .theme-cloud::after {
-  content: "";
-  position: absolute;
-  background: var(--theme-cloud);
-  border-radius: 50%;
-  box-shadow: var(--theme-cloud-soft);
-}
-
-/* The near cloud, low and wide, clear of the rays of the sun. */
-/* Three clouds in the sky to the right of the sun, kept apart: one low and
-   wide on the left of that space, one small and high above it, one middling
-   over on the right. What they must not do is touch, which is why each has its
-   own corner of the space and why the distances they drift are shorter than
-   the gaps between them. */
-#themeToggle .theme-cloud-near {
-  top: 1.0em;
-  left: 1.54em;
-  width: 0.72em;
-  height: 0.26em;
-}
-
-#themeToggle .theme-cloud-near::before {
-  bottom: 0.06em;
-  left: 0.08em;
-  width: 0.28em;
-  height: 0.28em;
-}
-
-#themeToggle .theme-cloud-near::after {
-  bottom: 0.08em;
-  left: 0.3em;
-  width: 0.36em;
-  height: 0.36em;
-}
-
-/* The far one, higher and smaller. Distance is drawn as size here and not as a
-   paler white: a cloud that was greyer would read as weather. */
-#themeToggle .theme-cloud-far {
-  top: 0.78em;
-  left: 2.54em;
-  width: 0.5em;
-  height: 0.2em;
-}
-
-#themeToggle .theme-cloud-far::before {
-  bottom: 0.05em;
-  left: 0.06em;
-  width: 0.2em;
-  height: 0.2em;
-}
-
-#themeToggle .theme-cloud-far::after {
-  bottom: 0.06em;
-  left: 0.24em;
-  width: 0.26em;
-  height: 0.26em;
-}
-
-/* A third, highest and smallest, over towards the middle. Three at three
-   heights is a sky; two at one height is a pair. */
-#themeToggle .theme-cloud-high {
-  top: 0.3em;
-  left: 1.7em;
-  width: 0.42em;
-  height: 0.15em;
-}
-
-#themeToggle .theme-cloud-high::before {
-  bottom: 0.04em;
-  left: 0.04em;
-  width: 0.16em;
-  height: 0.16em;
-}
-
-#themeToggle .theme-cloud-high::after {
-  bottom: 0.05em;
-  left: 0.17em;
-  width: 0.2em;
-  height: 0.2em;
-}
-
-/* A star is four points and not a dot. At this size a circle reads as a speck
-   of dust and a four pointed one reads as a star, which is the whole of the
-   difference between a night sky and a dirty one. */
-/* The box the four stars are softened on. It is on the field and not on each
-   star, because a clip is applied after a filter and would trim every blurred
-   point back to the hard edge it was cut to.
-
-   It is one softness and it holds: a star that changed how soft it was as it
-   twinkled would be a star going in and out of focus, which is not what a star
-   does. What the twinkle moves is how bright the star is and how big, and this
-   stays where it is under both. */
-#themeToggle .theme-star-field {
-  position: absolute;
-  inset: 0;
-  filter: var(--theme-star-rest);
-}
-
-#themeToggle .theme-star {
-  position: absolute;
-  background: var(--theme-star);
-  clip-path: polygon(
-    50% 0%, 60% 40%, 100% 50%, 60% 60%,
-    50% 100%, 40% 60%, 0% 50%, 40% 40%
-  );
-}
-
-/* The sky is alive for a moment after the switch and then still.
-
-   Movement that never stops is movement in the corner of the eye of somebody
-   working on something else, which is what a switch in a corner must not be.
-   So the drifting and the twinkling are given a few seconds, on the press that
-   put the sky there, and then the sky holds.
-
-   Every one of them runs an even number of times and turns around at each end,
-   so the last frame is the first: when the class goes there is nothing to snap
-   back from, and what is left is exactly what was drawn before it started. */
-html.theme-sky-live #themeToggle .theme-star {
-  animation: theme-twinkle 1.15s ease-in-out 4 alternate;
-}
-
-html.theme-sky-live #themeToggle .theme-cloud {
-  animation: theme-drift 1.7s ease-in-out 2 alternate;
-}
-
-/* The orb twinkles too, on the same short clock.
-
-   It is done with a filter and not with a transform or a shadow, because both
-   of those are already spoken for: the transform is what slides the knob from
-   one end to the other, and the shadow is what paints the body of it and the
-   light it throws. A filter sits over all of that and touches none of it.
-
-   Whichever of the two is up gets it. A sun that flares as it arrives and a
-   moon that catches the light for a moment are the same gesture, and the one
-   body that is both does not need two. */
-html.theme-sky-live #themeToggle .theme-knob {
-  animation: theme-orb-twinkle 1.45s ease-in-out 2 alternate;
-}
-
-@keyframes theme-orb-twinkle {
-  from {
-    filter: var(--theme-orb-rest) brightness(1) drop-shadow(0 0 0 var(--theme-orb-halo));
-  }
-
-  to {
-    filter: var(--theme-orb-rest) brightness(1.22) drop-shadow(0 0 0.28em var(--theme-orb-halo));
-  }
-}
-
-/* Each cloud a different way and a different distance, so they come apart as
-   they go rather than sliding as one sheet.
-
-   How far each may go is set by what is beside it and not by taste. The high
-   one has the whole top of the sky to itself and goes furthest. The near one
-   runs left, into the space under the sun, which is empty. The far one is the
-   boxed-in one: the pill curves in to its right and the near one is to its
-   left, so it moves least, and what keeps it from reading as stuck is that it
-   is on the slowest clock of the three. */
-html.theme-sky-live #themeToggle .theme-cloud-near {
-  animation-name: theme-drift-near;
-}
-
-html.theme-sky-live #themeToggle .theme-cloud-high {
-  animation-duration: 2.1s;
-}
-
-html.theme-sky-live #themeToggle .theme-cloud-far {
-  animation-duration: 2.5s;
-  animation-name: theme-drift-far;
-}
-
-@keyframes theme-drift {
-  from {
-    transform: translateX(0);
-  }
-
-  to {
-    transform: translateX(0.26em);
-  }
-}
-
-@keyframes theme-drift-near {
-  from {
-    transform: translateX(0);
-  }
-
-  to {
-    transform: translateX(-0.22em);
-  }
-}
-
-@keyframes theme-drift-far {
-  from {
-    transform: translateX(0);
-  }
-
-  to {
-    transform: translateX(-0.2em);
-  }
-}
-
-/* Four stars, at four sizes, on four clocks. Every one of them the same size
-   on the same clock is a pattern, and a pattern is the one thing a sky is not.
-   The delays are negative so that no star waits to start: the animation is
-   already part way through on the frame the night arrives. */
-#themeToggle .theme-star-a {
-  top: 0.5em;
-  left: 0.52em;
-  width: 0.34em;
-  height: 0.34em;
-  animation-delay: 0s;
-}
-
-#themeToggle .theme-star-b {
-  top: 1.02em;
-  left: 0.92em;
-  width: 0.24em;
-  height: 0.24em;
-  animation-delay: 0.18s;
-}
-
-#themeToggle .theme-star-c {
-  top: 0.74em;
-  left: 1.3em;
-  width: 0.17em;
-  height: 0.17em;
-  animation-delay: 0.36s;
-}
-
-#themeToggle .theme-star-d {
-  top: 0.34em;
-  left: 1.06em;
-  width: 0.13em;
-  height: 0.13em;
-  animation-delay: 0.1s;
-}
-
-/* A star does not blink on and off. It dims and brightens and swells a little
-   as it does, which is what it looks like through air. */
-@keyframes theme-twinkle {
-  0%, 100% {
-    opacity: 0.45;
-    transform: scale(0.82);
-  }
-
-  50% {
-    opacity: 1;
-    transform: scale(1);
-  }
-}
-
 
 /* The list of languages is held to the height of the switch beside it, so the
    two read as one row of controls and not as a control with a form next to it.
@@ -875,8 +547,8 @@ nav {
 nav a {
   color: var(--accent);
   text-decoration: none;
-  padding: 0.2rem 0.5rem;
-  border-radius: var(--radius-control);
+  padding: 0.2rem 0.6rem;
+  border-radius: var(--radius-pill);
 }
 
 nav a:hover {
@@ -884,8 +556,9 @@ nav a:hover {
 }
 
 nav a.current {
-  background: var(--accent);
+  background: var(--accent-fill);
   color: var(--text-on-accent);
+  box-shadow: 0 4px 14px var(--accent-cast);
 }
 
 /* The name is on its own row above the links, so it reads as what this is
@@ -895,7 +568,6 @@ nav a.current {
    the page is already in, and a colour said again here is one more place a
    change of theme has to arrive at. */
 .topbar .brand {
-  margin-bottom: 0.5rem;
   font-weight: 600;
 }
 
@@ -941,16 +613,18 @@ h3 {
 .card {
   margin: 0 0 1.25rem;
   padding: 1rem;
-  background: var(--bg-raised);
-  border: 1px solid var(--border);
+  background: var(--glass-sheen), var(--glass-deep);
+  backdrop-filter: var(--glass-blur);
+  -webkit-backdrop-filter: var(--glass-blur);
+  border: 1px solid var(--glass-edge);
   border-radius: var(--radius-surface);
-  box-shadow: 0 1px 2px var(--shadow-raised);
+  box-shadow: 0 1px 1px var(--glass-edge) inset, 0 6px 18px var(--glass-cast);
 }
 
 /* What cannot be taken back is set apart from the form above it, the way the
    delete button is set apart from the two beside it. */
 .card.danger-zone {
-  background: var(--danger-bg-soft);
+  background: var(--glass-sheen), var(--danger-bg-soft);
   border-color: var(--danger-border);
 }
 
@@ -994,12 +668,13 @@ h3 {
 .field input[type="password"],
 .field textarea,
 .field select {
-  padding: 0.35rem 0.5rem;
+  padding: 0.4rem 0.75rem;
   font: inherit;
   color: inherit;
-  background: var(--bg-surface);
-  border: 1px solid var(--border-strong);
+  background: var(--glass);
+  border: 1px solid var(--glass-edge);
   border-radius: var(--radius-control);
+  box-shadow: 0 1px 2px var(--glass-cast) inset;
 }
 
 /* A pasted PEM block is read a line at a time, and the lines are all the same
@@ -1045,8 +720,6 @@ h3 {
 
 .field input[type="checkbox"] {
   justify-self: start;
-  width: 1rem;
-  height: 1rem;
 }
 
 .field small {
@@ -1097,13 +770,21 @@ h3 {
 }
 
 button {
-  padding: 0.35rem 0.8rem;
+  padding: 0.35rem 0.9rem;
   font: inherit;
   color: var(--text);
-  background: var(--bg-surface);
-  border: 1px solid var(--border-strong);
-  border-radius: var(--radius-control);
+  background: var(--control);
+  border: 1px solid var(--control-edge);
+  border-radius: var(--radius-pill);
   cursor: pointer;
+}
+
+button:hover {
+  background: var(--control-hover);
+}
+
+button:active {
+  background: var(--control-active);
 }
 
 button:hover {
@@ -1128,16 +809,17 @@ button:disabled {
 
 button[type="submit"] {
   color: var(--text-on-accent);
-  background: var(--accent);
-  border-color: var(--accent);
+  background: var(--accent-fill);
+  border-color: transparent;
+  box-shadow: 0 4px 14px var(--accent-cast);
 }
 
 button[type="submit"]:hover {
-  background: var(--accent-hover);
+  background: var(--accent-fill-hover);
 }
 
 button[type="submit"]:active {
-  background: var(--accent-active);
+  background: var(--accent-fill-active);
 }
 
 /* The same paint as a submit, for the one press a card is there for that is not
@@ -1148,16 +830,17 @@ button[type="submit"]:active {
    widening it moves all of them. */
 button.primary {
   color: var(--text-on-accent);
-  background: var(--accent);
-  border-color: var(--accent);
+  background: var(--accent-fill);
+  border-color: transparent;
+  box-shadow: 0 4px 14px var(--accent-cast);
 }
 
 button.primary:hover {
-  background: var(--accent-hover);
+  background: var(--accent-fill-hover);
 }
 
 button.primary:active {
-  background: var(--accent-active);
+  background: var(--accent-fill-active);
 }
 
 /* Delete is the one button in a row that cannot be taken back with another
@@ -1246,11 +929,11 @@ th {
 
 /* The banding is what carries the eye along a row of a table this wide. */
 tbody tr:nth-child(even) {
-  background: var(--bg-raised);
+  background: var(--row-band);
 }
 
 tbody tr:hover {
-  background: var(--bg-hover);
+  background: var(--row-hover);
 }
 
 tbody tr:last-child td {
@@ -1276,6 +959,11 @@ tbody tr.under > td {
 
 .last-error {
   display: block;
+  /* Held in on all four sides. Sat against the edge of the row it reads as
+     having been cut off there, and it is the one line on the screen most likely
+     to be read to its last character; against the row above and the row below
+     it reads as part of them rather than as what the failing one said. */
+  padding: 0.3rem 0.5rem;
   color: var(--danger);
   overflow-wrap: break-word;
 }
@@ -1427,8 +1115,6 @@ tbody tr.under > td {
 
 .host-key-pick input[type="checkbox"] {
   flex: 0 0 auto;
-  width: 1rem;
-  height: 1rem;
   /* Lined up with the first line of the text beside it rather than with the
      top of a block that carries a badge under it. */
   margin: 0.2rem 0 0;
@@ -1458,8 +1144,6 @@ tbody tr.under > td {
 
 .host-keys-all input[type="checkbox"] {
   flex: 0 0 auto;
-  width: 1rem;
-  height: 1rem;
   margin: 0.15rem 0 0;
 }
 
@@ -1487,6 +1171,13 @@ tbody tr.under > td {
    date and the clock, the two halves read as two values stacked in one cell. */
 .stamp {
   white-space: nowrap;
+}
+
+/* The log has no card around it, so the room a line is given at either end is
+   its own rather than a card's. Without it a message runs to the edge of the
+   box it is in and reads as having been cut there. */
+.log-table {
+  padding-inline: 0.15rem;
 }
 
 /* The log is the exception, and has its own class for it. Its stamp carries a
@@ -1596,11 +1287,6 @@ td.actions {
   border-color: var(--accent);
   outline: 2px solid var(--accent-ring);
   outline-offset: 0;
-}
-
-.log-controls input[type="checkbox"] {
-  width: 1rem;
-  height: 1rem;
 }
 
 /* Which page is up and which rows are on it. It is dimmed and sits after the
@@ -1925,7 +1611,7 @@ td.actions {
   }
 
   .log-table tr {
-    padding: 0.5rem 0;
+    padding: 0.5rem 0.6rem;
     border-bottom: 1px solid var(--border-soft);
   }
 
@@ -2107,8 +1793,6 @@ body.modal-open {
 
 .assign-row input[type="checkbox"] {
   flex: 0 0 auto;
-  width: 1rem;
-  height: 1rem;
   /* The box is lined up with the first line of the text beside it rather than
      with the top of the block, which carries a second line under it. */
   margin: 0.15rem 0 0;

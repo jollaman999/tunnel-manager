@@ -13,9 +13,13 @@
          painted and a dark page is never shown light first. The key and the two
          names are the ones app.js reads and writes.
 
+         Dark is what a first visit gets, whatever the browser is set to. This
+         page is a console that is left open beside other work, and the dark one
+         is the side it was drawn for; what the browser prefers is a guess about
+         every page, and this is not every page.
+
          Reading the storage is what a browser with it turned off throws on, so
-         the read is guarded and a throw leaves the choice to what the browser
-         prefers. -->
+         the read is guarded and a throw leaves the choice to the default. -->
     <script>
       (function () {
         var picked = null;
@@ -27,8 +31,7 @@
         }
 
         if (picked !== "light" && picked !== "dark") {
-          picked = window.matchMedia !== undefined &&
-            window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+          picked = "dark";
         }
 
         document.documentElement.setAttribute("data-theme", picked);
@@ -146,24 +149,6 @@
            see a moon slide is told the state and not only the label. -->
       <button id="themeToggle" type="button" role="switch" aria-pressed="false" hidden>
         <span class="theme-track">
-          <span class="theme-sky theme-clouds">
-            <span class="theme-cloud theme-cloud-near"></span>
-            <span class="theme-cloud theme-cloud-far"></span>
-            <span class="theme-cloud theme-cloud-high"></span>
-          </span>
-          <span class="theme-sky theme-stars">
-            <!-- The field is what the stars are softened on. A star is cut to
-                 its points with clip-path, and a clip is applied after a
-                 filter: a blur on the star itself is drawn and then trimmed
-                 back to the same sharp outline. One box around all four takes
-                 the blur instead, and there is nothing cutting that one. -->
-            <span class="theme-star-field">
-              <span class="theme-star theme-star-a"></span>
-              <span class="theme-star theme-star-b"></span>
-              <span class="theme-star theme-star-c"></span>
-              <span class="theme-star theme-star-d"></span>
-            </span>
-          </span>
           <span class="theme-knob"></span>
         </span>
       </button>
