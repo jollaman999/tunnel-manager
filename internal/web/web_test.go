@@ -1090,3 +1090,40 @@ func TestEverySentenceTheServerCanSendIsInEnglish(t *testing.T) {
 		}
 	}
 }
+
+// scriptRefusalDeclaration is how app.js writes out a code it decides
+// something on: a const whose name ends in Code, holding the name the server
+// raises the refusal under. Two of them are there, one that moves the operator
+// to the setup screen and one that keeps them on the screen they are on, and
+// both are a decision taken on a name rather than on a sentence.
+var scriptRefusalDeclaration = regexp.MustCompile(`(?m)^const [A-Za-z]+Code = "([a-z0-9_.]+)";$`)
+
+// TestEveryRefusalTheScriptActsOnIsOneTheServerRaises holds the names the UI
+// branches on to the list the server raises them from.
+//
+// A code the server renames and the script does not is the worst shape this can
+// fail in, because nothing about it looks broken: the answer still arrives, the
+// sentence is still read out of the catalog, and only the branch behind the
+// name quietly stops being taken. For the host key password that branch is what
+// keeps a wrong password from logging the operator out, so its going missing
+// would put the bug it was written for back with no test failing.
+func TestEveryRefusalTheScriptActsOnIsOneTheServerRaises(t *testing.T) {
+	raised := map[string]bool{}
+
+	for _, code := range refusalCodes(t) {
+		raised[code] = true
+	}
+
+	found := scriptRefusalDeclaration.FindAllStringSubmatch(readStatic(t, "app.js"), -1)
+	if len(found) == 0 {
+		t.Fatalf("app.js names no refusal code, so nothing here reads what the UI acts on")
+	}
+
+	t.Logf("refusal codes the script acts on: %d", len(found))
+
+	for _, match := range found {
+		if !raised[match[1]] {
+			t.Errorf("the script acts on the refusal %q, which the server does not raise", match[1])
+		}
+	}
+}
