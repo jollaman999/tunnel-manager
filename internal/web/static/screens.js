@@ -2998,10 +2998,12 @@ async function drawUpdate() {
   const update = await apiCall("GET", "/api/update");
   const set = await apiCall("GET", "/api/settings");
 
-  const nodes = [element("p", t("update.screen.text"))];
+  const versions = updateVersions(update);
 
-  nodes.push(updateVersions(update));
-
+  // The presses and what is said about them go inside the card they are about.
+  // Left beside it they line up against the edge of the page while the cards
+  // above and below them are inset, and a row that is the only thing on the
+  // page not in a card reads as having come loose from one.
   const buttons = document.createElement("div");
   buttons.className = "buttons";
 
@@ -3021,15 +3023,18 @@ async function drawUpdate() {
       }, "danger"));
   }
 
-  nodes.push(buttons);
+  versions.appendChild(buttons);
 
+  // Why the install is not among them, under the row it is missing from.
   if (!update.installable) {
-    nodes.push(statusLine(t("update.not-installable.notice"), "warning"));
+    versions.appendChild(statusLine(t("update.not-installable.notice"), "warning"));
   }
 
-  nodes.push(updateSettingsCard(set));
-
-  render(t("update.screen.title"), nodes);
+  render(t("update.screen.title"), [
+    element("p", t("update.screen.text")),
+    versions,
+    updateSettingsCard(set)
+  ]);
 }
 
 // updateSettingsCard is the two switches and the interval, on the screen they
