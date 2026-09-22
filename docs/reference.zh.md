@@ -655,6 +655,7 @@ curl -s -b cookies.txt -X PUT "$BASE/api/account" \
 | Service Ports | `/ui/service-ports` | 每个服务端口一行，有 ID、服务 IP、服务端口、本地端口、描述和更新时间。行和 Hosts 一样是一页一页出的，页大小和页码各记各的。可以添加、编辑和删除。添加表单里有一个默认勾上的 **Assign to all hosts**，它决定一开始哪些 Host 负责它；之后哪些 Host 负责它，在 Hosts 页面上修改。 |
 | Logs | `/ui/logs` | 日志文件的末尾，最新的在最下面，可以按级别过滤，也可以选看多少行。它每 5 秒刷新一次。它读的是进程此刻正在写的那个文件，轮转后的文件不显示。行按页面的语言显示，文件本身还是英文；见[页面的语言](#页面的语言)。 |
 | Settings | `/ui/settings` | 已经保存但还没生效的设置，那张卡片里有一个让它们生效的 Restart；所有已保存的设置，以及一次保存改了什么（没选过语言的浏览器看本安装用哪种语言，也在这里）；正在使用的证书，带一个重新生成它的按钮和两个注册你自己证书的框；这个账号的用户名和密码；把隧道配置和管理器的设置各加密成一个文件导出，以及把这样的文件导回来的导入；一个停止服务再重新启动的 Restart；还有最下面的卸载。见[设置](#设置)。 |
+| Update | `/ui/update` | 本安装正在运行的版本，与最新发布并排显示，以及决定是否再去查看这两者的两个设置。最新发布是按计时读取的，不是在打开页面时读取，所以打开页面不会给发布 API 带来负担；要立刻读取就按按钮。若发布更新，且本进程是由服务注册启动的，页面会给出安装按钮，它会要求账户密码，并在最后重启服务。参见[更新](#更新)。 |
 | Manual | `/ui/manual` | 一套安装由什么组成，在一个页面上用图和文字讲清楚：它做什么、一条隧道的完整流程、Host 和服务端口以及它们之间的分配关系、转发端口无法连接意味着什么、那两个间隔，还有文件放在哪里。它不向服务器请求任何数据，所以登录页面也能显示同样的内容。 |
 | Login | `/ui/login` | 没有会话的客户端会落到这里。第一次登录时用户名留空。账号还没有用户名时，它会把你带到初始化页面。上面的 **Manual** 按钮会把手册作为面板盖在它上面打开，不需要会话，因为最需要手册的时刻，正是什么都还没运行起来的时候。 |
 
@@ -751,6 +752,9 @@ Settings 页面。同样的值通过 `GET /api/settings` 和 `PUT /api/settings`
 | Days a rotated log file is kept | `logging_file_max_age` | `logging.file.max_age` | `30` | 下次启动 |
 | Compress rotated log files | `logging_file_compress` | `logging.file.compress` | `true` | 下次启动 |
 | Language this installation is shown in | `ui_default_language` | `ui.default_language` | 空，即不指定任何语言 | **保存的那一刻** |
+| 查看是否有新发布 | `update_check_enabled` | `update.check_enabled` | `true` | **保存的那一刻** |
+| 查看间隔（小时） | `update_check_interval_hours` | `update.check_interval_hours` | `24` | **保存的那一刻** |
+| 自动安装新发布 | `update_auto_install` | `update.auto_install` | `false` | **保存的那一刻** |
 
 **保存的那一刻就生效的设置有两项：日志级别和语言。** 日志级别会传给启动时创建的每一个
 日志器，包括数据库用来报告自己语句的那个，而这通常正是开 `debug` 想看的另一半。语言这个进程
@@ -770,6 +774,7 @@ Settings 页面。同样的值通过 `GET /api/settings` 和 `PUT /api/settings`
 | `logging_format` | `json` 或 `console` |
 | `logging_file_max_size`、`logging_file_max_backups`、`logging_file_max_age` | 零或更大 |
 | `ui_default_language` | 空，或者 `en`、`ko`、`ja`、`zh`、`es`、`fr`、`de`、`pt-BR`、`ru`、`ar`、`hi`、`vi`、`th` 中的一个，一字不差：`EN` 和 `ko-KR` 都会被拒绝 |
+| `update_check_interval_hours` | 1 到 8760。0 是被拒绝而不是被当作关闭：0 会让计时器以能重新装填的速度不断发出请求，而对面是一个会计数的 API。要关闭请用 `update_check_enabled` |
 
 ```bash
 curl -s -b cookies.txt -X PUT "$BASE/api/settings" \
@@ -876,6 +881,59 @@ curl -s -b cookies.txt -X POST "$BASE/api/restart" \
 fatal  failed to read the settings  {"error": "the stored settings are refused: invalid API port: 0.
        Start with -reset-settings to put every setting back to its default"}
 ```
+
+## 更新
+
+更新页面说明本安装正在运行什么、最新发布是什么，并且可以安装该发布。
+
+**读取的只有本仓库的发布页面。** 请求不带任何凭据，因为仓库是公开的；一个需要凭据的请求意味着，
+按运维人员机器的方式根本够不到该发布。
+
+### 查看
+
+读取发生在计时器上，而不是打开页面时。两个人同时打开页面不会产生任何请求，他们看到的是上次查看
+所得到的结果，以及那次查看的时间。**立即查看** 按钮会重新读取。
+
+`update_check_enabled` 关闭计时器，`update_check_interval_hours` 决定多久触发一次。两者保存即生效：
+把间隔从一天改成一小时，不会等完那个已经在走的一天。
+
+**查看失败与已是最新并不相同**，页面会说明是哪一种。失败会作为失败保留并显示，而不是让上一次的
+成功结果继续留在那里。
+
+**读不成三个数字的标签绝不会被当作更新。** 比较只接受 `v3.8.1` 和 `3.8.1`：带后缀的标签、分成四段
+的标签、是一个单词的标签，都会得到"无法判断"，页面如此说明，也绝不会因此开始安装。因为"更新"这个
+答案本身就是替换一个正在运行的服务的可执行文件的依据。
+
+### 安装
+
+只有在发布更新、并且本进程是由服务注册启动的情况下，才会给出按钮。它像卸载一样要求账户密码：它
+替换可执行文件，并以一次重启收尾，而那会让所有隧道断开。
+
+**它与 `-install` 所做的是同一件事，实际上它就是 `-install`。** 本程序会作为独立进程再次启动，并
+带上该标志。一个进程无法在替换掉自己的文件之后再启动自己，所以这项工作交给一个尚未被替换的进程。
+发布会被下载、与发布公布的 `SHA256SUMS` 比对、放到位，然后由服务管理器重启服务。
+
+**响应只说安装已开始，绝不说已完成。** 本该报告结束的那个进程，正是被重启的那个。页面会这样说明，
+并提示在服务回来之后重新打开页面：角落里的版本才是真正生效的那个。
+
+如果本程序是以某人直接启动的方式运行，而不是注册的服务，按钮根本不会出现：`-install` 会去注册一个
+服务，而此后没有东西会再次启动该进程。页面会在按钮的位置说明这一点，`POST /api/update/install`
+返回 `409`。
+
+### 不询问就安装
+
+`update_auto_install` 除非在此开启，否则一直关闭。开启后，被读作更新的发布会在无人按下任何按钮的
+情况下被安装。
+
+**它触发时做的事就是让服务停机。** 无论发布在几点出现，那时所有隧道都会断开并重新建立。这是否可以
+接受，取决于那些隧道上跑着什么、当时谁在依赖它们，而这是本程序无法判断的，也正是默认值把它留给运维
+人员的原因。
+
+上面所有条件同样适用：查看失败、无法比较的标签、并不更新的发布，都会被放过；不是注册服务的安装根本
+到不了这一步。
+
+**导出的配置会带上这个设置。** 从开启了它的安装导出的文件，会在导入的地方同样把它开启。参见
+[导出与导入](#导出与导入)。
 
 ## 卸载
 
@@ -1208,6 +1266,10 @@ curl -s -b cookies.txt -X PUT "$BASE/api/host/1/service-port" \
 | `POST` | `/api/restart` | 按顺序停止服务，在有 exec 的平台上原地重新运行程序 |
 | `POST` | `/api/uninstall` | 收 `password`，删除本安装并结束进程 |
 | `GET` | `/api/logs` | 日志文件的末尾。`lines` 说要多少行，最多 2000 |
+| `POST` | `/api/logs/clear` | 接收 `password`，清空当前正在写入的日志文件，旁边已轮转的文件不动 |
+| `GET` | `/api/update` | 上次查看的结果：正在运行的版本、最新发布、它是否更新，以及能否从这里开始安装 |
+| `POST` | `/api/update/check` | 立刻读取最新发布，并返回 `GET /api/update` 随后会返回的内容 |
+| `POST` | `/api/update/install` | 接收 `password` 并开始安装。它只回答安装已开始，绝不回答已完成：安装最后做的事，正是重启那个在回答本请求的服务 |
 
 `api_https_enabled` 关闭时，三个证书接口都返回 `409`，因为那时没有正在使用的证书。无论是
 更换证书的响应还是读取的响应，都不带私钥：它是用加密 SSH 密码的那把密钥加密保存的，从不离开

@@ -67,6 +67,7 @@ server, no configuration file, no directory that has to travel next to it.
 - [First startup and the account](#first-startup-and-the-account)
 - [The built-in UI](#the-built-in-ui)
 - [Settings](#settings)
+- [Updates](#updates)
 - [Uninstall](#uninstall)
 - [Calling the API from a script](#calling-the-api-from-a-script)
 - [API endpoints](#api-endpoints)
@@ -799,6 +800,7 @@ no directory travels next to it and no path has to be configured.
 | Service Ports | `/ui/service-ports` | One row per service port with ID, service IP, service port, local port, description and updated. The rows come a page at a time the same way the Hosts do, with a size and a page of their own. Add, edit and delete. The add form has an **Assign to all hosts** tick, on by default, that says which Hosts carry it from the start; which Hosts carry it after that is changed from the Hosts screen. |
 | Logs | `/ui/logs` | The end of the log file, newest last, with a level filter and a count to show. It asks again every 5 seconds. It reads the file the process is writing now; rotated files are not shown. The lines are shown in the language of the screen while the file stays English; see [The language of the screens](#the-language-of-the-screens). |
 | Settings | `/ui/settings` | What is stored but not being run on yet, with a Restart in that card that puts it into place, every stored setting and what a save changed, among them the language this installation shows a browser that has picked none, the certificate being served with a button to renew it and boxes to register one of your own, the username and the password of this account, an export of the tunnel configuration and of the settings of this manager into one encrypted file each and an import that takes such a file back, a Restart that takes the service down and brings it back, and the Uninstall at the bottom. See [Settings](#settings). |
+| Update | `/ui/update` | What this installation is running beside what the newest release is, and the two settings that decide whether either is looked at again. The reading is taken on a timer rather than when the screen is drawn, so opening it costs the release API nothing; a press takes it now. Where the release is newer and this process is what a service registration starts, a press installs it, which takes the password of the account and ends with the service restarting. See [Updates](#updates). |
 | Manual | `/ui/manual` | What an installation is made of, drawn and said on one screen: what this does, one tunnel end to end, Hosts and service ports and the assignments between them, what an unreached port means, the two intervals, and where the files go. It asks the server for nothing, which is what lets the login screen show the same thing. |
 | Login | `/ui/login` | Where a client without a session lands. Leave the username empty on the first sign in. It leads to the setup screen while the account still needs one. A **Manual** button opens the manual as a panel over it, without a session, because the state it is most needed in is the one where nothing works yet. |
 
@@ -932,8 +934,11 @@ and `PUT /api/settings`.
 | Days a rotated log file is kept | `logging_file_max_age` | `logging.file.max_age` | `30` | At the next start |
 | Compress rotated log files | `logging_file_compress` | `logging.file.compress` | `true` | At the next start |
 | Language this installation is shown in | `ui_default_language` | `ui.default_language` | empty, which names none | **The moment it is saved** |
+| Look for a newer release | `update_check_enabled` | `update.check_enabled` | `true` | **The moment it is saved** |
+| How often to look (hours) | `update_check_interval_hours` | `update.check_interval_hours` | `24` | **The moment it is saved** |
+| Install a newer release on its own | `update_auto_install` | `update.auto_install` | `false` | **The moment it is saved** |
 
-**The log level and the language are the two settings that take hold as they
+**The log level, the language and the three update settings take hold as they
 are saved.** The level reaches every logger that was handed out at startup, the
 one the database writes its statements through included, which is the half of
 `debug` it is usually turned on for. The language is never read by this process
@@ -956,6 +961,7 @@ A save is refused before it is stored when a value would not hold:
 | `logging_format` | `json` or `console` |
 | `logging_file_max_size`, `logging_file_max_backups`, `logging_file_max_age` | Zero or more |
 | `ui_default_language` | Empty, or one of `en`, `ko`, `ja`, `zh`, `es`, `fr`, `de`, `pt-BR`, `ru`, `ar`, `hi`, `vi` and `th`, written exactly so: `EN` and `ko-KR` are refused |
+| `update_check_interval_hours` | 1 to 8760. Zero is refused rather than read as off, because a zero would be a timer rearming as fast as it can against an API that counts requests; `update_check_enabled` is what turns it off |
 
 ```bash
 curl -s -b cookies.txt -X PUT "$BASE/api/settings" \
@@ -1084,6 +1090,79 @@ A stored set that does not pass the rules above says so and names this flag:
 fatal  failed to read the settings  {"error": "the stored settings are refused: invalid API port: 0.
        Start with -reset-settings to put every setting back to its default"}
 ```
+
+## Updates
+
+The Update screen says what this installation is running and what the newest
+release is, and it can install that release.
+
+**What is read is the release page of this repository, and nothing else.** The
+request carries no credentials, because the repository is public; a request that
+needed them would mean the release is not reachable the way an operator's
+machine reaches it.
+
+### Looking
+
+The reading is taken on a timer, not when the screen is opened. Two people
+opening the screen make no requests at all, and what they see is what the last
+look found, with the time it was taken. The **Look now** button takes it again.
+
+`update_check_enabled` turns the timer off and `update_check_interval_hours`
+says how often it fires. Both take hold as they are saved: an interval changed
+from a day to an hour does not wait out the day that was already running.
+
+**A check that failed is not the same as being up to date**, and the screen says
+which of the two it is. A failure is kept and drawn as a failure rather than
+leaving the last good answer standing.
+
+**A tag that does not read as three numbers is never treated as newer.** The
+comparison takes `v3.8.1` and `3.8.1` and nothing else: a tag with a suffix, a
+tag with four parts and a tag that is a word all answer "cannot tell", which the
+screen says and which never starts an install. An answer of newer is what
+replaces the executable of a running service, so a version this does not
+understand is not grounds for one.
+
+### Installing
+
+The press is offered where the release is newer and where this process is what a
+service registration starts. It takes the password of the account, the way the
+uninstall does: it replaces the executable and ends with a restart that drops
+every tunnel.
+
+**It is the same work `-install` does**, because it is `-install`: the program is
+run again as a process of its own, with the flag. A process cannot replace its
+own file and then run itself again, so the work is handed to one that has not.
+The release is downloaded, checked against the `SHA256SUMS` the release
+publishes, put in place, and the service manager restarts the service.
+
+**The answer says the install started and never that it finished.** The process
+that would report the end is the one being restarted. The screen says so and
+says to load the page again once the service is back, where the version in the
+corner is what went through.
+
+Where this program is running as something somebody started rather than as a
+registered service, the press is not offered at all: `-install` would register
+one, and nothing would start the process again afterwards. The screen says that
+in place of the button, and `POST /api/update/install` answers `409`.
+
+### Installing without being asked
+
+`update_auto_install` is off unless it is turned on. With it on, a release that
+is read as newer is installed with nobody pressing anything.
+
+**What it does when it acts is take the service down.** Every tunnel comes down
+and is built again, at whatever hour the release appears. Whether that is
+acceptable depends on what runs over those tunnels and who is relying on them at
+the time, which is not something this program can work out, which is why the
+default leaves it with the operator.
+
+It is subject to everything above: a check that failed, a tag that cannot be
+compared and a release that is not newer all leave it alone, and an installation
+that is not a registered service never reaches it.
+
+**An exported configuration carries this setting.** A file exported from an
+installation that has it on turns it on wherever the file is taken in; see
+[Export and import](#export-and-import).
 
 ## Uninstall
 
@@ -1450,6 +1529,10 @@ woken once it is committed, so the tunnels follow within the moment.
 | `POST` | `/api/restart` | Takes the service down in order and runs the program again in place of this process, where the platform has exec |
 | `POST` | `/api/uninstall` | Takes `password`, removes the installation and ends the process |
 | `GET` | `/api/logs` | The end of the log file. `lines` says how many, up to 2000 |
+| `POST` | `/api/logs/clear` | Takes `password`, empties the file the log is being written to and leaves the rotated files beside it alone |
+| `GET` | `/api/update` | What the last look found: the version running, the newest release, whether it is newer, and whether an install can be started from here |
+| `POST` | `/api/update/check` | Reads the newest release now and answers what `GET /api/update` would then answer |
+| `POST` | `/api/update/install` | Takes `password` and starts the install. It answers that the install started and never that it finished: what the install ends with is a restart of the service answering the request |
 
 The three certificate calls answer with a `409` while `api_https_enabled` is
 off, because there is no certificate in use then. Neither the answer to a
