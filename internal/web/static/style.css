@@ -1217,6 +1217,15 @@ td.actions {
   border-radius: 4px;
 }
 
+/* A sentence that explains the row of presses above it. It carries no top
+   margin of its own, because everywhere else it is the first thing in a card
+   and a margin there would push it off the heading; under a row of buttons
+   that leaves it touching them, which reads as part of the press rather than
+   as a note about it. */
+.buttons + .summary {
+  margin-top: 0.75rem;
+}
+
 /* The gap between the three counts is what the screen is for, so the sentence
    that names it is coloured and the one that says there is no gap is not. */
 .summary.warning {
