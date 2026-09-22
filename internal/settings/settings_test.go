@@ -1,10 +1,12 @@
 package settings
 
 import (
+	"encoding/json"
 	"errors"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/glebarez/sqlite"
 	"gorm.io/gorm"
@@ -782,5 +784,62 @@ func TestRepairPathsHasNothingToDoBeforeAFirstStartup(t *testing.T) {
 	}
 	if len(changes) != 0 {
 		t.Fatalf("RepairPaths changed %+v in an empty database", changes)
+	}
+}
+
+// TestTheStoredTimestampComesFromTheServerAndNotTheBody covers what a save can
+// be told. PUT /api/settings binds the request body onto the stored set, so
+// every field of this struct that JSON names is a field a client writes, and
+// the timestamp is not a setting: it is this end's account of when the row was
+// last written, which is the whole of what it is read for. A body that named it
+// would leave the row saying it was saved at a time nobody saved it at, and the
+// account would be worth nothing to whoever reads it afterwards.
+func TestTheStoredTimestampComesFromTheServerAndNotTheBody(t *testing.T) {
+	db := newDB(t)
+
+	stored, err := Load(db)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+
+	claimed := time.Date(2000, time.January, 1, 0, 0, 0, 0, time.UTC)
+
+	// The body is read onto the stored set the way the handler binds it, so
+	// what is held here is the struct itself rather than a copy of the rule.
+	// The port travels with it to show that the body does reach the settings:
+	// a body nothing at all was taken from would pass the timestamp check
+	// without the field being kept out of anything.
+	sent := *stored
+
+	err = json.Unmarshal([]byte(`{"api_port":9999,"updated_at":"2000-01-01T00:00:00Z"}`), &sent)
+	if err != nil {
+		t.Fatalf("binding the body: %v", err)
+	}
+
+	if sent.APIPort != 9999 {
+		t.Fatalf("the body reached none of the settings: the port is %d, want 9999", sent.APIPort)
+	}
+	if sent.UpdatedAt.Equal(claimed) {
+		t.Fatalf("the body named the timestamp and it was taken: %v", sent.UpdatedAt)
+	}
+
+	before := time.Now().Truncate(time.Second)
+
+	err = Save(db, &sent)
+	if err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+
+	again, err := Load(db)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+
+	if again.UpdatedAt.Equal(claimed) {
+		t.Fatalf("the stored timestamp is the one the body named: %v", again.UpdatedAt)
+	}
+	if again.UpdatedAt.Before(before) {
+		t.Errorf("the stored timestamp is %v, which is before the save at %v, so the save did not set it",
+			again.UpdatedAt, before)
 	}
 }

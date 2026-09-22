@@ -116,7 +116,17 @@ type Settings struct {
 	// that stays where they left it.
 	UpdateAutoInstall bool `gorm:"default:false" json:"update_auto_install"`
 
-	UpdatedAt time.Time `json:"updated_at"`
+	// UpdatedAt is when the row was last written. It is this end's account of
+	// that and not a setting anybody chooses, so it is kept out of the JSON: a
+	// save binds the request body onto the stored set, which makes every field
+	// JSON names a field a client writes, and a stored time a client named is a
+	// row claiming it was saved when nobody saved it.
+	//
+	// It is kept out in both directions because a tag cannot split them, and
+	// nothing is reading it. The times the screens draw belong to a Host and to
+	// a service port, which are rows of their own, and a settings file an export
+	// writes names the settings it carries one by one rather than this struct.
+	UpdatedAt time.Time `json:"-"`
 }
 
 // Defaults returns what a first startup stores.
