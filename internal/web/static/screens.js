@@ -1755,7 +1755,8 @@ async function drawHosts() {
 
     nodes.push(buildTable(
       [t("hosts.id.column"), t("hosts.ip.column"), t("hosts.port.column"),
-        t("hosts.user.column"), t("hosts.description.column"), t("hosts.enabled.column"),
+        t("hosts.user.column"), t("hosts.bind-address.column"),
+        t("hosts.description.column"), t("hosts.enabled.column"),
         t("hosts.updated.column"), ""],
       hosts.map(hostRow),
       [0, 2]
@@ -1793,6 +1794,7 @@ function hostRow(host) {
     host.ip,
     host.port,
     host.user,
+    bindAddressShown(host.bind_address),
     host.description,
     host.enabled ? t("common.yes.text") : t("common.no.text"),
     timeCell(host.updated_at),
@@ -1859,9 +1861,9 @@ function privilegedPortAdvice(value) {
 }
 
 // bindAddressEveryInterface is the address that asks for every interface of the
-// Host, and it is what a service port that names none is asked for on: a row
-// stored before there was a column to hold one carries nothing, and nothing has
-// to go on meaning what those rows were already running on.
+// Host, and it is what a Host that names none is asked for on: a row stored
+// before there was a column to hold one carries nothing, and nothing has to go
+// on meaning what those rows were already running on.
 const bindAddressEveryInterface = "0.0.0.0";
 
 // bindAddressChoices are the addresses offered without anything being typed.
@@ -1884,9 +1886,9 @@ function bindAddressListed(stored) {
   return stored === "" || bindAddressChoices.indexOf(stored) !== -1;
 }
 
-// bindAddressStored is what a form was opened with, as a string. A service port
-// being added carries nothing, and a row stored before the column existed
-// carries nothing either, and the two open the form the same way.
+// bindAddressStored is what a form was opened with, as a string. A Host being
+// added carries nothing, and a row stored before the column existed carries
+// nothing either, and the two open the form the same way.
 function bindAddressStored(value) {
   return value === undefined || value === null ? "" : String(value);
 }
@@ -1896,19 +1898,19 @@ function bindAddressStored(value) {
 // for no listed address, and it is checked only while it is there.
 //
 // A stored address that is not on the list opens the form on that entry with
-// the box filled in, so a service port bound to an interface of its Host can be
-// edited without being retyped.
+// the box filled in, so a Host bound to one of its own interfaces can be edited
+// without being retyped.
 function bindAddressField(value) {
   const stored = bindAddressStored(value);
 
   return {
     name: "bind_address",
-    label: t("service-ports.bind-address.label"),
+    label: t("hosts.bind-address.label"),
     value: bindAddressListed(stored) ? bindAddressShown(stored) : bindAddressEntered,
     options: bindAddressChoices.concat([
-      { value: bindAddressEntered, text: t("service-ports.bind-address-entered.option") }
+      { value: bindAddressEntered, text: t("hosts.bind-address-entered.option") }
     ]),
-    note: t("service-ports.bind-address.hint"),
+    note: t("hosts.bind-address.hint"),
     advise: bindAddressReachAdvice
   };
 }
@@ -1917,7 +1919,7 @@ function bindAddressEnteredField(value) {
   const stored = bindAddressStored(value);
 
   const field = ipField("bind_address_entered",
-    t("service-ports.bind-address-entered.label"),
+    t("hosts.bind-address-entered.label"),
     bindAddressListed(stored) ? "" : stored);
 
   field.shownWhen = { field: "bind_address", is: bindAddressEntered };
@@ -1928,7 +1930,7 @@ function bindAddressEnteredField(value) {
 // bindAddressShown is a stored address as it is put on a screen. The empty
 // value is what a row written before the column existed holds, and it is drawn
 // as the address it stands for rather than as a blank, because a blank there
-// reads as a service port that is bound to nothing.
+// reads as a Host that is bound to nothing.
 function bindAddressShown(value) {
   return value === undefined || value === null || value === ""
     ? bindAddressEveryInterface
@@ -1942,13 +1944,24 @@ function bindAddressShown(value) {
 // this screen cannot see. An sshd with GatewayPorts off binds loopback whatever
 // is asked for, and one with it on opens the port to everything that can reach
 // that machine. Refusing the wildcard would be deciding that from here, and it
-// is what every service port stored so far is already running on.
+// is what every Host stored so far is already running on.
 function bindAddressReachAdvice(value) {
   if (value !== bindAddressEveryInterface) {
     return "";
   }
 
-  return t("service-ports.bind-address-open.notice");
+  return t("hosts.bind-address-open.notice");
+}
+
+// bindAddressOf is what the list and the box under it come to. The list carries
+// the address itself on every entry but the one that stands for none of them,
+// where what was typed is the answer.
+function bindAddressOf(values) {
+  if (values.bind_address !== bindAddressEntered) {
+    return values.bind_address;
+  }
+
+  return values.bind_address_entered.trim();
 }
 
 // privateKeyField and keyPassphraseField are the key half of how a host is
@@ -2016,6 +2029,8 @@ function hostCreateForm() {
         type: "password",
         note: t("hosts.password-add.hint")
       },
+      bindAddressField(),
+      bindAddressEnteredField(),
       { name: "description", label: t("hosts.description.label") },
       // Ticked to begin with, because a Host with no assignment runs no tunnel
       // at all and carrying everything is what the API does with a request that
@@ -2051,6 +2066,8 @@ function hostEditForm(host) {
         type: "password",
         note: t("hosts.password-edit.hint")
       },
+      bindAddressField(host.bind_address),
+      bindAddressEnteredField(host.bind_address),
       { name: "description", label: t("hosts.description.label"), value: host.description },
       { name: "enabled", label: t("hosts.enabled.label"), type: "checkbox", value: host.enabled }
     ],
@@ -2070,6 +2087,7 @@ async function createHost(values) {
     ip: values.ip.trim(),
     port: asNumber(values.port),
     user: values.user.trim(),
+    bind_address: bindAddressOf(values),
     description: values.description,
     assign_all_service_ports: values.assign_all_service_ports
   };
@@ -2095,6 +2113,7 @@ async function updateHost(host, values) {
   const body = {
     ip: values.ip.trim(),
     user: values.user.trim(),
+    bind_address: bindAddressOf(values),
     description: values.description,
     enabled: values.enabled
   };
@@ -2451,8 +2470,7 @@ async function drawServicePorts() {
     nodes.push(buildTable(
       [t("service-ports.id.column"), t("service-ports.service-ip.column"),
         t("service-ports.service-port.column"), t("service-ports.local-port.column"),
-        t("service-ports.bind-address.column"), t("service-ports.description.column"),
-        t("service-ports.updated.column"), ""],
+        t("service-ports.description.column"), t("service-ports.updated.column"), ""],
       ports.map(servicePortRow),
       [0, 2, 3]
     ));
@@ -2479,7 +2497,6 @@ function servicePortRow(port) {
     port.service_ip,
     port.service_port,
     port.local_port,
-    bindAddressShown(port.bind_address),
     port.description,
     timeCell(port.updated_at),
     buttons
@@ -2496,8 +2513,6 @@ function servicePortCreateForm() {
       portField("service_port", t("service-ports.service-port.label")),
       portField("local_port", t("service-ports.local-port.label"), undefined,
         privilegedPortAdvice),
-      bindAddressField(),
-      bindAddressEnteredField(),
       { name: "description", label: t("service-ports.description.label") },
       // The other half of the pair on the host form, ticked to begin with for
       // the same reason, and on the add form alone for the same reason.
@@ -2523,8 +2538,6 @@ function servicePortEditForm(port) {
       portField("service_port", t("service-ports.service-port.label"), port.service_port),
       portField("local_port", t("service-ports.local-port.label"), port.local_port,
         privilegedPortAdvice),
-      bindAddressField(port.bind_address),
-      bindAddressEnteredField(port.bind_address),
       { name: "description", label: t("service-ports.description.label"), value: port.description }
     ],
     onSubmit: function (values) {
@@ -2547,20 +2560,8 @@ function servicePortBody(values) {
     service_ip: values.service_ip.trim(),
     service_port: asNumber(values.service_port),
     local_port: asNumber(values.local_port),
-    bind_address: bindAddressOf(values),
     description: values.description
   };
-}
-
-// bindAddressOf is what the list and the box under it come to. The list carries
-// the address itself on every entry but the one that stands for none of them,
-// where what was typed is the answer.
-function bindAddressOf(values) {
-  if (values.bind_address !== bindAddressEntered) {
-    return values.bind_address;
-  }
-
-  return values.bind_address_entered.trim();
 }
 
 async function createServicePort(values) {
