@@ -20,9 +20,9 @@ made reachable from the Host.
 
 | What you register | Fields | What it is |
 |-------------------|--------|------------|
-| Host | `ip`, `port`, `user`, `private_key`, `key_passphrase`, `password`, `bind_address`, `description`, `enabled` | An SSH server Tunnel Manager logs in to. It logs in with a private key, with a password, or with both; at least one of the two is required. The key, its passphrase and the password are all stored encrypted. `bind_address` is the address on this Host the forwarded ports are asked for, `0.0.0.0` where it is not given. |
+| Host | `ip`, `port`, `user`, `private_key`, `key_passphrase`, `password`, `description`, `enabled` | An SSH server Tunnel Manager logs in to. It logs in with a private key, with a password, or with both; at least one of the two is required. The key, its passphrase and the password are all stored encrypted. |
 | Service port | `service_ip`, `service_port`, `local_port` | The service to publish, and the port opened on every Host that carries it. |
-| Assignment | `host_id`, `sp_id` | One Host paired with one service port: this Host is to carry it. It is what a tunnel is built from, and it is made for you as a Host or a service port is registered. |
+| Assignment | `host_id`, `sp_id`, `bind_scope` | One Host paired with one service port: this Host is to carry it. It is what a tunnel is built from, and it is made for you as a Host or a service port is registered. `bind_scope` is how far its forwarded port is asked to reach on the Host, `loopback` or `wildcard`, and the wildcard where it is not given. |
 
 Both `ip` and `service_ip` take an IPv4 or an IPv6 address. An IPv6 address is
 written plainly, as `2001:db8::1`, and the brackets a dialer needs are put on
@@ -187,6 +187,41 @@ An assignment naming a Host or a service port that is not there builds nothing
 and is passed over by a reconcile pass. Nothing can be built from it: the
 address, the port and the credentials all sit on the rows that are gone.
 
+**How far the forwarded port reaches is part of the assignment.** `bind_scope`
+on the row says which addresses on the Host the port is asked to be opened on,
+and it names a pair of them rather than one.
+
+| `bind_scope` | What is asked for on the Host | What it is for |
+|--------------|-------------------------------|----------------|
+| `loopback` | `127.0.0.1` and `::1` | The port is to answer on the Host itself and nowhere else |
+| `wildcard`, and the empty value | `0.0.0.0` and `::` | The port is to answer wherever the Host can be reached |
+
+**Both addresses of the pair are asked for**, because neither address family
+stands in for the other: a client that connects to `::1` does not reach a port
+opened on `127.0.0.1`, and the same holds for the two wildcards. Whoever picks a
+scope picks it for the machine and not for one family, so both are asked for and
+the tunnel row says which of them the SSH server took, see
+[Reading the tunnel status](#reading-the-tunnel-status). There is no box for an
+address typed in by hand: this program never asks a Host what interfaces it has,
+so an address written here would be a guess, and a wrong guess is a forward that
+never opens and says nothing.
+
+The scope is held by the assignment because the Host and the service port both
+have a say in it. One Host carries several service ports, and one of them may be
+meant for that machine alone while the next is to be reached from elsewhere; one
+service port is carried by several Hosts, and only some of them face a network
+nobody else should reach in over. Either end on its own forces one answer on the
+other.
+
+An assignment stored before the column existed holds the empty value, which is
+the wildcard, so an upgrade takes reach away from nothing that is running. An
+installation that set a bind address on the **Host** in v3.8.3 has that answer
+carried onto every assignment of that Host: a loopback address there becomes
+`loopback`, and every other answer, the empty one and an address of an interface
+of the machine among them, becomes the wildcard. It is carried on the startup
+that adds the column and on no other, the way the assignments themselves are
+filled in once, or a later startup would write over what has been chosen since.
+
 ### A single tunnel
 
 ```mermaid
@@ -203,7 +238,7 @@ sequenceDiagram
     rect rgb(255, 255, 220)
         Note over Host,WAS: Tunnel Creation Phase
         Bastion->>Host: Create SSH Tunnel
-        Note right of Bastion: For each assigned service port: -R bindAddress:localPort:remoteIP:remotePort
+        Note right of Bastion: For each assigned service port, both addresses of its bind scope: -R bindAddress:localPort:remoteIP:remotePort
     end
 
     rect rgb(255, 255, 220)
@@ -224,12 +259,19 @@ sequenceDiagram
     end
 ```
 
-Which address is asked for is `bind_address` on the Host, `0.0.0.0` where none
-was given, see [Hosts](#hosts). Whether the listener on the Host really opens
-there is up to the SSH server on the Host. When its
-`GatewayPorts` is off, the listener is bound to the loopback address whatever
-address was asked for, and the log says so. Once the tunnel is up,
-tunnel-manager tries the forwarded port itself and reports what it found, see
+Which addresses are asked for is `bind_scope` on the assignment, the wildcards
+where nothing was chosen, see [Assignments](#assignments). Both of them are
+asked for over the one SSH connection, so **one tunnel holds two forwards**, and
+a server that opens one and refuses the other leaves the tunnel carrying traffic
+over half of what was asked for. The row stays one row, because one row is what
+somebody chose.
+
+Whether a listener on the Host really opens where it was asked for is up to the
+SSH server on the Host. When its `GatewayPorts` is off, the listeners are bound
+to the loopback addresses whatever was asked for, and when it is on they are
+bound to every interface even where the loopback scope was chosen. Once the
+tunnel is up, tunnel-manager tries the forwarded port itself and reports what it
+found, see
 [Whether the forwarded port can be reached](#whether-the-forwarded-port-can-be-reached).
 
 The monitoring interval and the reconcile interval are two different jobs. The
@@ -797,9 +839,9 @@ no directory travels next to it and no path has to be configured.
 
 | Screen | Path | What it shows and does |
 |--------|------|------------------------|
-| Status | `/ui/status` | The three counts (desired, rows, connected), a sentence about the difference between them, and one line per tunnel: Host, service port, status, server, local, remote, port reached, retries, last connected. A tunnel with something wrong carries what went wrong on a line under it, across the whole table, and a tunnel whose forwarded port was not reached carries there what to change on the SSH server it named and what else to check. The tunnel rows come a page at a time, ten to a page to begin with, with the size and the page chosen above the table; the three counts stay counts of every tunnel and not of the page. It asks again every 5 seconds and comes back on the page being read. |
-| Hosts | `/ui/hosts` | One row per Host with ID, IP, port, user, description, enabled and updated. The rows come a page at a time, ten to a page to begin with, with the size (10, 20, 30, 50 or 100) and the page chosen above the table. The choice is remembered for this screen on its own, and a list short enough to fit a page of the smallest size carries no controls at all. Add a Host, edit one, enable or disable one, delete one. The add and edit forms have a box to paste a private key into, an area to drop the key file onto, and a box for the passphrase of a key that has one, and the add form has an **Assign all service ports** tick, on by default, that says what the Host starts out carrying. **Service ports** in a row opens a panel of every service port with a tick against the ones this Host carries; only what was changed is sent when it is saved, so a tick made there leaves the pages that were not read alone. |
-| Service Ports | `/ui/service-ports` | One row per service port with ID, service IP, service port, local port, description and updated. The rows come a page at a time the same way the Hosts do, with a size and a page of their own. Add, edit and delete. The add form has an **Assign to all hosts** tick, on by default, that says which Hosts carry it from the start; which Hosts carry it after that is changed from the Hosts screen. |
+| Status | `/ui/status` | The three counts (desired, rows, connected), a sentence about the difference between them, and one line per tunnel: Host, service port, status, server, local, remote, port reached, retries, last connected. A tunnel with something wrong carries what went wrong on a line under it, across the whole table, and a tunnel whose forwarded port was not reached carries there what to change on the SSH server it named and what else to check. A tunnel that is up carries under it what is known about the addresses of its forward, kept in three: what was asked for, what the SSH server answered, and what a connection from here confirmed. It never says a port is open. The tunnel rows come a page at a time, ten to a page to begin with, with the size and the page chosen above the table; the three counts stay counts of every tunnel and not of the page. It asks again every 5 seconds and comes back on the page being read. |
+| Hosts | `/ui/hosts` | One row per Host with ID, IP, port, user, description, enabled and updated. The rows come a page at a time, ten to a page to begin with, with the size (10, 20, 30, 50 or 100) and the page chosen above the table. The choice is remembered for this screen on its own, and a list short enough to fit a page of the smallest size carries no controls at all. Add a Host, edit one, enable or disable one, delete one. The add and edit forms have a box to paste a private key into, an area to drop the key file onto, and a box for the passphrase of a key that has one, and the add form has an **Assign all service ports** tick, on by default, that says what the Host starts out carrying, with a **Reach on the Host** list beside it that every assignment that tick makes starts on. **Service ports** in a row opens a panel of every service port with a tick against the ones this Host carries, and a reach beside each row: pick a reach above and apply it to everything ticked, or set one row on its own, and a row that was not ticked is left alone. Only what was changed is sent when it is saved, so a tick made there leaves the pages that were not read alone. |
+| Service Ports | `/ui/service-ports` | One row per service port with ID, service IP, service port, local port, description and updated. The rows come a page at a time the same way the Hosts do, with a size and a page of their own. Add, edit and delete. The add form has an **Assign to all hosts** tick, on by default, that says which Hosts carry it from the start, with a **Reach on the Host** list beside it that the assignments that tick makes start on; which Hosts carry it after that, and what each of those assignments reaches, is changed from the Hosts screen. |
 | Logs | `/ui/logs` | The end of the log file, newest last, with a level filter and a count to show. It asks again every 5 seconds. It reads the file the process is writing now; rotated files are not shown. The lines are shown in the language of the screen while the file stays English; see [The language of the screens](#the-language-of-the-screens). |
 | Settings | `/ui/settings` | What is stored but not being run on yet, with a Restart in that card that puts it into place, every stored setting and what a save changed, among them the language this installation shows a browser that has picked none, the certificate being served with a button to renew it and boxes to register one of your own, the username and the password of this account, an export of the tunnel configuration and of the settings of this manager into one encrypted file each and an import that takes such a file back, a Restart that takes the service down and brings it back, and the Uninstall at the bottom. See [Settings](#settings). |
 | Update | `/ui/update` | What this installation is running beside what the newest release is, and the two settings that decide whether either is looked at again. The reading is taken on a timer rather than when the screen is drawn, so opening it costs the release API nothing; a press takes it now. Where the release is newer and this process is what a service registration starts, a press installs it, which takes the password of the account and ends with the service restarting. See [Updates](#updates). |
@@ -1493,7 +1535,7 @@ curl -s -b cookies.txt "$BASE/api/status?page=99999&size=10"
 
 | Method | Path | What it does |
 |--------|------|--------------|
-| `POST` | `/api/host` | Creates a Host. `enabled` is optional and a Host that does not say is enabled, and `bind_address` is optional and is `0.0.0.0` when it is left out |
+| `POST` | `/api/host` | Creates a Host. `enabled` is optional and a Host that does not say is enabled, and `bind_scope` is what the assignments this request makes are opened to |
 | `GET` | `/api/host` | One page of the Hosts, oldest first. Takes `page` and `size`, see [Paging](#paging) |
 | `GET` | `/api/host/:id` | Reads one Host |
 | `PUT` | `/api/host/:id` | Updates a Host. Every field is optional; `enabled` false stops its tunnels |
@@ -1509,7 +1551,7 @@ The body of a create and of an update takes these fields.
 | `private_key` | The text of a PEM private key file. Optional if a `password` is given | An empty or missing value keeps the stored key. A key that is sent replaces the stored key and its passphrase together |
 | `key_passphrase` | Required only for a key that is protected by one | Sent with the key it belongs to. On its own, without `private_key`, it is refused |
 | `password` | Optional if a `private_key` is given | An empty or missing value keeps the stored password |
-| `bind_address` | Optional. Left out or sent empty, it is `0.0.0.0` | Optional; what is left out stays as it is. Send `0.0.0.0` to go back to the wildcard |
+| `bind_scope` | Optional. `loopback` or `wildcard`, and left out or sent empty it is the wildcard | Not read. A Host holds no scope; the scope of one assignment is changed through `PUT /api/host/:id/service-port` |
 | `description`, `enabled` | Optional | Optional |
 | `assign_all_service_ports` | Optional. Left out, and the Host is given every service port that is stored. Send it as false to register a Host that carries none | Not read. What a Host carries is changed through `PUT /api/host/:id/service-port` |
 
@@ -1522,35 +1564,24 @@ passphrase does not open the key. Nothing is stored in any of those cases.
 one included. What was stored is confirmed by the Host connecting, which the
 status says.
 
-**`bind_address` is the address on this Host the forwarded ports are asked to be
-opened on.** It takes an IPv4 or an IPv6 address and nothing else. The string is
-handed to the sshd on the Host as it stands, so a name would be resolved over
-there, by a resolver this end cannot see, and a name that resolves to nothing is
-answered one refused connection at a time. Left out or sent empty it is
-`0.0.0.0`, which is what every forward asked for before the field existed, so a
-Host stored by an earlier version reaches exactly as far as it did.
+**`bind_scope` is what the assignments this one request makes are opened to**,
+the batch of them, and it is read nowhere else. A Host is registered before
+anything has been said about its service ports one at a time, so the one answer
+given here is what the whole batch starts on. Where the request sends
+`assign_all_service_ports` as false no assignment is made and the field decides
+nothing. It takes `loopback` or `wildcard` and nothing else, a third word is
+refused with `400`, and left out it is the wildcard, which is what every forward
+asked for before any of this existed.
 
-It is held on the Host rather than on the service port because it names an
-interface of that machine. The same service port carried by three Hosts is three
-listeners on three machines, and one of them may be the only one with an
-interface facing a network the forwarded port has no business being reachable
-from; on the service port there would be one answer for all three.
+The Host itself holds no scope, so `PUT /api/host/:id` does not take the field
+and no answer carries it. What one assignment is opened to afterwards is read
+and changed through
+[the service ports a Host carries](#the-service-ports-a-host-carries), and what
+the two scopes mean is in [Assignments](#assignments).
 
-The screens offer `0.0.0.0`, `127.0.0.1` and `::1`, and take any other address
-typed in. The list is not asked of the Host: an address that belongs to one
-interface of one machine is a fact about that machine, and reading it would mean
-running a command over there, which this program has no way of doing.
-
-What the address does is still the SSH server's decision. `127.0.0.1` keeps the
-port on the Host itself whatever `GatewayPorts` says, while `0.0.0.0` opens it
-to everything that can reach the Host, but only where the server allows that,
-see [Whether the forwarded port can be reached](#whether-the-forwarded-port-can-be-reached).
-A Host bound to loopback has its tunnels reported `unreachable` there, and that
-is the reading working as intended: it is taken by connecting from this process
-to the Host, and a port on loopback does not answer that.
-
-Changing the address rebuilds every tunnel of that Host, because the address is
-part of what a tunnel is built from.
+Moving an assignment to another scope rebuilds the tunnel of that assignment
+alone, because the scope is part of what a tunnel is built from. The other
+assignments of the same Host are left running.
 
 ```bash
 # A Host that is logged in to with a key. The key is sent as the text of the
@@ -1580,7 +1611,8 @@ none looks like.
   "data": {
     "items": [
       { "id": 1, "service_ip": "198.51.100.20", "service_port": 8080,
-        "local_port": 18080, "description": "", "assigned": true }
+        "local_port": 18080, "description": "", "assigned": true,
+        "bind_scope": "wildcard" }
     ],
     "total": 1,
     "page": 1,
@@ -1588,6 +1620,11 @@ none looks like.
   }
 }
 ```
+
+`bind_scope` on a row is what the assignment of this Host is opened to. It is
+**empty on a row this Host does not carry**: the scope is held by the assignment,
+so a service port that is not assigned has none, and the row the screen would
+make starts on the wildcard until something else is chosen.
 
 **`PUT /api/host/:id/service-port` takes a change and not the whole set.** The
 list is served a page at a time, so a client holds one page and knows nothing of
@@ -1599,22 +1636,39 @@ meant to tick one box.
 curl -s -b cookies.txt -X PUT "$BASE/api/host/1/service-port" \
   -H 'Content-Type: application/json' \
   -H "X-CSRF-Token: $CSRF" \
-  -d '{"add":[1,3],"remove":[2]}'
+  -d '{"add":[1,3],"remove":[2],"rescope":[1],"bind_scope":"loopback"}'
 ```
 
 ```json
-{ "success": true, "data": { "added": 2, "removed": 1 } }
+{ "success": true, "data": { "added": 2, "removed": 1, "rescoped": 1 } }
 ```
 
-`added` and `removed` count the rows and not the request: a service port that is
-already assigned is asked for again without a row being written, and one that is
-not assigned is removed without a row going. Both lists are optional and a
-request that changes nothing is answered, not refused.
+| Field | What it does |
+|-------|--------------|
+| `add` | The service ports to give this Host. A new assignment is written on `bind_scope` |
+| `remove` | The service ports to take away from it |
+| `rescope` | The assignments to move to `bind_scope`, named the same way. An id this Host does not carry moves nothing |
+| `bind_scope` | `loopback` or `wildcard`, and left out it is the wildcard. It is what the rows in `add` are written on and what the rows in `rescope` are moved to |
+
+**An assignment that is already there is left on the scope it holds unless
+`rescope` names it.** That is why the two are separate lists. Read the other way,
+a client that ticks a box which was ticked already, or one written before any of
+this existed, would widen to the wildcard an assignment somebody had pinned to
+the loopback, and reach handed out by a request that did not mention it is the
+one thing this must not do. `add` widens nothing; the bulk apply on the screen
+fills `rescope` from what was ticked, so a row you did not tick is left alone.
+
+`added`, `removed` and `rescoped` count the rows and not the request: a service
+port that is already assigned is asked for again without a row being written,
+one that is not assigned is removed without a row going, and an id in `rescope`
+that names an assignment this Host does not carry moves nothing. All three lists
+are optional and a request that changes nothing is answered, not refused.
 
 | What was sent | What happens |
 |---------------|--------------|
 | The same service port in `add` and in `remove` | `400`, naming it. Which of the two would win is a guess at what the request meant, and what it decides is whether a tunnel runs |
 | A service port id that is not stored | `400`, naming it. Nothing is written |
+| A `bind_scope` that is neither `loopback` nor `wildcard` | `400`, naming the field. Nothing is written |
 | A Host id that is not stored | `404` |
 
 The whole of the change lands or none of it does, and the reconcile loop is
@@ -1624,11 +1678,19 @@ woken once it is committed, so the tunnels follow within the moment.
 
 | Method | Path | What it does |
 |--------|------|--------------|
-| `POST` | `/api/service-port` | Creates a service port. `assign_to_all_hosts` is optional: left out, every stored Host is given it, and sent as false it is registered carried by none |
+| `POST` | `/api/service-port` | Creates a service port. `assign_to_all_hosts` is optional: left out, every stored Host is given it, and sent as false it is registered carried by none. `bind_scope` is what the assignments it makes are opened to |
 | `GET` | `/api/service-port` | One page of the service ports, oldest first. Takes `page` and `size`, see [Paging](#paging) |
 | `GET` | `/api/service-port/:id` | Reads one service port |
 | `PUT` | `/api/service-port/:id` | Updates a service port. `service_ip`, `service_port` and `local_port` are all required |
 | `DELETE` | `/api/service-port/:id` | Deletes a service port, and the assignments naming it |
+
+`bind_scope` on the create is what the batch of assignments `assign_to_all_hosts`
+makes is opened to, the way it is on `POST /api/host`, and
+`PUT /api/service-port/:id` does not take it. One answer can stand for a batch
+that reaches every Host because the two words mean the same on every machine,
+which is the other reason there is no box for an address typed in: an address
+names an interface of one machine, and the rest would be asked to open a port on
+an address they do not have.
 
 ### Status
 
@@ -1729,6 +1791,16 @@ cleanly and leave the installation with no tunnel at all. A Host that carries
 nothing is written into the file as `[]`, which is the same distinction from the
 other side.
 
+**How far each assignment reaches travels with it**, in `assigned_bind_scopes`
+on the Host, keyed by the same local port. An assignment with no entry there is
+on the wildcard, which is what the empty value means in the database, so only an
+answer other than that one is written. A file from v3.8.3 carries no such field
+and one `bind_address` for the whole Host instead: that is read, and a loopback
+address there makes every assignment of that Host `loopback` while every other
+answer makes them the wildcard, by the same rule the upgrade uses. It is read
+and never written, so an import cannot quietly undo a narrowing somebody made,
+and a file this version writes carries no `bind_address` at all.
+
 **The whole file is encrypted with the password given to the export, and that
 password is the only thing protecting it.** Inside it, the SSH password, the
 private key and the key passphrase of every Host are written in the clear. That
@@ -1826,7 +1898,8 @@ curl -s -b cookies.txt https://127.0.0.1:8888/api/status
         "local": "0.0.0.0:18080",
         "remote": "198.51.100.20:8080",
         "server_banner": "",
-        "forward_reach": "unknown"
+        "forward_reach": "unknown",
+        "open_reach": ""
       }
     ]
   }
@@ -1866,28 +1939,70 @@ mean different things.
 ### Whether the forwarded port can be reached
 
 A tunnel that says `connected` is one the SSH connection stands for. It does not
-mean the forwarded port can be reached: the listener is opened by the **SSH
-server**, and which address it binds is that server's decision, not this one's.
-tunnel-manager asks for `<bind address>:<local port>`, the wildcard `0.0.0.0`
-unless the Host names another address, and with OpenSSH left at its
-default of `GatewayPorts no`, or Dropbear started without `-a`, the server binds
-loopback alone. The port then answers on the Host itself and nowhere else.
+mean the forwarded port can be reached: the listeners are opened by the **SSH
+server**, and which addresses it binds is that server's decision, not this one's.
+tunnel-manager asks for both addresses of the bind scope of the assignment, the
+wildcards `0.0.0.0` and `::` unless the loopback scope was chosen.
 
-Two fields on every tunnel row say what is known about it.
+**What the SSH server answers to a request is not a measurement of what it
+bound.** The reply to a forward request carries a port and no address, and there
+is nothing on the far side this program asks. What decides the binding is
+`GatewayPorts` in `sshd_config` for OpenSSH, and the `-a` flag on the command
+line for Dropbear. This is what was measured against OpenSSH:
+
+| `GatewayPorts` | Asked for | What the server bound | The second request |
+|----------------|-----------|-----------------------|--------------------|
+| `clientspecified` | `0.0.0.0` | `0.0.0.0` | `::` was opened |
+| `yes` | `0.0.0.0` | `0.0.0.0` and `::` | Refused |
+| `yes` | `127.0.0.1` | `0.0.0.0` and `::`, so the scope that was chosen was ignored | Refused |
+| `no` | `0.0.0.0` | `127.0.0.1` and `::1`, so the scope that was chosen was ignored | Refused |
+
+`man 5 sshd_config` has `yes` "force remote port forwardings to bind to the
+wildcard address" and `no` "force ... available to the local host only". **Both
+of them force, so the client is not asked**, and `clientspecified` is the one
+setting under which the scope that was picked is the scope that is bound. A
+refusal is not a closed port either: a server that bound both families on the
+first request refuses the second, and so does a server with no IPv6 at all, and
+the two are the same answer seen from here.
+
+Three fields on every tunnel row say what is known about it.
 
 | Field | What it holds |
 |-------|---------------|
 | `server_banner` | What the SSH server called itself on the handshake, for example `SSH-2.0-OpenSSH_10.5p1 Ubuntu-1ubuntu2`. It is what says which server is in front of you, and what to change on it differs by server |
-| `forward_reach` | Whether tunnel-manager reached the forwarded port by opening a TCP connection to the Host at that port: `reachable`, `unreachable`, or `unknown` while nothing has been measured |
+| `open_reach` | Which of the two requests the SSH server said yes to: `both`, `ipv4` where it took the IPv4 address and refused the IPv6 one, `ipv6` the other way round, and empty where nothing has been measured yet. A connection on which it refused both is a tunnel that failed rather than one that reaches half, and it is reported on `status` and `last_error` like every other failure |
+| `forward_reach` | Whether tunnel-manager reached the forwarded port by opening a TCP connection to the Host at that port: `reachable`, `unreachable`, or `unknown` where nothing has been measured and where nothing can be |
 
-It is measured once when the tunnel comes up and again on every reconnect, not
-on every status read: what decides it is the configuration of the SSH server,
+All three are taken once when the tunnel comes up and again on every reconnect,
+not
+on every status read: what decides them is the configuration of the SSH server,
 which does not change under a connection that stands.
+
+**The status screen keeps three things apart, and so should you.**
+
+| What is said | What it rests on |
+|--------------|------------------|
+| What was **asked for** | The two addresses of the scope on the assignment. This end chose them, so they are known |
+| What was **confirmed** | An address that answered a TCP connection opened from here, which is `forward_reach` reading `reachable`. It is the one piece of evidence this end holds |
+| What is **not known** | Everything else, `open_reach` included. A yes to a request is not a port that is up, and a no is not a port that is down |
+
+It never says a port is open. A port that answered a connection from here is
+open at the address that was dialled and that is all that can be said.
 
 > **`unreachable` says where the port was not reached from, not why.** A server
 > that bound the port to loopback alone and a firewall that drops the connection
 > on the way look exactly the same from here, and a connection that never
 > arrives cannot tell them apart. Check both before changing either.
+
+**An assignment on the `loopback` scope can never be confirmed from here, and
+that is not a fault.** Its ports are asked for on the addresses of the Host
+itself, which nothing outside that machine reaches, so no connection opened here
+could ever arrive however well the port is carrying traffic over there. The
+silence is written down as `unknown` rather than as `unreachable` for that
+reason: a tunnel doing exactly what was asked of it must not be drawn as one
+that failed. The same holds for an address family the server refused, and for
+the IPv6 half of any Host this installation knows by an IPv4 address, which is
+the only address of a Host it holds.
 
 `GET /api/status/:hostId` answers with the same counts except `desired_tunnels`,
 plus the Host itself. It is not paged and carries every tunnel of that Host.
