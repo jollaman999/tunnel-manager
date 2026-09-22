@@ -432,9 +432,9 @@ async function drawStatus() {
         under.push(denied);
       }
 
-      const half = openReachAdvice(tunnel);
-      if (half !== null) {
-        under.push(half);
+      const addresses = forwardAddresses(tunnel);
+      if (addresses !== null) {
+        under.push(addresses);
       }
 
       if (under.length === 0) {
@@ -673,45 +673,187 @@ function forwardAdvice(tunnel) {
   return box;
 }
 
-// openReachAdvice is what is said under a tunnel whose forwarded port opened on
-// one address family and not on the other.
+// forwardAddresses is what is said under a connected tunnel about the addresses
+// of its forwarded port: the ones that were asked for, the one that answered a
+// connection opened from here, and nothing else.
 //
-// A scope asks for two addresses, the loopbacks or the wildcards, because
-// neither of a pair stands in for the other: a client dialling ::1 does not
-// arrive at a port opened on 127.0.0.1. The reading says which of the two were
-// opened, and the one case worth a line is half of them.
+// It is drawn as a note and not as a warning. None of it is something to go and
+// fix: a tunnel whose ports were asked for on the Host itself has no address
+// this machine can try, and that is the scope doing what it was picked for. The
+// one thing on this screen that is a warning about reach is what reachAdvice
+// draws, for a port that was tried and gave nothing back.
 //
-// "both" is the tunnel that is working and says nothing. The empty value is a
-// tunnel nothing has been measured on yet, and a row stored before there was a
-// column to measure into, and it says nothing either: a line drawn from an
-// absence of readings would be on every row of an installation that has just
-// been upgraded. A forward that opened on neither address does not arrive here
-// at all, it arrives as a failure, and the status and the last error of the row
-// are what say so.
+// What the reading of the requests is not is a list of what is open. It is what
+// the SSH server answered to each tcpip-forward request, and an answer is not a
+// binding: a server set to bind every interface takes both families on the
+// first request and says no to the second, and it does that for a request that
+// named the loopback address too. So the line says what was asked, what was
+// answered and what was confirmed by a connection, and never which addresses
+// are open.
 //
-// It names no cause. The refusal carries no reason and this program never runs
-// a command on the Host, so IPv6 turned off on that machine, an sshd that was
-// told to listen on one family, and a firewall in front of it are the same
-// silence seen from here.
-function openReachAdvice(tunnel) {
+// Nothing is drawn where the row carries no reading, which is a tunnel nothing
+// has been asked of yet and a row stored before there was a column. A line
+// drawn from an absence of readings would be on every row of an installation
+// that has just been upgraded.
+function forwardAddresses(tunnel) {
   const reach = typeof tunnel.open_reach === "string" ? tunnel.open_reach : "";
 
-  if (reach !== "ipv4" && reach !== "ipv6") {
+  // Only under a tunnel that is up. The readings belong to the connection that
+  // stands, and a row that is reconnecting or in error carries what the last
+  // connection left, which is not a fact about the tunnel as it is now.
+  if (tunnel.status !== "connected") {
+    return null;
+  }
+
+  if (reach !== "both" && reach !== "ipv4" && reach !== "ipv6") {
     return null;
   }
 
   const box = document.createElement("div");
 
-  box.className = "reach-advice";
+  box.className = "forward-addresses";
   box.dataset.openReach = reach;
 
-  box.appendChild(element("strong", reach === "ipv4"
-    ? t("status.open-ipv4-only.text")
-    : t("status.open-ipv6-only.text")));
+  box.appendChild(element("strong", t("status.addresses-known.text")));
+  box.appendChild(element("p", askedSentence(tunnel.local)));
+  box.appendChild(element("p", answeredSentence(reach)));
 
-  box.appendChild(element("p", t("status.open-half.text")));
+  // What an answer is worth is said where one of the two requests was turned
+  // down, which is where a reader is most likely to take the answer for a
+  // measurement.
+  if (reach !== "both") {
+    box.appendChild(element("p", t("status.addresses-answer-no-proof.text")));
+  }
+
+  box.appendChild(element("p", confirmedSentence(tunnel)));
 
   return box;
+}
+
+// askedSentence names the addresses the forwarded port was asked to be opened
+// at. They are the pair the bind scope names, which is what the address in the
+// row is one of; where that address is none of the four a scope is made of, the
+// row is all there is to name and the sentence names it alone.
+function askedSentence(local) {
+  const pair = requestedPair(local);
+
+  if (pair === null) {
+    return t("status.addresses-asked-one.text", { address: typeof local === "string" ? local : "" });
+  }
+
+  return t("status.addresses-asked-pair.text", { first: pair.v4, second: pair.v6 });
+}
+
+// answeredSentence is what the SSH server said to the two requests. It is an
+// answer and not a measurement, which is what the sentence under it says where
+// one of the two was turned down.
+function answeredSentence(reach) {
+  if (reach === "ipv4") {
+    return t("status.addresses-answered-ipv4.text");
+  }
+
+  if (reach === "ipv6") {
+    return t("status.addresses-answered-ipv6.text");
+  }
+
+  return t("status.addresses-answered-both.text");
+}
+
+// confirmedSentence is what was confirmed by a connection opened from here,
+// which is the one evidence this end can hold that a port is up.
+//
+// A forward asked for on the Host itself has nothing here that can be tried, so
+// the empty answer for one of those is what it is meant to be rather than
+// something missing: the sentence says so, so that a scope doing what it was
+// picked for does not read as a tunnel with something wrong with it.
+function confirmedSentence(tunnel) {
+  if (tunnel.forward_reach === "reachable") {
+    const answered = probedAddress(tunnel.server, tunnel.local);
+
+    // Where the two columns cannot be cut into a host and a port, the address
+    // is left out rather than written wrong, which is what reachAdvice does
+    // with the same pair of columns.
+    return answered === ""
+      ? t("status.addresses-confirmed-plain.text")
+      : t("status.addresses-confirmed.text", { address: answered });
+  }
+
+  if (requestedScope(tunnel.local) === bindScopeLoopback) {
+    return t("status.addresses-host-only.text");
+  }
+
+  return t("status.addresses-confirmed-none.text");
+}
+
+// requestedHost is the address out of the local column, without the port. An
+// IPv6 address is written in brackets there, so it is taken from between them;
+// everything else is cut at the last colon, which is what separates a port from
+// an address that has none of its own.
+function requestedHost(local) {
+  if (typeof local !== "string") {
+    return "";
+  }
+
+  if (local.startsWith("[")) {
+    const close = local.indexOf("]");
+
+    return close < 0 ? "" : local.slice(1, close);
+  }
+
+  const at = local.lastIndexOf(":");
+
+  return at < 0 ? "" : local.slice(0, at);
+}
+
+// bindScopeWildcard and bindScopeLoopback are the two answers an assignment can
+// carry, spelled the way the API spells them. An assignment that carries
+// neither holds the empty value, and that means the wildcard: it is what every
+// row written before there was a column is already running on, and nothing here
+// may quietly move one of those somewhere narrower.
+const bindScopeWildcard = "wildcard";
+const bindScopeLoopback = "loopback";
+
+// The two addresses of each bind scope, one per family, spelled the way the
+// server asks for them. They are here so that a row, which carries one address,
+// can name the pair that was asked for: the scope itself is not on the row.
+const bindScopePairs = {
+  "0.0.0.0": { scope: bindScopeWildcard, v4: "0.0.0.0", v6: "::" },
+  "::": { scope: bindScopeWildcard, v4: "0.0.0.0", v6: "::" },
+  "127.0.0.1": { scope: bindScopeLoopback, v4: "127.0.0.1", v6: "::1" },
+  "::1": { scope: bindScopeLoopback, v4: "127.0.0.1", v6: "::1" }
+};
+
+// bindScopePairOf is the pair the address in the local column belongs to, and
+// null for an address that is none of the four. Asked of the table itself and
+// not of what every object inherits, so that a row naming "constructor" is an
+// address nothing is known about rather than a function.
+function bindScopePairOf(local) {
+  const host = requestedHost(local);
+
+  return Object.prototype.hasOwnProperty.call(bindScopePairs, host) ? bindScopePairs[host] : null;
+}
+
+// requestedScope is which scope the forwarded port was asked for on, out of the
+// address the row names, and the empty string where that address is none of the
+// four a scope is made of.
+function requestedScope(local) {
+  const pair = bindScopePairOf(local);
+
+  return pair === null ? "" : pair.scope;
+}
+
+// requestedPair is the two addresses that were asked for, port and all, and
+// null where the address in the row is none of the four. The port is the one
+// the row carries, which is the port the SSH server confirmed.
+function requestedPair(local) {
+  const pair = bindScopePairOf(local);
+  const port = forwardedPort(local);
+
+  if (pair === null || port === null) {
+    return null;
+  }
+
+  return { v4: pair.v4 + ":" + String(port), v6: "[" + pair.v6 + "]:" + String(port) };
 }
 
 // forwardedPort is the port the Host was asked to open, out of the local
@@ -1903,14 +2045,6 @@ function privilegedPortAdvice(value) {
 
   return t("service-ports.local-port-privileged.hint");
 }
-
-// bindScopeWildcard and bindScopeLoopback are the two answers an assignment can
-// carry, spelled the way the API spells them. An assignment that carries
-// neither holds the empty value, and that means the wildcard: it is what every
-// row written before there was a column is already running on, and nothing here
-// may quietly move one of those somewhere narrower.
-const bindScopeWildcard = "wildcard";
-const bindScopeLoopback = "loopback";
 
 // bindScopeOptions are the two entries every list that picks a scope offers.
 // The wildcard is first because it is what an assignment that says nothing

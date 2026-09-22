@@ -1397,3 +1397,128 @@ func jsonFields(t *testing.T, of any) map[string]bool {
 
 	return names
 }
+
+// addressLineMarker is what the line under a tunnel row that says what is known
+// about the addresses of its forwarded port leaves on the element it draws. The
+// tests below find that line by it rather than by the name of the function, so
+// that renaming the function does not quietly stop them checking anything.
+const addressLineMarker = "dataset.openReach"
+
+// claimsNotToBeMade are what the line may not say, in the English catalog,
+// which is the one every other catalog is written from.
+//
+// None of them is measurable from here. The reply to a tcpip-forward request
+// carries a port and no address, so what the SSH server bound is never said,
+// and an answer to a request is not a binding: a server set to bind every
+// interface takes both address families on the first request and turns the
+// second one down, for a request that named the loopback address as much as for
+// one that named the wildcard. A line that reads an answer as a port that is
+// open, or as traffic that will not arrive, is telling an operator something
+// this program has not measured and cannot.
+var claimsNotToBeMade = []string{
+	"refus", "reject", "denied", "turned down",
+	"alone", "only", "half of",
+	"unreachable", "not reachable", "cannot be reached",
+	"does not arrive", "never arrives", "nothing that dials",
+	"is open on", "opened on", "not open",
+}
+
+// TestTheAddressLineClaimsNothingItCannotMeasure holds the sentences under a
+// tunnel row to what was asked, what was answered and what a connection from
+// here confirmed.
+//
+// The words are held rather than the drawing because the words are what an
+// operator acts on. A sentence that says the Host turned an address down and
+// that nothing reaches it over that family sends them to change a machine that
+// may have the port open, and there is nothing on the screen to tell them
+// otherwise.
+func TestTheAddressLineClaimsNothingItCannotMeasure(t *testing.T) {
+	base := readCatalog(t, baseCatalog)
+	named := regexp.MustCompile(`\bt\("([^"]+)"`)
+
+	held := map[string]bool{}
+
+	// The keys the line itself names, which is what catches a line drawn from
+	// the sentences it used to be drawn from.
+	for _, use := range named.FindAllStringSubmatch(
+		scriptFunctionCarrying(t, readStatic(t, "screens.js"), addressLineMarker), -1) {
+		held[use[1]] = true
+	}
+
+	// And the keys of the group it is written in, which is what catches a
+	// sentence added to one of the functions it is put together by.
+	for key := range base {
+		if strings.HasPrefix(key, "status.addresses-") {
+			held[key] = true
+		}
+	}
+
+	t.Logf("sentences the address line is made of: %d", len(held))
+
+	if len(held) == 0 {
+		t.Fatalf("no sentence of the address line was found, so this test checks nothing")
+	}
+
+	for key := range held {
+		value := strings.ToLower(base[key])
+
+		for _, claim := range claimsNotToBeMade {
+			if strings.Contains(value, claim) {
+				t.Errorf("the English catalog says %q under %q, which is not something this end "+
+					"measured: an answer to a forward request is not what the server bound", claim, key)
+			}
+		}
+	}
+}
+
+// TestTheAddressLineIsNotDrawnAsAWarning keeps the note under a row a note.
+//
+// Nothing in it is something to go and fix. A tunnel whose ports were asked for
+// on the Host itself has no address this machine can try, which is the scope
+// doing what it was picked for, and painted the way a failure is it reads as a
+// tunnel with something wrong with it. The one warning about reach on this
+// screen is the box drawn for a port that was tried and gave nothing back.
+func TestTheAddressLineIsNotDrawnAsAWarning(t *testing.T) {
+	const warningClass = "reach-advice"
+
+	body := scriptFunctionCarrying(t, readStatic(t, "screens.js"), addressLineMarker)
+	painted := regexp.MustCompile(`className = "([^"]+)"`).FindStringSubmatch(body)
+
+	if painted == nil {
+		t.Fatalf("the address line is drawn with no class of its own, so nothing here is checked")
+	}
+
+	if painted[1] == warningClass {
+		t.Fatalf("the address line is drawn as %q, which is the box a port that did not answer is "+
+			"warned about in", painted[1])
+	}
+
+	if style := readStatic(t, "style.css"); !strings.Contains(style, "."+painted[1]) {
+		t.Fatalf("the address line is drawn as %q, which style.css has no rule for", painted[1])
+	}
+}
+
+// scriptFunctionCarrying is the body of the function of a script that carries
+// the string given, from the line it is declared on to the line that closes it.
+// A function is found by something it does rather than by its name, so that a
+// test is not answered by a rename.
+func scriptFunctionCarrying(t *testing.T, script, carried string) string {
+	t.Helper()
+
+	at := strings.Index(script, carried)
+	if at < 0 {
+		t.Fatalf("no function of the script carries %q", carried)
+	}
+
+	opens := strings.LastIndex(script[:at], "\nfunction ")
+	if opens < 0 {
+		t.Fatalf("%q is not inside a function of the script", carried)
+	}
+
+	body := script[opens+1:]
+	if closes := strings.Index(body, "\n}\n"); closes >= 0 {
+		body = body[:closes]
+	}
+
+	return body
+}

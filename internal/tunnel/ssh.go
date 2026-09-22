@@ -369,28 +369,40 @@ func listenErrorKind(err error) string {
 const forwardProbeTimeout = 10 * time.Second
 
 // probeForwardReach reports whether the forwarded port answers a TCP
-// connection opened from this process.
+// connection opened from this process, and writes down a silence as the caller
+// says a silence is worth here.
 //
-// That is the whole of what can be measured from this end. The reply to a
-// tcpip-forward request carries a port and no address, so the SSH server never
-// says which address it bound, and there is no shell on the far side to ask.
+// An answer is the one piece of evidence this end can hold: the port carried a
+// connection, so it is open at the address that was dialled. Nothing else here
+// is evidence of anything. The reply to a tcpip-forward request carries a port
+// and no address, so the SSH server never says which address it bound, and
+// there is no shell on the far side to ask.
 //
 // What comes back is where the port was reached from, never why it was not.
 // A server that bound the port to loopback alone and a firewall that drops the
-// packet are the same refusal seen from here, and reporting either as the cause
+// packet are the same silence seen from here, and reporting either as the cause
 // would send the operator to fix a machine that is not the one at fault.
 //
 // The connection is closed as soon as it stands. The handshake is the whole
 // measurement, and a probe left open is a socket held for the life of the
 // tunnel, one more on every reconnect.
-func probeForwardReach(address string, timeout time.Duration) string {
+func probeForwardReach(address string, timeout time.Duration, silence string) string {
 	conn, err := net.DialTimeout("tcp", address, timeout)
 	if err != nil {
-		return forwardUnreachable
+		return silence
 	}
 	_ = conn.Close()
 
 	return forwardReachable
+}
+
+// forwardProbe is what the reachability probe of one connection dials and what
+// its silence is worth. The two travel together because they are one decision:
+// there is a single address this end can try, and whether nothing coming back
+// from it says anything about the port depends on what was asked for there.
+type forwardProbe struct {
+	address string
+	silence string
 }
 
 // forwardProbeAddress is where the forwarded port is tried from here: the
@@ -398,10 +410,52 @@ func probeForwardReach(address string, timeout time.Duration) string {
 // forward.
 //
 // It is not the address the listener reports. That one is the address that was
-// asked for, a wildcard 0.0.0.0, which is not an address to dial and would only
-// ever reach this machine.
+// asked for, a wildcard or a loopback address, and neither is an address to
+// dial from here: the wildcard is no address at all and the loopback one is
+// this machine rather than the Host.
+//
+// It is the one address of the Host this program holds, so it carries one
+// address family. The other family of the Host is not known here, and a port
+// that was asked for on it cannot be tried at all.
 func forwardProbeAddress(server *net.TCPAddr, port int) string {
 	return net.JoinHostPort(server.IP.String(), strconv.Itoa(port))
+}
+
+// forwardProbeSilence is the reading a probe that gets no answer is written
+// down as.
+//
+// A silence is a measurement only where an answer was to be expected. It says
+// the forwarded port is not reachable at the address of the Host this program
+// holds, which is what an operator has to be told about a tunnel that reads as
+// connected. Where an answer was not to be expected it says nothing at all, and
+// writing it down as a port that cannot be reached would put a failure on a
+// tunnel that is doing what was asked of it.
+//
+// Two things make a silence worth nothing. The probe can only dial the address
+// family of the Host address, so a scope whose request for that family was
+// turned down was never confirmed for the family being tried. And a scope that
+// asks for the loopback addresses asks for them on the Host, which nothing here
+// can reach, however well the port is carrying traffic on that machine.
+//
+// The probe is run in both cases all the same, because an answer is evidence
+// and a request that was turned down is not evidence of a port that is closed:
+// an SSH server told to bind every interface opens both families on the first
+// request and turns the second one down, and it binds every interface for a
+// request that named the loopback address too.
+func forwardProbeSilence(local localPair, server *net.TCPAddr, reach string) string {
+	asked := local.v6
+	answered := reach == openReachBoth || reach == openReachV6
+
+	if server.IP.To4() != nil {
+		asked = local.v4
+		answered = reach == openReachBoth || reach == openReachV4
+	}
+
+	if !answered || asked.IP.IsLoopback() {
+		return forwardReachUnknown
+	}
+
+	return forwardUnreachable
 }
 
 // recordForwardReach measures the forwarded port and writes the reading to the
@@ -415,8 +469,8 @@ func forwardProbeAddress(server *net.TCPAddr, port int) string {
 // The tunnel reconnected while the probe was waiting, a probe of its own is
 // running for the new connection, and writing here would put the reading of a
 // connection that is gone on the row of the one that replaced it.
-func (t *SSHTunnel) recordForwardReach(m *Manager, tunnel *models.Tunnel, measured *ssh.Client, address string) {
-	reach := probeForwardReach(address, forwardProbeTimeout)
+func (t *SSHTunnel) recordForwardReach(m *Manager, tunnel *models.Tunnel, measured *ssh.Client, probe forwardProbe) {
+	reach := probeForwardReach(probe.address, forwardProbeTimeout, probe.silence)
 
 	t.clientMu.RLock()
 	current := t.client
@@ -447,7 +501,7 @@ func (t *SSHTunnel) recordForwardReach(m *Manager, tunnel *models.Tunnel, measur
 		"server has to be restarted for a change to it. Between here and the Host it is the firewall that "+
 		"the port has to be open through",
 		logid.TunnelForwardUnreachable.Field(),
-		zap.String("probed", address),
+		zap.String("probed", probe.address),
 		zap.String("server_banner", banner),
 		zap.String("local", t.Local.String()),
 		zap.String("server", t.Server.String()),
@@ -694,7 +748,10 @@ func (t *SSHTunnel) establishConnection(m *Manager, tunnel *models.Tunnel) error
 	// configuration of the SSH server, which does not change under a
 	// connection that stands, while a probe per status read would be one
 	// connection per tunnel per reader.
-	go t.recordForwardReach(m, tunnel, client, forwardProbeAddress(t.Server, boundPort))
+	go t.recordForwardReach(m, tunnel, client, forwardProbe{
+		address: forwardProbeAddress(t.Server, boundPort),
+		silence: forwardProbeSilence(t.Local, t.Server, opened.reach),
+	})
 
 	return t.acceptForwards(m, tunnel, client, opened)
 }

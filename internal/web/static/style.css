@@ -1082,6 +1082,31 @@ tbody tr.under > td {
   margin-top: 0.25rem;
 }
 
+/* What is known about the addresses of a forwarded port, under the row. It is
+   the same shape as the box above and none of its colour: nothing in it is
+   something to go and fix, it is what was asked for, what was answered and what
+   a connection from here confirmed. Painted the way a warning is, a tunnel
+   whose ports were asked for on the Host itself would read as a tunnel with
+   something wrong with it, which is the scope doing what it was picked for. */
+.forward-addresses {
+  margin: 0.25rem 0 0.5rem;
+  padding: 0.5rem 0.75rem;
+  border-radius: var(--radius-control);
+  color: var(--text-muted);
+  background: var(--bg-sunken);
+  border: 1px solid var(--border-soft);
+  overflow-wrap: break-word;
+}
+
+.forward-addresses > strong {
+  display: block;
+  color: var(--text);
+}
+
+.forward-addresses > p {
+  margin: 0.35rem 0 0;
+}
+
 /* The line over the status table about the Hosts that are waiting for a host
    key to be approved, and the press that opens the list of them. It sits where
    the sentences about the three counts sit and is spaced as they are, and it

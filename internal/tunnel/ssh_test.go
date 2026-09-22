@@ -1851,12 +1851,12 @@ func TestProbeForwardReachAnswersFromTheHandshake(t *testing.T) {
 		}
 	}()
 
-	reach := probeForwardReach(ln.Addr().String(), forwardProbeTimeout)
+	reach := probeForwardReach(ln.Addr().String(), forwardProbeTimeout, forwardUnreachable)
 	if reach != forwardReachable {
 		t.Fatalf("reach = %q, want %q, the port answered the handshake", reach, forwardReachable)
 	}
 
-	reach = probeForwardReach(closedPort(t), forwardProbeTimeout)
+	reach = probeForwardReach(closedPort(t), forwardProbeTimeout, forwardUnreachable)
 	if reach != forwardUnreachable {
 		t.Fatalf("reach = %q, want %q, nothing listens on that port", reach, forwardUnreachable)
 	}
@@ -1930,7 +1930,7 @@ func TestProbeForwardReachClosesWhatItOpened(t *testing.T) {
 	// that kept its connection leaves the read of the listener blocked, the
 	// listener never finishes with it, and the wait below runs out and says so.
 	for i := 0; i < 20; i++ {
-		reach := probeForwardReach(ln.Addr().String(), forwardProbeTimeout)
+		reach := probeForwardReach(ln.Addr().String(), forwardProbeTimeout, forwardUnreachable)
 		if reach != forwardReachable {
 			t.Fatalf("probe %d: reach = %q, want %q", i, reach, forwardReachable)
 		}
@@ -1993,7 +1993,7 @@ func TestProbeForwardReachGivesUpOnAPortThatNeverAnswers(t *testing.T) {
 	const timeout = 500 * time.Millisecond
 
 	start := time.Now()
-	reach := probeForwardReach(addr, timeout)
+	reach := probeForwardReach(addr, timeout, forwardUnreachable)
 	held := time.Since(start)
 
 	if reach != forwardUnreachable {
@@ -2048,6 +2048,65 @@ func TestForwardProbeAddressIsTheServerAtTheConfirmedPort(t *testing.T) {
 	}
 }
 
+// TestASilenceIsAReadingOnlyWhereAnAnswerWasExpected holds the probe to what it
+// can measure. There is one address of the Host here and it carries one address
+// family, so a port asked for on the other family cannot be tried at all, and a
+// port asked for on the loopback addresses is on the Host where nothing here
+// reaches it. Silence from either is not a port that cannot be reached, and
+// written down as one it puts a failure on a tunnel that is carrying traffic.
+func TestASilenceIsAReadingOnlyWhereAnAnswerWasExpected(t *testing.T) {
+	tests := []struct {
+		name    string
+		localV4 string
+		localV6 string
+		server  string
+		reach   string
+		want    string
+	}{
+		{"both were answered and the Host is dialled over IPv4", "0.0.0.0:80", "[::]:80",
+			"192.0.2.10:22", openReachBoth, forwardUnreachable},
+		{"both were answered and the Host is dialled over IPv6", "0.0.0.0:80", "[::]:80",
+			"[2001:db8::1]:22", openReachBoth, forwardUnreachable},
+		{"the family being dialled was answered", "0.0.0.0:80", "[::]:80",
+			"192.0.2.10:22", openReachV4, forwardUnreachable},
+		{"the IPv6 request was the one answered, and the Host is dialled over IPv4",
+			"0.0.0.0:80", "[::]:80", "192.0.2.10:22", openReachV6, forwardReachUnknown},
+		{"the IPv4 request was the one answered, and the Host is dialled over IPv6",
+			"0.0.0.0:80", "[::]:80", "[2001:db8::1]:22", openReachV4, forwardReachUnknown},
+		{"the ports were asked for on the loopback of the Host", "127.0.0.1:80", "[::1]:80",
+			"192.0.2.10:22", openReachBoth, forwardReachUnknown},
+		{"the loopback of the Host over IPv6", "127.0.0.1:80", "[::1]:80",
+			"[2001:db8::1]:22", openReachBoth, forwardReachUnknown},
+		{"nothing is known of what the server answered", "0.0.0.0:80", "[::]:80",
+			"192.0.2.10:22", "", forwardReachUnknown},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			local := localPair{v4: resolveTestTCPAddr(t, tt.localV4), v6: resolveTestTCPAddr(t, tt.localV6)}
+			server := resolveTestTCPAddr(t, tt.server)
+
+			got := forwardProbeSilence(local, server, tt.reach)
+			if got != tt.want {
+				t.Fatalf("forwardProbeSilence = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
+// resolveTestTCPAddr is net.ResolveTCPAddr with the failure reported here, so
+// that a table of addresses reads as a table.
+func resolveTestTCPAddr(t *testing.T, address string) *net.TCPAddr {
+	t.Helper()
+
+	addr, err := net.ResolveTCPAddr("tcp", address)
+	if err != nil {
+		t.Fatalf("failed to resolve %q: %v", address, err)
+	}
+
+	return addr
+}
+
 // readTunnelReach reads the two readings the way the probe writes them, under
 // the lock the tunnel row is written with, so the test is not a race of its own.
 func readTunnelReach(tun *SSHTunnel, tunnel *models.Tunnel) (string, string) {
@@ -2076,6 +2135,28 @@ func waitTunnelReach(t *testing.T, tun *SSHTunnel, tunnel *models.Tunnel, timeou
 	return ""
 }
 
+// waitTunnelBanner waits until the connection has written what the server
+// called itself on the row, and returns it.
+//
+// The banner is waited for rather than the reading of the probe, which is what
+// the tunnel is up by a moment earlier. A probe can end on a reading of unknown,
+// which is what the row already holds, so there is no value to wait for there.
+func waitTunnelBanner(t *testing.T, tun *SSHTunnel, tunnel *models.Tunnel, timeout time.Duration) string {
+	t.Helper()
+
+	deadline := time.Now().Add(timeout)
+	for time.Now().Before(deadline) {
+		if banner, _ := readTunnelReach(tun, tunnel); banner != "" {
+			return banner
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+
+	t.Fatal("the connection never wrote what the server called itself")
+
+	return ""
+}
+
 // TestEstablishConnectionRecordsWhatTheServerSaid pins the banner on the tunnel
 // row. It is what decides which of the things to check is shown for a port that
 // did not answer, since what opens a forwarded port differs between servers.
@@ -2090,9 +2171,7 @@ func TestEstablishConnectionRecordsWhatTheServerSaid(t *testing.T) {
 	}()
 
 	waitTunnelClient(t, tun, 10*time.Second)
-	waitTunnelReach(t, tun, tunnel, 30*time.Second)
-
-	banner, _ := readTunnelReach(tun, tunnel)
+	banner := waitTunnelBanner(t, tun, tunnel, 30*time.Second)
 
 	closeTunnelClient(t, tun)
 
@@ -2158,7 +2237,11 @@ func TestEstablishConnectionMeasuresTheForwardedPort(t *testing.T) {
 
 			m := newSSHTestManager(t, 1)
 			serverAddr, _ := startForwardingSSHServerConfirming(t, uint32(port))
-			tun, tunnel := newSSHTestTunnel(t, serverAddr)
+			// On the wildcard pair, because that is the scope a silence is a
+			// reading of. Ports asked for on the loopback addresses are on the
+			// Host and nothing here can dial them, so a probe that gets
+			// nothing back from one of those measured nothing.
+			tun, tunnel := newScopedSSHTestTunnel(t, serverAddr, "0.0.0.0:0", "[::]:0")
 
 			errc := make(chan error, 1)
 			go func() {
@@ -2206,14 +2289,14 @@ func TestRecordForwardReachDropsAReadingOfAnOlderConnection(t *testing.T) {
 	older, _, olderCleanup := dialTestSSHClient(t, serverAddr)
 	defer olderCleanup()
 
-	tun.recordForwardReach(m, tunnel, older, closedPort(t))
+	tun.recordForwardReach(m, tunnel, older, forwardProbe{address: closedPort(t), silence: forwardUnreachable})
 
 	if _, reach := readTunnelReach(tun, tunnel); reach != forwardReachUnknown {
 		t.Fatalf("forward reach = %q, want %q, the reading of a connection that is gone was written "+
 			"to the row of the one that replaced it", reach, forwardReachUnknown)
 	}
 
-	tun.recordForwardReach(m, tunnel, current, closedPort(t))
+	tun.recordForwardReach(m, tunnel, current, forwardProbe{address: closedPort(t), silence: forwardUnreachable})
 
 	if _, reach := readTunnelReach(tun, tunnel); reach != forwardUnreachable {
 		t.Fatalf("forward reach = %q, want %q, the reading of the current connection was dropped",

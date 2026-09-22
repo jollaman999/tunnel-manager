@@ -160,9 +160,17 @@ type Tunnel struct {
 	ServerBanner string `json:"server_banner"`
 	// ForwardReach is whether the forwarded port answered a TCP connection
 	// from this process, measured once per connection: "reachable",
-	// "unreachable", or "unknown" while nothing has been measured. Anything
+	// "unreachable", or "unknown" where nothing has been measured. Anything
 	// else, an empty value on a row from before the column among them, means
 	// the same as "unknown".
+	//
+	// "reachable" is the one reading that is evidence: the port carried a
+	// connection opened from here. "unreachable" is the measurement that a
+	// port which was asked for on an address of the Host this program can dial
+	// gave nothing back. "unknown" is everything that was not measured and
+	// everything that cannot be: a tunnel whose ports were asked for on the
+	// loopback addresses of the Host is one nothing here can dial, and a
+	// silence from it is not a reading.
 	//
 	// It says where the port was not reached from and never why. A server that
 	// bound the port to loopback alone and a firewall on the way look exactly
