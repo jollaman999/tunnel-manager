@@ -634,6 +634,65 @@ h3 {
   border-color: var(--ok-border);
 }
 
+/* What went through, at the top of the window.
+
+   It is fixed rather than written above the screen because the form that was
+   submitted is often well down a long page: a line at the top of the document
+   is then off the screen, and the operator is told nothing. Fixed, it arrives
+   where they are already looking whatever the page is scrolled to.
+
+   It takes no clicks. It sits over whatever is under it for three seconds, and
+   a button it happened to land on has to stay pressable for those seconds.
+
+   It is above the panel as well as the page. A panel is a choice being made,
+   and a message that is taken away by itself cannot wait behind one until the
+   choice is over.
+
+   The glass is the card's, at the deeper of the two fills: it is the same
+   material as the surfaces it floats over, which is what says it belongs to
+   this page rather than to the browser. */
+#toast {
+  position: fixed;
+  top: 1rem;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 20;
+  max-width: min(32rem, calc(100vw - 2rem));
+  padding: 0.6rem 1rem;
+  box-sizing: border-box;
+  color: var(--ok);
+  background: var(--glass-sheen), var(--ok-bg);
+  backdrop-filter: var(--glass-blur);
+  -webkit-backdrop-filter: var(--glass-blur);
+  border: 1px solid var(--ok-border);
+  border-radius: var(--radius-control);
+  box-shadow: 0 1px 1px var(--glass-edge) inset, 0 8px 24px var(--glass-cast);
+  pointer-events: none;
+  /* Hidden and not merely clear, so that what the last message said is out of
+     the reading order between two of them: the box is in the document from the
+     first paint, which is what lets a screen reader announce it at all, and a
+     box that is always there is always read unless it is taken out.
+
+     The two are timed apart on purpose. Fading out, visibility waits the whole
+     fade and then flips, so the words are gone before they are taken away;
+     coming in it flips at once, so there is something to fade. Somebody who
+     asked for less movement has --theme-swap at zero, which makes both edges
+     immediate and the message appear rather than arrive. */
+  opacity: 0;
+  visibility: hidden;
+  transition:
+    opacity var(--theme-swap) ease,
+    visibility 0s linear var(--theme-swap);
+}
+
+#toast.shown {
+  opacity: 1;
+  visibility: visible;
+  transition:
+    opacity var(--theme-swap) ease,
+    visibility 0s linear 0s;
+}
+
 .card {
   margin: 0 0 1.25rem;
   padding: 1rem;

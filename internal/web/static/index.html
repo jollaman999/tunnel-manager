@@ -153,6 +153,21 @@
         </span>
       </button>
     </div>
+    <!-- Where an action that went through says so. It is fixed to the top of
+         the window, because the form that was submitted is often at the bottom
+         of a long screen and a line written above that screen is then off it:
+         what the operator is told has to arrive where they are looking.
+
+         It is outside #app for the reason the version is, and for one more: a
+         live region is only announced while it is already in the document when
+         its text changes, so the box is here from the first paint and stays
+         through every draw. One built for each message would be new to the
+         reader and would go up in silence.
+
+         Only what went through comes here. A refusal stays the line above the
+         screen, because a toast that takes itself away takes the reason with
+         it, and the reason is what the next attempt is made from. -->
+    <div id="toast" role="status" aria-live="polite"></div>
     <!-- The ellipsis is not a word on purpose. It is painted before any script
          has run, so there is no catalog to take a word from, and "Loading..."
          would be the one English string a page asked for in another language

@@ -25,6 +25,15 @@ const statusRefreshMs = 5000;
 // refresh that waits for it is not meaningfully later than one that did not.
 const scrollQuietMs = 400;
 
+// toastHoldMs is how long a message that something went through stays up.
+//
+// It is long enough to read a sentence that is already expected: the operator
+// pressed the button and is waiting to hear that it worked, so the toast
+// confirms a guess rather than being read cold. Nothing is lost by missing it
+// either, because what it reports is on the screen behind it: the host is in
+// the list, the setting holds the new value.
+const toastHoldMs = 3000;
+
 // apiLoginPath and apiSetupPath are the two calls whose refusals must not be
 // turned into a move to another screen. A 401 from the login is what wrong
 // credentials look like, and a 403 from the setup would send the operator to
@@ -235,6 +244,12 @@ let loadedVersion = null;
 // screen, which is how the reason a call was refused stays readable while the
 // list behind it is fetched again, and it is dropped on a screen change.
 let notice = null;
+
+// toastTimer is what takes the toast down again. It is held out here so that a
+// second message arriving while the first is still up cancels that first
+// timer: left running it would come due partway through the second message and
+// take it away early.
+let toastTimer = null;
 
 // refreshTimer is the timer of the status screen. It is held out here because
 // what has to stop it is leaving the screen, and leaving is done from here.
@@ -519,6 +534,43 @@ function refreshWhenStill(draw) {
 // caller draws after setting it.
 function setNotice(text, kind) {
   notice = { text: text, kind: kind === undefined ? "error" : kind };
+}
+
+// toastBox is the box a message that something went through is written into.
+//
+// It is held for the reason cornerControls is: it is built in index.html, and
+// a lookup every time one goes up would be a lookup that has to keep finding
+// it. It is never moved into #app, so emptying #app leaves it where it is and
+// a message stays up across the draw the action it reports sets off.
+const toastBox = document.getElementById("toast");
+
+// setToast says that an action went through, at the top of the window and for
+// a few seconds. It is what the line above the screen was for that case: the
+// form being submitted is often well down a long screen, and a line written
+// above the screen is then somewhere the operator is not looking.
+//
+// It goes up at once rather than with the next draw, unlike setNotice: the box
+// is outside #app, so nothing has to be redrawn for it to be seen, and the
+// draw that follows the action is usually a fetch away.
+//
+// The line above the screen is dropped as it goes up, because that is the line
+// setNotice would have overwritten: a refusal that is still up there is about
+// the attempt this one has just replaced.
+function setToast(text) {
+  notice = null;
+
+  if (toastTimer !== null) {
+    window.clearTimeout(toastTimer);
+  }
+
+  toastBox.textContent = text;
+  toastBox.classList.add("shown");
+
+  toastTimer = window.setTimeout(function () {
+    toastTimer = null;
+
+    toastBox.classList.remove("shown");
+  }, toastHoldMs);
 }
 
 // run carries out something that may fail and puts what went wrong on the

@@ -2086,7 +2086,7 @@ async function createHost(values) {
 
   await apiCall("POST", "/api/host", body);
 
-  setNotice(t("hosts.added.notice", { ip: body.ip }), "info");
+  setToast(t("hosts.added.notice", { ip: body.ip }));
 
   return drawHosts();
 }
@@ -2124,7 +2124,7 @@ async function updateHost(host, values) {
   await apiCall("PUT", "/api/host/" + host.id, body);
 
   editingHostID = null;
-  setNotice(t("hosts.updated.notice", { id: host.id }), "info");
+  setToast(t("hosts.updated.notice", { id: host.id }));
 
   return drawHosts();
 }
@@ -2573,8 +2573,8 @@ async function createServicePort(values) {
 
   await apiCall("POST", "/api/service-port", body);
 
-  setNotice(t("service-ports.added.notice",
-    { ip: body.service_ip, port: body.service_port }), "info");
+  setToast(t("service-ports.added.notice",
+    { ip: body.service_ip, port: body.service_port }));
 
   return drawServicePorts();
 }
@@ -2583,7 +2583,7 @@ async function updateServicePort(port, values) {
   await apiCall("PUT", "/api/service-port/" + port.id, servicePortBody(values));
 
   editingServicePortID = null;
-  setNotice(t("service-ports.updated.notice", { id: port.id }), "info");
+  setToast(t("service-ports.updated.notice", { id: port.id }));
 
   return drawServicePorts();
 }
@@ -3682,11 +3682,11 @@ async function saveSettings(values) {
     : data.changes;
 
   if (changes.length === 0) {
-    setNotice(t("settings.saved-nothing.notice"), "info");
+    setToast(t("settings.saved-nothing.notice"));
   } else if (data.restart_required) {
-    setNotice(t("settings.saved-next-start.notice"), "info");
+    setToast(t("settings.saved-next-start.notice"));
   } else {
-    setNotice(t("settings.saved.notice"), "info");
+    setToast(t("settings.saved.notice"));
   }
 
   // A save that changed the language of the installation changes what this
