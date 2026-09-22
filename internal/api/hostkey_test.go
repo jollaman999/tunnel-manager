@@ -155,7 +155,7 @@ func approveHostKeyLogged(t *testing.T, db *gorm.DB, body string,
 	c.SetParamValues("1")
 
 	if withAccount {
-		c.Set(contextUserIDKey, uint(1))
+		leaveSessionOnContext(c, 1)
 	}
 
 	manager := &wakeRecorder{tx: &txConnPool{}}
@@ -794,7 +794,7 @@ func approveHostKeys(t *testing.T, db *gorm.DB,
 
 	rec := httptest.NewRecorder()
 	c := e.NewContext(req, rec)
-	c.Set(contextUserIDKey, uint(1))
+	leaveSessionOnContext(c, 1)
 
 	manager := &wakeRecorder{tx: &txConnPool{}}
 	h := NewHandler(db, manager, zap.New(core), newTestCipher(t))

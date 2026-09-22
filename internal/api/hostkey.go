@@ -348,10 +348,13 @@ func (h *Handler) ApproveHostKey(c echo.Context) error {
 			// A password that does not open the account is written down,
 			// because this is the one call where a password stands between a
 			// session and the trust of a Host: somebody working through a
-			// session that is not theirs leaves nothing else behind. The
-			// other refusals accountPasswordRefused can answer with are
-			// logged where they are raised, so only this one is written here,
-			// and the password that was sent is on no line of it.
+			// session that is not theirs leaves nothing else behind. Of the
+			// other refusals accountPasswordRefused can answer with, the ones
+			// that name a fault are logged where they are raised and the hold
+			// on too many wrong passwords is not written down at all, the same
+			// as a held login: what put the sender in it is on the lines
+			// above. So only this one is written here, and the password that
+			// was sent is on no line of it.
 			if refused.code == errHostKeyPasswordWrong {
 				h.logger.Warn("a host key approval was refused: the password does not open the account",
 					logid.HostHostKeyApprovalPasswordWrong.Field(), zap.Uint("host_id", host.ID))

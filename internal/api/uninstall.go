@@ -153,12 +153,23 @@ func (h *UninstallHandler) Uninstall(c echo.Context) error {
 		return failure(c, http.StatusBadRequest, errRequestBodyInvalid, errorArgs{"reason": err.Error()})
 	}
 
-	userID, ok := c.Get(contextUserIDKey).(uint)
+	userID, limiter, ok := sessionOnContext(c)
 	if !ok {
-		// The middleware is what puts it there, so getting here means the route
-		// was hung somewhere the middleware does not cover.
-		h.logger.Error("the uninstall was reached with no account on the context", logid.UninstallNoAccountOnContext.Field())
+		// The middleware is what puts them there, so getting here means the
+		// route was hung somewhere the middleware does not cover.
+		h.logger.Error("the uninstall was reached with neither the account nor the limiter of its "+
+			"failures on the context", logid.UninstallNoAccountOnContext.Field())
 		return failure(c, http.StatusInternalServerError, errAccountReadFailed)
+	}
+
+	// The password is a guess at the same secret the login is a guess at, so it
+	// is counted on the same counters and refused once there have been too many
+	// of them. Of the calls that ask for the password again this is the one
+	// nothing can be taken back of, and the refusal is written before the row
+	// is read and before bcrypt runs.
+	refused := limiter.passwordHeld(c, userID)
+	if refused != nil {
+		return refused.answer(c)
 	}
 
 	var user models.User
@@ -170,6 +181,8 @@ func (h *UninstallHandler) Uninstall(c echo.Context) error {
 	}
 
 	if !auth.CheckPassword(user.PasswordHash, req.Password) {
+		limiter.passwordFailed(c, userID)
+
 		// Nothing has been touched at this point, and the log says so: an
 		// operator reading it later has to be able to tell an uninstall that
 		// was refused from one that ran.
@@ -179,6 +192,8 @@ func (h *UninstallHandler) Uninstall(c echo.Context) error {
 
 		return failure(c, http.StatusUnauthorized, errUninstallPasswordWrong)
 	}
+
+	limiter.passwordSucceeded(c, userID)
 
 	h.logger.Warn("the uninstall was asked for and the password opens the account. The tunnels are "+
 		"stopped, the files of this installation are removed and the process ends",

@@ -239,7 +239,7 @@ func postUninstallAs(t *testing.T, h *UninstallHandler, body string,
 	c := e.NewContext(req, rec)
 
 	if withAccount {
-		c.Set(contextUserIDKey, uint(1))
+		leaveSessionOnContext(c, 1)
 	}
 
 	err := h.Uninstall(c)

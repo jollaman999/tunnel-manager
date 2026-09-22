@@ -112,6 +112,20 @@ func newServer(t *testing.T, db *gorm.DB, logger *zap.Logger, passwordFile strin
 	return e, authHandler
 }
 
+// leaveSessionOnContext puts on the context what RequireSession leaves there:
+// the account of the session, and the limiter the failed password checks of
+// that session are counted on. It is what a test that calls a handler directly,
+// with no middleware in front of it, stands in for.
+//
+// The limiter is a handler of its own and a fresh one, so nothing has been
+// counted against the call before it arrives. It is given no database because
+// the counters read none: what it is here for is the address the request came
+// from and the failures counted against it.
+func leaveSessionOnContext(c echo.Context, userID uint) {
+	c.Set(contextUserIDKey, userID)
+	c.Set(contextPasswordLimiterKey, accountPasswordLimiter(NewAuthHandler(nil, zap.NewNop(), "")))
+}
+
 // testResponse is models.Response as a client reads it back.
 type testResponse struct {
 	Success bool   `json:"success"`

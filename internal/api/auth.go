@@ -288,7 +288,10 @@ type AuthHandler struct {
 	initialPasswordFile string
 	sessions            *SessionStore
 	// logins counts the failed sign ins and is what refuses one that has been
-	// tried too often. It is made here rather than handed in, so that an
+	// tried too often. It counts the calls that ask for the account password
+	// again as well, which reach it through the session middleware: they are
+	// guesses at the same secret and share these counters rather than holding
+	// any of their own. It is made here rather than handed in, so that an
 	// installation is limited by default and nothing has to be wired up at the
 	// startup for it to be: see loginlimit.go for what it counts and why.
 	logins *loginLimiter
@@ -749,6 +752,11 @@ func (h *AuthHandler) RequireSession() echo.MiddlewareFunc {
 			}
 
 			c.Set(contextUserIDKey, userID)
+			// The limiter of the login goes on beside the account, because the
+			// calls behind this middleware that ask for the password again are
+			// guesses at the same secret and are counted on the same counters.
+			// contextPasswordLimiterKey says why it travels on the request.
+			c.Set(contextPasswordLimiterKey, accountPasswordLimiter(h))
 
 			return next(c)
 		}
@@ -787,16 +795,32 @@ func isSafeMethod(method string) bool {
 // transaction. The pool holds one connection, so the read would wait for the
 // connection the transaction is holding and never be given it. ApproveHostKey
 // says the rest of it.
+//
+// The attempt is counted on the counters of the login and is refused once there
+// have been too many of them, which is what keeps every call behind this one
+// from being a way to guess at the password as fast as the network carries
+// requests. loginlimit.go says what is counted and why it is the one set of
+// counters.
 func accountPasswordRefused(c echo.Context, db *gorm.DB, logger *zap.Logger, password string,
 	wrong errorCode) *refusal {
-	userID, ok := c.Get(contextUserIDKey).(uint)
+	userID, limiter, ok := sessionOnContext(c)
 	if !ok {
-		// The middleware is what puts it there, so getting here means the
+		// The middleware is what puts them there, so getting here means the
 		// route was hung somewhere the middleware does not cover.
-		logger.Error("a call that asks for the password of the account was reached with no account "+
-			"on the context", logid.AccountReadNoAccountOnContext.Field())
+		logger.Error("a call that asks for the password of the account was reached with neither the "+
+			"account nor the limiter of its failures on the context, so no password was checked",
+			logid.AccountReadNoAccountOnContext.Field())
 
 		return refuse(http.StatusInternalServerError, errAccountReadFailed)
+	}
+
+	// The failures are looked at before the account is read and long before
+	// bcrypt runs, for the reason the login looks at them first: the compare is
+	// the expensive half, and a refusal written ahead of it bounds both the
+	// rate of the guessing and the CPU it spends.
+	refused := limiter.passwordHeld(c, userID)
+	if refused != nil {
+		return refused
 	}
 
 	var user models.User
@@ -809,8 +833,12 @@ func accountPasswordRefused(c echo.Context, db *gorm.DB, logger *zap.Logger, pas
 	}
 
 	if !auth.CheckPassword(user.PasswordHash, password) {
+		limiter.passwordFailed(c, userID)
+
 		return refuse(http.StatusUnauthorized, wrong)
 	}
+
+	limiter.passwordSucceeded(c, userID)
 
 	return nil
 }

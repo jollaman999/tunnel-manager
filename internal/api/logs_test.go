@@ -685,7 +685,7 @@ func (call *clearLogsCall) run(t *testing.T) (*httptest.ResponseRecorder, *obser
 	c := e.NewContext(req, rec)
 
 	if call.account {
-		c.Set(contextUserIDKey, uint(1))
+		leaveSessionOnContext(c, 1)
 	}
 
 	var empty func() error

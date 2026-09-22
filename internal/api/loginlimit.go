@@ -358,15 +358,118 @@ func (h *AuthHandler) loginAddress(c echo.Context) string {
 // the same number in the sentence, so neither has to guess at a number by
 // retrying, which is the traffic this is here to stop.
 func (h *AuthHandler) refuseHeldLogin(c echo.Context, wait time.Duration) error {
-	// Rounded up, so that a client that comes back exactly when it was told to
-	// is past the deadline rather than one tick short of it.
-	seconds := int((wait + time.Second - 1) / time.Second)
-	if seconds < 1 {
-		seconds = 1
-	}
+	seconds := retryAfterSeconds(wait)
 
 	c.Response().Header().Set(echo.HeaderRetryAfter, strconv.Itoa(seconds))
 
 	return failure(c, http.StatusTooManyRequests, errAuthTooManyAttempts,
 		errorArgs{"retry_after": strconv.Itoa(seconds)})
+}
+
+// retryAfterSeconds is the wait as a client is told it.
+//
+// Rounded up, so that a client that comes back exactly when it was told to is
+// past the deadline rather than one tick short of it, and never below one, so
+// that a hold with a fraction of a second left is not answered with a nought
+// that reads as no wait at all.
+func retryAfterSeconds(wait time.Duration) int {
+	seconds := int((wait + time.Second - 1) / time.Second)
+	if seconds < 1 {
+		seconds = 1
+	}
+
+	return seconds
+}
+
+// The login is not the only place a password reaches bcrypt. Six calls ask for
+// the password of the account again before they do something that cannot be
+// taken back - the account change, the uninstall, emptying the log, installing
+// an update and the two host key approvals - and every one of them is a guess
+// at the same secret of the same one account. What is below is how they are
+// counted, and they are counted on the counters above rather than on ones of
+// their own.
+//
+// One set of counters and not two, because two would be a limit of half the
+// strength it reads as: five tries at the login plus five at each of those
+// calls is a sender who gets far more than five, and the number that was argued
+// for above (loginAddressFailureLimit) would hold nothing down. A guess is a
+// guess whichever door it is sent through.
+//
+// These calls are behind a session, which is what keeps the limit from being a
+// way to lock the operator out: reaching them at all means already holding one.
+// What it stops is the screen left unattended, where a session is there for the
+// taking and the password is the only thing between it and an uninstall.
+
+// accountPasswordLimiter is what such a call counts an attempt against.
+//
+// It is an interface, and the handler that serves the login is what implements
+// it, because the address a failure is counted against is not read the same way
+// everywhere: loginAddress reads it from the socket unless the operator has
+// said a proxy of theirs is in front. The one place that knows which it is is
+// that handler, so the counters and the flag that names an address stay in a
+// single object and no call can end up counting against an address the login
+// does not count against.
+type accountPasswordLimiter interface {
+	// passwordHeld returns what to answer a call whose password is not being
+	// checked, or nil when it is to be checked.
+	passwordHeld(c echo.Context, accountID uint) *refusal
+	// passwordFailed records one password that did not open the account.
+	passwordFailed(c echo.Context, accountID uint)
+	// passwordSucceeded forgets what was counted against one that did.
+	passwordSucceeded(c echo.Context, accountID uint)
+}
+
+// contextPasswordLimiterKey is where the session middleware leaves the limiter,
+// beside the account it leaves under contextUserIDKey.
+//
+// It is carried on the request rather than held by each of the handlers that
+// serve those six calls, because the session middleware is the one thing all
+// six are behind and the account those counters are keyed by is what it leaves
+// there anyway. A call that arrives with neither is a call served from outside
+// that middleware, and it checks no password at all: the counter that bounds
+// the guessing is not there to count it.
+const contextPasswordLimiterKey = "auth_password_limiter"
+
+// sessionOnContext returns what the session middleware leaves on the context:
+// the account of the session, and the limiter the failed password checks of
+// that session are counted on. ok is false where the route was hung outside
+// that middleware, which is a bug in the wiring rather than anything the
+// request did.
+func sessionOnContext(c echo.Context) (uint, accountPasswordLimiter, bool) {
+	userID, haveUser := c.Get(contextUserIDKey).(uint)
+	limiter, haveLimiter := c.Get(contextPasswordLimiterKey).(accountPasswordLimiter)
+
+	return userID, limiter, haveUser && haveLimiter
+}
+
+// passwordHeld answers a call that asks for the account password again while
+// the address it came from, or the account itself, is already held.
+//
+// It carries Retry-After for the reason refuseHeldLogin does, and it is a
+// refusal rather than an answer written out here because the callers hold one
+// until they have rolled back whatever they had open.
+func (h *AuthHandler) passwordHeld(c echo.Context, accountID uint) *refusal {
+	wait, held := h.logins.retryAfter(h.loginAddress(c), accountID)
+	if !held {
+		return nil
+	}
+
+	seconds := retryAfterSeconds(wait)
+
+	c.Response().Header().Set(echo.HeaderRetryAfter, strconv.Itoa(seconds))
+
+	return refuse(http.StatusTooManyRequests, errAuthTooManyAttempts,
+		errorArgs{"retry_after": strconv.Itoa(seconds)})
+}
+
+func (h *AuthHandler) passwordFailed(c echo.Context, accountID uint) {
+	h.logins.failed(h.loginAddress(c), accountID)
+}
+
+// passwordSucceeded forgets both counters of a password that opened the
+// account, the way a successful login does and for the same reason: an operator
+// who mistyped on the way to the right password is back at nothing, and an
+// attacker who reaches this already has the password.
+func (h *AuthHandler) passwordSucceeded(c echo.Context, accountID uint) {
+	h.logins.succeeded(h.loginAddress(c), accountID)
 }

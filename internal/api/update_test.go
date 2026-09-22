@@ -94,7 +94,7 @@ func updateRequest(t *testing.T, target string, body string, withAccount bool) (
 	c := e.NewContext(req, rec)
 
 	if withAccount {
-		c.Set(contextUserIDKey, uint(1))
+		leaveSessionOnContext(c, 1)
 	}
 
 	return c, rec

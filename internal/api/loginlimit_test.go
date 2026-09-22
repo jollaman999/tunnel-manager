@@ -3,12 +3,16 @@ package api
 import (
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/go-playground/validator/v10"
 	"github.com/labstack/echo/v4"
+	"go.uber.org/zap"
 )
 
 // The wrong password every attempt below sends. It is not the account's, and
@@ -454,5 +458,301 @@ func TestTheLimiterDoesNotGrowWithoutBound(t *testing.T) {
 		t.Errorf("the limiter holds %d counters, want no more than the %d of the second flood "+
 			"and the account: the ones that had run out were not swept",
 			len(limiter.failures), secondFlood)
+	}
+}
+
+// The tests below are the other side of the same counters: the calls that ask
+// for the account password again once a session is open. They are sent at a
+// server wired the way main wires it, with the session middleware on the group
+// and the login beside them, because what they are holding is that an attempt
+// sent through one of those doors is counted on the counters the login counts
+// on and not on a set of its own.
+
+// clearLogsPath is the one of the six that is exercised here through
+// accountPasswordRefused, the shared function the log, the update and the two
+// host key approvals go through. accountPath, next to the tests of the change
+// itself, is the one that compares the password where it stands.
+const clearLogsPath = "/api/logs/clear"
+
+// newPasswordCheckServer returns the server, the handler whose counters the
+// calls land on, and the log file the emptying is pointed at.
+func newPasswordCheckServer(t *testing.T) (*echo.Echo, *AuthHandler, string) {
+	t.Helper()
+
+	db := newAccountStubDB(t, newTestAccount(t, false))
+	logPath := writeLog(t, `{"level":"info","msg":"something happened"}`)
+
+	e := echo.New()
+	e.Validator = &testValidator{validator: validator.New()}
+
+	authHandler := NewAuthHandler(db, zap.NewNop(), filepath.Join(t.TempDir(), "initial-password"))
+	logsHandler := NewLogsHandler(zap.NewNop(), logPath, db, func() error {
+		return os.Truncate(logPath, 0)
+	})
+
+	g := e.Group("/api")
+	g.Use(authHandler.RequireSession())
+	g.POST("/login", authHandler.Login)
+	g.POST("/logs/clear", logsHandler.ClearLogs)
+	g.PUT("/account", authHandler.ChangeAccount)
+
+	return e, authHandler, logPath
+}
+
+// signInFrom logs in from address and returns the cookies a client holds
+// afterwards. The login is what the tests below get a session from, and it is
+// sent from the address they go on to use: a login that opens the account
+// forgets both counters, so everything counted below is what the call under
+// test put there.
+func signInFrom(t *testing.T, e *echo.Echo, address string) []*http.Cookie {
+	t.Helper()
+
+	rec := loginFrom(e, address, goodLogin)
+
+	session := sessionCookieOf(rec)
+	if session == nil {
+		t.Fatalf("the login set no session cookie, body: %s", rec.Body.String())
+	}
+
+	csrf := csrfCookieOf(rec)
+	if csrf == nil {
+		t.Fatalf("the login set no %s cookie, body: %s", csrfCookieName, rec.Body.String())
+	}
+
+	return []*http.Cookie{session, csrf}
+}
+
+// passwordCheckFrom sends one call that asks for the account password. It is
+// do with an address of its own, for the reason loginFrom has one.
+func passwordCheckFrom(e *echo.Echo, address, method, target, body string,
+	cookies []*http.Cookie) *httptest.ResponseRecorder {
+	req := httptest.NewRequest(method, target, strings.NewReader(body))
+	req.Header.Set(echo.HeaderContentType, echo.MIMEApplicationJSON)
+	req.RemoteAddr = address + ":54321"
+
+	for _, cookie := range cookies {
+		req.AddCookie(cookie)
+
+		if cookie.Name == csrfCookieName {
+			req.Header.Set(csrfHeaderName, cookie.Value)
+		}
+	}
+
+	rec := httptest.NewRecorder()
+	e.ServeHTTP(rec, req)
+
+	return rec
+}
+
+// clearLogsWith sends one press of the button that empties the log, carrying
+// password.
+func clearLogsWith(e *echo.Echo, address, password string, cookies []*http.Cookie) *httptest.ResponseRecorder {
+	return passwordCheckFrom(e, address, http.MethodPost, clearLogsPath,
+		`{"password":"`+password+`"}`, cookies)
+}
+
+// changeAccountWith sends one account change that renames the account, carrying
+// password as the current one.
+func changeAccountWith(e *echo.Echo, address, password string, cookies []*http.Cookie) *httptest.ResponseRecorder {
+	return passwordCheckFrom(e, address, http.MethodPut, accountPath,
+		`{"current_password":"`+password+`","username":"someone-else"}`, cookies)
+}
+
+// failPasswordChecks sends count wrong passwords at the log and fails the test
+// if any of them is answered with anything but the ordinary refusal.
+func failPasswordChecks(t *testing.T, e *echo.Echo, address string, cookies []*http.Cookie, count int) {
+	t.Helper()
+
+	for i := 0; i < count; i++ {
+		rec := clearLogsWith(e, address, mistypedPassword, cookies)
+		if rec.Code != http.StatusUnauthorized {
+			t.Fatalf("attempt %d from %s: status = %d, want %d, body: %s",
+				i+1, address, rec.Code, http.StatusUnauthorized, rec.Body.String())
+		}
+	}
+}
+
+// TestTooManyWrongPasswordsOnACallThatAsksAgainAreRefused is the limit on the
+// calls that ask for the account password behind a session. The password of the
+// sixth attempt is never looked at, which is shown by sending the right one and
+// being refused all the same, with the file it would have emptied still there.
+func TestTooManyWrongPasswordsOnACallThatAsksAgainAreRefused(t *testing.T) {
+	e, _, logPath := newPasswordCheckServer(t)
+
+	const guesser = "198.51.100.30"
+
+	cookies := signInFrom(t, e, guesser)
+
+	failPasswordChecks(t, e, guesser, cookies, loginAddressFailureLimit)
+
+	rec := clearLogsWith(e, guesser, mistypedPassword, cookies)
+	if rec.Code != http.StatusTooManyRequests {
+		t.Fatalf("attempt %d: status = %d, want %d, body: %s",
+			loginAddressFailureLimit+1, rec.Code, http.StatusTooManyRequests, rec.Body.String())
+	}
+
+	code := refusalCode(t, rec)
+	if code != tooManyAttemptsCode {
+		t.Errorf("error_code = %q, want %q", code, tooManyAttemptsCode)
+	}
+
+	want := strconv.Itoa(int(loginAddressBlockFor / time.Second))
+
+	got := rec.Result().Header.Get(echo.HeaderRetryAfter)
+	if got != want {
+		t.Errorf("Retry-After = %q, want %q", got, want)
+	}
+
+	t.Logf("the answer to attempt %d: %s, Retry-After: %s",
+		loginAddressFailureLimit+1, rec.Body.String(), got)
+
+	// The right password is refused as well, which is the only way from out
+	// here to show that no password is being checked at all.
+	rec = clearLogsWith(e, guesser, testPassword, cookies)
+	if rec.Code != http.StatusTooManyRequests {
+		t.Errorf("the right password from a held address: status = %d, want %d, body: %s",
+			rec.Code, http.StatusTooManyRequests, rec.Body.String())
+	}
+
+	// And that the call itself never ran: the hold is reached before the work
+	// the password stands in front of.
+	info, err := os.Stat(logPath)
+	if err != nil {
+		t.Fatalf("failed to stat the log file: %v", err)
+	}
+
+	if info.Size() == 0 {
+		t.Error("the log was emptied by a call that was held")
+	}
+}
+
+// TestTheLoginAndTheCallsThatAskAgainShareOneCounter is what the whole of this
+// rests on. Were the two counted apart, the five tries the login allows would
+// be five more on every call behind it, and the limit would be worth a
+// fraction of what it reads as.
+func TestTheLoginAndTheCallsThatAskAgainShareOneCounter(t *testing.T) {
+	// The failures at the login hold the call behind it.
+	e, _, _ := newPasswordCheckServer(t)
+
+	const guesser = "198.51.100.31"
+
+	cookies := signInFrom(t, e, guesser)
+
+	failLogins(t, e, guesser, loginAddressFailureLimit)
+
+	// With the right password, so that what refuses it is the hold and nothing
+	// else.
+	rec := clearLogsWith(e, guesser, testPassword, cookies)
+	if rec.Code != http.StatusTooManyRequests {
+		t.Fatalf("after %d failed logins, the log was emptied with status = %d, want %d, body: %s",
+			loginAddressFailureLimit, rec.Code, http.StatusTooManyRequests, rec.Body.String())
+	}
+
+	t.Logf("%d failed logins held the call that asks for the password again: %s",
+		loginAddressFailureLimit, rec.Body.String())
+
+	// And the other way about: the failures on that call hold the login.
+	e, _, _ = newPasswordCheckServer(t)
+
+	const other = "198.51.100.32"
+
+	cookies = signInFrom(t, e, other)
+
+	failPasswordChecks(t, e, other, cookies, loginAddressFailureLimit)
+
+	rec = loginFrom(e, other, goodLogin)
+	if rec.Code != http.StatusTooManyRequests {
+		t.Fatalf("after %d wrong passwords on the log, the login answered %d, want %d, body: %s",
+			loginAddressFailureLimit, rec.Code, http.StatusTooManyRequests, rec.Body.String())
+	}
+
+	if sessionCookieOf(rec) != nil {
+		t.Error("a held login handed out a session cookie")
+	}
+}
+
+// TestAPasswordThatOpensTheAccountForgetsTheFailuresBeforeIt is what keeps the
+// limit off the operator who mistyped on their way to the right password.
+func TestAPasswordThatOpensTheAccountForgetsTheFailuresBeforeIt(t *testing.T) {
+	e, h, _ := newPasswordCheckServer(t)
+
+	const operator = "198.51.100.33"
+
+	cookies := signInFrom(t, e, operator)
+
+	failPasswordChecks(t, e, operator, cookies, loginAddressFailureLimit-1)
+
+	// The address and the account, which is what four failures on one address
+	// leave behind and what the success below has to clear.
+	h.logins.mu.Lock()
+	counted := len(h.logins.failures)
+	h.logins.mu.Unlock()
+
+	if counted != 2 {
+		t.Fatalf("%d wrong passwords left %d counters, want 2",
+			loginAddressFailureLimit-1, counted)
+	}
+
+	rec := clearLogsWith(e, operator, testPassword, cookies)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d, body: %s", rec.Code, http.StatusOK, rec.Body.String())
+	}
+
+	h.logins.mu.Lock()
+	left := len(h.logins.failures)
+	h.logins.mu.Unlock()
+
+	if left != 0 {
+		t.Errorf("the limiter holds %d counters after a password that opened the account, want 0", left)
+	}
+
+	// Had the four before it been kept, the first of these would have been the
+	// fifth and would have been held.
+	failPasswordChecks(t, e, operator, cookies, loginAddressFailureLimit-1)
+
+	t.Logf("%d wrong passwords, one that opened the account, and %d more, none of them held",
+		loginAddressFailureLimit-1, loginAddressFailureLimit-1)
+}
+
+// TestTheAccountChangeIsHeldByTheSameCounter covers the other half of the six
+// calls: the ones that do not go through accountPasswordRefused but compare the
+// password where they stand. The account change is one of those, and the
+// uninstall is the other.
+func TestTheAccountChangeIsHeldByTheSameCounter(t *testing.T) {
+	e, _, _ := newPasswordCheckServer(t)
+
+	const guesser = "198.51.100.34"
+
+	cookies := signInFrom(t, e, guesser)
+
+	for i := 0; i < loginAddressFailureLimit; i++ {
+		rec := changeAccountWith(e, guesser, mistypedPassword, cookies)
+		if rec.Code != http.StatusUnauthorized {
+			t.Fatalf("attempt %d: status = %d, want %d, body: %s",
+				i+1, rec.Code, http.StatusUnauthorized, rec.Body.String())
+		}
+	}
+
+	rec := changeAccountWith(e, guesser, mistypedPassword, cookies)
+	if rec.Code != http.StatusTooManyRequests {
+		t.Fatalf("attempt %d: status = %d, want %d, body: %s",
+			loginAddressFailureLimit+1, rec.Code, http.StatusTooManyRequests, rec.Body.String())
+	}
+
+	code := refusalCode(t, rec)
+	if code != tooManyAttemptsCode {
+		t.Errorf("error_code = %q, want %q", code, tooManyAttemptsCode)
+	}
+
+	if rec.Result().Header.Get(echo.HeaderRetryAfter) == "" {
+		t.Error("the held account change was answered without Retry-After")
+	}
+
+	// The failures are on the counters the login is on, so the login is held
+	// as well.
+	rec = loginFrom(e, guesser, goodLogin)
+	if rec.Code != http.StatusTooManyRequests {
+		t.Errorf("the login after %d wrong passwords on the account change: status = %d, want %d",
+			loginAddressFailureLimit, rec.Code, http.StatusTooManyRequests)
 	}
 }
