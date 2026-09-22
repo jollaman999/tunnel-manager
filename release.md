@@ -1,3 +1,22 @@
+# v3.8.2
+
+## Bug fixes:
+
+- **Installing an update from the Update screen did nothing but take the service down.** The press was answered, the release was downloaded and its checksum checked, and then the service stopped and stayed stopped with the old executable still in place.
+  - An install stops the service before it replaces the executable, because a file that is open for execution cannot be written to. systemd stops a unit by signalling everything in its cgroup, and the install was started as a plain child of the service, so it was killed by the stop it had just asked for, three lines before the copy it was there to do.
+  - Nothing brought the service back either. An explicit stop is not a failure to a service manager, so `Restart=always` does not act on one.
+  - The same command run by hand from a shell worked, and still does. A shell is not in the cgroup of the service, which is why this was only ever broken from the screen.
+  - On a machine with systemd the install is now handed to systemd as a unit of its own. The stop does not reach it, and what it says goes to the journal with everything else this service writes. Where there is no `systemd-run` it stays a plain child and writes its report to a file beside the log rather than to nothing.
+- **An install that fails after stopping the service now starts it again.** Every way out between the stop and the start left the service down with nothing about to start it. The failure that is reported is still the one that happened.
+
+## Notes:
+
+- The upgrade note of v3.7.0 still holds: every Host stops until its key is approved, a stored path outside the data directory is put back to its default, and the data directory becomes 0700.
+- An installation running v3.8.0 or v3.8.1 cannot install this release from the Update screen, because the code that would do it is the code this release fixes. Run the install once by hand and the screen works from then on.
+- A release left a directory under the temporary directory on every attempt that was killed this way, holding the downloaded executable. Nothing removes those on the next attempt; they can be deleted.
+- Only the Linux path of `-install` and `-uninstall` has been run. The macOS and the Windows backends are still held up by the compiler, by the vet tool for their platform, and by tests over the plist and the service configuration they produce.
+- None of the twelve translations has been read by a native speaker.
+
 # v3.8.1
 
 ## Add/fix features:
