@@ -1,9 +1,11 @@
 package crypto
 
 import (
+	"encoding/base64"
 	"errors"
 	"strings"
 	"testing"
+	"time"
 )
 
 // The phrases the tests seal with. They are test input, not credentials.
@@ -203,6 +205,77 @@ func TestDecryptWithPasswordRejectsUnusableParameters(t *testing.T) {
 	err := checkScryptParameters(scryptLogN, scryptR, scryptP)
 	if err != nil {
 		t.Fatalf("the parameters this package writes were refused: %v", err)
+	}
+}
+
+// passwordValueWithParameters writes a value that states the given parameters
+// and carries a body long enough to be read past the nonce and the tag, so that
+// what a test sees is the verdict on the parameters and not on the length.
+func passwordValueWithParameters(logN byte, r byte, p byte) string {
+	body := make([]byte, 0, passwordHeaderSize+44)
+	body = append(body, logN, r, p)
+	body = append(body, make([]byte, passwordSaltSize+44)...)
+
+	return passwordEncryptedPrefix + base64.StdEncoding.EncodeToString(body)
+}
+
+func TestDecryptWithPasswordCapsTheMemoryAFileAsksFor(t *testing.T) {
+	// scrypt takes 128 * r * N bytes, so with r of 8 a stated N of 2^17 is the
+	// 128 MiB that maxScryptMemory allows and 2^19 is four times that.
+	_, err := DecryptWithPassword(passwordValueWithParameters(19, scryptR, scryptP), testPhrase)
+	if !errors.Is(err, ErrPasswordEncryptedDamaged) {
+		t.Fatalf("a file that asks for 512 MiB was not refused as damaged: %v", err)
+	}
+
+	// At the cap the parameters are the last thing standing between the file
+	// and its body, so a file that sits on it is read that far and fails on the
+	// body instead: this one is zeros and does not authenticate.
+	_, err = DecryptWithPassword(passwordValueWithParameters(17, scryptR, scryptP), testPhrase)
+	if !errors.Is(err, ErrWrongPassword) {
+		t.Fatalf("a file at the cap was not read as far as its body: %v", err)
+	}
+}
+
+func TestDecryptWithPasswordOpensOneAtATime(t *testing.T) {
+	encrypted, err := EncryptWithPassword("the exported settings", testPhrase)
+	if err != nil {
+		t.Fatalf("EncryptWithPassword returned an error: %v", err)
+	}
+
+	// Taking the slot the way an open in flight holds it leaves the open below
+	// waiting on that one thing, with no timing of two real opens to read.
+	passwordOpenSlots <- struct{}{}
+
+	started := make(chan struct{})
+	done := make(chan error, 1)
+
+	go func() {
+		close(started)
+
+		_, err := DecryptWithPassword(encrypted, testPhrase)
+		done <- err
+	}()
+
+	<-started
+
+	// An open under the parameters this package writes took 62 ms when it was
+	// measured, so one that did not wait its turn would have finished several
+	// times over before this is up.
+	select {
+	case err = <-done:
+		t.Fatalf("a second open ran while the first held the slot: %v", err)
+	case <-time.After(time.Second):
+	}
+
+	<-passwordOpenSlots
+
+	select {
+	case err = <-done:
+		if err != nil {
+			t.Fatalf("the open that waited returned an error: %v", err)
+		}
+	case <-time.After(30 * time.Second):
+		t.Fatal("the second open did not run after the slot was given back")
 	}
 }
 

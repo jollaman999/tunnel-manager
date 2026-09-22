@@ -49,8 +49,23 @@ const passwordHeaderSize = 3 + passwordSaltSize
 
 // maxScryptMemory caps the memory a file may ask for while it is opened. A file
 // states its own N and r, so a hostile file could otherwise name a size that no
-// machine can allocate and end the process instead of failing the import.
-const maxScryptMemory = 512 << 20
+// machine can allocate and end the process instead of failing the import. It is
+// four times what the parameters above take, which is room for two more steps
+// of N: a file written by a later version that raised N still opens here, and a
+// single open still asks for a size a machine that runs this program has.
+const maxScryptMemory = 128 << 20
+
+// passwordOpenSlots holds the opens that derive a key to one at a time. An
+// opened file names its own N and r, so one open may take as much as
+// maxScryptMemory, and files arriving together would otherwise add up to a
+// multiple of it with nothing above deciding how many arrive at once. Waiting
+// costs an import the time of the opens ahead of it, which is the same wait as
+// having no memory left.
+//
+// Sealing takes no slot. It derives under the constants above, which nothing in
+// the input can raise, so the size of a seal is what this build chose rather
+// than what a caller asked for.
+var passwordOpenSlots = make(chan struct{}, 1)
 
 // ErrPasswordRequired reports that the password is empty. A file sealed under
 // an empty password would be open to anyone who holds it, so an empty password
@@ -153,7 +168,7 @@ func DecryptWithPassword(encoded string, password string) (string, error) {
 		return "", err
 	}
 
-	aead, err := passwordAEAD(password, salt, logN, r, p)
+	aead, err := openPasswordAEAD(password, salt, logN, r, p)
 	if err != nil {
 		return "", err
 	}
@@ -170,6 +185,16 @@ func DecryptWithPassword(encoded string, password string) (string, error) {
 	}
 
 	return string(plaintext), nil
+}
+
+// openPasswordAEAD is passwordAEAD for a file that is being opened: it takes
+// the one slot for as long as the derivation holds the memory the file named,
+// and gives it back before the body is read, which takes none of it.
+func openPasswordAEAD(password string, salt []byte, logN int, r int, p int) (cipher.AEAD, error) {
+	passwordOpenSlots <- struct{}{}
+	defer func() { <-passwordOpenSlots }()
+
+	return passwordAEAD(password, salt, logN, r, p)
 }
 
 // passwordAEAD derives the AES-256 key from the password with scrypt and
