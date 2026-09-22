@@ -133,22 +133,39 @@
          this whole arrangement is here to avoid. -->
     <div id="cornerControls">
       <select id="langPick" hidden></select>
-      <!-- The switch is a button that holds its own parts: the two words it
-           sits between, the track, the knob that slides and turns from a full
-           circle into a crescent, and the stars that come out behind it. They
+      <!-- The switch is a button that holds its own parts: the track, the knob
+           that slides and turns from a sun into a crescent moon, and the stars
+           that come out behind it. There are no words on it: what it is in is
+           said by the shape and by aria-pressed, and a word beside a drawing
+           this plain is a second thing to read where one was enough. They
            are here rather than built in app.js so the shape is painted with the
            first frame, in the theme the script above already settled, and the
-           only thing left for the script is the words and what a press does.
+           only thing left for the script is what a press does.
 
            aria-pressed says which of the two it is in, so a reader that cannot
            see a moon slide is told the state and not only the label. -->
       <button id="themeToggle" type="button" role="switch" aria-pressed="false" hidden>
-        <span class="theme-word" data-theme-word="light"></span>
         <span class="theme-track">
-          <span class="theme-stars"></span>
+          <span class="theme-sky theme-clouds">
+            <span class="theme-cloud theme-cloud-near"></span>
+            <span class="theme-cloud theme-cloud-far"></span>
+            <span class="theme-cloud theme-cloud-high"></span>
+          </span>
+          <span class="theme-sky theme-stars">
+            <!-- The field is what the stars are softened on. A star is cut to
+                 its points with clip-path, and a clip is applied after a
+                 filter: a blur on the star itself is drawn and then trimmed
+                 back to the same sharp outline. One box around all four takes
+                 the blur instead, and there is nothing cutting that one. -->
+            <span class="theme-star-field">
+              <span class="theme-star theme-star-a"></span>
+              <span class="theme-star theme-star-b"></span>
+              <span class="theme-star theme-star-c"></span>
+              <span class="theme-star theme-star-d"></span>
+            </span>
+          </span>
           <span class="theme-knob"></span>
         </span>
-        <span class="theme-word" data-theme-word="dark"></span>
       </button>
     </div>
     <!-- The ellipsis is not a word on purpose. It is painted before any script
