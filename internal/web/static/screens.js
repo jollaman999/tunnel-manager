@@ -760,11 +760,31 @@ async function openHostKeysPanel() {
     });
   }
 
+  // approveButton is the press along the bottom of the panel. It is looked up
+  // when it is wanted rather than kept, because the list is drawn once before
+  // there is a panel to hold it and the lookup then has nothing to find.
+  function approveButton() {
+    return document.querySelector(
+      "[data-modal-panel=\"host-keys\"] [data-action=\"host-keys-approve\"]"
+    );
+  }
+
+  // The count and the press under it are about a list with something in it. A
+  // Host approved from its own row empties the list while the panel is up, and
+  // what would be left is a press that sends nothing and a line counting to
+  // nothing, over a list saying there is nothing here to approve.
   function sayChosen() {
     const count = pickedList().length;
+    const empty = shown.length === 0;
+    const approve = approveButton();
 
+    chosen.hidden = empty;
     chosen.textContent = t(plural(count, "status.host-keys-chosen-one.text",
       "status.host-keys-chosen-many.text"), { count: count });
+
+    if (approve !== null) {
+      approve.hidden = empty;
+    }
   }
 
   // The rows of the page that is drawn, and how long the whole list is. They
@@ -866,7 +886,7 @@ async function openHostKeysPanel() {
 
   drawn = { number: page.number, size: page.size };
 
-  await openModal({
+  const panel = openModal({
     name: "host-keys",
     title: t("status.host-keys.title"),
     body: [
@@ -888,6 +908,13 @@ async function openHostKeysPanel() {
       { label: t("common.close.button"), name: "close" }
     ]
   });
+
+  // openModal puts the panel on the page before it hands back the promise, so
+  // the press at the bottom is there to be set from the list that was drawn
+  // before it. The draw that ran above could not reach it.
+  sayChosen();
+
+  await panel;
 
   // The screen behind is drawn again whichever way the panel went, and not only
   // after the press at the bottom. The line over the table is a count of what
