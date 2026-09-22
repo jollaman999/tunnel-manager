@@ -246,6 +246,7 @@ const (
 	HostPrivateKeyEncryptFailed            ID = "host.private_key_encrypt_failed"
 	HostPasswordEncryptFailed              ID = "host.password_encrypt_failed"
 	HostCreateFailed                       ID = "host.create_failed"
+	HostNextNumberReadFailed               ID = "host.next_number_read_failed"
 	HostNewServicePortsReadFailed          ID = "host.new_service_ports_read_failed"
 	HostNewServicePortAssignFailed         ID = "host.new_service_port_assign_failed"
 	HostCountFailed                        ID = "host.count_failed"

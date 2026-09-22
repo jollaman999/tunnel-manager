@@ -335,6 +335,7 @@
   "log.host.list_fetch_failed.text": "تعذّر جلب الـ Hosts",
   "log.host.new_service_port_assign_failed.text": "تعذّر إسناد منفذ خدمة إلى Host جديد",
   "log.host.new_service_ports_read_failed.text": "تعذّرت قراءة منافذ الخدمة لإسنادها إلى Host جديد",
+  "log.host.next_number_read_failed.text": "تعذّر تحديد رقم مضيف جديد",
   "log.host.password_encrypt_failed.text": "تعذّر تشفير كلمة مرور الـ Host",
   "log.host.private_key_encrypt_failed.text": "تعذّر تشفير المفتاح الخاص للـ Host",
   "log.host.service_port_assign_failed.text": "تعذّر إسناد منفذ خدمة إلى Host",

@@ -262,6 +262,40 @@ func wantsAssignments(asked *bool) bool {
 	return *asked
 }
 
+// nextHostID is the number the next Host is registered under.
+//
+// It is one past the largest in use, which is what the column would hand out if
+// it were not AUTOINCREMENT. What that changes is a Host deleted from the end:
+// the number it held is free again and the next registration takes it, instead
+// of the count climbing away from how many Hosts there are.
+//
+// A gap in the middle is left alone, though the same query could fill it. The
+// number of a Host is what the Status screen, the host key panel and the log
+// file call it by, and one handed back in the middle would put a newly
+// registered Host among the older ones on every screen that lists them by
+// number, under a number an older log line already used for something else.
+// Taken from the end, the number that comes back is the one just given up, and
+// a new Host is still the last of the list.
+//
+// It is read inside the transaction that writes the Host. The pool holds one
+// connection, so a second registration cannot read the same answer.
+func nextHostID(tx *gorm.DB) (uint, error) {
+	// Only the number is read, of only the last row. The rest of a Host is the
+	// sealed password and the sealed key, and none of it is wanted here.
+	//
+	// Find and not First: a table with nothing in it is the ordinary case on a
+	// fresh installation, and First calls that an error. What it leaves behind
+	// is the zero, which is the number before the first.
+	var last models.Host
+
+	err := tx.Model(&models.Host{}).Select("id").Order("id desc").Limit(1).Find(&last).Error
+	if err != nil {
+		return 0, err
+	}
+
+	return last.ID + 1, nil
+}
+
 func (h *Handler) CreateHost(c echo.Context) error {
 	var req models.CreateHostRequest
 	err := c.Bind(&req)
@@ -323,6 +357,16 @@ func (h *Handler) CreateHost(c echo.Context) error {
 		KeyPassphrase: keyPassphrase,
 		Description:   req.Description,
 		Enabled:       enabled,
+	}
+
+	// The number is chosen here rather than left to the column, so that one a
+	// deleted Host gave up is handed out again. nextHostID says which one.
+	host.ID, err = nextHostID(tx)
+	if err != nil {
+		tx.Rollback()
+		h.logger.Error("failed to work out the number for a new Host",
+			logid.HostNextNumberReadFailed.Field(), zap.Error(err))
+		return failure(c, http.StatusInternalServerError, errHostCreateFailed)
 	}
 
 	err = tx.Create(host).Error

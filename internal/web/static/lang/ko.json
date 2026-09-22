@@ -335,6 +335,7 @@
   "log.host.list_fetch_failed.text": "Host 목록을 가져오지 못했습니다",
   "log.host.new_service_port_assign_failed.text": "새 Host 에 서비스 포트를 할당하지 못했습니다",
   "log.host.new_service_ports_read_failed.text": "새 Host 에 할당할 서비스 포트를 읽지 못했습니다",
+  "log.host.next_number_read_failed.text": "새 Host 의 번호를 정하지 못했습니다",
   "log.host.password_encrypt_failed.text": "Host 의 비밀번호를 암호화하지 못했습니다",
   "log.host.private_key_encrypt_failed.text": "Host 의 개인키를 암호화하지 못했습니다",
   "log.host.service_port_assign_failed.text": "Host 에 서비스 포트를 할당하지 못했습니다",

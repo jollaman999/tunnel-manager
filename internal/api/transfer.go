@@ -1074,6 +1074,17 @@ func (h *TransferHandler) importHost(c echo.Context, tx *gorm.DB, host hostConte
 		Enabled:       host.Enabled,
 	}
 
+	// The number is chosen the way the Hosts screen chooses it. An import that
+	// left it to the column would step over a number the screen would have
+	// handed out, so which of the two registered a Host would decide whether
+	// the numbers have a gap in them.
+	created.ID, err = nextHostID(tx)
+	if err != nil {
+		h.hosts.logger.Error("failed to work out the number for a Host being imported",
+			logid.HostNextNumberReadFailed.Field(), zap.Error(err))
+		return nil, refuse(http.StatusInternalServerError, errImportHostCreateFailed, errorArgs{"host": name})
+	}
+
 	err = tx.Create(&created).Error
 	if err != nil {
 		h.hosts.logger.Error("failed to create a Host while importing",

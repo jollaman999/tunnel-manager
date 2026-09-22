@@ -335,6 +335,7 @@
   "log.host.list_fetch_failed.text": "не удалось получить список Host",
   "log.host.new_service_port_assign_failed.text": "не удалось привязать сервисный порт к новому Host",
   "log.host.new_service_ports_read_failed.text": "не удалось прочитать сервисные порты для привязки к новому Host",
+  "log.host.next_number_read_failed.text": "не удалось определить номер нового Host",
   "log.host.password_encrypt_failed.text": "не удалось зашифровать пароль Host",
   "log.host.private_key_encrypt_failed.text": "не удалось зашифровать закрытый ключ Host",
   "log.host.service_port_assign_failed.text": "не удалось привязать сервисный порт к Host",

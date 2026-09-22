@@ -715,12 +715,19 @@ func TestWriteHandlersReadTheirRowInsideTheTransaction(t *testing.T) {
 }
 
 // TestCreateHandlersReadOnlyWhatTheyAssign pins down the other side of it: a
-// create has no row of its own to read yet, and the unique indexes are what
-// keep a duplicate out. The one read it makes is of the other table, which is
-// where the assignments the new row is written with come from, and it is made
-// on the transaction that writes them with the commit still ahead. Read outside
+// create does not look its own row up, since it has none yet and the unique
+// indexes are what keep a duplicate out. What it reads is the other table,
+// where the assignments the new row is written with come from, and it reads on
+// the transaction that writes them with the commit still ahead. Read outside
 // it, a Host deleted in between would be assigned a service port after it was
 // gone.
+//
+// A create of a Host reads its own table once more, for the largest number in
+// use: the number of the next Host is chosen rather than left to the column, so
+// that one a deleted Host gave up is handed out again. It is a read of the one
+// column and the one row, on the same transaction, and it is named here so that
+// a create which started scanning its own table for something else would still
+// be caught.
 func TestCreateHandlersReadOnlyWhatTheyAssign(t *testing.T) {
 	tests := []struct {
 		name     string
@@ -728,7 +735,11 @@ func TestCreateHandlersReadOnlyWhatTheyAssign(t *testing.T) {
 		body     string
 		assigned string
 		own      string
-		call     func(*Handler, echo.Context) error
+		// ownRead is the read of the create's own table that belongs there, or
+		// empty where none does. It is matched on the whole statement, so a
+		// read of that table which is not this one fails the case.
+		ownRead string
+		call    func(*Handler, echo.Context) error
 	}{
 		{
 			name:     "create host",
@@ -736,6 +747,7 @@ func TestCreateHandlersReadOnlyWhatTheyAssign(t *testing.T) {
 			body:     `{"ip":"192.0.2.1","port":22,"user":"root","password":"fake-value-1"}`, // hook:allow
 			assigned: "service_ports",
 			own:      "hosts",
+			ownRead:  "SELECT `id` FROM `hosts` ORDER BY id desc LIMIT 1",
 			call:     (*Handler).CreateHost,
 		},
 		{
@@ -771,22 +783,47 @@ func TestCreateHandlersReadOnlyWhatTheyAssign(t *testing.T) {
 			}
 
 			all := reads.all()
-			if len(all) != 1 {
-				t.Fatalf("reads = %d, want the one read of %s: %v", len(all), tt.assigned, all)
-			}
-			read := all[0]
 
-			if strings.Contains(read.sql, "`"+tt.own+"`") {
-				t.Errorf("the create reads the table it writes to: %s", read.sql)
+			want := 1
+			if tt.ownRead != "" {
+				want = 2
 			}
-			if !strings.Contains(read.sql, "`"+tt.assigned+"`") {
-				t.Errorf("sql = %s, want a read of %s", read.sql, tt.assigned)
+
+			if len(all) != want {
+				t.Fatalf("reads = %d, want %d: %v", len(all), want, all)
 			}
-			if !read.inTx {
-				t.Errorf("the rows to assign were read outside the transaction that writes: %s", read.sql)
+
+			assigned := false
+			ownRead := false
+
+			for _, read := range all {
+				switch {
+				case read.sql == tt.ownRead:
+					ownRead = true
+				case strings.Contains(read.sql, "`"+tt.own+"`"):
+					t.Errorf("the create reads the table it writes to: %s", read.sql)
+				case strings.Contains(read.sql, "`"+tt.assigned+"`"):
+					assigned = true
+				default:
+					t.Errorf("the create makes a read nothing accounts for: %s", read.sql)
+				}
+
+				// Every one of them, and not only the read of what is
+				// assigned. A number chosen outside the transaction that
+				// writes the row could be given out twice.
+				if !read.inTx {
+					t.Errorf("a read was made outside the transaction that writes: %s", read.sql)
+				}
+				if read.commits != 0 {
+					t.Errorf("commits at the read = %d, want 0: the transaction that writes was already through", read.commits)
+				}
 			}
-			if read.commits != 0 {
-				t.Errorf("commits at the read = %d, want 0: the transaction that writes was already through", read.commits)
+
+			if !assigned {
+				t.Errorf("the create does not read %s: %v", tt.assigned, all)
+			}
+			if tt.ownRead != "" && !ownRead {
+				t.Errorf("the create does not read the number to take: %v", all)
 			}
 		})
 	}
@@ -4016,5 +4053,194 @@ func TestCreateHandlersLeaveNoRowWhenTheAssignmentsFail(t *testing.T) {
 				t.Errorf("reconcile wake-ups = %d, want 0", wakes)
 			}
 		})
+	}
+}
+
+// numberingDB is a database whose hosts table is the one the application
+// creates, AUTOINCREMENT and all. The numbering is about what that column would
+// do on its own, so a test that made the table any other way would be testing
+// something else.
+func numberingDB(t *testing.T, ids ...uint) *gorm.DB {
+	t.Helper()
+
+	db := newRowsDB(t, nil, nil, nil)
+
+	for _, id := range ids {
+		err := db.Create(&models.Host{
+			ID:       id,
+			IP:       fmt.Sprintf("192.0.2.%d", id),
+			Port:     22,
+			User:     "operator",
+			Password: storedHostPassword,
+		}).Error
+		if err != nil {
+			t.Fatalf("failed to store the Host numbered %d: %v", id, err)
+		}
+	}
+
+	return db
+}
+
+func nextNumber(t *testing.T, db *gorm.DB) uint {
+	t.Helper()
+
+	next, err := nextHostID(db)
+	if err != nil {
+		t.Fatalf("failed to work out the next number: %v", err)
+	}
+
+	return next
+}
+
+// TestTheFirstHostIsNumberedOne is the empty table. It is the case the column
+// on its own gets wrong once anything has ever been registered: AUTOINCREMENT
+// keeps the high-water mark in sqlite_sequence and hands out one past it even
+// when there is nothing left in the table.
+func TestTheFirstHostIsNumberedOne(t *testing.T) {
+	if got := nextNumber(t, numberingDB(t)); got != 1 {
+		t.Errorf("the first Host is numbered %d, want 1", got)
+	}
+}
+
+// TestANumberGivenUpFromTheEndComesBack is the whole of what this changes.
+func TestANumberGivenUpFromTheEndComesBack(t *testing.T) {
+	db := numberingDB(t, 1, 2, 3)
+
+	if got := nextNumber(t, db); got != 4 {
+		t.Fatalf("with 1, 2 and 3 registered the next is %d, want 4", got)
+	}
+
+	err := db.Where("id = ?", 3).Delete(&models.Host{}).Error
+	if err != nil {
+		t.Fatalf("failed to delete the last Host: %v", err)
+	}
+
+	if got := nextNumber(t, db); got != 3 {
+		t.Errorf("after the last Host went the next is %d, want the 3 it gave up", got)
+	}
+}
+
+// TestEmptyingTheTableStartsAtOneAgain is the state an operator reaches by
+// deleting the one Host they had. The column alone would carry on from where it
+// left off, which is what this was asked for.
+func TestEmptyingTheTableStartsAtOneAgain(t *testing.T) {
+	db := numberingDB(t, 1, 2)
+
+	err := db.Where("1 = 1").Delete(&models.Host{}).Error
+	if err != nil {
+		t.Fatalf("failed to empty the hosts table: %v", err)
+	}
+
+	// The column would answer 3 here: the sequence it keeps is untouched by a
+	// delete. Reading it is what says the test is on the table it means to be.
+	var seq uint
+
+	err = db.Raw("SELECT seq FROM sqlite_sequence WHERE name = 'hosts'").Scan(&seq).Error
+	if err != nil {
+		t.Fatalf("failed to read the sequence the column keeps: %v", err)
+	}
+
+	if seq != 2 {
+		t.Fatalf("the sequence the column keeps is %d, want the 2 it reached", seq)
+	}
+
+	if got := nextNumber(t, db); got != 1 {
+		t.Errorf("with nothing registered the next is %d, want 1", got)
+	}
+}
+
+// TestAGapInTheMiddleIsLeftAlone holds the rule to taking only from the end.
+//
+// The number of a Host is what the Status screen, the host key panel and the
+// log file call it by. One handed back in the middle would put a newly
+// registered Host among the older ones wherever they are listed by number,
+// under a number an older log line already used for something else.
+func TestAGapInTheMiddleIsLeftAlone(t *testing.T) {
+	db := numberingDB(t, 1, 2, 3)
+
+	err := db.Where("id = ?", 2).Delete(&models.Host{}).Error
+	if err != nil {
+		t.Fatalf("failed to delete the Host in the middle: %v", err)
+	}
+
+	if got := nextNumber(t, db); got != 4 {
+		t.Errorf("with 2 free in the middle the next is %d, want 4", got)
+	}
+}
+
+// TestANewHostIsAlwaysTheLastOfTheList is the invariant the rule is for. The
+// Hosts are listed in the order of their numbers, so a number that is not past
+// every one in use would put a Host that was just registered somewhere above
+// the ones that were there before it.
+func TestANewHostIsAlwaysTheLastOfTheList(t *testing.T) {
+	for _, held := range [][]uint{{}, {1}, {1, 2, 3}, {2}, {1, 3, 7}, {5}} {
+		db := numberingDB(t, held...)
+		next := nextNumber(t, db)
+
+		for _, id := range held {
+			if next <= id {
+				t.Errorf("with %v registered the next is %d, which is not past %d", held, next, id)
+			}
+		}
+	}
+}
+
+// TestARegisteredHostTakesTheNumberThatWasGivenUp runs the whole handler.
+//
+// The numbering rests on the write carrying the number: gorm reads a primary
+// key that was set as a value to insert, and one it reads as unset goes to the
+// column instead. Tested on nextHostID alone, a create that quietly dropped the
+// number would pass every test above and change nothing at all.
+func TestARegisteredHostTakesTheNumberThatWasGivenUp(t *testing.T) {
+	db := newAssignmentDB(t, []models.Host{statusHost(1, true), statusHost(2, true)}, nil)
+
+	// The Host at the end goes, the way an operator removes the one they just
+	// registered. Its number is free and nothing else moved.
+	err := db.Where("id = ?", 2).Delete(&models.Host{}).Error
+	if err != nil {
+		t.Fatalf("failed to delete the last Host: %v", err)
+	}
+
+	manager := &wakeRecorder{tx: &txConnPool{}}
+	h := NewHandler(db, manager, zap.NewNop(), newTestCipher(t))
+
+	c, rec := createRequest(t, "/api/host",
+		`{"ip":"192.0.2.77","port":22,"user":"root","password":"fake-value-1"}`) // hook:allow
+
+	err = h.CreateHost(c)
+	if err != nil {
+		t.Fatalf("CreateHost returned an error: %v", err)
+	}
+
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("status = %d, want 201, body: %s", rec.Code, rec.Body.String())
+	}
+
+	var stored models.Host
+
+	err = db.Where("ip = ?", "192.0.2.77").First(&stored).Error
+	if err != nil {
+		t.Fatalf("failed to read the Host back: %v", err)
+	}
+
+	if stored.ID != 2 {
+		t.Errorf("the registered Host is numbered %d, want the 2 that was given up", stored.ID)
+	}
+
+	// The answer the screen draws carries it too. A row numbered 2 under an
+	// answer that said 3 would send the next press to a Host that is not there.
+	var resp struct {
+		Data struct {
+			ID uint `json:"id"`
+		} `json:"data"`
+	}
+
+	err = json.Unmarshal(rec.Body.Bytes(), &resp)
+	if err != nil {
+		t.Fatalf("failed to read the answer: %v, body: %s", err, rec.Body.String())
+	}
+
+	if resp.Data.ID != 2 {
+		t.Errorf("the answer says the Host is numbered %d, want 2", resp.Data.ID)
 	}
 }

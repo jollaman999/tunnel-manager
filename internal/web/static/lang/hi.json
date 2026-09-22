@@ -335,6 +335,7 @@
   "log.host.list_fetch_failed.text": "Host की सूची लाई नहीं जा सकी",
   "log.host.new_service_port_assign_failed.text": "नए Host को सर्विस पोर्ट असाइन नहीं किया जा सका",
   "log.host.new_service_ports_read_failed.text": "नए Host को असाइन करने के लिए सर्विस पोर्ट पढ़े नहीं जा सके",
+  "log.host.next_number_read_failed.text": "नए Host का नंबर तय नहीं किया जा सका",
   "log.host.password_encrypt_failed.text": "Host का पासवर्ड एन्क्रिप्ट नहीं किया जा सका",
   "log.host.private_key_encrypt_failed.text": "Host की निजी कुंजी एन्क्रिप्ट नहीं की जा सकी",
   "log.host.service_port_assign_failed.text": "Host को सर्विस पोर्ट असाइन नहीं किया जा सका",

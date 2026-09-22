@@ -335,6 +335,7 @@
   "log.host.list_fetch_failed.text": "không lấy được danh sách Host",
   "log.host.new_service_port_assign_failed.text": "không gán được một cổng dịch vụ cho Host mới",
   "log.host.new_service_ports_read_failed.text": "không đọc được các cổng dịch vụ để gán cho Host mới",
+  "log.host.next_number_read_failed.text": "không xác định được số của Host mới",
   "log.host.password_encrypt_failed.text": "không mã hóa được mật khẩu của Host",
   "log.host.private_key_encrypt_failed.text": "không mã hóa được khóa riêng của Host",
   "log.host.service_port_assign_failed.text": "không gán được một cổng dịch vụ cho Host",

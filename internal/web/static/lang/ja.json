@@ -335,6 +335,7 @@
   "log.host.list_fetch_failed.text": "Host の一覧を取得できませんでした",
   "log.host.new_service_port_assign_failed.text": "新しい Host にサービスポートを割り当てられませんでした",
   "log.host.new_service_ports_read_failed.text": "新しい Host に割り当てるサービスポートを読めませんでした",
+  "log.host.next_number_read_failed.text": "新しい Host の番号を決められませんでした",
   "log.host.password_encrypt_failed.text": "Host のパスワードを暗号化できませんでした",
   "log.host.private_key_encrypt_failed.text": "Host の秘密鍵を暗号化できませんでした",
   "log.host.service_port_assign_failed.text": "Host にサービスポートを割り当てられませんでした",

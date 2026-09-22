@@ -335,6 +335,7 @@
   "log.host.list_fetch_failed.text": "ดึงรายการ Host ไม่สำเร็จ",
   "log.host.new_service_port_assign_failed.text": "ผูกพอร์ตบริการเข้ากับ Host ตัวใหม่ไม่สำเร็จ",
   "log.host.new_service_ports_read_failed.text": "อ่านพอร์ตบริการที่จะผูกกับ Host ตัวใหม่ไม่สำเร็จ",
+  "log.host.next_number_read_failed.text": "ไม่สามารถกำหนดหมายเลขของ Host ใหม่ได้",
   "log.host.password_encrypt_failed.text": "เข้ารหัสรหัสผ่านของ Host ไม่สำเร็จ",
   "log.host.private_key_encrypt_failed.text": "เข้ารหัสคีย์ส่วนตัวของ Host ไม่สำเร็จ",
   "log.host.service_port_assign_failed.text": "ผูกพอร์ตบริการเข้ากับ Host ไม่สำเร็จ",

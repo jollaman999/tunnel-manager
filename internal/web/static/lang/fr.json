@@ -335,6 +335,7 @@
   "log.host.list_fetch_failed.text": "échec de la récupération des Hosts",
   "log.host.new_service_port_assign_failed.text": "échec de l'attribution d'un port de service à un nouveau Host",
   "log.host.new_service_ports_read_failed.text": "échec de la lecture des ports de service à attribuer à un nouveau Host",
+  "log.host.next_number_read_failed.text": "impossible de déterminer le numéro d'un nouvel hôte",
   "log.host.password_encrypt_failed.text": "échec du chiffrement du mot de passe du Host",
   "log.host.private_key_encrypt_failed.text": "échec du chiffrement de la clé privée du Host",
   "log.host.service_port_assign_failed.text": "échec de l'attribution d'un port de service à un Host",

@@ -335,6 +335,7 @@
   "log.host.list_fetch_failed.text": "failed to fetch Hosts",
   "log.host.new_service_port_assign_failed.text": "failed to assign a service port to a new Host",
   "log.host.new_service_ports_read_failed.text": "failed to read the service ports to assign to a new Host",
+  "log.host.next_number_read_failed.text": "failed to work out the number for a new Host",
   "log.host.password_encrypt_failed.text": "failed to encrypt the password of the Host",
   "log.host.private_key_encrypt_failed.text": "failed to encrypt the private key of the Host",
   "log.host.service_port_assign_failed.text": "failed to assign a service port to a Host",

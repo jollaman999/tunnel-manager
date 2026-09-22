@@ -335,6 +335,7 @@
   "log.host.list_fetch_failed.text": "获取 Host 列表失败",
   "log.host.new_service_port_assign_failed.text": "把服务端口分配给新 Host 失败",
   "log.host.new_service_ports_read_failed.text": "读取要分配给新 Host 的服务端口失败",
+  "log.host.next_number_read_failed.text": "无法确定新 Host 的编号",
   "log.host.password_encrypt_failed.text": "加密这台 Host 的密码失败",
   "log.host.private_key_encrypt_failed.text": "加密这台 Host 的私钥失败",
   "log.host.service_port_assign_failed.text": "把服务端口分配给 Host 失败",

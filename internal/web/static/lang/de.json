@@ -335,6 +335,7 @@
   "log.host.list_fetch_failed.text": "die Hosts konnten nicht geladen werden",
   "log.host.new_service_port_assign_failed.text": "einem neuen Host konnte kein Service-Port zugeordnet werden",
   "log.host.new_service_ports_read_failed.text": "die Service-Ports, die einem neuen Host zuzuordnen sind, konnten nicht gelesen werden",
+  "log.host.next_number_read_failed.text": "Nummer für einen neuen Host konnte nicht ermittelt werden",
   "log.host.password_encrypt_failed.text": "das Passwort des Hosts konnte nicht verschlüsselt werden",
   "log.host.private_key_encrypt_failed.text": "der private Schlüssel des Hosts konnte nicht verschlüsselt werden",
   "log.host.service_port_assign_failed.text": "einem Host konnte kein Service-Port zugeordnet werden",
