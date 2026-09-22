@@ -758,3 +758,50 @@ func isSafeMethod(method string) bool {
 
 	return false
 }
+
+// accountPasswordRefused checks the password of the account a session belongs
+// to and returns what to answer with when it does not open it, or nil when it
+// does.
+//
+// It reads the account behind the session rather than a username in the body,
+// the way the uninstall does: what is being asked for is that the person at the
+// screen is the one who logged in, and a request that named the account would
+// let a stolen session name any of them.
+//
+// wrong is the code a password that does not open the account is refused under.
+// It is handed in because the screen reads the code to tell a wrong password
+// from a session that has ended, and the two calls that ask for a password have
+// to be told apart there: a panel that shows the refusal where the operator is
+// working is the point of the distinction.
+//
+// It reads through the handle it is given and is not to be called from inside a
+// transaction. The pool holds one connection, so the read would wait for the
+// connection the transaction is holding and never be given it. ApproveHostKey
+// says the rest of it.
+func accountPasswordRefused(c echo.Context, db *gorm.DB, logger *zap.Logger, password string,
+	wrong errorCode) *refusal {
+	userID, ok := c.Get(contextUserIDKey).(uint)
+	if !ok {
+		// The middleware is what puts it there, so getting here means the
+		// route was hung somewhere the middleware does not cover.
+		logger.Error("a call that asks for the password of the account was reached with no account "+
+			"on the context", logid.AccountReadNoAccountOnContext.Field())
+
+		return refuse(http.StatusInternalServerError, errAccountReadFailed)
+	}
+
+	var user models.User
+
+	err := db.First(&user, userID).Error
+	if err != nil {
+		logger.Error("failed to read the account", logid.AccountReadFailed.Field(), zap.Error(err))
+
+		return refuse(http.StatusInternalServerError, errAccountReadFailed)
+	}
+
+	if !auth.CheckPassword(user.PasswordHash, password) {
+		return refuse(http.StatusUnauthorized, wrong)
+	}
+
+	return nil
+}

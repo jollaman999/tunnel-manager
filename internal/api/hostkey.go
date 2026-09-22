@@ -7,7 +7,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/jollaman999/tunnel-manager/internal/auth"
 	"github.com/jollaman999/tunnel-manager/internal/logid"
 	"github.com/jollaman999/tunnel-manager/internal/models"
 	"github.com/jollaman999/tunnel-manager/internal/tunnel"
@@ -789,42 +788,8 @@ func (h *Handler) ApproveHostKeys(c echo.Context) error {
 	})
 }
 
-// accountPasswordRefused checks the password of the account this session
-// belongs to and returns what to answer with when it does not open it, or nil
-// when it does.
-//
-// It reads the account behind the session rather than a username in the body,
-// the way the uninstall does: what is being asked for is that the person at
-// the screen is the one who logged in, and a request that named the account
-// would let a stolen session name any of them.
-//
-// It reads through the default handle and is not to be called from inside a
-// transaction. The pool holds one connection, so the read would wait for the
-// connection the transaction is holding and never be given it. ApproveHostKey
-// says the rest of it.
+// accountPasswordRefused is the check the two approvals share, under the code a
+// wrong password is refused with on this screen. What it does is in auth.go.
 func (h *Handler) accountPasswordRefused(c echo.Context, password string) *refusal {
-	userID, ok := c.Get(contextUserIDKey).(uint)
-	if !ok {
-		// The middleware is what puts it there, so getting here means the
-		// route was hung somewhere the middleware does not cover.
-		h.logger.Error("a call that asks for the password of the account was reached with no account "+
-			"on the context", logid.AccountReadNoAccountOnContext.Field())
-
-		return refuse(http.StatusInternalServerError, errAccountReadFailed)
-	}
-
-	var user models.User
-
-	err := h.db.First(&user, userID).Error
-	if err != nil {
-		h.logger.Error("failed to read the account", logid.AccountReadFailed.Field(), zap.Error(err))
-
-		return refuse(http.StatusInternalServerError, errAccountReadFailed)
-	}
-
-	if !auth.CheckPassword(user.PasswordHash, password) {
-		return refuse(http.StatusUnauthorized, errHostKeyPasswordWrong)
-	}
-
-	return nil
+	return accountPasswordRefused(c, h.db, h.logger, password, errHostKeyPasswordWrong)
 }
