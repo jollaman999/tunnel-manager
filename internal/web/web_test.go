@@ -659,6 +659,46 @@ func TestCatalogValuesCarryNoMarkup(t *testing.T) {
 	}
 }
 
+// TestCatalogValuesCarryNoDirectionMarks keeps the laying out of a sentence in
+// one place. app.js writes every value it fills in between FIRST STRONG ISOLATE
+// and POP DIRECTIONAL ISOLATE, which is what keeps the slash of a path from
+// being carried to the far end of a sentence on a page that reads right to
+// left; a translator who reached for a mark of their own would be working
+// against that, and the marks are drawn as nothing, so nobody reviewing the
+// file would see them.
+//
+// Every character the standard calls an explicit formatting character is
+// listed, the overrides and embeddings as well as the isolates, along with the
+// three implicit marks. None of them belongs in a value: the run they would
+// wrap is not in the value, it is the value.
+func TestCatalogValuesCarryNoDirectionMarks(t *testing.T) {
+	marks := map[rune]string{
+		'\u200e': "LEFT-TO-RIGHT MARK",
+		'\u200f': "RIGHT-TO-LEFT MARK",
+		'\u061c': "ARABIC LETTER MARK",
+		'\u202a': "LEFT-TO-RIGHT EMBEDDING",
+		'\u202b': "RIGHT-TO-LEFT EMBEDDING",
+		'\u202c': "POP DIRECTIONAL FORMATTING",
+		'\u202d': "LEFT-TO-RIGHT OVERRIDE",
+		'\u202e': "RIGHT-TO-LEFT OVERRIDE",
+		'\u2066': "LEFT-TO-RIGHT ISOLATE",
+		'\u2067': "RIGHT-TO-LEFT ISOLATE",
+		'\u2068': "FIRST STRONG ISOLATE",
+		'\u2069': "POP DIRECTIONAL ISOLATE",
+	}
+
+	for _, code := range catalogCodes {
+		for key, value := range readCatalog(t, code) {
+			for _, found := range value {
+				name, marked := marks[found]
+				if marked {
+					t.Errorf("%s catalog: %q carries %s (U+%04X), which app.js and not the catalog puts round a value", code, key, name, found)
+				}
+			}
+		}
+	}
+}
+
 // TestPlaceholdersAreNamedAndKnown holds the fill-ins of a translation to the
 // ones the English string has.
 //

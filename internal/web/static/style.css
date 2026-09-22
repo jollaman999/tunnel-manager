@@ -1392,6 +1392,28 @@ td.actions {
    scroller keeps the page from moving sideways, nothing of the line is readable
    without dragging it. So the message wraps, and it wraps inside a word where
    there is no other place to do it. */
+/* What a machine wrote is laid out the way a machine wrote it.
+
+   A log line, the sentence an SSH library raised, a caller and a fingerprint
+   are not in the language of the page: they are ASCII with brackets, colons,
+   quotes and slashes in them, and those characters carry no direction of their
+   own. On a page that reads right to left they are handed the direction of the
+   page, and a line of JSON comes apart - the brace that opened it is drawn at
+   the end of the line and the quote that closed it at the start.
+
+   direction says which way the run is laid out and isolate keeps that decision
+   from reaching the sentence around it, which is the same pair of rules app.js
+   puts round a value it writes into a translated sentence. */
+.log-message,
+.log-extra,
+.log-caller,
+.last-error,
+.fingerprint {
+  direction: ltr;
+  unicode-bidi: isolate;
+  text-align: start;
+}
+
 .log-message {
   white-space: pre-wrap;
   overflow-wrap: anywhere;

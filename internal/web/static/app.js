@@ -174,6 +174,28 @@ const langPath = "/ui/lang/";
 // sentence that renamed them would be a second list to keep in step.
 const placeholder = /\{([a-z][a-z0-9_]*)\}/g;
 
+// isolateOpen and isolateClose are what a value is written between. A value put
+// into a sentence is a run of its own, and the characters at the edges of it are
+// often of no direction: a path opens with a slash, an address closes with a
+// port after a colon, a version opens with a v. A character of no direction is
+// drawn in the direction of what surrounds it, so on a page that reads right to
+// left the slash of /var/log/tunnel-manager.log is carried to the far end of the
+// sentence and the path is read on the screen as var/log/tunnel-manager.log/.
+//
+// FIRST STRONG ISOLATE opens a run whose direction is worked out from the run
+// itself and POP DIRECTIONAL ISOLATE closes it, so what is between them is laid
+// out as the value it is and is put into the sentence as one piece. Isolates and
+// not the embedding marks, because neither side can see through an isolate:
+// the sentence does not pull the value about and the value does not pull the
+// sentence about.
+//
+// They are written whatever language the page is in. A page that reads left to
+// right has the same trouble the other way round, since a Host described in
+// Arabic is a right to left run inside an English sentence, and a rule that
+// holds everywhere is one rule instead of two to keep in step.
+const isolateOpen = "\u2068";
+const isolateClose = "\u2069";
+
 // versionPath is where the number in the corner is read from. It is served from
 // under /ui/ rather than from /api/, so the login screen, which has no session
 // yet, can show it too.
@@ -2551,6 +2573,12 @@ function setUpTheme() {
 // What comes back is a string and is put on the page with textContent, which is
 // the rule everything here follows. Nothing in a catalog is ever markup, so a
 // translation cannot bring an element with it.
+//
+// A string that had a value written into it carries the isolates that value was
+// written between. They are characters of the string and not markup: they are
+// drawn as nothing and they are counted in its length. A string that is to be
+// held against another string is therefore fetched with no values, which is
+// what the two places that compare one do.
 function t(key, values) {
   let template = entry(texts, key);
 
@@ -2574,7 +2602,15 @@ function t(key, values) {
       return whole;
     }
 
-    return String(values[name]);
+    const value = String(values[name]);
+
+    // A value that is nothing has no direction to hold apart, and the marks put
+    // round it would be two characters nobody can see and nobody asked for.
+    if (value === "") {
+      return value;
+    }
+
+    return isolateOpen + value + isolateClose;
   });
 }
 
