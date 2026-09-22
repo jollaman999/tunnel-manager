@@ -51,36 +51,12 @@ type Host struct {
 	// Neither carries "not null". The columns are added to installations
 	// whose rows were written before they existed, and AutoMigrate fills
 	// those with NULL, the way it did for Tunnel.ServerBanner below.
-	HostKey        string `json:"host_key"`
-	PendingHostKey string `json:"pending_host_key"`
-	// BindAddress is the address on this Host the ports forwarded to it are
-	// asked to be opened on. It belongs to the Host rather than to a service
-	// port because it is a fact about this machine: which interfaces it has,
-	// and which of them a forwarded port may be reached over, is answered here
-	// and nowhere else. The same service port carried by three Hosts is three
-	// listeners on three machines, and one of them being the only one with an
-	// interface facing a network nobody else should reach in over is a reason
-	// to answer it differently on that one.
-	//
-	// An empty value means 0.0.0.0, and that is what a row written before the
-	// column existed holds: AutoMigrate adds the column and leaves what is
-	// already stored alone. Reading the empty value as anything narrower would
-	// take reach away from tunnels that are running, which is a change nobody
-	// asked for made by a startup.
-	//
-	// What the address does is up to the SSH server, the way the wildcard
-	// always was. OpenSSH with GatewayPorts off binds loopback whatever is
-	// asked for, and with GatewayPorts clientspecified it binds what is asked
-	// for; between those two there is no answer this end can give about where
-	// the listener really is, which is why the reach is measured rather than
-	// declared (Tunnel.ForwardReach).
-	//
-	// It carries no "not null" for the reason the two keys above do not.
-	BindAddress string    `json:"bind_address"`
-	Description string    `json:"description"`
-	Enabled     bool      `json:"enabled"`
-	CreatedAt   time.Time `json:"created_at"`
-	UpdatedAt   time.Time `json:"updated_at"`
+	HostKey        string    `json:"host_key"`
+	PendingHostKey string    `json:"pending_host_key"`
+	Description    string    `json:"description"`
+	Enabled        bool      `json:"enabled"`
+	CreatedAt      time.Time `json:"created_at"`
+	UpdatedAt      time.Time `json:"updated_at"`
 }
 
 type ServicePort struct {
@@ -92,6 +68,23 @@ type ServicePort struct {
 	CreatedAt   time.Time `json:"created_at"`
 	UpdatedAt   time.Time `json:"updated_at"`
 }
+
+// BindScopeLoopback and BindScopeWildcard are the two answers an assignment
+// may carry about where its forwarded port is opened. Each names a pair of
+// addresses rather than one, because the two address families do not stand in
+// for each other: a port opened on 127.0.0.1 is not reached by a client that
+// connects to ::1, and the same holds for the two wildcards. Whoever chose a
+// scope chose it for the machine and not for one family of addresses, so both
+// are asked for and whichever the far side refuses is reported afterwards.
+//
+// They are stored as these words rather than as the addresses themselves so
+// that the stored row says what was chosen. An address would have to be read
+// back into one of these two anyway, and a row holding an address that is
+// neither, which is what a hand-written value would be, has no answer.
+const (
+	BindScopeLoopback = "loopback"
+	BindScopeWildcard = "wildcard"
+)
 
 // HostServicePort is one assignment: this Host is to carry this service port.
 // The pair is the whole of the row, so the two columns are the primary key
@@ -106,6 +99,37 @@ type ServicePort struct {
 type HostServicePort struct {
 	HostID uint `gorm:"primaryKey;not null" json:"host_id"`
 	SPID   uint `gorm:"primaryKey;not null" json:"sp_id"`
+	// BindScope is where on the Host the forwarded port of this assignment is
+	// asked to be opened: BindScopeLoopback asks for the loopback addresses
+	// and BindScopeWildcard for the wildcards.
+	//
+	// It is called a scope rather than a reach because Tunnel.ForwardReach is
+	// already the other half of the question. That one is what a connection
+	// found afterwards, measured; this one is what was asked for before
+	// anything was measured, and the two want names that are not read as one.
+	//
+	// It sits on the assignment because the Host and the service port both
+	// have a say in it. One Host carries several service ports, and one of
+	// those may be meant for that machine alone while the next is to be
+	// reached from elsewhere; one service port is carried by several Hosts,
+	// and only some of them face a network nobody else should reach in over.
+	// Either end alone forces one answer on the other, and the pair is the
+	// smallest row that can hold both.
+	//
+	// An empty value means BindScopeWildcard, which is what every row written
+	// before the column existed holds: AutoMigrate adds the column and leaves
+	// what is stored alone. Reading the empty value as the loopback instead
+	// would take reach away from every tunnel that is running, on a startup
+	// that was asked for nothing of the sort.
+	//
+	// The rule is a constraint on the column so that the database refuses a
+	// value that is neither, the way it refuses the same assignment twice.
+	// Assignments are written as model values from several places rather than
+	// bound from one request, so a rule carried by a request struct would
+	// leave most of those writers outside it. The two words are spelled again
+	// in the tag because a struct tag holds text and not an expression, and
+	// the empty value is among them because that is the wildcard.
+	BindScope string `gorm:"check:chk_host_service_ports_bind_scope,bind_scope IN ('','loopback','wildcard')" json:"bind_scope"`
 	// CreatedAt records when the assignment was made. There is no UpdatedAt
 	// beside it because an assignment has nothing to change: both of its
 	// columns are the key, so it is written or it is removed.
@@ -173,14 +197,7 @@ type CreateHostRequest struct {
 	Password      string `json:"password" validate:"omitempty"`
 	PrivateKey    string `json:"private_key" validate:"omitempty"`
 	KeyPassphrase string `json:"key_passphrase" validate:"omitempty"`
-	// BindAddress is omitempty and not required, because leaving it out is how
-	// a caller asks for the wildcard and is what every request written before
-	// the field existed does. What it does hold has to be an address: a name
-	// would be resolved on the Host, by an sshd that is given the string as it
-	// stands, so a request naming one would be stored here and refused over
-	// there, one connection at a time, with nothing on this end saying why.
-	BindAddress string `json:"bind_address" validate:"omitempty,ip"`
-	Description string `json:"description"`
+	Description   string `json:"description"`
 	// Enabled is a pointer so that a Host asked for as disabled can be told
 	// from one that did not mention it. A plain bool cannot say the difference,
 	// and the two mean different things: the second one is enabled.
@@ -207,13 +224,8 @@ type UpdateHostRequest struct {
 	Password      string `json:"password" validate:"omitempty"`
 	PrivateKey    string `json:"private_key" validate:"omitempty"`
 	KeyPassphrase string `json:"key_passphrase" validate:"omitempty"`
-	// BindAddress left out keeps the address that is stored, which is the rule
-	// the rest of this struct is under. It costs nothing here: the wildcard is
-	// asked for by naming 0.0.0.0, which reaches exactly what the empty value
-	// reaches, so no address a Host can be put on is out of reach of an update.
-	BindAddress string `json:"bind_address" validate:"omitempty,ip"`
-	Description string `json:"description"`
-	Enabled     *bool  `json:"enabled"`
+	Description   string `json:"description"`
+	Enabled       *bool  `json:"enabled"`
 }
 
 type CreateServicePortRequest struct {

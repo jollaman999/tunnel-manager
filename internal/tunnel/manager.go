@@ -369,20 +369,8 @@ const defaultBindAddress = "0.0.0.0"
 // JoinHostPort puts the brackets in, giving "[2001:db8::1]:22". The local
 // address goes through it too, since ::1 is one of the addresses a Host may be
 // asked to bind.
-//
-// The local address is read off the Host and not off the service port, because
-// it is an address over there: it names an interface of that machine, so the
-// same service port carried by two Hosts is asked for on whatever each of them
-// was given. Nothing here resolves it or holds it against an interface of this
-// machine. A Host that names none is asked for on the wildcard, which is what
-// every forward was asked for before the address could be chosen.
 func tunnelAddresses(host *models.Host, sp *models.ServicePort) (local, server, remote string) {
-	bind := host.BindAddress
-	if bind == "" {
-		bind = defaultBindAddress
-	}
-
-	return net.JoinHostPort(bind, strconv.Itoa(sp.LocalPort)),
+	return net.JoinHostPort(defaultBindAddress, strconv.Itoa(sp.LocalPort)),
 		net.JoinHostPort(host.IP, strconv.Itoa(host.Port)),
 		net.JoinHostPort(sp.ServiceIP, strconv.Itoa(sp.ServicePort))
 }

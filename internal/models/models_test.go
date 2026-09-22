@@ -247,96 +247,187 @@ func TestTunnelMigrationKeepsTheRowsThatWereThere(t *testing.T) {
 // oldHost is Host as it stood before the address the forwarded ports are opened
 // on could be chosen. It is what the hosts table of an installation migrated by
 // an earlier release looks like.
-type oldHost struct {
-	ID             uint   `gorm:"primaryKey;autoIncrement"`
-	IP             string `gorm:"uniqueIndex:idx_hosts_ip;not null"`
-	Port           int    `gorm:"not null"`
-	User           string `gorm:"not null"`
-	Password       string
-	PrivateKey     string
-	KeyPassphrase  string
-	HostKey        string
-	PendingHostKey string
-	Description    string
-	Enabled        bool
-	CreatedAt      time.Time
-	UpdatedAt      time.Time
+// oldHostServicePort is the assignment table as the releases before this one
+// built it: the pair that is the key and the time it was made, and nothing
+// about where the forwarded port of the pair is opened. It is written out here
+// rather than migrated from the model, which carries the column now, because
+// the shape it left behind is what a running installation holds.
+type oldHostServicePort struct {
+	HostID    uint `gorm:"primaryKey;not null"`
+	SPID      uint `gorm:"primaryKey;not null"`
+	CreatedAt time.Time
 }
 
-func (oldHost) TableName() string {
-	return "hosts"
+func (oldHostServicePort) TableName() string {
+	return "host_service_ports"
 }
 
-// TestHostMigrationLeavesTheStoredRowsWhereTheyWere is what keeps an upgrade
-// from changing how far a running tunnel reaches.
-//
-// The column is added to a table that is in use, and a row written before it
-// existed comes through holding nothing. Nothing has to go on meaning the
-// wildcard, which is what those rows were already being forwarded on, so the
-// column carries no NOT NULL and no default and nothing rewrites what is
-// stored: an installation that upgrades and never touches a Host opens exactly
-// the ports it opened before.
-func TestHostMigrationLeavesTheStoredRowsWhereTheyWere(t *testing.T) {
+// newAssignmentTable opens a database holding the assignments alone. The two
+// tables the pair points at are not there, because nothing in this file asks
+// the database to follow the pair to a row: what is under test is the column
+// the assignment carries.
+func newAssignmentTable(t *testing.T) *gorm.DB {
+	t.Helper()
+
 	db, err := gorm.Open(sqlite.Open(filepath.Join(t.TempDir(), "tm.db")), &gorm.Config{})
 	if err != nil {
 		t.Fatalf("failed to open the database: %v", err)
 	}
 
-	err = db.AutoMigrate(&oldHost{})
+	err = db.AutoMigrate(&HostServicePort{})
+	if err != nil {
+		t.Fatalf("failed to build the table: %v", err)
+	}
+
+	return db
+}
+
+// storedBindScope is what the table holds for one assignment.
+func storedBindScope(t *testing.T, db *gorm.DB, hostID, spID uint) string {
+	t.Helper()
+
+	var stored HostServicePort
+	err := db.Where("host_id = ? AND sp_id = ?", hostID, spID).First(&stored).Error
+	if err != nil {
+		t.Fatalf("failed to read the assignment of host %d with service port %d: %v", hostID, spID, err)
+	}
+
+	return stored.BindScope
+}
+
+// TestAnAssignmentIsOpenToEverythingUntilItIsToldOtherwise is what keeps an
+// upgrade from changing how far a running tunnel reaches.
+//
+// The column is added to a table that is in use, and a row written before it
+// existed comes through holding nothing. Nothing has to go on meaning the
+// wildcard, which is what those rows were already being forwarded on, so the
+// column carries no NOT NULL and no default and nothing rewrites what is
+// stored: an installation that upgrades and touches no assignment opens
+// exactly the ports it opened before.
+func TestAnAssignmentIsOpenToEverythingUntilItIsToldOtherwise(t *testing.T) {
+	db, err := gorm.Open(sqlite.Open(filepath.Join(t.TempDir(), "tm.db")), &gorm.Config{})
+	if err != nil {
+		t.Fatalf("failed to open the database: %v", err)
+	}
+
+	err = db.AutoMigrate(&oldHostServicePort{})
 	if err != nil {
 		t.Fatalf("failed to build the table as it was: %v", err)
 	}
 
-	before := oldHost{
-		IP:          "198.51.100.20",
-		Port:        22,
-		User:        "someone",
-		Password:    "sealed", // hook:allow
-		Description: "a Host",
-		Enabled:     true,
-	}
+	before := oldHostServicePort{HostID: 1, SPID: 2, CreatedAt: time.Now().UTC()}
 
 	err = db.Create(&before).Error
 	if err != nil {
 		t.Fatalf("failed to write a row of the table as it was: %v", err)
 	}
 
-	err = db.AutoMigrate(&Host{})
+	err = db.AutoMigrate(&HostServicePort{})
 	if err != nil {
 		t.Fatalf("failed to migrate the table: %v", err)
 	}
 
-	var after Host
-	err = db.First(&after, before.ID).Error
+	var after HostServicePort
+	err = db.Where("host_id = ? AND sp_id = ?", before.HostID, before.SPID).First(&after).Error
 	if err != nil {
 		t.Fatalf("the row that was there before the migration cannot be read: %v", err)
 	}
 
-	if after.IP != before.IP || after.Port != before.Port || after.User != before.User ||
-		after.Password != before.Password || after.Description != before.Description ||
-		after.Enabled != before.Enabled {
-		t.Fatalf("the migration changed the row that was there: %+v", after)
+	if after.BindScope != "" {
+		t.Fatalf("a row written before the column carries the bind scope %q, "+
+			"so the migration narrowed a tunnel that is running", after.BindScope)
 	}
 
-	if after.BindAddress != "" {
-		t.Fatalf("a row written before the column carries the bind address %q", after.BindAddress)
-	}
-
-	after.BindAddress = "127.0.0.1"
-
-	err = db.Save(&after).Error
+	// An assignment made now and asked nothing about the scope is the same
+	// wildcard. That is every caller written before the column existed.
+	err = db.Create(&HostServicePort{HostID: 3, SPID: 4}).Error
 	if err != nil {
-		t.Fatalf("failed to write a bind address to the migrated row: %v", err)
+		t.Fatalf("an assignment that names no bind scope was refused: %v", err)
 	}
 
-	var stored Host
-	err = db.First(&stored, before.ID).Error
-	if err != nil {
-		t.Fatalf("failed to read the migrated row back: %v", err)
+	if scope := storedBindScope(t, db, 3, 4); scope != "" {
+		t.Fatalf("an assignment that names no bind scope was stored as %q", scope)
+	}
+}
+
+// TestOneHostOpensItsServicePortsDifferently is half of why the scope is on the
+// assignment. One Host carries several service ports, and one of them may
+// belong to that machine alone while the next is to be reached from elsewhere.
+func TestOneHostOpensItsServicePortsDifferently(t *testing.T) {
+	db := newAssignmentTable(t)
+
+	for _, assignment := range []HostServicePort{
+		{HostID: 1, SPID: 1, BindScope: BindScopeLoopback},
+		{HostID: 1, SPID: 2, BindScope: BindScopeWildcard},
+	} {
+		err := db.Create(&assignment).Error
+		if err != nil {
+			t.Fatalf("the assignment of service port %d was refused: %v", assignment.SPID, err)
+		}
 	}
 
-	if stored.BindAddress != "127.0.0.1" {
-		t.Fatalf("the bind address did not survive being stored: %q", stored.BindAddress)
+	if scope := storedBindScope(t, db, 1, 1); scope != BindScopeLoopback {
+		t.Fatalf("the first service port of the Host is open to %q, want %q", scope, BindScopeLoopback)
+	}
+	if scope := storedBindScope(t, db, 1, 2); scope != BindScopeWildcard {
+		t.Fatalf("the second service port of the Host is open to %q, want %q", scope, BindScopeWildcard)
+	}
+}
+
+// TestOneServicePortIsOpenedDifferentlyOnTwoHosts is the other half. The same
+// service port is carried by several Hosts, and only some of them face a
+// network nobody else should reach in over.
+func TestOneServicePortIsOpenedDifferentlyOnTwoHosts(t *testing.T) {
+	db := newAssignmentTable(t)
+
+	for _, assignment := range []HostServicePort{
+		{HostID: 1, SPID: 1, BindScope: BindScopeLoopback},
+		{HostID: 2, SPID: 1, BindScope: BindScopeWildcard},
+	} {
+		err := db.Create(&assignment).Error
+		if err != nil {
+			t.Fatalf("the assignment on host %d was refused: %v", assignment.HostID, err)
+		}
+	}
+
+	if scope := storedBindScope(t, db, 1, 1); scope != BindScopeLoopback {
+		t.Fatalf("the service port on the first Host is open to %q, want %q", scope, BindScopeLoopback)
+	}
+	if scope := storedBindScope(t, db, 2, 1); scope != BindScopeWildcard {
+		t.Fatalf("the service port on the second Host is open to %q, want %q", scope, BindScopeWildcard)
+	}
+}
+
+// TestABindScopeThatIsNeitherIsRefused pins that the rule is in the database
+// rather than in whatever was about to write the row. Assignments are written
+// as model values from several places, and a value that is neither of the two
+// words has no answer to the question of which addresses to ask for: it would
+// sit in the table until a tunnel is built and be read then, by something with
+// nothing to do but guess.
+func TestABindScopeThatIsNeitherIsRefused(t *testing.T) {
+	db := newAssignmentTable(t)
+
+	refused := []string{
+		// An address is what the release before this one stored, one Host at a
+		// time. The column holds what was chosen and not an address.
+		"127.0.0.1",
+		"0.0.0.0",
+		"LOOPBACK",
+		"anywhere",
+	}
+
+	for i, scope := range refused {
+		err := db.Create(&HostServicePort{HostID: uint(i + 1), SPID: 1, BindScope: scope}).Error
+		if err == nil {
+			t.Fatalf("an assignment was stored with the bind scope %q", scope)
+		}
+	}
+
+	for i, scope := range []string{"", BindScopeLoopback, BindScopeWildcard} {
+		err := db.Create(&HostServicePort{HostID: uint(i + 10), SPID: 1, BindScope: scope}).Error
+		if err != nil {
+			t.Fatalf("an assignment with the bind scope %q was refused: %v", scope, err)
+		}
 	}
 }
 

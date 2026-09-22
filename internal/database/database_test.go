@@ -1392,6 +1392,216 @@ func TestTheAssignmentsAreWrittenInBatches(t *testing.T) {
 	}
 }
 
+// newDatabaseFromTheHostBindAddress builds the database of an installation
+// running the release that kept one bind address per Host: the hosts table
+// carries the column, and the assignments carry nothing about where their
+// forwarded port is opened. It is written out in SQL rather than migrated from
+// the models, because the column is gone from the source and the shape it left
+// behind is what such an installation holds.
+//
+// Each Host is given one bind address and the assignments named beside it.
+func newDatabaseFromTheHostBindAddress(t *testing.T, hosts map[uint]string, assignments [][2]uint) string {
+	t.Helper()
+
+	path := filepath.Join(t.TempDir(), "state", "tunnel-manager.db")
+
+	err := os.MkdirAll(filepath.Dir(path), 0755)
+	if err != nil {
+		t.Fatalf("failed to create the directory of the database: %v", err)
+	}
+
+	old, err := gorm.Open(sqlite.Open(path), &gorm.Config{Logger: gormlogger.Discard})
+	if err != nil {
+		t.Fatalf("failed to open the database: %v", err)
+	}
+
+	statements := []string{
+		"CREATE TABLE `hosts` (`id` integer PRIMARY KEY AUTOINCREMENT," +
+			"`ip` text NOT NULL,`port` integer NOT NULL,`user` text NOT NULL," +
+			"`password` text,`private_key` text,`key_passphrase` text," +
+			"`host_key` text,`pending_host_key` text,`bind_address` text," +
+			"`description` text,`enabled` numeric,`created_at` datetime,`updated_at` datetime)",
+		"CREATE UNIQUE INDEX `idx_hosts_ip` ON `hosts`(`ip`)",
+		"CREATE TABLE `host_service_ports` (`host_id` integer NOT NULL," +
+			"`sp_id` integer NOT NULL,`created_at` datetime," +
+			"PRIMARY KEY (`host_id`,`sp_id`))",
+	}
+
+	for _, sql := range statements {
+		err = old.Exec(sql).Error
+		if err != nil {
+			t.Fatalf("failed to build the tables as they were: %v", err)
+		}
+	}
+
+	ids := make([]uint, 0, len(hosts))
+	for id := range hosts {
+		ids = append(ids, id)
+	}
+	sort.Slice(ids, func(i, j int) bool { return ids[i] < ids[j] })
+
+	for _, id := range ids {
+		err = old.Exec("INSERT INTO `hosts` (`id`,`ip`,`port`,`user`,`password`,`bind_address`,"+
+			"`enabled`,`created_at`,`updated_at`) VALUES (?,?,22,'operator',"+
+			"'tmenc:v1:the-sealed-password-of-the-test',?,true,"+
+			"'2026-09-01 00:00:00','2026-09-01 00:00:00')",
+			id, fmt.Sprintf("192.0.2.%d", id), hosts[id]).Error
+		if err != nil {
+			t.Fatalf("failed to store the Host %d: %v", id, err)
+		}
+	}
+
+	for _, pair := range assignments {
+		err = old.Exec("INSERT INTO `host_service_ports` (`host_id`,`sp_id`,`created_at`) "+
+			"VALUES (?,?,'2026-09-01 00:00:00')", pair[0], pair[1]).Error
+		if err != nil {
+			t.Fatalf("failed to store the assignment %d:%d: %v", pair[0], pair[1], err)
+		}
+	}
+
+	sqlDB, err := old.DB()
+	if err != nil {
+		t.Fatalf("failed to reach the connection pool: %v", err)
+	}
+	err = sqlDB.Close()
+	if err != nil {
+		t.Fatalf("failed to close the old handle: %v", err)
+	}
+
+	return path
+}
+
+// storedBindScopes returns what every assignment is open to, read with SQL so
+// that the test says what is in the table. A row that was never written to
+// holds NULL, which the model reads as the empty value, and both mean the
+// wildcard.
+func storedBindScopes(t *testing.T, db *gorm.DB) []string {
+	t.Helper()
+
+	var scopes []string
+	err := db.Raw("SELECT host_id || ':' || sp_id || '=' || COALESCE(bind_scope,'') " +
+		"FROM host_service_ports ORDER BY host_id, sp_id").Scan(&scopes).Error
+	if err != nil {
+		t.Fatalf("failed to read the bind scopes: %v", err)
+	}
+
+	return scopes
+}
+
+// TestTheHostBindAddressIsCarriedOntoEveryAssignmentOfThatHost is the upgrade
+// of an installation that pinned a Host to loopback. The answer used to be one
+// per Host and is now one per assignment, and a startup that added the column
+// and stopped there would hand that Host back to every interface it has,
+// without anybody asking for it.
+//
+// A Host that was on a wildcard, on an address of one of its interfaces, or on
+// nothing at all comes out on the wildcard, which is what the empty value in
+// the new column already means, so nothing is written for those.
+func TestTheHostBindAddressIsCarriedOntoEveryAssignmentOfThatHost(t *testing.T) {
+	path := newDatabaseFromTheHostBindAddress(t,
+		map[uint]string{
+			1: "127.0.0.1",
+			2: "::1",
+			3: "0.0.0.0",
+			// An address of one interface of the machine. It is no longer
+			// something that can be asked for, and what is left of it is that
+			// it was not the loopback.
+			4: "198.51.100.9",
+			5: "",
+		},
+		[][2]uint{{1, 1}, {1, 2}, {2, 1}, {3, 1}, {4, 1}, {5, 1}},
+	)
+
+	core, _ := observer.New(zapcore.DebugLevel)
+
+	db, _, err := NewDatabase(path, zap.New(core), "error")
+	if err != nil {
+		t.Fatalf("the migration failed: %v", err)
+	}
+
+	want := []string{"1:1=loopback", "1:2=loopback", "2:1=loopback", "3:1=", "4:1=", "5:1="}
+	got := storedBindScopes(t, db)
+
+	if strings.Join(got, ",") != strings.Join(want, ",") {
+		t.Fatalf("the assignments are open to %v, want %v", got, want)
+	}
+
+	// What the operator does next: one of the two assignments of the Host that
+	// was on loopback is opened to everything.
+	err = db.Model(&models.HostServicePort{}).Where("host_id = ? AND sp_id = ?", 1, 1).
+		Update("bind_scope", models.BindScopeWildcard).Error
+	if err != nil {
+		t.Fatalf("failed to open an assignment to everything: %v", err)
+	}
+
+	sqlDB, err := db.DB()
+	if err != nil {
+		t.Fatalf("failed to reach the connection pool: %v", err)
+	}
+	err = sqlDB.Close()
+	if err != nil {
+		t.Fatalf("failed to close the handle: %v", err)
+	}
+
+	// The column the old answer is read from is still there, so the startup
+	// that follows has everything it needs to run the move again. It must not:
+	// the answer on the Host is stale from the moment the first startup carried
+	// it over, and writing it a second time takes back what was chosen since.
+	second, _, err := NewDatabase(path, zap.New(core), "error")
+	if err != nil {
+		t.Fatalf("the second startup failed: %v", err)
+	}
+	t.Cleanup(func() {
+		sqlDB, err := second.DB()
+		if err == nil {
+			_ = sqlDB.Close()
+		}
+	})
+
+	want = []string{"1:1=wildcard", "1:2=loopback", "2:1=loopback", "3:1=", "4:1=", "5:1="}
+	got = storedBindScopes(t, second)
+
+	if strings.Join(got, ",") != strings.Join(want, ",") {
+		t.Fatalf("after the second startup the assignments are open to %v, want %v", got, want)
+	}
+}
+
+// TestAnUpgradeFromBeforeTheHostBindAddressCarriesNothing is the other kind of
+// installation upgrading: one from a release that never stored a bind address
+// at all. There is no column to read, and the startup has to come up as it
+// always did rather than fail over a column that is not there.
+func TestAnUpgradeFromBeforeTheHostBindAddressCarriesNothing(t *testing.T) {
+	path := newDatabaseFromBefore(t,
+		[]models.Host{
+			{IP: "192.0.2.10", Port: 22, User: "operator", Enabled: true},
+			{IP: "192.0.2.11", Port: 22, User: "operator", Enabled: true},
+		},
+		[]models.ServicePort{
+			{ServiceIP: "198.51.100.20", ServicePort: 8080, LocalPort: 18080},
+		},
+	)
+
+	core, _ := observer.New(zapcore.DebugLevel)
+
+	db, _, err := NewDatabase(path, zap.New(core), "error")
+	if err != nil {
+		t.Fatalf("the migration failed: %v", err)
+	}
+	t.Cleanup(func() {
+		sqlDB, err := db.DB()
+		if err == nil {
+			_ = sqlDB.Close()
+		}
+	})
+
+	want := []string{"1:1=", "2:1="}
+	got := storedBindScopes(t, db)
+
+	if strings.Join(got, ",") != strings.Join(want, ",") {
+		t.Fatalf("the assignments are open to %v, want %v", got, want)
+	}
+}
+
 // theHashOfTheTest stands in for what the account table holds. It is written
 // out rather than produced with bcrypt so that the test names the very string
 // it then looks for, and so that the check does not depend on the hashing

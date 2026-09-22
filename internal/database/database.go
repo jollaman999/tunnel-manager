@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -397,6 +398,69 @@ func fillHostServicePorts(db *gorm.DB, logger *zap.Logger) error {
 	return nil
 }
 
+// hostBindAddressColumn is the column the release before this one kept the
+// answer in, back when it was one answer for the whole Host. It is written out
+// here rather than read off models.Host, which no longer carries the field:
+// gorm adds columns and never removes them, so the column is what a running
+// installation of that release holds and this is the only name left for it.
+//
+// bindScopeColumn is where the answer lives now, on the assignment. Whether it
+// is already there is how an upgrade is told from a restart.
+const (
+	hostBindAddressColumn = "bind_address"
+	bindScopeColumn       = "bind_scope"
+)
+
+// fillBindScopes carries the answer of the release before this one onto the
+// assignments of the Host it was stored on.
+//
+// It runs on the startup that adds the column to the assignments and on no
+// other. A later pass would write the Host-wide answer over whatever has been
+// chosen per assignment since, and the whole point of the column is that the
+// assignments of one Host may differ.
+//
+// Only the Hosts that were bound to a loopback address are written. Every
+// other answer, the empty one and an address of some interface of the machine
+// among them, comes out as the wildcard, which is what the empty value in the
+// new column already means, so those rows are left as they are. What must not
+// happen is the other direction: a Host that was pinned to loopback coming back
+// from an upgrade open to everything, which is reach handed out by a startup
+// rather than by a person.
+func fillBindScopes(db *gorm.DB) error {
+	type hostBindAddress struct {
+		ID          uint
+		BindAddress string
+	}
+
+	var stored []hostBindAddress
+	err := db.Model(&models.Host{}).Select("id", hostBindAddressColumn).Scan(&stored).Error
+	if err != nil {
+		return fmt.Errorf("failed to read the bind addresses of the hosts: %w", err)
+	}
+
+	loopback := make([]uint, 0, len(stored))
+	for _, host := range stored {
+		address := net.ParseIP(host.BindAddress)
+		if address == nil || !address.IsLoopback() {
+			continue
+		}
+
+		loopback = append(loopback, host.ID)
+	}
+
+	if len(loopback) == 0 {
+		return nil
+	}
+
+	err = db.Model(&models.HostServicePort{}).Where("host_id IN ?", loopback).
+		Update(bindScopeColumn, models.BindScopeLoopback).Error
+	if err != nil {
+		return fmt.Errorf("failed to carry the bind addresses onto the service port assignments: %w", err)
+	}
+
+	return nil
+}
+
 // NewDatabase opens the database file and hands back the handle its logger
 // follows along with it. The caller holds that handle so that the level can be
 // put right once the stored settings are read, which is after this returns:
@@ -469,6 +533,15 @@ func NewDatabase(path string, logger *zap.Logger, logLevel string) (*gorm.DB, *L
 	// decides is below.
 	hadAssignments := db.Migrator().HasTable(&models.HostServicePort{})
 
+	// Where the bind scope has to come from is asked here for the same reason.
+	// After AutoMigrate the assignments carry the column whatever the file held
+	// a moment ago, so this is the last point at which an installation coming
+	// from the release that stored the answer on the Host can be told from one
+	// that has been running with the column for a while. An installation from
+	// before that release has no such column to read and is passed over here.
+	carriesHostBindAddress := db.Migrator().HasColumn(&models.Host{}, hostBindAddressColumn) &&
+		!db.Migrator().HasColumn(&models.HostServicePort{}, bindScopeColumn)
+
 	err = db.AutoMigrate(
 		&models.Host{},
 		&models.ServicePort{},
@@ -498,6 +571,18 @@ func NewDatabase(path string, logger *zap.Logger, logLevel string) (*gorm.DB, *L
 
 	if !hadAssignments {
 		err = fillHostServicePorts(db, logger)
+		if err != nil {
+			return nil, nil, err
+		}
+	}
+
+	// This follows the fill above rather than leading it, so that assignments
+	// made a moment ago by an upgrade are given the answer of their Host as
+	// well. An installation that reaches both of these is one that stored
+	// neither the assignments nor a scope, and its tunnels are as open as its
+	// Hosts were.
+	if carriesHostBindAddress {
+		err = fillBindScopes(db)
 		if err != nil {
 			return nil, nil, err
 		}
