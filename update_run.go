@@ -159,21 +159,18 @@ func runUpdateChecks(ctx context.Context, logger *zap.Logger, db *gorm.DB,
 
 		last = time.Now()
 
-		result := handler.Look(ctx)
+		handler.Look(ctx)
 
 		// Only a release that was read, that compares, and that compares as
-		// newer starts an install. A check that failed and a version that could
-		// not be compared both fall through here, which is the whole of why
-		// Latest carries the two apart.
-		if !installable || !set.UpdateAutoInstall || result.Problem != "" ||
-			!result.Comparable || !result.Newer {
+		// newer starts an install. Those three are asked as one question, in
+		// NewerAvailable, so that this call site cannot drop one of them.
+		if !installable || !set.UpdateAutoInstall || !handler.NewerAvailable() {
 			continue
 		}
 
 		logger.Warn("a newer release is being installed because the settings ask for it. This "+
 			"service is restarted at the end of it, which takes every tunnel down",
-			logid.UpdateAutoInstallStarting.Field(),
-			zap.String("latest", result.Tag))
+			logid.UpdateAutoInstallStarting.Field())
 
 		err = handler.StartInstall()
 		if err != nil {

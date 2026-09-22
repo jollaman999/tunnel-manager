@@ -50,8 +50,9 @@ const apiUninstallPath = "/api/uninstall";
 // saying the opposite of what happened.
 const apiAccountPath = "/api/account";
 
-// hostKeyPasswordWrongCode and logsClearPasswordWrongCode are the two 401s that
-// do not mean the session is over and that no path can tell apart.
+// These are the 401s that do not mean the session is over. Each of them is a
+// password box in front of the operator being wrong, and they are read by the
+// name the server raises them under rather than by the path they came from.
 //
 // The host key approval is the one with no path to compare against: the
 // approval of one host is POST /api/host/<id>/host-key, so there is no single
@@ -73,8 +74,13 @@ const apiAccountPath = "/api/account";
 // quiet without failing.
 const hostKeyPasswordWrongCode = "host.host_key.password_wrong";
 const logsClearPasswordWrongCode = "logs.clear.password_wrong";
+const updatePasswordWrongCode = "update.password_wrong";
 
-const passwordWrongCodes = [hostKeyPasswordWrongCode, logsClearPasswordWrongCode];
+const passwordWrongCodes = [
+  hostKeyPasswordWrongCode,
+  logsClearPasswordWrongCode,
+  updatePasswordWrongCode
+];
 
 // csrfCookieName and csrfHeaderName are the two ends of the CSRF check. The
 // server hands the token of the session out in a cookie it leaves readable from
@@ -1357,7 +1363,10 @@ function buildForm(spec) {
       advice.dataset.advice = field.name;
 
       const sayAdvice = function () {
-        const said = field.advise(input.value);
+        // The value is read the way the submit reads it. A checkbox carries
+        // "on" in value whether it is ticked or not, so advice given that
+        // would say the same thing in both states.
+        const said = field.advise(input.type === "checkbox" ? input.checked : input.value);
 
         advice.textContent = said;
         advice.hidden = said === "";

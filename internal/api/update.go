@@ -140,6 +140,25 @@ func (h *UpdateHandler) Look(ctx context.Context) checkResult {
 	return result
 }
 
+// NewerAvailable reports whether the last look found a release that is both
+// comparable with what is running and after it.
+//
+// It is the one condition an install may start on when nobody is asking for it,
+// which is why it is here rather than written out at the loop: a check that
+// failed and a version that could not be compared both have to answer false,
+// and three conditions spelled out at the call site are three chances to drop
+// one of them.
+func (h *UpdateHandler) NewerAvailable() bool {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+
+	if h.last == nil {
+		return false
+	}
+
+	return h.last.Problem == "" && h.last.Comparable && h.last.Newer
+}
+
 // StartInstall runs the install without a request behind it.
 //
 // It is what the loop calls where the settings ask for an update to be
