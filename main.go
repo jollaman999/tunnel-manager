@@ -1619,6 +1619,13 @@ func serve() {
 	// a screen that had to work it out would be guessing from the browser it
 	// runs in.
 	restartHandler := api.NewRestartHandler(logger, canReexec(), endBeforeRestart)
+	// The update screen is handed what it needs to look and what it needs to
+	// install. Both are functions rather than the packages themselves, so that
+	// a test drives the handler without reaching GitHub or replacing anything.
+	updateHandler := api.NewUpdateHandler(logger, db, version, canInstallUpdate(databaseFile),
+		install.Check, func() error {
+			return startUpdateInstall(logger, databaseFile)
+		})
 	// The export and the import are handed the handler that serves the Hosts,
 	// because an imported Host has to be stored the way a created one is. The
 	// version goes into the file, so that a file found later says what wrote it.
@@ -1714,6 +1721,18 @@ func serve() {
 	g.POST("/restart", restartHandler.Restart)
 
 	g.POST("/uninstall", uninstallHandler.Uninstall)
+
+	// The look for a newer release runs on the same context the reconcile loop
+	// does, so the shutdown that stops one stops the other. It is started after
+	// the handler exists because both of them keep the one answer.
+	go runUpdateChecks(reconcileCtx, logger, db, updateHandler, canInstallUpdate(databaseFile))
+
+	g.GET("/update", updateHandler.GetUpdate)
+	// Both of these are POST rather than GET. The check makes a request to
+	// another host, and the install replaces the executable; neither is a thing
+	// a link or a prefetch may set off.
+	g.POST("/update/check", updateHandler.CheckUpdate)
+	g.POST("/update/install", updateHandler.InstallUpdate)
 
 	// The UI is put on the instance itself and not on the group above. It is
 	// the same bytes for every client and carries no data of its own, while

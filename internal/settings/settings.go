@@ -89,6 +89,33 @@ type Settings struct {
 	// remembers when they come to write it in a query.
 	UIDefaultLanguage string `gorm:"column:ui_default_language" json:"ui_default_language"`
 
+	// UpdateCheckEnabled is whether the newest release is read on a timer. It
+	// is on by default: what it costs is one small answer from a public API,
+	// nothing is downloaded and nothing is written, and an installation that
+	// does not know a release exists is one whose operator finds out from
+	// somewhere else or not at all.
+	//
+	// The column carries its default so that an installation upgraded onto
+	// this version reads back the same answer a fresh one gives.
+	UpdateCheckEnabled bool `gorm:"default:true" json:"update_check_enabled"`
+	// UpdateCheckIntervalHours is how often that read happens. Releases are
+	// not a thing that happens by the minute, and the answer is only ever used
+	// to draw a line on a screen or, where the setting below is on, to start
+	// an install that takes the service down: a day is often enough for both
+	// and rare enough that nobody is rate limited for it.
+	UpdateCheckIntervalHours int `gorm:"default:24" json:"update_check_interval_hours"`
+	// UpdateAutoInstall is whether a release that is newer is installed without
+	// anybody pressing anything. It is off by default, and that default is the
+	// decision this setting exists to leave with the operator.
+	//
+	// What an install does is replace the executable and restart the service,
+	// which takes down every tunnel that is up. When that may happen is not
+	// something this program can work out: it depends on what runs over those
+	// tunnels and who is relying on them at the time. An operator who knows
+	// that can turn this on; one who has not thought about it gets a service
+	// that stays where they left it.
+	UpdateAutoInstall bool `gorm:"default:false" json:"update_auto_install"`
+
 	UpdatedAt time.Time `json:"updated_at"`
 }
 
@@ -123,6 +150,13 @@ func Defaults() Settings {
 		LoggingFileMaxAge:     30,
 		LoggingFileCompress:   true,
 		UIDefaultLanguage:     "",
+		// The check is on and the install is off. Reading what the newest
+		// release is costs one request and changes nothing; installing it
+		// takes the service down, and when that may happen is the operator's
+		// to say.
+		UpdateCheckEnabled:       true,
+		UpdateCheckIntervalHours: 24,
+		UpdateAutoInstall:        false,
 	}
 }
 
@@ -305,6 +339,21 @@ func (s *Settings) Validate() error {
 	// operator typed it while the server holds something else.
 	if s.UIDefaultLanguage != "" && !validLanguages[s.UIDefaultLanguage] {
 		return fmt.Errorf("%w: %s", ErrLanguageUnsupported, s.UIDefaultLanguage)
+	}
+
+	// The interval is held away from zero rather than only away from negative.
+	// A zero here would be a timer that fires as fast as it can be rearmed,
+	// against an API that answers a public repository and counts the requests
+	// of whoever asks, so the one value that must not be stored is the one a
+	// box left empty reads as. The ceiling is a year, which is the far side of
+	// the same thought: a number past it is a typo rather than a schedule.
+	//
+	// Neither of the two switches carries a rule. Both of their values are
+	// states this program runs in, and what is risky about the install one is
+	// what it does rather than what it is set to.
+	if s.UpdateCheckIntervalHours < 1 || s.UpdateCheckIntervalHours > 8760 {
+		return fmt.Errorf("invalid update check interval: %d. It is in hours, from 1 to 8760",
+			s.UpdateCheckIntervalHours)
 	}
 
 	return nil
@@ -505,6 +554,9 @@ func values(s *Settings) []value {
 		{"logging.file.max_age", strconv.Itoa(s.LoggingFileMaxAge)},
 		{"logging.file.compress", strconv.FormatBool(s.LoggingFileCompress)},
 		{"ui.default_language", s.UIDefaultLanguage},
+		{"update.check_enabled", strconv.FormatBool(s.UpdateCheckEnabled)},
+		{"update.check_interval_hours", strconv.Itoa(s.UpdateCheckIntervalHours)},
+		{"update.auto_install", strconv.FormatBool(s.UpdateAutoInstall)},
 	}
 }
 

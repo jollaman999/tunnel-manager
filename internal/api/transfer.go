@@ -192,6 +192,20 @@ type settingsContent struct {
 	// than a machine, so it means the same on the installation that takes the
 	// file in, and an empty value carries across as the empty value it is.
 	UIDefaultLanguage string `json:"ui_default_language"`
+	// The update settings travel too. Whether to look for a release is a
+	// choice about this installation rather than about the machine it is on,
+	// so it means the same wherever the file is taken in.
+	//
+	// The one to be careful with is the automatic install. A file exported
+	// from an installation that has it on turns it on wherever it is imported,
+	// and what it does there is take that service down when a release appears.
+	// It is carried all the same: a setting left out of the file is one that
+	// silently keeps whatever the other installation had, which is the worse
+	// of the two surprises, and an import is already a thing that replaces
+	// what is stored.
+	UpdateCheckEnabled       bool `json:"update_check_enabled"`
+	UpdateCheckIntervalHours int  `json:"update_check_interval_hours"`
+	UpdateAutoInstall        bool `json:"update_auto_install"`
 }
 
 // settingsOf returns the settings of a set as they are carried in a file.
@@ -210,6 +224,10 @@ func settingsOf(s *settings.Settings) settingsContent {
 		LoggingFileMaxAge:     s.LoggingFileMaxAge,
 		LoggingFileCompress:   s.LoggingFileCompress,
 		UIDefaultLanguage:     s.UIDefaultLanguage,
+
+		UpdateCheckEnabled:       s.UpdateCheckEnabled,
+		UpdateCheckIntervalHours: s.UpdateCheckIntervalHours,
+		UpdateAutoInstall:        s.UpdateAutoInstall,
 	}
 }
 
@@ -229,6 +247,9 @@ func (content *settingsContent) applyTo(s *settings.Settings) {
 	s.LoggingFileMaxAge = content.LoggingFileMaxAge
 	s.LoggingFileCompress = content.LoggingFileCompress
 	s.UIDefaultLanguage = content.UIDefaultLanguage
+	s.UpdateCheckEnabled = content.UpdateCheckEnabled
+	s.UpdateCheckIntervalHours = content.UpdateCheckIntervalHours
+	s.UpdateAutoInstall = content.UpdateAutoInstall
 }
 
 // exportRequest is what an export is asked for. The password seals the file and

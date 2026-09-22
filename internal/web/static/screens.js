@@ -20,6 +20,7 @@ const screens = {
   },
   logs: { label: "nav.logs.link", nav: true, draw: drawLogs, enter: enterLogs },
   settings: { label: "nav.settings.link", nav: true, draw: drawSettings, enter: enterSettings },
+  update: { label: "nav.update.link", nav: true, draw: drawUpdate },
   // The manual is the other screen that asks the server for nothing. What is on
   // it is true of every installation, so there is nothing to fetch, and that is
   // what lets the login put the same thing in a panel for somebody who has no
@@ -2984,6 +2985,300 @@ function enterSettings() {
   transferResult = null;
 
   return drawSettings();
+}
+
+// drawUpdate is the Update screen: what is running, what the newest release is,
+// and the two settings that decide whether either of those is looked at again.
+//
+// It does not look while it is being drawn. What it shows is what the timer in
+// the server last found, so opening the screen costs nothing on the far side
+// and two people opening it do not make two requests of GitHub. The press is
+// there for somebody who wants the answer now.
+async function drawUpdate() {
+  const update = await apiCall("GET", "/api/update");
+  const set = await apiCall("GET", "/api/settings");
+
+  const nodes = [element("p", t("update.screen.text"))];
+
+  nodes.push(updateVersions(update));
+
+  const buttons = document.createElement("div");
+  buttons.className = "buttons";
+
+  const check = actionButton(t("update.check.button"), "update-check", function () {
+    return submitUpdateCheck(check);
+  });
+
+  buttons.appendChild(check);
+
+  // The press that installs is offered where the release is newer and where
+  // this installation is one an install can be run on. Drawn otherwise it
+  // would be a button whose only answer is a refusal.
+  if (update.installable && update.newer && update.comparable) {
+    buttons.appendChild(actionButton(t("update.install.button"), "update-install",
+      function () {
+        return updateInstallPanel(update);
+      }, "danger"));
+  }
+
+  nodes.push(buttons);
+
+  if (!update.installable) {
+    nodes.push(statusLine(t("update.not-installable.notice"), "warning"));
+  }
+
+  nodes.push(updateSettingsCard(set));
+
+  render(t("update.screen.title"), nodes);
+}
+
+// updateSettingsCard is the two switches and the interval, on the screen they
+// are about rather than among the twenty settings on the other one.
+//
+// They are saved through the same call the Settings screen saves through, so
+// there is one place that writes settings and one place that refuses a value.
+// What is sent is the whole set with these three changed, for the reason the
+// service port edit sends the whole record: the call replaces what is stored.
+function updateSettingsCard(set) {
+  const card = document.createElement("section");
+
+  card.className = "card";
+  card.dataset.card = "update-settings";
+  card.appendChild(element("h2", t("update.settings.title")));
+
+  card.appendChild(buildForm({
+    name: "update-settings",
+    submitLabel: t("common.save.button"),
+    fields: [
+      {
+        name: "update_check_enabled",
+        label: t("update.check-enabled.label"),
+        type: "checkbox",
+        value: set.update_check_enabled,
+        note: t("update.check-enabled.hint")
+      },
+      {
+        name: "update_check_interval_hours",
+        label: t("update.interval.label"),
+        value: set.update_check_interval_hours,
+        inputMode: "numeric",
+        filter: portCharacters,
+        check: checkUpdateInterval,
+        note: t("update.interval.hint")
+      },
+      {
+        name: "update_auto_install",
+        label: t("update.auto-install.label"),
+        type: "checkbox",
+        value: set.update_auto_install,
+        note: t("update.auto-install.hint"),
+        // The one switch on this screen that takes the service down when it
+        // acts. What it does is said beside it rather than left to the word
+        // "automatic", which reads as a convenience.
+        advise: function (ticked) {
+          return ticked ? t("update.auto-install.notice") : "";
+        }
+      }
+    ],
+    onSubmit: function (values) {
+      return saveUpdateSettings(set, values);
+    }
+  }));
+
+  return card;
+}
+
+// checkUpdateInterval holds the box to what the server takes. A zero would be a
+// timer rearming as fast as it can against an API that counts requests, which
+// is why it is the one number a box left empty must not send.
+function checkUpdateInterval(value) {
+  const hours = Number(String(value).trim());
+
+  if (!Number.isInteger(hours) || hours < 1 || hours > 8760) {
+    return t("update.interval.error");
+  }
+
+  return "";
+}
+
+async function saveUpdateSettings(set, values) {
+  const body = Object.assign({}, set, {
+    update_check_enabled: values.update_check_enabled,
+    update_check_interval_hours: asNumber(values.update_check_interval_hours),
+    update_auto_install: values.update_auto_install
+  });
+
+  await apiCall("PUT", "/api/settings", body);
+
+  setNotice(t("update.settings-saved.notice"), "info");
+
+  return drawUpdate();
+}
+
+// updateVersions is the pair of versions and the sentence about them.
+function updateVersions(update) {
+  const card = document.createElement("section");
+
+  card.className = "card";
+  card.dataset.card = "update-versions";
+
+  const counts = document.createElement("div");
+  counts.className = "counts";
+  counts.appendChild(countBox(t("update.running.label"), update.version, "update-running"));
+  counts.appendChild(countBox(t("update.latest.label"),
+    update.tag === "" ? t("update.latest-unknown.text") : update.tag, "update-latest"));
+  card.appendChild(counts);
+
+  // A check that failed is not a version that is up to date. It is said as its
+  // own line so that the two are never read as each other.
+  if (update.problem !== "") {
+    card.appendChild(statusLine(t("update.check-failed.notice", { reason: update.problem }),
+      "warning"));
+  } else if (update.tag === "") {
+    card.appendChild(statusLine(t("update.never-checked.empty"), "empty"));
+  } else if (!update.comparable) {
+    card.appendChild(statusLine(t("update.not-comparable.notice", { tag: update.tag }), "warning"));
+  } else if (update.newer) {
+    card.appendChild(statusLine(t("update.newer.notice", { tag: update.tag }), "warning"));
+  } else {
+    card.appendChild(statusLine(t("update.current.notice"), "ok"));
+  }
+
+  // formatTime answers the word for never on the zero time, which is what the
+  // server sends where nothing has looked yet. That case is the empty line
+  // above, so the sentence is left off here rather than reading "last looked:
+  // never" under it.
+  const when = formatTime(update.checked_at);
+  if (when !== t("common.never.text")) {
+    card.appendChild(element("p", t("update.checked.text", { when: when })));
+  }
+
+  return card;
+}
+
+// submitUpdateCheck looks now and draws what came back.
+async function submitUpdateCheck(button) {
+  button.disabled = true;
+
+  try {
+    await apiCall("POST", "/api/update/check");
+  } catch (error) {
+    if (error instanceof Redirected) {
+      throw error;
+    }
+
+    button.disabled = false;
+
+    // The screen is drawn again even though the check failed, because what the
+    // server now holds is that failure and the screen is where it is said.
+    await drawUpdate();
+
+    throw error;
+  }
+
+  setNotice(t("update.checked.notice"), "info");
+
+  return drawUpdate();
+}
+
+// updateInstallPanel asks before the executable is replaced.
+//
+// It takes the password of the account, the way the uninstall and the log
+// emptying do: what it starts cannot be stopped from here, and it ends with
+// every tunnel coming down.
+async function updateInstallPanel(update) {
+  const problem = element("p", "");
+
+  problem.className = "notice error";
+  problem.dataset.problem = "update-install";
+  problem.hidden = true;
+
+  const password = accountPasswordField("update-install-password",
+    t("update.password.label"), t("update.password.hint"));
+
+  let started = false;
+
+  await openModal({
+    name: "update-install",
+    title: t("update.confirm.title"),
+    body: [
+      element("p", t("update.confirm.text", { tag: update.tag })),
+      element("p", t("update.confirm-restart.text")),
+      problem,
+      password.row
+    ],
+    buttons: [
+      {
+        label: t("update.install.button"),
+        name: "install",
+        variant: "danger",
+        press: function (node, close) {
+          return sendUpdateInstall(password, node, close, problem, function () {
+            started = true;
+          });
+        }
+      },
+      { label: t("common.cancel.button"), name: "cancel" }
+    ]
+  });
+
+  if (!started) {
+    return;
+  }
+
+  // Nothing is asked of the server again. It is on its way down, and a request
+  // made now is one that will not be answered.
+  //
+  // drawRestarting is not reused here: it draws only over the Settings screen
+  // (screens.js, its first line), and it counts down a wait this does not know.
+  // How long an install takes is a download and a service manager, not a number
+  // this end was told.
+  return drawUpdateStarted();
+}
+
+// drawUpdateStarted is the screen left up while the install runs.
+//
+// It counts nothing down and asks for nothing. What happens next is a download,
+// a file being put in place and a service manager restarting the service, and
+// none of that reports back here: this process is ended by the restart. What
+// the screen can honestly say is that it started and how to see that it
+// finished.
+function drawUpdateStarted() {
+  render(t("update.started.title"), [
+    statusLine(t("update.started.notice"), "info"),
+    element("p", t("update.started.text")),
+    element("p", t("update.started-reload.text"))
+  ]);
+}
+
+async function sendUpdateInstall(password, button, close, problem, done) {
+  if (password.input.value === "") {
+    password.input.classList.add("bad");
+    showPanelProblem(problem, t("update.password.error"));
+
+    return;
+  }
+
+  password.input.classList.remove("bad");
+  problem.hidden = true;
+  button.disabled = true;
+
+  try {
+    await apiCall("POST", "/api/update/install", { password: password.input.value });
+  } catch (error) {
+    if (error instanceof Redirected) {
+      throw error;
+    }
+
+    button.disabled = false;
+
+    showPanelProblem(problem, error.message);
+
+    return;
+  }
+
+  done();
+  close("install");
 }
 
 async function drawSettings() {

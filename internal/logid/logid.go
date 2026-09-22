@@ -156,6 +156,17 @@ const (
 	LoggingFileClearFailed        ID = "logging.file_clear_failed"
 )
 
+// update: reading what the newest release is, and installing it.
+const (
+	UpdateChecked              ID = "update.checked"
+	UpdateCheckFailed          ID = "update.check_failed"
+	UpdateCheckLoopStarted     ID = "update.check_loop_started"
+	UpdateAutoInstallStarting  ID = "update.auto_install_starting"
+	UpdateInstallAsked         ID = "update.install_asked"
+	UpdateInstallPasswordWrong ID = "update.install_password_wrong"
+	UpdateInstallStartFailed   ID = "update.install_start_failed"
+)
+
 // encryption: the key the stored secrets are encrypted with.
 const (
 	EncryptionKeyCheckHostsReadFailed   ID = "encryption.key_check_hosts_read_failed"

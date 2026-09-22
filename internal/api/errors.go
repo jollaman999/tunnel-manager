@@ -161,6 +161,12 @@ const (
 	errLogsClearPasswordWrong   errorCode = "logs.clear.password_wrong"
 	errLogsClearFailed          errorCode = "logs.clear.failed"
 
+	errUpdateCheckFailed     errorCode = "update.check_failed"
+	errUpdateNotInstallable  errorCode = "update.not_installable"
+	errUpdatePasswordMissing errorCode = "update.password_missing"
+	errUpdatePasswordWrong   errorCode = "update.password_wrong"
+	errUpdateInstallFailed   errorCode = "update.install_failed"
+
 	errExportPasswordRequired  errorCode = "export.password.required"
 	errExportPasswordTooShort  errorCode = "export.password.too_short"
 	errExportPasswordTooLong   errorCode = "export.password.too_long"
@@ -347,6 +353,12 @@ var errorMessages = map[errorCode]string{
 	errLogsClearPasswordMissing: "Enter the password of your account to empty the log",
 	errLogsClearPasswordWrong:   "That is not the password of this account. The log was not touched",
 	errLogsClearFailed:          "The log file at {path} could not be emptied: {reason}",
+
+	errUpdateCheckFailed:     "The newest release could not be read: {reason}",
+	errUpdateNotInstallable:  "This installation cannot install an update from here. It is running as a program somebody started rather than as a registered service, so there is nothing to restart it afterwards",
+	errUpdatePasswordMissing: "Enter the password of your account to install the update",
+	errUpdatePasswordWrong:   "That is not the password of this account. Nothing was installed",
+	errUpdateInstallFailed:   "The install could not be started: {reason}",
 
 	// The export half of the transfer screens.
 	errExportPasswordRequired:  "A password is required. It is what encrypts the file, and the file cannot be opened without it",
