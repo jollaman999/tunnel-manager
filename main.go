@@ -1613,6 +1613,15 @@ func serve() {
 	// sent it.
 	g.POST("/host/:id/host-key", h.ApproveHostKey)
 
+	// The keys waiting to be approved across every Host, read a page at a time
+	// and approved together. It is its own path and not a filter on /host,
+	// because what a row of it carries is the pair of fingerprints and nothing
+	// else of the Host, and because the press over it writes to several Hosts
+	// at once and so belongs to no single one of them. The POST carries a body
+	// for the reason the one above it does.
+	g.GET("/host-key", h.ListHostKeysWaiting)
+	g.POST("/host-key", h.ApproveHostKeys)
+
 	// The service ports a Host carries are read and changed under the Host, on
 	// the group that carries the session check, because an assignment decides
 	// which tunnels this installation runs.

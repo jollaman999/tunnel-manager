@@ -1254,6 +1254,34 @@ func (h *Handler) GetStatus(c echo.Context) error {
 		return failure(c, http.StatusInternalServerError, errStatusFetchFailed)
 	}
 
+	// The Hosts waiting for a host key approval are counted here and not listed
+	// here, and the two counts are over every Host rather than over the page of
+	// tunnels below.
+	//
+	// Over the page they would say nothing: a Host with four service ports has
+	// four tunnels refused by the same key, so a page would carry the same
+	// question four times and a Host whose tunnels are all on the next page
+	// would not be asked about at all. What goes on the screen from these is
+	// one line over the table, and the list behind it is read a page at a time
+	// from ListHostKeysWaiting: an upgrade leaves every Host waiting at once,
+	// and a list of two hundred of them in the answer this screen refreshes
+	// itself from every few seconds is the load the paging is here to avoid.
+	var hostKeysUnapproved int64
+
+	err = hostKeysFirstApproval(h.db).Count(&hostKeysUnapproved).Error
+	if err != nil {
+		h.logger.Error("failed to count the Hosts", logid.HostCountFailed.Field(), zap.Error(err))
+		return failure(c, http.StatusInternalServerError, errStatusFetchFailed)
+	}
+
+	var hostKeysMismatched int64
+
+	err = hostKeysChanged(h.db).Count(&hostKeysMismatched).Error
+	if err != nil {
+		h.logger.Error("failed to count the Hosts", logid.HostCountFailed.Field(), zap.Error(err))
+		return failure(c, http.StatusInternalServerError, errStatusFetchFailed)
+	}
+
 	page = page.fitTo(totalTunnels)
 
 	var tunnels []models.Tunnel
@@ -1270,12 +1298,14 @@ func (h *Handler) GetStatus(c echo.Context) error {
 	return c.JSON(http.StatusOK, models.Response{
 		Success: true,
 		Data: map[string]interface{}{
-			"desired_tunnels":   desiredTunnels,
-			"total_tunnels":     totalTunnels,
-			"connected_tunnels": connectedTunnels,
-			"tunnels":           tunnels,
-			"page":              page.number,
-			"size":              page.size,
+			"desired_tunnels":      desiredTunnels,
+			"total_tunnels":        totalTunnels,
+			"connected_tunnels":    connectedTunnels,
+			"host_keys_unapproved": hostKeysUnapproved,
+			"host_keys_mismatched": hostKeysMismatched,
+			"tunnels":              tunnels,
+			"page":                 page.number,
+			"size":                 page.size,
 		},
 	})
 }

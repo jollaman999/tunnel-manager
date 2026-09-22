@@ -335,6 +335,16 @@ async function drawStatus() {
 
   const nodes = [counts];
 
+  // What is waiting to be answered goes above the sentences about the counts.
+  // Every other line on this screen is about something to fix on a machine or
+  // on the way to it; this one is a question that stays where it is until
+  // somebody settles it, and the tunnels it is about are not running until
+  // they do.
+  const asked = hostKeysNotice(data);
+  if (asked !== null) {
+    nodes.push(asked);
+  }
+
   // The three counts differ for two different reasons, and the difference is
   // the whole point of showing all three. A tunnel with no row has not been
   // started at all, while a row that is not connected was started and failed.
@@ -388,15 +398,12 @@ async function drawStatus() {
       // the row when a tunnel has both.
       const under = [];
 
-      // A tunnel the host key check refused carries the one thing under a row
-      // that is answered rather than read, so it goes above the rest of it.
-      // The last error under it is the same refusal in the words the
-      // connection failed with, which is what the server wrote and is not in
-      // the language of the page.
-      const hostKey = hostKeyNotice(tunnel);
-      if (hostKey !== null) {
-        under.push(hostKey);
-      }
+      // Nothing is said under a tunnel the host key check refused, which is
+      // what used to go here first. A Host with four service ports carries four
+      // such tunnels, all refused by the one key, so the notice was the same
+      // question drawn four times over and a Host whose tunnels sit on a later
+      // page asked it nowhere. The row still says which state it is in through
+      // its badge, and the question is asked once, over the table.
 
       const failure = typeof tunnel.last_error === "string" ? tunnel.last_error : "";
       if (failure !== "") {
@@ -627,41 +634,648 @@ function hostKeyState(status) {
   return Object.prototype.hasOwnProperty.call(states, text) ? states[text] : null;
 }
 
-// hostKeyNotice is what goes under a tunnel the host key check refused: what
-// the state means in one line, and the press that opens the key to compare it
-// and approve it.
+// hostKeysNotice is the one line over the table about the Hosts that are
+// waiting for a host key to be approved: how many there are, and the press that
+// opens the list of them.
 //
-// It is under the row rather than in it for the reason the reach advice is.
-// Nine columns of addresses and counts already ask for more width than a
-// screen has, and a sentence with a button after it in the status column
-// would take the rest of it.
-function hostKeyNotice(tunnel) {
-  const state = hostKeyState(tunnel.status);
-  if (state === null) {
+// It is drawn from the two counts of the answer and not from the rows below it.
+// The counts are over every Host the installation has, the way the three at the
+// top are over every tunnel, and the rows are one page of tunnels: a Host with
+// four service ports carries four refused tunnels, so a notice per row asked
+// the same question four times, and a Host whose tunnels are all on a later
+// page asked it nowhere.
+//
+// There is one line and not two, because what the two counts are is two
+// different questions with the same answer: the press under them. What the
+// second one changes is the colour, since a key that changed under a Host that
+// was approved is either a rebuilt server or a connection that is not reaching
+// the server at all, and that is not the colour of a Host waiting to be
+// registered.
+//
+// One Host waiting is said differently from several. The sentences that say
+// what each state means are written about one Host - "this host" - so they are
+// what a single one is said with, and that is the state an installation that
+// answers these as they arrive is usually in. Where there are several it is the
+// two counts, and what one of them means is on the panel a row of the list
+// opens, beside the Host it is about.
+function hostKeysNotice(data) {
+  const mismatched = countOf(data, "host_keys_mismatched");
+  const waiting = countOf(data, "host_keys_unapproved") + mismatched;
+
+  if (waiting === 0) {
     return null;
   }
 
+  const state = hostKeyState(mismatched > 0 ? "host_key_mismatch" : "host_key_unapproved");
   const box = document.createElement("div");
 
   box.className = "host-key-notice " + state.paint;
-  box.dataset.hostKey = String(tunnel.status);
-  box.appendChild(element("p", t(state.said)));
-  box.appendChild(actionButton(t("status.host-key-review.button"),
-    "host-key-" + tunnel.host_id, function () {
-      return openHostKeyPanel(tunnel.host_id);
-    }));
+  box.dataset.hostKey = mismatched > 0 ? "host_key_mismatch" : "host_key_unapproved";
+
+  box.appendChild(element("p", t(
+    plural(waiting, "status.host-keys-waiting-one.notice", "status.host-keys-waiting-many.notice"),
+    { count: waiting }
+  )));
+
+  if (waiting === 1) {
+    box.appendChild(element("p", t(state.said)));
+  } else if (mismatched > 0) {
+    box.appendChild(element("p", t(
+      plural(mismatched, "status.host-keys-changed-one.notice",
+        "status.host-keys-changed-many.notice"),
+      { count: mismatched }
+    )));
+  }
+
+  box.appendChild(actionButton(t("status.host-key-review.button"), "host-keys",
+    openHostKeysPanel));
 
   return box;
 }
 
+// openHostKeysPanel is the list of the Hosts that have a host key waiting to be
+// approved, and where several of them are answered in one press.
+//
+// It is a panel and not a part of the status screen because of what an upgrade
+// looks like. Every Host registered before the host key check existed is
+// waiting for a first approval at the same moment, so on an installation of two
+// hundred Hosts the list is two hundred rows long, and two hundred rows laid
+// over the table would be the screen. Over the table there is one line saying
+// how many there are; the list itself is here, a page at a time.
+//
+// The fingerprint of every Host is in its row. What a tick means is that the
+// operator compared that fingerprint with the server, and a fingerprint that
+// has to be opened to be seen is one that nobody opens: the row would be ticked
+// on the identifier of the Host alone, which is the one thing about it that was
+// never in question.
+async function openHostKeysPanel() {
+  // The panel has a page of its own and does not touch listPages. It is opened
+  // and closed while the table behind it stays on the page it was left on, and
+  // the two lists are not the same length anyway.
+  const page = { number: 1, size: listSizes[0] };
+
+  // What is ticked, held across the pages rather than read off the boxes of the
+  // page that happens to be drawn. The work this panel is for is twenty pages
+  // of ticking on an installation of two hundred, and a selection that a turn
+  // of the page threw away would be twenty presses of approve, which is the
+  // thing the panel is here to save.
+  //
+  // What is held is the row and not the identifier, because the approval names
+  // the fingerprint of each Host and the confirmation lists them: both are of
+  // the page a Host was ticked on and not of the page on the screen.
+  const picked = {};
+
+  // Why a Host of the last press was not approved, kept beside the list so that
+  // the row it belongs to carries it. A refusal is per Host - the key changed
+  // under that one, or it was approved from somewhere else - and the answer is
+  // the only place it is said.
+  const refusals = {};
+
+  const list = document.createElement("div");
+
+  list.className = "host-key-list";
+  list.dataset.list = "host-keys";
+
+  // Why a press or a page was refused. It is shown inside the panel because the
+  // line above the screen is behind the backdrop, where the operator who
+  // pressed the button cannot read it.
+  const problem = element("p", "");
+
+  problem.className = "notice error";
+  problem.dataset.problem = "host-keys";
+  problem.hidden = true;
+
+  // How many are ticked, under the list and not in it. What is about to be sent
+  // is mostly not on the screen, since it was ticked on pages that have been
+  // turned away from, and this is the one thing that says so before the
+  // confirmation does.
+  const chosen = element("p", "");
+
+  chosen.className = "host-keys-chosen";
+  chosen.dataset.chosen = "host-keys";
+
+  function pickedList() {
+    return Object.keys(picked).map(function (key) {
+      return picked[key];
+    });
+  }
+
+  function sayChosen() {
+    const count = pickedList().length;
+
+    chosen.textContent = t(plural(count, "status.host-keys-chosen-one.text",
+      "status.host-keys-chosen-many.text"), { count: count });
+  }
+
+  // The rows of the page that is drawn, and how long the whole list is. They
+  // are kept so that ticking the box that takes the whole page can draw the
+  // list again without asking the server for a page it already has.
+  let shown = [];
+  let total = 0;
+
+  function drawList() {
+    // Only the list is built again. The panel around it is the one openModal
+    // put up, and nothing here writes to #app, so a draw of the screen behind
+    // the backdrop cannot take the panel down and this cannot draw over it.
+    list.textContent = "";
+
+    if (shown.length === 0) {
+      list.appendChild(statusLine(t("status.host-key-gone.text"), "empty"));
+      sayChosen();
+
+      return;
+    }
+
+    const controls = pageControls("host-keys", page, total, turnPage);
+    if (controls !== null) {
+      list.appendChild(controls);
+    }
+
+    const all = hostKeysPageBox(shown, picked, function () {
+      drawList();
+    });
+
+    if (all !== null) {
+      list.appendChild(all);
+    }
+
+    for (const item of shown) {
+      list.appendChild(hostKeyRow(item, picked, refusals[String(item.host_id)], sayChosen,
+        function () {
+          return approveOne(item);
+        }));
+    }
+
+    sayChosen();
+  }
+
+  async function drawPage() {
+    const answer = await apiCall("GET", "/api/host-key?" + pageQuery(page));
+
+    takeListPage(page, answer);
+
+    shown = answer === null || answer.items === null || answer.items === undefined
+      ? []
+      : answer.items;
+    total = answer === null || typeof answer.total !== "number" ? shown.length : answer.total;
+
+    drawList();
+  }
+
+  // drawn is the page the list on the screen was built from, and turnPage is
+  // what the controls call. A page that could not be fetched leaves the list as
+  // it was, so the numbers are put back to it: left where the press moved them,
+  // the next press would step over a page that was never read.
+  let drawn = { number: page.number, size: page.size };
+
+  function turnPage() {
+    return drawPage().then(function () {
+      drawn = { number: page.number, size: page.size };
+    }, function (error) {
+      if (error instanceof Redirected) {
+        throw error;
+      }
+
+      page.number = drawn.number;
+      page.size = drawn.size;
+
+      showPanelProblem(problem, error.message);
+    });
+  }
+
+  // approveOne is the press on a row, and it is the panel this screen has
+  // always had: the Host is read again, the fingerprints are put side by side,
+  // and a key that replaces a trusted one asks for the password of the account.
+  // There is no confirmation over it, because one Host approved from its own
+  // row is the thing being confirmed.
+  async function approveOne(item) {
+    const approved = await openHostKeyPanel(item.host_id);
+    if (!approved) {
+      return;
+    }
+
+    delete picked[String(item.host_id)];
+    delete refusals[String(item.host_id)];
+
+    return turnPage();
+  }
+
+  // The first page is fetched before the panel goes up, so that a refusal is
+  // answered with the line above the screen rather than with an empty panel.
+  await drawPage();
+
+  drawn = { number: page.number, size: page.size };
+
+  await openModal({
+    name: "host-keys",
+    title: t("status.host-keys.title"),
+    body: [
+      element("p", t("status.host-keys.text")),
+      problem,
+      list,
+      chosen
+    ],
+    buttons: [
+      {
+        label: t("status.host-keys-approve.button"),
+        name: "approve",
+        variant: "primary",
+        press: function (button, close) {
+          return approvePickedHostKeys(pickedList(), picked, refusals, button, close, problem,
+            turnPage);
+        }
+      },
+      { label: t("common.close.button"), name: "close" }
+    ]
+  });
+
+  // The screen behind is drawn again whichever way the panel went, and not only
+  // after the press at the bottom. The line over the table is a count of what
+  // is waiting, this panel is where that count is changed, and a press on a row
+  // changes it as much as the press at the bottom does.
+  return drawStatus();
+}
+
+// hostKeysPageBox is the tick that takes the whole page, and null for a page
+// with nothing it may take.
+//
+// It takes the Hosts of this page that are waiting for a first approval and
+// leaves out the ones that were presented a key other than the one they are
+// trusted on. The first is a step of registering a Host, and an upgrade puts
+// every Host through it at once, which is what a box over a page is for; the
+// second is a server that was rebuilt or a connection that is not reaching the
+// server at all, and that is an answer to give one Host at a time, with the two
+// fingerprints in front of you.
+function hostKeysPageBox(items, picked, redraw) {
+  const first = items.filter(function (item) {
+    return !item.mismatch;
+  });
+
+  if (first.length === 0) {
+    return null;
+  }
+
+  const row = document.createElement("label");
+
+  row.className = "host-keys-all";
+  row.dataset.all = "host-keys";
+
+  const box = document.createElement("input");
+
+  box.type = "checkbox";
+  box.dataset.field = "host-keys-all";
+  box.checked = first.every(function (item) {
+    return Object.prototype.hasOwnProperty.call(picked, String(item.host_id));
+  });
+
+  box.addEventListener("change", function () {
+    for (const item of first) {
+      if (box.checked) {
+        picked[String(item.host_id)] = item;
+      } else {
+        delete picked[String(item.host_id)];
+      }
+    }
+
+    redraw();
+  });
+
+  const text = document.createElement("span");
+
+  text.className = "host-keys-all-text";
+  text.appendChild(element("span", t("status.host-keys-all.label")));
+
+  const said = element("small", t("status.host-keys-all.hint"));
+
+  said.className = "host-keys-said";
+  text.appendChild(said);
+
+  row.appendChild(box);
+  row.appendChild(text);
+
+  return row;
+}
+
+// hostKeyRow is one Host of that list: the tick, which Host it is, which of the
+// two states it is in, the fingerprints, and the press that answers this one
+// Host on its own.
+//
+// The box and the name of the Host are a label together, so the name is part of
+// the target: a checkbox on its own is the width of a character, which is the
+// one thing a list ticked on a phone cannot be. The rest of the row is outside
+// that label, because a button inside one is pressed by a press meant for the
+// box.
+function hostKeyRow(item, picked, refused, sayChosen, approve) {
+  const state = item.mismatch ? "host_key_mismatch" : "host_key_unapproved";
+  const row = document.createElement("div");
+
+  row.className = "host-key-row " + (item.mismatch ? "bad" : "waiting");
+  row.dataset.hostKey = String(item.host_id);
+
+  const pick = document.createElement("label");
+
+  pick.className = "host-key-pick";
+
+  const box = document.createElement("input");
+
+  box.type = "checkbox";
+  box.dataset.field = "host-key-" + item.host_id;
+  box.checked = Object.prototype.hasOwnProperty.call(picked, String(item.host_id));
+  box.addEventListener("change", function () {
+    if (box.checked) {
+      picked[String(item.host_id)] = item;
+    } else {
+      delete picked[String(item.host_id)];
+    }
+
+    sayChosen();
+  });
+
+  const name = document.createElement("span");
+
+  name.className = "host-key-name";
+  name.appendChild(element("span", t("status.host-key.title",
+    { id: item.host_id, ip: item.ip })));
+  name.appendChild(statusBadge(state));
+
+  pick.appendChild(box);
+  pick.appendChild(name);
+  row.appendChild(pick);
+
+  // The fingerprints, in the same two boxes the single approval puts them in. A
+  // Host that is trusted on another key carries both, because the question that
+  // is being answered about it is the comparison of the two.
+  row.appendChild(hostKeyFingerprints(
+    typeof item.trusted_fingerprint === "string" ? item.trusted_fingerprint : "",
+    typeof item.fingerprint === "string" ? item.fingerprint : ""
+  ));
+
+  if (refused !== undefined && refused !== "") {
+    const said = element("p", refused);
+
+    said.className = "notice error";
+    said.dataset.problem = "host-key-" + item.host_id;
+    row.appendChild(said);
+  }
+
+  const buttons = document.createElement("div");
+
+  buttons.className = "buttons";
+  buttons.appendChild(actionButton(t("status.host-key-approve.button"),
+    "host-key-" + item.host_id, approve, item.mismatch ? "danger" : undefined));
+
+  row.appendChild(buttons);
+
+  return row;
+}
+
+// approvePickedHostKeys is the press at the bottom of the panel.
+//
+// Nothing is sent from here. What it does is put the confirmation up, and the
+// confirmation is what sends: the ticks were made over several pages, so most
+// of what is about to be approved is not on the screen, and this is the one
+// place it can all be read before it goes.
+async function approvePickedHostKeys(chosen, picked, refusals, button, close, problem, turnPage) {
+  if (chosen.length === 0) {
+    showPanelProblem(problem, t("status.host-keys-none.error"));
+
+    return;
+  }
+
+  // The button is held down for as long as the confirmation is up, because the
+  // panel underneath stays where it is and a second press would put a second
+  // confirmation over the first.
+  button.disabled = true;
+
+  try {
+    const answer = await confirmHostKeyApprovals(chosen);
+    if (answer === null) {
+      return;
+    }
+
+    const results = answer.hosts === null || answer.hosts === undefined ? [] : answer.hosts;
+
+    for (const result of results) {
+      const key = String(result.host_id);
+
+      delete refusals[key];
+
+      if (result.approved) {
+        // Approved, so it is no longer waiting: the row goes with the next
+        // draw of the list, and the tick goes with it.
+        delete picked[key];
+
+        continue;
+      }
+
+      // The refusal is said in the language of the page where the code is one
+      // this screen knows, and in the English the answer carries where it is
+      // not, which is what an older screen meets from a newer server.
+      const said = refusalText(result);
+
+      refusals[key] = said === null ? String(result.error === undefined ? "" : result.error) : said;
+    }
+
+    const approved = results.length - Object.keys(refusals).length;
+
+    if (Object.keys(refusals).length === 0) {
+      setNotice(t(plural(approved, "status.host-keys-approved-one.notice",
+        "status.host-keys-approved-many.notice"), { count: approved }), "info");
+
+      close("approved");
+
+      return;
+    }
+
+    // Something was refused, so the panel stays up with the reasons on the
+    // rows they belong to. The list is read again first, which is what takes
+    // the Hosts that did go through out of it.
+    await turnPage();
+
+    showPanelProblem(problem, t("status.host-keys-refused.notice",
+      { approved: approved, refused: Object.keys(refusals).length }));
+  } finally {
+    button.disabled = false;
+  }
+}
+
+// confirmHostKeyApprovals is the step between the ticks and the request: every
+// Host that is about to be approved, with the fingerprint that is about to be
+// trusted, and the password of the account where one of them replaces a key
+// that is already trusted.
+//
+// It is here because the ticks outlive the page they were made on. What is
+// about to be sent is mostly not on the screen behind this, and a press that
+// approved it would be a press over a list nobody read; this is where it is
+// read, with the same fingerprints that were ticked.
+//
+// It hands back what the server answered, or null where the panel was closed
+// without sending. A refusal of the whole request is shown inside it and leaves
+// it up, because the password is typed here and a panel that closed on a wrong
+// one would throw the list away with it.
+async function confirmHostKeyApprovals(chosen) {
+  const changed = chosen.filter(function (item) {
+    return item.mismatch;
+  });
+
+  const problem = element("p", "");
+
+  problem.className = "notice error";
+  problem.dataset.problem = "host-keys-confirm";
+  problem.hidden = true;
+
+  // The password of the account is asked for exactly where the server reads
+  // one: where the list carries a Host whose trusted key would be replaced. It
+  // is asked once for the whole list and not once per Host, because what it
+  // answers is whether the person at the screen is the one who logged in.
+  const password = changed.length === 0 ? null : hostKeyPasswordField();
+
+  const list = document.createElement("div");
+
+  list.className = "host-key-list";
+  list.dataset.list = "host-keys-confirm";
+
+  for (const item of chosen) {
+    list.appendChild(hostKeyConfirmRow(item));
+  }
+
+  const body = [element("p", t("status.host-keys-confirm.text"))];
+
+  if (changed.length > 0) {
+    const warning = element("p", t("status.host-keys-confirm-changed.text"));
+
+    warning.className = "notice error";
+    warning.dataset.problem = "host-keys-changed";
+    body.push(warning);
+  }
+
+  body.push(problem, list);
+
+  if (password !== null) {
+    body.push(password.row);
+  }
+
+  let answer = null;
+
+  const outcome = await openModal({
+    name: "host-keys-confirm",
+    title: t("status.host-keys-confirm.title"),
+    body: body,
+    buttons: [
+      {
+        label: t("status.host-keys-approve.button"),
+        name: "approve",
+        // A list that replaces a trusted key is painted as what cannot be
+        // taken back, for the reason the single approval is.
+        variant: changed.length === 0 ? "primary" : "danger",
+        press: function (node, close) {
+          return sendHostKeyApprovals(chosen, password, node, close, problem, function (data) {
+            answer = data;
+          });
+        }
+      },
+      { label: t("common.cancel.button"), name: "cancel" }
+    ]
+  });
+
+  return outcome === "approved" ? answer : null;
+}
+
+// hostKeyConfirmRow is one Host of that list: which Host it is, which of the
+// two states it is in, and the fingerprint that is about to be trusted.
+//
+// A Host whose trusted key would be replaced is marked as such rather than left
+// to be picked out of the list by its badge. It is the one row of the list that
+// is not a registration, and the password at the bottom is being typed because
+// of it.
+function hostKeyConfirmRow(item) {
+  const state = item.mismatch ? "host_key_mismatch" : "host_key_unapproved";
+  const row = document.createElement("div");
+
+  row.className = "host-key-row " + (item.mismatch ? "bad" : "waiting");
+  row.dataset.hostKey = String(item.host_id);
+
+  const name = document.createElement("div");
+
+  name.className = "host-key-name";
+  name.appendChild(element("span", t("status.host-key.title",
+    { id: item.host_id, ip: item.ip })));
+  name.appendChild(statusBadge(state));
+
+  row.appendChild(name);
+  row.appendChild(hostKeyFingerprints(
+    typeof item.trusted_fingerprint === "string" ? item.trusted_fingerprint : "",
+    typeof item.fingerprint === "string" ? item.fingerprint : ""
+  ));
+
+  return row;
+}
+
+// sendHostKeyApprovals sends the list that was confirmed.
+//
+// Every Host goes with the fingerprint that was drawn for it. The server takes
+// each one only while that is still the key waiting on that Host, so a press
+// meant for the keys that were read cannot approve one an SSH server presented
+// after they were; a Host that meets that is refused on its own and the rest of
+// the list goes through.
+async function sendHostKeyApprovals(chosen, password, button, close, problem, keep) {
+  const body = {
+    hosts: chosen.map(function (item) {
+      return { host_id: item.host_id, fingerprint: item.fingerprint };
+    })
+  };
+
+  if (password !== null) {
+    // An empty box is answered here rather than by a round trip, the way a
+    // form answers a value the server would refuse anyway.
+    if (password.input.value === "") {
+      password.input.classList.add("bad");
+      showPanelProblem(problem, t("status.host-key-password.error"));
+
+      return;
+    }
+
+    password.input.classList.remove("bad");
+    body.password = password.input.value;
+  }
+
+  // The button is held down for the whole call, because the panel stays up
+  // while it is in flight and a second press would send the same list again.
+  button.disabled = true;
+  problem.hidden = true;
+
+  try {
+    keep(await apiCall("POST", "/api/host-key", body));
+
+    close("approved");
+  } catch (error) {
+    if (error instanceof Redirected) {
+      // The session ended and the page is on its way to the login. The panel
+      // goes with the screen it was opened from.
+      close(null);
+
+      throw error;
+    }
+
+    showPanelProblem(problem, error.message);
+  } finally {
+    button.disabled = false;
+  }
+}
+
 // openHostKeyPanel is where the key an SSH server presented is compared with
-// the server and approved.
+// the server and approved, one Host at a time.
 //
 // The Host is read again on the way in rather than taken from the row that
-// was pressed. A status row carries the state of a tunnel and not the keys of
-// the Host it runs over, and the screen behind this is a refresh or two old
-// either way: what is put in front of the operator has to be the key that is
-// waiting now, because that is the key the approval names.
+// was pressed. A row of the list carries what was waiting when the page was
+// read, and the screen behind this is a refresh or two old either way: what is
+// put in front of the operator has to be the key that is waiting now, because
+// that is the key the approval names.
+//
+// It hands back whether the key was approved. The screen behind is not drawn
+// from here: this is opened from a panel that stays up over it, and what the
+// list in that panel does about a Host that has been answered for is the
+// caller's to decide.
 async function openHostKeyPanel(hostID) {
   const host = await apiCall("GET", "/api/host/" + hostID);
   const waiting = typeof host.pending_host_key_fingerprint === "string"
@@ -683,7 +1297,7 @@ async function openHostKeyPanel(hostID) {
       buttons: [{ label: t("common.close.button"), name: "close" }]
     });
 
-    return drawStatus();
+    return false;
   }
 
   // Why an approval was refused. It is shown inside the panel because the line
@@ -733,11 +1347,7 @@ async function openHostKeyPanel(hostID) {
     ]
   });
 
-  if (outcome !== "approved") {
-    return;
-  }
-
-  return drawStatus();
+  return outcome === "approved";
 }
 
 // hostKeyFingerprints is the key that is waiting, and the key the Host is
@@ -3125,8 +3735,10 @@ async function exportSettings(values) {
   return drawSettings();
 }
 
-// countOf reads one of the counts an export answered with. A count the server
-// left out is said as none rather than as the word undefined.
+// countOf reads one of the counts an answer carries: what an export wrote, and
+// what the status screen says is waiting. A count the server left out is said
+// as none rather than as the word undefined, which is what an older server
+// that does not send it reads as.
 function countOf(data, name) {
   return data === null || data === undefined || typeof data[name] !== "number" ? 0 : data[name];
 }
