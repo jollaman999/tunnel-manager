@@ -1,3 +1,32 @@
+# v3.8.3
+
+## Add/fix features:
+
+- **A Host says which of its addresses the forwarded ports are opened on.** Every forward was asked for on the wildcard and there was no way to ask for anything else, so on a Host whose SSH server carries `GatewayPorts yes` the port was open on every interface that machine has, reachable by whatever is on its network rather than only by this manager. The screens measured that reach and offered no way to narrow it.
+  - The address is the Host's and not the service port's. What opens the port is the SSH server over there, so which of its interfaces it opens on is a fact about that machine; a service port carried to three Hosts could want three answers.
+  - The choices are the wildcard, the two loopbacks and whatever is typed. They are not read off the Host: this program opens no session on a Host and runs nothing there.
+  - A Host that names no address is asked for on the wildcard, which is what every Host was asked for before. Nothing that is running changes reach.
+  - The form says what the wildcard means for as long as it is the one chosen, and the Host list carries the column, so which Host is open on every interface is read off the list rather than found by opening each row.
+- **A wrong account password is counted wherever it is asked for.** Six calls ask for it again before they do something that cannot be taken back, and the limit was on the login alone. The scenario those calls name as their reason, a session left open on an unattended screen, was the one it did not cover: emptying the log in a loop guessed at the password as fast as the network carried requests, and spent a bcrypt compare of a root process per try. They count on the counters of the login, because two sets of counters are two allowances to spend.
+- **A redirect is sent only to a name the certificate carries.** The plaintext port built its Location from the Host header, so anything could ask it to point somewhere else. The names are read from the certificate being served and read per request, since renewing or installing one swaps it while the process runs.
+- **The download of a release is held to the same hosts a redirect is held to.** The allow-list ran on the second hop and later. The addresses the files are fetched from are fields of the document the API answered with, and a document is no more this process's to trust than a redirect is.
+- **One password-sealed file is opened at a time, and a file may ask for less memory.** A sealed file states the parameters it was written with, so the file being opened decided how much was asked for, and nothing decided how many arrived at once.
+- **The two cookies are guarded where the connection lets them be guarded.** They went out under names any sibling on the same host name could write, and a cookie ignores the port. Nothing was taken that way, because the CSRF header is compared against the token the session holds, but the two could be overwritten and the client left unable to use the page.
+- **Sessions that ran out unseen are dropped.** A client that closes its window instead of logging out left a token that was never sent again, and the only eviction was in the lookup of the token being looked up, so its two deadlines passed with nothing reading them.
+- **A save says so where the reader is looking.** The line that said it was drawn at the top of the screen, and the forms that raise it are at the foot of long ones. It is now a box of its own that does not scroll away and takes itself off after three seconds. A refusal stays the line it was: it has to be read and acted on.
+- **A value written into a sentence keeps its own direction.** On a page that reads right to left the slash of a path was carried to the far end of the sentence, so `/var/log/tunnel-manager.log` was read on the screen as `var/log/tunnel-manager.log/`. What a machine wrote is now laid out the way a machine wrote it, which a line of JSON in the log needed as well.
+- **The theme switch carries a sun by day and a moon by night**, and the note under a row of presses is no longer against them.
+
+## Notes:
+
+- The upgrade note of v3.7.0 still holds: every Host stops until its key is approved, a stored path outside the data directory is put back to its default, and the data directory becomes 0700.
+- **Everyone signed in is signed out by this upgrade.** The cookies are named differently now, so the ones a browser is holding are not read. Nothing is lost by it; sign in again.
+- An exported configuration carries the bind address of a Host. A file exported from an installation where a Host is held to the loopback puts it there wherever the file is taken in.
+- A database that ran a build made between v3.8.2 and this release carries a `bind_address` column on the service ports as well. It is not read any more and nothing removes it, which is harmless.
+- What was looked at and deliberately not changed is written down in `docs/design/2026-09-23-security-and-bind-address.md`, findings and scanner results together, so the same ground is not covered again from nothing.
+- Only the Linux path of `-install` and `-uninstall` has been run. The macOS and the Windows backends are still held up by the compiler, by the vet tool for their platform, and by tests over the plist and the service configuration they produce.
+- None of the twelve translations has been read by a native speaker.
+
 # v3.8.2
 
 ## Bug fixes:
