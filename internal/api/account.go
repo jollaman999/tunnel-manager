@@ -237,12 +237,7 @@ func (h *AuthHandler) ChangeAccount(c echo.Context) error {
 	// Everything below this point runs only because the row has been written.
 	// Sessions dropped ahead of a write that then failed would be sessions
 	// ended for a change that never happened.
-	token := ""
-
-	cookie, err := c.Cookie(sessionCookieName)
-	if err == nil {
-		token = cookie.Value
-	}
+	token := cookieValue(c, sessionCookieName)
 
 	// Every other session goes, and the one that asked for this stays. That is
 	// one rule for both values rather than one for the password and another for

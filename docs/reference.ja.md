@@ -1120,8 +1120,13 @@ curl -s -b cookies.txt -X POST "$BASE/api/uninstall" \
 **`/api` の下のすべてのパスにセッションが要り、`POST`, `PUT`, `DELETE` にはさらに CSRF
 トークンが要ります。**
 
-1. ユーザー名とパスワードで `POST /api/login` します。そこで設定されるクッキー `tm_session`
-   と `tm_csrf` を保存してください。
+1. ユーザー名とパスワードで `POST /api/login` します。そこで設定されるクッキーを保存して
+   ください。HTTPS 経由なら名前は `__Host-tm_session` と `__Host-tm_csrf` で、平文の HTTP
+   なら `tm_session` と `tm_csrf` です。`__Host-` はそのクッキーがこのホストだけのものだと
+   ブラウザに伝える印で、ブラウザは `Secure` の付いたクッキーからしかその名前を受け取り
+   ません。ですから HTTPS を切ってある設置には、接頭辞のない名前で送られます。クッキーを
+   ファイルに保存しておけば届いたほうがそのまま残るので、スクリプトがどちらかを知って
+   いる必要はありません。
 2. 応答の `data.csrf_token` を取り出し、**すべての** `POST`, `PUT`, `DELETE` に
    `X-CSRF-Token` ヘッダとして付けてください。
 3. `GET` にトークンは要りません。`GET` は何も変えないからです。
@@ -1145,7 +1150,7 @@ BASE=https://127.0.0.1:8888
 # [HTTPS と証明書](#https-と証明書) を参照。
 export CURL_CA_BUNDLE=tm-cert.pem
 
-# 1. ログインする。-c が tm_session と tm_csrf を cookies.txt に書く。
+# 1. ログインする。-c がクッキー 2 つを届いた名前のまま cookies.txt に書く。
 curl -s -c cookies.txt -X POST "$BASE/api/login" \
   -H 'Content-Type: application/json' \
   -d '{"username":"operator","password":"<your-password>"}' > login.json

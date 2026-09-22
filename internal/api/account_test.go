@@ -42,6 +42,13 @@ type accountFixture struct {
 	auth *AuthHandler
 	db   *gorm.DB
 	logs *observer.ObservedLogs
+
+	// overTLS makes every request the fixture sends arrive over TLS this
+	// process terminated itself. It is off by default, which is the install
+	// served over plain HTTP, and a test that turns it on gets the cookie
+	// names a browser guards: the session this endpoint has to find is then
+	// under __Host-tm_session and not under tm_session.
+	overTLS bool
 }
 
 func newAccountFixture(t *testing.T) *accountFixture {
@@ -93,7 +100,7 @@ func newAccountFixture(t *testing.T) *accountFixture {
 func (f *accountFixture) signIn(t *testing.T, username, password string) []*http.Cookie {
 	t.Helper()
 
-	return csrfLoginCookies(t, f.e, loginBody(t, username, password))
+	return csrfLoginCookiesOverTLS(t, f.e, f.overTLS, loginBody(t, username, password))
 }
 
 // signInFails sends a login that is expected to be refused and says what the
@@ -109,7 +116,7 @@ func (f *accountFixture) signInFails(t *testing.T, username, password string) in
 // reachable reports the status a session gets on a route behind the session
 // check. 200 is a session that is still open and 401 is one that is gone.
 func (f *accountFixture) reachable(cookies []*http.Cookie) int {
-	return do(f.e, http.MethodGet, accountProbePath, "", cookies...).Code
+	return doOverTLS(f.e, f.overTLS, http.MethodGet, accountProbePath, "", cookies...).Code
 }
 
 // storedUsername is the name in the row, read back out of the database rather
@@ -161,7 +168,7 @@ func (f *accountFixture) changeAccount(t *testing.T, cookies []*http.Cookie,
 	current, username, newPassword string) *httptest.ResponseRecorder {
 	t.Helper()
 
-	return do(f.e, http.MethodPut, accountPath,
+	return doOverTLS(f.e, f.overTLS, http.MethodPut, accountPath,
 		accountBody(t, current, username, newPassword), cookies...)
 }
 
@@ -395,6 +402,69 @@ func TestAccountChangeKeepsTheSessionItWasMadeWith(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("the second change: status = %d, want %d, body: %s",
 			rec.Code, http.StatusOK, rec.Body.String())
+	}
+}
+
+// TestAccountChangeOverTLSKeepsTheSessionItWasMadeWith is the same rule as the
+// two tests above on an install served over HTTPS, where the session cookie
+// arrives under the guarded name.
+//
+// It is a test of its own because every other test here logs in over plain
+// HTTP, where the name is the bare one. This endpoint reads the session out of
+// the request to decide which session to keep, and a read that missed it would
+// leave an empty token: DeleteAllExcept takes that as a session none of the
+// open ones is, so the operator who just chose a new password would be logged
+// out by the change they made, on the installs that are set up the safer way.
+func TestAccountChangeOverTLSKeepsTheSessionItWasMadeWith(t *testing.T) {
+	f := newAccountFixture(t)
+	f.overTLS = true
+
+	mine := f.signIn(t, testUsername, testPassword)
+	other := f.signIn(t, testUsername, testPassword)
+
+	// What makes this test the one it is. A login that handed out the bare
+	// names would be testing the same thing as the tests above it.
+	for _, cookie := range mine {
+		if !strings.HasPrefix(cookie.Name, hostCookiePrefix) {
+			t.Fatalf("the login over TLS set %q, want a name starting with %q",
+				cookie.Name, hostCookiePrefix)
+		}
+	}
+
+	rec := f.changeAccount(t, mine, testPassword, accountNewUsername, testNewPassword)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d, body: %s", rec.Code, http.StatusOK, rec.Body.String())
+	}
+
+	code := f.reachable(mine)
+	if code != http.StatusOK {
+		t.Errorf("the session that made the change: status = %d, want %d", code, http.StatusOK)
+	}
+
+	code = f.reachable(other)
+	if code != http.StatusUnauthorized {
+		t.Errorf("the other session: status = %d, want %d", code, http.StatusUnauthorized)
+	}
+
+	var resp struct {
+		Data struct {
+			SessionsEnded int `json:"sessions_ended"`
+		} `json:"data"`
+	}
+
+	err := json.Unmarshal(rec.Body.Bytes(), &resp)
+	if err != nil {
+		t.Fatalf("failed to decode the body %q: %v", rec.Body.String(), err)
+	}
+
+	if resp.Data.SessionsEnded != 1 {
+		t.Errorf("sessions_ended = %d, want 1, body: %s", resp.Data.SessionsEnded, rec.Body.String())
+	}
+
+	// The change went through with the credentials it was sent with, so the new
+	// ones are what opens the account now.
+	if f.signInFails(t, accountNewUsername, testNewPassword) != http.StatusOK {
+		t.Errorf("the new credentials do not open the account")
 	}
 }
 

@@ -141,8 +141,21 @@ type testResponse struct {
 // which is what the page does with it: a test that wants a request to arrive
 // without a token leaves that cookie out and sends the session one alone.
 func do(e *echo.Echo, method, target, body string, cookies ...*http.Cookie) *httptest.ResponseRecorder {
+	return doOverTLS(e, false, method, target, body, cookies...)
+}
+
+// doOverTLS is do with a say over whether the request arrived over TLS this
+// process terminated itself. That is what decides Secure on the cookies of the
+// answer, and with it which name they carry, so a test that reads a name back
+// has to be able to send both kinds of request.
+func doOverTLS(e *echo.Echo, overTLS bool, method, target, body string, cookies ...*http.Cookie) *httptest.ResponseRecorder {
 	req := httptest.NewRequest(method, target, strings.NewReader(body))
 	req.Header.Set(echo.HeaderContentType, echo.MIMEApplicationJSON)
+
+	if overTLS {
+		// An empty state is enough: echo asks whether there is one.
+		req.TLS = &tls.ConnectionState{}
+	}
 
 	for _, cookie := range cookies {
 		if cookie == nil {
@@ -151,7 +164,7 @@ func do(e *echo.Echo, method, target, body string, cookies ...*http.Cookie) *htt
 
 		req.AddCookie(cookie)
 
-		if cookie.Name == csrfCookieName {
+		if isCookieFor(cookie, csrfCookieName) {
 			req.Header.Set(csrfHeaderName, cookie.Value)
 		}
 	}
@@ -162,10 +175,18 @@ func do(e *echo.Echo, method, target, body string, cookies ...*http.Cookie) *htt
 	return rec
 }
 
+// isCookieFor reports whether the cookie is the one for base, under the guarded
+// name or the bare one. A test does not decide which of the two the server used
+// on a given request, so it accepts either and checks the name where the name
+// is what is under test.
+func isCookieFor(cookie *http.Cookie, base string) bool {
+	return cookie.Name == base || cookie.Name == hostCookiePrefix+base
+}
+
 // sessionCookieOf returns the session cookie the answer set, or nil.
 func sessionCookieOf(rec *httptest.ResponseRecorder) *http.Cookie {
 	for _, cookie := range rec.Result().Cookies() {
-		if cookie.Name == sessionCookieName {
+		if isCookieFor(cookie, sessionCookieName) {
 			return cookie
 		}
 	}
@@ -190,7 +211,15 @@ func decode(t *testing.T, rec *httptest.ResponseRecorder) testResponse {
 func login(t *testing.T, e *echo.Echo, body string) (*httptest.ResponseRecorder, *http.Cookie) {
 	t.Helper()
 
-	rec := do(e, http.MethodPost, "/api/login", body, nil)
+	return loginOverTLS(t, e, false, body)
+}
+
+// loginOverTLS is login with a say over how the request arrives, which decides
+// the name the cookies of the answer carry.
+func loginOverTLS(t *testing.T, e *echo.Echo, overTLS bool, body string) (*httptest.ResponseRecorder, *http.Cookie) {
+	t.Helper()
+
+	rec := doOverTLS(e, overTLS, http.MethodPost, "/api/login", body, nil)
 
 	return rec, sessionCookieOf(rec)
 }
@@ -198,7 +227,7 @@ func login(t *testing.T, e *echo.Echo, body string) (*httptest.ResponseRecorder,
 // csrfCookieOf returns the CSRF cookie the answer set, or nil.
 func csrfCookieOf(rec *httptest.ResponseRecorder) *http.Cookie {
 	for _, cookie := range rec.Result().Cookies() {
-		if cookie.Name == csrfCookieName {
+		if isCookieFor(cookie, csrfCookieName) {
 			return cookie
 		}
 	}
@@ -212,14 +241,23 @@ func csrfCookieOf(rec *httptest.ResponseRecorder) *http.Cookie {
 func csrfLoginCookies(t *testing.T, e *echo.Echo, body string) []*http.Cookie {
 	t.Helper()
 
-	rec, session := login(t, e, body)
+	return csrfLoginCookiesOverTLS(t, e, false, body)
+}
+
+// csrfLoginCookiesOverTLS is csrfLoginCookies with a say over how the request
+// arrives. A test that wants the guarded cookie names has to log in over TLS,
+// since that is what the server hands them out on.
+func csrfLoginCookiesOverTLS(t *testing.T, e *echo.Echo, overTLS bool, body string) []*http.Cookie {
+	t.Helper()
+
+	rec, session := loginOverTLS(t, e, overTLS, body)
 	if session == nil {
 		t.Fatalf("the login set no session cookie, body: %s", rec.Body.String())
 	}
 
 	csrf := csrfCookieOf(rec)
 	if csrf == nil {
-		t.Fatalf("the login set no %s cookie, Set-Cookie: %v", csrfCookieName, rec.Result().Header["Set-Cookie"])
+		t.Fatalf("the login set no CSRF cookie, Set-Cookie: %v", rec.Result().Header["Set-Cookie"])
 	}
 
 	return []*http.Cookie{session, csrf}
@@ -415,7 +453,7 @@ func TestLogoutEndsTheSession(t *testing.T) {
 	var lastCSRF *http.Cookie
 
 	for _, cookie := range rec.Result().Cookies() {
-		if cookie.Name == csrfCookieName {
+		if isCookieFor(cookie, csrfCookieName) {
 			lastCSRF = cookie
 		}
 	}
@@ -836,6 +874,191 @@ func TestTheCookieSecureFlagFollowsTheProxySwitch(t *testing.T) {
 
 			if csrf.HttpOnly {
 				t.Errorf("%s: HttpOnly = true, want false: the page has to read it", csrfCookieName)
+			}
+		})
+	}
+}
+
+// TestTheCookieNamesAreGuardedWhereTheyAreSecure pins down which name the two
+// cookies go out under, and that the attributes a browser demands of the
+// guarded name are all there.
+//
+// A cookie carries no port, so a service on another port of this host can write
+// over a cookie of this one and leave the operator unable to work. The guarded
+// name is what stops that, and a browser only takes it from a Secure cookie
+// with Path=/ and no Domain: a name that carried the prefix on a plain HTTP
+// install would be dropped whole and no login there would ever finish. So the
+// name follows Secure, and both halves of that are checked here.
+func TestTheCookieNamesAreGuardedWhereTheyAreSecure(t *testing.T) {
+	tests := []struct {
+		name           string
+		overTLS        bool
+		trustProxy     bool
+		forwardedProto string
+		wantGuarded    bool
+	}{
+		{name: "plain HTTP, which is an install with HTTPS turned off", wantGuarded: false},
+		{name: "TLS terminated here", overTLS: true, wantGuarded: true},
+		{name: "forwarded https with the switch on", trustProxy: true, forwardedProto: "https", wantGuarded: true},
+		{name: "forwarded http with the switch on", trustProxy: true, forwardedProto: "http", wantGuarded: false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			e, authHandler := newTestServer(t, newTestAccount(t, false))
+			authHandler.TrustProxyHeaders(tt.trustProxy)
+
+			body := `{"username":"` + testUsername + `","password":"` + testPassword + `"}`
+
+			req := httptest.NewRequest(http.MethodPost, "/api/login", strings.NewReader(body))
+			req.Header.Set(echo.HeaderContentType, echo.MIMEApplicationJSON)
+
+			if tt.forwardedProto != "" {
+				req.Header.Set(echo.HeaderXForwardedProto, tt.forwardedProto)
+			}
+
+			if tt.overTLS {
+				req.TLS = &tls.ConnectionState{}
+			}
+
+			rec := httptest.NewRecorder()
+			e.ServeHTTP(rec, req)
+
+			if rec.Code != http.StatusOK {
+				t.Fatalf("status = %d, want %d, body: %s", rec.Code, http.StatusOK, rec.Body.String())
+			}
+
+			session := sessionCookieOf(rec)
+			if session == nil {
+				t.Fatalf("the login set no session cookie, Set-Cookie: %v", rec.Result().Header["Set-Cookie"])
+			}
+
+			csrf := csrfCookieOf(rec)
+			if csrf == nil {
+				t.Fatalf("the login set no CSRF cookie, Set-Cookie: %v", rec.Result().Header["Set-Cookie"])
+			}
+
+			wantNames := map[string]string{
+				sessionCookieName: sessionCookieName,
+				csrfCookieName:    csrfCookieName,
+			}
+
+			if tt.wantGuarded {
+				wantNames[sessionCookieName] = hostCookiePrefix + sessionCookieName
+				wantNames[csrfCookieName] = hostCookiePrefix + csrfCookieName
+			}
+
+			pairs := []struct {
+				base   string
+				cookie *http.Cookie
+			}{
+				{base: sessionCookieName, cookie: session},
+				{base: csrfCookieName, cookie: csrf},
+			}
+
+			for _, pair := range pairs {
+				if pair.cookie.Name != wantNames[pair.base] {
+					t.Errorf("name = %q, want %q", pair.cookie.Name, wantNames[pair.base])
+				}
+
+				// The three attributes the guarded name is only taken with.
+				// They are checked on the bare name as well, since that is
+				// where the guarded one has to be able to move to.
+				if pair.cookie.Secure != tt.wantGuarded {
+					t.Errorf("%s: Secure = %t, want %t", pair.cookie.Name, pair.cookie.Secure, tt.wantGuarded)
+				}
+
+				if pair.cookie.Path != "/" {
+					t.Errorf("%s: Path = %q, want %q", pair.cookie.Name, pair.cookie.Path, "/")
+				}
+
+				if pair.cookie.Domain != "" {
+					t.Errorf("%s: Domain = %q, want it unset", pair.cookie.Name, pair.cookie.Domain)
+				}
+			}
+
+			// The token is a credential, so only the attributes are logged.
+			for _, line := range rec.Result().Header["Set-Cookie"] {
+				name, rest, _ := strings.Cut(line, "=")
+				_, attributes, _ := strings.Cut(rest, ";")
+				t.Logf("Set-Cookie: %s=<token>;%s", name, attributes)
+			}
+		})
+	}
+}
+
+// TestTheSessionWorksUnderBothCookieNames walks the whole flow on each of the
+// two names: log in, make a call that needs the session, then a call that needs
+// the CSRF token as well, and check that the session is gone afterwards.
+//
+// The plain HTTP row is the install with HTTPS turned off, and it is the one
+// that would break if the guarded name were put on unconditionally: the browser
+// would drop the cookies and the login would never take.
+func TestTheSessionWorksUnderBothCookieNames(t *testing.T) {
+	tests := []struct {
+		name      string
+		overTLS   bool
+		wantNames []string
+	}{
+		{
+			name:      "plain HTTP",
+			wantNames: []string{sessionCookieName, csrfCookieName},
+		},
+		{
+			name:      "over TLS",
+			overTLS:   true,
+			wantNames: []string{hostCookiePrefix + sessionCookieName, hostCookiePrefix + csrfCookieName},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			e, _ := newTestServer(t, newTestAccount(t, false))
+
+			body := `{"username":"` + testUsername + `","password":"` + testPassword + `"}`
+
+			rec := doOverTLS(e, tt.overTLS, http.MethodPost, "/api/login", body)
+			if rec.Code != http.StatusOK {
+				t.Fatalf("login status = %d, want %d, body: %s", rec.Code, http.StatusOK, rec.Body.String())
+			}
+
+			session := sessionCookieOf(rec)
+			csrf := csrfCookieOf(rec)
+
+			if session == nil || csrf == nil {
+				t.Fatalf("the login set %v, want a session and a CSRF cookie", rec.Result().Header["Set-Cookie"])
+			}
+
+			got := []string{session.Name, csrf.Name}
+			if got[0] != tt.wantNames[0] || got[1] != tt.wantNames[1] {
+				t.Fatalf("names = %v, want %v", got, tt.wantNames)
+			}
+
+			cookies := []*http.Cookie{session, csrf}
+
+			// A read behind the session, which is the name the middleware has
+			// to find the session under.
+			rec = doOverTLS(e, tt.overTLS, http.MethodGet, "/api/host", "", cookies...)
+			if rec.Code != http.StatusOK {
+				t.Fatalf("read status = %d, want %d, body: %s", rec.Code, http.StatusOK, rec.Body.String())
+			}
+
+			// A call that changes something, so the CSRF token the page read
+			// out of the cookie is checked against the one the session holds.
+			rec = doOverTLS(e, tt.overTLS, http.MethodPost, "/api/logout", "", cookies...)
+			if rec.Code != http.StatusOK {
+				t.Fatalf("logout status = %d, want %d, body: %s", rec.Code, http.StatusOK, rec.Body.String())
+			}
+
+			expired := sessionCookieOf(rec)
+			if expired == nil || expired.Name != tt.wantNames[0] || expired.MaxAge >= 0 {
+				t.Errorf("the logout did not expire %s: %v", tt.wantNames[0], expired)
+			}
+
+			rec = doOverTLS(e, tt.overTLS, http.MethodGet, "/api/host", "", cookies...)
+			if rec.Code != http.StatusUnauthorized {
+				t.Fatalf("status after the logout = %d, want %d, body: %s",
+					rec.Code, http.StatusUnauthorized, rec.Body.String())
 			}
 		})
 	}

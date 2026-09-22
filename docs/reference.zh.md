@@ -993,7 +993,11 @@ Windows 上，这个进程正在写的日志文件打开着就无法删除，而
 
 **`/api` 下面的每条路径都需要会话，而每个 `POST`、`PUT` 和 `DELETE` 还需要一个 CSRF 令牌。**
 
-1. 用用户名和密码调 `POST /api/login`。把它设下的 cookie `tm_session` 和 `tm_csrf` 留着。
+1. 用用户名和密码调 `POST /api/login`。把它设下的 cookie 留着。走 HTTPS 时它们叫
+   `__Host-tm_session` 和 `__Host-tm_csrf`，走明文 HTTP 时叫 `tm_session` 和 `tm_csrf`。
+   `__Host-` 是告诉浏览器这个 cookie 只属于这台主机的记号，而浏览器只在标了 `Secure` 的
+   cookie 上接受这个名字，所以关掉了 HTTPS 的安装拿到的是不带前缀的名字。cookie jar 会把
+   来的那一对原样存下来，脚本不需要知道是哪一对。
 2. 从响应里取出 `data.csrf_token`，在**每一个** `POST`、`PUT` 和 `DELETE` 上作为
    `X-CSRF-Token` 头发出去。
 3. `GET` 不需要令牌。它不修改任何数据。
@@ -1015,7 +1019,7 @@ BASE=https://127.0.0.1:8888
 # 见 [HTTPS 与证书](#https-与证书)。
 export CURL_CA_BUNDLE=tm-cert.pem
 
-# 1. 登录。-c 把 tm_session 和 tm_csrf 存进 cookies.txt。
+# 1. 登录。-c 把两个 cookie 按回来的名字存进 cookies.txt。
 curl -s -c cookies.txt -X POST "$BASE/api/login" \
   -H 'Content-Type: application/json' \
   -d '{"username":"operator","password":"<your-password>"}' > login.json

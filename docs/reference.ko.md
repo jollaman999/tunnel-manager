@@ -1087,8 +1087,13 @@ curl -s -b cookies.txt -X POST "$BASE/api/uninstall" \
 
 **`/api` 아래 모든 경로는 세션이 필요하고, `POST`·`PUT`·`DELETE` 는 CSRF 토큰도 필요합니다.**
 
-1. `POST /api/login` 에 사용자명과 비밀번호를 보냅니다. 서버가 내려주는 쿠키
-   `tm_session` 과 `tm_csrf` 를 보관합니다.
+1. `POST /api/login` 에 사용자명과 비밀번호를 보냅니다. 서버가 내려주는 쿠키를
+   보관합니다. HTTPS 로 부르면 이름이 `__Host-tm_session` 과 `__Host-tm_csrf` 이고,
+   평문 HTTP 면 `tm_session` 과 `tm_csrf` 입니다. `__Host-` 는 그 쿠키가 이 호스트
+   것뿐이라고 브라우저에 알리는 표시인데, 브라우저는 `Secure` 가 붙은 쿠키에서만 그
+   이름을 받습니다. 그래서 HTTPS 를 꺼 둔 설치에는 접두사 없는 이름으로 나갑니다.
+   쿠키를 파일에 모아 두면 어느 쪽이 왔든 그대로 남으므로, 스크립트가 어느 쪽인지 알고
+   있을 필요는 없습니다.
 2. 응답의 `data.csrf_token` 을 꺼내서 **모든** `POST`·`PUT`·`DELETE` 에 `X-CSRF-Token`
    헤더로 붙입니다.
 3. `GET` 은 토큰이 필요 없습니다. 바꾸는 것이 없기 때문입니다.
@@ -1112,7 +1117,7 @@ BASE=https://127.0.0.1:8888
 # [HTTPS 와 인증서](#https-와-인증서) 참조.
 export CURL_CA_BUNDLE=tm-cert.pem
 
-# 1. 로그인한다. -c 가 tm_session 과 tm_csrf 를 cookies.txt 에 적는다.
+# 1. 로그인한다. -c 가 쿠키 둘을 내려온 이름 그대로 cookies.txt 에 적는다.
 curl -s -c cookies.txt -X POST "$BASE/api/login" \
   -H 'Content-Type: application/json' \
   -d '{"username":"operator","password":"<your-password>"}' > login.json

@@ -31,8 +31,29 @@ const (
 	setupPath  = "/api/setup"
 )
 
-// sessionCookieName is the cookie the session token is carried in.
+// sessionCookieName is the cookie the session token is carried in. It is the
+// bare name: what goes out on the wire is what cookieName makes of it.
 const sessionCookieName = "tm_session"
+
+// hostCookiePrefix is the mark a browser guards a cookie name with. A cookie
+// whose name carries it is only taken when it is Secure, has Path=/ and names
+// no Domain, and only the exact host that set it can write it again. Cookies
+// carry no port and no scheme of their own, so without the prefix a service on
+// another port of this host, or a sibling name under a shared domain, can set
+// a cookie of the same name and the browser will send that one here instead.
+//
+// Neither token is given away that way in any case: the session cookie is
+// HttpOnly, and the CSRF header is compared against the token the session
+// holds rather than against the cookie that came back. What the prefix stops is
+// the other half of it, an outsider writing over the two cookies until the
+// operator cannot use this server at all.
+//
+// The prefix is put on only where the cookie is really Secure, which
+// cookieIsSecure decides for each request, because this server is served over
+// plain HTTP as well. A browser throws away a prefixed cookie that arrives
+// without Secure, so a name that carried the prefix there would hand out a
+// session that never comes back and no login would ever finish.
+const hostCookiePrefix = "__Host-"
 
 // sessionLifetime is how long a session lives past the last request that used
 // it. Every request pushes the deadline out, so a client that keeps working is
@@ -61,7 +82,8 @@ const sessionTokenBytes = 32
 // csrfCookieName is the cookie the CSRF token of a session is carried in. It is
 // a second cookie rather than the session one because the page has to read it
 // to put it back in a header, and the session cookie stays HttpOnly so that a
-// script can never get at the credential itself.
+// script can never get at the credential itself. Like the session name it is
+// the bare one, and cookieName says what it goes out as.
 const csrfCookieName = "tm_csrf"
 
 // csrfHeaderName is the header the token is sent back in. A header is what is
@@ -389,16 +411,59 @@ type setupRequest struct {
 // sessionCookie returns the cookie a session token is handed out in. Secure is
 // set from the request rather than always, because the server is served over
 // plain HTTP as well and a Secure cookie would never be sent back on it.
+//
+// Path is / and Domain is left empty, which is what the guarded name asks for
+// on top of Secure. The whole API and the page that calls it live under this
+// one host, so neither one gives anything up.
 func (h *AuthHandler) sessionCookie(c echo.Context, token string, maxAge int) *http.Cookie {
+	secure := h.cookieIsSecure(c)
+
 	return &http.Cookie{
-		Name:     sessionCookieName,
+		Name:     cookieName(sessionCookieName, secure),
 		Value:    token,
 		Path:     "/",
 		MaxAge:   maxAge,
 		HttpOnly: true,
 		SameSite: http.SameSiteLaxMode,
-		Secure:   h.cookieIsSecure(c),
+		Secure:   secure,
 	}
+}
+
+// cookieName returns the name a cookie goes out under on a request whose
+// cookies are Secure or are not. hostCookiePrefix says why the name is not the
+// same in both cases.
+func cookieName(base string, secure bool) string {
+	if !secure {
+		return base
+	}
+
+	return hostCookiePrefix + base
+}
+
+// cookieValue returns what the request carries under base, or "" when it
+// carries nothing under either name.
+//
+// Both names are looked for because which one was handed out follows the
+// request the cookie was set on, and that is not decided here: an install
+// behind TLS has the guarded name, one served over plain HTTP has the bare one,
+// and an install that gains or loses TLS has clients holding either. The
+// guarded name is read first, so where this server sets that one the bare name
+// is only reached by a client that carries no guarded cookie at all. That is
+// worth saying plainly: the bare name is the one an outsider can write, and a
+// token from there opens nothing it did not already open, since it still has to
+// name a session this server made.
+func cookieValue(c echo.Context, base string) string {
+	cookie, err := c.Cookie(hostCookiePrefix + base)
+	if err == nil {
+		return cookie.Value
+	}
+
+	cookie, err = c.Cookie(base)
+	if err == nil {
+		return cookie.Value
+	}
+
+	return ""
 }
 
 // cookieIsSecure reports whether the cookies of this request are handed out
@@ -443,14 +508,16 @@ func (h *AuthHandler) cookieIsSecure(c echo.Context) bool {
 // since the value is not a credential on its own: it is only accepted next to
 // the session it was made for.
 func (h *AuthHandler) csrfCookie(c echo.Context, token string, maxAge int) *http.Cookie {
+	secure := h.cookieIsSecure(c)
+
 	return &http.Cookie{
-		Name:     csrfCookieName,
+		Name:     cookieName(csrfCookieName, secure),
 		Value:    token,
 		Path:     "/",
 		MaxAge:   maxAge,
 		HttpOnly: false,
 		SameSite: http.SameSiteLaxMode,
-		Secure:   h.cookieIsSecure(c),
+		Secure:   secure,
 	}
 }
 
@@ -539,9 +606,9 @@ func (h *AuthHandler) Login(c echo.Context) error {
 // session, or one that has already run out, is answered the same way: what it
 // asked for is the state it is left in.
 func (h *AuthHandler) Logout(c echo.Context) error {
-	cookie, err := c.Cookie(sessionCookieName)
-	if err == nil {
-		h.sessions.Delete(cookie.Value)
+	token := cookieValue(c, sessionCookieName)
+	if token != "" {
+		h.sessions.Delete(token)
 	}
 
 	c.SetCookie(h.sessionCookie(c, "", -1))
@@ -665,12 +732,7 @@ func (h *AuthHandler) Setup(c echo.Context) error {
 	// been written. Dropping the sessions or the file before the commit would
 	// take away the initial password while it is still the one that opens the
 	// account, and a commit that then failed would leave nobody able to log in.
-	token := ""
-
-	cookie, err := c.Cookie(sessionCookieName)
-	if err == nil {
-		token = cookie.Value
-	}
+	token := cookieValue(c, sessionCookieName)
 
 	h.sessions.DeleteAllExcept(token)
 	h.removeInitialPasswordFile()
@@ -740,12 +802,7 @@ func (h *AuthHandler) RequireSession() echo.MiddlewareFunc {
 				return next(c)
 			}
 
-			token := ""
-
-			cookie, err := c.Cookie(sessionCookieName)
-			if err == nil {
-				token = cookie.Value
-			}
+			token := cookieValue(c, sessionCookieName)
 
 			userID, csrfToken, ok := h.sessions.Lookup(token)
 			if !ok {
@@ -767,7 +824,8 @@ func (h *AuthHandler) RequireSession() echo.MiddlewareFunc {
 
 			if !isSafeMethod(c.Request().Method) &&
 				subtle.ConstantTimeCompare([]byte(c.Request().Header.Get(csrfHeaderName)), []byte(csrfToken)) != 1 {
-				return failure(c, http.StatusForbidden, errAuthCSRFRefused, errorArgs{"header": csrfHeaderName, "cookie": csrfCookieName})
+				return failure(c, http.StatusForbidden, errAuthCSRFRefused,
+					errorArgs{"header": csrfHeaderName, "cookie": cookieName(csrfCookieName, h.cookieIsSecure(c))})
 			}
 
 			// The logout needs nothing below this point: it ends the session it

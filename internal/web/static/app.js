@@ -90,6 +90,15 @@ const passwordWrongCodes = [
 const csrfCookieName = "tm_csrf";
 const csrfHeaderName = "X-CSRF-Token";
 
+// hostCookiePrefix is what the server puts in front of both cookie names where
+// it can. A browser only takes a name carrying it from a Secure cookie with
+// Path=/ and no Domain, which is what keeps another port of this host, or a
+// sibling name under a shared domain, from writing over the cookies of this
+// one. The server leaves it off where it is served over plain HTTP, since a
+// browser would drop such a cookie and no login would finish, so the page has
+// to look for the token under both names.
+const hostCookiePrefix = "__Host-";
+
 // themeKey is where the theme the operator picked is kept, and index.html holds
 // the same string: it is read there, in the head, so the first paint is already
 // in the right colour. It is a key of the local storage of the one browser and
@@ -849,15 +858,26 @@ function saysSetupFirst(payload, response) {
 // the server writes the cookie again on every answer and a reload of the page
 // starts with nothing held in memory.
 function csrfToken() {
+  const guarded = hostCookiePrefix + csrfCookieName;
+  let bare = "";
+
   for (const part of document.cookie.split(";")) {
     const pair = part.trim();
 
+    if (pair.startsWith(guarded + "=")) {
+      return decodeURIComponent(pair.slice(guarded.length + 1));
+    }
+
+    // The bare name is kept and not returned yet, because a guarded cookie may
+    // still come later in the list and it is the one this server set where it
+    // set one. Reading the wrong one costs nothing but a refusal the operator
+    // would have to log in again to clear.
     if (pair.startsWith(csrfCookieName + "=")) {
-      return decodeURIComponent(pair.slice(csrfCookieName.length + 1));
+      bare = decodeURIComponent(pair.slice(csrfCookieName.length + 1));
     }
   }
 
-  return "";
+  return bare;
 }
 
 // readPayload returns the decoded body, or null when there is none to decode.

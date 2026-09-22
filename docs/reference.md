@@ -1234,7 +1234,13 @@ that was never going to go.
 needs a CSRF token as well.**
 
 1. `POST /api/login` with the username and the password. Keep the cookies it
-   sets, `tm_session` and `tm_csrf`.
+   sets. Over HTTPS they are named `__Host-tm_session` and `__Host-tm_csrf`;
+   over plain HTTP they are `tm_session` and `tm_csrf`. The `__Host-` prefix is
+   what tells a browser that the cookie belongs to this host alone, and a
+   browser only takes that name from a cookie marked `Secure`, so an install
+   with HTTPS turned off is served the names without it. A cookie jar keeps
+   whichever pair arrived, so a script that uses one does not have to know
+   which.
 2. Read `data.csrf_token` out of the answer and send it as an `X-CSRF-Token`
    header on **every** `POST`, `PUT` and `DELETE`.
 3. `GET` needs no token. Nothing it reaches changes anything.
@@ -1258,7 +1264,8 @@ BASE=https://127.0.0.1:8888
 # See [HTTPS and the certificate](#https-and-the-certificate).
 export CURL_CA_BUNDLE=tm-cert.pem
 
-# 1. Log in. -c stores tm_session and tm_csrf in cookies.txt.
+# 1. Log in. -c stores both cookies in cookies.txt, under the names they came
+# back with.
 curl -s -c cookies.txt -X POST "$BASE/api/login" \
   -H 'Content-Type: application/json' \
   -d '{"username":"operator","password":"<your-password>"}' > login.json
