@@ -573,6 +573,22 @@ function paint(title, nodes) {
   const atY = window.scrollY;
   const sameScreen = drawnScreen === currentScreen;
 
+  // Where each box that scrolls on its own is scrolled to, taken before the
+  // screen goes.
+  //
+  // The page position above covers the page and nothing else. A wide table is
+  // in a scroller of its own, and the message under a failing tunnel is read by
+  // dragging that scroller sideways; the draw builds a new scroller, which
+  // starts at its beginning, and what the reader had dragged into view slid
+  // back off the screen. It read as the screen refreshing under them, which it
+  // was.
+  //
+  // They are matched by the order they come in and not by a name, because they
+  // have none: what is being put back is the second scroller of this screen
+  // onto the second scroller of the same screen, which is the same box drawn
+  // again.
+  const scrolledTo = insideScrolls(app);
+
   app.textContent = "";
 
   const screen = screens[currentScreen];
@@ -599,9 +615,33 @@ function paint(title, nodes) {
 
   if (sameScreen) {
     window.scrollTo(atX, atY);
+
+    const boxes = insideScrolls(app);
+
+    for (let at = 0; at < boxes.length && at < scrolledTo.length; at += 1) {
+      boxes[at].node.scrollLeft = scrolledTo[at].left;
+      boxes[at].node.scrollTop = scrolledTo[at].top;
+    }
   } else {
     window.scrollTo(0, 0);
   }
+}
+
+// insideScrolls is every box on the screen that scrolls inside itself, in the
+// order they are drawn, with where each one is scrolled to.
+//
+// The list is of the boxes that are given a scrollbar of their own by the
+// stylesheet. A box that is not scrolled anywhere is still in it: the count and
+// the order are what the two lists are matched on, and leaving the still ones
+// out would shift every one after them onto the wrong box.
+function insideScrolls(app) {
+  const found = [];
+
+  for (const node of app.querySelectorAll(".table-scroll, .topology, pre")) {
+    found.push({ node: node, left: node.scrollLeft, top: node.scrollTop });
+  }
+
+  return found;
 }
 
 // navigation is the top of every screen: the product name on one row and the
@@ -2804,30 +2844,42 @@ document.addEventListener("scroll", function () {
 // comes down first. Lifting it starts the quiet time rather than ending the
 // wait, because what a phone does when a finger leaves is carry on moving.
 //
-// Pointer events and not touch events, so that a mouse is watched as well as a
-// finger. Where there are no pointer events there are touch events, and the
-// pair below is the same pair under other names.
-const pointerDownNames = window.PointerEvent === undefined
-  ? ["touchstart"]
-  : ["pointerdown"];
-const pointerUpNames = window.PointerEvent === undefined
-  ? ["touchend", "touchcancel"]
-  : ["pointerup", "pointercancel"];
+// Both sets of names are listened for, the pointer ones and the touch ones,
+// rather than one set being picked. They overlap on most browsers and the two
+// say the same thing when they do, so hearing both costs a flag being set to
+// what it already is. What it buys is the browser where they do not overlap:
+// one that reports a finger only as a touch, or one that cancels the pointer
+// the moment a drag turns into a scroll and then says nothing more about it.
+// Which browser does which is not something this page can ask.
+const heldDownNames = ["pointerdown", "touchstart"];
+const letGoNames = ["pointerup", "pointercancel", "touchend", "touchcancel"];
 
-for (const name of pointerDownNames) {
+for (const name of heldDownNames) {
   window.addEventListener(name, function () {
     pointerDown = true;
     scrolledAt = Date.now();
-  }, { passive: true });
+  }, { capture: true, passive: true });
 }
 
-for (const name of pointerUpNames) {
+for (const name of letGoNames) {
   window.addEventListener(name, function () {
     pointerDown = false;
     scrolledAt = Date.now();
-  }, { passive: true });
+  }, { capture: true, passive: true });
 }
 
+// A drag and a wheel, which are movement before anything has scrolled.
+//
+// A scroll event is the result and these are the cause, and the two come apart
+// in the cases that matter: a wheel or a trackpad over a list that is already
+// at its end moves nothing and fires no scroll, and a finger dragging a page
+// fires its moves before the first scroll lands. Both are somebody working the
+// page with their hand on it, which is the whole of what is being watched for.
+for (const name of ["touchmove", "wheel"]) {
+  window.addEventListener(name, function () {
+    scrolledAt = Date.now();
+  }, { capture: true, passive: true });
+}
 // What clears a press that was never let go of over this page.
 //
 // A mouse pressed on a row and released somewhere else - over another window,
