@@ -16,7 +16,7 @@ Tunnel Manager 建立 SSH 隧道，并让它们保持连接。你注册它要登
 | 你注册的内容 | 字段 | 是什么 |
 |--------------|------|--------|
 | Host | `ip`、`port`、`user`、`private_key`、`key_passphrase`、`password`、`description`、`enabled` | Tunnel Manager 要登录的 SSH 服务器。可以用私钥登录，可以用密码登录，也可以两个都注册，但至少要有一个。密钥、密钥的密码和登录密码都加密保存。 |
-| 服务端口 | `service_ip`、`service_port`、`local_port` | 要发布的服务，以及在负责它的每台 Host 上打开的端口。 |
+| 服务端口 | `service_ip`、`service_port`、`local_port`、`bind_address` | 要发布的服务，以及在负责它的每台 Host 上打开的端口。`bind_address` 是请求把那个端口开在 Host 的哪个地址上，不给就是 `0.0.0.0`。 |
 | 分配关系 | `host_id`、`sp_id` | 一台 Host 配一个服务端口，表示这台 Host 负责它。隧道就是根据它建立的，你注册 Host 或服务端口时它会自动生成。 |
 
 `ip` 和 `service_ip` 都收 IPv4 或 IPv6 地址。IPv6 地址照原样写成 `2001:db8::1`，建立连接时需要
@@ -170,12 +170,12 @@ sequenceDiagram
     rect rgb(255, 255, 220)
         Note over Host,WAS: 建立隧道阶段
         Bastion->>Host: 创建 SSH 隧道
-        Note right of Bastion: 每个已分配的服务端口各一条：-R 0.0.0.0:localPort:remoteIP:remotePort
+        Note right of Bastion: 每个已分配的服务端口各一条：-R bindAddress:localPort:remoteIP:remotePort
     end
 
     rect rgb(255, 255, 220)
         Note over Host,WAS: 访问服务阶段
-        Host->>Host: 连接 localPort（监听绑在 0.0.0.0）
+        Host->>Host: 连接 localPort（监听绑在 bindAddress）
         Host->>Bastion: 流量顺着隧道转发过来
         Bastion->>WAS: 转发到 remoteIP:remotePort
         WAS-->>Bastion: 响应
@@ -191,7 +191,8 @@ sequenceDiagram
     end
 ```
 
-Host 上的监听到底会不会开在 `0.0.0.0` 上，由 Host 上的 SSH 服务器说了算。它的 `GatewayPorts`
+请求的地址是服务端口上的 `bind_address`，没给就是 `0.0.0.0`，见[服务端口](#服务端口)。
+Host 上的监听到底会不会开在那个地址上，由 Host 上的 SSH 服务器说了算。它的 `GatewayPorts`
 关闭时，不管请求的是哪个地址，监听都绑定在回环地址上，日志里会记录。隧道建立后，
 tunnel-manager 会自行测试那个转发端口，并报告结果，见
 [转发端口是否可达](#转发端口是否可达)。
@@ -1240,11 +1241,28 @@ curl -s -b cookies.txt -X PUT "$BASE/api/host/1/service-port" \
 
 | 方法 | 路径 | 做什么 |
 |------|------|--------|
-| `POST` | `/api/service-port` | 创建一个服务端口。`assign_to_all_hosts` 可以不填：不填时，现存的每台 Host 都分到它；发成 false 则注册成没有 Host 负责 |
+| `POST` | `/api/service-port` | 创建一个服务端口。`bind_address` 可以不填，不填就是 `0.0.0.0`。`assign_to_all_hosts` 也可以不填：不填时，现存的每台 Host 都分到它；发成 false 则注册成没有 Host 负责 |
 | `GET` | `/api/service-port` | 服务端口的一页，旧的在前。收 `page` 和 `size`，见[分页](#分页) |
 | `GET` | `/api/service-port/:id` | 读一个服务端口 |
-| `PUT` | `/api/service-port/:id` | 更新一个服务端口。`service_ip`、`service_port` 和 `local_port` 都是必填的 |
+| `PUT` | `/api/service-port/:id` | 更新一个服务端口。`service_ip`、`service_port` 和 `local_port` 都是必填的，`bind_address` 不填就是 `0.0.0.0` |
 | `DELETE` | `/api/service-port/:id` | 删除一个服务端口，以及涉及它的分配关系 |
+
+**`bind_address` 是请求把转发端口开在 Host 的哪个地址上。**只收 IPv4 或 IPv6 地址。这个字符串
+会原样交给 Host 上的 sshd，所以写成名字就要由那边的、这边看不到的解析器去解析，解析不出来的
+名字只会一次次以被拒绝的连接显现出来。不填或发成空就是 `0.0.0.0`，这也是这个字段出现之前每个
+服务端口所请求的值，因此早先版本保存的服务端口，可达范围一点没变。
+
+界面提供 `0.0.0.0`、`127.0.0.1` 和 `::1`，其他地址可以自己输入。这份列表不会去问 Host：某个
+地址属于哪台机器的哪个接口，是那台机器自己的事实，要读它就得在那边执行命令，而这个程序没有
+这种手段。
+
+这个地址到底起什么作用，仍然由 SSH 服务器决定。`127.0.0.1` 不管 `GatewayPorts` 是什么，都把
+端口留在 Host 自己身上；`0.0.0.0` 则把端口开给所有能访问到 Host 的人，但也只在服务器允许时
+才如此，见[转发端口是否可达](#转发端口是否可达)。绑在回环地址上的服务端口在那里会报成
+`unreachable`，这正是该读数正常工作的样子：它是从本进程向 Host 发起连接量出来的，而开在
+回环地址上的端口不会应答。
+
+改动这个地址会重建负责该服务端口的隧道，因为地址是构成一条隧道的值的一部分。
 
 ### 状态
 
@@ -1440,8 +1458,8 @@ curl -s -b cookies.txt https://127.0.0.1:8888/api/status
 
 写着 `connected` 的隧道，说明 SSH 连接已建立。这不等于转发端口可以连接：监听是由 **SSH
 服务器**打开的，它绑定哪个地址是那台服务器的决定，不是这边的。tunnel-manager 请求的是
-`0.0.0.0:<本地端口>`，而 OpenSSH 保持默认的 `GatewayPorts no`，或者 Dropbear 不带 `-a`
-启动时，服务器只绑定回环地址。这样这个端口只在 Host 本机上响应，从其他地方无法访问。
+`<绑定地址>:<本地端口>`，服务端口没写别的地址时就是 `0.0.0.0`；而 OpenSSH 保持默认的
+`GatewayPorts no`，或者 Dropbear 不带 `-a` 启动时，服务器只绑定回环地址。这样这个端口只在 Host 本机上响应，从其他地方无法访问。
 
 每条隧道行上有两个字段，说明对这件事已知的信息。
 

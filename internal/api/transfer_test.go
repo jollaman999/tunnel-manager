@@ -217,6 +217,7 @@ func (i *transferInstall) registerServicePort(t *testing.T, sp servicePortConten
 		ServiceIP:   sp.ServiceIP,
 		ServicePort: sp.ServicePort,
 		LocalPort:   sp.LocalPort,
+		BindAddress: sp.BindAddress,
 		Description: sp.Description,
 	}
 
@@ -348,6 +349,34 @@ func TestTheHostContentCarriesEveryFieldOfAHost(t *testing.T) {
 	}
 }
 
+// TestTheServicePortContentCarriesEveryFieldOfAServicePort is the other half of
+// the check above. A service port holds no secret, so nothing is left out of it
+// but the id and the two timestamps, which describe the row this export was
+// read from rather than what was asked for.
+//
+// A field added to the model and not here would be dropped by an export
+// without a word, and the installation that imported the file would come up
+// running something other than what was exported.
+func TestTheServicePortContentCarriesEveryFieldOfAServicePort(t *testing.T) {
+	left := map[string]bool{"ID": true, "CreatedAt": true, "UpdatedAt": true}
+
+	stored := reflect.TypeOf(models.ServicePort{})
+	carried := reflect.TypeOf(servicePortContent{})
+
+	for i := 0; i < stored.NumField(); i++ {
+		name := stored.Field(i).Name
+		if left[name] {
+			continue
+		}
+
+		_, found := carried.FieldByName(name)
+		if !found {
+			t.Errorf("models.ServicePort has %s and servicePortContent does not, "+
+				"so it is not carried by an export", name)
+		}
+	}
+}
+
 // TestAnExportedFileHoldsNoSecretInTheClear is the rule the whole format rests
 // on: the SSH password, the private key and its passphrase are inside the file,
 // and the file is one sealed string, so none of the three can be read off it
@@ -424,7 +453,8 @@ func TestAnExportedConfigurationIsReadableOnAnotherInstallation(t *testing.T) {
 	source.registerHost(t, withKey)
 	source.registerHost(t, withPassword)
 	source.registerServicePort(t, servicePortContent{
-		ServiceIP: "192.0.2.20", ServicePort: 80, LocalPort: 18080, Description: "a service",
+		ServiceIP: "192.0.2.20", ServicePort: 80, LocalPort: 18080,
+		BindAddress: "127.0.0.1", Description: "a service",
 	})
 
 	file := source.exportTunnels(t, testExportPassword)
@@ -512,6 +542,14 @@ func TestAnExportedConfigurationIsReadableOnAnotherInstallation(t *testing.T) {
 
 	if sp.ServiceIP != "192.0.2.20" || sp.ServicePort != 80 {
 		t.Errorf("the service port came across as %s:%d", sp.ServiceIP, sp.ServicePort)
+	}
+
+	// The address the forwarded port is asked for on has to come across as it
+	// was. Dropped, it would read as the wildcard, and the installation that
+	// took the file in would open on every interface of every Host what the
+	// one it came from had on loopback alone.
+	if sp.BindAddress != "127.0.0.1" {
+		t.Errorf("the service port came across bound to %q, want %q", sp.BindAddress, "127.0.0.1")
 	}
 
 	if target.manager.count() != 1 {

@@ -244,7 +244,94 @@ func TestTunnelMigrationKeepsTheRowsThatWereThere(t *testing.T) {
 	}
 }
 
-// TestTunnelSerializesTheForwardedPortReadings pins the two names the API
+// oldServicePort is ServicePort as it stood before the address the forwarded
+// port is opened on could be chosen. It is what the service_ports table of an
+// installation migrated by an earlier release looks like.
+type oldServicePort struct {
+	ID          uint   `gorm:"primaryKey;autoIncrement"`
+	ServiceIP   string `gorm:"uniqueIndex:idx_service_ip_port;not null"`
+	ServicePort int    `gorm:"uniqueIndex:idx_service_ip_port;not null"`
+	LocalPort   int    `gorm:"uniqueIndex:idx_service_local_port;not null"`
+	Description string
+	CreatedAt   time.Time
+	UpdatedAt   time.Time
+}
+
+func (oldServicePort) TableName() string {
+	return "service_ports"
+}
+
+// TestServicePortMigrationLeavesTheStoredRowsWhereTheyWere is what keeps an
+// upgrade from changing how far a running tunnel reaches.
+//
+// The column is added to a table that is in use, and a row written before it
+// existed comes through holding nothing. Nothing has to go on meaning the
+// wildcard, which is what those rows were already being forwarded on, so the
+// column carries no NOT NULL and no default and nothing rewrites what is
+// stored: an installation that upgrades and never touches a service port opens
+// exactly the ports it opened before.
+func TestServicePortMigrationLeavesTheStoredRowsWhereTheyWere(t *testing.T) {
+	db, err := gorm.Open(sqlite.Open(filepath.Join(t.TempDir(), "tm.db")), &gorm.Config{})
+	if err != nil {
+		t.Fatalf("failed to open the database: %v", err)
+	}
+
+	err = db.AutoMigrate(&oldServicePort{})
+	if err != nil {
+		t.Fatalf("failed to build the table as it was: %v", err)
+	}
+
+	before := oldServicePort{
+		ServiceIP:   "198.51.100.20",
+		ServicePort: 8080,
+		LocalPort:   18080,
+		Description: "a service",
+	}
+
+	err = db.Create(&before).Error
+	if err != nil {
+		t.Fatalf("failed to write a row of the table as it was: %v", err)
+	}
+
+	err = db.AutoMigrate(&ServicePort{})
+	if err != nil {
+		t.Fatalf("failed to migrate the table: %v", err)
+	}
+
+	var after ServicePort
+	err = db.First(&after, before.ID).Error
+	if err != nil {
+		t.Fatalf("the row that was there before the migration cannot be read: %v", err)
+	}
+
+	if after.ServiceIP != before.ServiceIP || after.ServicePort != before.ServicePort ||
+		after.LocalPort != before.LocalPort || after.Description != before.Description {
+		t.Fatalf("the migration changed the row that was there: %+v", after)
+	}
+
+	if after.BindAddress != "" {
+		t.Fatalf("a row written before the column carries the bind address %q", after.BindAddress)
+	}
+
+	after.BindAddress = "127.0.0.1"
+
+	err = db.Save(&after).Error
+	if err != nil {
+		t.Fatalf("failed to write a bind address to the migrated row: %v", err)
+	}
+
+	var stored ServicePort
+	err = db.First(&stored, before.ID).Error
+	if err != nil {
+		t.Fatalf("failed to read the migrated row back: %v", err)
+	}
+
+	if stored.BindAddress != "127.0.0.1" {
+		t.Fatalf("the bind address did not survive being stored: %q", stored.BindAddress)
+	}
+}
+
+// TestTunnelSerializesTheForwardedPortReadings pins the two names the API// TestTunnelSerializesTheForwardedPortReadings pins the two names the API
 // answers with. The status screen reads them off the tunnel rows of
 // GET /api/status, so a rename here is a screen that shows nothing.
 func TestTunnelSerializesTheForwardedPortReadings(t *testing.T) {

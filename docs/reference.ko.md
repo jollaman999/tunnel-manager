@@ -19,7 +19,7 @@ Tunnel Manager 는 SSH 터널을 열고 그 상태를 계속 유지합니다. �
 | 등록하는 것 | 항목 | 무엇인가 |
 |-------------|------|----------|
 | Host | `ip`, `port`, `user`, `private_key`, `key_passphrase`, `password`, `description`, `enabled` | Tunnel Manager 가 접속하는 SSH 서버입니다. 개인키로 접속할 수도, 비밀번호로 접속할 수도, 둘 다 등록할 수도 있으며 둘 중 하나는 반드시 있어야 합니다. 키와 키 암호와 비밀번호는 모두 암호화해서 저장합니다. |
-| 서비스 포트 | `service_ip`, `service_port`, `local_port` | 내보낼 서비스와, 그 서비스를 담당하는 Host 마다 열 포트입니다. |
+| 서비스 포트 | `service_ip`, `service_port`, `local_port`, `bind_address` | 내보낼 서비스와, 그 서비스를 담당하는 Host 마다 열 포트입니다. `bind_address` 는 그 포트를 Host 의 어느 주소에 열도록 요청할지이고, 안 주면 `0.0.0.0` 입니다. |
 | 할당 | `host_id`, `sp_id` | Host 하나와 서비스 포트 하나를 짝지은 것입니다. 이 Host 가 이 서비스 포트를 담당한다는 뜻이며, 터널은 여기서 만들어집니다. Host 나 서비스 포트를 등록할 때 같이 만들어집니다. |
 
 `ip` 와 `service_ip` 는 IPv4 와 IPv6 를 모두 받습니다. IPv6 주소는 `2001:db8::1` 처럼 그대로 적고,
@@ -184,12 +184,12 @@ sequenceDiagram
     rect rgb(255, 255, 220)
         Note over Host,WAS: 터널 생성 단계
         Bastion->>Host: SSH 터널 생성
-        Note right of Bastion: 할당된 서비스 포트마다: -R 0.0.0.0:localPort:remoteIP:remotePort
+        Note right of Bastion: 할당된 서비스 포트마다: -R bindAddress:localPort:remoteIP:remotePort
     end
 
     rect rgb(255, 255, 220)
         Note over Host,WAS: 서비스 접속 단계
-        Host->>Host: localPort 로 접속 (리스너는 0.0.0.0 에 바인딩)
+        Host->>Host: localPort 로 접속 (리스너는 bindAddress 에 바인딩)
         Host->>Bastion: 터널을 타고 트래픽 전달
         Bastion->>WAS: remoteIP:remotePort 로 전달
         WAS-->>Bastion: 응답
@@ -205,10 +205,12 @@ sequenceDiagram
     end
 ```
 
-Host 쪽 리스너가 정말 `0.0.0.0` 으로 열리는지는 Host 의 SSH 서버 설정에 달려 있습니다.
-`GatewayPorts` 가 꺼져 있으면 요청한 주소와 관계없이 루프백에만 바인딩되고, 그 사실이
-로그에 남습니다. 터널이 연결된 뒤에는 tunnel-manager 가 그 포워딩된 포트에 직접 접속해 보고 결과를
-알려줍니다. [포워딩된 포트에 접속되는지](#포워딩된-포트에-접속되는지)를 보십시오.
+요청하는 주소는 서비스 포트의 `bind_address` 이고, 안 주면 `0.0.0.0` 입니다.
+[서비스 포트 관리](#서비스-포트-관리)를 보십시오. Host 쪽 리스너가 정말 그 주소로 열리는지는
+Host 의 SSH 서버 설정에 달려 있습니다. `GatewayPorts` 가 꺼져 있으면 요청한 주소와 관계없이
+루프백에만 바인딩되고, 그 사실이 로그에 남습니다. 터널이 연결된 뒤에는 tunnel-manager 가 그
+포워딩된 포트에 직접 접속해 보고 결과를 알려줍니다.
+[포워딩된 포트에 접속되는지](#포워딩된-포트에-접속되는지)를 보십시오.
 
 모니터링 주기와 조정 주기는 다른 일을 합니다. 모니터는 이미 연결된 터널이 아직 응답하는지
 확인하고 끊겼으면 다시 연결합니다. 조정 루프는 동작해야 할 터널이 애초에 전부 있는지를 봅니다.
@@ -1344,11 +1346,31 @@ curl -s -b cookies.txt -X PUT "$BASE/api/host/1/service-port" \
 
 | 메서드 | 경로 | 하는 일 |
 |--------|------|---------|
-| `POST` | `/api/service-port` | 서비스 포트 생성. `assign_to_all_hosts` 는 선택이며, 안 보내면 저장돼 있는 Host 가 전부 그것을 받고 false 로 보내면 어느 Host 에도 할당되지 않은 상태로 등록됩니다 |
+| `POST` | `/api/service-port` | 서비스 포트 생성. `bind_address` 는 선택이며 안 보내면 `0.0.0.0` 입니다. `assign_to_all_hosts` 도 선택이며, 안 보내면 저장돼 있는 Host 가 전부 그것을 받고 false 로 보내면 어느 Host 에도 할당되지 않은 상태로 등록됩니다 |
 | `GET` | `/api/service-port` | 서비스 포트 한 페이지를 등록된 순서로 조회. `page` 와 `size` 를 받음, [페이징](#페이징) 참고 |
 | `GET` | `/api/service-port/:id` | 특정 서비스 포트 조회 |
-| `PUT` | `/api/service-port/:id` | 서비스 포트 수정. `service_ip`, `service_port`, `local_port` 가 모두 필수 |
+| `PUT` | `/api/service-port/:id` | 서비스 포트 수정. `service_ip`, `service_port`, `local_port` 가 모두 필수이고, `bind_address` 를 빼면 `0.0.0.0` 입니다 |
 | `DELETE` | `/api/service-port/:id` | 서비스 포트 삭제. 그것을 가리키는 할당도 같이 지움 |
+
+**`bind_address` 는 포워딩된 포트를 Host 의 어느 주소에 열도록 요청할지입니다.** IPv4 나
+IPv6 주소만 받습니다. 이 문자열은 그대로 Host 의 sshd 에 넘어가므로, 이름을 적으면 여기서는
+볼 수 없는 리졸버가 저쪽에서 풀고, 풀리지 않는 이름은 거절된 접속 하나하나로만 드러납니다.
+빼거나 빈 값으로 보내면 `0.0.0.0` 이고, 이것이 이 필드가 생기기 전 모든 서비스 포트가 요청하던
+값이라 이전 버전에서 저장된 서비스 포트의 도달 범위는 그대로입니다.
+
+화면은 `0.0.0.0`, `127.0.0.1`, `::1` 을 제시하고 그 밖의 주소는 직접 입력받습니다. 목록을
+Host 에 물어보지는 않습니다. 어느 인터페이스에 붙은 주소인지는 그 기계에 대한 사실이고,
+그것을 읽으려면 저쪽에서 명령을 실행해야 하는데 이 프로그램에는 그럴 수단이 없습니다.
+
+그 주소로 무엇이 되는지는 여전히 SSH 서버가 정합니다. `127.0.0.1` 은 `GatewayPorts` 가
+무엇이든 포트를 Host 자신에 묶어 두고, `0.0.0.0` 은 Host 에 닿을 수 있는 모든 것에 포트를
+열지만 그것도 서버가 허용할 때뿐입니다.
+[포워딩된 포트에 접속되는지](#포워딩된-포트에-접속되는지)를 보십시오. 루프백에 묶은 서비스
+포트는 거기서 `unreachable` 로 나오는데, 그것이 제대로 동작한 결과입니다 - 그 측정은 이
+프로세스에서 Host 로 접속해 보는 것이고, 루프백에 열린 포트는 거기에 응답하지 않습니다.
+
+주소를 바꾸면 그 서비스 포트를 담당하는 터널이 다시 만들어집니다. 주소는 터널을 구성하는
+값의 일부입니다.
 
 ### 상태 조회
 
@@ -1557,8 +1579,9 @@ curl -s -b cookies.txt https://127.0.0.1:8888/api/status
 
 `connected` 는 SSH 연결이 유지되고 있다는 뜻입니다. 포워딩된 포트에 접속된다는 뜻은 아닙니다.
 리스너를 여는 것은 **SSH 서버** 이고 어느 주소에 묶을지는 그 서버가 정하지 tunnel-manager 가
-정하지 않습니다. tunnel-manager 는 `0.0.0.0:<local port>` 를 요청하지만, OpenSSH 가 기본값인
-`GatewayPorts no` 이거나 Dropbear 가 `-a` 없이 실행 중이면 서버는 루프백에만 묶습니다. 그러면
+정하지 않습니다. tunnel-manager 는 `<bind address>:<local port>` 를, 서비스 포트가 다른 주소를
+적지 않았으면 `0.0.0.0` 으로 요청하지만, OpenSSH 가 기본값인 `GatewayPorts no` 이거나
+Dropbear 가 `-a` 없이 실행 중이면 서버는 루프백에만 묶습니다. 그러면
 그 포트는 Host 자신에서만 접속되고 다른 곳에서는 접속되지 않습니다.
 
 터널 행마다 이것에 대해 아는 것이 두 필드에 담깁니다.

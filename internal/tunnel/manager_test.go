@@ -1109,6 +1109,54 @@ func TestTunnelAddressesBracketAnIPv6Host(t *testing.T) {
 	}
 }
 
+// TestTunnelAddressesBindWhereTheServicePortAsks pins what the forward is
+// requested on. The address is the one thing that decides how far the forwarded
+// port reaches once the SSH server allows a choice at all, so a change to it is
+// a change to who can connect, and it is held here rather than read off the
+// screen that sets it.
+//
+// The empty value is the row written before the column existed, and it has to
+// go on asking for the wildcard. Anything else would narrow the reach of
+// tunnels that are already running, which is a migration this does not do.
+func TestTunnelAddressesBindWhereTheServicePortAsks(t *testing.T) {
+	cases := []struct {
+		name      string
+		bind      string
+		wantLocal string
+	}{
+		{"a row from before the column", "", "0.0.0.0:18080"},
+		{"every interface", "0.0.0.0", "0.0.0.0:18080"},
+		{"loopback", "127.0.0.1", "127.0.0.1:18080"},
+		{"IPv6 loopback", "::1", "[::1]:18080"},
+		{"one interface of the Host", "192.0.2.7", "192.0.2.7:18080"},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			host := &models.Host{IP: "192.0.2.1", Port: 22}
+			sp := &models.ServicePort{
+				ServiceIP:   "203.0.113.5",
+				ServicePort: 8080,
+				LocalPort:   18080,
+				BindAddress: tc.bind,
+			}
+
+			local, _, _ := tunnelAddresses(host, sp)
+
+			if local != tc.wantLocal {
+				t.Errorf("local = %q, want %q", local, tc.wantLocal)
+			}
+
+			// Whatever was asked for, the listener is opened from this string
+			// and it has to come apart into an address and a port again.
+			_, _, err := net.SplitHostPort(local)
+			if err != nil {
+				t.Errorf("the local address %q cannot be split into a host and a port: %v", local, err)
+			}
+		})
+	}
+}
+
 // testPrivateKey returns a fresh private key in PEM, protected by passphrase
 // when one is given, along with the public key that goes with it.
 //

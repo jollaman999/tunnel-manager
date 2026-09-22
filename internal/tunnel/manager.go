@@ -352,18 +352,36 @@ func (m *Manager) hostSealed(host *models.Host, what string, stored string) (str
 	return "", fmt.Errorf("failed to decrypt the stored %s of the Host (host_id=%d): %w", what, host.ID, err)
 }
 
+// defaultBindAddress is what a service port that names no address is asked for
+// on. It is the wildcard because that is what every forward was requested on
+// before there was a column to say otherwise, and a stored row from then holds
+// the empty value: reading it as anything else would narrow what those tunnels
+// reach without anybody having asked.
+const defaultBindAddress = "0.0.0.0"
+
 // tunnelAddresses returns the local, server and remote addresses a tunnel for
 // this combination is built from. Both the tunnel and its fingerprint are built
 // from these, so the comparison sees what was connected to.
 //
-// The host and the service are joined with net.JoinHostPort rather than with a
-// format string, because an IPv6 address has colons of its own: "2001:db8::1"
-// and port 22 written plainly reads "2001:db8::1:22", which no dialer can take
-// apart. JoinHostPort puts the brackets in, giving "[2001:db8::1]:22". The
-// local address is a literal 0.0.0.0, which is what the sshd on the Host binds
-// the forwarded port to and is not an address of ours to translate.
+// All three are joined with net.JoinHostPort rather than with a format string,
+// because an IPv6 address has colons of its own: "2001:db8::1" and port 22
+// written plainly reads "2001:db8::1:22", which no dialer can take apart.
+// JoinHostPort puts the brackets in, giving "[2001:db8::1]:22". The local
+// address goes through it too, since ::1 is one of the addresses a service
+// port may be bound to.
+//
+// The local address is the one the sshd on the Host is asked to open the
+// forwarded port on, and it is an address over there rather than one of ours,
+// so nothing here resolves it or holds it against an interface of this
+// machine. A service port that names none is asked for on the wildcard, which
+// is what every service port was asked for before the address could be chosen.
 func tunnelAddresses(host *models.Host, sp *models.ServicePort) (local, server, remote string) {
-	return fmt.Sprintf("0.0.0.0:%d", sp.LocalPort),
+	bind := sp.BindAddress
+	if bind == "" {
+		bind = defaultBindAddress
+	}
+
+	return net.JoinHostPort(bind, strconv.Itoa(sp.LocalPort)),
 		net.JoinHostPort(host.IP, strconv.Itoa(host.Port)),
 		net.JoinHostPort(sp.ServiceIP, strconv.Itoa(sp.ServicePort))
 }

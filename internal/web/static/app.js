@@ -1394,6 +1394,19 @@ function listControl(field) {
   return select;
 }
 
+// showFormRow puts a row of a form on the screen or takes it away.
+//
+// The hidden property alone does not do it here. What the browser attaches to
+// [hidden] is a display of none, and a row of a form is given a display by the
+// stylesheet of this page, which wins over it: the row would carry the
+// property and go on being drawn. The display is therefore set on the row
+// itself, which beats both, and the property is set as well so that a row
+// which is not on the screen is also not announced as being there.
+function showFormRow(row, shown) {
+  row.hidden = !shown;
+  row.style.display = shown ? "" : "none";
+}
+
 // buildForm draws a form and hands the values to onSubmit. The values are read
 // out of the inputs at submit time rather than tracked on every keystroke, so
 // there is one place that knows what the form holds.
@@ -1419,10 +1432,13 @@ function buildForm(spec) {
 
   const inputs = {};
   const problems = {};
+  const rows = {};
 
   for (const field of spec.fields) {
     const row = document.createElement("div");
     row.className = "field";
+
+    rows[field.name] = row;
 
     const id = spec.name + "-" + field.name;
     const label = element("label", field.label);
@@ -1505,6 +1521,31 @@ function buildForm(spec) {
     form.appendChild(row);
   }
 
+  // A field that is only asked for while another one is set to a particular
+  // value. It is wired once every field exists, since the one that decides may
+  // be drawn after the one it decides about.
+  //
+  // The row is hidden and shown rather than drawn again, so what was typed
+  // into it is still there after a look at one of the other values. What is
+  // compared is the value of the deciding control, which is what a list
+  // carries; a checkbox carries "on" whether it is ticked or not, so it is not
+  // one of these.
+  for (const field of spec.fields) {
+    if (field.shownWhen === undefined) {
+      continue;
+    }
+
+    const deciding = inputs[field.shownWhen.field];
+    const row = rows[field.name];
+
+    const showIt = function () {
+      showFormRow(row, deciding.value === field.shownWhen.is);
+    };
+
+    deciding.addEventListener("input", showIt);
+    showIt();
+  }
+
   const buttons = document.createElement("div");
   buttons.className = "buttons";
 
@@ -1546,7 +1587,12 @@ function buildForm(spec) {
       // The check is handed the whole form as well as its own value, because
       // one of them is about a pair: a new password and the box it is typed
       // into a second time are only wrong together.
-      const message = field.check === undefined
+      //
+      // A box that is not on the screen is not checked. What it holds is not
+      // what the form is asking for while it is away, and a refusal drawn
+      // under a row nobody can see would stop the form with nothing on the
+      // screen saying why.
+      const message = field.check === undefined || rows[field.name].hidden
         ? ""
         : field.check(values[field.name], values);
       const problem = problems[field.name];

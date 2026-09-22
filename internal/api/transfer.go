@@ -144,6 +144,17 @@ type servicePortContent struct {
 	ServiceIP   string `json:"service_ip"`
 	ServicePort int    `json:"service_port"`
 	LocalPort   int    `json:"local_port"`
+	// BindAddress is carried because it is what the operator asked for and not
+	// what this installation made of it, the rule every other field here is
+	// under. It also decides how far the forwarded port reaches, so a file
+	// that left it out would rebuild an installation with every service port
+	// back on the wildcard, which is wider than what was exported and says
+	// nothing about having widened it.
+	//
+	// A file written before the field existed carries none, which reads back
+	// as the empty value, and the empty value is the wildcard. That is what
+	// those installations were running, so such a file imports as itself.
+	BindAddress string `json:"bind_address"`
 	Description string `json:"description"`
 }
 
@@ -816,6 +827,7 @@ func (h *TransferHandler) ExportTunnels(c echo.Context) error {
 			ServiceIP:   sp.ServiceIP,
 			ServicePort: sp.ServicePort,
 			LocalPort:   sp.LocalPort,
+			BindAddress: sp.BindAddress,
 			Description: sp.Description,
 		})
 	}
@@ -1131,6 +1143,7 @@ func (h *TransferHandler) importServicePort(c echo.Context, tx *gorm.DB, sp serv
 		ServiceIP:   sp.ServiceIP,
 		ServicePort: sp.ServicePort,
 		LocalPort:   sp.LocalPort,
+		BindAddress: sp.BindAddress,
 		Description: sp.Description,
 	})
 	if err != nil {
@@ -1167,6 +1180,7 @@ func (h *TransferHandler) importServicePort(c echo.Context, tx *gorm.DB, sp serv
 			ServiceIP:   sp.ServiceIP,
 			ServicePort: sp.ServicePort,
 			LocalPort:   sp.LocalPort,
+			BindAddress: sp.BindAddress,
 			Description: sp.Description,
 		}
 
@@ -1216,6 +1230,7 @@ func (h *TransferHandler) importServicePort(c echo.Context, tx *gorm.DB, sp serv
 	stored.ServiceIP = sp.ServiceIP
 	stored.ServicePort = sp.ServicePort
 	stored.LocalPort = sp.LocalPort
+	stored.BindAddress = sp.BindAddress
 	stored.Description = sp.Description
 
 	err = tx.Save(&stored).Error

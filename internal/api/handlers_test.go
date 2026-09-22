@@ -2302,6 +2302,125 @@ func TestReadHandlersKeepTheCauseOutOfTheAnswer(t *testing.T) {
 	}
 }
 
+// TestTheBindAddressIsStoredOrRefusedAsAnAddress holds the one field of a
+// service port that decides how far the forwarded port reaches.
+//
+// A name is refused along with the nonsense. The string is handed to the sshd
+// on the Host exactly as it is stored, so a name would be resolved over there,
+// by a resolver this end cannot see, and a name that resolves to nothing is
+// answered one refused connection at a time with nothing here saying why.
+//
+// The field left out is the row every installation had before there was a
+// column, and it has to be taken rather than refused: it means the wildcard,
+// which is what those rows were already running on.
+func TestTheBindAddressIsStoredOrRefusedAsAnAddress(t *testing.T) {
+	cases := []struct {
+		name  string
+		sent  string
+		want  string
+		taken bool
+	}{
+		{"left out", "", "", true},
+		{"an empty value", `,"bind_address":""`, "", true},
+		{"the wildcard", `,"bind_address":"0.0.0.0"`, "0.0.0.0", true},
+		{"loopback", `,"bind_address":"127.0.0.1"`, "127.0.0.1", true},
+		{"IPv6 loopback", `,"bind_address":"::1"`, "::1", true},
+		{"one interface of the Host", `,"bind_address":"192.0.2.7"`, "192.0.2.7", true},
+		{"a name", `,"bind_address":"localhost"`, "", false},
+		{"an address carrying a port", `,"bind_address":"127.0.0.1:80"`, "", false},
+		{"nonsense", `,"bind_address":"not an address"`, "", false},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			f := newHostFixture(t)
+
+			body := `{"service_ip":"203.0.113.5","service_port":8080,"local_port":18080` +
+				tc.sent + `}`
+
+			rec := f.call(t, http.MethodPost, "/api/service-port", body, "", "",
+				f.h.CreateServicePort)
+
+			if !tc.taken {
+				if rec.Code != http.StatusBadRequest {
+					t.Fatalf("status = %d, want %d, body: %s", rec.Code, http.StatusBadRequest,
+						rec.Body.String())
+				}
+
+				var count int64
+				if err := f.db.Model(&models.ServicePort{}).Count(&count).Error; err != nil {
+					t.Fatalf("failed to count the service ports: %v", err)
+				}
+				if count != 0 {
+					t.Fatalf("a service port was stored although the request was refused")
+				}
+
+				return
+			}
+
+			if rec.Code != http.StatusCreated {
+				t.Fatalf("status = %d, want %d, body: %s", rec.Code, http.StatusCreated,
+					rec.Body.String())
+			}
+
+			var stored models.ServicePort
+			if err := f.db.First(&stored, 1).Error; err != nil {
+				t.Fatalf("failed to read the stored service port: %v", err)
+			}
+
+			if stored.BindAddress != tc.want {
+				t.Fatalf("the stored bind address = %q, want %q", stored.BindAddress, tc.want)
+			}
+		})
+	}
+}
+
+// TestAnUpdateCarriesTheBindAddressTheWholeRecordNames is the edit half of the
+// check above. The update takes the whole record, so the field is stored from
+// the same rule the rest of it is, the one that reads a field left out as
+// asked for empty rather than as left alone.
+func TestAnUpdateCarriesTheBindAddressTheWholeRecordNames(t *testing.T) {
+	f := newHostFixture(t)
+
+	rec := f.call(t, http.MethodPost, "/api/service-port",
+		`{"service_ip":"203.0.113.5","service_port":8080,"local_port":18080,"bind_address":"127.0.0.1"}`,
+		"", "", f.h.CreateServicePort)
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("status = %d, want %d, body: %s", rec.Code, http.StatusCreated, rec.Body.String())
+	}
+
+	rec = f.call(t, http.MethodPut, "/api/service-port/1",
+		`{"service_ip":"203.0.113.5","service_port":8080,"local_port":18080,"bind_address":"::1"}`,
+		"id", "1", f.h.UpdateServicePort)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d, body: %s", rec.Code, http.StatusOK, rec.Body.String())
+	}
+
+	var stored models.ServicePort
+	if err := f.db.First(&stored, 1).Error; err != nil {
+		t.Fatalf("failed to read the stored service port: %v", err)
+	}
+
+	if stored.BindAddress != "::1" {
+		t.Fatalf("the stored bind address = %q, want %q", stored.BindAddress, "::1")
+	}
+
+	rec = f.call(t, http.MethodPut, "/api/service-port/1",
+		`{"service_ip":"203.0.113.5","service_port":8080,"local_port":18080,"bind_address":"over there"}`,
+		"id", "1", f.h.UpdateServicePort)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want %d, body: %s", rec.Code, http.StatusBadRequest, rec.Body.String())
+	}
+
+	if err := f.db.First(&stored, 1).Error; err != nil {
+		t.Fatalf("failed to read the stored service port: %v", err)
+	}
+
+	if stored.BindAddress != "::1" {
+		t.Fatalf("a refused update left the bind address at %q, want %q", stored.BindAddress, "::1")
+	}
+}
+
 // hostFixture is a Handler over a database of its own, so that what a request
 // stored can be read back. The stubs above answer statements without keeping
 // them, which is what the transaction tests need and the opposite of what a
