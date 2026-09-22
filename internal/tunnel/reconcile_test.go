@@ -56,7 +56,7 @@ func newWritableStubDB(t *testing.T, hosts []models.Host, sps []models.ServicePo
 func registerStoppedTunnel(t *testing.T, m *Manager, hostID, spID uint) *SSHTunnel {
 	t.Helper()
 
-	tun, err := NewSSHTunnel(&hostID, &spID, "0.0.0.0:18081", "127.0.0.1:1", "127.0.0.1:1", nil, zap.NewNop())
+	tun, err := NewSSHTunnel(&hostID, &spID, "0.0.0.0:18081", "[::]:18081", "127.0.0.1:1", "127.0.0.1:1", nil, zap.NewNop())
 	if err != nil {
 		t.Fatalf("failed to create tunnel: %v", err)
 	}
@@ -165,7 +165,7 @@ func TestReconcileLeavesRunningTunnelsAlone(t *testing.T) {
 	// The tunnel runs with the settings the desired state holds, which is what
 	// the pass reads from its fingerprint. The stored password is plaintext, so
 	// it is the password itself.
-	tun.connFP = connectionFingerprint(&hosts[0], &sps[0], hostCreds{password: hosts[0].Password})
+	tun.connFP = connectionFingerprint(&hosts[0], &sps[0], "", hostCreds{password: hosts[0].Password})
 
 	result, err := m.Reconcile()
 	if err != nil {
@@ -601,7 +601,7 @@ func TestReconcileKeepsTheFingerprintOutOfTheLogs(t *testing.T) {
 	// anywhere in what was logged, in any of the forms it can be written in.
 	secrets := []string{"fake-value-1", "fake-value-2"}                 // hook:allow
 	for _, password := range []string{"fake-value-1", "fake-value-2"} { // hook:allow
-		fp := connectionFingerprint(&hosts[0], &sps[0], hostCreds{password: password})
+		fp := connectionFingerprint(&hosts[0], &sps[0], "", hostCreds{password: password})
 		secrets = append(secrets,
 			hex.EncodeToString(fp[:]),
 			fmt.Sprint(fp),
@@ -1032,7 +1032,7 @@ func TestReconcileRebuildsATunnelWhenItsHostKeyIsApproved(t *testing.T) {
 	t.Cleanup(m.StopAllTunnels)
 
 	tun := registerStoppedTunnel(t, m, 1, 2)
-	tun.connFP = connectionFingerprint(&hosts[0], &sps[0], hostCreds{password: hosts[0].Password})
+	tun.connFP = connectionFingerprint(&hosts[0], &sps[0], "", hostCreds{password: hosts[0].Password})
 
 	result, err := m.Reconcile()
 	if err != nil {
@@ -1054,5 +1054,30 @@ func TestReconcileRebuildsATunnelWhenItsHostKeyIsApproved(t *testing.T) {
 
 	if runningKeys(m)["1-2"] == tun {
 		t.Fatal("the tunnel still runs on the trust it was built with")
+	}
+}
+
+// TestChangingTheBindScopeChangesTheFingerprint keeps a scope that was changed
+// from being left in the connection it was changed on. The addresses a forward
+// is bound to are settled when the forward is opened, so the only thing that
+// carries a new scope to a running tunnel is the pass noticing that the
+// settings are no longer the ones it should have.
+func TestChangingTheBindScopeChangesTheFingerprint(t *testing.T) {
+	host := &models.Host{IP: "192.0.2.1", Port: 22, User: "tester"}
+	sp := &models.ServicePort{ServiceIP: "203.0.113.5", ServicePort: 5432, LocalPort: 15432}
+	creds := hostCreds{password: "secret"} // hook:allow
+
+	wildcard := connectionFingerprint(host, sp, models.BindScopeWildcard, creds)
+	loopback := connectionFingerprint(host, sp, models.BindScopeLoopback, creds)
+
+	if wildcard == loopback {
+		t.Fatal("the two scopes give the same fingerprint, so a tunnel would keep the addresses it was built with")
+	}
+
+	// The empty value is the wildcard, so the pass must not read a row that
+	// has never been given a scope as a change and restart its tunnel on
+	// every startup.
+	if empty := connectionFingerprint(host, sp, "", creds); empty != wildcard {
+		t.Error("the empty scope and the wildcard give different fingerprints, so an upgraded row restarts for nothing")
 	}
 }

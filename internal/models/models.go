@@ -184,6 +184,30 @@ type Tunnel struct {
 	// without giving a reason, and the several settings that make it refuse
 	// look identical from here, so none of them may be reported as the cause.
 	ErrorKind string `json:"error_kind"`
+	// OpenReach says which of the two addresses this assignment asked for were
+	// actually opened.
+	//   "both"  - both went up
+	//   "ipv4"  - only 127.0.0.1 or 0.0.0.0 went up; the IPv6 one was refused
+	//   "ipv6"  - only ::1 or :: went up; the IPv4 one was refused
+	//   ""      - nothing measured yet, or a row written before this column
+	//
+	// A scope names a pair of addresses, one per family, and the far side
+	// answers each request on its own, so the assignment can end up half open.
+	// The empty value is nothing measured rather than nothing open: a row that
+	// has not been connected yet and a row whose IPv6 request was refused must
+	// not read alike, and a screen that draws a warning on the first would put
+	// one on every tunnel that is still starting.
+	//
+	// Both requests being refused is not one of these readings. Nothing is
+	// forwarded then, which is a failure of the tunnel rather than a fact
+	// about how far it reaches, and it is reported the way every other failure
+	// is, on Status, LastError and ErrorKind.
+	//
+	// Like ForwardReach it says what happened and not why. A server that
+	// refuses the second request because it already bound both families on the
+	// first and one that has no IPv6 at all answer identically, so neither may
+	// be reported as the cause.
+	OpenReach string `json:"open_reach"`
 }
 
 // CreateHostRequest registers a Host. The password is no longer required on its

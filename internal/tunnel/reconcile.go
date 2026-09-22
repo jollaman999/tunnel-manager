@@ -36,6 +36,12 @@ type ReconcileResult struct {
 type desiredTunnel struct {
 	host *models.Host
 	sp   *models.ServicePort
+	// bindScope is what the assignment row of this combination stored, and it
+	// decides the pair of addresses the forwarded port is asked to be opened
+	// on. It is carried here rather than looked up where the tunnel is built,
+	// because the assignment row is read by the pass already and is the only
+	// place this answer exists.
+	bindScope string
 }
 
 // connFingerprint stands for the connection settings a tunnel was built from.
@@ -59,6 +65,11 @@ type connFingerprint [sha256.Size]byte
 // hours later and looks like the key failing rather than the key never having
 // been used.
 //
+// The bind scope is in here because it decides the local addresses, and those
+// are what the tunnel asks the far side to open. A scope that was changed has
+// to reach the connection, and the only way a forward changes the address it is
+// bound to is by being opened again.
+//
 // The host key the Host is trusted on is in here because approving one is a
 // change to how the connection is made rather than to what it logs in with.
 // The trust is read where the tunnel is built, so a tunnel that was refused
@@ -70,12 +81,12 @@ type connFingerprint [sha256.Size]byte
 //
 // Every value is written with its length in front, so that two different sets
 // of settings cannot produce the same input to the hash.
-func connectionFingerprint(host *models.Host, sp *models.ServicePort, creds hostCreds) connFingerprint {
-	local, server, remote := tunnelAddresses(host, sp)
+func connectionFingerprint(host *models.Host, sp *models.ServicePort, bindScope string, creds hostCreds) connFingerprint {
+	localV4, localV6, server, remote := tunnelAddresses(host, sp, bindScope)
 
 	h := sha256.New()
 	for _, value := range []string{
-		server, remote, local, host.User,
+		server, remote, localV4, localV6, host.User,
 		creds.password, creds.privateKey, creds.passphrase,
 		host.HostKey,
 	} {
@@ -169,8 +180,9 @@ func (m *Manager) desiredTunnels() (map[string]desiredTunnel, error) {
 		}
 
 		desired[tunnelKey(host.ID, sp.ID)] = desiredTunnel{
-			host: host,
-			sp:   sp,
+			host:      host,
+			sp:        sp,
+			bindScope: assignment.BindScope,
 		}
 	}
 
@@ -222,7 +234,7 @@ func (m *Manager) restartTunnel(want desiredTunnel) error {
 		return err
 	}
 
-	return m.StartTunnel(want.host, want.sp)
+	return m.StartTunnel(want.host, want.sp, want.bindScope)
 }
 
 // Reconcile brings the running tunnels in line with the ones that should be
@@ -244,7 +256,7 @@ func (m *Manager) Reconcile() (ReconcileResult, error) {
 	for key, want := range desired {
 		current, isRunning := running[key]
 		if !isRunning {
-			err := m.StartTunnel(want.host, want.sp)
+			err := m.StartTunnel(want.host, want.sp, want.bindScope)
 			if err != nil {
 				m.logger.Error("failed to start tunnel",
 					logid.TunnelStartFailed.Field(),
@@ -268,7 +280,7 @@ func (m *Manager) Reconcile() (ReconcileResult, error) {
 			continue
 		}
 
-		if connectionFingerprint(want.host, want.sp, creds) == current {
+		if connectionFingerprint(want.host, want.sp, want.bindScope, creds) == current {
 			continue
 		}
 

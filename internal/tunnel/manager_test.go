@@ -142,7 +142,7 @@ func TestStartTunnelSkipsDisabledHost(t *testing.T) {
 	host := models.Host{ID: 1, IP: "127.0.0.1", Port: 22, User: "user", Password: "pass", Enabled: false}
 	sp := models.ServicePort{ID: 2, ServiceIP: "127.0.0.1", ServicePort: 3306, LocalPort: 13306}
 
-	err = m.StartTunnel(&host, &sp)
+	err = m.StartTunnel(&host, &sp, models.BindScopeWildcard)
 	if err != nil {
 		t.Fatalf("StartTunnel on disabled Host returned an error: %v", err)
 	}
@@ -170,7 +170,7 @@ func TestStartTunnelProceedsForEnabledHost(t *testing.T) {
 
 	// The failing database stops StartTunnel at the tunnel row, which it only
 	// reaches for a Host that is not skipped, so no SSH connection is attempted.
-	err = m.StartTunnel(&host, &sp)
+	err = m.StartTunnel(&host, &sp, models.BindScopeWildcard)
 	if err == nil {
 		t.Fatal("StartTunnel with a failing database returned no error")
 	}
@@ -190,7 +190,7 @@ func TestStartTunnelLeavesNoTunnelWhenTheRowCannotBeCreated(t *testing.T) {
 	host := models.Host{ID: 1, IP: "127.0.0.1", Port: 22, User: "user", Password: "pass", Enabled: true}
 	sp := models.ServicePort{ID: 2, ServiceIP: "127.0.0.1", ServicePort: 3306, LocalPort: 13306}
 
-	err = m.StartTunnel(&host, &sp)
+	err = m.StartTunnel(&host, &sp, models.BindScopeWildcard)
 	if err == nil {
 		t.Fatal("StartTunnel with a failing tunnel row returned no error")
 	}
@@ -205,7 +205,7 @@ func TestStartTunnelLeavesNoTunnelWhenTheRowCannotBeCreated(t *testing.T) {
 
 	// The key has to be free again, otherwise the combination can never be
 	// started once the database answers.
-	err = m.StartTunnel(&host, &sp)
+	err = m.StartTunnel(&host, &sp, models.BindScopeWildcard)
 	if err == nil {
 		t.Fatal("StartTunnel with a failing tunnel row returned no error")
 	}
@@ -447,7 +447,7 @@ func TestStartTunnelFailsWhenTheKeyIsWrong(t *testing.T) {
 	host := models.Host{ID: 1, IP: "127.0.0.1", Port: 22, User: "user", Password: stored, Enabled: true}
 	sp := models.ServicePort{ID: 2, ServiceIP: "127.0.0.1", ServicePort: 3306, LocalPort: 13306}
 
-	err = m.StartTunnel(&host, &sp)
+	err = m.StartTunnel(&host, &sp, models.BindScopeWildcard)
 	if !errors.Is(err, crypto.ErrWrongKey) {
 		t.Fatalf("StartTunnel did not report a wrong key: %v", err)
 	}
@@ -617,7 +617,7 @@ func TestStopAllTunnelsReportsFailureToStopAsError(t *testing.T) {
 	}
 
 	hostID, spID := hosts[0].ID, sps[0].ID
-	tunnel, err := NewSSHTunnel(&hostID, &spID, "0.0.0.0:18081", "127.0.0.1:22", "127.0.0.1:8081", nil, zap.NewNop())
+	tunnel, err := NewSSHTunnel(&hostID, &spID, "0.0.0.0:18081", "[::]:18081", "127.0.0.1:22", "127.0.0.1:8081", nil, zap.NewNop())
 	if err != nil {
 		t.Fatalf("failed to create tunnel: %v", err)
 	}
@@ -1088,7 +1088,7 @@ func TestTunnelAddressesBracketAnIPv6Host(t *testing.T) {
 			host := &models.Host{IP: tc.hostIP, Port: 22}
 			sp := &models.ServicePort{ServiceIP: tc.serviceIP, ServicePort: 5432, LocalPort: 15432}
 
-			local, server, remote := tunnelAddresses(host, sp)
+			localV4, localV6, server, remote := tunnelAddresses(host, sp, models.BindScopeWildcard)
 
 			if server != tc.wantServer {
 				t.Errorf("server = %q, want %q", server, tc.wantServer)
@@ -1099,7 +1099,9 @@ func TestTunnelAddressesBracketAnIPv6Host(t *testing.T) {
 
 			// Whatever the addresses are, each one has to come apart again into
 			// a host and a port. That is what every dialer does with them.
-			for name, addr := range map[string]string{"local": local, "server": server, "remote": remote} {
+			for name, addr := range map[string]string{
+				"local v4": localV4, "local v6": localV6, "server": server, "remote": remote,
+			} {
 				_, _, err := net.SplitHostPort(addr)
 				if err != nil {
 					t.Errorf("the %s address %q cannot be split into a host and a port: %v", name, addr, err)
@@ -1679,7 +1681,7 @@ func TestStartTunnelWritesARowThatSaysNothingWasMeasured(t *testing.T) {
 	host := models.Host{ID: 1, IP: "127.0.0.1", Port: hostPort, User: "user", Password: "pass", Enabled: true}
 	sp := models.ServicePort{ID: 2, ServiceIP: "127.0.0.1", ServicePort: 3306, LocalPort: 13306}
 
-	err = m.StartTunnel(&host, &sp)
+	err = m.StartTunnel(&host, &sp, models.BindScopeWildcard)
 	if err != nil {
 		t.Fatalf("StartTunnel returned an error: %v", err)
 	}
@@ -2020,7 +2022,7 @@ func TestATunnelRefusedOnItsHostKeyStopsTrying(t *testing.T) {
 	host := &models.Host{ID: 1, IP: "127.0.0.1", Port: 22, User: "user", Password: "pass", Enabled: true}
 
 	hostID, spID := host.ID, uint(2)
-	tun, err := NewSSHTunnel(&hostID, &spID, "0.0.0.0:18099", addr, "127.0.0.1:1",
+	tun, err := NewSSHTunnel(&hostID, &spID, "0.0.0.0:18099", "[::]:18099", addr, "127.0.0.1:1",
 		&ssh.ClientConfig{
 			User:            host.User,
 			Auth:            []ssh.AuthMethod{ssh.Password("pass")},
@@ -2068,5 +2070,64 @@ func TestATunnelRefusedOnItsHostKeyStopsTrying(t *testing.T) {
 
 	if !reflect.DeepEqual(got, []string{MarshalHostKey(presented)}) {
 		t.Fatalf("the keys written down for approval are %v, want the presented one alone", got)
+	}
+}
+
+// TestBindScopeNamesAPairOfAddresses pins the two addresses each scope asks
+// for. The two families do not stand in for each other, so a scope that came
+// out as one address would leave whoever chose it reachable over one of them
+// and not the other, with nothing on the screen saying so.
+func TestBindScopeNamesAPairOfAddresses(t *testing.T) {
+	cases := []struct {
+		name   string
+		scope  string
+		wantV4 string
+		wantV6 string
+	}{
+		{"loopback", models.BindScopeLoopback, "127.0.0.1", "::1"},
+		{"wildcard", models.BindScopeWildcard, "0.0.0.0", "::"},
+		{"the empty value is the wildcard", "", "0.0.0.0", "::"},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			gotV4, gotV6 := bindScopeAddresses(tc.scope)
+			if gotV4 != tc.wantV4 || gotV6 != tc.wantV6 {
+				t.Fatalf("bindScopeAddresses(%q) = (%q, %q), want (%q, %q)",
+					tc.scope, gotV4, gotV6, tc.wantV4, tc.wantV6)
+			}
+		})
+	}
+}
+
+// TestTunnelAddressesCarriesTheScopeOfTheAssignment holds the local addresses
+// to the assignment rather than to a constant. Before the scope was read here
+// every forward was requested on 0.0.0.0, so a tunnel that ignores it is a
+// tunnel that opens a port to everything on a Host somebody asked to keep it
+// off.
+func TestTunnelAddressesCarriesTheScopeOfTheAssignment(t *testing.T) {
+	host := &models.Host{IP: "192.0.2.1", Port: 22}
+	sp := &models.ServicePort{ServiceIP: "203.0.113.5", ServicePort: 5432, LocalPort: 15432}
+
+	cases := []struct {
+		scope  string
+		wantV4 string
+		wantV6 string
+	}{
+		{models.BindScopeLoopback, "127.0.0.1:15432", "[::1]:15432"},
+		{models.BindScopeWildcard, "0.0.0.0:15432", "[::]:15432"},
+		{"", "0.0.0.0:15432", "[::]:15432"},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.scope, func(t *testing.T) {
+			localV4, localV6, _, _ := tunnelAddresses(host, sp, tc.scope)
+			if localV4 != tc.wantV4 {
+				t.Errorf("local IPv4 address = %q, want %q", localV4, tc.wantV4)
+			}
+			if localV6 != tc.wantV6 {
+				t.Errorf("local IPv6 address = %q, want %q", localV6, tc.wantV6)
+			}
+		})
 	}
 }

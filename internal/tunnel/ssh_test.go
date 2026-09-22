@@ -81,7 +81,7 @@ func newSSHTestTunnel(t *testing.T, serverAddr string) (*SSHTunnel, *models.Tunn
 	hostID := uint(1)
 	spID := uint(1)
 
-	tun, err := NewSSHTunnel(&hostID, &spID, "127.0.0.1:0", serverAddr, "127.0.0.1:1",
+	tun, err := NewSSHTunnel(&hostID, &spID, "127.0.0.1:0", "[::1]:0", serverAddr, "127.0.0.1:1",
 		sshConfig, zap.NewNop())
 	if err != nil {
 		t.Fatalf("failed to create tunnel: %v", err)
@@ -1204,7 +1204,7 @@ func newForwardTunnel(t *testing.T, remoteAddr string) *SSHTunnel {
 	hostID := uint(1)
 	spID := uint(1)
 
-	tun, err := NewSSHTunnel(&hostID, &spID, "127.0.0.1:0", "127.0.0.1:1", remoteAddr, nil, zap.NewNop())
+	tun, err := NewSSHTunnel(&hostID, &spID, "127.0.0.1:0", "[::1]:0", "127.0.0.1:1", remoteAddr, nil, zap.NewNop())
 	if err != nil {
 		t.Fatalf("failed to create tunnel: %v", err)
 	}
@@ -2260,6 +2260,307 @@ func TestAFailureThatIsNotARefusalIsLeftUnnamed(t *testing.T) {
 	} {
 		if got := listenErrorKind(err); got != "" {
 			t.Errorf("listenErrorKind(%v) = %q, want it left unnamed", err, got)
+		}
+	}
+}
+
+// startScopedForwardSSHServer speaks SSH and answers every tcpip-forward
+// request by the rule the caller hands in, recording the address each request
+// named.
+//
+// It is what a test about a bind scope needs and the server above cannot give.
+// A scope is two addresses, so what has to be observable is which addresses
+// were asked for and what becomes of the tunnel when the server opens only one
+// of them, and a server that grants everything shows neither.
+func startScopedForwardSSHServer(t *testing.T, grant func(addr string) bool) (string, func() []string) {
+	t.Helper()
+
+	_, priv, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatalf("failed to generate host key: %v", err)
+	}
+
+	signer, err := ssh.NewSignerFromKey(priv)
+	if err != nil {
+		t.Fatalf("failed to create signer: %v", err)
+	}
+
+	config := &ssh.ServerConfig{
+		PasswordCallback: func(ssh.ConnMetadata, []byte) (*ssh.Permissions, error) {
+			return nil, nil
+		},
+	}
+	config.AddHostKey(signer)
+
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("failed to listen: %v", err)
+	}
+
+	var mu sync.Mutex
+	var asked []string
+	var conns []net.Conn
+
+	t.Cleanup(func() {
+		_ = ln.Close()
+
+		mu.Lock()
+		defer mu.Unlock()
+		for _, conn := range conns {
+			_ = conn.Close()
+		}
+	})
+
+	go func() {
+		for {
+			conn, err := ln.Accept()
+			if err != nil {
+				return
+			}
+
+			mu.Lock()
+			conns = append(conns, conn)
+			mu.Unlock()
+
+			go func(conn net.Conn) {
+				defer func() {
+					_ = conn.Close()
+				}()
+
+				sshConn, chans, reqs, err := ssh.NewServerConn(conn, config)
+				if err != nil {
+					return
+				}
+				defer func() {
+					_ = sshConn.Close()
+				}()
+
+				go func() {
+					for newChan := range chans {
+						_ = newChan.Reject(ssh.Prohibited, "not supported")
+					}
+				}()
+
+				for req := range reqs {
+					if !req.WantReply {
+						continue
+					}
+					if req.Type != "tcpip-forward" {
+						_ = req.Reply(false, nil)
+						continue
+					}
+
+					var forward struct {
+						Addr string
+						Port uint32
+					}
+					if err := ssh.Unmarshal(req.Payload, &forward); err != nil {
+						_ = req.Reply(false, nil)
+						continue
+					}
+
+					mu.Lock()
+					asked = append(asked, net.JoinHostPort(forward.Addr, strconv.Itoa(int(forward.Port))))
+					mu.Unlock()
+
+					if !grant(forward.Addr) {
+						_ = req.Reply(false, nil)
+						continue
+					}
+
+					_ = req.Reply(true, ssh.Marshal(struct{ Port uint32 }{Port: forward.Port}))
+				}
+			}(conn)
+		}
+	}()
+
+	return ln.Addr().String(), func() []string {
+		mu.Lock()
+		defer mu.Unlock()
+
+		return append([]string(nil), asked...)
+	}
+}
+
+// newScopedSSHTestTunnel is newSSHTestTunnel with the pair of local addresses
+// chosen by the caller, so a test can hand in the pair a bind scope names.
+func newScopedSSHTestTunnel(t *testing.T, serverAddr, localV4, localV6 string) (*SSHTunnel, *models.Tunnel) {
+	t.Helper()
+
+	sshConfig := &ssh.ClientConfig{
+		User:            "tester",
+		Auth:            []ssh.AuthMethod{ssh.Password("any")},
+		HostKeyCallback: ssh.InsecureIgnoreHostKey(),
+		Timeout:         3 * time.Second,
+	}
+
+	hostID := uint(1)
+	spID := uint(1)
+
+	tun, err := NewSSHTunnel(&hostID, &spID, localV4, localV6, serverAddr, "127.0.0.1:1",
+		sshConfig, zap.NewNop())
+	if err != nil {
+		t.Fatalf("failed to create tunnel: %v", err)
+	}
+
+	return tun, &models.Tunnel{HostID: hostID, SPID: spID, Status: "starting"}
+}
+
+// readTunnelOpenReach reads the row under the lock the connection writes it
+// under, because the probe of the same connection writes beside it.
+func readTunnelOpenReach(tun *SSHTunnel, tunnel *models.Tunnel) (openReach, local, status string) {
+	tun.tunnelMu.Lock()
+	defer tun.tunnelMu.Unlock()
+
+	return tunnel.OpenReach, tunnel.Local, tunnel.Status
+}
+
+// runScopedConnection connects, lets the connection settle and brings it down
+// again, returning once establishConnection has.
+func runScopedConnection(t *testing.T, m *Manager, tun *SSHTunnel, tunnel *models.Tunnel) {
+	t.Helper()
+
+	errc := make(chan error, 1)
+	go func() {
+		errc <- tun.establishConnection(m, tunnel)
+	}()
+
+	waitTunnelClient(t, tun, 10*time.Second)
+	closeTunnelClient(t, tun)
+
+	select {
+	case <-errc:
+	case <-time.After(5 * time.Second):
+		t.Fatal("establishConnection did not return after the connection was closed")
+	}
+}
+
+// TestEstablishConnectionOpensBothAddressesOfTheScope holds the tunnel to the
+// pair. A scope names one address per family and neither stands in for the
+// other, so a connection that asks for one of them gives whoever chose the
+// scope half of what they chose, silently.
+func TestEstablishConnectionOpensBothAddressesOfTheScope(t *testing.T) {
+	cases := []struct {
+		name   string
+		scope  string
+		wantV4 string
+		wantV6 string
+	}{
+		{"loopback", models.BindScopeLoopback, "127.0.0.1:18201", "[::1]:18201"},
+		{"wildcard", models.BindScopeWildcard, "0.0.0.0:18201", "[::]:18201"},
+		{"empty reads as the wildcard", "", "0.0.0.0:18201", "[::]:18201"},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			m := newSSHTestManager(t, 1)
+			serverAddr, requested := startScopedForwardSSHServer(t, func(string) bool { return true })
+
+			host := &models.Host{IP: "127.0.0.1", Port: 22}
+			sp := &models.ServicePort{ServiceIP: "127.0.0.1", ServicePort: 1, LocalPort: 18201}
+			localV4, localV6, _, _ := tunnelAddresses(host, sp, tc.scope)
+
+			tun, tunnel := newScopedSSHTestTunnel(t, serverAddr, localV4, localV6)
+			runScopedConnection(t, m, tun, tunnel)
+
+			asked := requested()
+			if len(asked) != 2 {
+				t.Fatalf("the tunnel asked for %d forwards (%v), want the two addresses of the scope",
+					len(asked), asked)
+			}
+
+			for _, want := range []string{tc.wantV4, tc.wantV6} {
+				found := false
+				for _, got := range asked {
+					if got == want {
+						found = true
+					}
+				}
+				if !found {
+					t.Errorf("the tunnel asked for %v, which does not include %q", asked, want)
+				}
+			}
+
+			openReach, _, _ := readTunnelOpenReach(tun, tunnel)
+			if openReach != openReachBoth {
+				t.Errorf("open reach = %q, want %q, the server opened both", openReach, openReachBoth)
+			}
+		})
+	}
+}
+
+// TestEstablishConnectionReportsTheHalfTheServerRefused pins what a connection
+// leaves on the row when one of the two requests was refused. The tunnel is
+// connected, because what opened carries traffic, and the row says which half
+// of the scope it is: a screen has nothing else to tell it from a tunnel that
+// got everything it asked for.
+func TestEstablishConnectionReportsTheHalfTheServerRefused(t *testing.T) {
+	cases := []struct {
+		name      string
+		refuse    string
+		wantReach string
+		wantLocal string
+	}{
+		{"the IPv6 address is refused", "::", openReachV4, "0.0.0.0:18202"},
+		{"the IPv4 address is refused", "0.0.0.0", openReachV6, "[::]:18202"},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			m := newSSHTestManager(t, 1)
+			serverAddr, _ := startScopedForwardSSHServer(t, func(addr string) bool {
+				return addr != tc.refuse
+			})
+
+			tun, tunnel := newScopedSSHTestTunnel(t, serverAddr, "0.0.0.0:18202", "[::]:18202")
+			runScopedConnection(t, m, tun, tunnel)
+
+			openReach, local, _ := readTunnelOpenReach(tun, tunnel)
+			if openReach != tc.wantReach {
+				t.Errorf("open reach = %q, want %q", openReach, tc.wantReach)
+			}
+			if local != tc.wantLocal {
+				t.Errorf("the row names %q to connect to, want %q, the address that opened",
+					local, tc.wantLocal)
+			}
+		})
+	}
+}
+
+// TestEstablishConnectionFailsWhenNeitherAddressOpens keeps the half-open
+// reading off a tunnel that forwards nothing. Nothing is open, so there is no
+// reach to report, and what an operator has to be shown is the refusal.
+func TestEstablishConnectionFailsWhenNeitherAddressOpens(t *testing.T) {
+	m := newSSHTestManager(t, 1)
+	serverAddr, requested := startScopedForwardSSHServer(t, func(string) bool { return false })
+
+	tun, tunnel := newScopedSSHTestTunnel(t, serverAddr, "0.0.0.0:18203", "[::]:18203")
+	tunnel.OpenReach = openReachBoth
+
+	err := tun.establishConnection(m, tunnel)
+	if err == nil {
+		t.Fatal("establishConnection returned no error although neither address opened")
+	}
+
+	if asked := requested(); len(asked) != 2 {
+		t.Errorf("the tunnel asked for %v, want both addresses tried before giving up", asked)
+	}
+
+	openReach, _, status := readTunnelOpenReach(tun, tunnel)
+	if openReach != "" {
+		t.Errorf("open reach = %q, want it emptied: nothing of the scope is open", openReach)
+	}
+	if status != "error" {
+		t.Errorf("status = %q, want %q", status, "error")
+	}
+	if tunnel.ErrorKind != errorKindForwardDenied {
+		t.Errorf("error kind = %q, want %q", tunnel.ErrorKind, errorKindForwardDenied)
+	}
+
+	for _, want := range []string{"0.0.0.0:18203", "[::]:18203"} {
+		if !strings.Contains(tunnel.LastError, want) {
+			t.Errorf("the last error %q does not name %q, so it names one refusal and not both",
+				tunnel.LastError, want)
 		}
 	}
 }

@@ -352,25 +352,57 @@ func (m *Manager) hostSealed(host *models.Host, what string, stored string) (str
 	return "", fmt.Errorf("failed to decrypt the stored %s of the Host (host_id=%d): %w", what, host.ID, err)
 }
 
-// defaultBindAddress is what a Host that names no address is asked to open the
-// forwarded ports on. It is the wildcard because that is what every forward was
-// requested on before there was a column to say otherwise, and a stored row
-// from then holds the empty value: reading it as anything else would narrow
-// what those tunnels reach without anybody having asked.
-const defaultBindAddress = "0.0.0.0"
+// The four addresses the two bind scopes are made of, one pair per scope and
+// one address per family within a pair. A scope is what is stored and what
+// somebody chose; these are what a forward request can actually carry, since
+// the protocol asks for one address at a time.
+const (
+	loopbackBindAddressV4 = "127.0.0.1"
+	loopbackBindAddressV6 = "::1"
+	wildcardBindAddressV4 = "0.0.0.0"
+	wildcardBindAddressV6 = "::"
+)
+
+// bindScopeAddresses returns the two addresses an assignment of this scope asks
+// its forwarded port to be opened on, one per address family.
+//
+// Anything that is not the loopback scope gives the wildcard pair, the empty
+// value among them. That is the reading models.HostServicePort.BindScope is
+// documented with: every row written before the column existed holds the empty
+// value, and those tunnels were requested on the wildcard, so reading it as
+// anything else would narrow what they reach on a startup that was asked for
+// nothing of the sort. A value that is neither word cannot be stored, since
+// the column carries a rule refusing it, and one somebody wrote by hand is
+// answered the same way rather than by leaving the tunnel with no address.
+func bindScopeAddresses(scope string) (v4, v6 string) {
+	if scope == models.BindScopeLoopback {
+		return loopbackBindAddressV4, loopbackBindAddressV6
+	}
+
+	return wildcardBindAddressV4, wildcardBindAddressV6
+}
 
 // tunnelAddresses returns the local, server and remote addresses a tunnel for
 // this combination is built from. Both the tunnel and its fingerprint are built
 // from these, so the comparison sees what was connected to.
 //
-// All three are joined with net.JoinHostPort rather than with a format string,
-// because an IPv6 address has colons of its own: "2001:db8::1" and port 22
-// written plainly reads "2001:db8::1:22", which no dialer can take apart.
+// There are two local addresses because a scope names a pair, and the tunnel
+// asks for both. They are returned as a pair rather than as one address chosen
+// here, because the two families do not stand in for each other: whoever chose
+// a scope chose it for the machine, and half of it is not what they asked for.
+//
+// All of them are joined with net.JoinHostPort rather than with a format
+// string, because an IPv6 address has colons of its own: "2001:db8::1" and port
+// 22 written plainly reads "2001:db8::1:22", which no dialer can take apart.
 // JoinHostPort puts the brackets in, giving "[2001:db8::1]:22". The local
-// address goes through it too, since ::1 is one of the addresses a Host may be
+// addresses go through it too, since ::1 and :: are among the ones a Host is
 // asked to bind.
-func tunnelAddresses(host *models.Host, sp *models.ServicePort) (local, server, remote string) {
-	return net.JoinHostPort(defaultBindAddress, strconv.Itoa(sp.LocalPort)),
+func tunnelAddresses(host *models.Host, sp *models.ServicePort, bindScope string) (localV4, localV6, server, remote string) {
+	bindV4, bindV6 := bindScopeAddresses(bindScope)
+	port := strconv.Itoa(sp.LocalPort)
+
+	return net.JoinHostPort(bindV4, port),
+		net.JoinHostPort(bindV6, port),
 		net.JoinHostPort(host.IP, strconv.Itoa(host.Port)),
 		net.JoinHostPort(sp.ServiceIP, strconv.Itoa(sp.ServicePort))
 }
@@ -534,7 +566,13 @@ func (m *Manager) hostKeyCallback(host *models.Host) ssh.HostKeyCallback {
 	}
 }
 
-func (m *Manager) StartTunnel(host *models.Host, sp *models.ServicePort) error {
+// StartTunnel builds and starts the tunnel for one assignment. bindScope is
+// what that assignment stored, models.HostServicePort.BindScope, and it decides
+// the pair of addresses the forwarded port is asked to be opened on. It is
+// passed in rather than read here because the reconcile pass has already read
+// every assignment row, and reading it again would put a statement per tunnel
+// onto the database every few seconds.
+func (m *Manager) StartTunnel(host *models.Host, sp *models.ServicePort, bindScope string) error {
 	if !host.Enabled {
 		m.logger.Info("skipped starting tunnel for disabled Host",
 			logid.TunnelStartSkippedHostDisabled.Field(),
@@ -564,25 +602,36 @@ func (m *Manager) StartTunnel(host *models.Host, sp *models.ServicePort) error {
 		Timeout:         time.Second * 10,
 	}
 
-	local, server, remote := tunnelAddresses(host, sp)
+	localV4, localV6, server, remote := tunnelAddresses(host, sp, bindScope)
 
 	tunnel := models.Tunnel{
 		HostID: host.ID,
 		SPID:   sp.ID,
 		Status: "starting",
-		Local:  local,
+		// The row carries one address because it is the one to connect to,
+		// and the scope asks for two. The IPv4 one of the pair stands here
+		// until a connection says which of the two opened, which is what
+		// every row held before the pair existed and so is what a reader that
+		// has not been changed goes on seeing.
+		Local:  localV4,
 		Server: server,
 		Remote: remote,
 		// Nothing has been measured on a tunnel that is only being started,
 		// and the row says so rather than leaving the field empty: an empty
 		// reading and one that was taken must not read alike.
 		ForwardReach: forwardReachUnknown,
+		// OpenReach is left empty for the same reason, except that for it the
+		// empty value is the one that says nothing has been measured. Nothing
+		// has been asked of the far side yet, so there is no half of the pair
+		// to report as missing.
+		OpenReach: "",
 	}
 
 	t, err := NewSSHTunnel(
 		&tunnel.HostID,
 		&tunnel.SPID,
-		tunnel.Local,
+		localV4,
+		localV6,
 		tunnel.Server,
 		tunnel.Remote,
 		sshConfig,
@@ -594,7 +643,7 @@ func (m *Manager) StartTunnel(host *models.Host, sp *models.ServicePort) error {
 
 	// The settings this tunnel is connecting with, so a later pass can tell
 	// whether the ones it should have are still the same.
-	t.connFP = connectionFingerprint(host, sp, creds)
+	t.connFP = connectionFingerprint(host, sp, bindScope, creds)
 
 	err = m.db.Where("host_id = ? AND sp_id = ?", host.ID, sp.ID).
 		Attrs(tunnel).

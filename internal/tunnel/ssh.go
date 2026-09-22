@@ -20,13 +20,36 @@ import (
 // not a failure, but the Start loop still has to wait before reconnecting.
 var errConnectionClosed = errors.New("connection closed")
 
+// localPair is the two addresses a bind scope asks the forwarded port to be
+// opened on, one per address family. A forward request carries one address, so
+// a scope is two requests, and both of them belong to the one tunnel: the row
+// stays the assignment somebody made rather than splitting into a line per
+// family.
+//
+// It has a String of its own so that a log line about the tunnel names both.
+// Naming one would say the tunnel reaches half of what it asked for.
+type localPair struct {
+	v4 *net.TCPAddr
+	v6 *net.TCPAddr
+}
+
+func (p localPair) String() string {
+	return p.v4.String() + " and " + p.v6.String()
+}
+
+// port is the local port of the pair. Both addresses carry the same one,
+// because a scope is two addresses for the one service port.
+func (p localPair) port() int {
+	return p.v4.Port
+}
+
 type SSHTunnel struct {
 	HostID *uint
 	SPID   *uint
-	// Local is the address requested for the remote listener. The
+	// Local is the pair of addresses requested for the remote listeners. The
 	// tcpip-forward reply carries a port and nothing else, so the SSH server
-	// never confirms which address it bound.
-	Local  *net.TCPAddr
+	// never confirms which address it bound, only that it bound something.
+	Local  localPair
 	Server *net.TCPAddr
 	Remote *net.TCPAddr
 	Config *ssh.ClientConfig
@@ -52,10 +75,19 @@ type SSHTunnel struct {
 	logger    *zap.Logger
 }
 
-func NewSSHTunnel(hostID, spID *uint, localAddr, serverAddr, remoteAddr string, sshConfig *ssh.ClientConfig, logger *zap.Logger) (*SSHTunnel, error) {
-	local, err := net.ResolveTCPAddr("tcp", localAddr)
+// NewSSHTunnel builds the tunnel of one assignment. It takes two local
+// addresses rather than one because that is what a bind scope names, and both
+// of them are asked for on the same connection.
+func NewSSHTunnel(hostID, spID *uint, localV4Addr, localV6Addr, serverAddr, remoteAddr string,
+	sshConfig *ssh.ClientConfig, logger *zap.Logger) (*SSHTunnel, error) {
+	localV4, err := net.ResolveTCPAddr("tcp", localV4Addr)
 	if err != nil {
 		return nil, fmt.Errorf("failed to resolve local address: %w", err)
+	}
+
+	localV6, err := net.ResolveTCPAddr("tcp", localV6Addr)
+	if err != nil {
+		return nil, fmt.Errorf("failed to resolve local IPv6 address: %w", err)
 	}
 
 	server, err := net.ResolveTCPAddr("tcp", serverAddr)
@@ -71,7 +103,7 @@ func NewSSHTunnel(hostID, spID *uint, localAddr, serverAddr, remoteAddr string, 
 	return &SSHTunnel{
 		HostID: hostID,
 		SPID:   spID,
-		Local:  local,
+		Local:  localPair{v4: localV4, v6: localV6},
 		Server: server,
 		Remote: remote,
 		Config: sshConfig,
@@ -280,6 +312,17 @@ const (
 	forwardReachable    = "reachable"
 	forwardUnreachable  = "unreachable"
 	forwardReachUnknown = "unknown"
+)
+
+// The three readings models.Tunnel.OpenReach carries once a connection stands:
+// the pair of addresses the scope named both opened, or only the IPv4 one did,
+// or only the IPv6 one did. A connection on which neither opened writes none of
+// them, because that is a tunnel that failed rather than one that reaches half
+// of what was asked for.
+const (
+	openReachBoth = "both"
+	openReachV4   = "ipv4"
+	openReachV6   = "ipv6"
 )
 
 // errorKindForwardDenied is the one reading models.Tunnel.ErrorKind carries. It
@@ -586,7 +629,7 @@ func (t *SSHTunnel) establishConnection(m *Manager, tunnel *models.Tunnel) error
 		return fmt.Errorf("failed to establish SSH connection: %w", err)
 	}
 
-	listener, err := client.Listen("tcp", t.Local.String())
+	opened, err := t.openForwards(client)
 	if err != nil {
 		m.logger.Error("failed to start remote listener",
 			logid.TunnelRemoteListenerFailed.Field(),
@@ -598,6 +641,11 @@ func (t *SSHTunnel) establishConnection(m *Manager, tunnel *models.Tunnel) error
 		tunnel.Status = "error"
 		tunnel.LastError = err.Error()
 		tunnel.ErrorKind = listenErrorKind(err)
+		// Nothing of the pair is open, so what the last connection opened is
+		// no longer true of this one. It goes back to the empty value rather
+		// than staying at what it was, or a tunnel that is now failing would
+		// go on reporting the reach of a connection that is gone.
+		tunnel.OpenReach = ""
 		// The banner is written on the way out as well as on the way in. What
 		// the screen says about a refusal differs by which server refused, and
 		// the handshake is behind us by the time we are here, so the one thing
@@ -608,30 +656,17 @@ func (t *SSHTunnel) establishConnection(m *Manager, tunnel *models.Tunnel) error
 
 		return fmt.Errorf("failed to start remote listener: %w", err)
 	}
-	defer func() {
-		_ = listener.Close()
-	}()
+	defer opened.close()
 
 	t.clientMu.Lock()
 	t.client = client
 	t.clientConn = clientConn
 	t.clientMu.Unlock()
 
-	// Addr reports the requested address with the port the server confirmed,
-	// so only the port is known to be real here. That port is what the probe
-	// below is aimed at, and it is taken out of the address the library builds
-	// (x/crypto/ssh, tcpListener.Addr). A listener that reports anything else
-	// leaves the port that was asked to be forwarded, which is the port the
-	// server confirmed in every case but a request for port 0.
-	localAddr := listener.Addr().String()
-
-	boundPort := t.Local.Port
-	if bound, ok := listener.Addr().(*net.TCPAddr); ok {
-		boundPort = bound.Port
-	}
+	boundPort := opened.confirmedPort(t.Local.port())
 
 	t.tunnelMu.Lock()
-	tunnel.Local = localAddr
+	tunnel.Local = opened.shown()
 	tunnel.Status = "connected"
 	tunnel.RetryCount = 0
 	tunnel.LastError = ""
@@ -642,12 +677,16 @@ func (t *SSHTunnel) establishConnection(m *Manager, tunnel *models.Tunnel) error
 	// be to a server that was reconfigured in between, so the reading goes back
 	// to unknown until the probe below answers for the connection that is up.
 	tunnel.ForwardReach = forwardReachUnknown
+	// Which halves of the pair opened is a fact about this connection for the
+	// same reason, and it was settled a moment ago for this one.
+	tunnel.OpenReach = opened.reach
 	t.saveTunnelStatus(m, tunnel)
 	t.tunnelMu.Unlock()
 
 	t.logger.Info("tunnel connected successfully",
 		logid.TunnelConnected.Field(),
 		zap.String("local", t.Local.String()),
+		zap.String("open_reach", opened.reach),
 		zap.String("server", t.Server.String()),
 		zap.String("remote", t.Remote.String()))
 
@@ -657,39 +696,186 @@ func (t *SSHTunnel) establishConnection(m *Manager, tunnel *models.Tunnel) error
 	// connection per tunnel per reader.
 	go t.recordForwardReach(m, tunnel, client, forwardProbeAddress(t.Server, boundPort))
 
+	return t.acceptForwards(m, tunnel, client, opened)
+}
+
+// openForwards asks the SSH server to open both addresses of the bind scope
+// and reports which of them it did.
+//
+// Both are asked for on the one connection, because they are the one
+// assignment. The far side answers each request on its own and may refuse one
+// of them, and a refusal of one is not a failure of the tunnel: what opened
+// carries traffic, and what did not is reported so that whoever chose the
+// scope can see they got half of it.
+//
+// Both being refused is a failure, and the error names both refusals. The two
+// cannot be reported apart: the row holds one LastError, and a caller shown
+// only the first would go and look at the address family that may not be the
+// one at fault.
+func (t *SSHTunnel) openForwards(client *ssh.Client) (*openForwards, error) {
+	listenerV4, errV4 := client.Listen("tcp", t.Local.v4.String())
+	listenerV6, errV6 := client.Listen("tcp", t.Local.v6.String())
+
+	switch {
+	case errV4 != nil && errV6 != nil:
+		return nil, fmt.Errorf("the SSH server opened neither address of the bind scope (%s: %v; %s: %v)",
+			t.Local.v4, errV4, t.Local.v6, errV6)
+	case errV6 != nil:
+		return &openForwards{v4: listenerV4, reach: openReachV4, refused: errV6}, nil
+	case errV4 != nil:
+		return &openForwards{v6: listenerV6, reach: openReachV6, refused: errV4}, nil
+	}
+
+	return &openForwards{v4: listenerV4, v6: listenerV6, reach: openReachBoth}, nil
+}
+
+// openForwards is what came of asking for the two addresses of a bind scope.
+type openForwards struct {
+	// v4 and v6 are the forwards that opened, and either is nil when the SSH
+	// server refused that address. They are never both nil: a connection on
+	// which neither opened is a failure and never reaches here.
+	v4 net.Listener
+	v6 net.Listener
+	// reach is what models.Tunnel.OpenReach is left at, one of openReachBoth,
+	// openReachV4 and openReachV6.
+	reach string
+	// refused is what the SSH server said about the address it would not open,
+	// and is nil when it opened both. It is kept for the line that is logged
+	// about it rather than for the row, because a tunnel that carries traffic
+	// over one family is connected and not in error.
+	refused error
+	// closeOnce guards the forwards against being closed twice. The connection
+	// closes them on the way out and the accept loops close them to end each
+	// other, and the two orders overlap.
+	closeOnce sync.Once
+}
+
+// listeners returns the forwards that opened, in the order their addresses were
+// asked for.
+func (o *openForwards) listeners() []net.Listener {
+	opened := make([]net.Listener, 0, 2)
+	for _, listener := range []net.Listener{o.v4, o.v6} {
+		if listener != nil {
+			opened = append(opened, listener)
+		}
+	}
+
+	return opened
+}
+
+// shown returns the address the tunnel row carries, which is the one to
+// connect to. Both addresses of a pair are open in the ordinary case and only
+// one of them can be in the row, so the IPv4 one is preferred: that is the
+// address every row held before a scope named two, and a screen reading the
+// row goes on seeing what it saw. When only the IPv6 address opened it is that
+// one, because the row has to name an address that answers.
+//
+// It is the address the listener reports rather than the one that was asked
+// for, since that is the requested address with the port the SSH server
+// confirmed (x/crypto/ssh, tcpListener.Addr), and the port is the part a
+// request for port 0 does not know in advance.
+func (o *openForwards) shown() string {
+	return o.listeners()[0].Addr().String()
+}
+
+// confirmedPort returns the port the SSH server bound the forwards on, falling
+// back to requested for a listener that reports an address of another kind.
+//
+// Only the port of the reported address is known to be real: the address
+// itself is the one that was asked for, which the reply to a tcpip-forward
+// request never confirms. A listener that reports anything but a TCP address
+// leaves the port that was asked to be forwarded, which is the port the server
+// confirmed in every case but a request for port 0.
+func (o *openForwards) confirmedPort(requested int) int {
+	if bound, ok := o.listeners()[0].Addr().(*net.TCPAddr); ok {
+		return bound.Port
+	}
+
+	return requested
+}
+
+func (o *openForwards) close() {
+	o.closeOnce.Do(func() {
+		for _, listener := range o.listeners() {
+			_ = listener.Close()
+		}
+	})
+}
+
+// acceptForwards carries what the forwards of this connection accept, and
+// returns when the first of them ends.
+//
+// The first to end ends the connection rather than leaving the other running.
+// Both forwards belong to the one assignment and to the one SSH connection, so
+// a forward that ended on its own leaves the tunnel reaching half of what it
+// was built for, with nothing that would ever open the other half again short
+// of connecting anew. What ended the first is what the caller is told, and the
+// second ends with it: closing a forward ends its accept with io.EOF
+// (x/crypto/ssh, forwardList.remove closing the channel tcpListener.Accept
+// reads).
+func (t *SSHTunnel) acceptForwards(m *Manager, tunnel *models.Tunnel, client *ssh.Client, opened *openForwards) error {
+	listeners := opened.listeners()
+
+	// Buffered for every loop, so the ones that are not read from still end.
+	ends := make(chan error, len(listeners))
+
+	var accepting sync.WaitGroup
+
+	for _, listener := range listeners {
+		accepting.Add(1)
+
+		go func(listener net.Listener) {
+			defer accepting.Done()
+
+			ends <- t.acceptForward(listener)
+		}(listener)
+	}
+
+	err := <-ends
+
+	opened.close()
+	accepting.Wait()
+
+	if errors.Is(err, io.EOF) {
+		t.logger.Info("connection closed",
+			logid.TunnelConnectionClosed.Field(),
+			zap.String("local", t.Local.String()),
+			zap.String("server", t.Server.String()),
+			zap.String("remote", t.Remote.String()))
+
+		// Drop the dead client, or the monitor keeps checking it and
+		// tears down the connection the Start loop establishes next.
+		t.clientMu.Lock()
+		if t.client == client {
+			_ = t.client.Close()
+			t.client = nil
+			t.clientConn = nil
+		}
+		t.clientMu.Unlock()
+
+		t.markReconnecting(m, tunnel)
+
+		return errConnectionClosed
+	}
+
+	m.logger.Error("listener accept error",
+		logid.TunnelListenerAcceptFailed.Field(),
+		zap.String("local", t.Local.String()),
+		zap.String("server", t.Server.String()),
+		zap.String("remote", t.Remote.String()), zap.Error(err))
+
+	return fmt.Errorf("listener accept error: %w", err)
+}
+
+// acceptForward carries the connections one forward accepts and returns what
+// ended it.
+func (t *SSHTunnel) acceptForward(listener net.Listener) error {
 	for {
 		conn, err := listener.Accept()
 		if err != nil {
-			if errors.Is(err, io.EOF) {
-				t.logger.Info("connection closed",
-					logid.TunnelConnectionClosed.Field(),
-					zap.String("local", t.Local.String()),
-					zap.String("server", t.Server.String()),
-					zap.String("remote", t.Remote.String()))
-
-				// Drop the dead client, or the monitor keeps checking it and
-				// tears down the connection the Start loop establishes next.
-				t.clientMu.Lock()
-				if t.client == client {
-					_ = t.client.Close()
-					t.client = nil
-					t.clientConn = nil
-				}
-				t.clientMu.Unlock()
-
-				t.markReconnecting(m, tunnel)
-
-				return errConnectionClosed
-			}
-
-			m.logger.Error("listener accept error",
-				logid.TunnelListenerAcceptFailed.Field(),
-				zap.String("local", t.Local.String()),
-				zap.String("server", t.Server.String()),
-				zap.String("remote", t.Remote.String()), zap.Error(err))
-
-			return fmt.Errorf("listener accept error: %w", err)
+			return err
 		}
+
 		go t.forward(conn, forwardIdleTimeout)
 	}
 }
