@@ -9,12 +9,14 @@ import (
 	"os"
 	"path"
 	"path/filepath"
+	"reflect"
 	"regexp"
 	"sort"
 	"strings"
 	"testing"
 
 	"github.com/jollaman999/tunnel-manager/internal/api"
+	"github.com/jollaman999/tunnel-manager/internal/models"
 	"github.com/jollaman999/tunnel-manager/internal/settings"
 	"github.com/labstack/echo/v4"
 	"go.uber.org/zap"
@@ -1224,4 +1226,174 @@ func TestEveryRefusalTheScriptActsOnIsOneTheServerRaises(t *testing.T) {
 			t.Errorf("the script acts on the refusal %q, which the server does not raise", match[1])
 		}
 	}
+}
+
+// scriptBindScope is how screens.js writes down one of the two words a bind
+// scope can be.
+var scriptBindScope = regexp.MustCompile(`(?m)^const (bindScope[A-Za-z]+) = "([^"]*)";$`)
+
+// TestTheScreensNameTheBindScopesTheModelStores holds the words the screens
+// send against the words the column takes.
+//
+// The two are compared rather than written out once, because a word that does
+// not match is refused nowhere the operator would see it in time: the list on
+// the screen still offers two entries under sentences out of the catalog, and
+// what comes back is a refusal of the whole request naming a field. The check
+// on the column would be the last thing to speak, and by then the screen has
+// been offering a choice it could never store.
+func TestTheScreensNameTheBindScopesTheModelStores(t *testing.T) {
+	want := map[string]string{
+		"bindScopeWildcard": models.BindScopeWildcard,
+		"bindScopeLoopback": models.BindScopeLoopback,
+	}
+
+	found := map[string]string{}
+
+	for _, said := range scriptBindScope.FindAllStringSubmatch(readStatic(t, "screens.js"), -1) {
+		found[said[1]] = said[2]
+	}
+
+	if len(found) == 0 {
+		t.Fatalf("screens.js names no bind scope in the shape this test reads")
+	}
+
+	for name, word := range found {
+		stored, known := want[name]
+		if !known {
+			t.Errorf("screens.js names the bind scope %s, which the model has no word for", name)
+			continue
+		}
+
+		if word != stored {
+			t.Errorf("screens.js sends %s as %q, which the model stores as %q", name, word, stored)
+		}
+	}
+
+	for name := range want {
+		if _, ok := found[name]; !ok {
+			t.Errorf("screens.js names no %s, so one of the two scopes cannot be picked", name)
+		}
+	}
+}
+
+// The two shapes a script writes a request body in: the object it builds, and
+// the fields it sets on that object afterwards. A field is set afterwards where
+// it is only sent sometimes, an empty password box being the first of those, so
+// reading the object alone would miss half of what goes out.
+var (
+	scriptBodyLiteral = regexp.MustCompile(`(?m)^ {4}([a-z][a-z0-9_]*):`)
+	scriptBodyField   = regexp.MustCompile(`(?m)^ +body\.([a-z][a-z0-9_]*) =`)
+)
+
+// TestTheFieldsTheScreensSendAreOnesTheRequestsCarry holds what the screens put
+// in a request body against what the request is bound into.
+//
+// A name that is in one and not in the other is the quietest failure this UI
+// has. Binding leaves a field it does not know about exactly where it found it,
+// so the request is answered with a 200, the screen says the Host was stored,
+// and the one value the operator went in to change was dropped on the way. It
+// is what a field moved from one record to another leaves behind, which is how
+// the bind address became a scope on the assignment: the screens went on
+// sending it under the old name to a request that had stopped carrying it.
+func TestTheFieldsTheScreensSendAreOnesTheRequestsCarry(t *testing.T) {
+	script := readStatic(t, "screens.js")
+
+	for _, held := range []struct {
+		name string
+		into any
+	}{
+		{"createHost", models.CreateHostRequest{}},
+		{"updateHost", models.UpdateHostRequest{}},
+		// The update of a service port is bound into the request the create is
+		// bound into, so both of the functions that build that body are held to
+		// the one struct.
+		{"servicePortBody", models.CreateServicePortRequest{}},
+		{"createServicePort", models.CreateServicePortRequest{}},
+	} {
+		carried := jsonFields(t, held.into)
+		sent := bodyFields(t, script, held.name)
+
+		if len(sent) == 0 {
+			t.Errorf("screens.js builds no request body in %s, so nothing here is checked", held.name)
+			continue
+		}
+
+		t.Logf("%s sends: %s", held.name, strings.Join(sent, " "))
+
+		for _, field := range sent {
+			if !carried[field] {
+				t.Errorf("screens.js sends %q from %s, which %T does not carry",
+					field, held.name, held.into)
+			}
+		}
+	}
+}
+
+// bodyFields are the names one function of a script writes into a request body.
+// The object it builds is read from the first line that opens one to the line
+// that closes it at the indentation a body sits on, and the fields set on it
+// afterwards are read over the whole function.
+func bodyFields(t *testing.T, script, name string) []string {
+	t.Helper()
+
+	at := strings.Index(script, "function "+name+"(")
+	if at < 0 {
+		t.Fatalf("screens.js has no function named %s", name)
+	}
+
+	body := script[at:]
+	if end := strings.Index(body, "\n}\n"); end >= 0 {
+		body = body[:end]
+	}
+
+	var found []string
+
+	opens := strings.Index(body, "const body = {")
+	if opens < 0 {
+		opens = strings.Index(body, "  return {")
+	}
+
+	if opens >= 0 {
+		literal := body[opens:]
+		if closes := strings.Index(literal, "\n  };"); closes >= 0 {
+			literal = literal[:closes]
+		}
+
+		for _, said := range scriptBodyLiteral.FindAllStringSubmatch(literal, -1) {
+			found = append(found, said[1])
+		}
+	}
+
+	for _, said := range scriptBodyField.FindAllStringSubmatch(body, -1) {
+		found = append(found, said[1])
+	}
+
+	sort.Strings(found)
+
+	return found
+}
+
+// jsonFields are the names a struct is bound from, out of the tags themselves
+// rather than out of a list written beside them: a tag renamed without the list
+// being touched is exactly what this is here to catch.
+func jsonFields(t *testing.T, of any) map[string]bool {
+	t.Helper()
+
+	shape := reflect.TypeOf(of)
+	if shape.Kind() != reflect.Struct {
+		t.Fatalf("%T is not a struct", of)
+	}
+
+	names := map[string]bool{}
+
+	for i := 0; i < shape.NumField(); i++ {
+		tag := shape.Field(i).Tag.Get("json")
+		if tag == "" || tag == "-" {
+			continue
+		}
+
+		names[strings.Split(tag, ",")[0]] = true
+	}
+
+	return names
 }

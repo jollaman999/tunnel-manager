@@ -432,6 +432,11 @@ async function drawStatus() {
         under.push(denied);
       }
 
+      const half = openReachAdvice(tunnel);
+      if (half !== null) {
+        under.push(half);
+      }
+
       if (under.length === 0) {
         return cells;
       }
@@ -664,6 +669,47 @@ function forwardAdvice(tunnel) {
   causes.push(t("status.denied-in-use.text"));
 
   box.appendChild(bulletList(causes));
+
+  return box;
+}
+
+// openReachAdvice is what is said under a tunnel whose forwarded port opened on
+// one address family and not on the other.
+//
+// A scope asks for two addresses, the loopbacks or the wildcards, because
+// neither of a pair stands in for the other: a client dialling ::1 does not
+// arrive at a port opened on 127.0.0.1. The reading says which of the two were
+// opened, and the one case worth a line is half of them.
+//
+// "both" is the tunnel that is working and says nothing. The empty value is a
+// tunnel nothing has been measured on yet, and a row stored before there was a
+// column to measure into, and it says nothing either: a line drawn from an
+// absence of readings would be on every row of an installation that has just
+// been upgraded. A forward that opened on neither address does not arrive here
+// at all, it arrives as a failure, and the status and the last error of the row
+// are what say so.
+//
+// It names no cause. The refusal carries no reason and this program never runs
+// a command on the Host, so IPv6 turned off on that machine, an sshd that was
+// told to listen on one family, and a firewall in front of it are the same
+// silence seen from here.
+function openReachAdvice(tunnel) {
+  const reach = typeof tunnel.open_reach === "string" ? tunnel.open_reach : "";
+
+  if (reach !== "ipv4" && reach !== "ipv6") {
+    return null;
+  }
+
+  const box = document.createElement("div");
+
+  box.className = "reach-advice";
+  box.dataset.openReach = reach;
+
+  box.appendChild(element("strong", reach === "ipv4"
+    ? t("status.open-ipv4-only.text")
+    : t("status.open-ipv6-only.text")));
+
+  box.appendChild(element("p", t("status.open-half.text")));
 
   return box;
 }
@@ -1755,9 +1801,8 @@ async function drawHosts() {
 
     nodes.push(buildTable(
       [t("hosts.id.column"), t("hosts.ip.column"), t("hosts.port.column"),
-        t("hosts.user.column"), t("hosts.bind-address.column"),
-        t("hosts.description.column"), t("hosts.enabled.column"),
-        t("hosts.updated.column"), ""],
+        t("hosts.user.column"), t("hosts.description.column"),
+        t("hosts.enabled.column"), t("hosts.updated.column"), ""],
       hosts.map(hostRow),
       [0, 2]
     ));
@@ -1794,7 +1839,6 @@ function hostRow(host) {
     host.ip,
     host.port,
     host.user,
-    bindAddressShown(host.bind_address),
     host.description,
     host.enabled ? t("common.yes.text") : t("common.no.text"),
     timeCell(host.updated_at),
@@ -1860,108 +1904,80 @@ function privilegedPortAdvice(value) {
   return t("service-ports.local-port-privileged.hint");
 }
 
-// bindAddressEveryInterface is the address that asks for every interface of the
-// Host, and it is what a Host that names none is asked for on: a row stored
-// before there was a column to hold one carries nothing, and nothing has to go
-// on meaning what those rows were already running on.
-const bindAddressEveryInterface = "0.0.0.0";
+// bindScopeWildcard and bindScopeLoopback are the two answers an assignment can
+// carry, spelled the way the API spells them. An assignment that carries
+// neither holds the empty value, and that means the wildcard: it is what every
+// row written before there was a column is already running on, and nothing here
+// may quietly move one of those somewhere narrower.
+const bindScopeWildcard = "wildcard";
+const bindScopeLoopback = "loopback";
 
-// bindAddressChoices are the addresses offered without anything being typed.
-// The three of them are every interface, IPv4 loopback and IPv6 loopback, which
-// is what nearly every Host wants and all this end can name: an address that
-// belongs to one interface of one machine is a fact about that machine, and
-// nothing here can ask a Host what its interfaces are. Doing that would mean
-// running a command over there, which this program has no way of doing and is
-// not being given one for a list of three.
-const bindAddressChoices = [bindAddressEveryInterface, "127.0.0.1", "::1"];
-
-// bindAddressEntered is what the list is set to while the address is being
-// typed into the box below it. It is not an address, so it cannot collide with
-// one, and it never leaves the screen: what is sent is what was typed.
-const bindAddressEntered = "entered";
-
-// bindAddressListed is whether a stored address is one the list offers. The
-// empty value is: it stands for the wildcard, which is the first entry.
-function bindAddressListed(stored) {
-  return stored === "" || bindAddressChoices.indexOf(stored) !== -1;
-}
-
-// bindAddressStored is what a form was opened with, as a string. A Host being
-// added carries nothing, and a row stored before the column existed carries
-// nothing either, and the two open the form the same way.
-function bindAddressStored(value) {
-  return value === undefined || value === null ? "" : String(value);
-}
-
-// bindAddressField and bindAddressEnteredField are one value in two boxes. The
-// second is only on the screen while the first is set to the entry that stands
-// for no listed address, and it is checked only while it is there.
+// bindScopeOptions are the two entries every list that picks a scope offers.
+// The wildcard is first because it is what an assignment that says nothing
+// means: a list that opened on the other one would send a narrower reach than
+// the request it stands in used to make.
 //
-// A stored address that is not on the list opens the form on that entry with
-// the box filled in, so a Host bound to one of its own interfaces can be edited
-// without being retyped.
-function bindAddressField(value) {
-  const stored = bindAddressStored(value);
-
-  return {
-    name: "bind_address",
-    label: t("hosts.bind-address.label"),
-    value: bindAddressListed(stored) ? bindAddressShown(stored) : bindAddressEntered,
-    options: bindAddressChoices.concat([
-      { value: bindAddressEntered, text: t("hosts.bind-address-entered.option") }
-    ]),
-    note: t("hosts.bind-address.hint"),
-    advise: bindAddressReachAdvice
-  };
+// There is no third entry and there is nothing to type. An address that belongs
+// to one interface of one machine is a fact about that machine, and nothing
+// here can ask a Host what its interfaces are: a typed address that is wrong is
+// refused nowhere, it is a forward that quietly fails.
+//
+// The words are read as the list is built rather than once at the top of this
+// file, because the catalog is loaded after the file is and the language is
+// changed while the page is up.
+function bindScopeOptions() {
+  return [
+    { value: bindScopeWildcard, text: t("form.bind-scope-wildcard.option") },
+    { value: bindScopeLoopback, text: t("form.bind-scope-loopback.option") }
+  ];
 }
 
-function bindAddressEnteredField(value) {
-  const stored = bindAddressStored(value);
+// bindScopeStored is what a form or a row is opened on. Anything that is not
+// the loopback is the wildcard, which is what the empty value of the column
+// means and what a row stored before there was a column carries.
+function bindScopeStored(value) {
+  return value === bindScopeLoopback ? bindScopeLoopback : bindScopeWildcard;
+}
 
-  const field = ipField("bind_address_entered",
-    t("hosts.bind-address-entered.label"),
-    bindAddressListed(stored) ? "" : stored);
+// bindScopeField is the list that picks how far the forwarded ports reach. It
+// is built here rather than written out at each of the places it appears, for
+// the reason ipField is: the two add forms and the assignment panel have to
+// offer the same two answers under the same words.
+//
+// shownWhen, where a caller passes one, is the tick that decides whether the
+// list is asked for at all. Both add forms make assignments only while a box is
+// ticked, and a scope with no assignment to sit on is a question about nothing.
+function bindScopeField(value, shownWhen) {
+  const field = {
+    name: "bind_scope",
+    label: t("form.bind-scope.label"),
+    value: bindScopeStored(value),
+    options: bindScopeOptions(),
+    note: t("form.bind-scope.hint"),
+    advise: bindScopeAdvice
+  };
 
-  field.shownWhen = { field: "bind_address", is: bindAddressEntered };
+  if (shownWhen !== undefined) {
+    field.shownWhen = shownWhen;
+  }
 
   return field;
 }
 
-// bindAddressShown is a stored address as it is put on a screen. The empty
-// value is what a row written before the column existed holds, and it is drawn
-// as the address it stands for rather than as a blank, because a blank there
-// reads as a Host that is bound to nothing.
-function bindAddressShown(value) {
-  return value === undefined || value === null || value === ""
-    ? bindAddressEveryInterface
-    : String(value);
-}
-
-// bindAddressReachAdvice says what the wildcard means, without refusing it.
+// bindScopeAdvice says what the wildcard means, without refusing it.
 //
 // It is a warning for the reason privilegedPortAdvice is one: how far the port
 // really reaches is a fact about the Host and about the SSH server on it, which
 // this screen cannot see. An sshd with GatewayPorts off binds loopback whatever
 // is asked for, and one with it on opens the port to everything that can reach
 // that machine. Refusing the wildcard would be deciding that from here, and it
-// is what every Host stored so far is already running on.
-function bindAddressReachAdvice(value) {
-  if (value !== bindAddressEveryInterface) {
+// is what every assignment stored so far is already running on.
+function bindScopeAdvice(value) {
+  if (value !== bindScopeWildcard) {
     return "";
   }
 
-  return t("hosts.bind-address-open.notice");
-}
-
-// bindAddressOf is what the list and the box under it come to. The list carries
-// the address itself on every entry but the one that stands for none of them,
-// where what was typed is the answer.
-function bindAddressOf(values) {
-  if (values.bind_address !== bindAddressEntered) {
-    return values.bind_address;
-  }
-
-  return values.bind_address_entered.trim();
+  return t("form.bind-scope-open.notice");
 }
 
 // privateKeyField and keyPassphraseField are the key half of how a host is
@@ -2029,8 +2045,6 @@ function hostCreateForm() {
         type: "password",
         note: t("hosts.password-add.hint")
       },
-      bindAddressField(),
-      bindAddressEnteredField(),
       { name: "description", label: t("hosts.description.label") },
       // Ticked to begin with, because a Host with no assignment runs no tunnel
       // at all and carrying everything is what the API does with a request that
@@ -2043,7 +2057,13 @@ function hostCreateForm() {
         type: "checkbox",
         value: true,
         note: t("hosts.assign-all.hint")
-      }
+      },
+      // The scope rides on that tick, and it is the scope of the assignments
+      // this registration makes rather than of the Host: a Host holds no scope
+      // at all. It is asked for here because the assignments are made here, and
+      // what they are changed to afterwards is the panel behind the Service
+      // ports button.
+      bindScopeField(undefined, { field: "assign_all_service_ports", ticked: true })
     ],
     onSubmit: createHost
   });
@@ -2066,8 +2086,11 @@ function hostEditForm(host) {
         type: "password",
         note: t("hosts.password-edit.hint")
       },
-      bindAddressField(host.bind_address),
-      bindAddressEnteredField(host.bind_address),
+      // No scope is asked for here. It belongs to the assignment and not to the
+      // Host, so one answer on this form would be one answer for every service
+      // port the Host carries, which is the thing the scope was moved off the
+      // Host to stop. It is changed in the panel behind the Service ports
+      // button, a row at a time or over everything that is ticked.
       { name: "description", label: t("hosts.description.label"), value: host.description },
       { name: "enabled", label: t("hosts.enabled.label"), type: "checkbox", value: host.enabled }
     ],
@@ -2087,10 +2110,16 @@ async function createHost(values) {
     ip: values.ip.trim(),
     port: asNumber(values.port),
     user: values.user.trim(),
-    bind_address: bindAddressOf(values),
     description: values.description,
     assign_all_service_ports: values.assign_all_service_ports
   };
+
+  // The scope is sent only where there are assignments for it to land on. The
+  // API reads it while it makes them and ignores it otherwise, and a field that
+  // decides nothing is better left out than sent from a row nobody saw.
+  if (values.assign_all_service_ports) {
+    body.bind_scope = values.bind_scope;
+  }
 
   body.password = values.password;
 
@@ -2113,7 +2142,6 @@ async function updateHost(host, values) {
   const body = {
     ip: values.ip.trim(),
     user: values.user.trim(),
-    bind_address: bindAddressOf(values),
     description: values.description,
     enabled: values.enabled
   };
@@ -2176,26 +2204,31 @@ async function deleteHost(host) {
 }
 
 // openHostServicePorts puts up the panel that says which service ports a Host
-// carries and lets them be ticked.
+// carries, lets them be ticked, and says how far each of them reaches.
 //
-// The list is served a page at a time, so what is ticked is held in two maps
-// rather than read off the boxes at the end. served is what the server said
-// about each service port on the pages that were read, and wanted holds the
-// ones the operator touched. A box is drawn from wanted where there is an entry
-// for it and from served otherwise, which is what keeps a tick made on the
-// first page while the second one is being read and after coming back.
+// The list is served a page at a time, so what was ticked is held in maps
+// rather than read off the controls at the end. picks.served is what the server
+// said about each service port on the pages that were read and picks.wanted
+// holds the boxes the operator touched; picks.scopes and picks.scoped are the
+// same pair for the scope. A control is drawn from what was touched where there
+// is an entry for it and from what the server said otherwise, which is what
+// keeps a tick made on the first page while the second one is being read and
+// after coming back.
 //
-// What is sent is the difference between the two. The panel knows nothing of
-// the pages it has not read, so a request carrying the whole set would name
-// this page alone, and every assignment outside it would be deleted by a press
-// that was meant to tick one box.
+// What is sent is the difference between the two halves. The panel knows
+// nothing of the pages it has not read, so a request carrying the whole set
+// would name this page alone, and every assignment outside it would be deleted
+// by a press that was meant to tick one box.
 async function openHostServicePorts(host) {
   // The panel has a page of its own and does not touch listPages. It is opened
   // and closed while the list behind it stays where it is, and the two lists
   // are not the same length anyway.
   const page = { number: 1, size: listSizes[0] };
-  const served = {};
-  const wanted = {};
+
+  // lists holds the scope list of every row on the page that is on the screen
+  // now. It is what lets an apply over the ticked rows show up on the ones
+  // being looked at, and it is emptied whenever the list is built again.
+  const picks = { served: {}, wanted: {}, scopes: {}, scoped: {}, lists: {} };
 
   const list = document.createElement("div");
 
@@ -2210,6 +2243,15 @@ async function openHostServicePorts(host) {
   problem.className = "notice error";
   problem.dataset.problem = "host-service-ports";
   problem.hidden = true;
+
+  // What an apply over the ticked rows did. It is a separate line from the one
+  // above because it is not a refusal, and it is inside the panel for the same
+  // reason that one is: setNotice writes behind the backdrop.
+  const said = element("p", "");
+
+  said.className = "notice info";
+  said.dataset.said = "host-service-ports";
+  said.hidden = true;
 
   async function drawPage() {
     const answer = await apiCall("GET",
@@ -2228,6 +2270,7 @@ async function openHostServicePorts(host) {
     // put up, and nothing here writes to #app, so a draw of the screen behind
     // the backdrop cannot take the panel down and this cannot draw over it.
     list.textContent = "";
+    picks.lists = {};
 
     if (items.length === 0) {
       list.appendChild(statusLine(t("service-ports.none.empty"), "empty"));
@@ -2241,9 +2284,10 @@ async function openHostServicePorts(host) {
     }
 
     for (const item of items) {
-      served[item.id] = Boolean(item.assigned);
+      picks.served[item.id] = Boolean(item.assigned);
+      picks.scopes[item.id] = bindScopeStored(item.bind_scope);
 
-      list.appendChild(servicePortCheck(item, served, wanted));
+      list.appendChild(servicePortCheck(item, picks));
     }
   }
 
@@ -2279,7 +2323,10 @@ async function openHostServicePorts(host) {
     title: t("hosts.assign.title", { id: host.id, ip: host.ip }),
     body: [
       element("p", t("hosts.assign.text")),
+      element("p", t("hosts.assign-scope.text")),
       problem,
+      said,
+      scopeToTheTicked(picks, said),
       list
     ],
     buttons: [
@@ -2288,7 +2335,7 @@ async function openHostServicePorts(host) {
         name: "save",
         variant: "primary",
         press: function (button, close) {
-          return saveHostServicePorts(host, served, wanted, button, close, problem);
+          return saveHostServicePorts(host, picks, button, close, problem);
         }
       },
       { label: t("common.close.button"), name: "close" }
@@ -2304,26 +2351,88 @@ async function openHostServicePorts(host) {
   return drawHosts();
 }
 
-// servicePortCheck is one service port in that panel: the box, what the service
-// port is, and which one it is.
+// scopeToTheTicked is the row above the list that sets one scope on everything
+// that is ticked.
 //
-// The row is a label with the box inside it, so the whole row is the press.
-// A checkbox on its own is a target the width of a character, which is the one
-// thing a list ticked on a phone cannot be.
-function servicePortCheck(item, served, wanted) {
-  const row = document.createElement("label");
+// It reaches every row the panel has read and not the page on the screen alone,
+// which is the same span the save works over: a tick made on the first page is
+// still a tick while the second one is being read, and an apply that skipped it
+// would be applying to a different set than the one that is about to be sent.
+//
+// It touches nothing that is not ticked. A row the operator left alone has an
+// assignment somebody chose the reach of, or no assignment at all, and neither
+// is this press's to change. What it writes is the map the save reads, so the
+// rows it did not name are not in the request either.
+function scopeToTheTicked(picks, said) {
+  const row = document.createElement("div");
+
+  row.className = "assign-bulk";
+
+  const label = element("span", t("hosts.assign-scope.label"));
+
+  label.className = "assign-bulk-label";
+
+  const chosen = listControl({ options: bindScopeOptions(), value: bindScopeWildcard });
+
+  chosen.className = "assign-bulk-scope";
+  chosen.dataset.field = "assign-scope";
+  chosen.setAttribute("aria-label", t("hosts.assign-scope.label"));
+
+  row.appendChild(label);
+  row.appendChild(chosen);
+  row.appendChild(actionButton(t("hosts.assign-scope.button"), "assign-scope-apply", function () {
+    let touched = 0;
+
+    for (const id of Object.keys(picks.served)) {
+      const ticked = id in picks.wanted ? picks.wanted[id] : picks.served[id];
+      if (!ticked) {
+        continue;
+      }
+
+      picks.scoped[id] = chosen.value;
+      touched += 1;
+
+      if (id in picks.lists) {
+        picks.lists[id].value = chosen.value;
+      }
+    }
+
+    sayInPanel(said, touched === 0
+      ? t("hosts.assign-scope-none.notice")
+      : t(plural(touched, "hosts.assign-scope-applied-one.notice",
+        "hosts.assign-scope-applied-many.notice"), { count: touched }));
+  }));
+
+  return row;
+}
+
+// servicePortCheck is one service port in that panel: the box, what the service
+// port is, which one it is, and how far it reaches.
+//
+// The box and the text are inside a label, so that side of the row is the
+// press. A checkbox on its own is a target the width of a character, which is
+// the one thing a list ticked on a phone cannot be.
+//
+// The scope list is outside that label. A list inside one is a press that ticks
+// the box beside it, so picking a scope would untick the row it is being picked
+// for. It is also disabled while the box is clear: a service port this Host
+// does not carry has no forwarded port to open anywhere, so there is nothing
+// for the answer to be about.
+function servicePortCheck(item, picks) {
+  const row = document.createElement("div");
 
   row.className = "assign-row";
   row.dataset.assign = String(item.id);
+
+  const pick = document.createElement("label");
+
+  pick.className = "assign-pick";
 
   const box = document.createElement("input");
 
   box.type = "checkbox";
   box.dataset.field = "assign-" + item.id;
-  box.checked = item.id in wanted ? wanted[item.id] : served[item.id];
-  box.addEventListener("change", function () {
-    wanted[item.id] = box.checked;
-  });
+  box.checked = item.id in picks.wanted ? picks.wanted[item.id] : picks.served[item.id];
 
   const text = document.createElement("span");
 
@@ -2334,46 +2443,105 @@ function servicePortCheck(item, served, wanted) {
   const description = item.description === undefined || item.description === null
     ? ""
     : String(item.description);
-  const said = element("small", description === ""
+  const saidAbout = element("small", description === ""
     ? t("hosts.assign-said.text", { id: item.id })
     : t("hosts.assign-said-description.text", { id: item.id, description: description }));
 
-  said.className = "assign-said";
-  text.appendChild(said);
+  saidAbout.className = "assign-said";
+  text.appendChild(saidAbout);
 
-  row.appendChild(box);
-  row.appendChild(text);
+  pick.appendChild(box);
+  pick.appendChild(text);
+
+  const scope = listControl({
+    options: bindScopeOptions(),
+    value: item.id in picks.scoped ? picks.scoped[item.id] : picks.scopes[item.id]
+  });
+
+  scope.className = "assign-scope";
+  scope.dataset.field = "scope-" + item.id;
+  scope.disabled = !box.checked;
+  // The name is on the control itself and not on a label of its own. A row
+  // holds one of these and the panel holds thirty, so what tells them apart is
+  // which service port the row is about, and that is already written beside it.
+  scope.setAttribute("aria-label", t("hosts.assign-row-scope.aria", { id: item.id }));
+  scope.addEventListener("change", function () {
+    picks.scoped[item.id] = scope.value;
+  });
+
+  box.addEventListener("change", function () {
+    picks.wanted[item.id] = box.checked;
+    scope.disabled = !box.checked;
+  });
+
+  picks.lists[item.id] = scope;
+
+  row.appendChild(pick);
+  row.appendChild(scope);
 
   return row;
 }
 
-// saveHostServicePorts sends what was ticked, as the change it is.
+// saveHostServicePorts sends what was ticked and what was rescoped, as the
+// change it is.
 //
 // A panel that was not changed sends nothing at all. The request would carry
-// two empty lists, write no row and answer that it wrote none, so the round
-// trip decides nothing; the panel closes and the list behind it is drawn again,
+// empty lists, write no row and answer that it wrote none, so the round trip
+// decides nothing; the panel closes and the list behind it is drawn again,
 // which is what a save does.
 //
 // A refusal leaves the panel up with the ticks in it. They are the operator's
 // work, several pages of it, and a panel that closed on a refusal would throw
 // that away along with the chance to put right whatever was wrong.
-async function saveHostServicePorts(host, served, wanted, button, close, problem) {
+async function saveHostServicePorts(host, picks, button, close, problem) {
   const add = [];
   const remove = [];
+  const rescope = [];
 
-  for (const key of Object.keys(wanted)) {
-    if (wanted[key] === served[key]) {
-      continue;
-    }
+  for (const id of Object.keys(picks.served)) {
+    const carried = picks.served[id];
+    const ticked = id in picks.wanted ? picks.wanted[id] : carried;
+    const scope = id in picks.scoped ? picks.scoped[id] : picks.scopes[id];
 
-    if (wanted[key]) {
-      add.push(Number(key));
-    } else {
-      remove.push(Number(key));
+    if (ticked && !carried) {
+      add.push({ id: Number(id), scope: scope });
+    } else if (!ticked && carried) {
+      remove.push(Number(id));
+    } else if (ticked && scope !== picks.scopes[id]) {
+      // An assignment that is already there is named here and nowhere else.
+      // The API leaves one it is only asked to add exactly as it is, on
+      // purpose, so a row moves when and only when the request points at it.
+      rescope.push({ id: Number(id), scope: scope });
     }
   }
 
-  if (add.length === 0 && remove.length === 0) {
+  // The change goes out as one request per scope. A request carries a single
+  // bind_scope, which is what its added rows are written on and what the ones
+  // it names are moved to, and one press of Save can hold both: a service port
+  // pinned to the Host itself and another left open are two scopes in the same
+  // piece of work.
+  //
+  // A second request refused after the first one landed leaves half the change
+  // stored. The panel stays up holding what it held, and it has not read the
+  // list again, so pressing Save once more sends both requests again: adding an
+  // assignment that is already there writes nothing, and moving one to the
+  // scope it is already on writes the value it is already carrying. Sending the
+  // half that landed a second time leaves the same rows behind.
+  const changes = [];
+
+  for (const scope of [bindScopeWildcard, bindScopeLoopback]) {
+    const change = {
+      add: idsScoped(add, scope),
+      rescope: idsScoped(rescope, scope),
+      bind_scope: scope
+    };
+
+    if (change.add.length > 0 || change.rescope.length > 0) {
+      changes.push(change);
+    }
+  }
+
+  if (changes.length === 0 && remove.length === 0) {
     setNotice(t("hosts.assign-unchanged.notice", { id: host.id }), "info");
 
     close("unchanged");
@@ -2381,26 +2549,42 @@ async function saveHostServicePorts(host, served, wanted, button, close, problem
     return;
   }
 
+  // The removals ride on the first request there is, since taking an
+  // assignment away says nothing about a scope. Where there is no other
+  // request, they are the whole of one.
+  if (changes.length === 0) {
+    changes.push({ add: [], rescope: [], bind_scope: bindScopeWildcard });
+  }
+
+  changes[0].remove = remove;
+
   // The button is held down for the whole call. The panel stays up while it is
   // in flight, which is an invitation to press again, and the second press
   // would send the same change a second time.
   button.disabled = true;
   problem.hidden = true;
 
+  // The counts come from the answers, because they are counted over the rows
+  // that were written and not over the requests: a service port that is already
+  // assigned is asked for again without a row being written.
+  let added = 0;
+  let removed = 0;
+  let rescoped = 0;
+
   try {
-    const answer = await apiCall("PUT", "/api/host/" + host.id + "/service-port",
-      { add: add, remove: remove });
+    for (const change of changes) {
+      const answer = await apiCall("PUT", "/api/host/" + host.id + "/service-port", change);
 
-    // The counts come from the answer, because they are counted over the rows
-    // that were written and not over the request: a service port that was
-    // already assigned is asked for again without a row being written.
-    const added = answer === null || typeof answer.added !== "number" ? add.length : answer.added;
-    const removed = answer === null || typeof answer.removed !== "number"
-      ? remove.length
-      : answer.removed;
+      added += countedRows(answer, "added");
+      removed += countedRows(answer, "removed");
+      rescoped += countedRows(answer, "rescoped");
+    }
 
-    setNotice(t(plural(added, "hosts.assign-saved-one.notice", "hosts.assign-saved-many.notice"),
-      { id: host.id, added: added, removed: removed }), "info");
+    setNotice(rescoped > 0
+      ? t(plural(rescoped, "hosts.assign-scoped-one.notice", "hosts.assign-scoped-many.notice"),
+        { id: host.id, added: added, removed: removed, rescoped: rescoped })
+      : t(plural(added, "hosts.assign-saved-one.notice", "hosts.assign-saved-many.notice"),
+        { id: host.id, added: added, removed: removed }), "info");
 
     close("saved");
   } catch (error) {
@@ -2416,6 +2600,33 @@ async function saveHostServicePorts(host, served, wanted, button, close, problem
   } finally {
     button.disabled = false;
   }
+}
+
+// idsScoped are the identifiers of the entries that carry one scope, in the
+// order they were read, which is the order of the list they came off.
+function idsScoped(entries, scope) {
+  return entries.filter(function (entry) {
+    return entry.scope === scope;
+  }).map(function (entry) {
+    return entry.id;
+  });
+}
+
+// countedRows is one of the counts an answer carries. An answer that does not
+// carry it is read as nought rather than as the number of identifiers that were
+// sent: what was asked for is not what was written, which is the whole reason
+// the answer carries counts of its own.
+function countedRows(answer, name) {
+  return answer === null || typeof answer[name] !== "number" ? 0 : answer[name];
+}
+
+// sayInPanel puts a line inside the panel that is not a refusal. It is brought
+// into view for the reason showPanelProblem does it: the press that wrote it
+// may be above or below where the operator is looking.
+function sayInPanel(said, message) {
+  said.textContent = message;
+  said.hidden = false;
+  said.scrollIntoView({ block: "nearest" });
 }
 
 // showPanelProblem puts a refusal inside the panel. It is brought into view
@@ -2522,7 +2733,13 @@ function servicePortCreateForm() {
         type: "checkbox",
         value: true,
         note: t("service-ports.assign-all.hint")
-      }
+      },
+      // The scope of this batch of assignments, asked for on the same terms as
+      // on the host form. The two answers mean the same thing on every Host the
+      // batch reaches, which is what lets one of them be picked for all of them
+      // at once: the loopback addresses and the wildcards are on every machine,
+      // while an address of one interface is on one.
+      bindScopeField(undefined, { field: "assign_to_all_hosts", ticked: true })
     ],
     onSubmit: createServicePort
   });
@@ -2571,6 +2788,12 @@ async function createServicePort(values) {
   // here rather than in servicePortBody: the edit form sends that same body,
   // and the field means nothing to a service port that is already stored.
   body.assign_to_all_hosts = values.assign_to_all_hosts;
+
+  // And the scope rides on the assignment, so it goes out only where there is
+  // one to land on, as it does on the host form.
+  if (values.assign_to_all_hosts) {
+    body.bind_scope = values.bind_scope;
+  }
 
   await apiCall("POST", "/api/service-port", body);
 

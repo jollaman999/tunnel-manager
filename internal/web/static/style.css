@@ -1871,10 +1871,28 @@ body.modal-open {
   justify-content: flex-end;
 }
 
+/* The scope that one press sets on everything that is ticked, above the list it
+   applies to. It wraps rather than shrinking the list it holds: the two words
+   it offers are addresses, and an address cut off in the middle is not one. */
+.assign-bulk {
+  display: flex;
+  gap: 0.5rem;
+  align-items: center;
+  flex-wrap: wrap;
+  padding: 0.5rem 0.25rem;
+  border-bottom: 1px solid var(--border);
+}
+
+.assign-bulk-label {
+  color: var(--text-dim);
+  font-size: 13px;
+}
+
 /* The service ports a Host may carry, one to a row, inside the panel that ticks
-   them. Each row is a label with the box in it, so the row is the target and
-   not the box: a checkbox alone is the width of a character, which is what
-   cannot be hit on a phone.
+   them. The box and the text beside it are a label, so that side of the row is
+   the target and not the box alone: a checkbox by itself is the width of a
+   character, which is what cannot be hit on a phone. The scope list is outside
+   that label, because a press on a control inside one is a press on the box.
 
    The rows are separated by a line rather than boxed. A list of thirty ticked
    one after another reads down the panel, and a border around each of them
@@ -1883,9 +1901,9 @@ body.modal-open {
   display: flex;
   gap: 0.6rem;
   align-items: flex-start;
+  flex-wrap: wrap;
   padding: 0.5rem 0.25rem;
   border-bottom: 1px solid var(--border-soft);
-  cursor: pointer;
 }
 
 .assign-row:last-child {
@@ -1894,6 +1912,27 @@ body.modal-open {
 
 .assign-row:hover {
   background: var(--bg-hover);
+}
+
+/* The half of the row that ticks it. It takes what the scope list beside it
+   does not, and it is the press, so the pointer says so over that half and not
+   over the list. */
+.assign-pick {
+  display: flex;
+  gap: 0.6rem;
+  align-items: flex-start;
+  flex: 1 1 12rem;
+  min-width: 0;
+  cursor: pointer;
+}
+
+/* The scope of one row. It keeps its width while the text beside it takes the
+   rest, and it is lined up with the first line of that text rather than with
+   the block, which carries a second line under it. */
+.assign-scope {
+  flex: 0 0 auto;
+  align-self: flex-start;
+  max-width: 100%;
 }
 
 .assign-row input[type="checkbox"] {

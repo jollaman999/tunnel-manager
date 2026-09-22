@@ -1620,10 +1620,12 @@ function buildForm(spec) {
   // be drawn after the one it decides about.
   //
   // The row is hidden and shown rather than drawn again, so what was typed
-  // into it is still there after a look at one of the other values. What is
-  // compared is the value of the deciding control, which is what a list
-  // carries; a checkbox carries "on" whether it is ticked or not, so it is not
-  // one of these.
+  // into it is still there after a look at one of the other values.
+  //
+  // A list is answered with is, against the value it carries. A checkbox is
+  // answered with ticked, against whether it is ticked, because value on one of
+  // those is "on" whether it is ticked or not and comparing it would decide the
+  // same way in both states.
   for (const field of spec.fields) {
     if (field.shownWhen === undefined) {
       continue;
@@ -1631,12 +1633,15 @@ function buildForm(spec) {
 
     const deciding = inputs[field.shownWhen.field];
     const row = rows[field.name];
+    const byTick = field.shownWhen.ticked !== undefined;
 
     const showIt = function () {
-      showFormRow(row, deciding.value === field.shownWhen.is);
+      showFormRow(row, byTick
+        ? deciding.checked === field.shownWhen.ticked
+        : deciding.value === field.shownWhen.is);
     };
 
-    deciding.addEventListener("input", showIt);
+    deciding.addEventListener(byTick ? "change" : "input", showIt);
     showIt();
   }
 
