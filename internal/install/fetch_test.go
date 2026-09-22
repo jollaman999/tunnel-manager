@@ -7,8 +7,10 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"net"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -21,10 +23,58 @@ import (
 // TestMain shortens the waits between retries. The waits are there for a CDN
 // that needs seconds to catch up with a release, and a test that sat through a
 // real one would spend that time doing nothing.
+//
+// It also lets the servers the tests start be asked. Every one of them is on
+// the loopback address over plain http, which is what the rule on every address
+// turns away; the rule itself still decides every address that is not one of
+// those, so an address a test puts in a release document meets the real thing.
 func TestMain(m *testing.M) {
 	retryWaits = []time.Duration{time.Millisecond, time.Millisecond, time.Millisecond, time.Millisecond}
 
+	checkTarget = allowLoopback
+
 	os.Exit(m.Run())
+}
+
+// allowLoopback is releaseTarget with the addresses of the tests' own servers
+// let through.
+func allowLoopback(raw string) error {
+	parsed, err := url.Parse(raw)
+	if err == nil {
+		addr := net.ParseIP(parsed.Hostname())
+		if addr != nil && addr.IsLoopback() {
+			return nil
+		}
+	}
+
+	return releaseTarget(raw)
+}
+
+// onlyThisServer narrows the allowance above to the one server handed in, for
+// the length of the test that calls it. Another server started beside it is
+// then an address the real rule decides on, which is what a release document
+// naming somewhere else looks like from inside Fetch.
+func onlyThisServer(t *testing.T, serverURL string) {
+	t.Helper()
+
+	parsed, err := url.Parse(serverURL)
+	if err != nil {
+		t.Fatalf("read the address of the test server: %v", err)
+	}
+
+	allowed := parsed.Host
+	restore := checkTarget
+
+	checkTarget = func(raw string) error {
+		asked, err := url.Parse(raw)
+		if err == nil && asked.Host == allowed {
+			return nil
+		}
+
+		return releaseTarget(raw)
+	}
+
+	t.Cleanup(func() { checkTarget = restore })
 }
 
 // testBinary is what the fake release serves in place of the real binary. Its
@@ -688,5 +738,189 @@ func TestFetchFallsBackWhenTheReleaseRedirectsOffHTTPS(t *testing.T) {
 
 	if len(left) != 0 {
 		t.Errorf("the release was downloaded although its checksums never arrived: %v", left[0].Name())
+	}
+}
+
+// TestFetchFallsBackWhenTheReleaseNamesAPlainHTTPAsset is the release document
+// that names an address the file would be fetched from in the clear. The
+// addresses of the assets are fields of that document, so a document that can
+// be answered with is one that picks where the install downloads from, and a
+// plain http fetch is one anything on the way past can rewrite.
+//
+// What the test holds is that nothing was asked of that address at all. A
+// refusal that came after the answer would already have made the request.
+func TestFetchFallsBackWhenTheReleaseNamesAPlainHTTPAsset(t *testing.T) {
+	name := platformAsset(t)
+
+	var asked atomic.Int32
+
+	elsewhere := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		asked.Add(1)
+		_, _ = w.Write(sha256Line(testBinary, name))
+	}))
+	t.Cleanup(elsewhere.Close)
+
+	mux := http.NewServeMux()
+	server := httptest.NewServer(mux)
+	t.Cleanup(server.Close)
+
+	info := releaseInfo{TagName: "v9.9.9", Assets: []releaseAsset{
+		{Name: name, BrowserDownloadURL: elsewhere.URL + "/download/" + name},
+		{Name: sha256SumsAsset, BrowserDownloadURL: elsewhere.URL + "/download/" + sha256SumsAsset},
+	}}
+
+	mux.HandleFunc("/releases/latest", func(w http.ResponseWriter, _ *http.Request) {
+		_ = json.NewEncoder(w).Encode(info)
+	})
+
+	onlyThisServer(t, server.URL)
+
+	dir := t.TempDir()
+
+	fetched, err := fetchFrom(context.Background(), dir, server.URL+"/releases/latest")
+	if err != nil {
+		t.Fatalf("an address that was refused is not an error: %v", err)
+	}
+	defer fetched.Close()
+
+	if fetched.Source != SourceRunning {
+		t.Fatalf("source = %v, want SourceRunning. Why: %s", fetched.Source, fetched.Why)
+	}
+
+	if !strings.Contains(fetched.Why, "not https") {
+		t.Errorf("Why should say the address was refused, got %q", fetched.Why)
+	}
+
+	if got := asked.Load(); got != 0 {
+		t.Errorf("the address the release named was asked %d times, want 0", got)
+	}
+
+	left, err := os.ReadDir(dir)
+	if err != nil {
+		t.Fatalf("read the staging directory: %v", err)
+	}
+
+	if len(left) != 0 {
+		t.Errorf("something was downloaded from an address that may not be asked: %v", left[0].Name())
+	}
+}
+
+// TestFetchFallsBackWhenTheReleaseNamesAnAssetOffGitHub is the same document
+// naming a host nobody published, with the checksums served from where they
+// belong so that the download is reached at all. The file it would name is one
+// the checksums of that same document would agree with, which is why the
+// address has to be refused rather than what arrives from it checked.
+func TestFetchFallsBackWhenTheReleaseNamesAnAssetOffGitHub(t *testing.T) {
+	name := platformAsset(t)
+
+	mux := http.NewServeMux()
+	server := httptest.NewServer(mux)
+	t.Cleanup(server.Close)
+
+	info := releaseInfo{TagName: "v9.9.9", Assets: []releaseAsset{
+		{Name: name, BrowserDownloadURL: "https://example.com/download/" + name},
+		{Name: sha256SumsAsset, BrowserDownloadURL: server.URL + "/download/" + sha256SumsAsset},
+	}}
+
+	mux.HandleFunc("/releases/latest", func(w http.ResponseWriter, _ *http.Request) {
+		_ = json.NewEncoder(w).Encode(info)
+	})
+
+	mux.HandleFunc("/download/"+sha256SumsAsset, func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write(sha256Line(testBinary, name))
+	})
+
+	onlyThisServer(t, server.URL)
+
+	dir := t.TempDir()
+
+	fetched, err := fetchFrom(context.Background(), dir, server.URL+"/releases/latest")
+	if err != nil {
+		t.Fatalf("an address that was refused is not an error: %v", err)
+	}
+	defer fetched.Close()
+
+	if fetched.Source != SourceRunning {
+		t.Fatalf("source = %v, want SourceRunning. Why: %s", fetched.Source, fetched.Why)
+	}
+
+	if !strings.Contains(fetched.Why, "not a GitHub host") {
+		t.Errorf("Why should say the address was refused, got %q", fetched.Why)
+	}
+
+	left, err := os.ReadDir(dir)
+	if err != nil {
+		t.Fatalf("read the staging directory: %v", err)
+	}
+
+	if len(left) != 0 {
+		t.Errorf("something was downloaded from an address that may not be asked: %v", left[0].Name())
+	}
+}
+
+// TestReleaseTargetTakesOnlyGitHubOverHTTPS is the list of addresses a request
+// may start at. It runs against the rule itself and not the variable the tests
+// point at their own servers, so what it holds is what an install does.
+//
+// The address the program is built with is in the table. A rule its own
+// constant did not pass would turn every install into a fallback.
+func TestReleaseTargetTakesOnlyGitHubOverHTTPS(t *testing.T) {
+	cases := []struct {
+		name string
+		url  string
+		want string // the part of the refusal to look for, empty when it is allowed
+	}{
+		{"the address the release is read from", latestReleaseURL, ""},
+		{"a release download", "https://github.com/jollaman999/tunnel-manager/releases/download/v3.6.1/SHA256SUMS", ""},
+		{"the asset host of today", "https://release-assets.githubusercontent.com/github-production-release-asset/1/2?sig=x", ""},
+		{"the asset host of before", "https://objects.githubusercontent.com/github-production-release-asset/1/2", ""},
+		{"a host spelled in capitals", "https://GITHUB.COM/jollaman999/tunnel-manager", ""},
+		{"a host with the port written out", "https://github.com:443/jollaman999/tunnel-manager", ""},
+
+		{"plain http on GitHub", "http://github.com/jollaman999/tunnel-manager", "not https"},
+		{"plain http on the asset host", "http://objects.githubusercontent.com/1/2", "not https"},
+		{"the address of a server on this machine", "http://localhost:8080/download/SHA256SUMS", "not https"},
+		{"a scheme that is not the web at all", "file:///etc/passwd", "not https"},
+		{"somewhere else entirely", "https://example.com/tunnel-manager-linux-amd64", "not a GitHub host"},
+		{"a domain that ends in the same letters", "https://notgithub.com/tunnel-manager-linux-amd64", "not a GitHub host"},
+		{"a domain that starts with one of ours", "https://github.com.example.net/tunnel-manager-linux-amd64", "not a GitHub host"},
+		{"the same letters with no dot between", "https://evilgithubusercontent.com/1/2", "not a GitHub host"},
+		{"something that is not an address", "://tunnel-manager", "cannot be read"},
+	}
+
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			err := releaseTarget(c.url)
+
+			if c.want == "" {
+				if err != nil {
+					t.Fatalf("a request to %s is how a release is read, and it was refused: %v", c.url, err)
+				}
+
+				return
+			}
+
+			if err == nil {
+				t.Fatalf("a request to %s was made", c.url)
+			}
+
+			if !strings.Contains(err.Error(), c.want) {
+				t.Errorf("the refusal says %q, want it to say %q", err, c.want)
+			}
+		})
+	}
+}
+
+// TestReleaseTargetKeepsTheQueryOutOfItsMessage guards the signature, the way
+// the redirect policy does. The addresses that carry one are exactly the ones
+// that come out of a release document and land here.
+func TestReleaseTargetKeepsTheQueryOutOfItsMessage(t *testing.T) {
+	err := releaseTarget("https://example.com/1/2?sig=asignaturenobodyshouldsee")
+	if err == nil {
+		t.Fatal("a request off GitHub was made")
+	}
+
+	if strings.Contains(err.Error(), "asignaturenobodyshouldsee") {
+		t.Errorf("the refusal puts the query of the address in its message: %v", err)
 	}
 }

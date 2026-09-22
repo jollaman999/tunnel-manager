@@ -13,6 +13,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -411,7 +412,17 @@ func readBody(ctx context.Context, client *http.Client, url string, limit int64)
 //
 // A refusal is not retried. A rate limit answers 403 and a repository with no
 // release answers 404, and asking those again says the same thing.
+//
+// Every address is put through checkTarget before anything is asked of it, this
+// being the one place every request here passes through.
 func get(ctx context.Context, client *http.Client, url string) (*http.Response, error) {
+	err := checkTarget(url)
+	if err != nil {
+		// An address that may not be asked at all does not become one by being
+		// asked again, so this leaves before the loop rather than inside it.
+		return nil, err
+	}
+
 	var lastErr error
 
 	for attempt := 0; ; attempt++ {
@@ -615,4 +626,48 @@ func isReleaseHost(host string) bool {
 	}
 
 	return false
+}
+
+// checkTarget is the rule every request here is made under. It is a variable so
+// the tests can let their own server be asked, the way retryWaits is one so
+// they can shrink the waits. Nothing else may write to it: what it holds
+// decides where the binary that gets installed may come from.
+var checkTarget = releaseTarget
+
+// releaseTarget says whether a request may be made to an address at all.
+//
+// checkRedirect is this same rule over a hop something else chose; this is it
+// over the addresses a request starts from. Only the first of those is written
+// here: the addresses the files are fetched from are fields of the document the
+// API answered with, and a document is no more this process's to trust than a
+// redirect is. A release that named http://elsewhere/... would otherwise be
+// fetched in the clear from a host nobody published, and the checksums it would
+// be held against come out of that same document.
+//
+// The refusal happens before the request and not after the answer, because a
+// plain http ask has already put what it asked for on the wire, and an ask off
+// GitHub has already told a host nobody published that this machine is
+// installing.
+func releaseTarget(raw string) error {
+	parsed, err := url.Parse(raw)
+	if err != nil {
+		// The address itself stays out of the message, for the reason below.
+		return fmt.Errorf("the address a request would be made to cannot be read")
+	}
+
+	// Only the scheme and the host go into the messages. The address of an
+	// asset carries the signature that authorises the read, and an install
+	// prints why it fell back, which would put that signature on a terminal and
+	// in whatever collects its output.
+	where := parsed.Scheme + "://" + parsed.Host
+
+	if parsed.Scheme != "https" {
+		return fmt.Errorf("the request is to %s, which is not https", where)
+	}
+
+	if !isReleaseHost(parsed.Hostname()) {
+		return fmt.Errorf("the request is to %s, which is not a GitHub host", where)
+	}
+
+	return nil
 }
