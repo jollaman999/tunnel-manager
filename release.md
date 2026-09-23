@@ -2,10 +2,15 @@
 
 ## Add/fix features:
 
+- **A container image is published for each release.** Tagging a release now builds `linux/amd64` and `linux/arm64` and pushes them to `ghcr.io/jollaman999/tunnel-manager`, under the version and under `latest`. `docker-compose.yaml` runs that image instead of building the working tree, so a compose up brings up the release rather than whatever happened to be checked out. Write a version in place of `latest` to stay on one.
 - **The language picker and the theme switch sit on the line of the title on the login screen.** They were eight pixels below it. Those screens carry the two on the row of the heading itself, and a heading carries the space that goes under it; centring in that row centres each item with its space, so the title sat above the middle of a row its own margin had made taller and the switches sat on that middle. Measured at four widths, the two are on one line now, and neither the title nor anything under it has moved.
+- **The screens call a Host a Host wherever the menu does.** The same thing was named two ways from one sentence to the next. An SSH host key is not the entity, so it stays as it was and only the entity follows the menu. The same was done for Service Port, in English, Spanish and Portuguese.
+- **The notice that follows an assignment reads correctly for a count of one.** It carries two or three counts but only one of them could pick which wording was used, so it read "1 service ports assigned" whenever the reach was what had changed. The counts sit behind labels now, which no language has to agree with.
+- **The reference documents the three endpoints that approve a host key**, in all four languages it is written in, along with the two host key counts, `error_kind` and `listen_addresses` that `GET /api/status` returns.
 
 ## Notes:
 
+- Saving settings binds the request to a body of its own that names only the sixteen fields the screen sends. Nothing was writable that should not have been; the boundary is now written down so that adding a field the server owns cannot open one.
 - The upgrade note of v3.7.0 still holds: every Host stops until its key is approved, a stored path outside the data directory is put back to its default, and the data directory becomes 0700.
 - Nothing about the database changes in this release.
 
