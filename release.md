@@ -1,3 +1,16 @@
+# v3.11.1
+
+## Add/fix features:
+
+- **A box that is checked is called checked.** The English screens said a row was ticked while every other language already says it in its own word, and the box itself is checked in the markup and in what a screen reader announces. The one tick left is the period the reconcile loop runs on, which is not a box.
+- **A save that changed nothing says so rather than saying it was stored.** Being stored is the part nobody is asking about at that moment.
+
+## Notes:
+
+- Only the wording changes in this release. Nothing behaves differently.
+- The upgrade note of v3.7.0 still holds: every Host stops until its key is approved, a stored path outside the data directory is put back to its default, and the data directory becomes 0700.
+- Nothing about the database changes in this release.
+
 # v3.11.0
 
 ## Add/fix features:
