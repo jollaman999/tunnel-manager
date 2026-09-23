@@ -739,6 +739,18 @@ function forwardAddresses(tunnel) {
     return null;
   }
 
+  // Nothing is drawn where nothing came out other than what was asked for.
+  //
+  // The box is four sentences, and on a forward that went up the way it was
+  // asked to every one of them says so: this was asked for, the server agreed,
+  // a connection from here arrived, the Host is listening on those addresses.
+  // An operator reading a screen of tunnels does not need that under each of
+  // them, and a box that is always there is one nobody reads on the row where
+  // it says something.
+  if (nothingCameOutOfTheOrdinary(tunnel, reach)) {
+    return null;
+  }
+
   const box = document.createElement("div");
 
   box.className = "forward-addresses";
@@ -763,6 +775,68 @@ function forwardAddresses(tunnel) {
   }
 
   return box;
+}
+
+// nothingCameOutOfTheOrdinary says whether the forward is open exactly as it
+// was asked to be, with nothing about it left to tell.
+//
+// Three things could differ and none of them does here. The SSH server said yes
+// to both of the addresses that were asked for. The Host, asked what it has
+// open on that port, named those same addresses. And the port answered a
+// connection opened from here, or was never one this end could dial.
+//
+// The middle one is the one worth drawing when it differs, and it differs more
+// often than it sounds: a server set to bind every interface ignores a request
+// for the loopback and opens the port to its whole network, which is the
+// opposite of what was chosen and is not visible anywhere else.
+//
+// A Host that said nothing is not agreement. It leaves the answer unknown, and
+// unknown on a forward whose requests were both agreed to and which answered a
+// connection is not something to put on the screen: it is the ordinary state of
+// a Host this end cannot ask.
+function nothingCameOutOfTheOrdinary(tunnel, reach) {
+  if (reach !== "both") {
+    return false;
+  }
+
+  if (tunnel.forward_reach === "unreachable") {
+    return false;
+  }
+
+  return listeningIsWhatWasAsked(tunnel.local, tunnel.listen_addresses);
+}
+
+// listeningIsWhatWasAsked compares what the Host named against the pair the
+// scope names. A Host that named nothing is not a difference, and neither is a
+// row whose address is none of the four a scope is made of: what is being
+// looked for is a Host that named something else.
+function listeningIsWhatWasAsked(local, listening) {
+  const pair = bindScopePairOf(local);
+
+  if (pair === null) {
+    return true;
+  }
+
+  if (typeof listening !== "string" || listening === "") {
+    return true;
+  }
+
+  const named = listening.split(",").map(function (one) {
+    return one.trim();
+  }).filter(function (one) {
+    return one !== "";
+  });
+
+  if (named.length === 0) {
+    return true;
+  }
+
+  // The addresses are compared as a set. The Host writes them in whatever order
+  // its own table had them, which is not an order this end chose and not one a
+  // difference should be read out of.
+  const asked = [pair.v4, pair.v6].sort().join(",");
+
+  return named.slice().sort().join(",") === asked;
 }
 
 // listeningSentence is what the Host said is listening on the forwarded port,
