@@ -1,3 +1,19 @@
+# v3.11.0
+
+## Add/fix features:
+
+- **A message that says something went through is shown on the window rather than above the screen.** A form is often submitted from well down a long list, and a line written above the screen is then somewhere the operator is not looking. It appears at the top of the window wherever the page is scrolled to and takes itself away after a few seconds.
+  - **A refusal is shown in both places.** It goes up on the window so that it is seen, and stays above the screen so that it can be read: a refusal is read rather than glanced at, and is often longer than a few seconds of reading.
+- **Changing the language says the message again in the new words.** A message on the screen was the finished sentence, so it stayed in the language it was written in. It is now held as the making of the sentence and made again whenever the page is drawn. A refusal from a server this screen has no wording for stays as the server sent it, there being nothing to make it from.
+- **The service ports of a Host are drawn as a table.** The panel listed them as rows of its own making while the two screens behind it draw the same things as tables, so the same service port was read one way on one and another way on the other. It is the same table now, with the same headings and the same box on the heading that takes the page.
+  - The box says nothing when it is pressed. On the lists a tick is a selection and what it selected is worth a count; here a tick is the assignment itself, and the panel already says that nothing is stored until it is saved.
+  - What is ticked still outlives the page it was ticked on, which is what this panel differs in: a tick dropped on the way to the next page would be an assignment taken away from a Host without anybody saying so.
+
+## Notes:
+
+- The upgrade note of v3.7.0 still holds: every Host stops until its key is approved, a stored path outside the data directory is put back to its default, and the data directory becomes 0700.
+- Nothing about the database changes in this release.
+
 # v3.10.1
 
 ## Add/fix features:
