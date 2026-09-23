@@ -2813,26 +2813,20 @@ async function openHostServicePorts(host) {
   said.dataset.said = "host-service-ports";
   said.hidden = true;
 
-  async function drawPage() {
-    const answer = await apiCall("GET",
-      "/api/host/" + host.id + "/service-port?" + pageQuery(page));
+  // The rows of the page that is on the screen, and how long the whole list is.
+  // They are kept so that the tick which takes the whole page can draw the list
+  // again without asking the server for a page it already has.
+  let shown = [];
+  let total = 0;
 
-    takeListPage(page, answer);
-
-    const items = answer === null || answer.items === null || answer.items === undefined
-      ? []
-      : answer.items;
-    const total = answer === null || typeof answer.total !== "number"
-      ? items.length
-      : answer.total;
-
+  function drawList() {
     // Only the list is built again. The panel around it is the one openModal
     // put up, and nothing here writes to #app, so a draw of the screen behind
     // the backdrop cannot take the panel down and this cannot draw over it.
     list.textContent = "";
     picks.lists = {};
 
-    if (items.length === 0) {
+    if (shown.length === 0) {
       list.appendChild(statusLine(t("service-ports.none.empty"), "empty"));
 
       return;
@@ -2843,12 +2837,36 @@ async function openHostServicePorts(host) {
       list.appendChild(controls);
     }
 
-    for (const item of items) {
+    // What the server said about this page is taken before anything is drawn,
+    // because the box over the page is drawn from it: a row nobody has touched
+    // is ticked where the Host carries it, and that answer has to be in the
+    // maps before the box asks whether the page is ticked through.
+    for (const item of shown) {
       picks.served[item.id] = Boolean(item.assigned);
       picks.scopes[item.id] = bindScopeStored(item.bind_scope);
+    }
 
+    list.appendChild(servicePortsPageBox(shown, picks, said, function () {
+      drawList();
+    }));
+
+    for (const item of shown) {
       list.appendChild(servicePortCheck(item, picks));
     }
+  }
+
+  async function drawPage() {
+    const answer = await apiCall("GET",
+      "/api/host/" + host.id + "/service-port?" + pageQuery(page));
+
+    takeListPage(page, answer);
+
+    shown = answer === null || answer.items === null || answer.items === undefined
+      ? []
+      : answer.items;
+    total = answer === null || typeof answer.total !== "number" ? shown.length : answer.total;
+
+    drawList();
   }
 
   // drawn is the page the list on the screen was built from, and turnPage is
@@ -2962,6 +2980,76 @@ function scopeToTheTicked(picks, said) {
       : t(plural(touched, "hosts.assign-scope-applied-one.notice",
         "hosts.assign-scope-applied-many.notice"), { count: touched }));
   }));
+
+  return row;
+}
+
+// servicePortsPageBox is the tick that takes the whole page of that panel.
+//
+// It sits inside the list, under the paging controls and over the rows, and not
+// beside the scope row above the list. The two presses reach different sets:
+// the scope row reaches every row the panel has read, pages included that are
+// no longer on the screen, and this one reaches the rows underneath it and
+// nothing else. Put side by side they would read as one span, and this is the
+// one of the two whose span is a thing you can see - it is drawn again with
+// every page, over the rows it is about.
+//
+// It writes into picks.wanted for the rows of this page alone, so a tick made
+// on another page is left exactly as it was. That is the same span the box
+// reads to know whether it is ticked: a page whose rows are all ticked shows it
+// ticked, and one row cleared clears it.
+//
+// Clearing it is the press that takes assignments away, and there is no
+// confirmation over it. Nothing is stored until Save, which is what the line at
+// the top of the panel says and what the line this press writes says again with
+// the count; closing the panel drops the whole lot, which is an escape from a
+// misplaced press that a confirmation would not add to. What is guarded instead
+// is knowing what was pressed: the label names the page as its span, the hint
+// says a cleared row is an assignment taken away, and the count of what the
+// press touched is written where the scope row writes its own.
+function servicePortsPageBox(items, picks, said, redraw) {
+  const row = document.createElement("label");
+
+  row.className = "assign-all";
+  row.dataset.all = "host-service-ports";
+
+  const box = document.createElement("input");
+
+  box.type = "checkbox";
+  box.dataset.field = "assign-all";
+  box.checked = items.every(function (item) {
+    return item.id in picks.wanted ? picks.wanted[item.id] : picks.served[item.id];
+  });
+
+  box.addEventListener("change", function () {
+    for (const item of items) {
+      picks.wanted[item.id] = box.checked;
+    }
+
+    sayInPanel(said, t(box.checked
+      ? plural(items.length, "hosts.assign-page-ticked-one.notice",
+        "hosts.assign-page-ticked-many.notice")
+      : plural(items.length, "hosts.assign-page-cleared-one.notice",
+        "hosts.assign-page-cleared-many.notice"), { count: items.length }));
+
+    // Every row of the page is drawn again, because each of them carries the
+    // box this one just wrote over and a scope list that is disabled while the
+    // box beside it is clear.
+    redraw();
+  });
+
+  const text = document.createElement("span");
+
+  text.className = "assign-all-text";
+  text.appendChild(element("span", t("hosts.assign-page.label")));
+
+  const saidAbout = element("small", t("hosts.assign-page.hint"));
+
+  saidAbout.className = "assign-all-said";
+  text.appendChild(saidAbout);
+
+  row.appendChild(box);
+  row.appendChild(text);
 
   return row;
 }

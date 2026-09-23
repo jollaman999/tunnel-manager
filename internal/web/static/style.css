@@ -2022,6 +2022,37 @@ body.modal-open {
   font-size: 13px;
 }
 
+/* The tick that takes the whole page, inside the list and over the rows it
+   takes. It is set apart from them the way the one on the host key panel is:
+   what it does is not what a row does, it is one press over ten of them, and
+   the rows it reaches are the ones drawn under it. */
+.assign-all {
+  display: flex;
+  gap: 0.6rem;
+  align-items: flex-start;
+  margin: 0.5rem 0 0.75rem;
+  padding: 0.5rem 0.25rem;
+  border-bottom: 1px solid var(--border-soft);
+  cursor: pointer;
+}
+
+.assign-all input[type="checkbox"] {
+  flex: 0 0 auto;
+  margin: 0.15rem 0 0;
+}
+
+.assign-all-text {
+  display: flex;
+  flex-direction: column;
+  gap: 0.1rem;
+  min-width: 0;
+}
+
+.assign-all-said {
+  color: var(--text-dim);
+  font-size: 12px;
+}
+
 /* The service ports a Host may carry, one to a row, inside the panel that ticks
    them. The box and the text beside it are a label, so that side of the row is
    the target and not the box alone: a checkbox by itself is the width of a
