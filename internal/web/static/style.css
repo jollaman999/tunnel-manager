@@ -1496,6 +1496,59 @@ td.pick input[type="checkbox"] {
   font-size: 12px;
 }
 
+/* The presses that act on what is ticked, on the row between the controls that
+   turn the page and the table itself. They sit with the rows they act on and
+   not with the page controls: the ticks are the rows of this page, and a press
+   on the row of page numbers would read as something the whole list is put
+   through. */
+.list-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  margin-bottom: 0.75rem;
+}
+
+/* A press here is painted as one that cannot be taken back, and the rule that
+   does that is read after the one that paints a dead button: a delete with
+   nothing ticked would be painted as live. It is dead for most of the time it
+   is on the screen, since it takes a tick to wake it, so it is put back to the
+   paint of a dead button here. */
+.list-actions button:disabled,
+.list-actions button:disabled:hover {
+  color: var(--text-disabled);
+  background: var(--bg-sunken);
+  border-color: var(--border);
+}
+
+/* The rows named in the confirmation of a batch delete, one to a line. They
+   are boxed the way the Hosts waiting for a key are, because a refused row
+   carries a sentence under it and a hairline between two blocks of that height
+   is not what says where one row ends. */
+.picked-list {
+  margin: 0.75rem 0 0;
+}
+
+.picked-list > .picked-row {
+  margin-bottom: 0.4rem;
+  padding: 0.45rem 0.6rem;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-control);
+  overflow-wrap: break-word;
+}
+
+/* A row the server refused. It is painted as what did not happen, so that the
+   rows still to be deleted and the ones that were left behind are told apart
+   in a list that holds only the second kind after a partial run. */
+.picked-row.bad {
+  background: var(--danger-bg);
+  border-color: var(--danger-border);
+}
+
+.picked-said {
+  margin: 0.3rem 0 0;
+  color: var(--danger);
+}
+
 .log-scope {
   margin: 0 0 0.75rem;
   color: var(--text-dim);

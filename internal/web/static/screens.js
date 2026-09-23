@@ -2364,7 +2364,7 @@ async function drawHosts() {
       return t("hosts.pick-row.aria", { id: id });
     });
 
-    nodes.push(buildTable(
+    const table = buildTable(
       [t("hosts.id.column"), t("hosts.ip.column"), t("hosts.port.column"),
         t("hosts.user.column"), t("hosts.description.column"),
         t("hosts.enabled.column"), t("hosts.updated.column"), ""],
@@ -2373,7 +2373,33 @@ async function drawHosts() {
       }),
       [0, 2],
       picks.head
-    ));
+    );
+
+    // The press that acts on the ticks goes under the controls that turn the
+    // page and over the rows it acts on, which are the rows of this page: a
+    // tick is held for nothing else.
+    nodes.push(deletePickedBar({
+      name: "hosts",
+      items: hosts,
+      table: table,
+      label: t("hosts.delete-picked.button"),
+      title: t("hosts.delete-picked.title"),
+      text: t("hosts.delete-picked.text"),
+      describe: function (host) {
+        return t("hosts.picked-row.text", { id: host.id, ip: host.ip });
+      },
+      path: function (host) {
+        return "/api/host/" + host.id;
+      },
+      said: function (count) {
+        return t(plural(count, "hosts.deleted-picked-one.notice",
+          "hosts.deleted-picked-many.notice"), { count: count });
+      },
+      partly: function (deleted, failed) {
+        return t("hosts.deleted-picked-some.notice", { deleted: deleted, failed: failed });
+      },
+      draw: drawHosts
+    }), table);
   }
 
   render(t("hosts.screen.title"), nodes);
@@ -2412,6 +2438,233 @@ function hostRow(host) {
     timeCell(host.updated_at),
     buttons
   ];
+}
+
+// deletePickedBar is the row over a list that carries the press acting on what
+// is ticked: the one that takes every ticked row away.
+//
+// The press is drawn whether or not anything is ticked, and is dead while
+// nothing is. A button that appeared with the first tick would move the table
+// under the hand that is ticking it, and one that is there and dead says what
+// the ticks are for before any of them is made.
+//
+// What is ticked changes without a draw, since a tick writes listPicks and
+// fetches nothing, so the change of a box is listened for on the table the
+// ticks are in: every box of the page is under it, the head of the table
+// included, and the press goes dead again the moment the last tick is
+// released.
+//
+// The rest of what one of these lists differs in is handed in by the screen
+// that draws it: the words, the path a row is deleted at, and how a row is
+// named in front of the operator. What is here is what the two lists do the
+// same way, which is everything about the sending.
+function deletePickedBar(spec) {
+  const row = document.createElement("div");
+
+  row.className = "list-actions";
+
+  const button = actionButton(spec.label, spec.name + "-delete-picked", function () {
+    return deletePicked(spec);
+  }, "danger");
+
+  const settle = function () {
+    button.disabled = pickedIDs(spec.name).length === 0;
+  };
+
+  settle();
+  spec.table.addEventListener("change", settle);
+
+  row.appendChild(button);
+
+  return row;
+}
+
+// deletePicked is the press: the ticked rows of the page, read out of the
+// answer the page was drawn from, put in front of the operator once more
+// before any of them is sent.
+//
+// The list is drawn again however the confirmation ended. A press that sent
+// nothing leaves the list as it was, and one that deleted part of it leaves
+// rows of this page gone and rows of the pages after it moved up into their
+// places; neither is what is on the screen behind the panel.
+async function deletePicked(spec) {
+  const wanted = pickedIDs(spec.name);
+  const chosen = spec.items.filter(function (item) {
+    return wanted.indexOf(item.id) !== -1;
+  });
+
+  // Nothing is ticked, which is the state the press is dead in. It is read
+  // again here rather than trusted to the button, which was drawn with the
+  // page while the ticks have been changing since.
+  if (chosen.length === 0) {
+    return;
+  }
+
+  await confirmPickedDeletes(spec, chosen);
+
+  return spec.draw();
+}
+
+// confirmPickedDeletes is the step between the ticks and the requests.
+//
+// It is here because what is about to go cannot be brought back from this
+// screen or from any other. The ticks of a page of a hundred are not something
+// a glance at the table confirms, and a row ticked by a press on the head of
+// the table was never read at all; this is where every one of them is named
+// before the first request goes out.
+//
+// It is also where the end of the run is reported. A batch is a run of
+// requests and not one, so it ends as a count that went and a count that did
+// not: where everything went, the panel closes with the count on the line over
+// the screen, and where something did not, it stays up holding those rows
+// alone with what each of them met. The press is then a second run over what
+// is left, which is what a row that was refused for a reason that has since
+// passed needs.
+async function confirmPickedDeletes(spec, chosen) {
+  // What the next press would send. It starts as everything that was ticked
+  // and becomes the rows that were refused, so a run after a partial one goes
+  // over those and not over the rows that are already gone.
+  let remaining = chosen;
+
+  const problem = element("p", "");
+
+  problem.className = "notice error";
+  problem.dataset.problem = spec.name + "-delete-picked";
+  problem.hidden = true;
+
+  const list = document.createElement("div");
+
+  list.className = "picked-list";
+  list.dataset.list = spec.name + "-delete-picked";
+
+  const fill = function (rows) {
+    list.textContent = "";
+
+    for (const row of rows) {
+      list.appendChild(pickedDeleteRow(spec, row.item, row.reason));
+    }
+  };
+
+  fill(chosen.map(function (item) {
+    return { item: item, reason: null };
+  }));
+
+  await openModal({
+    name: spec.name + "-delete-picked",
+    title: spec.title,
+    body: [element("p", spec.text), problem, list],
+    buttons: [
+      {
+        label: t("common.delete.button"),
+        name: "delete",
+        // Painted as what cannot be taken back, the way the delete on a single
+        // row is.
+        variant: "danger",
+        press: function (node, close) {
+          return sendPickedDeletes(spec, remaining, node, close, problem, function (failures) {
+            remaining = failures.map(function (failure) {
+              return failure.item;
+            });
+
+            fill(failures);
+          });
+        }
+      },
+      { label: t("common.cancel.button"), name: "cancel" }
+    ]
+  });
+}
+
+// pickedDeleteRow is one row of that list: what the row is, by the same
+// identifier and address the table names it by, and where it was refused, what
+// the server said about it.
+function pickedDeleteRow(spec, item, reason) {
+  const row = document.createElement("div");
+  const refused = reason !== null && reason !== undefined;
+
+  row.className = refused ? "picked-row bad" : "picked-row";
+  row.dataset.picked = String(item.id);
+  row.appendChild(element("span", spec.describe(item)));
+
+  if (refused) {
+    const said = element("p", reason);
+
+    said.className = "picked-said";
+    row.appendChild(said);
+  }
+
+  return row;
+}
+
+// sendPickedDeletes sends the list that was confirmed, one row at a time.
+//
+// One request per row and not one for the batch: the database runs on a single
+// connection, so a request that deleted a hundred rows in one transaction
+// would hold it for the whole of them and everything else, the reconcile pass
+// included, would wait behind it. A row at a time puts the connection down
+// between rows.
+//
+// A refusal stops that row and nothing else. The rows are separate deletions
+// and a row that is already gone, or that another screen is holding, says
+// nothing about the next one; what the operator asked for was the rest of the
+// list as much as that row. The counts and the reasons are what the run is
+// answered with, which is the same as what the batch of host key approvals
+// hands back.
+async function sendPickedDeletes(spec, chosen, button, close, problem, keep) {
+  // Held down for the whole run rather than for one request, because the panel
+  // stays up until the last of them is answered and a second press would send
+  // the list again from the top.
+  button.disabled = true;
+  problem.hidden = true;
+
+  const failures = [];
+  let deleted = 0;
+
+  try {
+    for (const item of chosen) {
+      try {
+        await apiCall("DELETE", spec.path(item));
+      } catch (error) {
+        if (error instanceof Redirected) {
+          // The session ended and the page is on its way to the login. What is
+          // left of the list is not sent after it.
+          close(null);
+
+          throw error;
+        }
+
+        failures.push({ item: item, reason: error.message });
+
+        continue;
+      }
+
+      deleted += 1;
+
+      // The row is gone, so the tick for it goes here and not with the draw
+      // that follows. The draw drops it too, since it is no longer in the
+      // answer, but between now and then the tick would be a tick held for a
+      // row that does not exist.
+      delete listPicks[spec.name][String(item.id)];
+    }
+  } finally {
+    button.disabled = false;
+  }
+
+  if (failures.length === 0) {
+    setNotice(spec.said(deleted), "info");
+
+    close("deleted");
+
+    return;
+  }
+
+  // Something was refused, so the panel stays up with those rows and what each
+  // of them met. The rows that went are taken out of it: they are gone, and a
+  // list that still named them would be read as a list of what is about to be
+  // deleted, which is what it is about to become again.
+  keep(failures);
+
+  showPanelProblem(problem, spec.partly(deleted, failures.length));
 }
 
 // ipField and portField are the two kinds of box that hold something the server
@@ -3332,7 +3585,7 @@ async function drawServicePorts() {
       return t("service-ports.pick-row.aria", { id: id });
     });
 
-    nodes.push(buildTable(
+    const table = buildTable(
       [t("service-ports.id.column"), t("service-ports.service-ip.column"),
         t("service-ports.service-port.column"), t("service-ports.local-port.column"),
         t("service-ports.description.column"), t("service-ports.updated.column"), ""],
@@ -3341,7 +3594,32 @@ async function drawServicePorts() {
       }),
       [0, 2, 3],
       picks.head
-    ));
+    );
+
+    nodes.push(deletePickedBar({
+      name: "service-ports",
+      items: ports,
+      table: table,
+      label: t("service-ports.delete-picked.button"),
+      title: t("service-ports.delete-picked.title"),
+      text: t("service-ports.delete-picked.text"),
+      describe: function (port) {
+        return t("service-ports.picked-row.text",
+          { id: port.id, ip: port.service_ip, port: port.service_port });
+      },
+      path: function (port) {
+        return "/api/service-port/" + port.id;
+      },
+      said: function (count) {
+        return t(plural(count, "service-ports.deleted-picked-one.notice",
+          "service-ports.deleted-picked-many.notice"), { count: count });
+      },
+      partly: function (deleted, failed) {
+        return t("service-ports.deleted-picked-some.notice",
+          { deleted: deleted, failed: failed });
+      },
+      draw: drawServicePorts
+    }), table);
   }
 
   render(t("service-ports.screen.title"), nodes);
