@@ -707,7 +707,7 @@
   "settings.rescue.title": "저장된 설정으로 서버가 시작되지 않을 때",
   "settings.restart.button": "재시작",
   "settings.saved-next-start.notice": "설정을 저장했습니다. 그중 일부는 다음에 시작할 때 반영됩니다.",
-  "settings.saved-nothing.notice": "설정을 저장했습니다. 바뀐 것은 없습니다.",
+  "settings.saved-nothing.notice": "저장된 것과 달라진 곳이 없습니다.",
   "settings.saved.notice": "설정을 저장했고 바로 반영됐습니다.",
   "settings.screen.title": "설정",
   "settings.ui-language-any.option": "브라우저가 요청하는 언어",

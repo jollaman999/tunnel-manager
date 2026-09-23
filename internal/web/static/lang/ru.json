@@ -707,7 +707,7 @@
   "settings.rescue.title": "Если сервер не запускается с сохранёнными настройками",
   "settings.restart.button": "Перезапустить",
   "settings.saved-next-start.notice": "Настройки сохранены. Часть из них вступит в силу при следующем запуске.",
-  "settings.saved-nothing.notice": "Настройки сохранены. Ничего не изменилось.",
+  "settings.saved-nothing.notice": "Ничего не отличалось от того, что сохранено.",
   "settings.saved.notice": "Настройки сохранены и действуют.",
   "settings.screen.title": "Настройки",
   "settings.ui-language-any.option": "Как запрашивает браузер",

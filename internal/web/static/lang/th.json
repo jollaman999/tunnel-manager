@@ -707,7 +707,7 @@
   "settings.rescue.title": "ถ้าเซิร์ฟเวอร์เริ่มไม่ขึ้นด้วยค่าที่เก็บไว้",
   "settings.restart.button": "เริ่มใหม่",
   "settings.saved-next-start.notice": "เก็บการตั้งค่าแล้ว บางรายการจะมีผลเมื่อเริ่มบริการครั้งถัดไป",
-  "settings.saved-nothing.notice": "เก็บการตั้งค่าแล้ว ไม่มีอะไรเปลี่ยน",
+  "settings.saved-nothing.notice": "ไม่มีอะไรต่างจากที่บันทึกไว้",
   "settings.saved.notice": "เก็บการตั้งค่าแล้วและมีผลทันที",
   "settings.screen.title": "ตั้งค่า",
   "settings.ui-language-any.option": "ตามที่เบราว์เซอร์แต่ละเครื่องขอมา",

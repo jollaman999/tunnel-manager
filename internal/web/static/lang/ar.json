@@ -707,7 +707,7 @@
   "settings.rescue.title": "إن لم يبدأ الخادم على ما هو محفوظ",
   "settings.restart.button": "إعادة التشغيل",
   "settings.saved-next-start.notice": "حُفظت الإعدادات. وبعضها يسري عند التشغيل التالي.",
-  "settings.saved-nothing.notice": "حُفظت الإعدادات. ولم يتغير شيء.",
+  "settings.saved-nothing.notice": "لا شيء يختلف عمّا هو محفوظ.",
   "settings.saved.notice": "حُفظت الإعدادات وصارت سارية.",
   "settings.screen.title": "الإعدادات",
   "settings.ui-language-any.option": "ما يطلبه كل متصفح",

@@ -707,7 +707,7 @@
   "settings.rescue.title": "Se o servidor não iniciar com o que está salvo",
   "settings.restart.button": "Reiniciar",
   "settings.saved-next-start.notice": "As configurações foram salvas. Algumas delas passam a valer na próxima inicialização.",
-  "settings.saved-nothing.notice": "As configurações foram salvas. Nada mudou.",
+  "settings.saved-nothing.notice": "Nada estava diferente do que está gravado.",
   "settings.saved.notice": "As configurações foram salvas e já estão em vigor.",
   "settings.screen.title": "Configurações",
   "settings.ui-language-any.option": "O que cada navegador pedir",

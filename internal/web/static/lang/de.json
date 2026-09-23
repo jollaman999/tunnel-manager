@@ -707,7 +707,7 @@
   "settings.rescue.title": "Wenn der Server mit dem Gespeicherten nicht startet",
   "settings.restart.button": "Neu starten",
   "settings.saved-next-start.notice": "Die Einstellungen sind gespeichert. Einige davon greifen beim nächsten Start.",
-  "settings.saved-nothing.notice": "Die Einstellungen sind gespeichert. Es hat sich nichts geändert.",
+  "settings.saved-nothing.notice": "Nichts war anders als das, was gespeichert ist.",
   "settings.saved.notice": "Die Einstellungen sind gespeichert und wirksam.",
   "settings.screen.title": "Einstellungen",
   "settings.ui-language-any.option": "Was der Browser jeweils verlangt",

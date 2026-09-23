@@ -707,7 +707,7 @@
   "settings.rescue.title": "保存された値でサーバーが起動しないとき",
   "settings.restart.button": "再起動",
   "settings.saved-next-start.notice": "設定を保存しました。一部は次の起動から有効になります。",
-  "settings.saved-nothing.notice": "設定を保存しました。何も変わりませんでした。",
+  "settings.saved-nothing.notice": "保存されているものと変わったところはありません。",
   "settings.saved.notice": "設定を保存し、反映しました。",
   "settings.screen.title": "設定",
   "settings.ui-language-any.option": "各ブラウザが要求する言語",

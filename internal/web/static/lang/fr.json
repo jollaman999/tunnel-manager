@@ -707,7 +707,7 @@
   "settings.rescue.title": "Si le serveur refuse de démarrer sur ce qui est enregistré",
   "settings.restart.button": "Redémarrer",
   "settings.saved-next-start.notice": "Les paramètres sont enregistrés. Certains sont pris en compte au prochain démarrage.",
-  "settings.saved-nothing.notice": "Les paramètres sont enregistrés. Rien n'a changé.",
+  "settings.saved-nothing.notice": "Rien ne différait de ce qui est enregistré.",
   "settings.saved.notice": "Les paramètres sont enregistrés et appliqués.",
   "settings.screen.title": "Paramètres",
   "settings.ui-language-any.option": "Ce que demande chaque navigateur",

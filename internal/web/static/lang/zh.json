@@ -707,7 +707,7 @@
   "settings.rescue.title": "服务器用已保存的设置无法启动时",
   "settings.restart.button": "重启",
   "settings.saved-next-start.notice": "设置已保存。其中一部分要到下次启动才生效。",
-  "settings.saved-nothing.notice": "设置已保存。没有任何变化。",
+  "settings.saved-nothing.notice": "没有任何地方和已保存的不同。",
   "settings.saved.notice": "设置已保存并已生效。",
   "settings.screen.title": "设置",
   "settings.ui-language-any.option": "各浏览器自己请求的语言",

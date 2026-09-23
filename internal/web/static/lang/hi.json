@@ -707,7 +707,7 @@
   "settings.rescue.title": "अगर सेव की हुई सेटिंग्स पर सर्वर शुरू ही न हो",
   "settings.restart.button": "रीस्टार्ट",
   "settings.saved-next-start.notice": "सेटिंग्स सेव हो गईं। इनमें से कुछ अगले स्टार्ट पर लागू होंगी।",
-  "settings.saved-nothing.notice": "सेटिंग्स सेव हो गईं। कुछ बदला नहीं।",
+  "settings.saved-nothing.notice": "जो दर्ज है उससे कुछ भी अलग नहीं था।",
   "settings.saved.notice": "सेटिंग्स सेव हो गईं और लागू भी हैं।",
   "settings.screen.title": "सेटिंग्स",
   "settings.ui-language-any.option": "जो भाषा हर ब्राउज़र माँगे",

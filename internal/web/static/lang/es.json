@@ -707,7 +707,7 @@
   "settings.rescue.title": "Si el servidor no arranca con lo que hay guardado",
   "settings.restart.button": "Reiniciar",
   "settings.saved-next-start.notice": "Los ajustes quedan guardados. Algunos se aplican en el próximo arranque.",
-  "settings.saved-nothing.notice": "Los ajustes quedan guardados. No cambió nada.",
+  "settings.saved-nothing.notice": "Nada era distinto de lo que está guardado.",
   "settings.saved.notice": "Los ajustes quedan guardados y ya están aplicados.",
   "settings.screen.title": "Ajustes",
   "settings.ui-language-any.option": "Lo que pida cada navegador",

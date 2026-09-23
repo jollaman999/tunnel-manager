@@ -707,7 +707,7 @@
   "settings.rescue.title": "Nếu máy chủ không khởi động nổi với những gì đã lưu",
   "settings.restart.button": "Khởi động lại",
   "settings.saved-next-start.notice": "Cài đặt đã được lưu. Một số trong đó có hiệu lực ở lần khởi động sau.",
-  "settings.saved-nothing.notice": "Cài đặt đã được lưu. Không có gì thay đổi.",
+  "settings.saved-nothing.notice": "Không có gì khác với những gì đã lưu.",
   "settings.saved.notice": "Cài đặt đã được lưu và đang có hiệu lực.",
   "settings.screen.title": "Cài đặt",
   "settings.ui-language-any.option": "Theo yêu cầu của từng trình duyệt",
