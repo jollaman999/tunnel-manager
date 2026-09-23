@@ -2856,9 +2856,9 @@ async function saveHostServicePorts(host, picks, button, close, problem) {
     }
 
     setNotice(rescoped > 0
-      ? t(plural(rescoped, "hosts.assign-scoped-one.notice", "hosts.assign-scoped-many.notice"),
+      ? t("hosts.assign-scoped.notice",
         { id: host.id, added: added, removed: removed, rescoped: rescoped })
-      : t(plural(added, "hosts.assign-saved-one.notice", "hosts.assign-saved-many.notice"),
+      : t("hosts.assign-saved.notice",
         { id: host.id, added: added, removed: removed }), "info");
 
     close("saved");
