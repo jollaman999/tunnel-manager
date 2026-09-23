@@ -854,7 +854,7 @@
   "uninstalled.why.column": "Por qué no se borró",
   "update.auto-install.hint": "Desactivado salvo que se active aquí. Con esto activado, la versión que aparezca se instala y este servicio se reinicia por su cuenta, y todos los túneles quedan caídos mientras eso dura.",
   "update.auto-install.label": "Instalar una versión más reciente por su cuenta",
-  "update.auto-install.notice": "No se pregunta a nadie antes de que eso ocurra, y puede ocurrir a cualquier hora. Déjelo desactivado si aquí no vale un servicio que se cae a una hora que nadie eligió.",
+  "update.auto-install.notice": "Una versión más reciente se instala en cuanto se encuentra, y no se pregunta a nadie antes. Déjelo desactivado si aquí no vale un servicio que se cae a una hora que nadie eligió.",
   "update.check-enabled.hint": "Una consulta a la API pública de versiones, con el intervalo de abajo. No se descarga ni se guarda nada.",
   "update.check-enabled.label": "Buscar una versión más reciente",
   "update.check-failed.notice": "No se pudo leer la versión publicada más reciente: {reason}. Esto no es lo mismo que estar al día.",

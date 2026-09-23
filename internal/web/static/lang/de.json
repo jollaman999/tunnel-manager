@@ -854,7 +854,7 @@
   "uninstalled.why.column": "Warum nicht entfernt",
   "update.auto-install.hint": "Aus, solange Sie es nicht einschalten. Ist es an, wird jede erscheinende Veröffentlichung von selbst installiert und dieser Dienst von selbst neu gestartet, und jeder Tunnel ist so lange unten, wie das dauert.",
   "update.auto-install.label": "Eine neuere Veröffentlichung von selbst installieren",
-  "update.auto-install.notice": "Vorher wird niemand gefragt, und es kann zu jeder Tages- und Nachtzeit geschehen. Lassen Sie es aus, wenn ein Dienst, der zu einer von niemandem gewählten Stunde ausfällt, hier nicht in Ordnung ist.",
+  "update.auto-install.notice": "Eine neuere Veröffentlichung wird installiert, sobald sie gefunden wird, und vorher wird niemand gefragt. Lassen Sie es aus, wenn ein Dienst, der zu einer von niemandem gewählten Stunde ausfällt, hier nicht in Ordnung ist.",
   "update.check-enabled.hint": "Eine Anfrage an die öffentliche Veröffentlichungs-API, im Abstand unten. Es wird nichts heruntergeladen und nichts gespeichert.",
   "update.check-enabled.label": "Nach einer neueren Veröffentlichung sehen",
   "update.check-failed.notice": "Die neueste Veröffentlichung konnte nicht gelesen werden: {reason}. Das ist nicht dasselbe wie aktuell zu sein.",

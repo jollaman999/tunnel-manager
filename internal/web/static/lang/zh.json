@@ -854,7 +854,7 @@
   "uninstalled.why.column": "未删除的原因",
   "update.auto-install.hint": "除非在此开启，否则关闭。开启后，一旦有发布出现就会自行装上，本服务也会自行重启，在这期间每条隧道都会断开。",
   "update.auto-install.label": "自动安装新发布",
-  "update.auto-install.notice": "这样做之前不会问任何人，而且随时都可能发生。除非这里可以接受服务在没人挑选的时刻停机，否则请保持关闭。",
+  "update.auto-install.notice": "一旦发现更新的发布，就会不问任何人直接装上。除非这里可以接受服务在没人挑选的时刻停机，否则请保持关闭。",
   "update.check-enabled.hint": "按下面的间隔向公开的发布 API 请求一次。不下载也不存储任何内容。",
   "update.check-enabled.label": "查看是否有新发布",
   "update.check-failed.notice": "无法读取最新发布：{reason}。这不等于已是最新。",

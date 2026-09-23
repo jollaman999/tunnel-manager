@@ -854,7 +854,7 @@
   "uninstalled.why.column": "Por que ficou",
   "update.auto-install.hint": "Desligado a não ser que seja ligado aqui. Com isto ligado, a versão que aparecer é instalada e este serviço é reiniciado por conta própria, e todos os túneis ficam fora do ar enquanto isso durar.",
   "update.auto-install.label": "Instalar uma versão mais recente por conta própria",
-  "update.auto-install.notice": "Ninguém é consultado antes de isso acontecer, e pode acontecer a qualquer hora. Deixe isto desligado se um serviço que cai numa hora que ninguém escolheu não servir aqui.",
+  "update.auto-install.notice": "Uma versão mais recente é instalada assim que for encontrada, e ninguém é consultado antes. Deixe isto desligado se um serviço que cai numa hora que ninguém escolheu não servir aqui.",
   "update.check-enabled.hint": "Uma requisição à API pública de versões, no intervalo abaixo. Nada é baixado e nada é armazenado.",
   "update.check-enabled.label": "Procurar uma versão mais recente",
   "update.check-failed.notice": "Não foi possível ler a versão mais recente: {reason}. Isso não é o mesmo que estar em dia.",

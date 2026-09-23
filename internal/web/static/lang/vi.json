@@ -854,7 +854,7 @@
   "uninstalled.why.column": "Vì sao còn lại",
   "update.auto-install.hint": "Tắt trừ khi được bật ở đây. Khi bật, bản phát hành nào xuất hiện cũng được cài và dịch vụ này tự khởi động lại, mọi tunnel đều rớt xuống trong suốt thời gian đó.",
   "update.auto-install.label": "Tự cài đặt bản phát hành mới hơn",
-  "update.auto-install.notice": "Trước khi điều đó xảy ra, không ai được hỏi, và nó có thể xảy ra vào bất kỳ giờ nào. Hãy để tắt, trừ khi ở đây chấp nhận được việc dịch vụ ngừng vào một giờ không ai chọn.",
+  "update.auto-install.notice": "Khi tìm thấy bản phát hành mới hơn, nó được cài ngay mà không hỏi ai. Hãy để tắt, trừ khi ở đây chấp nhận được việc dịch vụ ngừng vào một giờ không ai chọn.",
   "update.check-enabled.hint": "Một yêu cầu tới API phát hành công khai, theo khoảng thời gian bên dưới. Không tải về và không lưu gì.",
   "update.check-enabled.label": "Tìm bản phát hành mới hơn",
   "update.check-failed.notice": "Không đọc được bản phát hành mới nhất: {reason}. Điều này không đồng nghĩa với việc đã là mới nhất.",

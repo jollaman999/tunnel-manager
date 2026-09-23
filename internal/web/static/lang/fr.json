@@ -854,7 +854,7 @@
   "uninstalled.why.column": "Raison",
   "update.auto-install.hint": "Désactivé tant qu'il n'est pas activé ici. Une fois activé, toute version qui paraît est installée et ce service redémarre de lui-même, et tous les tunnels restent à terre le temps que cela dure.",
   "update.auto-install.label": "Installer une version plus récente de lui-même",
-  "update.auto-install.notice": "Personne n'est consulté avant que cela arrive, et cela peut arriver à n'importe quelle heure. Laissez ceci désactivé si un service qui tombe à une heure que personne n'a choisie ne convient pas ici.",
+  "update.auto-install.notice": "Une version plus récente est installée dès qu'elle est trouvée, et personne n'est consulté avant. Laissez ceci désactivé si un service qui tombe à une heure que personne n'a choisie ne convient pas ici.",
   "update.check-enabled.hint": "Une requête vers l'API publique des versions, à l'intervalle ci-dessous. Rien n'est téléchargé ni enregistré.",
   "update.check-enabled.label": "Rechercher une version plus récente",
   "update.check-failed.notice": "La dernière version n'a pas pu être lue : {reason}. Ce n'est pas la même chose qu'être à jour.",

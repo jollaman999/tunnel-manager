@@ -854,7 +854,7 @@
   "uninstalled.why.column": "Why it stayed",
   "update.auto-install.hint": "Off unless you turn it on. With it on, a release that appears is installed and this service is restarted on its own, which takes every tunnel down for as long as that takes.",
   "update.auto-install.label": "Install a newer release without asking",
-  "update.auto-install.notice": "Nobody is asked before that happens, and it can happen at any hour. Leave this off unless a service that goes down at a time nobody picked is all right here.",
+  "update.auto-install.notice": "A newer release is installed as soon as it is found, and nobody is asked first. Leave this off unless a service that goes down at a time nobody picked is all right here.",
   "update.check-enabled.hint": "One request to the public release API, on the timer below. Nothing is downloaded and nothing is stored.",
   "update.check-enabled.label": "Look for a newer release",
   "update.check-failed.notice": "The newest release could not be read: {reason}. This is not the same as being up to date.",
