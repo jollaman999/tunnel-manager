@@ -655,7 +655,7 @@
   "settings.next-start.hint": "Greift beim nächsten Start.",
   "settings.path-base.hint": "{what} Greift beim nächsten Start.",
   "settings.path-unix.hint": "{what} Greift beim nächsten Start. Ein Pfad, der mit / beginnt, wird so genommen, wie er dasteht. Alles andere wird gegen {dir} gelesen, das Verzeichnis, in dem die Datenbankdatei liegt.",
-  "settings.path-windows.hint": "{what} Greift beim nächsten Start. Ein absoluter Pfad wird so genommen, wie er dasteht, und unter Windows heißt absolut: einer, der ein Laufwerk oder eine Freigabe nennt, etwa {dir}\\logs\\tunnel-manager.log. Alles andere wird gegen {dir} gelesen, das Verzeichnis, in dem die Datenbankdatei liegt, und dazu zählt auch ein Pfad, der mit einem einzelnen Backslash beginnt, den Windows nicht als absolut ansieht.",
+  "settings.path-windows.hint": "{what} Greift beim nächsten Start. Ein absoluter Pfad wird so genommen, wie er dasteht, und unter Windows heißt absolut: einer, der ein Laufwerk oder eine Freigabe nennt, etwa {example}. Alles andere wird gegen {dir} gelesen, das Verzeichnis, in dem die Datenbankdatei liegt, und dazu zählt auch ein Pfad, der mit einem einzelnen Backslash beginnt, den Windows nicht als absolut ansieht.",
   "settings.pending-name.column": "Einstellung",
   "settings.pending-restart.notice": "Wirksam werden sie erst durch einen Neustart. Was er auf diesem Rechner tut und was währenddessen getrennt wird, steht weiter unten auf dieser Seite in der Karte Dienst neu starten.",
   "settings.pending-running.column": "Läuft mit",

@@ -4138,7 +4138,16 @@ function pathNote(set, whatItIs) {
   const windows = /^[A-Za-z]:[\\/]/.test(dir);
 
   if (windows) {
-    return t("settings.path-windows.hint", { what: whatItIs, dir: dir });
+    // The example path is handed over whole rather than built in the sentence
+    // out of the directory and a tail written into the catalog. A value is laid
+    // out as one run and what is written round it is not, so on a page that
+    // reads right to left the tail was carried off and the path was drawn in
+    // pieces, with its end before its beginning.
+    return t("settings.path-windows.hint", {
+      what: whatItIs,
+      dir: dir,
+      example: dir.replace(/[\\/]+$/, "") + "\\logs\\tunnel-manager.log"
+    });
   }
 
   return t("settings.path-unix.hint", { what: whatItIs, dir: dir });

@@ -655,7 +655,7 @@
   "settings.next-start.hint": "Có hiệu lực ở lần khởi động sau.",
   "settings.path-base.hint": "{what} Có hiệu lực ở lần khởi động sau.",
   "settings.path-unix.hint": "{what} Có hiệu lực ở lần khởi động sau. Đường dẫn mở đầu bằng / được dùng nguyên như vậy. Mọi đường dẫn khác được hiểu theo {dir}, thư mục chứa tệp cơ sở dữ liệu.",
-  "settings.path-windows.hint": "{what} Có hiệu lực ở lần khởi động sau. Đường dẫn tuyệt đối được dùng nguyên như vậy, mà trên Windows thì tuyệt đối nghĩa là có nêu ổ đĩa hoặc thư mục chia sẻ, như {dir}\\logs\\tunnel-manager.log. Mọi đường dẫn khác được hiểu theo {dir}, thư mục chứa tệp cơ sở dữ liệu, kể cả đường dẫn mở đầu bằng một dấu gạch chéo ngược, thứ mà Windows không coi là tuyệt đối.",
+  "settings.path-windows.hint": "{what} Có hiệu lực ở lần khởi động sau. Đường dẫn tuyệt đối được dùng nguyên như vậy, mà trên Windows thì tuyệt đối nghĩa là có nêu ổ đĩa hoặc thư mục chia sẻ, như {example}. Mọi đường dẫn khác được hiểu theo {dir}, thư mục chứa tệp cơ sở dữ liệu, kể cả đường dẫn mở đầu bằng một dấu gạch chéo ngược, thứ mà Windows không coi là tuyệt đối.",
   "settings.pending-name.column": "Cài đặt",
   "settings.pending-restart.notice": "Khởi động lại là thứ đưa chúng vào hiệu lực. Việc đó gây ra chuyện gì trên máy này, và ngắt những gì trong lúc chạy, thì được ghi ở thẻ Khởi động lại dịch vụ, phía dưới màn hình này.",
   "settings.pending-running.column": "Đang chạy",

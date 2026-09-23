@@ -655,7 +655,7 @@
   "settings.next-start.hint": "Se aplica en el próximo arranque.",
   "settings.path-base.hint": "{what} Se aplica en el próximo arranque.",
   "settings.path-unix.hint": "{what} Se aplica en el próximo arranque. Una ruta que empieza por / se usa tal cual. Cualquier otra se lee a partir de {dir}, el directorio en el que está el archivo de la base de datos.",
-  "settings.path-windows.hint": "{what} Se aplica en el próximo arranque. Una ruta absoluta se usa tal cual, y en Windows eso quiere decir una que nombre una unidad o un recurso compartido, como en {dir}\\logs\\tunnel-manager.log. Cualquier otra se lee a partir de {dir}, el directorio en el que está el archivo de la base de datos, y eso incluye una ruta que empiece por una sola barra invertida, que Windows no cuenta como absoluta.",
+  "settings.path-windows.hint": "{what} Se aplica en el próximo arranque. Una ruta absoluta se usa tal cual, y en Windows eso quiere decir una que nombre una unidad o un recurso compartido, como en {example}. Cualquier otra se lee a partir de {dir}, el directorio en el que está el archivo de la base de datos, y eso incluye una ruta que empiece por una sola barra invertida, que Windows no cuenta como absoluta.",
   "settings.pending-name.column": "Ajuste",
   "settings.pending-restart.notice": "Lo que los aplica es un reinicio. Qué hace en esta máquina, y qué se corta mientras dura, está en la tarjeta Reiniciar el servicio, más abajo en esta pantalla.",
   "settings.pending-running.column": "En ejecución con",

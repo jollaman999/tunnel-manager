@@ -655,7 +655,7 @@
   "settings.next-start.hint": "Passa a valer na próxima inicialização.",
   "settings.path-base.hint": "{what} Passa a valer na próxima inicialização.",
   "settings.path-unix.hint": "{what} Passa a valer na próxima inicialização. Um caminho que começa com / é usado como está. Qualquer outro é lido a partir de {dir}, o diretório em que está o arquivo do banco de dados.",
-  "settings.path-windows.hint": "{what} Passa a valer na próxima inicialização. Um caminho absoluto é usado como está, e no Windows isso quer dizer um que nomeia uma unidade ou um compartilhamento, como em {dir}\\logs\\tunnel-manager.log. Qualquer outro é lido a partir de {dir}, o diretório em que está o arquivo do banco de dados, e isso inclui um caminho que começa com uma única barra invertida, que o Windows não considera absoluto.",
+  "settings.path-windows.hint": "{what} Passa a valer na próxima inicialização. Um caminho absoluto é usado como está, e no Windows isso quer dizer um que nomeia uma unidade ou um compartilhamento, como em {example}. Qualquer outro é lido a partir de {dir}, o diretório em que está o arquivo do banco de dados, e isso inclui um caminho que começa com uma única barra invertida, que o Windows não considera absoluto.",
   "settings.pending-name.column": "Configuração",
   "settings.pending-restart.notice": "É o reinício que as coloca em vigor. O que ele faz nesta máquina, e o que fica interrompido enquanto ele roda, está no cartão Reiniciar o serviço mais abaixo nesta tela.",
   "settings.pending-running.column": "Em uso",

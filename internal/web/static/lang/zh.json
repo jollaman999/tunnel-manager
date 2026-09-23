@@ -655,7 +655,7 @@
   "settings.next-start.hint": "下次启动时生效。",
   "settings.path-base.hint": "{what}下次启动时生效。",
   "settings.path-unix.hint": "{what}下次启动时生效。以 / 开头的路径按原样使用。其他路径相对于 {dir} 解析，那是数据库文件所在的目录。",
-  "settings.path-windows.hint": "{what}下次启动时生效。绝对路径按原样使用，在 Windows 上，绝对路径指的是标明盘符或共享名的路径，比如 {dir}\\logs\\tunnel-manager.log。其他路径都相对于 {dir} 解析，那是数据库文件所在的目录；只以一个反斜杠开头的路径也算在内，Windows 不把它当作绝对路径。",
+  "settings.path-windows.hint": "{what}下次启动时生效。绝对路径按原样使用，在 Windows 上，绝对路径指的是标明盘符或共享名的路径，比如 {example}。其他路径都相对于 {dir} 解析，那是数据库文件所在的目录；只以一个反斜杠开头的路径也算在内，Windows 不把它当作绝对路径。",
   "settings.pending-name.column": "设置项",
   "settings.pending-restart.notice": "它们要靠重启才能生效。重启在这台机器上做什么、期间什么会中断，写在这个页面下方的“重启服务”卡片里。",
   "settings.pending-running.column": "运行中的值",

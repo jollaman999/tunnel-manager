@@ -655,7 +655,7 @@
   "settings.next-start.hint": "Pris en compte au prochain démarrage.",
   "settings.path-base.hint": "{what} Pris en compte au prochain démarrage.",
   "settings.path-unix.hint": "{what} Pris en compte au prochain démarrage. Un chemin commençant par / est utilisé tel quel. Tout le reste est lu à partir de {dir}, le répertoire où se trouve le fichier de base de données.",
-  "settings.path-windows.hint": "{what} Pris en compte au prochain démarrage. Un chemin absolu est utilisé tel quel, et sous Windows cela veut dire un chemin nommant un lecteur ou un partage, comme dans {dir}\\logs\\tunnel-manager.log. Tout le reste est lu à partir de {dir}, le répertoire où se trouve le fichier de base de données, y compris un chemin commençant par une seule barre oblique inversée, que Windows ne compte pas comme absolu.",
+  "settings.path-windows.hint": "{what} Pris en compte au prochain démarrage. Un chemin absolu est utilisé tel quel, et sous Windows cela veut dire un chemin nommant un lecteur ou un partage, comme dans {example}. Tout le reste est lu à partir de {dir}, le répertoire où se trouve le fichier de base de données, y compris un chemin commençant par une seule barre oblique inversée, que Windows ne compte pas comme absolu.",
   "settings.pending-name.column": "Paramètre",
   "settings.pending-restart.notice": "C'est un redémarrage qui les applique. Ce qu'il fait sur cette machine, et ce qui est interrompu pendant son exécution, est décrit dans la section Redémarrer le service, plus bas sur cet écran.",
   "settings.pending-running.column": "Valeur active",

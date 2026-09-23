@@ -655,7 +655,7 @@
   "settings.next-start.hint": "Taken up at the next start.",
   "settings.path-base.hint": "{what} Taken up at the next start.",
   "settings.path-unix.hint": "{what} Taken up at the next start. A path beginning with / is used as it stands. Anything else is read against {dir}, the directory the database file is in.",
-  "settings.path-windows.hint": "{what} Taken up at the next start. An absolute path is used as it stands, and on Windows that means one naming a drive or a share, as in {dir}\\logs\\tunnel-manager.log. Anything else is read against {dir}, the directory the database file is in, and that includes a path beginning with a single backslash, which Windows does not count as absolute.",
+  "settings.path-windows.hint": "{what} Taken up at the next start. An absolute path is used as it stands, and on Windows that means one naming a drive or a share, as in {example}. Anything else is read against {dir}, the directory the database file is in, and that includes a path beginning with a single backslash, which Windows does not count as absolute.",
   "settings.pending-name.column": "Setting",
   "settings.pending-restart.notice": "A restart is what puts them into place. What it does on this machine, and what is cut while it runs, is on the Restart the service card further down this screen.",
   "settings.pending-running.column": "Running on",

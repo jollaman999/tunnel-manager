@@ -655,7 +655,7 @@
   "settings.next-start.hint": "次の起動から有効になります。",
   "settings.path-base.hint": "{what}次の起動から有効になります。",
   "settings.path-unix.hint": "{what}次の起動から有効になります。/ で始まるパスはそのまま使われ、それ以外は、データベースファイルがあるディレクトリ {dir} を基準にしたパスとして読みます。",
-  "settings.path-windows.hint": "{what}次の起動から有効になります。絶対パスはそのまま使われますが、Windows で絶対パスと数えるのは、{dir}\\logs\\tunnel-manager.log のようにドライブか共有を指すパスだけです。それ以外は、データベースファイルがあるディレクトリ {dir} を基準にしたパスとして読みます。バックスラッシュ 1 つで始まるパスも、Windows は絶対パスと数えないので、そちらに入ります。",
+  "settings.path-windows.hint": "{what}次の起動から有効になります。絶対パスはそのまま使われますが、Windows で絶対パスと数えるのは、{example} のようにドライブか共有を指すパスだけです。それ以外は、データベースファイルがあるディレクトリ {dir} を基準にしたパスとして読みます。バックスラッシュ 1 つで始まるパスも、Windows は絶対パスと数えないので、そちらに入ります。",
   "settings.pending-name.column": "設定",
   "settings.pending-restart.notice": "反映させるのは再起動です。このマシンで再起動が何をするか、その間に何が切れるかは、この画面の下のほうにある「サービスを再起動する」のカードにあります。",
   "settings.pending-running.column": "動作中",
