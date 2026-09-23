@@ -259,6 +259,11 @@ sequenceDiagram
     end
 ```
 
+**The host key of the Host is checked before any of this.** The check runs
+inside the handshake, so a server that is not the one the Host is trusted on is
+never offered the password or the private key, and a Host whose key nobody has
+approved builds no tunnel at all. See [Host keys](#host-keys).
+
 Which addresses are asked for is `bind_scope` on the assignment, the wildcards
 where nothing was chosen, see [Assignments](#assignments). Both of them are
 asked for over the one SSH connection, so **one tunnel holds two forwards**, and
@@ -1674,6 +1679,135 @@ are optional and a request that changes nothing is answered, not refused.
 The whole of the change lands or none of it does, and the reconcile loop is
 woken once it is committed, so the tunnels follow within the moment.
 
+### Host keys
+
+**A Host reaches nothing until the key of its SSH server has been approved.**
+The check runs inside the handshake, before any authentication, so a server that
+fails it is never offered the SSH password or the private key of the Host.
+Whatever it presented is written down so that there is something to compare and
+to approve, and it is never written down as trusted: nothing this end can see
+makes a key the right one, and the only thing that does is a person who read the
+fingerprint off the server itself.
+
+Every answer that carries a Host carries `host_key_fingerprint`, the key that
+Host is trusted on, and `pending_host_key_fingerprint`, the key some server
+presented on a connection that was refused. Both are the SHA256 fingerprint and
+never the key itself: the fingerprint is what `ssh` prints on a first connection
+and what `ssh-keygen -lf` reports for the host key file on the server, so it is
+the one form of the key that can be compared against the machine itself. A Host
+that carries no trusted key yet is empty in the first, and one with nothing
+waiting is empty in the second.
+
+A Host that is waiting is in one of two states, and they are not the same
+question. Which of the two it is is on the tunnel rows of that Host, in
+`status`, and on the list below, in `mismatch`.
+
+| State | What it is |
+|-------|------------|
+| `host_key_unapproved` | The Host carries no trusted key. It is where every Host starts, and where an upgrade leaves every Host that was registered before this check existed |
+| `host_key_mismatch` | The Host is trusted on one key and was presented another. Either the server was rebuilt and given a new key, or the connection is not reaching that server at all, and the two cannot be told apart from here |
+
+| Method | Path | What it does |
+|--------|------|--------------|
+| `GET` | `/api/host-key` | One page of the Hosts that have a key waiting, across every Host. Takes `page` and `size`, see [Paging](#paging) |
+| `POST` | `/api/host/:id/host-key` | Approves the key waiting on one Host |
+| `POST` | `/api/host-key` | Approves the keys of several Hosts in one request |
+
+A row of the list carries the comparison and nothing else of the Host: a panel
+holds a hundred of them at a time, and the port, the user and the description
+are a hundred rows of what nobody is reading there.
+
+```json
+{
+  "success": true,
+  "data": {
+    "items": [
+      { "host_id": 1, "ip": "192.0.2.10", "mismatch": true,
+        "fingerprint": "SHA256:<the key the server presented>",
+        "trusted_fingerprint": "SHA256:<the key this Host is trusted on>" }
+    ],
+    "total": 1,
+    "page": 1,
+    "size": 10
+  }
+}
+```
+
+`trusted_fingerprint` is empty on a Host that has never been approved, and
+`mismatch` is false there. `mismatch` is carried rather than left to a client
+comparing that field with the empty string, because it is what decides whether
+the approval asks for the password of the account.
+
+```bash
+# Approve the key waiting on one Host. The fingerprint goes back with the
+# approval, so a key the SSH server presented after the list was read is not
+# approved by a press meant for the one on the screen.
+curl -s -b cookies.txt -X POST "$BASE/api/host/1/host-key" \
+  -H 'Content-Type: application/json' \
+  -H "X-CSRF-Token: $CSRF" \
+  -d '{"fingerprint":"SHA256:<the fingerprint on the screen>","password":"<the account password>"}'
+```
+
+| Field | What it takes |
+|-------|---------------|
+| `fingerprint` | Required. The fingerprint that was compared against the server. The approval goes through only while that is still the key the row holds |
+| `password` | The password of **this account**, not of the Host. Required where the Host already carries a trusted key, and read nowhere else |
+
+**A Host that carries no key yet is approved on the session alone**, because
+there is no trust to overturn and because that press is on the path of
+registering every Host. Replacing a trusted key is the other thing: without the
+password, a session left open on an unattended screen would be one press away
+from trusting whatever is answering in place of the server.
+
+`POST /api/host-key` is the same approval given over a list, and it is there for
+what an upgrade looks like: every Host that was registered before this check
+existed is waiting for a first approval at the same moment. Every Host in the
+request carries its own fingerprint, since the fingerprint of one says nothing
+about another, and the password is asked for once for the whole request rather
+than once per Host.
+
+```bash
+curl -s -b cookies.txt -X POST "$BASE/api/host-key" \
+  -H 'Content-Type: application/json' \
+  -H "X-CSRF-Token: $CSRF" \
+  -d '{"hosts":[{"host_id":2,"fingerprint":"SHA256:<the fingerprint on the screen>"}]}'
+```
+
+```json
+{
+  "success": true,
+  "data": {
+    "approved": 1,
+    "refused": 0,
+    "hosts": [
+      { "host_id": 2, "approved": true,
+        "fingerprint": "SHA256:<what this Host is trusted on from here on>" }
+    ]
+  }
+}
+```
+
+**A Host that is refused does not take the rest of the list down with it.** It
+comes back in `hosts` with `approved` false and the refusal on it: `error`,
+`error_code`, and `error_args` where the sentence has values in it, the way an
+answer that says no carries one. The rest of the list goes through. One request may name **1000 Hosts** at most: every
+Host of a request is read and written inside a single transaction, and the
+database is run on one connection, so the length of the list is the length of
+time nothing else is served.
+
+| What was sent | What happens |
+|---------------|--------------|
+| A fingerprint that is not the one waiting | `409`, naming the one that is waiting. Nothing is written, and on the bulk approval it is that Host's refusal alone |
+| No password, or a wrong one, where a trusted key is being replaced | `401`. Nothing is written, on any Host of the request |
+| A Host that has no key waiting | `409`. Either it has been approved already, or nothing has connected to it since the last one was |
+| A Host id that is not stored | `404` on the single approval, and that Host's refusal alone on the bulk one |
+| More than 1000 Hosts in one request | `400`. Nothing is read |
+
+An approval wakes the reconcile loop, so the tunnels of that Host are built
+again within the moment rather than at the next pass. The Status screen carries
+one line over the table while anything is waiting, drawn from the two counts in
+`GET /api/status`, and the press on it opens this list.
+
 ### Service ports
 
 | Method | Path | What it does |
@@ -1801,6 +1935,15 @@ answer makes them the wildcard, by the same rule the upgrade uses. It is read
 and never written, so an import cannot quietly undo a narrowing somebody made,
 and a file this version writes carries no `bind_address` at all.
 
+**The key each Host is trusted on travels with it**, in `host_key`, so moving a
+configuration does not throw the trust away and the installation that takes the
+file in connects without every Host being approved again. It is a public key and
+is written as the row holds it rather than encrypted. The key some server
+presented on a refused connection is in no file, and an import that replaces a
+row drops the one that was there: it is a question about a machine the other
+installation has not spoken to yet, and the file has just said what the right
+key is.
+
 **The whole file is encrypted with the password given to the export, and that
 password is the only thing protecting it.** Inside it, the SSH password, the
 private key and the key passphrase of every Host are written in the clear. That
@@ -1884,6 +2027,8 @@ curl -s -b cookies.txt https://127.0.0.1:8888/api/status
     "desired_tunnels": 1,
     "total_tunnels": 1,
     "connected_tunnels": 0,
+    "host_keys_unapproved": 0,
+    "host_keys_mismatched": 0,
     "page": 1,
     "size": 10,
     "tunnels": [
@@ -1899,7 +2044,9 @@ curl -s -b cookies.txt https://127.0.0.1:8888/api/status
         "remote": "198.51.100.20:8080",
         "server_banner": "",
         "forward_reach": "unknown",
-        "open_reach": ""
+        "error_kind": "",
+        "open_reach": "",
+        "listen_addresses": ""
       }
     ]
   }
@@ -1927,6 +2074,20 @@ mean different things.
 | `desired > total` | A tunnel that should be running has not been started at all. Either a pass has not run yet, which lasts a moment, or the pass could not start it, for example because the stored password does not open with the encryption key in use. The reason is in the log. |
 | `total > connected` | A tunnel was started and is not carrying traffic. Its row says why in `status` and `last_error`. |
 
+**Two more counts stand beside them, and they are over Hosts and not over
+tunnels.**
+
+| Count | What it counts |
+|-------|----------------|
+| `host_keys_unapproved` | Hosts whose SSH server presented a host key and that carry no approved key yet |
+| `host_keys_mismatched` | Hosts that are trusted on one key and were presented another |
+
+They are over the whole installation and not over the page, for the reason the
+other three are, and for one more: a Host that carries four service ports is
+refused on the same key four times, so a count over the page would carry the
+same question four times over. What is waiting is the two added together, and
+the list behind them is `GET /api/host-key`; see [Host keys](#host-keys).
+
 `status` is one of:
 
 | Value | Meaning |
@@ -1935,6 +2096,14 @@ mean different things.
 | `connected` | The listener is open on the Host |
 | `reconnecting` | The connection dropped or a keepalive went unanswered, and it is being built again |
 | `error` | The attempt failed. `last_error` holds the reason |
+| `host_key_unapproved` | The SSH server presented a host key and none has been approved for this Host, so the connection was refused. See [Host keys](#host-keys) |
+| `host_key_mismatch` | The SSH server presented a key other than the one this Host is trusted on, so the connection was refused. See [Host keys](#host-keys) |
+
+`error_kind` names what sort of failure `last_error` is, for the one sort there
+is somewhere to send you: `forward_denied` is the SSH server refusing to open
+the forwarded port. Every other failure, and every row that is not in error,
+leave it empty. Like `forward_reach` it says what happened and never why, since
+the several settings that make a server refuse look identical from here.
 
 ### Whether the forwarded port can be reached
 
@@ -2005,8 +2174,9 @@ that failed. The same holds for an address family the server refused, and for
 the IPv6 half of any Host this installation knows by an IPv4 address, which is
 the only address of a Host it holds.
 
-`GET /api/status/:hostId` answers with the same counts except `desired_tunnels`,
-plus the Host itself. It is not paged and carries every tunnel of that Host.
+`GET /api/status/:hostId` answers with `total_tunnels` and `connected_tunnels`
+over that Host, plus the Host itself. It carries neither `desired_tunnels` nor
+the two host key counts. It is not paged and carries every tunnel of that Host.
 
 ## Encryption key
 
