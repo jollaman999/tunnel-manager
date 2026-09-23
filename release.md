@@ -1,3 +1,14 @@
+# v3.9.2
+
+## Add/fix features:
+
+- **The language picker and the theme switch sit on the line of the title on the login screen.** They were eight pixels below it. Those screens carry the two on the row of the heading itself, and a heading carries the space that goes under it; centring in that row centres each item with its space, so the title sat above the middle of a row its own margin had made taller and the switches sat on that middle. Measured at four widths, the two are on one line now, and neither the title nor anything under it has moved.
+
+## Notes:
+
+- The upgrade note of v3.7.0 still holds: every Host stops until its key is approved, a stored path outside the data directory is put back to its default, and the data directory becomes 0700.
+- Nothing about the database changes in this release.
+
 # v3.9.1
 
 ## Add/fix features:
