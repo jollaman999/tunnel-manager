@@ -1,3 +1,20 @@
+# v3.10.0
+
+## Add/fix features:
+
+- **The rows of a list are ticked and acted on together.** The Host list and the service port list carry a box on every row and one on the heading that takes the page. A tick reaches the rows of the page it was made on and no further, so a press never touches a row nobody looked at.
+  - **Ticked rows are deleted in one press.** What is about to go is put in front of you as a list first, because the rows do not come back and a count is not something to agree to. Each row is still its own request, so one that is refused leaves the rest deleted and comes back named, with what it was refused for.
+  - **Ticked Hosts are turned on and off in one press.** A Host already in the state being asked for is passed over rather than written, and what was passed over is counted in what comes back.
+  - **Ticked service ports are assigned to Hosts from the service port list.** An assignment could only be made from the Host that was to carry it, so putting one service port on twenty Hosts meant opening twenty panels. The reach is written on the assignments the press creates, and a Host already carrying one keeps the reach it has.
+- **A page of service ports is assigned to a Host in one press.** The panel that assigns them takes the page it is showing and leaves the other pages as they were, and it says how many rows it took, since clearing the box takes an assignment away from each of them.
+- **The row of controls over a list carries page numbers.** The way through a list was the page on either side and a line saying where in it you were, so a list of twenty pages was reached by pressing Next nineteen times. The numbers around the page being read are there now, with a pair of buttons that move that run of numbers without moving the page, so a page far from this one is one press away. The run comes back to the page being read as soon as the page turns.
+
+## Notes:
+
+- The row of controls still appears only once a list is longer than the smallest page size, which is ten.
+- The upgrade note of v3.7.0 still holds: every Host stops until its key is approved, a stored path outside the data directory is put back to its default, and the data directory becomes 0700.
+- Nothing about the database changes in this release.
+
 # v3.9.2
 
 ## Add/fix features:
