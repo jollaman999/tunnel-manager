@@ -1,13 +1,13 @@
 services:
   tunnel-manager:
-    build:
-      context: .
-      dockerfile: Dockerfile
+    # The image a release tag builds and pushes, for whichever of linux/amd64
+    # and linux/arm64 this machine runs. latest is the newest release; write a
+    # version here instead to stay on one. Nothing is built from this file, so
+    # that what runs is the released image rather than whatever the working
+    # tree happens to hold. To run an unreleased change, build the Dockerfile
+    # by hand and put the name it was tagged with here.
+    image: ghcr.io/jollaman999/tunnel-manager:latest
     container_name: tunnel-manager
-    # Not a version and not meant to become one. The build above makes the
-    # image here and this is only the name put on it, so it lists as
-    # tunnel-manager. The images that carry a version go to ghcr.io.
-    image: tunnel-manager:latest
     ulimits:
       nofile:
         soft: 65535
