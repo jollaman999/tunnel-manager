@@ -460,7 +460,15 @@ async function submitSetup(values) {
     // to do on this screen any more, and the credentials that now open the
     // account are the ones they chose.
     if (error instanceof ApiError && error.status === 409) {
-      navigate("login", { say: sayOf(error), kind: "info" });
+      const said = sayOf(error);
+
+      // A refusal, and said as one: on the window so that it is seen at the
+      // moment the screen changes under the reader, and above the login so
+      // that it is still there to read afterwards. setFailure is not what puts
+      // the line up here, because navigate writes the line itself and would
+      // write over one set before it.
+      showToast(said, "error");
+      navigate("login", { say: said, kind: "error" });
 
       return;
     }
