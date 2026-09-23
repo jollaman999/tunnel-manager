@@ -1346,6 +1346,31 @@ td.actions {
   width: 1%;
 }
 
+/* The column of ticks, at the start of the row. It takes no more width than a
+   tick needs, for the reason the column of buttons takes none, and the tick is
+   centred in it so that the column reads down the page as a column: left where
+   it falls, the one in the head sits over the left edge of a heading and the
+   ones under it over the left edge of a number, which is two columns of ticks
+   rather than one.
+
+   The room down the sides is cut back because what is in the cell is 1.1rem
+   wide and the padding of a cell is set for text. A table this wide is already
+   scrolled sideways on a phone, and a column holding one box is the cheapest
+   place to give that width back. */
+th.pick,
+td.pick {
+  width: 1%;
+  padding-inline: 0.35rem;
+  text-align: center;
+}
+
+th.pick input[type="checkbox"],
+td.pick input[type="checkbox"] {
+  display: block;
+  margin: 0 auto;
+  cursor: pointer;
+}
+
 /* The state of a tunnel is the column that is looked at first, so it carries
    its colour rather than only its word. */
 .badge {

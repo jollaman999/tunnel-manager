@@ -112,6 +112,128 @@ const listPages = {
   "service-ports": { number: 1, size: listSizes[0] }
 };
 
+// listPicks is what has been ticked on the two lists that can be ticked. It is
+// held out here for the reason listPages is: the screens are drawn again from
+// scratch every five seconds, and ticks kept inside the draw would be gone by
+// the time the operator reached the press they were ticked for.
+//
+// The rule for reading it: the keys of listPicks.hosts are the Hosts ticked on
+// the Host list and the keys of listPicks["service-ports"] are the service
+// ports ticked on the service port list, each an identifier written as a
+// string and each held against true. pickedIDs hands the same thing back as
+// numbers, which is what a request wants. Nothing else may be under a key: a
+// row that is not ticked is deleted rather than held against false, so the
+// count of what is ticked is the count of the keys.
+//
+// Two things narrow what can be in there, and both are done in keepPicksOnPage
+// as the list is drawn rather than left to the press to deal with:
+//
+//   - Only rows of the page on screen. A tick is for a row the operator is
+//     looking at, and a press that acted on more than that would reach rows
+//     that were never seen. Turning the page therefore clears the ticks, which
+//     is what leaves the tick in the head of the table clear on the new page.
+//   - Only rows that still exist. A row deleted from another screen, or by
+//     somebody else, is gone from the next answer and goes from here with it.
+const listPicks = {
+  hosts: {},
+  "service-ports": {}
+};
+
+// pickedIDs is what a press that acts on the ticks reads: the identifiers
+// ticked on one list, as numbers, smallest first. The order is fixed so that a
+// run of requests goes out in the order the rows are read in, and so that what
+// is shown back to the operator is in that order too.
+function pickedIDs(name) {
+  return Object.keys(listPicks[name])
+    .map(Number)
+    .sort(function (one, other) {
+      return one - other;
+    });
+}
+
+// keepPicksOnPage drops every tick that is not on the page of rows just
+// fetched. It is the same treatment the row with the edit form open is given a
+// few lines below every call of it: what the screen is holding the identifier
+// of has to be something in the answer that screen was drawn from, or it is
+// holding a row that is not there.
+function keepPicksOnPage(name, items) {
+  const here = {};
+
+  for (const item of items) {
+    here[String(item.id)] = true;
+  }
+
+  for (const id of Object.keys(listPicks[name])) {
+    if (!here[id]) {
+      delete listPicks[name][id];
+    }
+  }
+}
+
+// listPickColumn makes the column of ticks for one list: the one in the head of
+// the table, which takes and releases the whole page, and the one of each row.
+//
+// They are made together because each is the answer to the other. The head is
+// ticked exactly while every row of the page is ticked, so a row that is
+// released clears it and the last row that is ticked sets it; and the head
+// takes the rows of this page only, which is the rule listPicks is kept under.
+//
+// A press on either changes listPicks and the ticks already on screen, and
+// fetches nothing. The list is read again five seconds later whatever happens,
+// and that draw puts the same ticks back from listPicks.
+//
+// describe is what a reader who cannot see the column is told a row's tick is
+// for. A box on its own is read out as a box, and there are ten of them.
+function listPickColumn(name, items, describe) {
+  const picked = listPicks[name];
+  const boxes = [];
+  const head = document.createElement("input");
+
+  head.type = "checkbox";
+  head.dataset.field = name + "-pick-all";
+  head.setAttribute("aria-label", t("list.pick-all.aria"));
+  head.checked = items.length > 0 && items.every(function (item) {
+    return Object.prototype.hasOwnProperty.call(picked, String(item.id));
+  });
+
+  function hold(id, on) {
+    if (on) {
+      picked[String(id)] = true;
+    } else {
+      delete picked[String(id)];
+    }
+  }
+
+  head.addEventListener("change", function () {
+    for (const one of boxes) {
+      one.box.checked = head.checked;
+      hold(one.id, head.checked);
+    }
+  });
+
+  return {
+    head: head,
+    box: function (id) {
+      const box = document.createElement("input");
+
+      box.type = "checkbox";
+      box.dataset.field = name + "-pick-" + id;
+      box.setAttribute("aria-label", describe(id));
+      box.checked = Object.prototype.hasOwnProperty.call(picked, String(id));
+      box.addEventListener("change", function () {
+        hold(id, box.checked);
+        head.checked = boxes.every(function (one) {
+          return one.box.checked;
+        });
+      });
+
+      boxes.push({ box: box, id: id });
+
+      return box;
+    }
+  };
+}
+
 // certificateDraft is what was typed into the two PEM boxes. It is kept because
 // the screen is drawn again after a registration that was refused, and a paste
 // of thirty lines that is thrown away on every refusal is one the operator has
@@ -2072,6 +2194,10 @@ async function drawHosts() {
     editingHostID = null;
   }
 
+  // And the same for what is ticked, for the same reason and one more: the
+  // rows of this page are the rows a tick may be held for at all.
+  keepPicksOnPage("hosts", hosts);
+
   const nodes = [editing === undefined ? hostCreateForm() : hostEditForm(editing)];
 
   if (hosts.length === 0) {
@@ -2082,12 +2208,19 @@ async function drawHosts() {
       nodes.push(controls);
     }
 
+    const picks = listPickColumn("hosts", hosts, function (id) {
+      return t("hosts.pick-row.aria", { id: id });
+    });
+
     nodes.push(buildTable(
       [t("hosts.id.column"), t("hosts.ip.column"), t("hosts.port.column"),
         t("hosts.user.column"), t("hosts.description.column"),
         t("hosts.enabled.column"), t("hosts.updated.column"), ""],
-      hosts.map(hostRow),
-      [0, 2]
+      hosts.map(function (host) {
+        return { cells: hostRow(host), pick: picks.box(host.id) };
+      }),
+      [0, 2],
+      picks.head
     ));
   }
 
@@ -2941,6 +3074,8 @@ async function drawServicePorts() {
     editingServicePortID = null;
   }
 
+  keepPicksOnPage("service-ports", ports);
+
   const nodes = [
     editing === undefined ? servicePortCreateForm() : servicePortEditForm(editing)
   ];
@@ -2953,12 +3088,19 @@ async function drawServicePorts() {
       nodes.push(controls);
     }
 
+    const picks = listPickColumn("service-ports", ports, function (id) {
+      return t("service-ports.pick-row.aria", { id: id });
+    });
+
     nodes.push(buildTable(
       [t("service-ports.id.column"), t("service-ports.service-ip.column"),
         t("service-ports.service-port.column"), t("service-ports.local-port.column"),
         t("service-ports.description.column"), t("service-ports.updated.column"), ""],
-      ports.map(servicePortRow),
-      [0, 2, 3]
+      ports.map(function (port) {
+        return { cells: servicePortRow(port), pick: picks.box(port.id) };
+      }),
+      [0, 2, 3],
+      picks.head
     ));
   }
 

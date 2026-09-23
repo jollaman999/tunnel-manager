@@ -1220,11 +1220,31 @@ function actionButton(label, name, onClick, variant) {
 // numericColumns names the columns that hold numbers. They are set flush right
 // so that the digits of one row line up with the digits of the next, which is
 // what makes a column of ports readable at a glance.
-function buildTable(headers, rows, numericColumns) {
+//
+// pickHeader, where a caller passes one, puts a column of ticks before the
+// first column and that node in its head. The caller builds the ticks and holds
+// what they mean, because what a tick is for differs from screen to screen; all
+// this does is make the column for them. A row carries its own tick as
+// { cells: [...], pick: node }, the shape the row with something under it
+// already takes.
+//
+// The columns are still counted from the caller's first one. The tick column is
+// added here and is not one of them, so a numericColumns written before there
+// was one still names the same values.
+function buildTable(headers, rows, numericColumns, pickHeader) {
   const numeric = numericColumns === undefined ? [] : numericColumns;
+  const picking = pickHeader !== undefined && pickHeader !== null;
   const table = document.createElement("table");
   const head = document.createElement("thead");
   const headRow = document.createElement("tr");
+
+  if (picking) {
+    const th = document.createElement("th");
+
+    th.className = "pick";
+    th.appendChild(pickHeader);
+    headRow.appendChild(th);
+  }
 
   headers.forEach(function (header, index) {
     const th = element("th", header);
@@ -1246,9 +1266,26 @@ function buildTable(headers, rows, numericColumns) {
     // given the whole width, because what goes there is a sentence and a
     // sentence in a column of a table this wide is a column of single words.
     const under = row.under === undefined ? null : row.under;
-    const cells = under === null ? row : row.cells;
+    const pick = row.pick === undefined ? null : row.pick;
+    const cells = under === null && pick === null ? row : row.cells;
 
     const line = document.createElement("tr");
+
+    // The tick of this row, in the column the head of the table opened. The
+    // cell is made whether or not the row has a tick to put in it: a row short
+    // of a cell is a row whose values sit one column to the left of everybody
+    // else's.
+    if (picking) {
+      const td = document.createElement("td");
+
+      td.className = "pick";
+
+      if (pick !== null) {
+        td.appendChild(pick);
+      }
+
+      line.appendChild(td);
+    }
 
     cells.forEach(function (cell, index) {
       const td = document.createElement("td");
@@ -1281,7 +1318,7 @@ function buildTable(headers, rows, numericColumns) {
       const cell = document.createElement("td");
 
       detail.className = "under";
-      cell.setAttribute("colspan", String(headers.length));
+      cell.setAttribute("colspan", String(headers.length + (picking ? 1 : 0)));
       cell.appendChild(under);
       detail.appendChild(cell);
       body.appendChild(detail);
