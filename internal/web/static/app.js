@@ -2746,6 +2746,7 @@ function tellTheInstallResult() {
     setFailure(function () {
       return t("update.installed-other.notice", { wanted: wanted, version: running });
     });
+    showTheFailedInstall();
 
     return;
   }
@@ -2753,6 +2754,24 @@ function tellTheInstallResult() {
   setFailure(function () {
     return t("update.install-failed.notice", { version: running });
   });
+  showTheFailedInstall();
+}
+
+// showTheFailedInstall puts the line setFailure left behind onto the screen.
+//
+// The two callers of tellTheInstallResult are the version arriving and the
+// words arriving, and either may be the one that comes last. Where it is the
+// version, the screen has already been drawn and the line would wait for
+// whatever drew next, which on a screen that is only read is the next time the
+// operator presses something. What went through is on the window and needs no
+// draw; what did not is on the window and above the screen, and the half above
+// the screen is the half that is still there to read afterwards.
+//
+// A draw asked for before there is a screen does nothing (redraw returns on an
+// unknown screen), and the line is not lost by it: the first draw reads the
+// same notice.
+function showTheFailedInstall() {
+  redraw();
 }
 
 // storedTheme is what was picked on this browser, or null where nothing was.
