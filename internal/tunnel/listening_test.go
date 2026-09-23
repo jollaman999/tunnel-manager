@@ -692,3 +692,68 @@ func TestPlainTcpCostsTheLinuxOutputNothing(t *testing.T) {
 			"Linux output comes to", got, want)
 	}
 }
+
+// TestListeningAddressesReadsAnIPv6ListenerOnEitherSystem walks the shapes an
+// IPv6 listener is written in, which is where the two separators come closest
+// to each other: an IPv6 address is colons, and on the BSDs the port after it
+// is a dot.
+//
+// The Linux rows were measured. The BSD rows are the documented shape and have
+// not been run against a BSD or a Mac, the way the samples above have not.
+func TestListeningAddressesReadsAnIPv6ListenerOnEitherSystem(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		line string
+		port int
+		want string
+	}{
+		// ss writes the address in brackets, so the port is after the one
+		// colon that is outside them.
+		{"ss, the wildcard", "LISTEN 0 128 [::]:19601 [::]:*", 19601, "::"},
+		{"ss, the loopback", "LISTEN 0 128 [::1]:19601 [::]:*", 19601, "::1"},
+		{"ss, a global address", "LISTEN 0 128 [2001:db8::1]:19601 [::]:*", 19601, "2001:db8::1"},
+		{"ss, a link-local with a zone", "LISTEN 0 128 [fe80::1%eth0]:19601 [::]:*", 19601, "fe80::1%eth0"},
+		{"ss, a v4-mapped address", "LISTEN 0 128 [::ffff:192.0.2.1]:19601 [::]:*", 19601, "::ffff:192.0.2.1"},
+
+		// net-tools writes no brackets, so the port is after the last colon of
+		// a field that is colons all the way along.
+		{"net-tools, the wildcard", "tcp6 0 0 :::19601 :::* LISTEN", 19601, "::"},
+		{"net-tools, the loopback", "tcp6 0 0 ::1:19601 :::* LISTEN", 19601, "::1"},
+		{"net-tools, a global address", "tcp6 0 0 2001:db8::1:19601 :::* LISTEN", 19601, "2001:db8::1"},
+
+		// The BSDs put the port after a dot, so the colons all belong to the
+		// address and the split is the last dot.
+		{"bsd, the wildcard by its column", "tcp6 0 0 *.19601 *.* LISTEN", 19601, "::"},
+		{"bsd, the loopback", "tcp6 0 0 ::1.19601 *.* LISTEN", 19601, "::1"},
+		{"bsd, a global address", "tcp6 0 0 2001:db8::1.19601 *.* LISTEN", 19601, "2001:db8::1"},
+		{"bsd, a link-local with a zone", "tcp6 0 0 fe80::1%en0.19601 *.* LISTEN", 19601, "fe80::1%en0"},
+		// The last group of the address is digits and the port is digits, and
+		// the two are told apart by the dot between them and by the port being
+		// the one asked about.
+		{"bsd, an address whose last group is digits", "tcp6 0 0 2001:db8::1601.1601 *.* LISTEN", 1601, "2001:db8::1601"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got := listeningAddresses(tc.line+"\n", tc.port)
+
+			if strings.Join(got, ",") != tc.want {
+				t.Fatalf("addresses = %v, want [%s]", got, tc.want)
+			}
+		})
+	}
+}
+
+// TestAnAddressCutByTheColumnWidthIsNotRead is what a fixed-width column costs
+// and what it may not cost.
+//
+// netstat lays its columns out to a width, and a long IPv6 address written into
+// one is cut. What is cut off first is the end of the field, which is the port,
+// so the line no longer names the port being asked about and is passed over.
+// The reading is then that nothing is known, which is the honest one: an
+// address read out of a field that was cut is a different address.
+func TestAnAddressCutByTheColumnWidthIsNotRead(t *testing.T) {
+	line := "tcp6       0      0  2001:db8:1234:5678:9ab  *.*                    LISTEN\n"
+
+	if got := listeningAddresses(line, 19601); len(got) != 0 {
+		t.Fatalf("addresses = %v, want none: the field was cut before the port", got)
+	}
+}
