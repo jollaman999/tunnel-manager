@@ -148,6 +148,116 @@ func (h *SettingsHandler) GetSettings(c echo.Context) error {
 	})
 }
 
+// updateSettingsRequest is the whole of what a save is allowed to name. It
+// stands between the body and the stored settings so that what a client can
+// write is decided here, next to the handler, rather than by which fields
+// settings.Settings happens to spell in JSON.
+//
+// Bound onto the stored set directly, the two lists were the same list: every
+// field that struct named in JSON was a field a body wrote, and a field this
+// end is meant to decide became writable the moment somebody added it with a
+// tag on it. The stored timestamp was such a field once and is kept out of the
+// JSON for it, which works only for as long as whoever adds the next one
+// remembers why that tag is there. Here there is nothing to remember: a field
+// that is not written out below cannot be reached by a request at all.
+//
+// Every field is a pointer because a save sends the settings it has. The
+// screens write the boxes of one card at a time, so a body names some of the
+// settings and leaves the rest alone. nil is the field the body left out, and
+// a value that arrived is stored as it stands, the zero ones included: an empty
+// language is the installation naming none, which is a choice and not a box
+// nobody filled in.
+type updateSettingsRequest struct {
+	APIPort         *int  `json:"api_port"`
+	APIHTTPSEnabled *bool `json:"api_https_enabled"`
+
+	MonitoringIntervalSec *int `json:"monitoring_interval_sec"`
+	ReconcileIntervalSec  *int `json:"reconcile_interval_sec"`
+
+	SecurityKeyFile *string `json:"security_key_file"`
+
+	LoggingLevel  *string `json:"logging_level"`
+	LoggingFormat *string `json:"logging_format"`
+
+	LoggingFilePath       *string `json:"logging_file_path"`
+	LoggingFileMaxSize    *int    `json:"logging_file_max_size"`
+	LoggingFileMaxBackups *int    `json:"logging_file_max_backups"`
+	LoggingFileMaxAge     *int    `json:"logging_file_max_age"`
+	LoggingFileCompress   *bool   `json:"logging_file_compress"`
+
+	UIDefaultLanguage *string `json:"ui_default_language"`
+
+	UpdateCheckEnabled       *bool `json:"update_check_enabled"`
+	UpdateCheckIntervalHours *int  `json:"update_check_interval_hours"`
+	UpdateAutoInstall        *bool `json:"update_auto_install"`
+}
+
+// apply puts what the body named onto the stored settings and leaves the rest
+// of them as they were.
+//
+// The fields are copied one at a time rather than by anything that walks the
+// two structs, because the copying is the list: what a request can write is
+// read off these lines, and a field of the stored settings that is not on them
+// is one no body reaches. Nothing is validated here. The set that comes out
+// goes through the rules as a whole, which is where a value that was refused
+// is told apart from a database that could not be written to.
+func (r *updateSettingsRequest) apply(s *settings.Settings) {
+	if r.APIPort != nil {
+		s.APIPort = *r.APIPort
+	}
+	if r.APIHTTPSEnabled != nil {
+		s.APIHTTPSEnabled = *r.APIHTTPSEnabled
+	}
+
+	if r.MonitoringIntervalSec != nil {
+		s.MonitoringIntervalSec = *r.MonitoringIntervalSec
+	}
+	if r.ReconcileIntervalSec != nil {
+		s.ReconcileIntervalSec = *r.ReconcileIntervalSec
+	}
+
+	if r.SecurityKeyFile != nil {
+		s.SecurityKeyFile = *r.SecurityKeyFile
+	}
+
+	if r.LoggingLevel != nil {
+		s.LoggingLevel = *r.LoggingLevel
+	}
+	if r.LoggingFormat != nil {
+		s.LoggingFormat = *r.LoggingFormat
+	}
+
+	if r.LoggingFilePath != nil {
+		s.LoggingFilePath = *r.LoggingFilePath
+	}
+	if r.LoggingFileMaxSize != nil {
+		s.LoggingFileMaxSize = *r.LoggingFileMaxSize
+	}
+	if r.LoggingFileMaxBackups != nil {
+		s.LoggingFileMaxBackups = *r.LoggingFileMaxBackups
+	}
+	if r.LoggingFileMaxAge != nil {
+		s.LoggingFileMaxAge = *r.LoggingFileMaxAge
+	}
+	if r.LoggingFileCompress != nil {
+		s.LoggingFileCompress = *r.LoggingFileCompress
+	}
+
+	if r.UIDefaultLanguage != nil {
+		s.UIDefaultLanguage = *r.UIDefaultLanguage
+	}
+
+	if r.UpdateCheckEnabled != nil {
+		s.UpdateCheckEnabled = *r.UpdateCheckEnabled
+	}
+	if r.UpdateCheckIntervalHours != nil {
+		s.UpdateCheckIntervalHours = *r.UpdateCheckIntervalHours
+	}
+	if r.UpdateAutoInstall != nil {
+		s.UpdateAutoInstall = *r.UpdateAutoInstall
+	}
+}
+
 // UpdateSettings stores what the request carries and puts into place whatever
 // the running process can take on.
 //
@@ -170,16 +280,21 @@ func (h *SettingsHandler) UpdateSettings(c echo.Context) error {
 
 	before := *stored
 
-	// The body is bound onto what is stored, so a request that names some of
-	// the settings changes those and leaves the rest alone. Bound onto an empty
-	// set, every setting the body left out would arrive as a zero value and be
-	// stored as one or refused as one.
-	updated := *stored
+	// The body is read into a request of its own and put onto what is stored,
+	// so a request that names some of the settings changes those and leaves the
+	// rest alone, and a field the request does not carry is one no body can
+	// write. Bound onto the stored set itself, every setting the body left out
+	// would still keep its value, but the list of what a body may name would be
+	// whatever settings.Settings spells in JSON.
+	var req updateSettingsRequest
 
-	err = c.Bind(&updated)
+	err = c.Bind(&req)
 	if err != nil {
 		return failure(c, http.StatusBadRequest, errRequestBodyInvalid, errorArgs{"reason": err.Error()})
 	}
+
+	updated := *stored
+	req.apply(&updated)
 
 	// The rules are run here as well as inside Save so that a value they refuse
 	// is answered as a bad request while a database that could not be written

@@ -2,11 +2,14 @@ package api
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/glebarez/sqlite"
 	"github.com/jollaman999/tunnel-manager/internal/settings"
@@ -666,5 +669,257 @@ func TestTheLanguageDoesNotWaitForARestart(t *testing.T) {
 	pending, _ := decodePending(t, settingsRequest(t, h, ""))
 	if len(pending) != 0 {
 		t.Fatalf("pending = %+v, want none for a language that is in place", pending)
+	}
+}
+
+// jsonName is the name a field arrives under in a request body, or "" when it
+// arrives under none. It is worked out the way encoding/json does: the tag
+// decides, a tag of "-" keeps the field out of JSON altogether, and a field
+// with no tag is named after itself.
+func jsonName(field reflect.StructField) string {
+	name, _, _ := strings.Cut(field.Tag.Get("json"), ",")
+
+	if name == "-" {
+		return ""
+	}
+	if name == "" {
+		return field.Name
+	}
+
+	return name
+}
+
+// requestFields is every field a save may name, read off updateSettingsRequest
+// itself. The tests below are written against this rather than against a list
+// of their own, so that a field added to the request is covered by them the
+// moment it is added and a tag that was typed wrong shows up as a field that
+// never arrives.
+func requestFields() map[string]bool {
+	names := map[string]bool{}
+
+	typ := reflect.TypeOf(updateSettingsRequest{})
+	for i := 0; i < typ.NumField(); i++ {
+		name := jsonName(typ.Field(i))
+		if name != "" {
+			names[name] = true
+		}
+	}
+
+	return names
+}
+
+// settingsFields maps every field of a set of settings to the name it is
+// reached by in a request body. A field that is reached by none is in the map
+// under its own name, because the body of a test names it that way to show
+// that naming it changes nothing.
+func settingsFields(s *settings.Settings) map[string]reflect.Value {
+	fields := map[string]reflect.Value{}
+
+	typ := reflect.TypeOf(*s)
+	val := reflect.ValueOf(*s)
+
+	for i := 0; i < typ.NumField(); i++ {
+		name := jsonName(typ.Field(i))
+		if name == "" {
+			name = typ.Field(i).Name
+		}
+
+		fields[name] = val.Field(i)
+	}
+
+	return fields
+}
+
+// anotherValue returns a value of the same type that differs from the one it is
+// given, so that a field can be asked for in a body and then told apart from
+// what was stored. It is used for the fields no save may name, where what the
+// value is does not matter as long as it is not the one already there.
+func anotherValue(t *testing.T, name string, v reflect.Value) interface{} {
+	t.Helper()
+
+	if v.Type() == reflect.TypeOf(time.Time{}) {
+		return time.Date(2000, time.January, 1, 0, 0, 0, 0, time.UTC)
+	}
+
+	switch v.Kind() {
+	case reflect.Bool:
+		return !v.Bool()
+	case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
+		return v.Int() + 1
+	case reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64:
+		return v.Uint() + 1
+	case reflect.String:
+		return v.String() + "-from-the-body"
+	}
+
+	t.Fatalf("no other value is known for %s, which is a %s: this helper has to learn the type",
+		name, v.Kind())
+
+	return nil
+}
+
+// isTheAskedValue says whether what is stored is what the body asked for. The
+// two arrive as different types where JSON and the database each have their own
+// idea of a number, so they are held against each other as they read.
+func isTheAskedValue(asked interface{}, stored reflect.Value) bool {
+	if at, ok := asked.(time.Time); ok {
+		st, ok := stored.Interface().(time.Time)
+
+		return ok && st.Equal(at)
+	}
+
+	return fmt.Sprintf("%v", asked) == fmt.Sprintf("%v", stored.Interface())
+}
+
+// anotherSet is a valid set of settings with every field differing from the
+// defaults, which is what the save of a screen carries.
+func anotherSet() settings.Settings {
+	return settings.Settings{
+		APIPort:                  9443,
+		APIHTTPSEnabled:          false,
+		MonitoringIntervalSec:    30,
+		ReconcileIntervalSec:     45,
+		SecurityKeyFile:          "secrets/another.key",
+		LoggingLevel:             "warn",
+		LoggingFormat:            "console",
+		LoggingFilePath:          "logs/another.log",
+		LoggingFileMaxSize:       7,
+		LoggingFileMaxBackups:    3,
+		LoggingFileMaxAge:        14,
+		LoggingFileCompress:      false,
+		UIDefaultLanguage:        "ja",
+		UpdateCheckEnabled:       false,
+		UpdateCheckIntervalHours: 6,
+		UpdateAutoInstall:        true,
+	}
+}
+
+// TestSaveTakesEveryFieldTheRequestNames walks updateSettingsRequest and
+// requires each of its fields to reach the database. The request is what stands
+// between a body and the stored settings, so a field it names and does not copy
+// over is a box on the screen that is typed in, answered as saved and never
+// stored, which nothing else here would notice.
+func TestSaveTakesEveryFieldTheRequestNames(t *testing.T) {
+	db := newSettingsDB(t)
+	h, _, _, _ := newSettingsHandler(t, db)
+
+	defaults := settings.Defaults()
+	other := anotherSet()
+
+	asked := settingsFields(&other)
+	before := settingsFields(&defaults)
+
+	body := map[string]interface{}{}
+
+	for name := range requestFields() {
+		field, known := asked[name]
+		if !known {
+			t.Fatalf("the request names %q, which is no field of the settings: the tag is wrong "+
+				"and nothing a body puts under that name is stored", name)
+		}
+
+		// A field that is being stored as what it already holds would pass the
+		// check below without having been written at all.
+		if isTheAskedValue(field.Interface(), before[name]) {
+			t.Fatalf("the set this test saves holds the default for %q, so storing it proves nothing", name)
+		}
+
+		body[name] = field.Interface()
+	}
+
+	sent, err := json.Marshal(body)
+	if err != nil {
+		t.Fatalf("failed to build the body: %v", err)
+	}
+
+	rec := settingsRequest(t, h, string(sent))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d, body: %s", rec.Code, http.StatusOK, rec.Body.String())
+	}
+
+	after, err := settings.Load(db)
+	if err != nil {
+		t.Fatalf("failed to read the settings: %v", err)
+	}
+
+	stored := settingsFields(after)
+
+	for name := range requestFields() {
+		if !isTheAskedValue(asked[name].Interface(), stored[name]) {
+			t.Errorf("%s = %v after a save that asked for %v", name,
+				stored[name].Interface(), asked[name].Interface())
+		}
+	}
+}
+
+// TestSaveWritesNothingTheRequestDoesNotName is the other half, and it is what
+// the request exists for. Every field of the stored settings that
+// updateSettingsRequest leaves out is named in the body anyway, under the name
+// a body would reach it by, and has to come back holding something else.
+//
+// The settings this end decides are kept out by being absent from the request
+// rather than by a tag on the field, so a field added to settings.Settings is
+// not writable until somebody writes it into the request on purpose. This test
+// is what says so: it reads both structs rather than a list, so the field added
+// next is covered by it without anybody remembering to come back here.
+func TestSaveWritesNothingTheRequestDoesNotName(t *testing.T) {
+	db := newSettingsDB(t)
+	h, _, _, _ := newSettingsHandler(t, db)
+
+	stored, err := settings.Load(db)
+	if err != nil {
+		t.Fatalf("failed to read the settings: %v", err)
+	}
+
+	named := requestFields()
+	fields := settingsFields(stored)
+
+	// The body carries a real change as well as the fields it must not be able
+	// to make. A body nothing at all was taken from would pass every check
+	// below while reaching none of the settings.
+	body := map[string]interface{}{"monitoring_interval_sec": 30}
+
+	asked := map[string]interface{}{}
+
+	for name, field := range fields {
+		if named[name] {
+			continue
+		}
+
+		asked[name] = anotherValue(t, name, field)
+		body[name] = asked[name]
+	}
+
+	if len(asked) == 0 {
+		t.Fatalf("the request names every field of the settings, so this test asks for nothing")
+	}
+
+	sent, err := json.Marshal(body)
+	if err != nil {
+		t.Fatalf("failed to build the body: %v", err)
+	}
+
+	rec := settingsRequest(t, h, string(sent))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d, body: %s", rec.Code, http.StatusOK, rec.Body.String())
+	}
+
+	after, err := settings.Load(db)
+	if err != nil {
+		t.Fatalf("failed to read the settings: %v", err)
+	}
+
+	if after.MonitoringIntervalSec != 30 {
+		t.Fatalf("the body reached none of the settings: monitoring.interval_sec is %d, want 30",
+			after.MonitoringIntervalSec)
+	}
+
+	written := settingsFields(after)
+
+	for name, value := range asked {
+		if isTheAskedValue(value, written[name]) {
+			t.Errorf("the body named %s and it was stored as %v, which is what the body asked for",
+				name, written[name].Interface())
+		}
 	}
 }
