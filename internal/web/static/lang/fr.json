@@ -864,7 +864,7 @@
   "update.confirm-restart.text": "Le service est redémarré à la fin, et tous les tunnels restent à terre jusqu'à ce qu'il soit de retour. Une fois lancé, cela ne peut plus être arrêté d'ici.",
   "update.confirm.text": "La version {tag} est téléchargée, vérifiée contre les sommes de contrôle qu'elle publie, et mise à la place de l'exécutable à partir duquel ce service est lancé.",
   "update.confirm.title": "Installer la dernière version publiée",
-  "update.current.notice": "C'est la dernière version publiée.",
+  "update.current.notice": "La dernière version publiée est en cours d'exécution.",
   "update.install.button": "Installer la mise à jour",
   "update.interval.error": "L'intervalle est en heures, de 1 à 8760.",
   "update.interval.hint": "De 1 à 8760. Les versions ne paraissent pas à la minute.",

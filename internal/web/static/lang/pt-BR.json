@@ -864,7 +864,7 @@
   "update.confirm-restart.text": "O serviço é reiniciado ao final, e todos os túneis ficam fora do ar até ele voltar. Depois que começa, não dá para parar daqui.",
   "update.confirm.text": "A versão {tag} é baixada, conferida com as somas de verificação que ela publica, e colocada no lugar do executável a partir do qual este serviço é iniciado.",
   "update.confirm.title": "Instalar a versão publicada mais recente",
-  "update.current.notice": "Esta é a versão publicada mais recente.",
+  "update.current.notice": "Em execução com a versão mais recente.",
   "update.install.button": "Instalar a atualização",
   "update.interval.error": "O intervalo é em horas, de 1 a 8760.",
   "update.interval.hint": "De 1 a 8760. Versões não são coisa que saia de minuto em minuto.",

@@ -864,7 +864,7 @@
   "update.confirm-restart.text": "그 끝에 서비스를 재기동합니다. 다시 올라올 때까지 터널이 전부 내려갑니다. 한번 시작하면 여기서 멈출 수 없습니다.",
   "update.confirm.text": "{tag} 버전을 내려받아 릴리즈가 공개한 체크섬과 대조하고, 이 서비스가 실행하는 파일 자리에 놓습니다.",
   "update.confirm.title": "최신 릴리즈 설치",
-  "update.current.notice": "이것이 최신 릴리즈입니다.",
+  "update.current.notice": "최신 릴리즈를 실행 중입니다.",
   "update.install.button": "업데이트 설치",
   "update.interval.error": "주기는 시간 단위로 1 에서 8760 까지입니다.",
   "update.interval.hint": "1 에서 8760 까지. 릴리즈는 분 단위로 나오는 것이 아닙니다.",

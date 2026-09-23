@@ -864,7 +864,7 @@
   "update.confirm-restart.text": "Am Ende wird der Dienst neu gestartet, und jeder Tunnel ist unten, bis er wieder läuft. Einmal begonnen, lässt es sich von hier aus nicht mehr anhalten.",
   "update.confirm.text": "Die Veröffentlichung {tag} wird heruntergeladen, gegen die Prüfsummen geprüft, die sie veröffentlicht, und an die Stelle der ausführbaren Datei gesetzt, aus der dieser Dienst gestartet wird.",
   "update.confirm.title": "Die neueste Veröffentlichung installieren",
-  "update.current.notice": "Dies ist die neueste Veröffentlichung.",
+  "update.current.notice": "Die neueste Veröffentlichung läuft.",
   "update.install.button": "Aktualisierung installieren",
   "update.interval.error": "Der Abstand wird in Stunden angegeben, von 1 bis 8760.",
   "update.interval.hint": "Von 1 bis 8760. Veröffentlichungen erscheinen nicht im Minutentakt.",

@@ -864,7 +864,7 @@
   "update.confirm-restart.text": "Cuối cùng dịch vụ được khởi động lại, mọi tunnel đều rớt xuống cho tới khi nó lên lại. Một khi đã bắt đầu thì không dừng được từ đây.",
   "update.confirm.text": "Bản phát hành {tag} được tải về, đối chiếu với các giá trị kiểm tra mà bản phát hành công bố, rồi đặt vào chỗ của tệp thực thi mà dịch vụ này khởi động từ đó.",
   "update.confirm.title": "Cài đặt bản phát hành mới nhất",
-  "update.current.notice": "Đây là bản phát hành mới nhất.",
+  "update.current.notice": "Đang chạy bản phát hành mới nhất.",
   "update.install.button": "Cài đặt bản cập nhật",
   "update.interval.error": "Khoảng thời gian tính bằng giờ, từ 1 đến 8760.",
   "update.interval.hint": "Từ 1 đến 8760. Bản phát hành không phải thứ ra theo từng phút.",

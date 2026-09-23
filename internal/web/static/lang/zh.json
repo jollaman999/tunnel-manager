@@ -864,7 +864,7 @@
   "update.confirm-restart.text": "最后会重启服务，每条隧道都会断开，直到服务重新起来。一旦开始，就无法从这里停下。",
   "update.confirm.text": "下载发布 {tag}，与发布公布的校验和比对，然后放到本服务启动所用的可执行文件位置。",
   "update.confirm.title": "安装最新的发布",
-  "update.current.notice": "这已是最新的发布。",
+  "update.current.notice": "正在运行最新的发布。",
   "update.install.button": "安装更新",
   "update.interval.error": "查看间隔以小时计，从 1 到 8760。",
   "update.interval.hint": "从 1 到 8760。发布不是按分钟出的东西。",
