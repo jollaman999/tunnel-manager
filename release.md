@@ -1,3 +1,32 @@
+# v3.9.1
+
+## Add/fix features:
+
+- **The Installing screen waits for the service and loads the page itself.** It said the install had started and left the operator to load the page again by hand, because nothing on this end is told when an install finishes: the process that would say so is the one being replaced.
+  - What it watches for is a different version answering rather than the server answering at all. The service is stopped only after the release has been fetched and checked, so for the whole of the download it is the old process that answers, and a page that took an answer for the install being over would reload onto the version it started from and call it done.
+  - Three minutes is the longest it waits. The end that fetches allows the download two minutes on its own and the restart follows that, so a page giving up at two would reload in the one window where nothing is there to answer. It costs nothing when things go well, because the wait ends as soon as a new version answers.
+  - The bar is how much of that wait has gone by and not how far the install has got, which is not something this end knows. Its width is written on each ask rather than moved by a transition, so it never glides on through a gap where nothing was learned.
+- **The addresses of a forward are drawn only where they differ from what was asked for.** On a forward that went up the way it was asked to, all four sentences said so, under every row of a screen of tunnels. It is drawn now where one of the two requests was turned down, where the port did not answer a connection this end could open, or where the Host, asked what it has open on that port, named something other than what was asked for. The last of those is the one worth the room: a server set to bind every interface ignores a request for the loopback and opens the port to its whole network.
+- **A count is said the way each language says it.** A catalog holds a sentence for one and a sentence for many, and two are not enough everywhere.
+  - Russian puts 21, 31 and 101 in the same class as 1, so the screen said one other client had been signed out when it had been twenty-one, and called twenty-one hosts that one host.
+  - Arabic tells apart none, two, a few and many, and had the form for a few standing in for all of them.
+  - Chinese, Vietnamese and Thai have no plural at all, so their sentence for one is never chosen and their sentence for many was pointing at one thing with a word for several.
+- **A path in an example is no longer drawn in pieces on a screen that reads right to left.** The hint under a stored path built its example from the directory the database is in and a tail written into the catalog. The directory is a value and is laid out as one run; the tail is not, so the end of the path came before its beginning. The whole example is one value now.
+- **An address is no longer turned round on a screen that reads right to left.** Each value written into a sentence was held apart on its own, which is right for a value standing alone and wrong for two the sentence joins: the colon between them took the direction of the sentence and the address came out as the port, the colon, and then the host. Measured in a browser before and after, on the same string.
+- **Every catalog was read as the language it is for.** They passed every check there is and still read as translations.
+  - Three had a sentence the wrong way round. "Host is trusted on this key" is this end deciding to trust that Host, and Russian, Portuguese and Vietnamese had the Host doing the trusting, which over SSH is a sentence about the far side's authorized_keys and a different thing entirely.
+  - Vietnamese called emptying the log file deleting it, in a sentence that then said what the file holds from now on. Arabic had the two words of one label in the other order from the forty-nine places the same catalog names it, which in a right to left script is a different order of code points. Arabic and Hindi both labelled the box that takes a number of hours as asking how many times to look.
+  - The rest is a word doing two jobs: a German column header that reads as "deleted" over a column of addresses, a French catalog naming the registered thing two ways, a Japanese one calling the same file exported and written out in the same table, a Korean one calling the same start two words in the same sentence, a Hindi one where updates were written in a different register from the other eight hundred keys.
+- **The Update screen says in every language what the English says.** The English and the translations of that one screen went in together saying different things, so it was never a sync that lapsed. What the eleven were missing was mostly the part that warns: the advice beside the automatic install had neither that nobody is asked nor that it can happen at any hour, and the sentence about a version that cannot be compared left out that nothing installs itself while that is so.
+
+## Notes:
+
+- The upgrade note of v3.7.0 still holds: every Host stops until its key is approved, a stored path outside the data directory is put back to its default, and the data directory becomes 0700.
+- Nothing about the database changes in this release. An installation on v3.9.0 upgrades with nothing to migrate.
+- The reading of what a BSD or a Mac answers when asked what is listening is still written from the manual pages of those systems and has not been run against one.
+- None of the twelve translations has been read by a native speaker. What each change rests on is a count of that catalog's own usage and a sibling string that already said it the other way.
+- Only the Linux path of `-install` and `-uninstall` has been run. The macOS and the Windows backends are still held up by the compiler, by the vet tool for their platform, and by tests over the plist and the service configuration they produce.
+
 # v3.9.0
 
 ## Add/fix features:
