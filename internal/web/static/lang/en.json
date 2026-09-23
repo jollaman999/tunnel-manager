@@ -883,7 +883,9 @@
   "update.screen.title": "Update",
   "update.settings-saved.notice": "Saved.",
   "update.settings.title": "When to look, and what to do about it",
-  "update.started-reload.text": "Load this page again in a little while. The version at the bottom of the screen is what says the install went through.",
+  "update.started-progress.aria": "How much of the wait has gone by",
+  "update.started-reload.text": "The version at the foot of the screen is what says the install went through.",
+  "update.started-waiting.text": "This page waits here and loads itself again as soon as a different version answers. It stops waiting after {seconds} seconds and loads itself anyway, which puts the version that is running back on the screen.",
   "update.started.notice": "The install has started.",
   "update.started.text": "The release is being downloaded and checked, and the service is restarted once it is in place. This screen is not told when that finishes: the process that would tell it is the one being restarted.",
   "update.started.title": "Installing"

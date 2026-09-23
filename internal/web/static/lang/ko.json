@@ -883,7 +883,9 @@
   "update.screen.title": "업데이트",
   "update.settings-saved.notice": "저장했습니다.",
   "update.settings.title": "언제 확인하고, 어떻게 할지",
-  "update.started-reload.text": "잠시 뒤에 이 페이지를 다시 여십시오. 설치가 됐는지는 화면 아래의 버전으로 확인합니다.",
+  "update.started-progress.aria": "기다린 시간의 비율",
+  "update.started-reload.text": "설치가 됐는지는 화면 아래의 버전으로 확인합니다.",
+  "update.started-waiting.text": "이 페이지는 여기서 기다리다가 다른 버전이 응답하면 곧바로 다시 불러옵니다. {seconds} 초가 지나면 기다리지 않고 불러오며, 그러면 실행 중인 버전이 다시 화면에 뜹니다.",
   "update.started.notice": "설치를 시작했습니다.",
   "update.started.text": "릴리즈를 내려받아 확인하고, 자리에 놓은 뒤 서비스를 재기동합니다. 이 화면은 그것이 언제 끝나는지 듣지 못합니다. 알려 줄 프로세스가 바로 재기동되는 그 프로세스이기 때문입니다.",
   "update.started.title": "설치 중"

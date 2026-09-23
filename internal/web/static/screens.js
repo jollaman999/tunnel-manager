@@ -59,6 +59,29 @@ const logFormats = ["json", "console"];
 const restartPollEverySec = 1;
 const restartPollLimitSec = 90;
 
+// updateWaitEverySec and updateWaitLimitSec are the same two numbers for the
+// wait after an install was started, and they are their own pair because the
+// wait is a different one.
+//
+// A restart is a process letting go of a port and taking it again. An install
+// is a release being fetched over the network, checked, written into place, and
+// only then a restart. The fetch alone is allowed two minutes by the end that
+// does it (internal/install/fetch.go, fetchTimeout), and the service is still
+// answering for all of it: it is stopped after the file is in hand. So a page
+// that gave up at two minutes would reload in the one window where the server
+// is not there to answer, and an operator would be shown a browser error for an
+// install that was going fine.
+//
+// Three minutes is past the fetch and past the restart that follows it. It
+// costs nothing when things go well, because the wait ends as soon as a new
+// version answers rather than when the clock runs out.
+//
+// The ask is every two seconds rather than every second. Nothing is waiting on
+// the first moment it could be noticed, and the far side is a service that is
+// busy being installed.
+const updateWaitEverySec = 2;
+const updateWaitLimitSec = 180;
+
 // editingHostID and editingServicePortID say which row has the edit form open.
 // Only the identifier is kept: the values in the form come from the last answer
 // the list was drawn from, so an edit form never shows a row as it was several
@@ -3763,29 +3786,135 @@ async function updateInstallPanel(update) {
     return;
   }
 
-  // Nothing is asked of the server again. It is on its way down, and a request
-  // made now is one that will not be answered.
-  //
   // drawRestarting is not reused here: it draws only over the Settings screen
-  // (screens.js, its first line), and it counts down a wait this does not know.
-  // How long an install takes is a download and a service manager, not a number
-  // this end was told.
-  return drawUpdateStarted();
+  // (screens.js, its first line), and it counts down a wait the server named.
+  // An install never names one, because what it is waiting on is a download and
+  // a service manager rather than a delay this end was told about.
+  return waitOutTheInstall();
 }
 
-// drawUpdateStarted is the screen left up while the install runs.
+// waitOutTheInstall keeps the screen up until a different version answers, and
+// then loads the page again.
 //
-// It counts nothing down and asks for nothing. What happens next is a download,
-// a file being put in place and a service manager restarting the service, and
-// none of that reports back here: this process is ended by the restart. What
-// the screen can honestly say is that it started and how to see that it
-// finished.
-function drawUpdateStarted() {
+// What it watches for is the version and not whether the server answers at all.
+// The service is stopped only after the release has been fetched and checked,
+// so for the whole of the download it is the process being replaced that
+// answers, and a page that took an answer for the install being over would
+// reload onto the version it started from and call it done.
+//
+// The version this end already has is the one the corner was drawn from. It is
+// read before the wait starts rather than during it, because during it is when
+// it changes.
+async function waitOutTheInstall() {
+  const was = loadedVersion;
+  const until = Date.now() + updateWaitLimitSec * 1000;
+
+  drawUpdateStarted(0);
+
+  while (Date.now() < until) {
+    await pause(updateWaitEverySec * 1000);
+
+    // The operator went somewhere else. What is drawn there is theirs, and a
+    // page that reloaded out from under them would take away whatever they
+    // were in the middle of.
+    if (currentScreen !== "update") {
+      return;
+    }
+
+    drawUpdateStarted(Math.min(1, (updateWaitLimitSec * 1000 - (until - Date.now())) / (updateWaitLimitSec * 1000)));
+
+    if (await theVersionChanged(was)) {
+      break;
+    }
+  }
+
+  if (currentScreen !== "update") {
+    return;
+  }
+
+  // The page is loaded again whether a new version answered or the wait ran
+  // out. Where it answered this shows the install that went through; where it
+  // did not, it shows the version that is still running, which is what says the
+  // install did not take. Neither is a screen left saying something is still
+  // going on when nothing is.
+  window.location.reload();
+}
+
+// theVersionChanged is one ask of the path the corner is drawn from.
+//
+// It needs no session, so it keeps answering across the restart that takes
+// every session with it, and it is the same file for every client. Anything
+// other than a version that is there and is not the one this page started on
+// reads as not yet: a refusal, a connection that did not open, a body that is
+// not what it should be. Each of those is a moment during the install, and the
+// next ask is two seconds away.
+async function theVersionChanged(was) {
+  try {
+    const response = await fetch(versionPath, {
+      headers: { Accept: "application/json" },
+      credentials: "same-origin",
+      cache: "no-store"
+    });
+
+    if (!response.ok) {
+      return false;
+    }
+
+    const payload = await response.json();
+
+    return typeof payload.version === "string" && payload.version !== "" &&
+      payload.version !== was;
+  } catch (error) {
+    return false;
+  }
+}
+
+// drawUpdateStarted is the screen left up while the install runs. filled is how
+// much of the wait has gone by, from 0 to 1.
+//
+// The bar is how long this page keeps waiting and not how far the install has
+// got. Nothing here is told that: the process that would say it is the one
+// being replaced. So the bar is drawn as what it is, a wait with an end to it,
+// and the sentence beside it says as much.
+function drawUpdateStarted(filled) {
   render(t("update.started.title"), [
     statusLine(t("update.started.notice"), "info"),
     element("p", t("update.started.text")),
+    waitingBar(filled),
+    element("p", t("update.started-waiting.text", { seconds: updateWaitLimitSec })),
     element("p", t("update.started-reload.text"))
   ]);
+}
+
+// waitingBar is the bar itself.
+//
+// It is a pair of elements rather than <progress>, because what a browser draws
+// for that one is its own and cannot be made to match the rest of these
+// screens. The outer element carries the role and the numbers, so what a screen
+// reader is told is the same as what is drawn.
+//
+// The width is written per ask rather than moved by a transition. A transition
+// would keep the bar going while the page waits on a request that may not
+// answer, which is motion saying something is happening when nothing is known
+// to be.
+function waitingBar(filled) {
+  const bar = document.createElement("div");
+  const fill = document.createElement("div");
+  const percent = Math.round(Math.max(0, Math.min(1, filled)) * 100);
+
+  bar.className = "waiting-bar";
+  bar.setAttribute("role", "progressbar");
+  bar.setAttribute("aria-valuemin", "0");
+  bar.setAttribute("aria-valuemax", "100");
+  bar.setAttribute("aria-valuenow", String(percent));
+  bar.setAttribute("aria-label", t("update.started-progress.aria"));
+
+  fill.className = "waiting-bar-fill";
+  fill.style.width = percent + "%";
+
+  bar.appendChild(fill);
+
+  return bar;
 }
 
 async function sendUpdateInstall(password, button, close, problem, done) {

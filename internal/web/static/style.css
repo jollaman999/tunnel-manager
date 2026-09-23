@@ -1082,6 +1082,30 @@ tbody tr.under > td {
   margin-top: 0.25rem;
 }
 
+/* The bar on the Installing screen. It says how much of the wait this page is
+   prepared to do has gone by, which is not how far the install has got: nothing
+   on this end is told that, because the process that would say it is the one
+   being replaced.
+
+   The width is written by the script on each ask rather than moved by a
+   transition here. A bar gliding along on its own would be motion claiming
+   progress between two moments where nothing was learned, and the two seconds
+   between asks are exactly such a gap. */
+.waiting-bar {
+  margin: 0.75rem 0 0.5rem;
+  height: 0.5rem;
+  border-radius: var(--radius-pill);
+  background: var(--bg-sunken);
+  border: 1px solid var(--border-soft);
+  overflow: hidden;
+}
+
+.waiting-bar-fill {
+  height: 100%;
+  background: var(--accent-fill);
+  border-radius: inherit;
+}
+
 /* What is known about the addresses of a forwarded port, under the row. It is
    the same shape as the box above and none of its colour: nothing in it is
    something to go and fix, it is what was asked for, what was answered and what
