@@ -1528,6 +1528,17 @@ td.pick input[type="checkbox"] {
   margin: 0.75rem 0 0;
 }
 
+/* The one of these lists that stands on a screen rather than inside a panel:
+   the rows a flip left as they were. A panel gives a list the gap under it
+   from its own edge and a screen gives it nothing, so the table would sit
+   against the last row while the press sits 0.75rem over the first. The gap
+   is written the same either side here, and it has to be the larger of the
+   two numbers rather than the difference: the bottom margin of the last row
+   collapses into this one, so the gap is whichever of them is bigger. */
+.picked-list[data-list="hosts-flip-picked"] {
+  margin-bottom: 0.75rem;
+}
+
 .picked-list > .picked-row {
   margin-bottom: 0.4rem;
   padding: 0.45rem 0.6rem;

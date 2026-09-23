@@ -89,6 +89,19 @@ const updateWaitLimitSec = 180;
 let editingHostID = null;
 let editingServicePortID = null;
 
+// pickedFlipRefusals are the Hosts the last press on one of the two flips could
+// not change, each with what the server said about that one. It is held out
+// here because the press ends by drawing the list again, and a run of a hundred
+// can be refused a row at a time and for a different reason each time: the
+// counts fit on the line above the screen and the reasons do not.
+//
+// It is read by the draw that follows the press and emptied by it, so what is
+// on the screen is always the last press and never the one before it. Turning
+// the page or opening an edit form takes it off, which is what the reasons are
+// worth by then: they were about rows that were ticked at the time of a press
+// that has since been read.
+let pickedFlipRefusals = [];
+
 // listSizes are the sizes a page of a list may be asked for in, and the first
 // of them is the size a screen starts on. They are the sizes the API takes: one
 // that is not on its list is refused there rather than brought into range, so a
@@ -2322,6 +2335,15 @@ function enterHosts() {
 
 async function drawHosts() {
   const page = listPages.hosts;
+
+  // Taken before the fetch, so that a press that is made while this one is in
+  // the air leaves its own reasons for the draw it sets off and not for this
+  // one. Every draw empties it, which is what keeps the reasons of one press
+  // off the screen of the next.
+  const refusals = pickedFlipRefusals;
+
+  pickedFlipRefusals = [];
+
   const answer = await apiCall("GET", "/api/host?" + pageQuery(page));
 
   takeListPage(page, answer);
@@ -2378,7 +2400,7 @@ async function drawHosts() {
     // The press that acts on the ticks goes under the controls that turn the
     // page and over the rows it acts on, which are the rows of this page: a
     // tick is held for nothing else.
-    nodes.push(deletePickedBar({
+    const bar = deletePickedBar({
       name: "hosts",
       items: hosts,
       table: table,
@@ -2399,10 +2421,160 @@ async function drawHosts() {
         return t("hosts.deleted-picked-some.notice", { deleted: deleted, failed: failed });
       },
       draw: drawHosts
-    }), table);
+    });
+
+    // The two presses that turn what is ticked on and off, over the same ticks
+    // the delete is over. They are the Host list's alone: there is no flag on
+    // a service port to turn.
+    //
+    // They go in front of the delete and not after it, which is why they are
+    // put in rather than appended. The delete cannot be taken back and these
+    // two can, so the delete is not the press a hand reaching along the row
+    // lands on first.
+    const flips = document.createDocumentFragment();
+
+    flips.appendChild(ticksWakeThePress("hosts", table,
+      actionButton(t("hosts.enable-picked.button"), "hosts-enable-picked",
+        function () {
+          return flipPickedHosts(hosts, true);
+        })));
+    flips.appendChild(ticksWakeThePress("hosts", table,
+      actionButton(t("hosts.disable-picked.button"), "hosts-disable-picked",
+        function () {
+          return flipPickedHosts(hosts, false);
+        })));
+
+    bar.insertBefore(flips, bar.firstChild);
+
+    nodes.push(bar);
+
+    // What the last flip could not change goes between the presses and the
+    // rows, which is where the ticks that were sent are still on the screen.
+    if (refusals.length > 0) {
+      nodes.push(flipRefusalList(refusals));
+    }
+
+    nodes.push(table);
   }
 
   render(t("hosts.screen.title"), nodes);
+}
+
+// flipRefusalList names the Hosts a flip left as they were, each with what the
+// server said about that one.
+//
+// A row is named by the identifier and the address the table names it by,
+// which is what the rows of a batch delete are named by, and it is painted as
+// what did not happen for the reason those are: the list is only ever the rows
+// that were refused.
+function flipRefusalList(refusals) {
+  const list = document.createElement("div");
+
+  list.className = "picked-list";
+  list.dataset.list = "hosts-flip-picked";
+
+  for (const refusal of refusals) {
+    const row = document.createElement("div");
+    const said = element("p", refusal.reason);
+
+    row.className = "picked-row bad";
+    row.dataset.picked = String(refusal.host.id);
+    said.className = "picked-said";
+
+    row.appendChild(element("span", t("hosts.picked-row.text",
+      { id: refusal.host.id, ip: refusal.host.ip })));
+    row.appendChild(said);
+
+    list.appendChild(row);
+  }
+
+  return list;
+}
+
+// flipPickedHosts turns every ticked Host on, or every ticked Host off.
+//
+// There is no confirmation over it, unlike the batch delete beside it. What it
+// does is undone by the other of the two presses, and a step in front of
+// something that can be taken back is a step that is read once and pressed
+// through from then on.
+//
+// One request per Host and not one for the batch, for the reason the batch
+// delete sends one at a time: the database runs on a single connection, and a
+// request that wrote a hundred rows in one transaction would hold it for the
+// whole of them. A refusal stops that Host and nothing else, since what was
+// asked for was the rest of the list as much as that row.
+async function flipPickedHosts(hosts, on) {
+  const wanted = pickedIDs("hosts");
+  const chosen = hosts.filter(function (host) {
+    return wanted.indexOf(host.id) !== -1;
+  });
+
+  // Nothing is ticked, which is the state the press is dead in. It is read
+  // again here rather than trusted to the button, which was drawn with the
+  // page while the ticks have been changing since.
+  if (chosen.length === 0) {
+    return;
+  }
+
+  const refusals = [];
+  let flipped = 0;
+  let already = 0;
+
+  for (const host of chosen) {
+    // A Host that is already the way the press asks for is counted and not
+    // sent. The request would not be free: the server saves the row it read
+    // and wakes the reconcile pass whatever the row was, so a Host that is
+    // already enabled would come back with a new time in the Updated column
+    // and nothing else changed, and that column is what says when a Host was
+    // last touched. It would also take its turn on the one database
+    // connection, in front of the Hosts the press is actually for.
+    if (host.enabled === on) {
+      already += 1;
+
+      continue;
+    }
+
+    try {
+      await apiCall("PUT", "/api/host/" + host.id, { enabled: on });
+    } catch (error) {
+      if (error instanceof Redirected) {
+        // The session ended and the page is on its way to the login. What is
+        // left of the list is not sent after it.
+        throw error;
+      }
+
+      refusals.push({ host: host, reason: error.message });
+
+      continue;
+    }
+
+    flipped += 1;
+  }
+
+  // The ticks stay on. The rows are all still there, unlike the rows of a
+  // batch delete, and the next thing done to them is usually done to the same
+  // ones: a flip that was refused in part is pressed again, and a batch that
+  // went through is often the batch that is then deleted.
+  if (refusals.length > 0) {
+    pickedFlipRefusals = refusals;
+
+    setNotice(on
+      ? t("hosts.enabled-picked-some.notice",
+        { flipped: flipped, already: already, refused: refusals.length })
+      : t("hosts.disabled-picked-some.notice",
+        { flipped: flipped, already: already, refused: refusals.length }), "error");
+  } else if (already > 0) {
+    setNotice(on
+      ? t("hosts.enabled-picked-same.notice", { flipped: flipped, already: already })
+      : t("hosts.disabled-picked-same.notice", { flipped: flipped, already: already }), "info");
+  } else {
+    setNotice(t(on
+      ? plural(flipped, "hosts.enabled-picked-one.notice", "hosts.enabled-picked-many.notice")
+      : plural(flipped, "hosts.disabled-picked-one.notice", "hosts.disabled-picked-many.notice"),
+    { count: flipped }), "info");
+  }
+
+  return drawHosts();
 }
 
 function hostRow(host) {
@@ -2454,9 +2626,9 @@ function hostRow(host) {
 // same way, which is everything about the sending.
 //
 // The row that comes back is the row and not the button, so a screen with a
-// second press over the ticks puts it in here beside this one. The service
-// port list is the one that has one, and it is that list's alone: there is
-// nothing to assign a Host to.
+// second press over the ticks puts it into the row beside this one. Both lists
+// have one and neither is the other's: the service port list assigns what is
+// ticked to Hosts, and the Host list turns what is ticked on and off.
 function deletePickedBar(spec) {
   const row = document.createElement("div");
 
