@@ -883,7 +883,9 @@
   "update.screen.title": "Atualização",
   "update.settings-saved.notice": "As configurações de atualização foram salvas.",
   "update.settings.title": "Procurar atualizações",
-  "update.started-reload.text": "Recarregue esta página em um minuto para ver com qual versão ela voltou.",
+  "update.started-progress.aria": "Quanto da espera já passou",
+  "update.started-reload.text": "A versão no rodapé da tela é o que diz que a instalação passou.",
+  "update.started-waiting.text": "Esta página espera aqui e se recarrega assim que uma versão diferente responde. Ela para de esperar depois de {seconds} segundos e se recarrega mesmo assim, o que traz de volta à tela a versão que está em execução.",
   "update.started.notice": "A instalação começou.",
   "update.started.text": "A versão está sendo baixada e conferida, e o serviço é reiniciado assim que ela estiver no lugar. Nada mais é pedido a esta tela, porque o processo que responde a ela é o que será reiniciado.",
   "update.started.title": "Instalando"

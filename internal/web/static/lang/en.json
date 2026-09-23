@@ -14,7 +14,7 @@
   "account.renamed.notice": "This account is called {name} now.",
   "account.sign-out.text": "Saving signs out every other client of this account, on this machine and on any other, whichever of the two was changed. This one stays signed in. A client that is already signed in keeps its session whatever the account is renamed to, so a rename that left them alone would change the name and nothing else.",
   "account.signed-out-many.notice": "{count} other clients were signed out.",
-  "account.signed-out-one.notice": "One other client was signed out.",
+  "account.signed-out-one.notice": "{count} other client was signed out.",
   "account.unknown.notice": "What this account is called could not be read: {reason}",
   "account.username.hint": "Leave it empty to keep the name above.",
   "account.username.label": "New username",

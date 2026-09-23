@@ -883,7 +883,9 @@
   "update.screen.title": "アップデート",
   "update.settings-saved.notice": "アップデートの設定を保存しました。",
   "update.settings.title": "アップデートの確認",
-  "update.started-reload.text": "1分ほど後にこのページを開き直すと、どのバージョンで戻ったかが分かります。",
+  "update.started-progress.aria": "待ち時間のうち経過した分",
+  "update.started-reload.text": "インストールが通ったかどうかは、画面の下にあるバージョンでわかります。",
+  "update.started-waiting.text": "このページはここで待ち、別のバージョンが応答したらすぐに自分を読み込み直します。{seconds} 秒たつと待つのをやめて読み込み直し、そのときは動いているバージョンが画面に戻ります。",
   "update.started.notice": "インストールを開始しました。",
   "update.started.text": "リリースをダウンロードして照合し、置いたうえでサービスを再起動します。この画面に問い合わせることはもうありません - この画面に答えていたプロセスが、まさに再起動されるものだからです。",
   "update.started.title": "インストール中"

@@ -883,7 +883,9 @@
   "update.screen.title": "Cập nhật",
   "update.settings-saved.notice": "Đã lưu thiết lập cập nhật.",
   "update.settings.title": "Tìm bản cập nhật",
-  "update.started-reload.text": "Hãy tải lại trang này sau khoảng một phút để xem nó quay lại với phiên bản nào.",
+  "update.started-progress.aria": "Đã trôi qua bao nhiêu thời gian chờ",
+  "update.started-reload.text": "Phiên bản ở cuối màn hình là thứ cho biết bản cài đặt đã vào.",
+  "update.started-waiting.text": "Trang này chờ ở đây và tự tải lại ngay khi có một phiên bản khác trả lời. Sau {seconds} giây thì thôi chờ và vẫn tải lại, khi đó phiên bản đang chạy sẽ hiện lại trên màn hình.",
   "update.started.notice": "Việc cài đặt đã bắt đầu.",
   "update.started.text": "Bản phát hành đang được tải về và đối chiếu, và dịch vụ sẽ khởi động lại khi nó vào đúng chỗ. Không hỏi gì thêm ở màn hình này, vì tiến trình đang trả lời nó chính là tiến trình sắp khởi động lại.",
   "update.started.title": "Đang cài đặt"

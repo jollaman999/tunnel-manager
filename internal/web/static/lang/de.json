@@ -883,7 +883,9 @@
   "update.screen.title": "Aktualisierung",
   "update.settings-saved.notice": "Die Aktualisierungseinstellungen wurden gespeichert.",
   "update.settings.title": "Nach Aktualisierungen sehen",
-  "update.started-reload.text": "Laden Sie diese Seite in einer Minute erneut, um zu sehen, welche Version zurückkam.",
+  "update.started-progress.aria": "Wie viel der Wartezeit vergangen ist",
+  "update.started-reload.text": "Die Version am Fuß des Bildschirms ist das, was sagt, dass die Installation durchgelaufen ist.",
+  "update.started-waiting.text": "Diese Seite wartet hier und lädt sich neu, sobald eine andere Version antwortet. Nach {seconds} Sekunden hört sie auf zu warten und lädt sich trotzdem neu, womit die laufende Version wieder auf dem Bildschirm steht.",
   "update.started.notice": "Die Installation hat begonnen.",
   "update.started.text": "Die Veröffentlichung wird heruntergeladen und geprüft, und der Dienst wird neu gestartet, sobald sie an ihrem Platz ist. Von diesem Bildschirm wird nichts weiter verlangt, denn der Prozess, der ihm antwortet, ist derjenige, der neu gestartet wird.",
   "update.started.title": "Wird installiert"

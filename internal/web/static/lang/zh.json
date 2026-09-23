@@ -883,7 +883,9 @@
   "update.screen.title": "更新",
   "update.settings-saved.notice": "已保存更新设置。",
   "update.settings.title": "更新查看",
-  "update.started-reload.text": "约一分钟后重新打开此页面，即可看到回来的是哪个版本。",
+  "update.started-progress.aria": "等待时间已经过去了多少",
+  "update.started-reload.text": "屏幕下方的版本号就是说明安装是否成功的地方。",
+  "update.started-waiting.text": "本页会在这里等待，只要有另一个版本应答就立刻重新加载。等满 {seconds} 秒后不再等待，也会重新加载，那时屏幕上显示的就是正在运行的版本。",
   "update.started.notice": "安装已开始。",
   "update.started.text": "正在下载并校验发布，放置到位后重启服务。不会再向此页面询问任何内容，因为回答此页面的进程正是将被重启的那个。",
   "update.started.title": "正在安装"
