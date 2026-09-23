@@ -2448,35 +2448,45 @@ function hostRow(host) {
 // under the hand that is ticking it, and one that is there and dead says what
 // the ticks are for before any of them is made.
 //
-// What is ticked changes without a draw, since a tick writes listPicks and
-// fetches nothing, so the change of a box is listened for on the table the
-// ticks are in: every box of the page is under it, the head of the table
-// included, and the press goes dead again the moment the last tick is
-// released.
-//
 // The rest of what one of these lists differs in is handed in by the screen
 // that draws it: the words, the path a row is deleted at, and how a row is
 // named in front of the operator. What is here is what the two lists do the
 // same way, which is everything about the sending.
+//
+// The row that comes back is the row and not the button, so a screen with a
+// second press over the ticks puts it in here beside this one. The service
+// port list is the one that has one, and it is that list's alone: there is
+// nothing to assign a Host to.
 function deletePickedBar(spec) {
   const row = document.createElement("div");
 
   row.className = "list-actions";
 
-  const button = actionButton(spec.label, spec.name + "-delete-picked", function () {
-    return deletePicked(spec);
-  }, "danger");
+  row.appendChild(ticksWakeThePress(spec.name, spec.table,
+    actionButton(spec.label, spec.name + "-delete-picked", function () {
+      return deletePicked(spec);
+    }, "danger")));
 
+  return row;
+}
+
+// ticksWakeThePress is the rule every press over the ticks of a list is under:
+// it is dead while nothing on the page is ticked.
+//
+// What is ticked changes without a draw, since a tick writes listPicks and
+// fetches nothing, so the change of a box is listened for on the table the
+// ticks are in: every box of the page is under it, the head of the table
+// included, and the press goes dead again the moment the last tick is
+// released.
+function ticksWakeThePress(name, table, button) {
   const settle = function () {
-    button.disabled = pickedIDs(spec.name).length === 0;
+    button.disabled = pickedIDs(name).length === 0;
   };
 
   settle();
-  spec.table.addEventListener("change", settle);
+  table.addEventListener("change", settle);
 
-  row.appendChild(button);
-
-  return row;
+  return button;
 }
 
 // deletePicked is the press: the ticked rows of the page, read out of the
@@ -3540,6 +3550,435 @@ function showPanelProblem(problem, message) {
   problem.scrollIntoView({ block: "nearest" });
 }
 
+// assignPickedToHosts is the second press over the ticks of the service port
+// list: the ticked service ports given to several Hosts in one go.
+//
+// It is the other direction of the panel a Host opens. That one asks which
+// service ports one Host carries, and until now there was nothing going the
+// other way: a service port wanted on twenty Hosts was twenty panels, each of
+// them a list to find one row in.
+//
+// The ticked rows are read again here rather than taken from the button, for
+// the reason deletePicked reads them again: the button was drawn with the page
+// and the ticks have been changing since.
+//
+// The list is drawn again however the panel ended, because a Host that took the
+// service ports carries them now and the Assign button of that Host's row opens
+// on a different set.
+async function assignPickedToHosts(items, draw) {
+  const wanted = pickedIDs("service-ports");
+  const chosen = items.filter(function (item) {
+    return wanted.indexOf(item.id) !== -1;
+  });
+
+  if (chosen.length === 0) {
+    return;
+  }
+
+  const outcome = await pickHostsToAssignTo(chosen);
+
+  // The ticks are what the press was made of, and the press has landed. Left
+  // where they are, the bar over the list would still be awake over work that
+  // is done, which reads as work still to do. A run that was refused in part
+  // leaves them, since that run is not over: the panel stays up holding the
+  // Hosts that are left.
+  if (outcome === "assigned") {
+    for (const item of chosen) {
+      delete listPicks["service-ports"][String(item.id)];
+    }
+  }
+
+  return draw();
+}
+
+// pickHostsToAssignTo puts up the panel that says which Hosts are to carry the
+// service ports that were ticked.
+//
+// There is no confirmation over it and this panel is why: an assignment can be
+// taken away again from the panel of the Host it was given to, so nothing here
+// is beyond recall, and the step before the press is the picking itself. What
+// a confirmation would add is a second reading of a list the operator has just
+// built.
+//
+// What it hands back is "assigned" where every Host took the change, and
+// nothing where the panel was closed or where something was refused.
+async function pickHostsToAssignTo(ports) {
+  // The panel has a page of its own and does not touch listPages, the way the
+  // panel a Host opens does: the service port list behind it stays on the page
+  // and at the size it was left on.
+  const page = { number: 1, size: listSizes[0] };
+
+  // The Hosts that are ticked, held against the row each was ticked on rather
+  // than as identifiers alone. A Host that refuses the change is named back to
+  // the operator by its address, and by then the page it was ticked on may be
+  // several pages away.
+  const picks = {};
+
+  const list = document.createElement("div");
+
+  list.className = "assign-list";
+  list.dataset.list = "assign-picked-hosts";
+
+  // Why a page or a send was refused. It is inside the panel because the line
+  // over the screen is behind the backdrop, where whoever pressed the button
+  // cannot read it.
+  const problem = element("p", "");
+
+  problem.className = "notice error";
+  problem.dataset.problem = "assign-picked-hosts";
+  problem.hidden = true;
+
+  // The Hosts that would not take the change, each with what it met. It is the
+  // shape the confirmation of a batch delete names its rows in.
+  const refused = document.createElement("div");
+
+  refused.className = "picked-list";
+  refused.dataset.list = "assign-picked-hosts-refused";
+  refused.hidden = true;
+
+  // What is about to be given away, named the way the list behind the panel
+  // names it. The ticks were made on a table of seven columns and the panel is
+  // over it, so this is the one place the operator can read back what the
+  // press is carrying.
+  const carrying = document.createElement("div");
+
+  carrying.className = "picked-list";
+  carrying.dataset.list = "assign-picked-ports";
+
+  for (const port of ports) {
+    carrying.appendChild(pickedAssignRow(port.id, t("service-ports.picked-row.text",
+      { id: port.id, ip: port.service_ip, port: port.service_port }), null));
+  }
+
+  // How far the assignments this press writes are opened. It is asked for here
+  // rather than left at the wildcard because the two other places that assign
+  // in bulk both ask for it - the Host form with every service port ticked, and
+  // the service port form with every Host ticked - and because the reach of a
+  // batch written without it is put right one Host at a time, in the panels
+  // this press exists to save. The wildcard is what it opens on, which is what
+  // the column stores when a request leaves the field out.
+  const scope = listControl({ options: bindScopeOptions(), value: bindScopeWildcard });
+
+  scope.className = "assign-bulk-scope";
+  scope.dataset.field = "assign-picked-scope";
+  scope.setAttribute("aria-label", t("service-ports.assign-picked-scope.label"));
+
+  const scopeRow = document.createElement("div");
+
+  scopeRow.className = "assign-bulk";
+
+  const scopeLabel = element("span", t("service-ports.assign-picked-scope.label"));
+
+  scopeLabel.className = "assign-bulk-label";
+  scopeRow.appendChild(scopeLabel);
+  scopeRow.appendChild(scope);
+
+  // The rows of the page on the screen, and how long the Host list is.
+  let shown = [];
+  let total = 0;
+
+  // settle is the rule the send is under: it is dead while no Host is ticked,
+  // which is the state the panel opens in. The button belongs to openModal and
+  // not to this list, so it is found through the panel this list is in.
+  // openModal builds the whole of the panel before it hands its promise back,
+  // so the button is there from the first call of this to the last; a call made
+  // before that, which cannot happen from a tick, finds nothing and leaves the
+  // button as it was.
+  function settle() {
+    const panel = list.closest(".modal-panel");
+    if (panel === null) {
+      return;
+    }
+
+    const send = panel.querySelector("[data-action=\"assign-picked-hosts-send\"]");
+    if (send !== null) {
+      send.disabled = Object.keys(picks).length === 0;
+    }
+  }
+
+  function drawList() {
+    // Only the list is built again, as in the panel a Host opens: nothing here
+    // writes to #app, so a draw of the screen behind the backdrop cannot take
+    // the panel down and this cannot draw over it.
+    list.textContent = "";
+
+    if (shown.length === 0) {
+      list.appendChild(statusLine(t("hosts.none.empty"), "empty"));
+
+      return;
+    }
+
+    const controls = pageControls("assign-picked-hosts", page, total, turnPage);
+    if (controls !== null) {
+      list.appendChild(controls);
+    }
+
+    for (const host of shown) {
+      list.appendChild(hostPickRow(host, picks, settle));
+    }
+  }
+
+  async function drawPage() {
+    const answer = await apiCall("GET", "/api/host?" + pageQuery(page));
+
+    takeListPage(page, answer);
+
+    shown = answer === null || answer.items === null || answer.items === undefined
+      ? []
+      : answer.items;
+    total = answer === null || typeof answer.total !== "number" ? shown.length : answer.total;
+
+    drawList();
+  }
+
+  // drawn is the page the list on the screen was built from. A page that could
+  // not be fetched leaves the list as it was, so the numbers are put back to
+  // it: left where the press moved them, the next press would step over a page
+  // that was never read.
+  let drawn = { number: page.number, size: page.size };
+
+  function turnPage() {
+    return drawPage().then(function () {
+      drawn = { number: page.number, size: page.size };
+    }, function (error) {
+      if (error instanceof Redirected) {
+        throw error;
+      }
+
+      page.number = drawn.number;
+      page.size = drawn.size;
+
+      showPanelProblem(problem, error.message);
+    });
+  }
+
+  // The first page is fetched before the panel goes up, so a refusal is
+  // answered with the line over the screen rather than with an empty panel.
+  await drawPage();
+
+  drawn = { number: page.number, size: page.size };
+
+  const opened = openModal({
+    name: "assign-picked-hosts",
+    title: t("service-ports.assign-picked.title"),
+    body: [
+      element("p", t("service-ports.assign-picked.text")),
+      carrying,
+      element("p", t("service-ports.assign-picked-hosts.text")),
+      element("p", t("service-ports.assign-picked-scope.text")),
+      scopeRow,
+      problem,
+      refused,
+      list
+    ],
+    buttons: [
+      {
+        label: t("service-ports.assign-picked-send.button"),
+        name: "send",
+        variant: "primary",
+        press: function (button, close) {
+          return sendPickedAssignments(ports, picks, scope.value, button, close,
+            problem, refused, drawList, settle);
+        }
+      },
+      { label: t("common.close.button"), name: "close" }
+    ]
+  });
+
+  // The panel is on the screen by now, and nothing in it is ticked, so this is
+  // what puts the send to sleep before it can be pressed.
+  settle();
+
+  return opened;
+}
+
+// hostPickRow is one Host in that panel: the box and which Host it is, by the
+// same identifier and address the list names it by.
+//
+// The box and the text are inside a label, so the whole row is the press. A
+// checkbox on its own is a target the width of a character, which is the one
+// thing a list ticked on a phone cannot be. There is no control beside it, so
+// the row is the label and nothing has to be kept outside it.
+//
+// A tick writes the map the send reads and nothing else: it fetches nothing,
+// and the list is not drawn again, so a Host ticked here is still ticked after
+// the page has been turned and turned back.
+function hostPickRow(host, picks, settle) {
+  const row = document.createElement("label");
+
+  row.className = "assign-row assign-pick";
+  row.dataset.assign = String(host.id);
+
+  const box = document.createElement("input");
+
+  box.type = "checkbox";
+  box.dataset.field = "assign-host-" + host.id;
+  box.checked = String(host.id) in picks;
+
+  const text = document.createElement("span");
+
+  text.className = "assign-text";
+  text.appendChild(element("span", t("hosts.picked-row.text", { id: host.id, ip: host.ip })));
+
+  const description = host.description === undefined || host.description === null
+    ? ""
+    : String(host.description);
+
+  if (description !== "") {
+    const saidAbout = element("small", description);
+
+    saidAbout.className = "assign-said";
+    text.appendChild(saidAbout);
+  }
+
+  box.addEventListener("change", function () {
+    if (box.checked) {
+      picks[String(host.id)] = host;
+    } else {
+      delete picks[String(host.id)];
+    }
+
+    settle();
+  });
+
+  row.appendChild(box);
+  row.appendChild(text);
+
+  return row;
+}
+
+// pickedAssignRow is one line of the two lists that panel holds which are not
+// ticked: the service ports about to be given away, and the Hosts that would
+// not take them. It is built the way the confirmation of a batch delete builds
+// its rows, down to the classes, so a row named to the operator reads the same
+// in both places.
+function pickedAssignRow(id, text, reason) {
+  const row = document.createElement("div");
+  const bad = reason !== null && reason !== undefined;
+
+  row.className = bad ? "picked-row bad" : "picked-row";
+  row.dataset.picked = String(id);
+  row.appendChild(element("span", text));
+
+  if (bad) {
+    const said = element("p", reason);
+
+    said.className = "picked-said";
+    row.appendChild(said);
+  }
+
+  return row;
+}
+
+// sendPickedAssignments gives the ticked service ports to the ticked Hosts, one
+// Host at a time.
+//
+// One request per Host and not one for the batch, for the reason the batch
+// delete sends one at a time: the database runs on a single connection, so a
+// request that wrote a hundred rows in one transaction would hold it for the
+// whole of them and the reconcile pass would wait behind it.
+//
+// The whole ticked set goes to every Host, the service ports it carries already
+// included, and nothing is read first to find out which those are. The API
+// leaves an assignment that is already there exactly as it is - a request that
+// only adds does not touch the reach of one that is stored - so a Host carrying
+// half of them is given the other half and no row is written twice. What comes
+// back is counted over rows written, which is how the line at the end can say
+// how many were there already.
+//
+// A refusal stops that Host and nothing else. The Hosts are separate changes,
+// and one that is gone, or that another screen is holding, says nothing about
+// the next; what was asked for was the rest of the list as much as that Host.
+async function sendPickedAssignments(ports, picks, scope, button, close, problem,
+  refused, redraw, settle) {
+  const hosts = Object.keys(picks).map(Number).sort(function (one, other) {
+    return one - other;
+  }).map(function (id) {
+    return picks[String(id)];
+  });
+
+  // Nothing is ticked, which is the state the send is dead in. It is read
+  // again here rather than trusted to the button.
+  if (hosts.length === 0) {
+    return;
+  }
+
+  const add = ports.map(function (port) {
+    return port.id;
+  });
+
+  // Held down for the whole run rather than for one request, because the panel
+  // stays up until the last of them is answered and a second press would send
+  // the list again from the top.
+  button.disabled = true;
+  problem.hidden = true;
+  refused.hidden = true;
+
+  const failures = [];
+  let written = 0;
+  let reached = 0;
+
+  try {
+    for (const host of hosts) {
+      let answer = null;
+
+      try {
+        answer = await apiCall("PUT", "/api/host/" + host.id + "/service-port",
+          { add: add, bind_scope: scope });
+      } catch (error) {
+        if (error instanceof Redirected) {
+          // The session ended and the page is on its way to the login. What is
+          // left of the list is not sent after it.
+          close(null);
+
+          throw error;
+        }
+
+        failures.push({ host: host, reason: error.message });
+
+        continue;
+      }
+
+      reached += 1;
+      written += countedRows(answer, "added");
+
+      // The Host has the service ports, so the tick for it goes here. A run
+      // after a partial one is then over the Hosts that are left and not over
+      // the ones that are already carrying them.
+      delete picks[String(host.id)];
+    }
+  } finally {
+    settle();
+  }
+
+  if (failures.length === 0) {
+    setNotice(t("service-ports.assigned-picked.notice",
+      { added: written, hosts: reached, already: reached * add.length - written }), "info");
+
+    close("assigned");
+
+    return;
+  }
+
+  // Something was refused, so the panel stays up with those Hosts and what each
+  // of them met. The list of Hosts is drawn again with it: the ones that took
+  // the change are no longer ticked, and a box still ticked for one of them
+  // would be read as work that has not happened.
+  refused.textContent = "";
+
+  for (const failure of failures) {
+    refused.appendChild(pickedAssignRow(failure.host.id,
+      t("hosts.picked-row.text", { id: failure.host.id, ip: failure.host.ip }),
+      failure.reason));
+  }
+
+  refused.hidden = false;
+  redraw();
+
+  showPanelProblem(problem, t("service-ports.assigned-picked-some.notice",
+    { added: written, reached: reached, failed: failures.length }));
+}
+
 function enterServicePorts() {
   editingServicePortID = null;
 
@@ -3596,7 +4035,7 @@ async function drawServicePorts() {
       picks.head
     );
 
-    nodes.push(deletePickedBar({
+    const bar = deletePickedBar({
       name: "service-ports",
       items: ports,
       table: table,
@@ -3619,7 +4058,18 @@ async function drawServicePorts() {
           { deleted: deleted, failed: failed });
       },
       draw: drawServicePorts
-    }), table);
+    });
+
+    // The second press over the same ticks, beside the one that deletes them.
+    // It is on this list alone, so it is put in here rather than handed to the
+    // bar: the Host list has no press of the kind to be given.
+    bar.appendChild(ticksWakeThePress("service-ports", table,
+      actionButton(t("service-ports.assign-picked.button"), "service-ports-assign-picked",
+        function () {
+          return assignPickedToHosts(ports, drawServicePorts);
+        })));
+
+    nodes.push(bar, table);
   }
 
   render(t("service-ports.screen.title"), nodes);
