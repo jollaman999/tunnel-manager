@@ -1,3 +1,16 @@
+# v3.10.1
+
+## Add/fix features:
+
+- **The Update screen says how the install turned out.** The page reloaded itself when the install was over and said nothing about it, so whether the release went on was something to work out from the number at the foot of the screen. What was running and what was asked for are written down as the install starts, and are read once the page comes back with both a version and the words to say it in.
+  - A version other than the one asked for is named rather than called a failure. The install fetches the newest release, and a newer one may have landed between the check and the press.
+  - The message is said once and then forgotten, and one left behind by a page that was closed mid-install is dropped rather than shown late.
+
+## Notes:
+
+- The upgrade note of v3.7.0 still holds: every Host stops until its key is approved, a stored path outside the data directory is put back to its default, and the data directory becomes 0700.
+- Nothing about the database changes in this release.
+
 # v3.10.0
 
 ## Add/fix features:

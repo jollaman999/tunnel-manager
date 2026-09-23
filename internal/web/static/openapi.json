@@ -7,7 +7,7 @@
         "license": {
             "name": "Apache 2.0"
         },
-        "version": "3.10.0"
+        "version": "3.10.1"
     },
     "basePath": "/api",
     "paths": {
