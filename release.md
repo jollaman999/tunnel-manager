@@ -6,6 +6,7 @@
 - **The language picker and the theme switch sit on the line of the title on the login screen.** They were eight pixels below it. Those screens carry the two on the row of the heading itself, and a heading carries the space that goes under it; centring in that row centres each item with its space, so the title sat above the middle of a row its own margin had made taller and the switches sat on that middle. Measured at four widths, the two are on one line now, and neither the title nor anything under it has moved.
 - **The screens call a Host a Host wherever the menu does.** The same thing was named two ways from one sentence to the next. An SSH host key is not the entity, so it stays as it was and only the entity follows the menu. The same was done for Service Port, in English, Spanish and Portuguese.
 - **The notice that follows an assignment reads correctly for a count of one.** It carries two or three counts but only one of them could pick which wording was used, so it read "1 service ports assigned" whenever the reach was what had changed. The counts sit behind labels now, which no language has to agree with.
+- **The panel that assigns service ports says that ticking is not saving.** It told the reader a tick survives the other pages and left them to work out that surviving is not being stored.
 - **The reference documents the three endpoints that approve a host key**, in all four languages it is written in, along with the two host key counts, `error_kind` and `listen_addresses` that `GET /api/status` returns.
 
 ## Notes:
