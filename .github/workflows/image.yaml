@@ -1,0 +1,56 @@
+name: Image
+
+# A tag is what an image is built from, so that what is pulled is a release and
+# not whatever master happened to be at the time. The manual trigger is there
+# for rebuilding one that failed to push without moving the tag to do it.
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  image:
+    runs-on: ubuntu-24.04
+    steps:
+    - uses: actions/checkout@v4
+
+    # The program is cross-compiled by the builder stage, but the stage the
+    # image is made of runs apk on the platform it is for, and that one needs
+    # emulating when it is not the runner's own.
+    - uses: docker/setup-qemu-action@v3
+    - uses: docker/setup-buildx-action@v3
+
+    - uses: docker/login-action@v3
+      with:
+        registry: ghcr.io
+        username: ${{ github.actor }}
+        password: ${{ secrets.GITHUB_TOKEN }}
+
+    # The tag without its leading v, which is what the version inside the
+    # program says and what the release notes call it.
+    - name: Read the version out of the tag
+      id: version
+      run: echo "value=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
+
+    # The two platforms the release builds a binary for. The other three a
+    # release ships are not platforms a container runs on.
+    - name: Build and push
+      run: |
+        docker buildx build \
+          --platform linux/amd64,linux/arm64 \
+          --tag "ghcr.io/${{ github.repository }}:${{ steps.version.outputs.value }}" \
+          --tag "ghcr.io/${{ github.repository }}:latest" \
+          --push \
+          .
+
+    # What was pushed, said in the log, so that a run that went green can be
+    # read back for which tags it put up.
+    - name: Say what went up
+      run: |
+        echo "ghcr.io/${{ github.repository }}:${{ steps.version.outputs.value }}"
+        echo "ghcr.io/${{ github.repository }}:latest"

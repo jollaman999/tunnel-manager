@@ -1,4 +1,9 @@
-FROM golang:1.27.1-bookworm@sha256:69a7b9788769bec032d238959b61854e9ae87f57be9029ec04e9885fabf99195 AS builder
+# The builder runs on whatever machine is doing the building and not on the
+# platform being built for. Nothing it does needs to run on the target: the
+# program is built with CGO_ENABLED=0, so a Go toolchain cross-compiles it by
+# being told where it is going. Left to run on the target instead, an image for
+# another architecture would compile the whole program under emulation.
+FROM --platform=$BUILDPLATFORM golang:1.27.1-bookworm@sha256:69a7b9788769bec032d238959b61854e9ae87f57be9029ec04e9885fabf99195 AS builder
 
 RUN apt-get update && apt-get install -y make bash
 
@@ -9,7 +14,14 @@ RUN go mod download && go mod verify
 
 COPY . .
 
-RUN make
+# TARGETOS and TARGETARCH are set by the builder for the platform being built
+# for. They are declared here rather than at the top of the stage so that what
+# comes before them is cached across platforms: the module download and the
+# verify are the same work whichever way this is going.
+ARG TARGETOS
+ARG TARGETARCH
+
+RUN GOOS=$TARGETOS GOARCH=$TARGETARCH make
 
 FROM alpine:3.24.2@sha256:294b683cb724975bec92580e1e685676bd4b50bda910ddb8c51d4cabeaec77e6 AS prod
 
