@@ -362,6 +362,16 @@ h1 {
   margin-bottom: 1rem;
 }
 
+/* On a screen with no navigation the row carries the heading itself, and a
+   heading carries the space that goes under it. align-items centres each item's
+   margin box rather than its content, so the title sits above the middle of a
+   row its own bottom margin made taller while the switches sit on that middle.
+   The switches take the same space, which puts the two on one line without
+   moving the title or anything under it. */
+.topline > h1 ~ #cornerControls {
+  margin-bottom: 1rem;
+}
+
 /* Where there is room beside the card, they drop to the line the name of the
    program is on: the middle of this row on the middle of that name.
 
