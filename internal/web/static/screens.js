@@ -311,12 +311,15 @@ async function logOut() {
   await apiCall("POST", "/api/logout");
   await forgetInstallationLang();
 
-  navigate("login", {
-    say: function () {
-      return t("login.signed-out.notice");
-    },
-    kind: "info"
+  // Said on the window rather than carried to the login as a line above it.
+  // Signing out is something that went through, and the screen it lands on is
+  // one the reader has business with: a line over the login box is a line in
+  // the way of the next thing they came to do.
+  setToast(function () {
+    return t("login.signed-out.notice");
   });
+
+  navigate("login");
 }
 
 // drawLogin is the screen a client without a session lands on.
