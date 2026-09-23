@@ -5042,11 +5042,9 @@ async function saveUpdateSettings(set, values) {
     update_auto_install: values.update_auto_install
   });
 
-  await apiCall("PUT", "/api/settings", body);
+  const data = await apiCall("PUT", "/api/settings", body);
 
-  setToast(function () {
-    return t("update.settings-saved.notice");
-  });
+  saySettingsSaved(data, "update.settings-saved.notice", "settings.saved-next-start.notice");
 
   return drawUpdate();
 }
@@ -5620,23 +5618,7 @@ async function saveSettings(values) {
 
   const data = await apiCall("PUT", "/api/settings", body);
 
-  const changes = data === null || data.changes === null || data.changes === undefined
-    ? []
-    : data.changes;
-
-  if (changes.length === 0) {
-    setToast(function () {
-      return t("settings.saved-nothing.notice");
-    });
-  } else if (data.restart_required) {
-    setToast(function () {
-      return t("settings.saved-next-start.notice");
-    });
-  } else {
-    setToast(function () {
-      return t("settings.saved.notice");
-    });
-  }
+  saySettingsSaved(data, "settings.saved.notice", "settings.saved-next-start.notice");
 
   // A save that changed the language of the installation changes what this
   // screen is drawn in, unless the operator has picked a language here. It is
@@ -5854,13 +5836,42 @@ async function saveHTTPS(enabled) {
   // Only this one setting is sent. The server binds what a request names onto
   // what is stored and leaves the rest alone, so nothing else on the screen is
   // written over by this press.
-  await apiCall("PUT", "/api/settings", { api_https_enabled: enabled });
+  const data = await apiCall("PUT", "/api/settings", { api_https_enabled: enabled });
 
-  setToast(function () {
-    return t("certificate.https-saved.notice");
-  });
+  // Both sides of the answer say the same thing here. This setting is read when
+  // the listener is opened and nowhere else, so a change to it is never in
+  // place before the next start.
+  saySettingsSaved(data, "certificate.https-saved.notice", "certificate.https-saved.notice");
 
   return drawSettings();
+}
+
+// saySettingsSaved says what a save of the settings did, out of what came back
+// from it rather than out of the fact that it did not fail.
+//
+// The three screens that write settings send different parts of the same row
+// and so have different words for a change that is in place, but the answer
+// they read is the same one: the server names what it changed and says whether
+// any of it waits for a restart. A save that changed nothing is the case worth
+// telling apart, since the press was the operator asking whether what is on the
+// screen is what is stored, and being told it was stored answers a different
+// question.
+function saySettingsSaved(data, inPlace, atNextStart) {
+  const changes = data === null || data.changes === null || data.changes === undefined
+    ? []
+    : data.changes;
+
+  if (changes.length === 0) {
+    setToast(function () {
+      return t("settings.saved-nothing.notice");
+    });
+
+    return;
+  }
+
+  setToast(function () {
+    return t(data.restart_required ? atNextStart : inPlace);
+  });
 }
 
 // certificateValidity is the line that says how long is left. A certificate
