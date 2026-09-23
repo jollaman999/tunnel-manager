@@ -314,20 +314,29 @@ func hostAtPort(field, port string) (string, bool) {
 // wildcardAddresses is what a "*" on this line stands for, read off the
 // protocol column.
 //
-// The BSDs and macOS write the protocol as tcp4, tcp6 or tcp46, and that is
-// the only thing on such a line that says which family the socket is of: the
-// address column is a bare "*". tcp46 is a socket of both, so it stands for
-// both addresses.
+// The BSDs and macOS write the protocol in a column of its own, and on a line
+// whose address is a bare "*" that column is the only thing saying which
+// family the socket is of. They do not all spell it the same way:
+//
+//   - FreeBSD, NetBSD and macOS write tcp4 and tcp6.
+//   - macOS and FreeBSD also write tcp46 for a socket that takes both, which
+//     is one listener reached over either family, so it stands for both
+//     addresses.
+//   - OpenBSD writes plain tcp for IPv4 and tcp6 for IPv6.
+//
+// Plain tcp is also what net-tools writes on Linux, where it never carries a
+// bare "*" as a listening address, so reading it as IPv4 costs nothing there:
+// a line that does not put a "*" at the port being asked about never reaches
+// this.
 //
 // A line with no such column gets nothing back, and the "*" on it is then
-// passed over. That is the case for ss and for net-tools, neither of which
-// writes a bare "*" for a listening address in the first place, and for any
-// output this end has not seen: a wildcard whose family is not stated is not a
-// wildcard this end may name.
+// passed over. That is the case for ss, which writes the address itself, and
+// for any output this end has not seen: a wildcard whose family is not stated
+// is not a wildcard this end may name.
 func wildcardAddresses(fields []string) []string {
 	for _, field := range fields {
 		switch field {
-		case "tcp4":
+		case "tcp", "tcp4":
 			return []string{"0.0.0.0"}
 		case "tcp6":
 			return []string{"::"}

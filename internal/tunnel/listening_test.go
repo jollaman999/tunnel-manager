@@ -649,3 +649,46 @@ func TestAFieldIsOnlyReadWhereThePortMatches(t *testing.T) {
 		}
 	}
 }
+
+// openbsdNetstatOutput is what OpenBSD prints. It spells the IPv4 protocol
+// plain tcp rather than tcp4, which is the one place the BSDs differ from each
+// other here, and it is written from output published for that system.
+//
+// Like the sample above it has not been taken off an OpenBSD machine.
+const openbsdNetstatOutput = `Active Internet connections (including servers)
+Proto Recv-Q Send-Q  Local Address          Foreign Address        (state)
+tcp        0      0  *.19601                *.*                    LISTEN
+tcp6       0      0  *.19601                *.*                    LISTEN
+tcp        0      0  127.0.0.1.19602        *.*                    LISTEN
+`
+
+// TestListeningAddressesReadsThePlainTcpOfOpenBsd is the spelling that would
+// otherwise be passed over. A wildcard on a line that says tcp and not tcp4 is
+// still an IPv4 wildcard, and a Host that spells it that way would have had its
+// answer read as nothing.
+func TestListeningAddressesReadsThePlainTcpOfOpenBsd(t *testing.T) {
+	got := listeningAddresses(openbsdNetstatOutput, 19601)
+	want := []string{"0.0.0.0", "::"}
+
+	if strings.Join(got, ",") != strings.Join(want, ",") {
+		t.Fatalf("addresses = %v, want %v, out of what OpenBSD prints", got, want)
+	}
+
+	if got := listeningAddresses(openbsdNetstatOutput, 19602); strings.Join(got, ",") != "127.0.0.1" {
+		t.Fatalf("addresses = %v, want [127.0.0.1]", got)
+	}
+}
+
+// TestPlainTcpCostsTheLinuxOutputNothing is the other half of reading plain tcp
+// as IPv4. net-tools writes that same word, so this holds it to the shape that
+// was measured there: the address is written out, a bare star is not a listening
+// address, and the star in the peer column is not at the port being asked about.
+func TestPlainTcpCostsTheLinuxOutputNothing(t *testing.T) {
+	got := listeningAddresses(netstatOutput, 19601)
+	want := []string{"0.0.0.0", "::"}
+
+	if strings.Join(got, ",") != strings.Join(want, ",") {
+		t.Fatalf("addresses = %v, want %v: reading plain tcp as a wildcard changed what "+
+			"Linux output comes to", got, want)
+	}
+}
