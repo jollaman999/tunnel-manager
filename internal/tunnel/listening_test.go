@@ -552,3 +552,100 @@ func TestRecordListenAddressesDropsTheAnswerOfAnOlderConnection(t *testing.T) {
 			got, "0.0.0.0,::")
 	}
 }
+
+// bsdNetstatOutput is what the netstat of the BSDs and of macOS prints. It is
+// written from their manual pages, which have "Address formats are of the form
+// 'host.port' or 'network.port'" and "Unspecified, or 'wildcard', addresses
+// and ports appear as '*'", and from output published for macOS.
+//
+// It has not been taken off a BSD or a Mac, because there is none here. What
+// the tests over it hold is that output of the documented shape is read, not
+// that a given system prints that shape.
+const bsdNetstatOutput = `Active Internet connections (including servers)
+Proto Recv-Q Send-Q  Local Address          Foreign Address        (state)
+tcp4       0      0  *.19601                *.*                    LISTEN
+tcp6       0      0  *.19601                *.*                    LISTEN
+tcp4       0      0  127.0.0.1.19603        *.*                    LISTEN
+tcp4       0      0  192.0.2.10.22          198.51.100.5.52310     ESTABLISHED
+tcp46      0      0  *.19604                *.*                    LISTEN
+`
+
+// TestListeningAddressesReadsTheBsdShape holds the parser to the other of the
+// two shapes: the port after a dot rather than after a colon, and a wildcard
+// written as a star whose family is in the protocol column.
+func TestListeningAddressesReadsTheBsdShape(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		port int
+		want []string
+	}{
+		{"a star on one line per family", 19601, []string{"0.0.0.0", "::"}},
+		{"an address written out", 19603, []string{"127.0.0.1"}},
+		{"tcp46 is a socket of both", 19604, []string{"0.0.0.0", "::"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got := listeningAddresses(bsdNetstatOutput, tc.port)
+
+			if strings.Join(got, ",") != strings.Join(tc.want, ",") {
+				t.Fatalf("addresses = %v, want %v, out of what a BSD netstat prints", got, tc.want)
+			}
+		})
+	}
+}
+
+// TestListeningAddressesLeavesTheBsdOutputAloneBelowThePort is the same rule as
+// for the other shape, checked here because the dot is also what an IPv4
+// address is written with: a line about another port must not be read through
+// a split that lands somewhere else.
+func TestListeningAddressesLeavesTheBsdOutputAloneBelowThePort(t *testing.T) {
+	if got := listeningAddresses(bsdNetstatOutput, 22); len(got) != 0 {
+		t.Fatalf("addresses = %v, want none: port 22 is on a line that is not listening", got)
+	}
+
+	if got := listeningAddresses(bsdNetstatOutput, 1); len(got) != 0 {
+		t.Fatalf("addresses = %v, want none: 1 is a piece of an address and not a port here", got)
+	}
+}
+
+// TestAStarWithNoFamilyNamedIsPassedOver is what keeps a guess out of the row.
+// A wildcard says nothing on its own about which family it stands for, so a
+// line that does not carry the protocol column leaves it unread.
+func TestAStarWithNoFamilyNamedIsPassedOver(t *testing.T) {
+	output := "unknown    0      0  *.19601                *.*                    LISTEN\n"
+
+	if got := listeningAddresses(output, 19601); len(got) != 0 {
+		t.Fatalf("addresses = %v, want none: the line never says which family the star is",
+			got)
+	}
+}
+
+// TestAFieldIsOnlyReadWhereThePortMatches is what keeps an address from being
+// cut in the wrong place. An IPv4 address carries dots of its own and a socket
+// carries a port after one separator or the other, so the only thing that says
+// where a field comes apart is which cut leaves the port being asked about.
+func TestAFieldIsOnlyReadWhereThePortMatches(t *testing.T) {
+	for _, tc := range []struct {
+		field string
+		port  string
+		want  string
+		ok    bool
+	}{
+		{"0.0.0.0:19601", "19601", "0.0.0.0", true},
+		{"127.0.0.1.19601", "19601", "127.0.0.1", true},
+		{"[::]:19601", "19601", "[::]", true},
+		{":::19601", "19601", "::", true},
+		{"*.19601", "19601", "*", true},
+		// The last dot of the address happens to leave 0:19601, and the last
+		// colon leaves 19601. Neither is the port 0, so nothing is read.
+		{"0.0.0.0:19601", "0", "", false},
+		{"0.0.0.0:19601", "19602", "", false},
+		{"nonsense", "19601", "", false},
+	} {
+		got, ok := hostAtPort(tc.field, tc.port)
+
+		if ok != tc.ok || got != tc.want {
+			t.Errorf("hostAtPort(%q, %q) = %q, %v, want %q, %v",
+				tc.field, tc.port, got, ok, tc.want, tc.ok)
+		}
+	}
+}

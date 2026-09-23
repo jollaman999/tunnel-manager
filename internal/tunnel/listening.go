@@ -208,16 +208,38 @@ func askListenAddresses(client *ssh.Client, port int, timeout time.Duration) str
 // its fields is an address at this port. Everything else on the line is passed
 // over, so a column this end has never seen costs nothing.
 //
-// A field is cut at its last colon, because that is what separates the port
-// from an address that has colons of its own: ss writes the IPv6 wildcard as
-// [::]:22 and netstat writes it as :::22, and both come apart there. The
-// address that comes out has to parse as an IP, and a field that does not is
-// dropped rather than kept. That is what keeps everything else the far side
-// printed out of the row: the peer column of a listening socket, the sentence
-// an account with no shell prints, the refusal of a shell that has no such
-// command. It also drops the few addresses this end cannot read, an IPv4
-// address that ss wrote a scope onto among them, and an address dropped is
-// read as not known, which is the safe way round.
+// A field is cut at its last colon or, where that gives nothing, at its last
+// dot. Which of the two separates the port from the address is the one thing
+// that differs between the systems this runs against.
+//
+//   - ss and the netstat of net-tools write a colon: 0.0.0.0:22, [::]:22 and
+//     :::22 all come apart at the last one, which is why it is the last and
+//     not the first.
+//   - the netstat of the BSDs and of macOS writes a dot. Their manual pages
+//     have it as "Address formats are of the form 'host.port' or
+//     'network.port'", so 127.0.0.1.22 and *.22 are what a listening socket
+//     reads as there.
+//
+// A wildcard is written differently as well. ss and net-tools name the address
+// itself, and the BSDs write "*", which their manual pages have as
+// "Unspecified, or 'wildcard', addresses and ports appear as '*'". Which
+// family that "*" stands for is on the same line, in the protocol column that
+// reads tcp4, tcp6 or tcp46, and a line that carries neither is passed over
+// rather than guessed at.
+//
+// **The BSD shapes are written from those manual pages and have not been run
+// against a BSD or a Mac.** What the tests below hold is that output of the
+// documented shape is read; whether a given system prints that shape is not
+// something this end has measured. The guard below is what makes that safe to
+// have written: the address has to parse as an IP, so a shape that is read
+// wrong yields nothing rather than an address that is wrong.
+//
+// That same guard keeps everything else the far side printed out of the row:
+// the peer column of a listening socket, the sentence an account with no shell
+// prints, the refusal of a shell that has no such command. It also drops the
+// few addresses this end cannot read, an IPv4 address that ss wrote a scope
+// onto among them, and an address dropped is read as not known, which is the
+// safe way round.
 func listeningAddresses(output string, port int) []string {
 	wanted := strconv.Itoa(port)
 	seen := make(map[string]bool)
@@ -228,13 +250,25 @@ func listeningAddresses(output string, port int) []string {
 			continue
 		}
 
+		wildcards := wildcardAddresses(fields)
+
 		for _, field := range fields {
-			at := strings.LastIndexByte(field, ':')
-			if at < 0 || field[at+1:] != wanted {
+			host, ok := hostAtPort(field, wanted)
+			if !ok {
 				continue
 			}
 
-			address, err := netip.ParseAddr(strings.Trim(field[:at], "[]"))
+			// The wildcard of the BSDs stands for whichever families the
+			// protocol column named, which is one address or two.
+			if host == "*" {
+				for _, address := range wildcards {
+					seen[address] = true
+				}
+
+				continue
+			}
+
+			address, err := netip.ParseAddr(strings.Trim(host, "[]"))
 			if err != nil {
 				continue
 			}
@@ -251,6 +285,58 @@ func listeningAddresses(output string, port int) []string {
 	sort.Strings(found)
 
 	return found
+}
+
+// hostAtPort splits a field of output into the address and the port, and says
+// whether the port is the one being asked about.
+//
+// Both separators are tried and each attempt stands or falls on the port
+// matching, which is what lets an IPv4 address carry dots of its own without
+// being taken apart at one of them: 0.0.0.0:19601 cut at its last dot gives a
+// port of 0:19601, that is not the port being asked about, and the colon is
+// tried next. The order the two are tried in decides nothing for that reason.
+// The colon is named first because it is the shape that was measured here.
+func hostAtPort(field, port string) (string, bool) {
+	for _, separator := range []byte{':', '.'} {
+		at := strings.LastIndexByte(field, separator)
+		if at < 0 {
+			continue
+		}
+
+		if field[at+1:] == port {
+			return field[:at], true
+		}
+	}
+
+	return "", false
+}
+
+// wildcardAddresses is what a "*" on this line stands for, read off the
+// protocol column.
+//
+// The BSDs and macOS write the protocol as tcp4, tcp6 or tcp46, and that is
+// the only thing on such a line that says which family the socket is of: the
+// address column is a bare "*". tcp46 is a socket of both, so it stands for
+// both addresses.
+//
+// A line with no such column gets nothing back, and the "*" on it is then
+// passed over. That is the case for ss and for net-tools, neither of which
+// writes a bare "*" for a listening address in the first place, and for any
+// output this end has not seen: a wildcard whose family is not stated is not a
+// wildcard this end may name.
+func wildcardAddresses(fields []string) []string {
+	for _, field := range fields {
+		switch field {
+		case "tcp4":
+			return []string{"0.0.0.0"}
+		case "tcp6":
+			return []string{"::"}
+		case "tcp46":
+			return []string{"0.0.0.0", "::"}
+		}
+	}
+
+	return nil
 }
 
 // listeningLine reports whether a line of output is about a socket that is
