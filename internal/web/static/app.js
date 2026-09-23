@@ -174,6 +174,18 @@ const langPath = "/ui/lang/";
 // sentence that renamed them would be a second list to keep in step.
 const placeholder = /\{([a-z][a-z0-9_]*)\}/g;
 
+// placeholderSpan is a run of places to fill that the sentence holds together:
+// one place, or several with nothing but characters of no direction between
+// them. What counts as no direction here is anything that is neither a letter
+// of any script nor a digit nor a space, so a colon joins {ip} to {port} and a
+// word does not.
+const placeholderSpan = /\{[a-z][a-z0-9_]*\}(?:[^\p{L}\p{N}\s{}]+\{[a-z][a-z0-9_]*\})*/gu;
+
+// placeholderSplit cuts a span into the places to fill and the literal pieces
+// between them, keeping both; placeholderName says which of those is a place.
+const placeholderSplit = /(\{[a-z][a-z0-9_]*\})/;
+const placeholderName = /^\{[a-z][a-z0-9_]*\}$/;
+
 // isolateOpen and isolateClose are what a value is written between. A value put
 // into a sentence is a run of its own, and the characters at the edges of it are
 // often of no direction: a path opens with a slash, an address closes with a
@@ -2602,20 +2614,42 @@ function t(key, values) {
   // The values are written in one pass over the sentence, so what is written in
   // is never read again. A Host named "{name}" is a name and not a second place
   // to fill, which is what a fill that went value by value would make of it.
-  return template.replace(placeholder, function (whole, name) {
-    if (!Object.prototype.hasOwnProperty.call(values, name)) {
-      return whole;
+  //
+  // A span and not a single place, because a sentence sometimes glues two
+  // values into one thing to read. {ip}:{port} is an address, and a colon left
+  // outside the isolates round each half is a character of no direction with a
+  // right to left sentence on either side of it: the two halves are then laid
+  // out in that direction and the address is drawn on screen as the port, the
+  // colon, and then the host. Held in one isolate the whole of it is one run
+  // and is drawn as what it is.
+  return template.replace(placeholderSpan, function (whole) {
+    let filled = "";
+    let wrote = false;
+
+    for (const part of whole.split(placeholderSplit)) {
+      const name = placeholderName.test(part) ? part.slice(1, -1) : null;
+
+      // A name the caller said nothing about is left on the page as it stands,
+      // the way it was before there were spans, so that a missing one is seen
+      // rather than silently dropped.
+      if (name === null || !Object.prototype.hasOwnProperty.call(values, name)) {
+        filled += part;
+
+        continue;
+      }
+
+      const value = String(values[name]);
+
+      filled += value;
+
+      if (value !== "") {
+        wrote = true;
+      }
     }
 
-    const value = String(values[name]);
-
-    // A value that is nothing has no direction to hold apart, and the marks put
-    // round it would be two characters nobody can see and nobody asked for.
-    if (value === "") {
-      return value;
-    }
-
-    return isolateOpen + value + isolateClose;
+    // A span that came to nothing has no direction to hold apart, and the marks
+    // put round it would be two characters nobody can see and nobody asked for.
+    return wrote ? isolateOpen + filled + isolateClose : filled;
   });
 }
 
