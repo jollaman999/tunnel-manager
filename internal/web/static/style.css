@@ -1456,6 +1456,38 @@ td.pick input[type="checkbox"] {
   outline-offset: 0;
 }
 
+/* The buttons that turn the page, kept together as one run. The row around
+   them wraps, and it may break between the size of a page, this run and the
+   line saying where in the list the page is; a break inside the run would put
+   one page number on the line under the page number before it, which reads as
+   two rows of controls rather than as one. */
+.page-turn {
+  display: flex;
+  flex-wrap: nowrap;
+  gap: 0.3rem;
+  align-items: center;
+}
+
+/* A page number and the two buttons that push the run of them along are aimed
+   at rather than read, so they are narrow where the words on either side of
+   them are not, and they are all one width so that a row holding a 9 is as
+   long as the same row holding a 10. */
+.page-turn .page-number,
+.page-turn .page-shift {
+  min-width: 2.1rem;
+  padding: 0.35rem 0.4rem;
+  text-align: center;
+}
+
+/* The page being read. It is dead like any button with nowhere to go, but it
+   is not unavailable: it is where you are, so it is painted as the one number
+   that is answered rather than as the ones that are greyed out. */
+.page-turn .page-number-here:disabled {
+  color: var(--text-on-accent);
+  background: var(--accent-fill);
+  border-color: transparent;
+}
+
 /* Which page is up and which rows are on it. It is dimmed and sits after the
    buttons, because it is read once to find out where in the list this is and
    the buttons are what is pressed. */
@@ -1776,6 +1808,24 @@ td.pick input[type="checkbox"] {
   .count {
     flex: 1 1 8rem;
     min-width: 0;
+  }
+
+  /* Five page numbers with a word on either side of them do not fit across a
+     phone. The script draws three of them at this width, and what is left is
+     tightened so that the run still holds one line: the two words and the two
+     push buttons are there whatever the width, so the three numbers have only
+     what those leave. */
+  .page-turn {
+    gap: 0.2rem;
+  }
+
+  .page-turn button {
+    padding: 0.35rem 0.45rem;
+  }
+
+  .page-turn .page-number,
+  .page-turn .page-shift {
+    min-width: 1.9rem;
   }
 
   /* The log is laid out as blocks rather than as a table at this width.

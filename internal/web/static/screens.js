@@ -106,6 +106,13 @@ const listSizes = [10, 20, 30, 50, 100];
 // are one row per Host per service port, so they run to the product of the
 // other two, and a size chosen for one list says nothing about the size wanted
 // on the next.
+//
+// A window is put on one of these by pageControls the first time the run of
+// page numbers is pushed along by hand, and it is for the same reason: it is
+// how the numbers around page eighteen are reached from page three, and a run
+// that came back to page three every five seconds would never be pressed. It
+// is written where the page is rather than beside it because the two panels
+// carry a page of their own; see listNumberFirst for what it holds.
 const listPages = {
   status: { number: 1, size: listSizes[0] },
   hosts: { number: 1, size: listSizes[0] },
@@ -2090,8 +2097,69 @@ function lastPageOf(total, size) {
   return pages < 1 ? 1 : pages;
 }
 
+// listNumbers is how many page numbers stand on the controls at once, and
+// listNumbersNarrow is how many are left where there is no width for five.
+//
+// The count is picked here and not by a rule in the stylesheet because it is
+// not only what is drawn. The two buttons that push the run of numbers along
+// move it by exactly this many and go dead by where its ends fall, so numbers
+// taken off the row by the stylesheet would leave both of them working on a
+// run of five over a row that shows three.
+const listNumbers = 5;
+const listNumbersNarrow = 3;
+
+// listNarrow is the width the run drops to three at. It is the width the rest
+// of the screens turn over at, written in the same units, so that the controls
+// narrow along with the page around them and not at a width of their own.
+const listNarrow = "(max-width: 34rem)";
+
+// The two buttons that push the run of numbers along, as characters rather
+// than as words. SINGLE LEFT-POINTING ANGLE QUOTATION MARK is mirrored by the
+// renderer on a page that reads right to left, so one pair points the way of
+// whichever language it is drawn in; thirteen written-out arrows would each
+// have to be pointed by hand. What they mean is said to a reader by their
+// label, the way the theme switch says what it is.
+const listEarlierNumbers = "‹‹";
+const listLaterNumbers = "››";
+
+// listNumberSpan is how many numbers this row has room for.
+function listNumberSpan() {
+  if (typeof window.matchMedia !== "function") {
+    return listNumbers;
+  }
+
+  return window.matchMedia(listNarrow).matches ? listNumbersNarrow : listNumbers;
+}
+
+// listNumberFirst is the leftmost number on the row.
+//
+// The run is a block of the list rather than a window centred on the page: at
+// five to a row pages one to five are one block and six to ten the next, so
+// stepping from eight to nine leaves the numbers where they were instead of
+// sliding them one place under the finger that pressed Next.
+//
+// page.window is a run that was pushed along by hand, and it is held against
+// the page it was pushed from. Pushing is for reaching a page that is nowhere
+// near this one, so it has to outlive the draw that comes five seconds later;
+// the moment the page itself changes, though, a run pushed off somewhere else
+// would no longer hold the page being read, so it is let go of and the block
+// of the new page is drawn. It is kept on the page rather than beside it
+// because the two panels carry a page of their own, and a run that outlived
+// the panel it was pushed in would be waiting in the next one.
+function listNumberFirst(page, span, last) {
+  const pushed = page.window;
+
+  if (pushed !== undefined && pushed !== null && pushed.page === page.number &&
+    pushed.first >= 1 && pushed.first <= last) {
+    return pushed.first;
+  }
+
+  return Math.floor((page.number - 1) / span) * span + 1;
+}
+
 // pageControls is the row above a table: the size the list is read in, the way
-// to the page on either side, and where in the list this page is.
+// to the page on either side, the numbers of the pages around this one, and
+// where in the list this page is.
 //
 // Nothing is drawn while there is nothing the row could do. A list shorter than
 // the smallest size is one page at every size, so both buttons are dead and the
@@ -2123,11 +2191,24 @@ function pageControls(name, page, total, draw) {
       // that was being read is no longer a place. The first page is the one
       // page that means the same at every size.
       page.number = 1;
+      // And a run pushed along by hand was pushed over a list cut into other
+      // pages. It is let go of here rather than by the page changing, because
+      // a size chosen while the first page is up changes nothing for that
+      // test to see.
+      page.window = null;
 
       return draw();
     }));
 
   const last = lastPageOf(total, page.size);
+
+  // The buttons are held in a run of their own. The row wraps where there is
+  // no width for all of it, and what it may break between is the size, the
+  // buttons and the line saying where this is; a break through the middle of
+  // the numbers would leave one page on the line under the page before it.
+  const turn = document.createElement("div");
+
+  turn.className = "page-turn";
 
   const previous = actionButton(t("list.previous.button"), name + "-page-previous", function () {
     page.number = page.number - 1;
@@ -2136,7 +2217,57 @@ function pageControls(name, page, total, draw) {
   });
 
   previous.disabled = page.number <= 1;
-  row.appendChild(previous);
+  turn.appendChild(previous);
+
+  const span = listNumberSpan();
+  const first = listNumberFirst(page, span, last);
+  const until = Math.min(first + span - 1, last);
+
+  // The two that push the run along leave the page alone: they are how a page
+  // far from this one is reached, and a press that also turned the page would
+  // make the numbers somewhere to go rather than somewhere to look.
+  const earlier = actionButton(listEarlierNumbers, name + "-page-numbers-earlier", function () {
+    page.window = { first: Math.max(1, first - span), page: page.number };
+
+    return draw();
+  }, "page-shift");
+
+  earlier.setAttribute("aria-label", t("list.numbers-earlier.aria"));
+  earlier.disabled = first <= 1;
+  turn.appendChild(earlier);
+
+  for (let number = first; number <= until; number += 1) {
+    const here = number === page.number;
+    const pick = actionButton(String(number), name + "-page-number-" + number, function () {
+      page.number = number;
+
+      return draw();
+    }, here ? "page-number page-number-here" : "page-number");
+
+    // The number carries the digit alone, which says nothing on its own to a
+    // reader going button by button.
+    pick.setAttribute("aria-label", t("list.page.aria", { page: number }));
+
+    // The page being read is on the row to be found and not to be pressed: a
+    // press on it would fetch the page that is already on the screen.
+    pick.disabled = here;
+
+    if (here) {
+      pick.setAttribute("aria-current", "page");
+    }
+
+    turn.appendChild(pick);
+  }
+
+  const later = actionButton(listLaterNumbers, name + "-page-numbers-later", function () {
+    page.window = { first: Math.min(last, first + span), page: page.number };
+
+    return draw();
+  }, "page-shift");
+
+  later.setAttribute("aria-label", t("list.numbers-later.aria"));
+  later.disabled = until >= last;
+  turn.appendChild(later);
 
   const next = actionButton(t("list.next.button"), name + "-page-next", function () {
     page.number = page.number + 1;
@@ -2145,7 +2276,9 @@ function pageControls(name, page, total, draw) {
   });
 
   next.disabled = page.number >= last;
-  row.appendChild(next);
+  turn.appendChild(next);
+
+  row.appendChild(turn);
 
   // Which page this is and which rows are on it. The count of pages on its own
   // says nothing about how long the list is, and the rows are what the operator
@@ -2158,6 +2291,25 @@ function pageControls(name, page, total, draw) {
 
   where.className = "page-where";
   row.appendChild(where);
+
+  // How many numbers there is room for is read once, here, at the moment of
+  // the draw, so a window dragged narrower would keep five of them until
+  // something else drew the screen again. This is what draws it again, and it
+  // goes with the row it was made for: the first crossing takes it off, and a
+  // row that is no longer on the page is one whose draw belongs to a screen
+  // that has been left, so the crossing that took it off is the whole of it.
+  if (typeof window.matchMedia === "function") {
+    const width = window.matchMedia(listNarrow);
+    const crossed = function () {
+      width.removeEventListener("change", crossed);
+
+      if (row.isConnected) {
+        run(draw);
+      }
+    };
+
+    width.addEventListener("change", crossed);
+  }
 
   return row;
 }
