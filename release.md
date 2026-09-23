@@ -1,3 +1,17 @@
+# v3.11.2
+
+## Add/fix features:
+
+- **A save of the settings says what it did rather than that it was made.** The Settings screen read the answer and told the three cases apart; the HTTPS switch and the Update screen said the setting was stored whatever came back. So turning the switch to the value it already had said it was stored and would be taken up at the next start, and changing how often a release is checked for said only Saved although it waits for a restart. The three read the same answer now.
+- **Signing out, and setting the account up, are said on the window.** Both were carried to the screen they land on as a line above it, which on the login is a line in the way of the box to type in and on the status screen is a line over what the reader had just got to. The line that asks for a username and a password stays where it is: it is what to do rather than what was done.
+- **A setup that somebody else had already made is said as the refusal it is.** It was written as an information line, which is what a screen says when nothing went wrong. It goes up on the window and stays above the login, as every other refusal does.
+- **The Update screen says check where it used to say look.** Its own keys, its own server fields and every other language already said check: the button read Look now, and update_check_interval_hours was labelled Look every (hours).
+
+## Notes:
+
+- The upgrade note of v3.7.0 still holds: every Host stops until its key is approved, a stored path outside the data directory is put back to its default, and the data directory becomes 0700.
+- Nothing about the database changes in this release.
+
 # v3.11.1
 
 ## Add/fix features:
