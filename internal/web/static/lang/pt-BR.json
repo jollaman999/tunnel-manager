@@ -262,7 +262,7 @@
   "hosts.assign-scope.text": "A lista ao lado de cada linha é até onde essa porta de serviço vai neste Host. Escolha um alcance acima e aplique a tudo o que marcou, ou ajuste uma linha sozinha. Uma linha não marcada fica como está.",
   "hosts.assign-scoped.notice": "Host {id} salvo. Portas de serviço atribuídas: {added}, removidas: {removed}, alcance alterado: {rescoped}.",
   "hosts.assign-unchanged.notice": "As portas de serviço do Host {id} não mudaram.",
-  "hosts.assign.text": "Marque as portas de serviço que devem ficar atribuídas a este Host. As marcações são mantidas enquanto você navega pelas outras páginas, e só o que você mudou é enviado ao salvar.",
+  "hosts.assign.text": "Marque as portas de serviço que devem ficar atribuídas a este Host. As marcações são mantidas enquanto você navega pelas outras páginas, mas nada é gravado até você salvar. Ao salvar, só o que você mudou é enviado.",
   "hosts.assign.title": "Portas de serviço do Host {id} ({ip})",
   "hosts.delete.confirm": "Excluir o Host {id} ({ip})?",
   "hosts.deleted.notice": "O Host {id} foi excluído.",

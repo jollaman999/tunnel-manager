@@ -262,7 +262,7 @@
   "hosts.assign-scope.text": "Die Liste neben einer Zeile sagt, wie weit dieser Service-Port auf diesem Host reicht. Wählen Sie oben eine Reichweite und wenden Sie sie auf alles Angehakte an, oder stellen Sie eine Zeile für sich ein. Eine nicht angehakte Zeile bleibt, wie sie ist.",
   "hosts.assign-scoped.notice": "Host {id} gespeichert. Zugewiesene Service-Ports: {added}, entzogene: {removed}, geänderte Reichweite: {rescoped}.",
   "hosts.assign-unchanged.notice": "Die Service-Ports von Host {id} wurden nicht geändert.",
-  "hosts.assign.text": "Haken Sie die Service-Ports an, die diesem Host zugewiesen werden sollen. Ein Haken bleibt erhalten, während Sie die anderen Seiten durchblättern, und beim Speichern wird nur gesendet, was Sie geändert haben.",
+  "hosts.assign.text": "Haken Sie die Service-Ports an, die diesem Host zugewiesen werden sollen. Ein Haken bleibt erhalten, während Sie die anderen Seiten durchblättern, gespeichert ist damit aber noch nichts. Beim Speichern wird nur gesendet, was Sie geändert haben.",
   "hosts.assign.title": "Service-Ports von Host {id} ({ip})",
   "hosts.delete.confirm": "Host {id} ({ip}) löschen?",
   "hosts.deleted.notice": "Host {id} wurde gelöscht.",

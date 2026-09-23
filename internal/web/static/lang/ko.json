@@ -262,7 +262,7 @@
   "hosts.assign-scope.text": "행 옆의 목록은 그 서비스 포트가 이 Host 에서 어디까지 열리는지입니다. 위에서 범위를 고르고 체크한 행 전부에 적용하거나, 행마다 따로 고를 수 있습니다. 체크하지 않은 행은 건드리지 않습니다.",
   "hosts.assign-scoped.notice": "{id} 번 Host 에 서비스 포트 {added} 개를 할당하고 {removed} 개를 해제했으며 {rescoped} 개의 범위를 바꿨습니다.",
   "hosts.assign-unchanged.notice": "{id} 번 Host 가 담당하는 서비스 포트는 그대로입니다.",
-  "hosts.assign.text": "이 Host 가 담당할 서비스 포트에 체크하십시오. 체크한 것은 다른 페이지를 보는 동안에도 남아 있고, 저장할 때는 바꾼 것만 보냅니다.",
+  "hosts.assign.text": "이 Host 가 담당할 서비스 포트에 체크하십시오. 체크한 것은 다른 페이지를 보는 동안에도 남아 있지만, 저장해야 반영됩니다. 저장할 때는 바꾼 것만 보냅니다.",
   "hosts.assign.title": "{id} 번 Host ({ip}) 가 담당하는 서비스 포트",
   "hosts.delete.confirm": "{id} 번 Host 를 지울까요? 주소는 {ip} 입니다.",
   "hosts.deleted.notice": "{id} 번 Host 를 지웠습니다.",

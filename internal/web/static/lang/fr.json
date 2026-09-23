@@ -262,7 +262,7 @@
   "hosts.assign-scope.text": "La liste à côté d'une ligne indique jusqu'où va ce port de service sur ce Host. Choisissez une portée ci-dessus et appliquez-la à tout ce que vous avez coché, ou réglez une ligne à part. Une ligne non cochée n'est pas touchée.",
   "hosts.assign-scoped.notice": "Host {id} enregistré. Ports de service attribués : {added}, retirés : {removed}, portée modifiée : {rescoped}.",
   "hosts.assign-unchanged.notice": "Les ports de service du Host {id} n'ont pas changé.",
-  "hosts.assign.text": "Cochez les ports de service que ce Host doit prendre en charge. Les cases cochées sont conservées pendant que vous parcourez les autres pages, et seul ce que vous avez changé est envoyé à l'enregistrement.",
+  "hosts.assign.text": "Cochez les ports de service que ce Host doit prendre en charge. Les cases cochées sont conservées pendant que vous parcourez les autres pages, mais rien n'est enregistré tant que vous n'enregistrez pas. À l'enregistrement, seul ce que vous avez changé est envoyé.",
   "hosts.assign.title": "Ports de service du Host {id} ({ip})",
   "hosts.delete.confirm": "Supprimer le Host {id} ({ip}) ?",
   "hosts.deleted.notice": "Le Host {id} a été supprimé.",

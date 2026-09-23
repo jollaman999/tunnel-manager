@@ -262,7 +262,7 @@
   "hosts.assign-scope.text": "每行旁边的列表是该服务端口在这台 Host 上开放到哪里。可以在上面选好范围后应用到所有已勾选的行，也可以单独设置某一行。未勾选的行不会被改动。",
   "hosts.assign-scoped.notice": "Host {id} 新增 {added} 个服务端口，移除 {removed} 个，修改了 {rescoped} 个的范围。",
   "hosts.assign-unchanged.notice": "Host {id} 的服务端口没有变化。",
-  "hosts.assign.text": "勾选这台 Host 要负责的服务端口。切换到其他页查看时，勾选会保留；保存时只发送你修改的部分。",
+  "hosts.assign.text": "勾选这台 Host 要负责的服务端口。切换到其他页查看时勾选会保留，但保存后才会生效；保存时只发送你修改的部分。",
   "hosts.assign.title": "Host {id}（{ip}）的服务端口",
   "hosts.delete.confirm": "删除 Host {id}（{ip}）？",
   "hosts.deleted.notice": "Host {id} 已删除。",

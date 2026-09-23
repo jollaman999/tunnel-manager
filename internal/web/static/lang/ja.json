@@ -262,7 +262,7 @@
   "hosts.assign-scope.text": "行の横の一覧は、そのサービスポートがこの Host でどこまで開くかです。上で範囲を選んでチェックした行すべてに適用するか、行ごとに個別に選べます。チェックしていない行はそのままです。",
   "hosts.assign-scoped.notice": "Host {id} にサービスポートを {added} 件追加し、{removed} 件外し、{rescoped} 件の範囲を変更しました。",
   "hosts.assign-unchanged.notice": "Host {id} が担当するサービスポートは変わりませんでした。",
-  "hosts.assign.text": "この Host に担当させるサービスポートにチェックを付けてください。チェックはほかのページを見ている間も残り、保存では変更した分だけを送ります。",
+  "hosts.assign.text": "この Host に担当させるサービスポートにチェックを付けてください。チェックはほかのページを見ている間も残りますが、保存するまでは記録されません。保存では変更した分だけを送ります。",
   "hosts.assign.title": "Host {id} ({ip}) のサービスポート",
   "hosts.delete.confirm": "Host {id} ({ip}) を削除しますか。",
   "hosts.deleted.notice": "Host {id} を削除しました。",

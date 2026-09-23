@@ -262,7 +262,7 @@
   "hosts.assign-scope.text": "La lista junto a cada fila es hasta dónde llega ese puerto de servicio en este Host. Elija un alcance arriba y aplíquelo a todo lo que haya marcado, o ajuste una fila por separado. Una fila sin marcar se queda como está.",
   "hosts.assign-scoped.notice": "Host {id} guardado. Puertos de servicio asignados: {added}, quitados: {removed}, alcance cambiado: {rescoped}.",
   "hosts.assign-unchanged.notice": "Los puertos de servicio del Host {id} no cambiaron.",
-  "hosts.assign.text": "Marque los puertos de servicio que debe tener asignados este Host. Las marcas se conservan mientras recorre las demás páginas, y al guardar solo se envía lo que haya cambiado.",
+  "hosts.assign.text": "Marque los puertos de servicio que debe tener asignados este Host. Las marcas se conservan mientras recorre las demás páginas, pero no se guarda nada hasta que guarde. Al guardar solo se envía lo que haya cambiado.",
   "hosts.assign.title": "Puertos de servicio del Host {id} ({ip})",
   "hosts.delete.confirm": "¿Eliminar el Host {id} ({ip})?",
   "hosts.deleted.notice": "Se eliminó el Host {id}.",

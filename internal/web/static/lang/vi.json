@@ -262,7 +262,7 @@
   "hosts.assign-scope.text": "Danh sách bên cạnh mỗi dòng cho biết cổng dịch vụ đó mở tới đâu trên Host này. Hãy chọn phạm vi ở trên rồi áp dụng cho mọi dòng bạn đã tích, hoặc đặt riêng cho từng dòng. Dòng bạn không tích thì giữ nguyên.",
   "hosts.assign-scoped.notice": "Host {id} được thêm {added} cổng dịch vụ, bị bỏ đi {removed} cổng và đổi phạm vi của {rescoped} cổng.",
   "hosts.assign-unchanged.notice": "Các cổng dịch vụ của Host {id} không có gì thay đổi.",
-  "hosts.assign.text": "Hãy tích vào những cổng dịch vụ mà Host này sẽ đảm nhận. Dấu tích vẫn được giữ trong lúc bạn xem các trang khác, và khi lưu thì chỉ những gì bạn đã đổi mới được gửi đi.",
+  "hosts.assign.text": "Hãy tích vào những cổng dịch vụ mà Host này sẽ đảm nhận. Dấu tích vẫn được giữ trong lúc bạn xem các trang khác, nhưng chưa lưu thì chưa có gì được ghi lại. Khi lưu thì chỉ những gì bạn đã đổi mới được gửi đi.",
   "hosts.assign.title": "Cổng dịch vụ của Host {id} ({ip})",
   "hosts.delete.confirm": "Xóa Host {id} ({ip})?",
   "hosts.deleted.notice": "Đã xóa Host {id}.",
