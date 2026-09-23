@@ -1,3 +1,36 @@
+# v3.9.0
+
+## Add/fix features:
+
+- **How far a forwarded port reaches is chosen on the assignment, and both addresses of the choice are opened.** v3.8.3 put a bind address on the Host, and that was the wrong place for it: one Host carries several service ports, and one of those may be meant for that machine alone while the next is to be reached from elsewhere. Holding one answer for the whole Host forces those two together. The pair of a Host and a service port is the smallest row that can hold both, and it is the row a forward already is.
+  - The choice is a reach rather than an address: the Host itself, or every interface. Each names a pair, `127.0.0.1` with `::1` or `0.0.0.0` with `::`, and both are asked for. The two families do not stand in for each other, and a port opened on one is not reached by a client that connects to the other.
+  - The address that was typed by hand is gone. This screen never asks a Host what interfaces it has, so an address written here was a guess, and a wrong guess fails as a forward that never opens and says nothing about why.
+  - Three places ask: the Host form when it is to carry every service port, the service port form when it is to go to every Host, and the panel on a Host row, which applies a reach to what is ticked or edits one row on its own.
+  - **A bulk apply moves only the rows that are ticked.** Adding one service port used to be a request that carried every port already there, and reading it as a reach for all of them would widen a Host somebody had pinned. The rows to move are a list of their own for that reason.
+  - An assignment that names no reach is opened on every interface, which is what every forward was opened on before there was a column to say otherwise. Nothing that is running changes reach on the upgrade.
+- **The status screen says what was asked for, what was confirmed, and that the rest is unknown.** It used to say the address was refused and that nothing dialling it arrives, and neither is something this end knows.
+  - **What an SSH server answers to a forward request is not a measurement of what it bound.** Measured against OpenSSH: a server carrying `GatewayPorts yes` takes both families on the first request and refuses the second, so a request it refused can be a port that is up. It never says why it refused, and a server with no IPv6 at all gives the same answer.
+  - `GatewayPorts` also decides the binding regardless of what was asked. Its manual page has `yes` forcing the wildcard and `no` forcing the loopback, so `clientspecified` is the one setting under which the reach that was picked is the reach that is bound. The form says so.
+  - **An assignment on the Host itself can never be confirmed from here, and that is not a fault.** Its ports are on the Host, which nothing outside that machine reaches. That silence is written down as unknown rather than as a port that cannot be reached, so a tunnel doing exactly what was asked of it is no longer drawn as one that failed.
+- **The Host is asked what is actually listening on the forwarded port.** It is the only reading that survives a server ignoring the reach that was picked, and there was no way to get it: the reply to a forward request carries a port and no address, and dialling the port reaches one address family of the one address this program holds.
+  - It is asked over the connection that is already there, once the forwards are open, and it is asked best effort. An account with no shell refuses the session, which leaves the forwards standing and the answer empty. There is no setting to turn this off, because an account without a shell already is one.
+  - **Empty means the question went unanswered, never that nothing is listening.**
+  - `ss` is asked first, about the one port, and `netstat` after it. What comes back is read for the shapes of Linux, of the BSDs and of macOS, and a Host whose output is none of them leaves the answer empty rather than a guess.
+- **The API is described in OpenAPI and the description is served with a Swagger UI.** Every call is on a page at `/ui/api-docs/`, with the fields it takes and the answers it gives, and the button on each of them sends a real request to the server being read. The description is at `/ui/openapi.json` for a client generator or for Postman.
+  - Both come out of the binary, so they open on a machine that reaches this server and nowhere else. Nothing is fetched from the network to draw the page.
+  - A test fails where a route is registered that the description does not carry, and where it carries one no route answers, so the two do not drift apart quietly.
+
+## Notes:
+
+- The upgrade note of v3.7.0 still holds: every Host stops until its key is approved, a stored path outside the data directory is put back to its default, and the data directory becomes 0700.
+- **An installation that set a bind address on a Host in v3.8.3 has that answer carried to every assignment of that Host, once.** Nothing that was held to the loopback is widened by the upgrade.
+- `hosts.bind_address` joins `service_ports.bind_address` as a column that is not read any more. Nothing removes either, which is harmless.
+- An exported configuration carries the reach of each assignment. A file written by v3.8.3 carries the bind address of a Host instead, and that is read and turned into the reach of every assignment of that Host by the same rule the upgrade uses. It is never written back out.
+- The reading of what a BSD or a Mac answers is written from the manual pages of those systems and has not been run against one. A shape that is read wrongly yields nothing rather than an address that is wrong, which is what not being able to ask already means everywhere here.
+- What was looked at and deliberately not changed is written down in `docs/design/2026-09-23-security-and-bind-address.md`, the measurements against OpenSSH among it, so the same ground is not covered again from nothing.
+- Only the Linux path of `-install` and `-uninstall` has been run. The macOS and the Windows backends are still held up by the compiler, by the vet tool for their platform, and by tests over the plist and the service configuration they produce.
+- None of the twelve translations has been read by a native speaker.
+
 # v3.8.3
 
 ## Add/fix features:
