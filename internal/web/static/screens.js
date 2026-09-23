@@ -468,12 +468,14 @@ async function submitSetup(values) {
     throw error;
   }
 
-  navigate("status", {
-    say: function () {
-      return t("setup.done.notice");
-    },
-    kind: "info"
+  // Said on the window, as signing out is. The account being set up is
+  // something that went through, and the screen it lands on is the one the
+  // reader came here to get to.
+  setToast(function () {
+    return t("setup.done.notice");
   });
+
+  navigate("status");
 }
 
 // enterStatus draws the screen and starts the refresh. The period is the one
