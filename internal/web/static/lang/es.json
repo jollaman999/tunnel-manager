@@ -770,7 +770,7 @@
   "status.status.column": "Estado",
   "theme.dark.label": "Oscuro",
   "theme.light.label": "Claro",
-  "theme.switch.aria": "Cambiar al tema {theme}",
+  "theme.switch.aria": "Cambiar de tema: {theme}",
   "transfer.card.text": "Una exportación genera un archivo y una importación lo recibe, así que ninguna instalación tiene que conectarse con la otra y es usted quien decide dónde se guarda el archivo y durante cuánto tiempo. El archivo se cifra con una contraseña que escribe aquí; no se guarda en ninguna parte, así que un archivo cuya contraseña se haya olvidado no puede abrirlo nadie, ni siquiera este programa.",
   "transfer.card.title": "Trasladar esta configuración a otra instalación",
   "transfer.drop-ever.text": "una configuración exportada",

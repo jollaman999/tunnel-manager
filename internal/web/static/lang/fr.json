@@ -770,7 +770,7 @@
   "status.status.column": "État",
   "theme.dark.label": "Sombre",
   "theme.light.label": "Clair",
-  "theme.switch.aria": "Passer au thème {theme}",
+  "theme.switch.aria": "Changer de thème : {theme}",
   "transfer.card.text": "Un export produit un fichier et un import le reprend : aucune des deux installations n'a donc besoin de joindre l'autre, et c'est vous qui décidez où le fichier est conservé et pour combien de temps. Le fichier est chiffré avec un mot de passe que vous saisissez ici ; il n'est enregistré nulle part, et un fichier dont le mot de passe est oublié ne peut donc être ouvert par personne, ce programme compris.",
   "transfer.card.title": "Transférer cette configuration vers une autre installation",
   "transfer.drop-ever.text": "une configuration exportée",
