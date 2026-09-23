@@ -703,6 +703,19 @@ h3 {
     visibility 0s linear 0s;
 }
 
+/* The same box for something that did not go through.
+
+   It is the colour the line above a screen is drawn in for a refusal, so that
+   which of the two a message is is read off the colour alone: green is what
+   went through wherever it is written, and red is what did not. Only the three
+   colours change; where it sits, how long it stays and what it is made of are
+   what the box is, and none of those is about how the action went. */
+#toast.error {
+  color: var(--danger-strong);
+  background: var(--glass-sheen), var(--danger-bg);
+  border-color: var(--danger-border);
+}
+
 .card {
   margin: 0 0 1.25rem;
   padding: 1rem;

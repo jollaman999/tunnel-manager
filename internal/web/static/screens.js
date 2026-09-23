@@ -5142,6 +5142,12 @@ async function updateInstallPanel(update) {
     return;
   }
 
+  // Written here and not where started is set, so that what is left behind is
+  // left behind by an install the server took and by nothing else. A password
+  // that was refused never gets this far, and a mark it wrote would be a result
+  // waiting for the next load of a page where nothing was installed at all.
+  markUpdateStarted(update.tag);
+
   // drawRestarting is not reused here: it draws only over the Settings screen
   // (screens.js, its first line), and it counts down a wait the server named.
   // An install never names one, because what it is waiting on is a download and

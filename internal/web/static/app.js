@@ -126,6 +126,34 @@ const themeKey = "tm_theme";
 // could not be honoured on the one screen every operator starts at.
 const langKey = "tm_lang";
 
+// updateMarkKey is where an install that has started is written down, so that
+// the page loaded after it can say how it went. What is written under it is the
+// version that was running, the version the release names and when it was
+// written: the three are judged together, and a mark that is dropped is dropped
+// whole, so they are kept as one value rather than as three keys.
+//
+// It is a key of the local storage of the one browser and is never sent
+// anywhere. It belongs to the browser rather than to the account for the same
+// reason the reload does: it is this page that started the install and is
+// waiting on it, and nobody else's screen has anything to be told.
+const updateMarkKey = "tm_update";
+
+// updateMarkHoldSec is how old a mark may be and still be worth a message.
+//
+// The page that started the install waits updateWaitLimitSec seconds for a
+// different version to answer, three minutes as screens.js has it, and then
+// loads itself whatever happened. So a mark is normally read within three
+// minutes of being written, and what this has to leave room for is the rest of
+// it: the service is down over the restart, so the load that follows the wait
+// can fail and be asked for again by hand a few times before it answers. Ten
+// minutes is that wait three times over.
+//
+// What the limit is against is the other end of it: a tab closed on the install
+// and opened again the next morning. A message about an install nobody is
+// waiting on any more says nothing about the screen it arrives on, and the
+// version in the corner has been the answer for hours by then.
+const updateMarkHoldSec = 600;
+
 // languages is what can be picked, in the order a browser language is matched
 // against them and in the order they are offered.
 //
@@ -590,7 +618,13 @@ const toastBox = document.getElementById("toast");
 // The line above the screen is dropped as it goes up, because that is the line
 // setNotice would have overwritten: a refusal that is still up there is about
 // the attempt this one has just replaced.
-function setToast(text) {
+//
+// kind is what the message is about, the way setNotice takes it: "error" for
+// something that did not go through, and nothing at all for something that
+// did. The box is the same box for both, because what it is for - a message
+// where the operator is already looking rather than at the top of a screen they
+// have scrolled past - is the same whichever way the action went.
+function setToast(text, kind) {
   notice = null;
 
   if (toastTimer !== null) {
@@ -598,6 +632,7 @@ function setToast(text) {
   }
 
   toastBox.textContent = text;
+  toastBox.classList.toggle("error", kind === "error");
   toastBox.classList.add("shown");
 
   toastTimer = window.setTimeout(function () {
@@ -2420,6 +2455,7 @@ function showVersion() {
       loadedVersion = payload.version;
 
       paintVersion();
+      tellTheInstallResult();
     })
     .catch(function () {});
 }
@@ -2437,6 +2473,139 @@ function paintVersion() {
   // The version is written the way the tag and the release name it, in every
   // language: it is a name to match against a release, not a sentence.
   document.getElementById("versionTag").textContent = "v" + loadedVersion;
+}
+
+// markUpdateStarted writes down the install that has just started, for the page
+// that is loaded after it to read.
+//
+// tag is the release as the release names it, with the v in front. What is
+// written is the version without it, because that is the shape the version this
+// end is running is read in, and the two are held against each other as they
+// are rather than by a rule about how each is spelled.
+//
+// Nothing is written where this page never learned what it is running. The
+// version that was running is what the later one is held against, and a mark
+// that named no version could not tell an install that took from one that left
+// the same executable in place. A browser that will not keep the mark is not an
+// error to report either: what is lost is one message, and the version in the
+// corner says the same thing to anybody who looks at it.
+function markUpdateStarted(tag) {
+  if (loadedVersion === null) {
+    return;
+  }
+
+  try {
+    window.localStorage.setItem(updateMarkKey, JSON.stringify({
+      from: loadedVersion,
+      want: String(tag).replace(/^v/, ""),
+      at: Date.now()
+    }));
+  } catch (error) {
+    return;
+  }
+}
+
+// takeUpdateMark reads the mark and drops it in the same breath, whether what
+// it read was usable or not.
+//
+// It is taken rather than read because a mark stands for one install and one
+// message. Left in place it would be read again by the next load of the page,
+// and the result of an install that is long over would arrive on a screen that
+// had nothing to do with it.
+//
+// Anything that is not a mark this page wrote reads as no mark: storage that
+// throws on the access itself, a value that is not JSON, a shape missing a
+// field. None of those can be judged, and a message put up from a value nobody
+// can read would be a sentence about an install that may never have happened.
+function takeUpdateMark() {
+  let written = null;
+
+  try {
+    written = window.localStorage.getItem(updateMarkKey);
+    window.localStorage.removeItem(updateMarkKey);
+  } catch (error) {
+    return null;
+  }
+
+  if (written === null) {
+    return null;
+  }
+
+  let mark = null;
+
+  try {
+    mark = JSON.parse(written);
+  } catch (error) {
+    return null;
+  }
+
+  if (mark === null || typeof mark !== "object" ||
+    typeof mark.from !== "string" || mark.from === "" ||
+    typeof mark.want !== "string" || mark.want === "" ||
+    typeof mark.at !== "number" || !isFinite(mark.at)) {
+    return null;
+  }
+
+  return mark;
+}
+
+// tellTheInstallResult says how the install this page was loaded by went, once
+// there is both a version to judge and words to say it in.
+//
+// It is called from the two places paintVersion is called from and for the same
+// reason: the version comes from the server, the words come from a catalog, the
+// two do not arrive together, and whichever is second is what puts the message
+// up. The mark is taken by the first call that has both of them, so the second
+// finds nothing and nothing is said twice.
+//
+// What is waited on is texts and not textsLoaded(). The English catalog is in
+// hand a moment before the one the page is drawn in, since the second is what
+// falls back to the first, and a sentence put up in that moment would be one
+// line of English on a page that is in Korean. texts is set once the language
+// has its own words, which is the moment this has something to say them in.
+//
+// The version is named with the v in front, as the corner and the release
+// itself name it, so the message and the number at the foot of the screen read
+// as the same thing.
+function tellTheInstallResult() {
+  if (loadedVersion === null || texts === null) {
+    return;
+  }
+
+  const mark = takeUpdateMark();
+
+  if (mark === null) {
+    return;
+  }
+
+  const since = Date.now() - mark.at;
+
+  // A mark older than the wait it belongs to is about an install nobody is
+  // still watching, and one written later than now is from a clock that has
+  // been put back, which is no age at all. Either is dropped without a word: it
+  // has been taken, so it is not read again either.
+  if (since < 0 || since > updateMarkHoldSec * 1000) {
+    return;
+  }
+
+  if (loadedVersion === mark.want) {
+    setToast(t("update.installed.notice", { version: "v" + loadedVersion }));
+
+    return;
+  }
+
+  // What is running is neither what was asked for nor what was there before:
+  // something was put in place, and it is not the release this page started.
+  // Both are named, because which of the two is on the screen is the whole of
+  // what says what has to be done about it.
+  if (loadedVersion !== mark.from) {
+    setToast(t("update.installed-other.notice",
+      { wanted: "v" + mark.want, version: "v" + loadedVersion }), "error");
+
+    return;
+  }
+
+  setToast(t("update.install-failed.notice", { version: "v" + loadedVersion }), "error");
 }
 
 // storedTheme is what was picked on this browser, or null where nothing was.
@@ -2972,6 +3141,7 @@ async function applyLang(code) {
   labelThemeToggle();
   labelLanguagePicker(code);
   paintVersion();
+  tellTheInstallResult();
 }
 
 // fillLanguagePicker puts the thirteen names in the list. It runs before any
