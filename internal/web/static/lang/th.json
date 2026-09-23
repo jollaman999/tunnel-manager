@@ -694,6 +694,7 @@
   "status.addresses-confirmed.text": "ยืนยันจากที่นี่ได้ว่า {address} ตอบการเชื่อมต่อที่ tunnel-manager เปิดไป",
   "status.addresses-host-only.text": "จากที่นี่ยืนยันไม่ได้ ที่อยู่เหล่านี้อยู่บนตัว Host เอง ไม่มีอะไรจากนอกระบบนั้นไปถึง พอร์ตที่นั่นเปิดอยู่หรือไม่จึงไม่ใช่สิ่งที่โปรแกรมนี้วัดได้",
   "status.addresses-known.text": "สิ่งที่รู้เกี่ยวกับที่อยู่ของการฟอร์เวิร์ดนี้",
+  "status.addresses-listening.text": "Host ตอบว่า พอร์ตนี้กำลังฟังอยู่ที่ {addresses}",
   "status.all-connected.notice": "อุโมงค์ทุกเส้นที่ควรทำงานอยู่เชื่อมต่อแล้ว",
   "status.connected.label": "เชื่อมต่ออยู่",
   "status.denied-authorized-keys.text": "คีย์ที่ใช้เข้าสู่ระบบ Host นี้อาจมีข้อจำกัดของตัวเอง บรรทัดใน authorized_keys ที่ขึ้นต้นด้วย no-port-forwarding หรือ restrict จะปฏิเสธสิ่งนี้ไม่ว่าการตั้งค่าเซิร์ฟเวอร์จะเป็นอย่างไร",

@@ -694,6 +694,7 @@
   "status.addresses-confirmed.text": "从这里确认到的：{address} 响应了 tunnel-manager 发起的连接。",
   "status.addresses-host-only.text": "从这里无法确认。这些地址在 Host 自己身上，那个系统之外什么都到不了，因此端口在那边是否开着，不是本程序能测量的。",
   "status.addresses-known.text": "关于该转发地址已知的内容",
+  "status.addresses-listening.text": "Host 答复的内容：这个端口正在 {addresses} 上监听。",
   "status.all-connected.notice": "应运行的隧道都已连接。",
   "status.connected.label": "已连接",
   "status.denied-authorized-keys.text": "用于登录此 Host 的密钥本身可能带有限制。authorized_keys 中该行若以 no-port-forwarding 或 restrict 开头，无论服务器设置如何都会被拒绝。",

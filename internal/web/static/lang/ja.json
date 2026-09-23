@@ -694,6 +694,7 @@
   "status.addresses-confirmed.text": "ここから確認できたこと: {address} が tunnel-manager の開いた接続に応答しました。",
   "status.addresses-host-only.text": "ここからは確認できません。これらのアドレスは Host 自身のもので、そのシステムの外からは何も届かないため、そこでポートが開いているかどうかはこのプログラムには測れません。",
   "status.addresses-known.text": "この転送のアドレスについて分かっていること",
+  "status.addresses-listening.text": "Host が答えたこと: このポートは {addresses} で接続を待っています。",
   "status.all-connected.notice": "動作しているべきトンネルは、すべて接続されています。",
   "status.connected.label": "接続中",
   "status.denied-authorized-keys.text": "この Host にログインする鍵自体に制限が付いている可能性があります。authorized_keys のその行が no-port-forwarding や restrict で始まっていると、サーバー設定に関係なく拒否されます。",

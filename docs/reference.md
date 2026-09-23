@@ -1965,15 +1965,16 @@ refusal is not a closed port either: a server that bound both families on the
 first request refuses the second, and so does a server with no IPv6 at all, and
 the two are the same answer seen from here.
 
-Three fields on every tunnel row say what is known about it.
+Four fields on every tunnel row say what is known about it.
 
 | Field | What it holds |
 |-------|---------------|
 | `server_banner` | What the SSH server called itself on the handshake, for example `SSH-2.0-OpenSSH_10.5p1 Ubuntu-1ubuntu2`. It is what says which server is in front of you, and what to change on it differs by server |
 | `open_reach` | Which of the two requests the SSH server said yes to: `both`, `ipv4` where it took the IPv4 address and refused the IPv6 one, `ipv6` the other way round, and empty where nothing has been measured yet. A connection on which it refused both is a tunnel that failed rather than one that reaches half, and it is reported on `status` and `last_error` like every other failure |
 | `forward_reach` | Whether tunnel-manager reached the forwarded port by opening a TCP connection to the Host at that port: `reachable`, `unreachable`, or `unknown` where nothing has been measured and where nothing can be |
+| `listen_addresses` | The addresses the Host itself answered that the port is listening at, comma separated, for example `0.0.0.0,::`. It is asked over the same SSH connection once the forwards are open, and it is the only reading that survives a server ignoring the scope: a Host with `GatewayPorts yes` says no to the second request and still answers here with both families. **Empty means the question was not answered, never that nothing is listening.** An account with no shell, a Host with neither `ss` nor a `netstat` this program reads, and a connection on which nothing was asked yet all leave it empty |
 
-All three are taken once when the tunnel comes up and again on every reconnect,
+All four are taken once when the tunnel comes up and again on every reconnect,
 not
 on every status read: what decides them is the configuration of the SSH server,
 which does not change under a connection that stands.

@@ -694,6 +694,7 @@
   "status.addresses-confirmed.text": "ما تأكّد من هنا: أجاب {address} على اتصال فتحه tunnel-manager.",
   "status.addresses-host-only.text": "لا يمكن التأكّد من ذلك من هنا. فهذه العناوين على المضيف نفسه ولا يصل إليها شيء من خارج ذلك النظام، وكون المنافذ قائمة هناك ليس مما يستطيع هذا البرنامج قياسه.",
   "status.addresses-known.text": "ما هو معروف عن عناوين هذا التمرير",
+  "status.addresses-listening.text": "ما أجاب به المضيف: هذا المنفذ يستمع على {addresses}.",
   "status.all-connected.notice": "كل الأنفاق التي ينبغي أن تعمل متصلة.",
   "status.connected.label": "المتصل",
   "status.denied-authorized-keys.text": "قد يحمل المفتاح الذي يُسجَّل به الدخول إلى هذا المضيف قيداً خاصاً به. سطر في authorized_keys يبدأ بـ no-port-forwarding أو restrict يرفض هذا مهما كانت إعدادات الخادم.",

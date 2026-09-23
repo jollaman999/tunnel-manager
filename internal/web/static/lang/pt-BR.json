@@ -694,6 +694,7 @@
   "status.addresses-confirmed.text": "Confirmado daqui: {address} respondeu a uma conexão aberta pelo tunnel-manager.",
   "status.addresses-host-only.text": "Daqui não dá para confirmar. Esses endereços ficam no próprio Host, nada de fora daquele sistema chega até eles, e se as portas estão abertas lá não é algo que este programa possa medir.",
   "status.addresses-known.text": "O que se sabe sobre os endereços deste encaminhamento",
+  "status.addresses-listening.text": "Respondido pelo Host: esta porta está escutando em {addresses}.",
   "status.all-connected.notice": "Todo túnel que deveria estar em execução está conectado.",
   "status.connected.label": "Conectados",
   "status.denied-authorized-keys.text": "A chave com que se entra neste Host pode ter uma restrição própria. Uma linha em authorized_keys que comece com no-port-forwarding ou restrict recusa isto independentemente das configurações do servidor.",

@@ -675,7 +675,8 @@ function forwardAdvice(tunnel) {
 
 // forwardAddresses is what is said under a connected tunnel about the addresses
 // of its forwarded port: the ones that were asked for, the one that answered a
-// connection opened from here, and nothing else.
+// connection opened from here, the ones the Host itself named, and nothing
+// else.
 //
 // It is drawn as a note and not as a warning. None of it is something to go and
 // fix: a tunnel whose ports were asked for on the Host itself has no address
@@ -688,8 +689,14 @@ function forwardAdvice(tunnel) {
 // binding: a server set to bind every interface takes both families on the
 // first request and says no to the second, and it does that for a request that
 // named the loopback address too. So the line says what was asked, what was
-// answered and what was confirmed by a connection, and never which addresses
-// are open.
+// answered and what was confirmed by a connection, and it never calls an answer
+// an open address.
+//
+// The one thing here that does say which addresses are open is the last line,
+// and it is there because the Host was asked and answered. It is drawn only
+// where there is an answer, so the rest of the box is what is said about every
+// forward and that line is what is said about the ones that could be asked
+// about.
 //
 // Nothing is drawn where the row carries no reading, which is a tunnel nothing
 // has been asked of yet and a row stored before there was a column. A line
@@ -727,7 +734,44 @@ function forwardAddresses(tunnel) {
 
   box.appendChild(element("p", confirmedSentence(tunnel)));
 
+  const listening = listeningSentence(tunnel.listen_addresses);
+  if (listening !== null) {
+    box.appendChild(element("p", listening));
+  }
+
   return box;
+}
+
+// listeningSentence is what the Host said is listening on the forwarded port,
+// and null where it said nothing.
+//
+// It comes last because it is the strongest thing in the box. Everything above
+// it is what was asked for and what was answered to the asking, and this is the
+// machine the port is on being asked what it has open.
+//
+// Nothing is drawn where the row carries no addresses, and no reason is given
+// for that. An account with no shell refuses the session, a system with neither
+// ss nor netstat prints nothing that can be read, and a row stored before there
+// was a column carries nothing either; none of those is told apart from here,
+// and a sentence naming one of them would be a guess. What stays on screen then
+// is the sentence above about what nothing here can confirm.
+function listeningSentence(listening) {
+  if (typeof listening !== "string") {
+    return null;
+  }
+
+  // A field that is empty is dropped rather than drawn: a value that is one
+  // separator on its own splits into two empty pieces, and neither is an
+  // address.
+  const addresses = listening.split(",").filter(function (address) {
+    return address !== "";
+  });
+
+  if (addresses.length === 0) {
+    return null;
+  }
+
+  return t("status.addresses-listening.text", { addresses: addresses.join(", ") });
 }
 
 // askedSentence names the addresses the forwarded port was asked to be opened

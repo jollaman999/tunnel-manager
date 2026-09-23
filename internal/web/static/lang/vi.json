@@ -694,6 +694,7 @@
   "status.addresses-confirmed.text": "Xác nhận được từ đây: {address} đã phản hồi kết nối do tunnel-manager mở.",
   "status.addresses-host-only.text": "Từ đây không thể xác nhận. Các địa chỉ này nằm trên chính Host, ngoài hệ thống đó không gì tới được, nên cổng ở đó có mở hay không là điều chương trình này không đo được.",
   "status.addresses-known.text": "Những gì đã biết về địa chỉ của chuyển tiếp này",
+  "status.addresses-listening.text": "Host trả lời: cổng này đang lắng nghe trên {addresses}.",
   "status.all-connected.notice": "Mọi tunnel đáng lẽ phải chạy đều đã kết nối.",
   "status.connected.label": "Đã kết nối",
   "status.denied-authorized-keys.text": "Khóa dùng để đăng nhập Host này có thể mang hạn chế riêng. Một dòng trong authorized_keys bắt đầu bằng no-port-forwarding hoặc restrict sẽ từ chối việc này bất kể cấu hình máy chủ.",

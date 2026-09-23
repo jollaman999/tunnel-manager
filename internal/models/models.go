@@ -216,6 +216,30 @@ type Tunnel struct {
 	// first and one that has no IPv6 at all answer identically, so neither may
 	// be reported as the cause.
 	OpenReach string `json:"open_reach"`
+	// ListenAddresses are the addresses the Host itself said are listening on
+	// the forwarded port, comma separated, each one an address that parsed as
+	// an IP on the way in so that nothing else the far side printed can land
+	// here.
+	//
+	// It is the one thing on this row that says which addresses are open. What
+	// was asked for is on Local, and what the SSH server answered to each
+	// request is on OpenReach, and neither is a binding: a server told to bind
+	// every interface opens both families on the first request and refuses the
+	// second, and it does that for a request that named a loopback address
+	// too. The Host is the only place that knows, so it is asked.
+	//
+	// The empty value is that it was not asked or could not answer, and never
+	// that nothing is listening. An account with no shell refuses the session
+	// channel, a Host with neither ss nor netstat prints nothing this can
+	// read, and both of those look exactly like a port that is closed from
+	// here. Being unable to ask is the configuration this program recommends
+	// rather than a fault, so a screen draws nothing at all from an empty
+	// value.
+	//
+	// It carries no "not null" for the reason ServerBanner does not: the
+	// column is added to installations whose rows were written before it
+	// existed, and AutoMigrate fills those with NULL.
+	ListenAddresses string `json:"listen_addresses"`
 }
 
 // CreateHostRequest registers a Host. The password is no longer required on its

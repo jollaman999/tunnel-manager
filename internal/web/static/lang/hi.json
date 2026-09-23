@@ -694,6 +694,7 @@
   "status.addresses-confirmed.text": "यहाँ से पुष्टि हुई: {address} ने tunnel-manager के खोले कनेक्शन का जवाब दिया।",
   "status.addresses-host-only.text": "यहाँ से इसकी पुष्टि हो ही नहीं सकती। ये पते ख़ुद Host पर हैं, उस सिस्टम के बाहर से उन तक कुछ नहीं पहुँचता, इसलिए वहाँ पोर्ट खुले हैं या नहीं, यह यह प्रोग्राम माप नहीं सकता।",
   "status.addresses-known.text": "इस फ़ॉरवर्ड के पतों के बारे में जो पता है",
+  "status.addresses-listening.text": "Host ने जो बताया: यह पोर्ट {addresses} पर सुन रहा है।",
   "status.all-connected.notice": "जितने टनल चलने चाहिए, वे सब जुड़े हुए हैं।",
   "status.connected.label": "जुड़े हुए",
   "status.denied-authorized-keys.text": "इस Host में लॉगिन करने वाली कुंजी पर अपना प्रतिबंध हो सकता है। authorized_keys की वह पंक्ति यदि no-port-forwarding या restrict से शुरू होती है तो सर्वर सेटिंग चाहे जो हो, यह अस्वीकार हो जाता है।",

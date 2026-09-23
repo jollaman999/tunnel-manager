@@ -700,6 +700,9 @@ func (t *SSHTunnel) establishConnection(m *Manager, tunnel *models.Tunnel) error
 		// than staying at what it was, or a tunnel that is now failing would
 		// go on reporting the reach of a connection that is gone.
 		tunnel.OpenReach = ""
+		// What the Host said was listening was said about a port that is not
+		// open now, so it goes with it.
+		tunnel.ListenAddresses = ""
 		// The banner is written on the way out as well as on the way in. What
 		// the screen says about a refusal differs by which server refused, and
 		// the handshake is behind us by the time we are here, so the one thing
@@ -734,6 +737,10 @@ func (t *SSHTunnel) establishConnection(m *Manager, tunnel *models.Tunnel) error
 	// Which halves of the pair opened is a fact about this connection for the
 	// same reason, and it was settled a moment ago for this one.
 	tunnel.OpenReach = opened.reach
+	// And so is what the Host has listening on the port, which this connection
+	// has not asked about yet. It goes back to the empty value, which reads as
+	// not known, rather than staying at what the last connection was told.
+	tunnel.ListenAddresses = ""
 	t.saveTunnelStatus(m, tunnel)
 	t.tunnelMu.Unlock()
 
@@ -752,6 +759,12 @@ func (t *SSHTunnel) establishConnection(m *Manager, tunnel *models.Tunnel) error
 		address: forwardProbeAddress(t.Server, boundPort),
 		silence: forwardProbeSilence(t.Local, t.Server, opened.reach),
 	})
+
+	// Asked here and not on every pass for the same reason, and on a goroutine
+	// of its own rather than after the probe so that neither waits out the
+	// bound of the other. What the two write is a field each, under the lock
+	// the row is written under.
+	go t.recordListenAddresses(m, tunnel, client, boundPort)
 
 	return t.acceptForwards(m, tunnel, client, opened)
 }

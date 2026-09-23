@@ -694,6 +694,7 @@
   "status.addresses-confirmed.text": "Подтверждено отсюда: {address} ответил на соединение, открытое tunnel-manager.",
   "status.addresses-host-only.text": "Отсюда это подтвердить нельзя. Эти адреса находятся на самом Host, снаружи той системы до них ничего не доходит, и открыты ли там порты, эта программа измерить не может.",
   "status.addresses-known.text": "Что известно об адресах этой переадресации",
+  "status.addresses-listening.text": "Ответ от Host: этот порт слушает на {addresses}.",
   "status.all-connected.notice": "Все туннели, которые должны работать, подключены.",
   "status.connected.label": "Подключено",
   "status.denied-authorized-keys.text": "У ключа, которым выполняется вход на этот Host, может быть собственное ограничение. Строка в authorized_keys, начинающаяся с no-port-forwarding или restrict, отклоняет это независимо от настроек сервера.",

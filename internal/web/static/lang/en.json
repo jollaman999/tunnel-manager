@@ -694,6 +694,7 @@
   "status.addresses-confirmed.text": "Confirmed from here: {address} answered a connection opened by tunnel-manager.",
   "status.addresses-host-only.text": "Nothing here can confirm it. These addresses are on the Host itself, which nothing outside that system reaches, so whether the ports are up there is not something this program can measure.",
   "status.addresses-known.text": "What is known about the addresses of this forward",
+  "status.addresses-listening.text": "Answered by the Host: this port is listening at {addresses}.",
   "status.all-connected.notice": "Every tunnel that should be running is connected.",
   "status.connected.label": "Connected",
   "status.denied-authorized-keys.text": "The key this Host is logged in with may carry a restriction of its own. A line in authorized_keys that starts with no-port-forwarding or restrict refuses this whatever the server settings say.",
