@@ -302,9 +302,24 @@ let installationLang = null;
 // them.
 let loadedVersion = null;
 
-// notice is the one line above the screen. It outlives a redraw of the same
-// screen, which is how the reason a call was refused stays readable while the
-// list behind it is fetched again, and it is dropped on a screen change.
+// notice is the one line above the screen: what says it, and what kind of
+// message it is. It outlives a redraw of the same screen, which is how the
+// reason a call was refused stays readable while the list behind it is fetched
+// again, and it is dropped on a screen change.
+//
+// What is held is a function that says the sentence and not the sentence
+// itself. A message has to come back in the new words when the language
+// changes, and a string that has already been built cannot: the catalog it was
+// built from is not in it. A function builds it again out of whatever catalog
+// is in hand at the moment of the draw.
+//
+// A function rather than a key and a table of values, because a good many of
+// these messages are not one key. Some pick their key from a count, some read
+// one way or the other way round a state, and some are put together by a
+// helper out of several keys at once. A key and its values carries only the
+// simplest of them, and the rest would need a second shape beside it; a
+// function carries all of them in one, and at every caller it is the sentence
+// that was already being written with function () { return ... } round it.
 let notice = null;
 
 // toastTimer is what takes the toast down again. It is held out here so that a
@@ -312,6 +327,11 @@ let notice = null;
 // timer: left running it would come due partway through the second message and
 // take it away early.
 let toastTimer = null;
+
+// toastSay is what the message that is up says, kept for as long as it is up
+// so that a language change while it is on the screen can write it again. It
+// is null whenever there is nothing up.
+let toastSay = null;
 
 // refreshTimer is the timer of the status screen. It is held out here because
 // what has to stop it is leaving the screen, and leaving is done from here.
@@ -413,15 +433,21 @@ function navigate(name, note, replace) {
 }
 
 // toNotice normalizes what a caller handed in as the line above the screen. A
-// bare string is the common case and means something went wrong, so that is
-// what it turns into; an answer that is worth reporting without being a failure
-// says so by handing in the kind.
+// bare function that says the sentence is the common case and means something
+// went wrong, so that is what it turns into; an answer that is worth reporting
+// without being a failure says so by handing in the kind beside the function.
+//
+// It is a function either way, and never the sentence itself, for the reason
+// notice holds one: a screen moved to with a line on it is a screen the
+// language can be changed on, and the line has to come back in the new words.
 function toNotice(note) {
   if (note === undefined || note === null) {
     return null;
   }
 
-  return typeof note === "string" ? { text: note, kind: "error" } : note;
+  return typeof note === "function"
+    ? { say: note, kind: "error" }
+    : { say: note.say, kind: note.kind };
 }
 
 // showScreen draws a screen by name. Every path into a screen goes through it,
@@ -431,7 +457,11 @@ function showScreen(name) {
 
   const screen = screens[name];
   if (screen === undefined) {
-    navigate("status", t("app.no-screen.error", { path: window.location.pathname }), true);
+    const asked = window.location.pathname;
+
+    navigate("status", function () {
+      return t("app.no-screen.error", { path: asked });
+    }, true);
 
     return;
   }
@@ -594,8 +624,12 @@ function refreshWhenStill(draw) {
 
 // setNotice puts a line above the screen. It is shown by the next draw, so the
 // caller draws after setting it.
-function setNotice(text, kind) {
-  notice = { text: text, kind: kind === undefined ? "error" : kind };
+//
+// say is called by the draw and not here, which is what puts the line in the
+// language the page is in when it is read rather than the one it was in when
+// the action behind it was taken.
+function setNotice(say, kind) {
+  notice = { say: say, kind: kind === undefined ? "error" : kind };
 }
 
 // toastBox is the box a message that something went through is written into.
@@ -615,31 +649,69 @@ const toastBox = document.getElementById("toast");
 // is outside #app, so nothing has to be redrawn for it to be seen, and the
 // draw that follows the action is usually a fetch away.
 //
-// The line above the screen is dropped as it goes up, because that is the line
-// setNotice would have overwritten: a refusal that is still up there is about
-// the attempt this one has just replaced.
-//
-// kind is what the message is about, the way setNotice takes it: "error" for
-// something that did not go through, and nothing at all for something that
-// did. The box is the same box for both, because what it is for - a message
-// where the operator is already looking rather than at the top of a screen they
-// have scrolled past - is the same whichever way the action went.
-function setToast(text, kind) {
+// The line above the screen is dropped as it goes up. Something went through,
+// so whatever the line was still saying is about an attempt this one has
+// replaced, and an action that went through is not worth a line that stays:
+// there is nothing left to read once the message has been read.
+function setToast(say) {
   notice = null;
 
+  showToast(say, "info");
+}
+
+// setFailure reports something that did not go through, both ways at once.
+//
+// The toast is where the operator is looking: the button that was pressed is
+// often well down a long screen, and a page that is scrolled past the top shows
+// nothing of a line written there. The line is what is still there afterwards:
+// a refusal names a reason, the reason is sometimes several sentences long, and
+// a message that takes itself away after three seconds is no place to put
+// something that has to be read twice and acted on.
+//
+// Both say the same thing, out of the same function, so nothing has to be kept
+// in step between them.
+function setFailure(say) {
+  setNotice(say, "error");
+
+  showToast(say, "error");
+}
+
+// showToast puts a message in the box and starts the wait that takes it down
+// again. It leaves the line above the screen alone: which of the two messages
+// wants a line beside the toast is the caller's to say.
+function showToast(say, kind) {
   if (toastTimer !== null) {
     window.clearTimeout(toastTimer);
   }
 
-  toastBox.textContent = text;
+  toastSay = say;
+
+  toastBox.textContent = say();
   toastBox.classList.toggle("error", kind === "error");
   toastBox.classList.add("shown");
 
   toastTimer = window.setTimeout(function () {
     toastTimer = null;
+    toastSay = null;
 
     toastBox.classList.remove("shown");
   }, toastHoldMs);
+}
+
+// paintToast writes the message that is up again, in the language the page is
+// now in. The box is outside #app and is not touched by a draw, so a language
+// change would otherwise leave the seconds it has left to run in the words it
+// went up in.
+//
+// The wait is not restarted. The message is the same message and it has been on
+// the screen for as long as it has been; what changed is the language it is
+// read in, not the moment it arrived.
+function paintToast() {
+  if (toastSay === null) {
+    return;
+  }
+
+  toastBox.textContent = toastSay();
 }
 
 // run carries out something that may fail and puts what went wrong on the
@@ -653,9 +725,29 @@ function run(action) {
         return;
       }
 
-      setNotice(error.message);
+      setFailure(sayOf(error));
       redraw();
     });
+}
+
+// sayOf is what an error reads as, as something that can be said again once
+// the language changes.
+//
+// A refused call carries its own: the answer said why, and what it said can be
+// built from the answer a second time. Anything else is an error raised by the
+// browser or by a screen and all there is of it is the message it was made
+// with, which is handed back as a function that says that one string whatever
+// is asked of it.
+function sayOf(error) {
+  if (typeof error.say === "function") {
+    return error.say;
+  }
+
+  const message = error.message;
+
+  return function () {
+    return message;
+  };
 }
 
 // render replaces everything under #app and is the only function that writes
@@ -736,7 +828,7 @@ function paint(title, nodes) {
   if (notice !== null) {
     const line = document.createElement("p");
     line.className = "notice " + notice.kind;
-    line.textContent = notice.text;
+    line.textContent = notice.say();
     app.appendChild(line);
   }
 
@@ -903,7 +995,11 @@ async function apiCall(method, path, body) {
   try {
     response = await fetch(path, options);
   } catch (error) {
-    throw new ApiError(t("api.unreachable.error", { reason: error.message }));
+    const reason = error.message;
+
+    throw apiFailure(function () {
+      return t("api.unreachable.error", { reason: reason });
+    });
   }
 
   const payload = await readPayload(response);
@@ -915,7 +1011,9 @@ async function apiCall(method, path, body) {
     // the one the installation names. The notice is picked after the switch
     // so that it comes in the same language as the screen it sits on.
     await forgetInstallationLang();
-    navigate("login", t("api.session-ended.error"));
+    navigate("login", function () {
+      return t("api.session-ended.error");
+    });
 
     throw new Redirected();
   }
@@ -923,7 +1021,9 @@ async function apiCall(method, path, body) {
   // The refusal that names the setup is the one that is a screen change. Other
   // 403s, if any are ever added, stay errors and are shown as they came.
   if (response.status === 403 && path !== apiSetupPath && saysSetupFirst(payload, response)) {
-    navigate("setup", t("api.setup-first.error"), false);
+    navigate("setup", function () {
+      return t("api.setup-first.error");
+    }, false);
 
     throw new Redirected();
   }
@@ -932,7 +1032,7 @@ async function apiCall(method, path, body) {
     // The status rides along with the message because one screen acts on a
     // particular code: a setup that comes back as a conflict has already been
     // done, and that sends the operator to the login rather than showing a line.
-    const failure = new ApiError(errorOf(payload, response));
+    const failure = apiFailure(errorSay(payload, response));
     failure.status = response.status;
 
     throw failure;
@@ -1024,21 +1124,56 @@ async function readPayload(response) {
   }
 }
 
-// errorOf is what to show for a refused call. The API answers with an "error"
-// field, but the 404 of an unrouted path comes from the framework and carries
-// "message" instead, so both are read before falling back to the status code.
+// apiFailure is the error a refused call is thrown as. It carries both the
+// sentence, which is what anything reading a caught error reads, and the
+// function that said it, which is what puts that sentence up again in another
+// language.
+function apiFailure(say) {
+  const failure = new ApiError(say());
+
+  failure.say = say;
+
+  return failure;
+}
+
+// errorOf is what to show for a refused call, right now. It is errorSay said
+// once, and it is what the places that read a refusal as a string use.
+function errorOf(payload, response) {
+  return errorSay(payload, response)();
+}
+
+// errorSay is that sentence as something that can be said again.
 //
 // The sentence this UI knows how to say itself comes first. What the server
 // sends is English whatever language the page is in, so a refusal that names
-// itself is said here instead, in the words of the page.
-function errorOf(payload, response) {
+// itself is said here instead, in the words of the page - and said again, in
+// the new words, every time the language changes under it.
+//
+// The other way round is not something a function can fix. A refusal this
+// screen has no sentence for is the English the answer carried, and there is
+// nothing here to build it from a second time: it stays the English it arrived
+// as whatever the page is switched to, which is the whole of what there is to
+// show. Same for an answer that names no refusal at all.
+function errorSay(payload, response) {
+  if (payload !== null && refusalText(payload) !== null) {
+    return function () {
+      const said = refusalText(payload);
+
+      return said === null ? plainError(payload, response) : said;
+    };
+  }
+
+  return function () {
+    return plainError(payload, response);
+  };
+}
+
+// plainError is what a refused call reads as where this UI has no sentence of
+// its own for it. The API answers with an "error" field, but the 404 of an
+// unrouted path comes from the framework and carries "message" instead, so
+// both are read before falling back to the status code.
+function plainError(payload, response) {
   if (payload !== null) {
-    const said = refusalText(payload);
-
-    if (said !== null) {
-      return said;
-    }
-
     if (typeof payload.error === "string" && payload.error !== "") {
       return payload.error;
     }
@@ -2588,8 +2723,15 @@ function tellTheInstallResult() {
     return;
   }
 
+  // The number is taken out of loadedVersion here and not read inside the
+  // sentence, so that what the message names stays the release this page was
+  // loaded by however often it is said again.
+  const running = "v" + loadedVersion;
+
   if (loadedVersion === mark.want) {
-    setToast(t("update.installed.notice", { version: "v" + loadedVersion }));
+    setToast(function () {
+      return t("update.installed.notice", { version: running });
+    });
 
     return;
   }
@@ -2599,13 +2741,18 @@ function tellTheInstallResult() {
   // Both are named, because which of the two is on the screen is the whole of
   // what says what has to be done about it.
   if (loadedVersion !== mark.from) {
-    setToast(t("update.installed-other.notice",
-      { wanted: "v" + mark.want, version: "v" + loadedVersion }), "error");
+    const wanted = "v" + mark.want;
+
+    setFailure(function () {
+      return t("update.installed-other.notice", { wanted: wanted, version: running });
+    });
 
     return;
   }
 
-  setToast(t("update.install-failed.notice", { version: "v" + loadedVersion }), "error");
+  setFailure(function () {
+    return t("update.install-failed.notice", { version: running });
+  });
 }
 
 // storedTheme is what was picked on this browser, or null where nothing was.
@@ -3141,6 +3288,7 @@ async function applyLang(code) {
   labelThemeToggle();
   labelLanguagePicker(code);
   paintVersion();
+  paintToast();
   tellTheInstallResult();
 }
 

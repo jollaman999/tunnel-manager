@@ -311,7 +311,12 @@ async function logOut() {
   await apiCall("POST", "/api/logout");
   await forgetInstallationLang();
 
-  navigate("login", { text: t("login.signed-out.notice"), kind: "info" });
+  navigate("login", {
+    say: function () {
+      return t("login.signed-out.notice");
+    },
+    kind: "info"
+  });
 }
 
 // drawLogin is the screen a client without a session lands on.
@@ -375,7 +380,9 @@ async function submitLogin(values) {
   // is in that state is refused everywhere but at the setup.
   if (data !== null && data.setup_required) {
     navigate("setup", {
-      text: t("setup.needed.notice"),
+      say: function () {
+        return t("setup.needed.notice");
+      },
       kind: "info"
     });
 
@@ -450,7 +457,7 @@ async function submitSetup(values) {
     // to do on this screen any more, and the credentials that now open the
     // account are the ones they chose.
     if (error instanceof ApiError && error.status === 409) {
-      navigate("login", { text: error.message, kind: "info" });
+      navigate("login", { say: sayOf(error), kind: "info" });
 
       return;
     }
@@ -458,7 +465,12 @@ async function submitSetup(values) {
     throw error;
   }
 
-  navigate("status", { text: t("setup.done.notice"), kind: "info" });
+  navigate("status", {
+    say: function () {
+      return t("setup.done.notice");
+    },
+    kind: "info"
+  });
 }
 
 // enterStatus draws the screen and starts the refresh. The period is the one
@@ -1661,8 +1673,10 @@ async function approvePickedHostKeys(chosen, picked, refusals, button, close, pr
     const approved = results.length - Object.keys(refusals).length;
 
     if (Object.keys(refusals).length === 0) {
-      setNotice(t(plural(approved, "status.host-keys-approved-one.notice",
-        "status.host-keys-approved-many.notice"), { count: approved }), "info");
+      setToast(function () {
+        return t(plural(approved, "status.host-keys-approved-one.notice",
+          "status.host-keys-approved-many.notice"), { count: approved });
+      });
 
       close("approved");
 
@@ -2035,7 +2049,9 @@ async function approveHostKey(host, waiting, password, button, close, problem) {
   try {
     await apiCall("POST", "/api/host/" + host.id + "/host-key", body);
 
-    setNotice(t("status.host-key-approved.notice", { id: host.id, fingerprint: waiting }), "info");
+    setToast(function () {
+      return t("status.host-key-approved.notice", { id: host.id, fingerprint: waiting });
+    });
 
     close("approved");
   } catch (error) {
@@ -2558,20 +2574,26 @@ async function flipPickedHosts(hosts, on) {
   if (refusals.length > 0) {
     pickedFlipRefusals = refusals;
 
-    setNotice(on
-      ? t("hosts.enabled-picked-some.notice",
-        { flipped: flipped, already: already, refused: refusals.length })
-      : t("hosts.disabled-picked-some.notice",
-        { flipped: flipped, already: already, refused: refusals.length }), "error");
+    setFailure(function () {
+      return on
+        ? t("hosts.enabled-picked-some.notice",
+          { flipped: flipped, already: already, refused: refusals.length })
+        : t("hosts.disabled-picked-some.notice",
+          { flipped: flipped, already: already, refused: refusals.length });
+    });
   } else if (already > 0) {
-    setNotice(on
-      ? t("hosts.enabled-picked-same.notice", { flipped: flipped, already: already })
-      : t("hosts.disabled-picked-same.notice", { flipped: flipped, already: already }), "info");
+    setToast(function () {
+      return on
+        ? t("hosts.enabled-picked-same.notice", { flipped: flipped, already: already })
+        : t("hosts.disabled-picked-same.notice", { flipped: flipped, already: already });
+    });
   } else {
-    setNotice(t(on
-      ? plural(flipped, "hosts.enabled-picked-one.notice", "hosts.enabled-picked-many.notice")
-      : plural(flipped, "hosts.disabled-picked-one.notice", "hosts.disabled-picked-many.notice"),
-    { count: flipped }), "info");
+    setToast(function () {
+      return t(on
+        ? plural(flipped, "hosts.enabled-picked-one.notice", "hosts.enabled-picked-many.notice")
+        : plural(flipped, "hosts.disabled-picked-one.notice", "hosts.disabled-picked-many.notice"),
+      { count: flipped });
+    });
   }
 
   return drawHosts();
@@ -2833,7 +2855,9 @@ async function sendPickedDeletes(spec, chosen, button, close, problem, keep) {
   }
 
   if (failures.length === 0) {
-    setNotice(spec.said(deleted), "info");
+    setToast(function () {
+      return spec.said(deleted);
+    });
 
     close("deleted");
 
@@ -3128,7 +3152,9 @@ async function createHost(values) {
 
   await apiCall("POST", "/api/host", body);
 
-  setToast(t("hosts.added.notice", { ip: body.ip }));
+  setToast(function () {
+    return t("hosts.added.notice", { ip: body.ip });
+  });
 
   return drawHosts();
 }
@@ -3166,7 +3192,9 @@ async function updateHost(host, values) {
   await apiCall("PUT", "/api/host/" + host.id, body);
 
   editingHostID = null;
-  setToast(t("hosts.updated.notice", { id: host.id }));
+  setToast(function () {
+    return t("hosts.updated.notice", { id: host.id });
+  });
 
   return drawHosts();
 }
@@ -3174,8 +3202,11 @@ async function updateHost(host, values) {
 async function toggleHost(host) {
   await apiCall("PUT", "/api/host/" + host.id, { enabled: !host.enabled });
 
-  setNotice(t(host.enabled ? "hosts.now-disabled.notice" : "hosts.now-enabled.notice",
-    { id: host.id }), "info");
+  const was = host.enabled;
+
+  setToast(function () {
+    return t(was ? "hosts.now-disabled.notice" : "hosts.now-enabled.notice", { id: host.id });
+  });
 
   return drawHosts();
 }
@@ -3193,7 +3224,9 @@ async function deleteHost(host) {
     editingHostID = null;
   }
 
-  setNotice(t("hosts.deleted.notice", { id: host.id }), "info");
+  setToast(function () {
+    return t("hosts.deleted.notice", { id: host.id });
+  });
 
   return drawHosts();
 }
@@ -3615,7 +3648,9 @@ async function saveHostServicePorts(host, picks, button, close, problem) {
   }
 
   if (changes.length === 0 && remove.length === 0) {
-    setNotice(t("hosts.assign-unchanged.notice", { id: host.id }), "info");
+    setToast(function () {
+      return t("hosts.assign-unchanged.notice", { id: host.id });
+    });
 
     close("unchanged");
 
@@ -3653,11 +3688,13 @@ async function saveHostServicePorts(host, picks, button, close, problem) {
       rescoped += countedRows(answer, "rescoped");
     }
 
-    setNotice(rescoped > 0
-      ? t("hosts.assign-scoped.notice",
-        { id: host.id, added: added, removed: removed, rescoped: rescoped })
-      : t("hosts.assign-saved.notice",
-        { id: host.id, added: added, removed: removed }), "info");
+    setToast(function () {
+      return rescoped > 0
+        ? t("hosts.assign-scoped.notice",
+          { id: host.id, added: added, removed: removed, rescoped: rescoped })
+        : t("hosts.assign-saved.notice",
+          { id: host.id, added: added, removed: removed });
+    });
 
     close("saved");
   } catch (error) {
@@ -4114,8 +4151,10 @@ async function sendPickedAssignments(ports, picks, scope, button, close, problem
   }
 
   if (failures.length === 0) {
-    setNotice(t("service-ports.assigned-picked.notice",
-      { added: written, hosts: reached, already: reached * add.length - written }), "info");
+    setToast(function () {
+      return t("service-ports.assigned-picked.notice",
+        { added: written, hosts: reached, already: reached * add.length - written });
+    });
 
     close("assigned");
 
@@ -4344,8 +4383,10 @@ async function createServicePort(values) {
 
   await apiCall("POST", "/api/service-port", body);
 
-  setToast(t("service-ports.added.notice",
-    { ip: body.service_ip, port: body.service_port }));
+  setToast(function () {
+    return t("service-ports.added.notice",
+      { ip: body.service_ip, port: body.service_port });
+  });
 
   return drawServicePorts();
 }
@@ -4354,7 +4395,9 @@ async function updateServicePort(port, values) {
   await apiCall("PUT", "/api/service-port/" + port.id, servicePortBody(values));
 
   editingServicePortID = null;
-  setToast(t("service-ports.updated.notice", { id: port.id }));
+  setToast(function () {
+    return t("service-ports.updated.notice", { id: port.id });
+  });
 
   return drawServicePorts();
 }
@@ -4372,7 +4415,9 @@ async function deleteServicePort(port) {
     editingServicePortID = null;
   }
 
-  setNotice(t("service-ports.deleted.notice", { id: port.id }), "info");
+  setToast(function () {
+    return t("service-ports.deleted.notice", { id: port.id });
+  });
 
   return drawServicePorts();
 }
@@ -4764,10 +4809,12 @@ async function logClearPanel() {
     return;
   }
 
-  // The line above the screen says it happened, because the screen it is drawn
-  // over is a log with nothing in it, which is the same thing the screen shows
-  // when the level filter matches none of the lines.
-  setNotice(t("logs.cleared.notice"), "info");
+  // The message says it happened, because the screen it is drawn over is a log
+  // with nothing in it, which is the same thing the screen shows when the level
+  // filter matches none of the lines.
+  setToast(function () {
+    return t("logs.cleared.notice");
+  });
 
   return drawLogs();
 }
@@ -4997,7 +5044,9 @@ async function saveUpdateSettings(set, values) {
 
   await apiCall("PUT", "/api/settings", body);
 
-  setNotice(t("update.settings-saved.notice"), "info");
+  setToast(function () {
+    return t("update.settings-saved.notice");
+  });
 
   return drawUpdate();
 }
@@ -5082,7 +5131,9 @@ async function submitUpdateCheck(button) {
     throw error;
   }
 
-  setNotice(t("update.checked.notice"), "info");
+  setToast(function () {
+    return t("update.checked.notice");
+  });
 
   return drawUpdate();
 }
@@ -5574,11 +5625,17 @@ async function saveSettings(values) {
     : data.changes;
 
   if (changes.length === 0) {
-    setToast(t("settings.saved-nothing.notice"));
+    setToast(function () {
+      return t("settings.saved-nothing.notice");
+    });
   } else if (data.restart_required) {
-    setToast(t("settings.saved-next-start.notice"));
+    setToast(function () {
+      return t("settings.saved-next-start.notice");
+    });
   } else {
-    setToast(t("settings.saved.notice"));
+    setToast(function () {
+      return t("settings.saved.notice");
+    });
   }
 
   // A save that changed the language of the installation changes what this
@@ -5799,7 +5856,9 @@ async function saveHTTPS(enabled) {
   // written over by this press.
   await apiCall("PUT", "/api/settings", { api_https_enabled: enabled });
 
-  setNotice(t("certificate.https-saved.notice"), "info");
+  setToast(function () {
+    return t("certificate.https-saved.notice");
+  });
 
   return drawSettings();
 }
@@ -5880,7 +5939,9 @@ async function renewCertificate() {
   certificateReplaceResult = await apiCall("POST", "/api/certificate/renew");
   certificateProblem = "";
 
-  setNotice(t("certificate.renewed.notice"), "info");
+  setToast(function () {
+    return t("certificate.renewed.notice");
+  });
 
   return drawSettings();
 }
@@ -5969,7 +6030,7 @@ async function installCertificate(values) {
     }
 
     certificateProblem = error.message;
-    setNotice(error.message, "error");
+    setFailure(sayOf(error));
 
     return drawSettings();
   }
@@ -5978,7 +6039,9 @@ async function installCertificate(values) {
   certificateProblem = "";
   certificateReplaceResult = answer;
 
-  setNotice(t("certificate.installed.notice"), "info");
+  setToast(function () {
+    return t("certificate.installed.notice");
+  });
 
   return drawSettings();
 }
@@ -6048,7 +6111,9 @@ async function saveAccount(values) {
   // here so that the password that was typed in is not sent over the wire to
   // be told that nothing was asked for.
   if (username === "" && newPassword === "") {
-    setNotice(t("account.nothing.error"));
+    setFailure(function () {
+      return t("account.nothing.error");
+    });
 
     return drawSettings();
   }
@@ -6068,7 +6133,9 @@ async function saveAccount(values) {
 
   const data = await apiCall("PUT", apiAccountPath, body);
 
-  setNotice(accountOutcome(data), "info");
+  setToast(function () {
+    return accountOutcome(data);
+  });
 
   return drawSettings();
 }
@@ -6294,12 +6361,14 @@ async function exportTunnels(values) {
   const hosts = countOf(data, "hosts");
   const ports = countOf(data, "service_ports");
 
-  setNotice(t(plural(hosts,
-    plural(ports, "transfer.exported-host-one-port-one.notice",
-      "transfer.exported-host-one-port-many.notice"),
-    plural(ports, "transfer.exported-host-many-port-one.notice",
-      "transfer.exported-host-many-port-many.notice")),
-    { name: name, hosts: hosts, ports: ports }), "info");
+  setToast(function () {
+    return t(plural(hosts,
+      plural(ports, "transfer.exported-host-one-port-one.notice",
+        "transfer.exported-host-one-port-many.notice"),
+      plural(ports, "transfer.exported-host-many-port-one.notice",
+        "transfer.exported-host-many-port-many.notice")),
+    { name: name, hosts: hosts, ports: ports });
+  });
 
   // The screen is drawn again, which is what takes the password out of the box
   // it was typed into. Nothing on the screen repeats it.
@@ -6310,7 +6379,9 @@ async function exportSettings(values) {
   const data = await apiCall("POST", "/api/export/settings", { password: values.password });
   const name = handTheFileOut(data, "settings");
 
-  setNotice(t("transfer.exported-settings.notice", { name: name }), "info");
+  setToast(function () {
+    return t("transfer.exported-settings.notice", { name: name });
+  });
 
   return drawSettings();
 }
@@ -6390,7 +6461,7 @@ async function importTunnels(values) {
 
     transferProblem.tunnels = error.message;
     transferResult = null;
-    setNotice(error.message, "error");
+    setFailure(sayOf(error));
 
     return drawSettings();
   }
@@ -6399,14 +6470,16 @@ async function importTunnels(values) {
   transferProblem.tunnels = "";
   transferResult = answer;
 
-  setNotice(importOutcome(answer), "info");
+  setToast(function () {
+    return importOutcome(answer);
+  });
 
   return drawSettings();
 }
 
-// importOutcome is the line above the screen after an import. What became of
-// each row is in the table on the card; this is the count, and what to do about
-// what was skipped.
+// importOutcome is the message after an import. What became of each row is in
+// the table on the card; this is the count, and what to do about what was
+// skipped.
 function importOutcome(answer) {
   const added = countOf(answer, "added");
   const replaced = countOf(answer, "replaced");
@@ -6489,7 +6562,7 @@ async function importSettings(values) {
     }
 
     transferProblem.settings = error.message;
-    setNotice(error.message, "error");
+    setFailure(sayOf(error));
 
     return drawSettings();
   }
@@ -6497,7 +6570,9 @@ async function importSettings(values) {
   transferDraft.settings = "";
   transferProblem.settings = "";
 
-  setNotice(settingsImportOutcome(answer), "info");
+  setToast(function () {
+    return settingsImportOutcome(answer);
+  });
 
   // The screen is drawn again from the server, and that is the point of it:
   // what arrived is stored and is not what this service is running on, so it
@@ -6731,7 +6806,9 @@ async function submitRestart(view, button, newAddress) {
     return;
   }
 
-  setNotice(t("restart.back.notice"), "info");
+  setToast(function () {
+    return t("restart.back.notice");
+  });
 
   return drawSettings();
 }
@@ -6946,7 +7023,12 @@ async function submitUninstall(values) {
 
   // From here on nothing asks the server for anything. It removed its own files
   // a moment ago and stops within seconds.
-  navigate("uninstalled", { text: t("uninstall.done.notice"), kind: "info" });
+  navigate("uninstalled", {
+    say: function () {
+      return t("uninstall.done.notice");
+    },
+    kind: "info"
+  });
 }
 
 // drawUninstalled is the screen after the uninstall.
