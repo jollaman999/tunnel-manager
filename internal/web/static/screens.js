@@ -3273,21 +3273,33 @@ async function openHostServicePorts(host) {
     }
 
     // What the server said about this page is taken before anything is drawn,
-    // because the box over the page is drawn from it: a row nobody has touched
-    // is ticked where the Host carries it, and that answer has to be in the
-    // maps before the box asks whether the page is ticked through.
+    // because the tick in the head of the table is drawn from it: a row nobody
+    // has touched is ticked where the Host carries it, and that answer has to
+    // be in the maps before the head asks whether the page is ticked through.
     for (const item of shown) {
       picks.served[item.id] = Boolean(item.assigned);
       picks.scopes[item.id] = bindScopeStored(item.bind_scope);
     }
 
-    list.appendChild(servicePortsPageBox(shown, picks, said, function () {
-      drawList();
-    }));
+    const column = assignPickColumn(shown, picks);
 
-    for (const item of shown) {
-      list.appendChild(servicePortCheck(item, picks));
-    }
+    // The columns are the ones the service port list is read by, in the order
+    // it reads them, so a row is recognised here by what it is called there:
+    // the identifier, where the service is, which port it is opened on and
+    // what somebody wrote it down as. The address is one column rather than
+    // two because this table is read inside a panel, where every column costs
+    // width the sentence above it needs. The reach is last because it is the
+    // one column that is not read but answered.
+    list.appendChild(buildTable(
+      [t("service-ports.id.column"), t("hosts.assign-service.column"),
+        t("service-ports.local-port.column"), t("service-ports.description.column"),
+        t("hosts.assign-scope.column")],
+      shown.map(function (item) {
+        return { cells: servicePortAssignRow(item, picks), pick: column.box(item) };
+      }),
+      [0, 2],
+      column.head
+    ));
   }
 
   async function drawPage() {
@@ -3419,123 +3431,98 @@ function scopeToTheTicked(picks, said) {
   return row;
 }
 
-// servicePortsPageBox is the tick that takes the whole page of that panel.
+// assignPickColumn makes the column of ticks for that panel: the one in the
+// head of the table, which takes and releases the rows of the page on the
+// screen, and the one of each row.
 //
-// It sits inside the list, under the paging controls and over the rows, and not
-// beside the scope row above the list. The two presses reach different sets:
-// the scope row reaches every row the panel has read, pages included that are
-// no longer on the screen, and this one reaches the rows underneath it and
-// nothing else. Put side by side they would read as one span, and this is the
-// one of the two whose span is a thing you can see - it is drawn again with
-// every page, over the rows it is about.
+// It is the pair listPickColumn makes for the two lists, over the maps this
+// panel holds instead of over listPicks, and the head follows the same rule
+// there: a page whose rows are all ticked shows it ticked, and one row cleared
+// clears it. What differs is what a tick is. On a list it is held for a press
+// that is about to be made, so turning the page drops it; here it is the
+// assignment itself, held for every page the panel has read, so nothing in
+// here writes over a row that is not on the page underneath the head.
 //
-// It writes into picks.wanted for the rows of this page alone, so a tick made
-// on another page is left exactly as it was. That is the same span the box
-// reads to know whether it is ticked: a page whose rows are all ticked shows it
-// ticked, and one row cleared clears it.
-//
-// Clearing it is the press that takes assignments away, and there is no
-// confirmation over it. Nothing is stored until Save, which is what the line at
-// the top of the panel says and what the line this press writes says again with
-// the count; closing the panel drops the whole lot, which is an escape from a
-// misplaced press that a confirmation would not add to. What is guarded instead
-// is knowing what was pressed: the label names the page as its span, the hint
-// says a cleared row is an assignment taken away, and the count of what the
-// press touched is written where the scope row writes its own.
-function servicePortsPageBox(items, picks, said, redraw) {
-  const row = document.createElement("label");
+// Clearing the head is the press that takes assignments away, and there is no
+// confirmation over it and nothing said back. Nothing is stored until Save,
+// which is what the line at the top of the panel says, and the ticks it
+// cleared are on the screen under it; closing the panel drops the lot, which
+// is an escape from a misplaced press that a sentence would not add to.
+function assignPickColumn(items, picks) {
+  const boxes = [];
+  const head = document.createElement("input");
 
-  row.className = "assign-all";
-  row.dataset.all = "host-service-ports";
+  // What a row is ticked as now: what the operator touched where there is an
+  // entry for it, and what the server said about the row otherwise.
+  function ticked(id) {
+    return id in picks.wanted ? picks.wanted[id] : picks.served[id];
+  }
 
-  const box = document.createElement("input");
+  // The scope list of a row is disabled while its box is clear: a service port
+  // this Host does not carry has no forwarded port to open anywhere, so there
+  // is nothing for the answer to be about. It is looked for when the press
+  // happens rather than held here, because the head is built before the rows
+  // it reaches are.
+  function hold(id, on) {
+    picks.wanted[id] = on;
 
-  box.type = "checkbox";
-  box.dataset.field = "assign-all";
-  box.checked = items.every(function (item) {
-    return item.id in picks.wanted ? picks.wanted[item.id] : picks.served[item.id];
-  });
-
-  box.addEventListener("change", function () {
-    for (const item of items) {
-      picks.wanted[item.id] = box.checked;
+    if (id in picks.lists) {
+      picks.lists[id].disabled = !on;
     }
+  }
 
-    sayInPanel(said, t(box.checked
-      ? plural(items.length, "hosts.assign-page-ticked-one.notice",
-        "hosts.assign-page-ticked-many.notice")
-      : plural(items.length, "hosts.assign-page-cleared-one.notice",
-        "hosts.assign-page-cleared-many.notice"), { count: items.length }));
-
-    // Every row of the page is drawn again, because each of them carries the
-    // box this one just wrote over and a scope list that is disabled while the
-    // box beside it is clear.
-    redraw();
+  head.type = "checkbox";
+  head.dataset.field = "assign-pick-all";
+  // The head carries a name to be read out and no words on the screen. What it
+  // does is what the same tick does on the two lists, and it is read there
+  // from the column of boxes underneath it.
+  head.setAttribute("aria-label", t("list.pick-all.aria"));
+  head.checked = items.length > 0 && items.every(function (item) {
+    return ticked(item.id);
   });
 
-  const text = document.createElement("span");
+  head.addEventListener("change", function () {
+    for (const one of boxes) {
+      one.box.checked = head.checked;
+      hold(one.id, head.checked);
+    }
+  });
 
-  text.className = "assign-all-text";
-  text.appendChild(element("span", t("hosts.assign-page.label")));
+  return {
+    head: head,
+    box: function (item) {
+      const box = document.createElement("input");
 
-  const saidAbout = element("small", t("hosts.assign-page.hint"));
+      box.type = "checkbox";
+      box.dataset.field = "assign-" + item.id;
+      box.setAttribute("aria-label", t("hosts.assign-pick-row.aria", { id: item.id }));
+      box.checked = ticked(item.id);
+      box.addEventListener("change", function () {
+        hold(item.id, box.checked);
+        head.checked = boxes.every(function (one) {
+          return one.box.checked;
+        });
+      });
 
-  saidAbout.className = "assign-all-said";
-  text.appendChild(saidAbout);
+      boxes.push({ box: box, id: item.id });
 
-  row.appendChild(box);
-  row.appendChild(text);
-
-  return row;
+      return box;
+    }
+  };
 }
 
-// servicePortCheck is one service port in that panel: the box, what the service
-// port is, which one it is, and how far it reaches.
+// servicePortAssignRow is the cells of one service port in that panel: which
+// one it is, where it is, what it was written down as, and how far it reaches
+// on this Host.
 //
-// The box and the text are inside a label, so that side of the row is the
-// press. A checkbox on its own is a target the width of a character, which is
-// the one thing a list ticked on a phone cannot be.
+// The tick of the row is not in here. It is in the column the head of the
+// table opened, which is where the tick of a row is on the two lists as well,
+// and assignPickColumn builds it.
 //
-// The scope list is outside that label. A list inside one is a press that ticks
-// the box beside it, so picking a scope would untick the row it is being picked
-// for. It is also disabled while the box is clear: a service port this Host
-// does not carry has no forwarded port to open anywhere, so there is nothing
-// for the answer to be about.
-function servicePortCheck(item, picks) {
-  const row = document.createElement("div");
-
-  row.className = "assign-row";
-  row.dataset.assign = String(item.id);
-
-  const pick = document.createElement("label");
-
-  pick.className = "assign-pick";
-
-  const box = document.createElement("input");
-
-  box.type = "checkbox";
-  box.dataset.field = "assign-" + item.id;
-  box.checked = item.id in picks.wanted ? picks.wanted[item.id] : picks.served[item.id];
-
-  const text = document.createElement("span");
-
-  text.className = "assign-text";
-  text.appendChild(element("span", t("hosts.assign-row.text",
-    { ip: item.service_ip, port: item.service_port, local: item.local_port })));
-
-  const description = item.description === undefined || item.description === null
-    ? ""
-    : String(item.description);
-  const saidAbout = element("small", description === ""
-    ? t("hosts.assign-said.text", { id: item.id })
-    : t("hosts.assign-said-description.text", { id: item.id, description: description }));
-
-  saidAbout.className = "assign-said";
-  text.appendChild(saidAbout);
-
-  pick.appendChild(box);
-  pick.appendChild(text);
-
+// The scope list is registered as the row is built, so the press that sets one
+// scope over everything ticked can write the value into the control that is on
+// the screen rather than drawing the page again.
+function servicePortAssignRow(item, picks) {
   const scope = listControl({
     options: bindScopeOptions(),
     value: item.id in picks.scoped ? picks.scoped[item.id] : picks.scopes[item.id]
@@ -3543,26 +3530,29 @@ function servicePortCheck(item, picks) {
 
   scope.className = "assign-scope";
   scope.dataset.field = "scope-" + item.id;
-  scope.disabled = !box.checked;
-  // The name is on the control itself and not on a label of its own. A row
-  // holds one of these and the panel holds thirty, so what tells them apart is
-  // which service port the row is about, and that is already written beside it.
+  scope.disabled = !(item.id in picks.wanted ? picks.wanted[item.id] : picks.served[item.id]);
+  // The name is on the control itself and not on a heading. The column says
+  // what all of them are, and what tells one from the next is the service port
+  // its row is about, which a reader going down the column cannot see.
   scope.setAttribute("aria-label", t("hosts.assign-row-scope.aria", { id: item.id }));
   scope.addEventListener("change", function () {
     picks.scoped[item.id] = scope.value;
   });
 
-  box.addEventListener("change", function () {
-    picks.wanted[item.id] = box.checked;
-    scope.disabled = !box.checked;
-  });
-
   picks.lists[item.id] = scope;
 
-  row.appendChild(pick);
-  row.appendChild(scope);
+  // The address is a value and not a sentence, so it is put together here
+  // rather than being a catalog string a translator is handed with two numbers
+  // in it. It is one cell because it is read as one thing, and nothing in it
+  // is broken across lines: the column is as wide as the longest address, and
+  // the table is scrolled sideways where the panel is narrower than that.
+  const service = item.service_ip + ":" + item.service_port;
 
-  return row;
+  const description = item.description === undefined || item.description === null
+    ? ""
+    : String(item.description);
+
+  return [item.id, service, item.local_port, description, scope];
 }
 
 // saveHostServicePorts sends what was ticked and what was rescoped, as the

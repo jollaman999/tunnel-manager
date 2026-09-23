@@ -2099,42 +2099,10 @@ body.modal-open {
   font-size: 13px;
 }
 
-/* The tick that takes the whole page, inside the list and over the rows it
-   takes. It is set apart from them the way the one on the host key panel is:
-   what it does is not what a row does, it is one press over ten of them, and
-   the rows it reaches are the ones drawn under it. */
-.assign-all {
-  display: flex;
-  gap: 0.6rem;
-  align-items: flex-start;
-  margin: 0.5rem 0 0.75rem;
-  padding: 0.5rem 0.25rem;
-  border-bottom: 1px solid var(--border-soft);
-  cursor: pointer;
-}
-
-.assign-all input[type="checkbox"] {
-  flex: 0 0 auto;
-  margin: 0.15rem 0 0;
-}
-
-.assign-all-text {
-  display: flex;
-  flex-direction: column;
-  gap: 0.1rem;
-  min-width: 0;
-}
-
-.assign-all-said {
-  color: var(--text-dim);
-  font-size: 12px;
-}
-
-/* The service ports a Host may carry, one to a row, inside the panel that ticks
-   them. The box and the text beside it are a label, so that side of the row is
-   the target and not the box alone: a checkbox by itself is the width of a
-   character, which is what cannot be hit on a phone. The scope list is outside
-   that label, because a press on a control inside one is a press on the box.
+/* The Hosts a ticked service port may be given to, one to a row, inside the
+   panel that ticks them. The box and the text beside it are a label, so the
+   row is the target and not the box alone: a checkbox by itself is the width
+   of a character, which is what cannot be hit on a phone.
 
    The rows are separated by a line rather than boxed. A list of thirty ticked
    one after another reads down the panel, and a border around each of them
@@ -2156,9 +2124,8 @@ body.modal-open {
   background: var(--bg-hover);
 }
 
-/* The half of the row that ticks it. It takes what the scope list beside it
-   does not, and it is the press, so the pointer says so over that half and not
-   over the list. */
+/* The part of the row that ticks it. It takes the width of the row, and it is
+   the press, so the pointer says so across the whole of it. */
 .assign-pick {
   display: flex;
   gap: 0.6rem;
@@ -2168,15 +2135,6 @@ body.modal-open {
   cursor: pointer;
 }
 
-/* The scope of one row. It keeps its width while the text beside it takes the
-   rest, and it is lined up with the first line of that text rather than with
-   the block, which carries a second line under it. */
-.assign-scope {
-  flex: 0 0 auto;
-  align-self: flex-start;
-  max-width: 100%;
-}
-
 .assign-row input[type="checkbox"] {
   flex: 0 0 auto;
   /* The box is lined up with the first line of the text beside it rather than
@@ -2184,7 +2142,7 @@ body.modal-open {
   margin: 0.15rem 0 0;
 }
 
-/* What the service port is, and which one it is, stacked. The width is
+/* Which Host it is, and what was written down about it, stacked. The width is
    whatever is left of the row, and a long address breaks inside itself rather
    than pushing the row wider than the panel. */
 .assign-text {
@@ -2198,6 +2156,13 @@ body.modal-open {
 .assign-said {
   color: var(--text-dim);
   font-size: 12px;
+}
+
+/* The reach of one service port, in the last column of the table that assigns
+   them. It is as wide as the longer of the two answers and no wider, so the
+   column it sits in does not take width from the ones that are read. */
+.assign-scope {
+  max-width: 100%;
 }
 
 /* Held upright there is no room for a panel with the screen showing around it,
