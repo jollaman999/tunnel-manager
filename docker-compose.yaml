@@ -4,7 +4,10 @@ services:
       context: .
       dockerfile: Dockerfile
     container_name: tunnel-manager
-    image: tunnel-manager:3.0.0
+    # Not a version and not meant to become one. The build above makes the
+    # image here and this is only the name put on it, so it lists as
+    # tunnel-manager. The images that carry a version go to ghcr.io.
+    image: tunnel-manager:latest
     ulimits:
       nofile:
         soft: 65535
