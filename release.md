@@ -1,3 +1,23 @@
+# v3.13.0
+
+## Add/fix features:
+
+- **The status screen holds the local forwards beside the tunnels.** It read the tunnel table alone, so a local forward was somewhere else entirely although it is the same thing seen from the other end: an SSH connection to a Host carrying a port. Both are in one table now, one page at a time, with a Kind column saying which sort a row is.
+  - The columns that named a side are gone. A service port is opened on the Host and read from here, a local forward is opened here and read from the Host, so Local and Remote meant opposite things on the two sorts. They are Opened and Reaches, and each cell says which machine it is talking about, since the addresses themselves look alike.
+  - The counts above the table are six rather than three. Folding them together would make one number out of two things that are fixed in different places.
+  - `GET /api/status` answers both sorts in `tunnels`, each row carrying `kind`. A row of a local forward carries no `sp_id` and no `forward_reach`. The three counts that were there keep counting the tunnels alone, and `total_local_forwards`, `connected_local_forwards`, `desired_local_forwards` and `total_rows` are beside them.
+- **A local forward is numbered within its Host.** It was known by a number that ran across the whole table, so the first forward of the second Host was 4 and nothing said why. The Host and the place on it are what a forward is named by, and the first forward of one Host and the first of another are both number 1.
+  - The three paths that read, change and delete one are `/api/host/:id/local-forward/:number`, where they were `/api/local-forward/:id`. Adding and listing are unchanged.
+  - A forward added is given the lowest number its Host is not using, so the gap a delete leaves is filled and the numbers of a Host run 1, 2, 3 with nothing missing.
+- **The icons are drawn from the full size artwork**, and the icon sits beside the title of every README.
+- **The animation at the top of the README was recorded again**, with a scene for the status screen holding a row of each sort.
+
+## Notes:
+
+- **The first start after this upgrade numbers the local forwards that are stored.** Each Host's forwards are numbered from 1 in the order they were added, which is the order the panel has been listing them in, and the move is one transaction: an installation that fails half way through comes back up on the table it had. A file exported from an earlier release carries no numbers and is unaffected.
+- A script that reads `GET /api/status` and counts the rows of `tunnels` as tunnels now counts the local forwards with them. `kind` is what tells them apart.
+- The upgrade note of v3.7.0 still holds: every Host stops until its key is approved, a stored path outside the data directory is put back to its default, and the data directory becomes 0700.
+
 # v3.12.1
 
 ## Add/fix features:
