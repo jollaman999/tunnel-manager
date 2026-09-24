@@ -818,6 +818,7 @@ function paint(title, nodes) {
   // onto the second scroller of the same screen, which is the same box drawn
   // again.
   const scrolledTo = insideScrolls(app);
+  const barFocus = sameScreen ? barFocusOf(app) : null;
 
   app.textContent = "";
 
@@ -855,9 +856,69 @@ function paint(title, nodes) {
       boxes[at].node.scrollLeft = scrolledTo[at].left;
       boxes[at].node.scrollTop = scrolledTo[at].top;
     }
+
+    putBackBarFocus(app, heading, barFocus);
   } else {
     window.scrollTo(0, 0);
   }
+}
+
+// barFocusOf is the press over the ticks of a list that has the keyboard, as
+// the place of its row and the action it runs, or null.
+function barFocusOf(app) {
+  const at = document.activeElement;
+
+  if (at === null || !app.contains(at)) {
+    return null;
+  }
+
+  const bar = at.closest(".list-actions");
+
+  if (bar === null) {
+    return null;
+  }
+
+  return {
+    bar: Array.prototype.indexOf.call(app.querySelectorAll(".list-actions"), bar),
+    action: at.classList.contains("bar-menu") ? null : at.dataset.action
+  };
+}
+
+// putBackBarFocus gives the keyboard to the press in the row drawn again that
+// stands where the one noted by barFocusOf stood: the menu button of a folded
+// row, the same press of one that is not, and the first live press or else the
+// heading where that one is dead.
+function putBackBarFocus(app, heading, was) {
+  if (was === null) {
+    return;
+  }
+
+  const bar = app.querySelectorAll(".list-actions")[was.bar];
+  let target = null;
+
+  if (bar !== undefined) {
+    fitBarActions(bar);
+
+    const trigger = barMenuButton(bar);
+    const live = barActions(bar).filter(function (button) {
+      return !button.disabled;
+    });
+
+    if (bar.classList.contains("folded")) {
+      target = trigger !== null && !trigger.disabled ? trigger : null;
+    } else {
+      target = live.find(function (button) {
+        return button.dataset.action === was.action;
+      }) || live[0] || null;
+    }
+  }
+
+  if (target === null) {
+    heading.tabIndex = -1;
+    target = heading;
+  }
+
+  target.focus({ preventScroll: true });
 }
 
 // insideScrolls is every box on the screen that scrolls inside itself, in the
