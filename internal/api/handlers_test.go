@@ -184,6 +184,9 @@ func newTxRecordingDB(t *testing.T) (*gorm.DB, *txConnPool) {
 // was committed can be told apart from one sent after it.
 type wakeRecorder struct {
 	tx *txConnPool
+	// localStates is what LocalForwardStatuses answers, the forwards the test
+	// has running. A nil map is a manager with none.
+	localStates map[uint]tunnel.LocalForwardState
 
 	mu                 sync.Mutex
 	wakes              int
@@ -221,6 +224,10 @@ func (r *wakeRecorder) GetAllTunnels() (*[]models.Tunnel, error) {
 
 func (r *wakeRecorder) GetHostTunnels(hostID uint) (*[]models.Tunnel, error) {
 	return nil, errQueryFailed
+}
+
+func (r *wakeRecorder) LocalForwardStatuses() map[uint]tunnel.LocalForwardState {
+	return r.localStates
 }
 
 // newWriteStubDB returns a gorm DB that answers the reads of the write handlers
@@ -1142,6 +1149,10 @@ func (m *countFailingManager) GetAllTunnels() (*[]models.Tunnel, error) {
 
 func (m *countFailingManager) GetHostTunnels(hostID uint) (*[]models.Tunnel, error) {
 	return &m.tunnels, nil
+}
+
+func (m *countFailingManager) LocalForwardStatuses() map[uint]tunnel.LocalForwardState {
+	return nil
 }
 
 // TestGetStatusFailsWhenTheDesiredCountCannotBeRead pins down that a count that

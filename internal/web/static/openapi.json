@@ -867,6 +867,130 @@
                 }
             }
         },
+        "/host/{id}/local-forward": {
+            "get": {
+                "description": "status is what the running forward reports (starting, connected, reconnecting, error, host_key_unapproved, host_key_mismatch), \"disabled\" when the Host is disabled, and \"stopped\" when the Host is enabled and no forward runs yet or it failed to start.\nbind_scope is always loopback or wildcard.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "local forwards"
+                ],
+                "summary": "The local forwards of a Host, with what each one reports",
+                "parameters": [
+                    {
+                        "type": "integer",
+                        "description": "The id of the Host",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/models.Response"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "data": {
+                                            "type": "array",
+                                            "items": {
+                                                "$ref": "#/definitions/api.localForwardView"
+                                            }
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "404": {
+                        "description": "No such Host",
+                        "schema": {
+                            "$ref": "#/definitions/api.errorBody"
+                        }
+                    }
+                }
+            },
+            "post": {
+                "security": [
+                    {
+                        "CSRFToken": []
+                    }
+                ],
+                "description": "This machine opens local_port and carries every connection to it over the SSH connection of the Host to target_ip:target_port, as seen from the Host.\nbind_scope is where local_port is opened on this machine: loopback, wildcard, or left out for the wildcard.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "local forwards"
+                ],
+                "summary": "Add a local forward to a Host",
+                "parameters": [
+                    {
+                        "type": "integer",
+                        "description": "The id of the Host",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "The local forward to add",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/models.LocalForwardRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "201": {
+                        "description": "Created",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/models.Response"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "data": {
+                                            "$ref": "#/definitions/api.localForwardView"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "400": {
+                        "description": "The body is refused",
+                        "schema": {
+                            "$ref": "#/definitions/api.errorBody"
+                        }
+                    },
+                    "404": {
+                        "description": "No such Host",
+                        "schema": {
+                            "$ref": "#/definitions/api.errorBody"
+                        }
+                    },
+                    "409": {
+                        "description": "local_port is taken by another local forward or is the port of this server",
+                        "schema": {
+                            "$ref": "#/definitions/api.errorBody"
+                        }
+                    }
+                }
+            }
+        },
         "/host/{id}/service-port": {
             "get": {
                 "description": "The page is taken over the service ports and not over the assignments, so a row sits on the same page of this list and of GET /api/service-port whether the Host carries it or not.\nbind_scope is what the assignment of this Host is opened to, and is empty on a row the Host does not carry.",
@@ -1129,6 +1253,175 @@
                     },
                     "400": {
                         "description": "The password is wrong, the file is damaged, it is not a file this program wrote, or it holds the other kind",
+                        "schema": {
+                            "$ref": "#/definitions/api.errorBody"
+                        }
+                    }
+                }
+            }
+        },
+        "/local-forward/{id}": {
+            "get": {
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "local forwards"
+                ],
+                "summary": "Read one local forward",
+                "parameters": [
+                    {
+                        "type": "integer",
+                        "description": "The id of the local forward",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/models.Response"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "data": {
+                                            "$ref": "#/definitions/api.localForwardView"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "404": {
+                        "description": "No such local forward",
+                        "schema": {
+                            "$ref": "#/definitions/api.errorBody"
+                        }
+                    }
+                }
+            },
+            "put": {
+                "security": [
+                    {
+                        "CSRFToken": []
+                    }
+                ],
+                "description": "local_port, target_ip and target_port are all required. The Host it is carried by is not changed.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "local forwards"
+                ],
+                "summary": "Update a local forward",
+                "parameters": [
+                    {
+                        "type": "integer",
+                        "description": "The id of the local forward",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "The local forward as it should stand",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/models.LocalForwardRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/models.Response"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "data": {
+                                            "$ref": "#/definitions/api.localForwardView"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "400": {
+                        "description": "The body is refused",
+                        "schema": {
+                            "$ref": "#/definitions/api.errorBody"
+                        }
+                    },
+                    "404": {
+                        "description": "No such local forward",
+                        "schema": {
+                            "$ref": "#/definitions/api.errorBody"
+                        }
+                    },
+                    "409": {
+                        "description": "local_port is taken by another local forward or is the port of this server",
+                        "schema": {
+                            "$ref": "#/definitions/api.errorBody"
+                        }
+                    }
+                }
+            },
+            "delete": {
+                "security": [
+                    {
+                        "CSRFToken": []
+                    }
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "local forwards"
+                ],
+                "summary": "Delete a local forward",
+                "parameters": [
+                    {
+                        "type": "integer",
+                        "description": "The id of the local forward",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/models.Response"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "data": {
+                                            "type": "string"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "404": {
+                        "description": "No such local forward",
                         "schema": {
                             "$ref": "#/definitions/api.errorBody"
                         }
@@ -2330,6 +2623,15 @@
                 "service_port.delete_failed",
                 "service_port.create.hosts_read_failed",
                 "service_port.create.hosts_store_failed",
+                "local_forward.id.invalid",
+                "local_forward.not_found",
+                "local_forward.fetch_failed",
+                "local_forward.list_failed",
+                "local_forward.create_failed",
+                "local_forward.update_failed",
+                "local_forward.delete_failed",
+                "local_forward.local_port.taken",
+                "local_forward.local_port.api_port",
                 "assignment.add_and_remove",
                 "assignment.service_port.not_found",
                 "assignment.update_failed",
@@ -2455,6 +2757,15 @@
                 "errServicePortDeleteFailed",
                 "errServicePortCreateHostsRead",
                 "errServicePortCreateHostsStore",
+                "errLocalForwardIDInvalid",
+                "errLocalForwardNotFound",
+                "errLocalForwardFetchFailed",
+                "errLocalForwardListFailed",
+                "errLocalForwardCreateFailed",
+                "errLocalForwardUpdateFailed",
+                "errLocalForwardDeleteFailed",
+                "errLocalForwardPortTaken",
+                "errLocalForwardPortIsAPIPort",
                 "errAssignmentAddAndRemove",
                 "errAssignmentServicePortsMissing",
                 "errAssignmentUpdateFailed",
@@ -2847,6 +3158,52 @@
                 },
                 "total": {
                     "type": "integer"
+                }
+            }
+        },
+        "api.localForwardView": {
+            "type": "object",
+            "properties": {
+                "bind_scope": {
+                    "description": "BindScope is where on this machine LocalPort is opened, with the words\nand the constraint HostServicePort.BindScope carries, and an empty value\nis the wildcard for the same reason.",
+                    "type": "string"
+                },
+                "created_at": {
+                    "type": "string"
+                },
+                "description": {
+                    "type": "string"
+                },
+                "host_id": {
+                    "type": "integer"
+                },
+                "id": {
+                    "type": "integer"
+                },
+                "last_connected_at": {
+                    "type": "string"
+                },
+                "last_error": {
+                    "type": "string"
+                },
+                "local_port": {
+                    "type": "integer"
+                },
+                "retry_count": {
+                    "type": "integer"
+                },
+                "status": {
+                    "description": "Status is what tunnel.LocalForwardState reports while a forward runs,\nand \"disabled\" or \"stopped\" while none does.",
+                    "type": "string"
+                },
+                "target_ip": {
+                    "type": "string"
+                },
+                "target_port": {
+                    "type": "integer"
+                },
+                "updated_at": {
+                    "type": "string"
                 }
             }
         },
@@ -3287,6 +3644,39 @@
                     "type": "string"
                 },
                 "service_port": {
+                    "type": "integer",
+                    "maximum": 65535,
+                    "minimum": 1
+                }
+            }
+        },
+        "models.LocalForwardRequest": {
+            "type": "object",
+            "required": [
+                "local_port",
+                "target_ip",
+                "target_port"
+            ],
+            "properties": {
+                "bind_scope": {
+                    "type": "string",
+                    "enum": [
+                        "loopback",
+                        "wildcard"
+                    ]
+                },
+                "description": {
+                    "type": "string"
+                },
+                "local_port": {
+                    "type": "integer",
+                    "maximum": 65535,
+                    "minimum": 1
+                },
+                "target_ip": {
+                    "type": "string"
+                },
+                "target_port": {
                     "type": "integer",
                     "maximum": 65535,
                     "minimum": 1

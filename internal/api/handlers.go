@@ -30,6 +30,10 @@ type tunnelManager interface {
 	DesiredTunnelCount() (int, error)
 	GetAllTunnels() (*[]models.Tunnel, error)
 	GetHostTunnels(hostID uint) (*[]models.Tunnel, error)
+	// LocalForwardStatuses reports what every running local forward says
+	// about itself, keyed by row. It is kept in memory by the manager rather
+	// than in a table, so it is asked for here and not read from the rows.
+	LocalForwardStatuses() map[uint]tunnel.LocalForwardState
 }
 
 type Handler struct {

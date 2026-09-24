@@ -298,6 +298,15 @@ const (
 	ServicePortHostAssignmentsDeleteFailed ID = "service_port.host_assignments_delete_failed"
 )
 
+// local_forward: the local forwards the screens add, change and remove.
+const (
+	LocalForwardCreateFailed    ID = "local_forward.create_failed"
+	LocalForwardListFetchFailed ID = "local_forward.list_fetch_failed"
+	LocalForwardFetchFailed     ID = "local_forward.fetch_failed"
+	LocalForwardUpdateFailed    ID = "local_forward.update_failed"
+	LocalForwardDeleteFailed    ID = "local_forward.delete_failed"
+)
+
 // status: what the Status screen asks about the tunnels.
 const (
 	StatusTunnelsToRunCountFailed     ID = "status.tunnels_to_run_count_failed"

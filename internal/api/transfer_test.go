@@ -18,6 +18,7 @@ import (
 	"github.com/jollaman999/tunnel-manager/internal/logid"
 	"github.com/jollaman999/tunnel-manager/internal/models"
 	"github.com/jollaman999/tunnel-manager/internal/settings"
+	"github.com/jollaman999/tunnel-manager/internal/tunnel"
 	"github.com/labstack/echo/v4"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
@@ -58,6 +59,10 @@ func (m *transferWakes) GetAllTunnels() (*[]models.Tunnel, error) {
 
 func (m *transferWakes) GetHostTunnels(hostID uint) (*[]models.Tunnel, error) {
 	return &[]models.Tunnel{}, nil
+}
+
+func (m *transferWakes) LocalForwardStatuses() map[uint]tunnel.LocalForwardState {
+	return nil
 }
 
 // transferInstall is one tunnel-manager: a database file of its own, the

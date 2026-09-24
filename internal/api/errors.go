@@ -133,6 +133,16 @@ const (
 	errServicePortCreateHostsRead  errorCode = "service_port.create.hosts_read_failed"
 	errServicePortCreateHostsStore errorCode = "service_port.create.hosts_store_failed"
 
+	errLocalForwardIDInvalid     errorCode = "local_forward.id.invalid"
+	errLocalForwardNotFound      errorCode = "local_forward.not_found"
+	errLocalForwardFetchFailed   errorCode = "local_forward.fetch_failed"
+	errLocalForwardListFailed    errorCode = "local_forward.list_failed"
+	errLocalForwardCreateFailed  errorCode = "local_forward.create_failed"
+	errLocalForwardUpdateFailed  errorCode = "local_forward.update_failed"
+	errLocalForwardDeleteFailed  errorCode = "local_forward.delete_failed"
+	errLocalForwardPortTaken     errorCode = "local_forward.local_port.taken"
+	errLocalForwardPortIsAPIPort errorCode = "local_forward.local_port.api_port"
+
 	errAssignmentAddAndRemove        errorCode = "assignment.add_and_remove"
 	errAssignmentServicePortsMissing errorCode = "assignment.service_port.not_found"
 	errAssignmentUpdateFailed        errorCode = "assignment.update_failed"
@@ -323,6 +333,20 @@ var errorMessages = map[errorCode]string{
 	errServicePortDeleteFailed:     "Failed to delete service port",
 	errServicePortCreateHostsRead:  "The service port was not created: failed to read the Hosts",
 	errServicePortCreateHostsStore: "The service port was not created: failed to store the Hosts that carry it",
+
+	// The local forwards of a Host. The two refusals over the local port are
+	// conflicts rather than a malformed body: the port is opened on this
+	// machine, and a port something here already opens leaves one of the two
+	// unable to start.
+	errLocalForwardIDInvalid:     "Invalid local forward ID: {reason}",
+	errLocalForwardNotFound:      "Local forward not found",
+	errLocalForwardFetchFailed:   "Failed to fetch local forward",
+	errLocalForwardListFailed:    "Failed to fetch local forwards",
+	errLocalForwardCreateFailed:  "Failed to create local forward",
+	errLocalForwardUpdateFailed:  "Failed to update local forward",
+	errLocalForwardDeleteFailed:  "Failed to delete local forward",
+	errLocalForwardPortTaken:     "The local port {local_port} is already opened by another local forward",
+	errLocalForwardPortIsAPIPort: "The local port {local_port} is the port this server listens on",
 
 	// Which service ports a Host carries.
 	errAssignmentAddAndRemove:        "The change names the same service port to add and to remove: {ids}",
