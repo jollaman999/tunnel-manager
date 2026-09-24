@@ -54,6 +54,10 @@ func (m *transferWakes) DesiredTunnelCount() (int, error) {
 	return 0, nil
 }
 
+func (m *transferWakes) DesiredLocalForwardCount() (int, error) {
+	return 0, nil
+}
+
 func (m *transferWakes) GetAllTunnels() (*[]models.Tunnel, error) {
 	return &[]models.Tunnel{}, nil
 }

@@ -220,6 +220,10 @@ func (r *wakeRecorder) DesiredTunnelCount() (int, error) {
 	return 0, errQueryFailed
 }
 
+func (r *wakeRecorder) DesiredLocalForwardCount() (int, error) {
+	return 0, errQueryFailed
+}
+
 func (r *wakeRecorder) GetAllTunnels() (*[]models.Tunnel, error) {
 	return nil, errQueryFailed
 }
@@ -1163,6 +1167,10 @@ type countFailingManager struct {
 func (m *countFailingManager) WakeReconcile() {}
 
 func (m *countFailingManager) DesiredTunnelCount() (int, error) {
+	return 0, errQueryFailed
+}
+
+func (m *countFailingManager) DesiredLocalForwardCount() (int, error) {
 	return 0, errQueryFailed
 }
 

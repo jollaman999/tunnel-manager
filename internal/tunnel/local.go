@@ -76,10 +76,16 @@ type localTunnel struct {
 	logger    *zap.Logger
 }
 
-// localForwardAddresses returns the listen pair, the SSH server and the target
+// LocalForwardAddresses returns the listen pair, the SSH server and the target
 // of a local forward. Both the forward and its fingerprint are built from
 // these, the way tunnelAddresses is used for the tunnels.
-func localForwardAddresses(host *models.Host, lf *models.LocalForward) (listenV4, listenV6, server, target string) {
+//
+// It is exported because the status answer carries those addresses on the rows
+// it makes for the local forwards, and where a forward listens is decided by
+// the bind scope. Working that out a second time in the API would be a second
+// place keeping that rule, and a row would then say one thing while the
+// forward did another.
+func LocalForwardAddresses(host *models.Host, lf *models.LocalForward) (listenV4, listenV6, server, target string) {
 	bindV4, bindV6 := bindScopeAddresses(lf.BindScope)
 	port := strconv.Itoa(lf.LocalPort)
 
@@ -94,7 +100,7 @@ func localForwardAddresses(host *models.Host, lf *models.LocalForward) (listenV4
 // and the target, each with its length in front. The reasons each of them is
 // in there are the ones given at connectionFingerprint.
 func localForwardFingerprint(host *models.Host, lf *models.LocalForward, creds hostCreds) connFingerprint {
-	listenV4, listenV6, server, target := localForwardAddresses(host, lf)
+	listenV4, listenV6, server, target := LocalForwardAddresses(host, lf)
 
 	h := sha256.New()
 	for _, value := range []string{
@@ -110,7 +116,7 @@ func localForwardFingerprint(host *models.Host, lf *models.LocalForward, creds h
 
 func newLocalTunnel(lf *models.LocalForward, host *models.Host, config *ssh.ClientConfig,
 	interval time.Duration, logger *zap.Logger) (*localTunnel, error) {
-	listenV4, listenV6, serverAddr, target := localForwardAddresses(host, lf)
+	listenV4, listenV6, serverAddr, target := LocalForwardAddresses(host, lf)
 
 	v4, err := net.ResolveTCPAddr("tcp4", listenV4)
 	if err != nil {
@@ -634,6 +640,25 @@ func (m *Manager) desiredLocalForwardsOf(hostByID map[uint]*models.Host) (map[ui
 	}
 
 	return desired, nil
+}
+
+// DesiredLocalForwardCount returns how many local forwards should be running.
+// It counts what a pass builds its desired state from, the way
+// DesiredTunnelCount does over the tunnels, so it cannot drift from what the
+// loop tries to start. A count above the number that report connected means a
+// forward that should be up is not.
+func (m *Manager) DesiredLocalForwardCount() (int, error) {
+	hostByID, err := m.hostsByID()
+	if err != nil {
+		return 0, err
+	}
+
+	desired, err := m.desiredLocalForwardsOf(hostByID)
+	if err != nil {
+		return 0, err
+	}
+
+	return len(desired), nil
 }
 
 // reconcileLocalForwards is the local forward half of a pass, with the rules

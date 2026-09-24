@@ -28,6 +28,9 @@ type tunnelManager interface {
 	// taken from the manager rather than counted here, so the state the status
 	// is reported against is the one the loop works towards.
 	DesiredTunnelCount() (int, error)
+	// DesiredLocalForwardCount reports how many local forwards should be
+	// running, counted by the manager for the reason DesiredTunnelCount is.
+	DesiredLocalForwardCount() (int, error)
 	GetAllTunnels() (*[]models.Tunnel, error)
 	GetHostTunnels(hostID uint) (*[]models.Tunnel, error)
 	// LocalForwardStatuses reports what every running local forward says
@@ -1597,26 +1600,37 @@ func idList(ids []uint) string {
 }
 
 // GetStatus answers the counts of the installation along with one page of the
-// tunnel rows.
+// rows of the status table: the service port tunnels and the local forwards
+// together, each row saying which of the two it is on kind.
 //
-// The three counts are over every row and not over the page. They are what the
+// The counts are over every row and not over the page. They are what the
 // status screen says the installation is doing, and counted over a page they
 // would follow the page size around: total_tunnels would read as the size of
 // the page, and a page without a connected tunnel on it would say that nothing
 // is connected while the tunnels carry traffic.
 //
-// The page itself is ordered by the two columns the row is identified by, host
-// first, so that the order is one the database states rather than one it
-// happens to return. See ListHosts for what an order that is not stated does to
-// LIMIT and OFFSET.
+// The three tunnel counts keep counting the service port tunnels alone. The
+// local forwards are counted beside them under names of their own, because a
+// count whose name stayed while what it counts grew is one that every reader
+// of this answer goes on reading the old way and gets wrong without noticing.
+// What paging is done against is neither of those: it is total_rows, the two
+// added together, since the page is a cut through both tables.
 //
-// @Summary      The counts of the installation and one page of the tunnel rows
-// @Description  The three counts are over every row and not over the page: they say what the installation is doing, not what is on the page being looked at.
+// The page is ordered by Host, then by sort, then by the id the row carries
+// within its sort. Host first is what keeps the rows of one Host together: an
+// order that took the tunnels first and the forwards after would put the two
+// halves of a Host pages apart. The order is stated rather than left to the
+// database for the reason ListHosts states one; see there for what an order
+// that is not stated does to LIMIT and OFFSET.
+//
+// @Summary      The counts of the installation and one page of the status rows
+// @Description  tunnels carries both sorts of forward: kind is service_port or local_forward, and sp_id is null on a local forward, which is carried by no service port. On a local forward row, local is the address opened on this machine and remote the target reached from the Host, which is the mirror of what they hold on a service port row.
+// @Description  The counts are over every row and not over the page: they say what the installation is doing, not what is on the page being looked at. The three tunnel counts are over the service port tunnels alone; the local forwards are counted under names of their own. total_rows is the two together, which is what the pages are cut from.
 // @Tags         status
 // @Produce  json
 // @Param   page  query  int  false  "The page, counted from 1. Below 1 is read as 1, and a page past the last one is answered with the last page"
 // @Param   size  query  int  false  "How many rows a page holds"  Enums(10, 20, 30, 50, 100)
-// @Success  200  {object}  models.Response  "counts, and tunnels holding one page of the tunnel rows"
+// @Success  200  {object}  models.Response  "counts, and tunnels holding one page of the status rows"
 // @Failure  400  {object}  api.errorBody  "page is not a number, or size is not one of the sizes taken"
 // @Router       /status [get]
 func (h *Handler) GetStatus(c echo.Context) error {
@@ -1636,11 +1650,20 @@ func (h *Handler) GetStatus(c echo.Context) error {
 		return failure(c, http.StatusInternalServerError, errStatusDesiredCountFailed)
 	}
 
-	var totalTunnels int64
-	err = h.db.Model(&models.Tunnel{}).Count(&totalTunnels).Error
+	// The same count over the local forwards. It is asked of the manager for
+	// the reason the tunnels are: what should be running is decided by the
+	// pass, and a rule written out again here would be a second place keeping
+	// it and would drift from the loop the moment either changed.
+	//
+	// A failed read is answered under the refusal of the tunnel count. The two
+	// are one failure to the reader of this answer, and a code of its own
+	// would be a message to write in every language the screen is served in.
+	desiredLocalForwards, err := h.manager.DesiredLocalForwardCount()
 	if err != nil {
-		h.logger.Error("failed to count the tunnel rows", logid.StatusTunnelRowsCountFailed.Field(), zap.Error(err))
-		return failure(c, http.StatusInternalServerError, errStatusFetchFailed)
+		h.logger.Error("failed to count the local forwards that should be running",
+			logid.LocalForwardCountFailed.Field(),
+			zap.Error(err))
+		return failure(c, http.StatusInternalServerError, errStatusDesiredCountFailed)
 	}
 
 	var connectedTunnels int64
@@ -1680,32 +1703,131 @@ func (h *Handler) GetStatus(c echo.Context) error {
 		return failure(c, http.StatusInternalServerError, errStatusFetchFailed)
 	}
 
-	page = page.fitTo(totalTunnels)
-
-	var tunnels []models.Tunnel
-	err = h.db.Order("host_id, sp_id").Limit(page.size).Offset(page.offset()).Find(&tunnels).Error
+	// Where the page falls is worked out on the keys of both tables rather
+	// than on the rows, because the page is a cut through the two of them at
+	// once and neither table can say on its own where that cut is. The two
+	// reads carry two columns each.
+	//
+	// The number of rows is counted off these lists rather than by a COUNT of
+	// its own, so that what the answer says there and the page it hands over
+	// are the one read. Two reads can straddle a row being written, and then
+	// the screen is told a number of rows the page it was given does not fit.
+	tunnelRefs, err := statusTunnelRefs(h.db)
 	if err != nil {
-		h.logger.Error("failed to fetch the tunnel status", logid.StatusTunnelsFetchFailed.Field(), zap.Error(err))
+		h.logger.Error("failed to count the tunnel rows", logid.StatusTunnelRowsCountFailed.Field(), zap.Error(err))
 		return failure(c, http.StatusInternalServerError, errStatusFetchFailed)
 	}
 
-	if tunnels == nil {
-		tunnels = []models.Tunnel{}
+	forwardRefs, err := statusLocalForwardRefs(h.db)
+	if err != nil {
+		h.logger.Error("failed to count the local forwards", logid.LocalForwardCountFailed.Field(), zap.Error(err))
+		return failure(c, http.StatusInternalServerError, errStatusFetchFailed)
 	}
+
+	totalTunnels := int64(len(tunnelRefs))
+	totalLocalForwards := int64(len(forwardRefs))
+
+	refs := mergeStatusRefs(tunnelRefs, forwardRefs)
+
+	page = page.fitTo(int64(len(refs)))
+	split := splitStatusPage(refs, page.offset(), page.size)
+
+	// Each table is then read with the LIMIT and OFFSET its own run on the
+	// page comes to. A table with no row on this page is not read at all.
+	var tunnels []models.Tunnel
+	if split.tunnelCount > 0 {
+		err = h.db.Order("host_id, sp_id").
+			Limit(split.tunnelCount).Offset(split.tunnelOffset).Find(&tunnels).Error
+		if err != nil {
+			h.logger.Error("failed to fetch the tunnel status", logid.StatusTunnelsFetchFailed.Field(), zap.Error(err))
+			return failure(c, http.StatusInternalServerError, errStatusFetchFailed)
+		}
+	}
+
+	var forwards []models.LocalForward
+	if split.forwardCount > 0 {
+		err = h.db.Order("host_id, id").
+			Limit(split.forwardCount).Offset(split.forwardOffset).Find(&forwards).Error
+		if err != nil {
+			h.logger.Error("failed to fetch local forwards", logid.LocalForwardListFetchFailed.Field(), zap.Error(err))
+			return failure(c, http.StatusInternalServerError, errStatusFetchFailed)
+		}
+	}
+
+	// The Hosts of the forwards on this page, which is what says whether a
+	// forward reports at all and where its SSH connection goes. Only the Hosts
+	// of the page are read: what is on the other pages is not being answered.
+	hostByID, err := h.hostsOfLocalForwards(forwards)
+	if err != nil {
+		h.logger.Error("failed to fetch Host", logid.HostFetchFailed.Field(), zap.Error(err))
+		return failure(c, http.StatusInternalServerError, errStatusFetchFailed)
+	}
+
+	states := h.manager.LocalForwardStatuses()
+
+	tunnelRows := make([]statusPageRow, 0, len(tunnels))
+	for _, t := range tunnels {
+		tunnelRows = append(tunnelRows, tunnelStatusRow(t))
+	}
+
+	forwardRows := make([]statusPageRow, 0, len(forwards))
+	for _, lf := range forwards {
+		forwardRows = append(forwardRows, localForwardStatusRow(lf, hostByID[lf.HostID], states))
+	}
+
+	rows := mergeStatusRows(tunnelRows, forwardRows)
 
 	return c.JSON(http.StatusOK, models.Response{
 		Success: true,
 		Data: map[string]interface{}{
-			"desired_tunnels":      desiredTunnels,
-			"total_tunnels":        totalTunnels,
-			"connected_tunnels":    connectedTunnels,
-			"host_keys_unapproved": hostKeysUnapproved,
-			"host_keys_mismatched": hostKeysMismatched,
-			"tunnels":              tunnels,
-			"page":                 page.number,
-			"size":                 page.size,
+			"desired_tunnels":          desiredTunnels,
+			"total_tunnels":            totalTunnels,
+			"connected_tunnels":        connectedTunnels,
+			"desired_local_forwards":   desiredLocalForwards,
+			"total_local_forwards":     totalLocalForwards,
+			"connected_local_forwards": connectedLocalForwardCount(states),
+			"total_rows":               totalTunnels + totalLocalForwards,
+			"host_keys_unapproved":     hostKeysUnapproved,
+			"host_keys_mismatched":     hostKeysMismatched,
+			"tunnels":                  rows,
+			"page":                     page.number,
+			"size":                     page.size,
 		},
 	})
+}
+
+// hostsOfLocalForwards reads the Hosts the given forwards are carried by,
+// keyed by id. A Host that is not there is simply not in the map, which is how
+// a row left over from before a Host was deleted is answered.
+func (h *Handler) hostsOfLocalForwards(forwards []models.LocalForward) (map[uint]*models.Host, error) {
+	if len(forwards) == 0 {
+		return nil, nil
+	}
+
+	ids := make([]uint, 0, len(forwards))
+	seen := make(map[uint]bool, len(forwards))
+
+	for _, lf := range forwards {
+		if seen[lf.HostID] {
+			continue
+		}
+
+		seen[lf.HostID] = true
+		ids = append(ids, lf.HostID)
+	}
+
+	var hosts []models.Host
+	err := h.db.Where("id IN ?", ids).Find(&hosts).Error
+	if err != nil {
+		return nil, err
+	}
+
+	hostByID := make(map[uint]*models.Host, len(hosts))
+	for i := range hosts {
+		hostByID[hosts[i].ID] = &hosts[i]
+	}
+
+	return hostByID, nil
 }
 
 // @Summary      The Host and the tunnels of that Host
