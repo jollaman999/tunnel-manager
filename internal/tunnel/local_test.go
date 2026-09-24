@@ -309,13 +309,15 @@ func newLocalForwardFixture(t *testing.T, scope string, localPort int, targetIP 
 	return f
 }
 
-// key is what the manager holds the forward of this fixture under: the local
-// port it opens.
-func (f *localForwardFixture) key() uint {
+// key is what the manager holds the forward of this fixture under: the Host
+// that carries it and its number on that Host. It is not the local port, so a
+// test that moves the forward to another port asks after the same forward
+// before and after.
+func (f *localForwardFixture) key() LocalForwardKey {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 
-	return uint(f.forwards[0].LocalPort)
+	return LocalForwardKey{HostID: f.forwards[0].HostID, Number: f.forwards[0].Number}
 }
 
 func (f *localForwardFixture) change(edit func(hosts []models.Host, forwards *[]models.LocalForward)) {
@@ -336,12 +338,13 @@ func (f *localForwardFixture) reconcile(t *testing.T) ReconcileResult {
 	return result
 }
 
-func waitLocalStatus(t *testing.T, m *Manager, id uint, what string, done func(LocalForwardState) bool) LocalForwardState {
+func waitLocalStatus(t *testing.T, m *Manager, key LocalForwardKey, what string,
+	done func(LocalForwardState) bool) LocalForwardState {
 	t.Helper()
 
 	var last LocalForwardState
 	waitFor(t, localTestTimeout, what, func() bool {
-		state, ok := m.LocalForwardStatus(id)
+		state, ok := m.LocalForwardStatus(key)
 		last = state
 		return ok && done(state)
 	})
@@ -549,6 +552,50 @@ func TestReconcileFollowsTheLocalForwardRows(t *testing.T) {
 	}
 	if !portIsFree(localPort) {
 		t.Fatal("the local port is still held after its row was deleted")
+	}
+}
+
+// TestAForwardWhoseLocalPortChangedIsRebuiltInPlace holds the pass to the
+// order a moved forward is rebuilt in. A forward is held under the row it is,
+// so a row whose local port changed is the one entry it always was: the pass
+// stops it and starts it again, in that order, and the port it was moved off
+// is free by the time the pass hands back. Held under the local port, that one
+// row would read as an entry that is not running yet and another that is no
+// longer wanted, and the pass would open the new port before letting go of the
+// old one.
+func TestAForwardWhoseLocalPortChangedIsRebuiltInPlace(t *testing.T) {
+	targetIP, targetPort := startEchoService(t, "moved:")
+	localPort := freeDualStackPort(t)
+	movedPort := freeDualStackPort(t)
+
+	if movedPort == localPort {
+		t.Skip("the two free ports found are the same one")
+	}
+
+	f := newLocalForwardFixture(t, models.BindScopeLoopback, localPort, targetIP, targetPort)
+
+	f.reconcile(t)
+	waitLocalStatus(t, f.m, f.key(), "the local forward to connect", isConnected)
+
+	f.change(func(_ []models.Host, forwards *[]models.LocalForward) {
+		(*forwards)[0].LocalPort = movedPort
+	})
+
+	result := f.reconcile(t)
+	if result != (ReconcileResult{Restarted: 1}) {
+		t.Fatalf("moving the forward to another local port reported %+v, want one restarted. "+
+			"A pass that reports one started and one stopped has opened the new port first", result)
+	}
+
+	if !portIsFree(localPort) {
+		t.Fatal("the port the forward was moved off is still held")
+	}
+
+	waitLocalStatus(t, f.m, f.key(), "the moved local forward to connect", isConnected)
+
+	moved := net.JoinHostPort("127.0.0.1", strconv.Itoa(movedPort))
+	if got := exchange(t, moved, "ping"); got != "moved:ping" {
+		t.Fatalf("the answer through the port it was moved to was %q, want %q", got, "moved:ping")
 	}
 }
 

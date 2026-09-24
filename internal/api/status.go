@@ -45,12 +45,18 @@ type statusRow struct {
 	// the number on the others. Both fields are tagged sp_id and this one is
 	// the shallower, which is the one encoding/json writes.
 	SPID *uint `json:"sp_id"`
+	// Number is which forward of its Host a local forward row is, which is
+	// what the row is read and changed by. It is left out of a tunnel row
+	// rather than written there as null, because a tunnel row is what it was
+	// before the forwards stood beside it, field for field, and nothing
+	// numbers a tunnel that way.
+	Number *uint `json:"number,omitempty"`
 }
 
 // statusRef identifies one row of the status table in the order the table is
-// paged in: the Host that carries it, which sort it is, and the id it has
-// within that sort - the service port for a tunnel row and the row id for a
-// local forward.
+// paged in: the Host that carries it, which sort it is, and the number it has
+// within that sort - the service port for a tunnel row and the number on its
+// Host for a local forward.
 //
 // It is read off the two tables on its own, without the rest of the row,
 // because the page is a cut through both of them together and there is no way
@@ -231,7 +237,7 @@ func tunnelStatusRow(t models.Tunnel) statusPageRow {
 // rows carry that one (see models.Tunnel.Local): a scope names two addresses
 // and the row carries the one to connect to.
 func localForwardStatusRow(lf models.LocalForward, host *models.Host,
-	states map[uint]tunnel.LocalForwardState) statusPageRow {
+	states map[tunnel.LocalForwardKey]tunnel.LocalForwardState) statusPageRow {
 	owner := models.Host{}
 	if host != nil {
 		owner = *host
@@ -243,6 +249,7 @@ func localForwardStatusRow(lf models.LocalForward, host *models.Host,
 	}
 
 	view := localForwardViewOf(lf, host != nil && host.Enabled, states)
+	number := lf.Number
 
 	return statusPageRow{
 		ref: statusRef{HostID: lf.HostID, Kind: statusKindLocalForward, Ref: lf.Number},
@@ -257,7 +264,8 @@ func localForwardStatusRow(lf models.LocalForward, host *models.Host,
 				Local:           listenV4,
 				Remote:          target,
 			},
-			Kind: statusKindLocalForward,
+			Kind:   statusKindLocalForward,
+			Number: &number,
 		},
 	}
 }
@@ -296,7 +304,7 @@ func mergeStatusRows(tunnels, forwards []statusPageRow) []statusRow {
 // the rows, because that is where the status of a local forward lives: there
 // is no column to count, and the rows of forwards that are switched off or
 // carried by a disabled Host report nothing at all.
-func connectedLocalForwardCount(states map[uint]tunnel.LocalForwardState) int {
+func connectedLocalForwardCount(states map[tunnel.LocalForwardKey]tunnel.LocalForwardState) int {
 	connected := 0
 
 	for _, state := range states {

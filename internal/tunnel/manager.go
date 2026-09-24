@@ -112,12 +112,14 @@ type Manager struct {
 	// reconcileWake carries the request for a reconcile pass. It holds one
 	// wake-up, so a caller never waits for the loop to pick the previous one up.
 	reconcileWake chan struct{}
-	// localForwards holds the running local forwards by the local port each of
-	// them opens, which is one row and no other: the port carries a unique
-	// index over the whole table, because two rows asking for one port on this
-	// machine leave one of them unable to start. It has a lock of its own,
-	// since nothing ever needs it together with the tunnels.
-	localForwards map[uint]*localTunnel
+	// localForwards holds the running local forwards by the Host and the
+	// number each of them is the row of, which is what the table is keyed by.
+	// It is not keyed by the local port, which is unique over the table as
+	// well: a forward moved to another port would then be registered under a
+	// key that changed with it, and a pass that moves it would start the
+	// forward on the new port before stopping the one on the old. It has a
+	// lock of its own, since nothing ever needs it together with the tunnels.
+	localForwards map[LocalForwardKey]*localTunnel
 	localMu       sync.RWMutex
 	// socksProxies holds the running SOCKS5 proxies by the ID of their Host,
 	// under a lock of its own for the same reason.
@@ -133,7 +135,7 @@ func NewManager(db *gorm.DB, logger *zap.Logger, cipher *crypto.Cipher, monitori
 		cipher:                cipher,
 		monitoringIntervalSec: monitoringIntervalSec,
 		reconcileWake:         make(chan struct{}, 1),
-		localForwards:         make(map[uint]*localTunnel),
+		localForwards:         make(map[LocalForwardKey]*localTunnel),
 		socksProxies:          make(map[uint]*socksTunnel),
 	}, nil
 }

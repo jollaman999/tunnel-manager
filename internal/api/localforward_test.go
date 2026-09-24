@@ -156,6 +156,21 @@ func localForwardRequest(t *testing.T, method, target, body, value string) (echo
 	return c, rec
 }
 
+// localForwardRowRequest is localForwardRequest for the three handlers that
+// answer under the path of one forward, which names the Host and the number on
+// it. Both are set, because a handler that read only one of them would find a
+// row of another Host.
+func localForwardRowRequest(t *testing.T, method, target, body, hostID, number string) (echo.Context,
+	*httptest.ResponseRecorder) {
+	t.Helper()
+
+	c, rec := localForwardRequest(t, method, target, body, hostID)
+	c.SetParamNames("id", "number")
+	c.SetParamValues(hostID, number)
+
+	return c, rec
+}
+
 // localForwardAnswer is a success carrying one row.
 type localForwardAnswer struct {
 	Success bool             `json:"success"`
@@ -264,9 +279,9 @@ func TestListHostLocalForwardsCarriesTheStatus(t *testing.T) {
 			storedLocalForward(3, 2, 15003),
 		})
 
-	manager := &wakeRecorder{tx: &txConnPool{}, localStates: map[uint]tunnel.LocalForwardState{
-		15001: {Status: "connected", RetryCount: 2, LastConnectedAt: connectedAt},
-		15003: {Status: "connected"},
+	manager := &wakeRecorder{tx: &txConnPool{}, localStates: map[tunnel.LocalForwardKey]tunnel.LocalForwardState{
+		{HostID: 1, Number: 1}: {Status: "connected", RetryCount: 2, LastConnectedAt: connectedAt},
+		{HostID: 2, Number: 3}: {Status: "connected"},
 	}}
 	h := NewHandler(db, manager, zap.NewNop(), newTestCipher(t))
 
@@ -478,7 +493,7 @@ func TestAnUpdateKeepsWhetherALocalForwardIsOnUnlessItSays(t *testing.T) {
 			t.Fatalf("failed to write the request: %v", err)
 		}
 
-		c, rec := localForwardRequest(t, http.MethodPut, "/api/local-forward/1", string(body), "1")
+		c, rec := localForwardRowRequest(t, http.MethodPut, "/api/host/1/local-forward/1", string(body), "1", "1")
 
 		err = h.UpdateLocalForward(c)
 		if err != nil {
@@ -506,9 +521,9 @@ func TestTheStatusOfALocalForwardSaysWhatIsOff(t *testing.T) {
 	off := storedLocalForward(2, 1, 15002)
 	off.Enabled = false
 
-	states := map[uint]tunnel.LocalForwardState{
-		15001: {Status: "connected"},
-		15002: {Status: "connected"},
+	states := map[tunnel.LocalForwardKey]tunnel.LocalForwardState{
+		{HostID: 1, Number: 1}: {Status: "connected"},
+		{HostID: 1, Number: 2}: {Status: "connected"},
 	}
 
 	for _, tc := range []struct {
@@ -542,7 +557,7 @@ func TestUpdateLocalForwardChangesTheRow(t *testing.T) {
 		`{"bind_scope":"wildcard","local_port":15001,"target_ip":"192.0.2.10","target_port":80}`,
 		`{"bind_scope":"loopback","local_port":15009,"target_ip":"192.0.2.10","target_port":8080,"description":"web"}`,
 	} {
-		c, rec := localForwardRequest(t, http.MethodPut, "/api/local-forward/1", body, "1")
+		c, rec := localForwardRowRequest(t, http.MethodPut, "/api/host/1/local-forward/1", body, "1", "1")
 
 		err := h.UpdateLocalForward(c)
 		if err != nil {
@@ -576,7 +591,7 @@ func TestDeleteLocalForwardRemovesTheRow(t *testing.T) {
 	manager := &wakeRecorder{tx: &txConnPool{}}
 	h := NewHandler(db, manager, zap.NewNop(), newTestCipher(t))
 
-	c, rec := localForwardRequest(t, http.MethodDelete, "/api/local-forward/1", "", "1")
+	c, rec := localForwardRowRequest(t, http.MethodDelete, "/api/host/1/local-forward/1", "", "1", "1")
 
 	err := h.DeleteLocalForward(c)
 	if err != nil {
@@ -601,12 +616,12 @@ func TestDeleteLocalForwardRemovesTheRow(t *testing.T) {
 func TestGetLocalForwardAnswersTheRow(t *testing.T) {
 	db := newLocalForwardDB(t, []models.Host{statusHost(1, true)},
 		[]models.LocalForward{storedLocalForward(1, 1, 15001)})
-	manager := &wakeRecorder{tx: &txConnPool{}, localStates: map[uint]tunnel.LocalForwardState{
-		15001: {Status: "error", LastError: "connection refused"},
+	manager := &wakeRecorder{tx: &txConnPool{}, localStates: map[tunnel.LocalForwardKey]tunnel.LocalForwardState{
+		{HostID: 1, Number: 1}: {Status: "error", LastError: "connection refused"},
 	}}
 	h := NewHandler(db, manager, zap.NewNop(), newTestCipher(t))
 
-	c, rec := localForwardRequest(t, http.MethodGet, "/api/local-forward/1", "", "1")
+	c, rec := localForwardRowRequest(t, http.MethodGet, "/api/host/1/local-forward/1", "", "1", "1")
 
 	err := h.GetLocalForward(c)
 	if err != nil {
@@ -622,6 +637,83 @@ func TestGetLocalForwardAnswersTheRow(t *testing.T) {
 	}
 }
 
+// TestALocalForwardIsReachedOnlyUnderItsOwnHost is what the path of a forward
+// has to hold: the number in it counts within the Host beside it, so two Hosts
+// each carrying a first forward are two rows and a read, a change or a delete
+// under one Host never reaches the other. A handler that looked the number up
+// on its own would answer with whichever row the database found first, and
+// would delete that one.
+func TestALocalForwardIsReachedOnlyUnderItsOwnHost(t *testing.T) {
+	first := storedLocalForward(1, 1, 15001)
+	second := storedLocalForward(1, 2, 15002)
+
+	db := newLocalForwardDB(t, []models.Host{statusHost(1, true), statusHost(2, true)},
+		[]models.LocalForward{first, second})
+	manager := &wakeRecorder{tx: &txConnPool{}}
+	h := NewHandler(db, manager, zap.NewNop(), newTestCipher(t))
+
+	// The read: the first forward of each Host is that Host's own row.
+	for _, tc := range []struct {
+		host string
+		port int
+	}{
+		{host: "1", port: 15001},
+		{host: "2", port: 15002},
+	} {
+		c, rec := localForwardRowRequest(t, http.MethodGet,
+			"/api/host/"+tc.host+"/local-forward/1", "", tc.host, "1")
+
+		err := h.GetLocalForward(c)
+		if err != nil {
+			t.Fatalf("GetLocalForward returned error: %v", err)
+		}
+		if rec.Code != http.StatusOK {
+			t.Fatalf("Host %s: status = %d, want %d, body: %s", tc.host, rec.Code, http.StatusOK,
+				rec.Body.String())
+		}
+
+		got := readLocalForwardAnswer(t, rec)
+		if got.Number != 1 || got.LocalPort != tc.port {
+			t.Errorf("the first forward of Host %s = %+v, want the one on the local port %d",
+				tc.host, got, tc.port)
+		}
+	}
+
+	// The change: it lands on the row of the Host in the path.
+	c, rec := localForwardRowRequest(t, http.MethodPut, "/api/host/2/local-forward/1",
+		`{"bind_scope":"loopback","local_port":15002,"target_ip":"127.0.0.1","target_port":5433}`, "2", "1")
+
+	err := h.UpdateLocalForward(c)
+	if err != nil {
+		t.Fatalf("UpdateLocalForward returned error: %v", err)
+	}
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d, body: %s", rec.Code, http.StatusOK, rec.Body.String())
+	}
+
+	rows := storedLocalForwards(t, db)
+	if len(rows) != 2 || rows[0].TargetPort != 5432 || rows[1].TargetPort != 5433 {
+		t.Fatalf("stored = %+v, want only the forward of Host 2 changed", rows)
+	}
+
+	// The delete: the first forward of Host 2 goes and the first forward of
+	// Host 1 stays.
+	c, rec = localForwardRowRequest(t, http.MethodDelete, "/api/host/2/local-forward/1", "", "2", "1")
+
+	err = h.DeleteLocalForward(c)
+	if err != nil {
+		t.Fatalf("DeleteLocalForward returned error: %v", err)
+	}
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d, body: %s", rec.Code, http.StatusOK, rec.Body.String())
+	}
+
+	rows = storedLocalForwards(t, db)
+	if len(rows) != 1 || rows[0].HostID != 1 || rows[0].Number != 1 {
+		t.Fatalf("stored = %+v, want the first forward of Host 1 alone", rows)
+	}
+}
+
 // TestLocalForwardWritesAreRefused pins every refusal a write can meet, and
 // that none of them writes a row or wakes the loop.
 func TestLocalForwardWritesAreRefused(t *testing.T) {
@@ -630,6 +722,10 @@ func TestLocalForwardWritesAreRefused(t *testing.T) {
 	tests := []struct {
 		name   string
 		method string
+		// host is the Host of the path on an update and a delete, left empty
+		// for the Host the stored rows are on. A create names its Host with
+		// value, the way the path of a create does.
+		host   string
 		value  string
 		body   string
 		status int
@@ -730,6 +826,31 @@ func TestLocalForwardWritesAreRefused(t *testing.T) {
 			status: http.StatusBadRequest,
 			code:   errLocalForwardIDInvalid,
 		},
+		{
+			name:   "a Host that is not a number",
+			method: http.MethodDelete,
+			host:   "one",
+			value:  "1",
+			status: http.StatusBadRequest,
+			code:   errHostIDInvalid,
+		},
+		{
+			name:   "update of a number that is on another Host",
+			method: http.MethodPut,
+			host:   "9",
+			value:  "1",
+			body:   `{"local_port":15100,` + valid + `}`,
+			status: http.StatusNotFound,
+			code:   errLocalForwardNotFound,
+		},
+		{
+			name:   "delete of a number that is on another Host",
+			method: http.MethodDelete,
+			host:   "9",
+			value:  "1",
+			status: http.StatusNotFound,
+			code:   errLocalForwardNotFound,
+		},
 	}
 
 	for _, tt := range tests {
@@ -739,20 +860,34 @@ func TestLocalForwardWritesAreRefused(t *testing.T) {
 			manager := &wakeRecorder{tx: &txConnPool{}}
 			h := NewHandler(db, manager, zap.NewNop(), newTestCipher(t))
 
-			var call func(echo.Context) error
-			target := "/api/local-forward/" + tt.value
+			// The Host of the path. A create names it with the value under
+			// test, since that is what it is given; the other two name the
+			// Host the stored rows are on unless the case says otherwise.
+			host := tt.host
+			if host == "" {
+				host = "1"
+			}
+
+			var (
+				call func(echo.Context) error
+				c    echo.Context
+				rec  *httptest.ResponseRecorder
+			)
+
+			target := "/api/host/" + host + "/local-forward/" + tt.value
 
 			switch tt.method {
 			case http.MethodPost:
 				call = h.CreateHostLocalForward
-				target = "/api/host/" + tt.value + "/local-forward"
+				c, rec = localForwardRequest(t, tt.method,
+					"/api/host/"+tt.value+"/local-forward", tt.body, tt.value)
 			case http.MethodPut:
 				call = h.UpdateLocalForward
+				c, rec = localForwardRowRequest(t, tt.method, target, tt.body, host, tt.value)
 			case http.MethodDelete:
 				call = h.DeleteLocalForward
+				c, rec = localForwardRowRequest(t, tt.method, target, tt.body, host, tt.value)
 			}
-
-			c, rec := localForwardRequest(t, tt.method, target, tt.body, tt.value)
 
 			err := call(c)
 			if err != nil {
@@ -800,7 +935,7 @@ func TestLocalForwardReadsAnswerNotFound(t *testing.T) {
 			http.StatusNotFound, errHostNotFound)
 	}
 
-	c, rec = localForwardRequest(t, http.MethodGet, "/api/local-forward/9", "", "9")
+	c, rec = localForwardRowRequest(t, http.MethodGet, "/api/host/1/local-forward/9", "", "1", "9")
 
 	err = h.GetLocalForward(c)
 	if err != nil {
@@ -887,13 +1022,12 @@ func TestALocalPortOnTheRunningAPIPortIsRefused(t *testing.T) {
 			h.SetRunningAPIPort(tt.running)
 
 			call := h.UpdateLocalForward
-			target := "/api/local-forward/1"
+
+			c, rec := localForwardRowRequest(t, tt.method, "/api/host/1/local-forward/1", body, "1", "1")
 			if tt.method == http.MethodPost {
 				call = h.CreateHostLocalForward
-				target = "/api/host/1/local-forward"
+				c, rec = localForwardRequest(t, tt.method, "/api/host/1/local-forward", body, "1")
 			}
-
-			c, rec := localForwardRequest(t, tt.method, target, body, "1")
 
 			err := call(c)
 			if err != nil {

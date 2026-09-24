@@ -186,7 +186,7 @@ type wakeRecorder struct {
 	tx *txConnPool
 	// localStates is what LocalForwardStatuses answers, the forwards the test
 	// has running. A nil map is a manager with none.
-	localStates map[uint]tunnel.LocalForwardState
+	localStates map[tunnel.LocalForwardKey]tunnel.LocalForwardState
 	// socksStates is what SocksStatuses answers, the same way.
 	socksStates map[uint]tunnel.SocksState
 
@@ -232,7 +232,7 @@ func (r *wakeRecorder) GetHostTunnels(hostID uint) (*[]models.Tunnel, error) {
 	return nil, errQueryFailed
 }
 
-func (r *wakeRecorder) LocalForwardStatuses() map[uint]tunnel.LocalForwardState {
+func (r *wakeRecorder) LocalForwardStatuses() map[tunnel.LocalForwardKey]tunnel.LocalForwardState {
 	return r.localStates
 }
 
@@ -1182,7 +1182,7 @@ func (m *countFailingManager) GetHostTunnels(hostID uint) (*[]models.Tunnel, err
 	return &m.tunnels, nil
 }
 
-func (m *countFailingManager) LocalForwardStatuses() map[uint]tunnel.LocalForwardState {
+func (m *countFailingManager) LocalForwardStatuses() map[tunnel.LocalForwardKey]tunnel.LocalForwardState {
 	return nil
 }
 

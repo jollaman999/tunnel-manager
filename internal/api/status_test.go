@@ -166,6 +166,13 @@ func TestGetStatusCarriesBothSortsOfForward(t *testing.T) {
 			t.Errorf("the local forward row carries sp_id %v, want nothing: a forward is carried by no service port", spID)
 		}
 
+		// The number is what the row is read and changed by, so the status
+		// table has to carry it: a row seen here and no way to name it is a
+		// row nothing can be done about.
+		if number, ok := row["number"].(float64); !ok || int(number) != 1 {
+			t.Errorf("the local forward row carries number %v, want the 1 it is numbered on its Host", row["number"])
+		}
+
 		addresses := []struct {
 			field string
 			want  string
@@ -201,6 +208,10 @@ func TestGetStatusCarriesBothSortsOfForward(t *testing.T) {
 
 		if _, ok := row["sp_id"].(float64); !ok {
 			t.Errorf("a service port row carries sp_id %v, want the number it always carried", row["sp_id"])
+		}
+
+		if _, carried := row["number"]; carried {
+			t.Errorf("a service port row carries number %v, which is on no tunnel row", row["number"])
 		}
 	}
 
@@ -620,11 +631,11 @@ func TestSplitStatusPageCutsBothRuns(t *testing.T) {
 // TestConnectedLocalForwardCountCountsWhatIsUp pins that the count is of the
 // forwards reporting connected and not of everything that is running.
 func TestConnectedLocalForwardCountCountsWhatIsUp(t *testing.T) {
-	states := map[uint]tunnel.LocalForwardState{
-		1: {Status: "connected"},
-		2: {Status: "reconnecting"},
-		3: {Status: "connected"},
-		4: {Status: "error"},
+	states := map[tunnel.LocalForwardKey]tunnel.LocalForwardState{
+		{HostID: 1, Number: 1}: {Status: "connected"},
+		{HostID: 1, Number: 2}: {Status: "reconnecting"},
+		{HostID: 2, Number: 1}: {Status: "connected"},
+		{HostID: 2, Number: 2}: {Status: "error"},
 	}
 
 	got := connectedLocalForwardCount(states)

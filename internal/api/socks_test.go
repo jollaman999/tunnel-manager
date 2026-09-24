@@ -420,8 +420,8 @@ func TestALocalForwardOnTheSocksPortIsRefused(t *testing.T) {
 			errLocalForwardPortSocks)
 	}
 
-	c, rec = localForwardRequest(t, http.MethodPut, "/api/local-forward/1",
-		`{"local_port":1080,"target_ip":"127.0.0.1","target_port":5432}`, "1")
+	c, rec = localForwardRowRequest(t, http.MethodPut, "/api/host/1/local-forward/1",
+		`{"local_port":1080,"target_ip":"127.0.0.1","target_port":5432}`, "1", "1")
 
 	err = h.UpdateLocalForward(c)
 	if err != nil {

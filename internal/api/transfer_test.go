@@ -66,7 +66,7 @@ func (m *transferWakes) GetHostTunnels(hostID uint) (*[]models.Tunnel, error) {
 	return &[]models.Tunnel{}, nil
 }
 
-func (m *transferWakes) LocalForwardStatuses() map[uint]tunnel.LocalForwardState {
+func (m *transferWakes) LocalForwardStatuses() map[tunnel.LocalForwardKey]tunnel.LocalForwardState {
 	return nil
 }
 
@@ -3092,7 +3092,7 @@ func TestImportedSettingsWithAnAPIPortALocalForwardOpensAreNotStored(t *testing.
 		t.Errorf("error_code = %q, want %q", answer.Code, errImportSettingsAPIPortForward)
 	}
 
-	want := apiPortHolder{ID: forward.Number, HostID: host.ID, HostIP: "192.0.2.10", LocalPort: 15432,
+	want := apiPortHolder{Number: forward.Number, HostID: host.ID, HostIP: "192.0.2.10", LocalPort: 15432,
 		TargetIP: "127.0.0.1", TargetPort: 5432}
 	if answer.Data.LocalForward != want {
 		t.Errorf("local_forward = %+v, want %+v", answer.Data.LocalForward, want)

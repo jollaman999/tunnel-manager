@@ -36,7 +36,7 @@ type tunnelManager interface {
 	// LocalForwardStatuses reports what every running local forward says
 	// about itself, keyed by row. It is kept in memory by the manager rather
 	// than in a table, so it is asked for here and not read from the rows.
-	LocalForwardStatuses() map[uint]tunnel.LocalForwardState
+	LocalForwardStatuses() map[tunnel.LocalForwardKey]tunnel.LocalForwardState
 	// SocksStatuses reports what every running SOCKS5 proxy says about
 	// itself, keyed by Host, for the reason LocalForwardStatuses is asked for.
 	SocksStatuses() map[uint]tunnel.SocksState

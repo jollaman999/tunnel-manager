@@ -45,14 +45,15 @@ type localForwardView struct {
 // localForwardViewOf builds the view of one row. The scope goes out as a word
 // every time, since an empty one is the wildcard and a screen that had to know
 // that would be a second place keeping the rule.
-func localForwardViewOf(lf models.LocalForward, hostEnabled bool, states map[uint]tunnel.LocalForwardState) localForwardView {
+func localForwardViewOf(lf models.LocalForward, hostEnabled bool,
+	states map[tunnel.LocalForwardKey]tunnel.LocalForwardState) localForwardView {
 	if lf.BindScope == "" {
 		lf.BindScope = models.BindScopeWildcard
 	}
 
 	view := localForwardView{LocalForward: lf}
 
-	state, running := states[uint(lf.LocalPort)]
+	state, running := states[tunnel.LocalForwardKey{HostID: lf.HostID, Number: lf.Number}]
 	switch {
 	case !hostEnabled:
 		view.Status = localForwardStatusDisabled
@@ -148,10 +149,31 @@ func nextLocalForwardNumber(tx *gorm.DB, hostID uint) (uint, error) {
 	return highest + 1, nil
 }
 
+// localForwardPath reads the Host and the number the path of one forward
+// names. The three handlers that answer under such a path read them here, so
+// the two refusals a path that names neither of them with a number is answered
+// with are raised in one place.
+func localForwardPath(c echo.Context) (uint, uint, *refusal) {
+	hostID, err := strconv.ParseUint(c.Param("id"), 10, 32)
+	if err != nil {
+		return 0, 0, refuse(http.StatusBadRequest, errHostIDInvalid, errorArgs{"reason": err.Error()})
+	}
+
+	number, err := strconv.ParseUint(c.Param("number"), 10, 32)
+	if err != nil {
+		return 0, 0, refuse(http.StatusBadRequest, errLocalForwardIDInvalid, errorArgs{"reason": err.Error()})
+	}
+
+	return uint(hostID), uint(number), nil
+}
+
 // apiPortHolder is the local forward that opens the port a change of the
 // settings asked to store as api_port, as the refusal of that change carries it.
 type apiPortHolder struct {
-	ID         uint   `json:"id"`
+	// Number is which forward of its Host this is. It is the number and not a
+	// table-wide id because that is what the row is keyed by, and it is read
+	// beside HostID: a number on its own names a row on every Host.
+	Number     uint   `json:"number"`
 	HostID     uint   `json:"host_id"`
 	HostIP     string `json:"host_ip"`
 	LocalPort  int    `json:"local_port"`
@@ -223,7 +245,7 @@ func apiPortRefused(tx *gorm.DB, codes apiPortCodes, apiPort int, storedPort int
 		"target":   net.JoinHostPort(holder.TargetIP, strconv.Itoa(holder.TargetPort)),
 	}).carrying(apiPortTaken{
 		LocalForward: apiPortHolder{
-			ID:         holder.Number,
+			Number:     holder.Number,
 			HostID:     holder.HostID,
 			HostIP:     hostIP,
 			LocalPort:  holder.LocalPort,
@@ -488,21 +510,23 @@ func (h *Handler) CreateHostLocalForward(c echo.Context) error {
 	})
 }
 
-// @Summary      Read one local forward
+// @Summary      Read one local forward of a Host
+// @Description  A forward is named by the Host that carries it and its number on that Host. Numbers are handed out per Host, so the number alone names a forward on every Host and never one by itself.
 // @Tags         local forwards
 // @Produce  json
-// @Param   id  path  int  true  "The id of the local forward"
+// @Param   id      path  int  true  "The id of the Host"
+// @Param   number  path  int  true  "The number of the local forward on that Host"
 // @Success  200  {object}  models.Response{data=api.localForwardView}
-// @Failure  404  {object}  api.errorBody  "No such local forward"
-// @Router       /local-forward/{id} [get]
+// @Failure  404  {object}  api.errorBody  "The Host carries no forward with that number"
+// @Router       /host/{id}/local-forward/{number} [get]
 func (h *Handler) GetLocalForward(c echo.Context) error {
-	id, err := strconv.ParseUint(c.Param("id"), 10, 32)
-	if err != nil {
-		return failure(c, http.StatusBadRequest, errLocalForwardIDInvalid, errorArgs{"reason": err.Error()})
+	hostID, number, refused := localForwardPath(c)
+	if refused != nil {
+		return refused.answer(c)
 	}
 
 	var lf models.LocalForward
-	err = h.db.Where("number = ?", id).First(&lf).Error
+	err := h.db.Where("host_id = ? AND number = ?", hostID, number).First(&lf).Error
 	if err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return failure(c, http.StatusNotFound, errLocalForwardNotFound)
@@ -527,28 +551,29 @@ func (h *Handler) GetLocalForward(c echo.Context) error {
 	})
 }
 
-// @Summary      Update a local forward
-// @Description  local_port, target_ip and target_port are all required. The Host it is carried by is not changed.
+// @Summary      Update a local forward of a Host
+// @Description  local_port, target_ip and target_port are all required. The Host it is carried by is not changed, and neither is its number.
 // @Description  enabled switches the forward on or off. Left out, it keeps what is stored.
 // @Tags         local forwards
 // @Accept   json
 // @Produce  json
 // @Security  CSRFToken
-// @Param   id    path  int  true  "The id of the local forward"
+// @Param   id      path  int  true  "The id of the Host"
+// @Param   number  path  int  true  "The number of the local forward on that Host"
 // @Param   body  body  models.LocalForwardRequest  true  "The local forward as it should stand"
 // @Success  200  {object}  models.Response{data=api.localForwardView}
 // @Failure  400  {object}  api.errorBody  "The body is refused"
-// @Failure  404  {object}  api.errorBody  "No such local forward"
+// @Failure  404  {object}  api.errorBody  "The Host carries no forward with that number"
 // @Failure  409  {object}  api.errorBody  "local_port is taken by another local forward or a SOCKS5 proxy, or is the port of this server"
-// @Router       /local-forward/{id} [put]
+// @Router       /host/{id}/local-forward/{number} [put]
 func (h *Handler) UpdateLocalForward(c echo.Context) error {
-	id, err := strconv.ParseUint(c.Param("id"), 10, 32)
-	if err != nil {
-		return failure(c, http.StatusBadRequest, errLocalForwardIDInvalid, errorArgs{"reason": err.Error()})
+	hostID, number, refusedPath := localForwardPath(c)
+	if refusedPath != nil {
+		return refusedPath.answer(c)
 	}
 
 	var req models.LocalForwardRequest
-	err = c.Bind(&req)
+	err := c.Bind(&req)
 	if err != nil {
 		return failure(c, http.StatusBadRequest, errRequestBodyInvalid, errorArgs{"reason": err.Error()})
 	}
@@ -573,7 +598,7 @@ func (h *Handler) UpdateLocalForward(c echo.Context) error {
 
 	// Read inside the transaction for the reason UpdateHost is.
 	var lf models.LocalForward
-	err = tx.Where("number = ?", id).First(&lf).Error
+	err = tx.Where("host_id = ? AND number = ?", hostID, number).First(&lf).Error
 	if err != nil {
 		tx.Rollback()
 		if errors.Is(err, gorm.ErrRecordNotFound) {
@@ -637,29 +662,31 @@ func (h *Handler) UpdateLocalForward(c echo.Context) error {
 	})
 }
 
-// @Summary      Delete a local forward
+// @Summary      Delete a local forward of a Host
+// @Description  The number the forward carried is not handed out again, so a number in a log line is never read back against a row made after it.
 // @Tags         local forwards
 // @Produce  json
 // @Security  CSRFToken
-// @Param   id  path  int  true  "The id of the local forward"
+// @Param   id      path  int  true  "The id of the Host"
+// @Param   number  path  int  true  "The number of the local forward on that Host"
 // @Success  200  {object}  models.Response{data=string}
-// @Failure  404  {object}  api.errorBody  "No such local forward"
-// @Router       /local-forward/{id} [delete]
+// @Failure  404  {object}  api.errorBody  "The Host carries no forward with that number"
+// @Router       /host/{id}/local-forward/{number} [delete]
 func (h *Handler) DeleteLocalForward(c echo.Context) error {
-	id, err := strconv.ParseUint(c.Param("id"), 10, 32)
-	if err != nil {
-		return failure(c, http.StatusBadRequest, errLocalForwardIDInvalid, errorArgs{"reason": err.Error()})
+	hostID, number, refused := localForwardPath(c)
+	if refused != nil {
+		return refused.answer(c)
 	}
 
 	tx := h.db.Begin()
-	err = tx.Error
+	err := tx.Error
 	if err != nil {
 		h.logger.Error("failed to start the transaction", logid.DatabaseTransactionStartFailed.Field(), zap.Error(err))
 		return failure(c, http.StatusInternalServerError, errTransactionBeginFailed)
 	}
 
 	var lf models.LocalForward
-	err = tx.Where("number = ?", id).First(&lf).Error
+	err = tx.Where("host_id = ? AND number = ?", hostID, number).First(&lf).Error
 	if err != nil {
 		tx.Rollback()
 		if errors.Is(err, gorm.ErrRecordNotFound) {

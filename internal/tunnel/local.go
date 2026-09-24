@@ -26,6 +26,20 @@ const (
 	localStatusError        = "error"
 )
 
+// LocalForwardKey names one local forward: the Host that carries it and which
+// forward of that Host it is. It is the key of the table (models.LocalForward),
+// so a running forward is registered and reported under the same pair the row
+// is read and written by, and neither has to be looked up to reach the other.
+type LocalForwardKey struct {
+	HostID uint
+	Number uint
+}
+
+// localForwardKeyOf is the key of one row.
+func localForwardKeyOf(lf *models.LocalForward) LocalForwardKey {
+	return LocalForwardKey{HostID: lf.HostID, Number: lf.Number}
+}
+
 // LocalForwardState is what a running local forward reports about itself. It
 // is kept in memory rather than in a table: a local forward has no row of its
 // own to write it to, and what it says is only true of this process anyway.
@@ -511,7 +525,7 @@ func (m *Manager) startLocalForward(host *models.Host, lf *models.LocalForward) 
 	m.localMu.Lock()
 	defer m.localMu.Unlock()
 
-	if _, exists := m.localForwards[uint(lf.LocalPort)]; exists {
+	if _, exists := m.localForwards[localForwardKeyOf(lf)]; exists {
 		return fmt.Errorf("local forward already exists")
 	}
 
@@ -534,21 +548,21 @@ func (m *Manager) startLocalForward(host *models.Host, lf *models.LocalForward) 
 
 	f.connFP = localForwardFingerprint(host, lf, creds)
 
-	m.localForwards[uint(lf.LocalPort)] = f
+	m.localForwards[localForwardKeyOf(lf)] = f
 
 	go f.Start()
 
 	return nil
 }
 
-// stopLocalForward stops the forward that opens the local port. It returns
-// ErrTunnelNotExist for one that is not running, which the callers pass over
-// the way they do for a tunnel.
-func (m *Manager) stopLocalForward(localPort uint) error {
+// stopLocalForward stops the forward of one row. It returns ErrTunnelNotExist
+// for one that is not running, which the callers pass over the way they do for
+// a tunnel.
+func (m *Manager) stopLocalForward(key LocalForwardKey) error {
 	m.localMu.Lock()
-	f, exists := m.localForwards[localPort]
+	f, exists := m.localForwards[key]
 	if exists {
-		delete(m.localForwards, localPort)
+		delete(m.localForwards, key)
 	}
 	m.localMu.Unlock()
 
@@ -562,26 +576,26 @@ func (m *Manager) stopLocalForward(localPort uint) error {
 }
 
 // runningLocalForwardFingerprints returns the fingerprint of every running
-// local forward, keyed by the local port it opens.
-func (m *Manager) runningLocalForwardFingerprints() map[uint]connFingerprint {
+// local forward, keyed by the row it is.
+func (m *Manager) runningLocalForwardFingerprints() map[LocalForwardKey]connFingerprint {
 	m.localMu.RLock()
 	defer m.localMu.RUnlock()
 
-	running := make(map[uint]connFingerprint, len(m.localForwards))
-	for id, f := range m.localForwards {
-		running[id] = f.connFP
+	running := make(map[LocalForwardKey]connFingerprint, len(m.localForwards))
+	for key, f := range m.localForwards {
+		running[key] = f.connFP
 	}
 
 	return running
 }
 
-// LocalForwardStatus returns what the local forward opening the local port
-// reports. The second value is false when no forward runs for it, which is a
-// row that is switched off, one whose Host is disabled or one the reconcile
-// pass has not reached yet.
-func (m *Manager) LocalForwardStatus(localPort uint) (LocalForwardState, bool) {
+// LocalForwardStatus returns what the local forward of one row reports. The
+// second value is false when no forward runs for it, which is a row that is
+// switched off, one whose Host is disabled or one the reconcile pass has not
+// reached yet.
+func (m *Manager) LocalForwardStatus(key LocalForwardKey) (LocalForwardState, bool) {
 	m.localMu.RLock()
-	f, exists := m.localForwards[localPort]
+	f, exists := m.localForwards[key]
 	m.localMu.RUnlock()
 
 	if !exists {
@@ -592,19 +606,18 @@ func (m *Manager) LocalForwardStatus(localPort uint) (LocalForwardState, bool) {
 }
 
 // LocalForwardStatuses returns what every running local forward reports,
-// keyed by the local port it opens, so a list is answered without a call per
-// row.
-func (m *Manager) LocalForwardStatuses() map[uint]LocalForwardState {
+// keyed by the row it is, so a list is answered without a call per row.
+func (m *Manager) LocalForwardStatuses() map[LocalForwardKey]LocalForwardState {
 	m.localMu.RLock()
-	forwards := make(map[uint]*localTunnel, len(m.localForwards))
-	for id, f := range m.localForwards {
-		forwards[id] = f
+	forwards := make(map[LocalForwardKey]*localTunnel, len(m.localForwards))
+	for key, f := range m.localForwards {
+		forwards[key] = f
 	}
 	m.localMu.RUnlock()
 
-	states := make(map[uint]LocalForwardState, len(forwards))
-	for id, f := range forwards {
-		states[id] = f.snapshot()
+	states := make(map[LocalForwardKey]LocalForwardState, len(forwards))
+	for key, f := range forwards {
+		states[key] = f.snapshot()
 	}
 
 	return states
@@ -621,14 +634,14 @@ type desiredLocalForward struct {
 // every row that is enabled and whose Host is there and enabled. A row naming a
 // Host that is not there is passed over for the reasons desiredTunnels passes
 // over an assignment.
-func (m *Manager) desiredLocalForwardsOf(hostByID map[uint]*models.Host) (map[uint]desiredLocalForward, error) {
+func (m *Manager) desiredLocalForwardsOf(hostByID map[uint]*models.Host) (map[LocalForwardKey]desiredLocalForward, error) {
 	var rows []models.LocalForward
 	err := m.db.Find(&rows).Error
 	if err != nil {
 		return nil, fmt.Errorf("failed to fetch local forwards: %w", err)
 	}
 
-	desired := make(map[uint]desiredLocalForward, len(rows))
+	desired := make(map[LocalForwardKey]desiredLocalForward, len(rows))
 	for i := range rows {
 		if !rows[i].Enabled {
 			continue
@@ -639,7 +652,7 @@ func (m *Manager) desiredLocalForwardsOf(hostByID map[uint]*models.Host) (map[ui
 			continue
 		}
 
-		desired[uint(rows[i].LocalPort)] = desiredLocalForward{host: host, lf: &rows[i]}
+		desired[localForwardKeyOf(&rows[i])] = desiredLocalForward{host: host, lf: &rows[i]}
 	}
 
 	return desired, nil
@@ -667,11 +680,11 @@ func (m *Manager) DesiredLocalForwardCount() (int, error) {
 // reconcileLocalForwards is the local forward half of a pass, with the rules
 // Reconcile applies to the tunnels: start what is missing, rebuild what runs
 // on settings it should no longer have, stop what is not wanted.
-func (m *Manager) reconcileLocalForwards(desired map[uint]desiredLocalForward, result *ReconcileResult) {
+func (m *Manager) reconcileLocalForwards(desired map[LocalForwardKey]desiredLocalForward, result *ReconcileResult) {
 	running := m.runningLocalForwardFingerprints()
 
-	for localPort, want := range desired {
-		current, isRunning := running[localPort]
+	for key, want := range desired {
+		current, isRunning := running[key]
 		if !isRunning {
 			err := m.startLocalForward(want.host, want.lf)
 			if err != nil {
@@ -700,8 +713,10 @@ func (m *Manager) reconcileLocalForwards(desired map[uint]desiredLocalForward, r
 		}
 
 		// The only error stopping returns is a forward that is already gone,
-		// which leaves nothing in the way of starting it again.
-		_ = m.stopLocalForward(localPort)
+		// which leaves nothing in the way of starting it again. The row is
+		// stopped before it is started again, so a forward whose local port
+		// changed has let go of the old one before the new one is opened.
+		_ = m.stopLocalForward(key)
 
 		err = m.startLocalForward(want.host, want.lf)
 		if err != nil {
@@ -717,12 +732,12 @@ func (m *Manager) reconcileLocalForwards(desired map[uint]desiredLocalForward, r
 		result.Restarted++
 	}
 
-	for localPort := range running {
-		if _, want := desired[localPort]; want {
+	for key := range running {
+		if _, want := desired[key]; want {
 			continue
 		}
 
-		err := m.stopLocalForward(localPort)
+		err := m.stopLocalForward(key)
 		if err != nil {
 			// The only error is a forward that is already gone, which is what
 			// this pass wanted.
@@ -736,7 +751,7 @@ func (m *Manager) reconcileLocalForwards(desired map[uint]desiredLocalForward, r
 // stopAllLocalForwards stops every running local forward. Like StopAllTunnels
 // it reads no rows.
 func (m *Manager) stopAllLocalForwards() {
-	for localPort := range m.runningLocalForwardFingerprints() {
-		_ = m.stopLocalForward(localPort)
+	for key := range m.runningLocalForwardFingerprints() {
+		_ = m.stopLocalForward(key)
 	}
 }

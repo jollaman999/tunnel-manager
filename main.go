@@ -1967,13 +1967,15 @@ func serve() {
 	g.GET("/host/:id/service-port", h.ListHostServicePorts)
 	g.PUT("/host/:id/service-port", h.UpdateHostServicePorts)
 
-	// The local forwards of a Host are added under it, and changed and removed
-	// by their own id, the way a service port is.
+	// The local forwards of a Host are added, read, changed and removed under
+	// it. One of them is named by its number on that Host and not by a
+	// table-wide id: numbers are handed out per Host, so a path that left the
+	// Host out would name a row on every Host and none of them in particular.
 	g.GET("/host/:id/local-forward", h.ListHostLocalForwards)
 	g.POST("/host/:id/local-forward", h.CreateHostLocalForward)
-	g.GET("/local-forward/:id", h.GetLocalForward)
-	g.PUT("/local-forward/:id", h.UpdateLocalForward)
-	g.DELETE("/local-forward/:id", h.DeleteLocalForward)
+	g.GET("/host/:id/local-forward/:number", h.GetLocalForward)
+	g.PUT("/host/:id/local-forward/:number", h.UpdateLocalForward)
+	g.DELETE("/host/:id/local-forward/:number", h.DeleteLocalForward)
 
 	g.POST("/service-port", h.CreateServicePort)
 	g.GET("/service-port", h.ListServicePorts)
