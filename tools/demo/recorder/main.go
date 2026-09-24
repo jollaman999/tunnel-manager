@@ -379,7 +379,13 @@ func sceneLocalForward(r *recorder, cfg config, _ string) error {
 
 	r.pause(time.Second)
 
-	if err := r.click(`[data-action^="host-local-forwards-"]`, `#local-forward-create-local_port`); err != nil {
+	if err := r.click(`[data-action^="host-local-forwards-"]`, `[data-action="local-forward-add"]`); err != nil {
+		return err
+	}
+
+	r.pause(time.Second)
+
+	if err := r.click(`[data-action="local-forward-add"]`, `#local-forward-create-local_port`); err != nil {
 		return err
 	}
 
@@ -400,7 +406,11 @@ func sceneLocalForward(r *recorder, cfg config, _ string) error {
 
 	connected := `[data-modal-panel="local-forwards"] .badge[data-status="connected"]`
 
-	if err := r.click(`[data-action="local-forward-create-submit"]`, `[data-modal-panel="local-forwards"] table`); err != nil {
+	if err := r.click(`[data-action="local-forward-create-submit"]`, ``); err != nil {
+		return err
+	}
+
+	if err := r.waitGone(`[data-modal-panel="local-forward-add"]`, 10*time.Second); err != nil {
 		return err
 	}
 
