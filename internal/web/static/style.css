@@ -1353,15 +1353,75 @@ td .buttons {
   white-space: nowrap;
 }
 
-/* A Host row carries five buttons, more than one line holds beside the other
-   columns at a common width, so there they may wrap. The cell gives up the
-   narrowest width it takes elsewhere, or they would stack one per line. */
-.table-scroll[data-list="hosts"] td .buttons {
-  flex-wrap: wrap;
+/* A table whose buttons do not fit on one line shows one menu button a row in
+   their place. */
+.table-scroll.rows-folded td.actions > .buttons {
+  display: none;
 }
 
-.table-scroll[data-list="hosts"] td.actions {
-  width: auto;
+.table-scroll:not(.rows-folded) td.actions > .row-menu {
+  display: none;
+}
+
+.row-menu {
+  padding: 0.35rem 0.7rem;
+  line-height: 1;
+}
+
+.row-menu[aria-expanded="true"] {
+  background: var(--control-active);
+}
+
+/* The list a menu button opens, over the page and over a panel. */
+.row-menu-list {
+  position: fixed;
+  z-index: 15;
+  display: flex;
+  flex-direction: column;
+  min-width: 10rem;
+  max-width: calc(100vw - 1rem);
+  max-height: calc(100vh - 1rem);
+  overflow-y: auto;
+  box-sizing: border-box;
+  padding: 0.3rem;
+  background: var(--bg-surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-control);
+  box-shadow: 0 8px 24px var(--shadow);
+}
+
+.row-menu-list > button {
+  padding: 0.45rem 0.75rem;
+  text-align: start;
+  white-space: nowrap;
+  color: var(--text);
+  background: transparent;
+  border: 0;
+  border-radius: calc(var(--radius-control) - 0.3rem);
+}
+
+.row-menu-list > button:hover,
+.row-menu-list > button:focus-visible {
+  background: var(--row-hover);
+}
+
+.row-menu-list > button:focus-visible {
+  outline-offset: -2px;
+}
+
+.row-menu-list > button.danger {
+  color: var(--danger);
+}
+
+.row-menu-list > button.danger:hover,
+.row-menu-list > button.danger:focus-visible {
+  color: var(--danger);
+  background: var(--danger-bg);
+}
+
+.row-menu-list > button:disabled {
+  color: var(--text-disabled);
+  background: transparent;
 }
 
 /* What an import did is told in a word or two for the kind and the action, and

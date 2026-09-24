@@ -367,6 +367,7 @@
   "list.page.aria": "Страница {page}",
   "list.pick-all.aria": "Выбрать все строки этой страницы",
   "list.previous.button": "Назад",
+  "list.row-actions.aria": "Действия для строки {row}",
   "list.where.text": "Страница {page} из {last}, строки с {from} по {to} из {total}",
   "local-forwards.add.title": "Добавить локальную переадресацию",
   "local-forwards.added.notice": "Локальная переадресация на локальном порту {port} добавлена.",

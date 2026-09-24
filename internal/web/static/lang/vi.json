@@ -367,6 +367,7 @@
   "list.page.aria": "Trang {page}",
   "list.pick-all.aria": "Chọn mọi hàng trên trang này",
   "list.previous.button": "Trước",
+  "list.row-actions.aria": "Thao tác cho hàng {row}",
   "list.where.text": "Trang {page}/{last}, dòng {from} đến {to} trong {total}",
   "local-forwards.add.title": "Thêm chuyển tiếp cục bộ",
   "local-forwards.added.notice": "Đã thêm chuyển tiếp cục bộ trên cổng cục bộ {port}.",

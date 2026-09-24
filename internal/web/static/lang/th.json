@@ -367,6 +367,7 @@
   "list.page.aria": "หน้า {page}",
   "list.pick-all.aria": "เลือกทุกแถวในหน้านี้",
   "list.previous.button": "ก่อนหน้า",
+  "list.row-actions.aria": "การทำงานของแถว {row}",
   "list.where.text": "หน้า {page} จาก {last} แถวที่ {from} ถึง {to} จากทั้งหมด {total}",
   "local-forwards.add.title": "เพิ่มการส่งต่อพอร์ตภายในเครื่อง",
   "local-forwards.added.notice": "เพิ่มการส่งต่อพอร์ตภายในเครื่องบนพอร์ต {port} แล้ว",

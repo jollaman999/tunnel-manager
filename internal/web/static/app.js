@@ -1443,6 +1443,7 @@ function buildTable(headers, rows, numericColumns, pickHeader) {
   table.appendChild(head);
 
   const body = document.createElement("tbody");
+  let acting = false;
 
   for (const row of rows) {
     // A row may carry something that belongs under it rather than in it. It is
@@ -1486,6 +1487,7 @@ function buildTable(headers, rows, numericColumns, pickHeader) {
         // column on some screens and there is none at all on others.
         if (cell.classList.contains("buttons")) {
           td.className = "actions";
+          acting = true;
         }
       } else {
         td.textContent = cell === null || cell === undefined ? "" : String(cell);
@@ -1518,7 +1520,348 @@ function buildTable(headers, rows, numericColumns, pickHeader) {
   scroller.className = "table-scroll";
   scroller.appendChild(table);
 
+  if (acting && rowFit !== null) {
+    const gauge = document.createElement("div");
+
+    gauge.className = "table-gauge";
+    gauge.setAttribute("aria-hidden", "true");
+    scroller.appendChild(gauge);
+    rowFit.observe(gauge);
+  }
+
   return scroller;
+}
+
+// rowMenu is the open menu of a row's buttons, or null.
+let rowMenu = null;
+
+// rowFit decides again whether a table's buttons fit when its width changes.
+const rowFit = typeof ResizeObserver === "function"
+  ? new ResizeObserver(function (entries) {
+    for (const entry of entries) {
+      const gauge = entry.target;
+      const scroller = gauge.parentNode;
+
+      if (!gauge.isConnected) {
+        rowFit.unobserve(gauge);
+
+        if (rowMenu !== null && rowMenu.scroller === scroller) {
+          closeRowMenu(false);
+        }
+
+        continue;
+      }
+
+      fitRowActions(scroller);
+    }
+  })
+  : null;
+
+// fitRowActions folds the buttons of a table into menus, or lays them out
+// again, by whether the table fits its scroller with them laid out.
+function fitRowActions(scroller) {
+  const folded = scroller.classList.contains("rows-folded");
+
+  if (folded) {
+    scroller.classList.remove("rows-folded");
+  }
+
+  const fits = scroller.scrollWidth <= scroller.clientWidth;
+
+  if (fits) {
+    if (folded) {
+      unfoldRowActions(scroller);
+    }
+
+    return;
+  }
+
+  if (folded) {
+    scroller.classList.add("rows-folded");
+
+    return;
+  }
+
+  foldRowActions(scroller);
+}
+
+// rowActionCells is the cell of buttons of every row of a table.
+function rowActionCells(scroller) {
+  return scroller.querySelectorAll(":scope > table > tbody > tr > td.actions");
+}
+
+// foldRowActions puts a menu button in every cell of buttons and hides the
+// buttons.
+function foldRowActions(scroller) {
+  scroller.classList.add("rows-folded");
+
+  rowActionCells(scroller).forEach(function (cell, index) {
+    const buttons = cell.querySelector(":scope > .buttons");
+
+    if (buttons === null || cell.querySelector(":scope > .row-menu") !== null) {
+      return;
+    }
+
+    cell.appendChild(rowMenuButton(scroller, cell, buttons, index));
+  });
+}
+
+// unfoldRowActions takes the menu buttons away and shows the buttons again.
+function unfoldRowActions(scroller) {
+  if (rowMenu !== null && rowMenu.scroller === scroller) {
+    closeRowMenu(false);
+  }
+
+  scroller.classList.remove("rows-folded");
+
+  for (const cell of rowActionCells(scroller)) {
+    const trigger = cell.querySelector(":scope > .row-menu");
+
+    if (trigger === null) {
+      continue;
+    }
+
+    const focused = document.activeElement === trigger;
+
+    cell.removeChild(trigger);
+
+    const first = cell.querySelector(":scope > .buttons > button");
+
+    if (focused && first !== null) {
+      first.focus({ preventScroll: true });
+    }
+  }
+}
+
+// rowMenuButton is the button a row's buttons are folded into.
+function rowMenuButton(scroller, cell, buttons, index) {
+  const node = document.createElement("button");
+  const first = cell.parentNode.querySelector(":scope > td:not(.pick)");
+  const name = first === null || first === cell || first.textContent.trim() === ""
+    ? String(index + 1)
+    : first.textContent.trim();
+
+  node.type = "button";
+  node.className = "row-menu";
+  node.textContent = "\u22ef";
+  node.setAttribute("aria-haspopup", "menu");
+  node.setAttribute("aria-expanded", "false");
+  node.setAttribute("aria-label", t("list.row-actions.aria", { row: name }));
+
+  node.addEventListener("click", function () {
+    if (rowMenu !== null && rowMenu.trigger === node) {
+      closeRowMenu(false);
+
+      return;
+    }
+
+    openRowMenu(scroller, node, buttons, 0);
+  });
+
+  node.addEventListener("keydown", function (event) {
+    if (event.key === "ArrowDown" || event.key === "ArrowUp") {
+      event.preventDefault();
+
+      openRowMenu(scroller, node, buttons, event.key === "ArrowDown" ? 0 : -1);
+    }
+  });
+
+  return node;
+}
+
+// openRowMenu puts the buttons of a row up as a list beside its menu button.
+function openRowMenu(scroller, trigger, buttons, at) {
+  closeRowMenu(false);
+
+  const menu = document.createElement("div");
+
+  menu.className = "row-menu-list";
+  menu.setAttribute("role", "menu");
+
+  const originals = Array.prototype.slice.call(buttons.querySelectorAll(":scope > button"));
+  const ordered = originals.filter(function (original) {
+    return !original.classList.contains("danger");
+  }).concat(originals.filter(function (original) {
+    return original.classList.contains("danger");
+  }));
+
+  for (const original of ordered) {
+    const item = document.createElement("button");
+
+    item.type = "button";
+    item.className = original.className;
+    item.textContent = original.textContent;
+    item.tabIndex = -1;
+    item.disabled = original.disabled;
+    item.setAttribute("role", "menuitem");
+
+    if (original.dataset.action !== undefined) {
+      item.dataset.action = original.dataset.action;
+    }
+
+    item.addEventListener("click", function () {
+      closeRowMenu(true);
+      original.click();
+    });
+
+    menu.appendChild(item);
+  }
+
+  document.body.appendChild(menu);
+  placeRowMenu(menu, trigger);
+
+  trigger.setAttribute("aria-expanded", "true");
+  rowMenu = { menu: menu, trigger: trigger, scroller: scroller };
+
+  window.addEventListener("keydown", onRowMenuKey, true);
+  document.addEventListener("pointerdown", onRowMenuPress, true);
+  document.addEventListener("scroll", onRowMenuScroll, true);
+  window.addEventListener("resize", onRowMenuResize);
+
+  const items = rowMenuItems(menu);
+
+  if (items.length > 0) {
+    items[at < 0 ? items.length - 1 : 0].focus({ preventScroll: true });
+  } else {
+    menu.tabIndex = -1;
+    menu.focus({ preventScroll: true });
+  }
+}
+
+// placeRowMenu sets the list beside its menu button, inside the window.
+function placeRowMenu(menu, trigger) {
+  const edge = 8;
+  const box = trigger.getBoundingClientRect();
+  const width = menu.offsetWidth;
+  const height = menu.offsetHeight;
+  const across = document.documentElement.clientWidth;
+  const down = window.innerHeight;
+  const rtl = document.documentElement.getAttribute("dir") === "rtl";
+
+  let left = rtl ? box.left : box.right - width;
+  let top = box.bottom + 4;
+
+  if (top + height > down - edge && box.top - 4 - height >= edge) {
+    top = box.top - 4 - height;
+  }
+
+  left = Math.max(edge, Math.min(left, across - width - edge));
+  top = Math.max(edge, Math.min(top, down - height - edge));
+
+  menu.style.left = left + "px";
+  menu.style.top = top + "px";
+}
+
+// rowMenuItems is the entries of the list the keyboard can land on.
+function rowMenuItems(menu) {
+  return Array.prototype.filter.call(menu.querySelectorAll("button"), function (item) {
+    return !item.disabled;
+  });
+}
+
+// closeRowMenu takes the open list away. refocus puts the keyboard back on its
+// menu button.
+function closeRowMenu(refocus) {
+  if (rowMenu === null) {
+    return;
+  }
+
+  const open = rowMenu;
+
+  rowMenu = null;
+
+  window.removeEventListener("keydown", onRowMenuKey, true);
+  document.removeEventListener("pointerdown", onRowMenuPress, true);
+  document.removeEventListener("scroll", onRowMenuScroll, true);
+  window.removeEventListener("resize", onRowMenuResize);
+
+  if (open.menu.parentNode !== null) {
+    open.menu.parentNode.removeChild(open.menu);
+  }
+
+  open.trigger.setAttribute("aria-expanded", "false");
+
+  if (refocus && open.trigger.isConnected) {
+    open.trigger.focus({ preventScroll: true });
+  }
+}
+
+// onRowMenuKey answers the keys of an open list.
+function onRowMenuKey(event) {
+  if (rowMenu === null) {
+    return;
+  }
+
+  const menu = rowMenu.menu;
+
+  if (event.key === "Escape") {
+    event.preventDefault();
+    event.stopPropagation();
+
+    closeRowMenu(true);
+
+    return;
+  }
+
+  if (!menu.contains(event.target)) {
+    return;
+  }
+
+  if (event.key === "Tab") {
+    closeRowMenu(true);
+
+    return;
+  }
+
+  const items = rowMenuItems(menu);
+
+  if (items.length === 0) {
+    return;
+  }
+
+  const at = items.indexOf(document.activeElement);
+  let next = -1;
+
+  if (event.key === "ArrowDown") {
+    next = at < 0 ? 0 : (at + 1) % items.length;
+  } else if (event.key === "ArrowUp") {
+    next = at <= 0 ? items.length - 1 : at - 1;
+  } else if (event.key === "Home") {
+    next = 0;
+  } else if (event.key === "End") {
+    next = items.length - 1;
+  }
+
+  if (next !== -1) {
+    event.preventDefault();
+
+    items[next].focus({ preventScroll: true });
+  }
+}
+
+// onRowMenuPress closes the list on a press outside it.
+function onRowMenuPress(event) {
+  if (rowMenu === null) {
+    return;
+  }
+
+  if (rowMenu.menu.contains(event.target) || rowMenu.trigger.contains(event.target)) {
+    return;
+  }
+
+  closeRowMenu(false);
+}
+
+// onRowMenuScroll closes the list when anything under it scrolls.
+function onRowMenuScroll(event) {
+  if (rowMenu !== null && !rowMenu.menu.contains(event.target)) {
+    closeRowMenu(false);
+  }
+}
+
+// onRowMenuResize closes the list when the window changes size.
+function onRowMenuResize() {
+  closeRowMenu(false);
 }
 
 // bulletList is a list of sentences. It is a list and not one paragraph with
@@ -2140,7 +2483,7 @@ function openModal(spec) {
     // answered by the panel and not by the screen behind it.
     const reachable = modalFocusables(panel);
 
-    (reachable.length === 0 ? panel : reachable[0]).focus();
+    (reachable.length === 0 ? panel : reachable[0]).focus({ preventScroll: true });
   });
 }
 

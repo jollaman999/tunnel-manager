@@ -367,6 +367,7 @@
   "list.page.aria": "Page {page}",
   "list.pick-all.aria": "Check every row on this page",
   "list.previous.button": "Previous",
+  "list.row-actions.aria": "Actions for row {row}",
   "list.where.text": "Page {page} of {last}, rows {from} to {to} of {total}",
   "local-forwards.add.title": "Add a local forward",
   "local-forwards.added.notice": "Added the local forward on the local port {port}.",
