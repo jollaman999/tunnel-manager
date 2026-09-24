@@ -2647,3 +2647,77 @@ func TestEstablishConnectionFailsWhenNeitherAddressOpens(t *testing.T) {
 		}
 	}
 }
+
+// A server that accepts the TCP connection and never sends its banner must not
+// hold the dial past the timeout of the configuration, or the tunnel it belongs
+// to stops trying to connect.
+func TestDialSSHClientGivesUpOnASilentServer(t *testing.T) {
+	addr := startSilentListener(t)
+	config := &ssh.ClientConfig{
+		User:            "tester",
+		Auth:            []ssh.AuthMethod{ssh.Password("secret")},
+		HostKeyCallback: ssh.InsecureIgnoreHostKey(),
+		Timeout:         300 * time.Millisecond,
+	}
+
+	type result struct {
+		client *ssh.Client
+		err    error
+	}
+	done := make(chan result, 1)
+	start := time.Now()
+	go func() {
+		client, _, err := dialSSHClient(addr, config)
+		done <- result{client: client, err: err}
+	}()
+
+	select {
+	case r := <-done:
+		if r.err == nil {
+			_ = r.client.Close()
+			t.Fatal("dialSSHClient succeeded against a server that sent nothing")
+		}
+		if elapsed := time.Since(start); elapsed > 2*time.Second {
+			t.Fatalf("dialSSHClient returned after %v, want about %v", elapsed, config.Timeout)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("dialSSHClient is still waiting on a server that sends nothing")
+	}
+}
+
+// The deadline that bounds the handshake has to be lifted once it is done, or
+// the connection dies as soon as the timeout passes.
+func TestDialSSHClientKeepsTheConnectionPastTheTimeout(t *testing.T) {
+	addr, _ := startForwardingSSHServer(t)
+	config := &ssh.ClientConfig{
+		User:            "tester",
+		Auth:            []ssh.AuthMethod{ssh.Password("secret")},
+		HostKeyCallback: ssh.InsecureIgnoreHostKey(),
+		Timeout:         300 * time.Millisecond,
+	}
+
+	client, _, err := dialSSHClient(addr, config)
+	if err != nil {
+		t.Fatalf("dialSSHClient failed: %v", err)
+	}
+	defer func() {
+		_ = client.Close()
+	}()
+
+	time.Sleep(3 * config.Timeout)
+
+	replied := make(chan error, 1)
+	go func() {
+		_, _, err := client.SendRequest("keepalive@tunnel-manager", true, nil)
+		replied <- err
+	}()
+
+	select {
+	case err := <-replied:
+		if err != nil {
+			t.Fatalf("request after the timeout failed: %v", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("request after the timeout got no reply")
+	}
+}

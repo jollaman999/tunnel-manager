@@ -657,8 +657,25 @@ func dialSSHClient(addr string, config *ssh.ClientConfig) (*ssh.Client, net.Conn
 		return nil, nil, err
 	}
 
+	// ClientConfig.Timeout bounds only the TCP connect (ssh/client.go, Dial),
+	// so a server that accepts and never sends its banner would hold the
+	// handshake, and with it the retries of the tunnel, forever.
+	if config.Timeout > 0 {
+		if err := conn.SetDeadline(time.Now().Add(config.Timeout)); err != nil {
+			_ = conn.Close()
+			return nil, nil, err
+		}
+	}
+
 	c, chans, reqs, err := ssh.NewClientConn(conn, addr, config)
 	if err != nil {
+		return nil, nil, err
+	}
+
+	// The deadline was for the handshake. Left in place it would cut the
+	// tunnel traffic once the timeout passes.
+	if err := conn.SetDeadline(time.Time{}); err != nil {
+		_ = c.Close()
 		return nil, nil, err
 	}
 
