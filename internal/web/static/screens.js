@@ -525,14 +525,28 @@ async function drawStatus() {
 
   takeListPage(page, data);
 
-  // The three counts are of every tunnel there is and not of the page below
-  // them. They are what says what the installation is doing, and a count that
-  // followed the page would read as a tunnel count that fell to ten.
+  // The counts are of everything there is and not of the page below them. They
+  // are what says what the installation is doing, and a count that followed the
+  // page would read as a tunnel count that fell to ten.
+  //
+  // There are two sets of three because the table below holds two sorts of row
+  // and the two are not added up anywhere. A single set over both would say
+  // that nine of eleven are connected without saying which sort the two that
+  // are not belong to, and the sorts fail for different reasons and are fixed
+  // in different places. Each label names its sort for the same reason: three
+  // numbers headed Desired, Rows and Connected over a table of both sorts read
+  // as being about all of it, which is what they are no longer about.
   const counts = document.createElement("div");
   counts.className = "counts";
   counts.appendChild(countBox(t("status.desired.label"), data.desired_tunnels, "desired"));
   counts.appendChild(countBox(t("status.rows.label"), data.total_tunnels, "total"));
   counts.appendChild(countBox(t("status.connected.label"), data.connected_tunnels, "connected"));
+  counts.appendChild(countBox(t("status.forwards-desired.label"),
+    data.desired_local_forwards, "forwards-desired"));
+  counts.appendChild(countBox(t("status.forwards-rows.label"),
+    data.total_local_forwards, "forwards-total"));
+  counts.appendChild(countBox(t("status.forwards-connected.label"),
+    data.connected_local_forwards, "forwards-connected"));
 
   const nodes = [counts];
 
@@ -566,6 +580,19 @@ async function drawStatus() {
     ));
   }
 
+  // A local forward is not asked the first of those two questions. Its row is
+  // the one that was configured and is there whether or not anything runs, so
+  // there is no row that has yet to be written for a line to be about; what a
+  // forward can be short of is the running, and that is what this says.
+  const forwardsDown = data.desired_local_forwards - data.connected_local_forwards;
+  if (forwardsDown > 0) {
+    nodes.push(statusLine(
+      t(plural(forwardsDown, "status.forwards-down-one.notice",
+        "status.forwards-down-many.notice"), { count: forwardsDown }),
+      "warning"
+    ));
+  }
+
   // Nothing at all is not the same as everything connected. An installation
   // with no Host or no service port has no tunnel for the line to be about,
   // and the empty list under it is what says so.
@@ -574,7 +601,12 @@ async function drawStatus() {
   // lines above have already left, so the rows are as many as should be running
   // and the connected ones are as many as there are rows: where that number is
   // nought, all three are.
-  if (data.desired_tunnels > 0 && missing === 0 && down === 0) {
+  //
+  // A local forward that is down keeps the line off the screen even though the
+  // line speaks of tunnels alone. It is drawn in the colour of everything being
+  // well, and that colour over a warning about a forward under it is the screen
+  // saying two things at once.
+  if (data.desired_tunnels > 0 && missing === 0 && down === 0 && !(forwardsDown > 0)) {
     nodes.push(statusLine(t("status.all-connected.notice"), "ok"));
   }
 
@@ -584,14 +616,23 @@ async function drawStatus() {
     nodes.push(statusLine(t("status.no-tunnels.empty"), "empty"));
   } else {
     const rows = tunnels.map(function (tunnel) {
+      const forward = isLocalForward(tunnel);
       const cells = [
         tunnel.host_id,
-        tunnel.sp_id,
+        forward ? t("status.kind-local-forward.text") : t("status.kind-service-port.text"),
+        // A local forward is carried by no service port, and the column holds
+        // a dash rather than a blank: a blank cell in a column of numbers
+        // reads as a number that failed to come through.
+        forward ? "-" : tunnel.sp_id,
         statusBadge(tunnel.status),
         tunnel.server,
-        tunnel.local,
+        openedCell(tunnel),
         tunnel.remote,
-        reachBadge(tunnel.forward_reach),
+        // Nothing measures the reach of a local forward, so the cell is left
+        // empty. reachBadge draws an unmeasured reading as "unknown", which is
+        // what a tunnel nothing has asked about yet says; on a forward that
+        // would be the screen promising a reading that is never taken.
+        forward ? "" : reachBadge(tunnel.forward_reach),
         tunnel.retry_count,
         timeCell(tunnel.last_connected_at)
       ];
@@ -654,22 +695,59 @@ async function drawStatus() {
       return { cells: cells, under: both };
     });
 
-    const controls = pageControls("status", page, data.total_tunnels, drawStatus);
+    // The pages are cut from both sorts together, so what the controls are
+    // built over is the count of rows and not the count of tunnels. Over the
+    // tunnels alone the last pages of an installation that has local forwards
+    // are pages the numbering does not reach.
+    const controls = pageControls("status", page, data.total_rows, drawStatus);
     if (controls !== null) {
       nodes.push(controls);
     }
 
     nodes.push(buildTable(
-      [t("status.host.column"), t("status.service-port.column"), t("status.status.column"),
-        t("status.server.column"), t("status.local.column"), t("status.remote.column"),
-        t("status.port-reached.column"), t("status.retries.column"),
-        t("status.last-connected.column")],
+      [t("status.host.column"), t("status.kind.column"), t("status.service-port.column"),
+        t("status.status.column"), t("status.server.column"), t("status.opened.column"),
+        t("status.reaches.column"), t("status.port-reached.column"),
+        t("status.retries.column"), t("status.last-connected.column")],
       rows,
-      [0, 1, 7]
+      [0, 2, 8]
     ));
   }
 
   render(t("status.screen.title"), nodes);
+}
+
+// isLocalForward is which of the two sorts a status row is. The server says it
+// on kind, and it is asked for by name rather than guessed at from the row: a
+// local forward and a service port tunnel carry the same fields with the same
+// addresses in them, and the only thing that tells them apart is this word.
+function isLocalForward(row) {
+  return row.kind === "local_forward";
+}
+
+// openedCell is the address in the Opened column, with the machine the port is
+// open on written beside it.
+//
+// The machine is in the cell and not in the heading because the two sorts of
+// row open their port on different machines: a service port tunnel opens it on
+// the Host and a local forward opens it here. Both addresses are written the
+// same way, 0.0.0.0:9000 and the like, so a column headed Local held one of
+// each and nothing said which was which. The column next to it is the mirror
+// of this one - a tunnel reaches its service from here, a forward reaches its
+// target from the Host - and it carries no machine of its own, because a row
+// that says where it was opened has said which way round it runs.
+function openedCell(row) {
+  const address = row.local === null || row.local === undefined ? "" : String(row.local);
+
+  // A row with no address carries none. There is nothing to say a machine
+  // about, and a cell reading "Host" alone would name a port that is not there.
+  if (address === "") {
+    return "";
+  }
+
+  return isLocalForward(row)
+    ? t("status.opened-here.text", { address: address })
+    : t("status.opened-host.text", { address: address });
 }
 
 // statusBadge is what a tunnel is, drawn so that the one row that is not
