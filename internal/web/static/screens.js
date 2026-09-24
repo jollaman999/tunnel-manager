@@ -2624,6 +2624,9 @@ function hostRow(host) {
   buttons.appendChild(actionButton(t("hosts.service-ports.button"), "host-service-ports-" + host.id, function () {
     return openHostServicePorts(host);
   }));
+  buttons.appendChild(actionButton(t("hosts.local-forwards.button"), "host-local-forwards-" + host.id, function () {
+    return openHostLocalForwards(host);
+  }));
   buttons.appendChild(actionButton(
     host.enabled ? t("hosts.disable.button") : t("hosts.enable.button"),
     "host-toggle-" + host.id,
@@ -3760,6 +3763,349 @@ function showPanelProblem(problem, message) {
   problem.textContent = message;
   problem.hidden = false;
   problem.scrollIntoView({ block: "nearest" });
+}
+
+// localForwardBusy are the states a local forward passes through on its way to
+// an answer. The panel reads its list again while a row is in one of them,
+// because nothing else on the screen would say that the row has settled.
+const localForwardBusy = ["starting", "reconnecting"];
+
+// openHostLocalForwards puts up the panel that lists the local forwards of a
+// Host, and adds, changes and deletes them.
+//
+// A local forward runs the other way from a service port: this machine opens
+// the port, and what connects to it is carried over the SSH connection of the
+// Host to an address the Host reaches. It has a panel of its own for that
+// reason, since a local port and an address mean a different machine on each.
+//
+// The list is not paged. The server hands back every forward of the Host at
+// once, and a Host carries few of them.
+async function openHostLocalForwards(host) {
+  const list = document.createElement("div");
+
+  list.className = "assign-list";
+  list.dataset.list = "local-forwards";
+
+  // Why a press was refused, inside the panel for the reason the service port
+  // panel puts it there: the line above the screen is behind the backdrop.
+  const problem = element("p", "");
+
+  problem.className = "notice error";
+  problem.dataset.problem = "local-forwards";
+  problem.hidden = true;
+
+  const said = element("p", "");
+
+  said.className = "notice info";
+  said.dataset.said = "local-forwards";
+  said.hidden = true;
+
+  // The form under the list is the add form until the Edit of a row is
+  // pressed, and goes back to it after a save or a cancel. It is one form
+  // swapped in place, the way the service port screen swaps its own.
+  const holder = document.createElement("div");
+
+  let shown = [];
+  let editing = null;
+  let open = true;
+  let timer = null;
+
+  function drawForm() {
+    holder.textContent = "";
+    holder.appendChild(editing === null
+      ? localForwardForm(null, add)
+      : localForwardForm(editing, change, function () {
+        editing = null;
+        drawForm();
+      }));
+  }
+
+  function drawList() {
+    list.textContent = "";
+
+    if (shown.length === 0) {
+      list.appendChild(statusLine(t("local-forwards.none.empty"), "empty"));
+
+      return;
+    }
+
+    list.appendChild(buildTable(
+      [t("local-forwards.local-port.column"), t("local-forwards.scope.column"),
+        t("local-forwards.target.column"), t("local-forwards.description.column"),
+        t("local-forwards.status.column"), ""],
+      shown.map(function (item) {
+        return localForwardRow(item, edit, remove);
+      }),
+      [0]
+    ));
+  }
+
+  async function readList() {
+    const answer = await apiCall("GET", "/api/host/" + host.id + "/local-forward");
+
+    shown = Array.isArray(answer) ? answer : [];
+
+    // A row deleted from somewhere else while it was being edited leaves a
+    // form that would save to nothing, so the add form is put back.
+    if (editing !== null && !shown.some(function (item) {
+      return item.id === editing.id;
+    })) {
+      editing = null;
+      drawForm();
+    }
+
+    drawList();
+  }
+
+  // settle decides whether the list is read again. soon is a write that has
+  // just gone out: the server starts the forward after it answers, so the row
+  // it answered with has not yet left the state it was stored in.
+  function settle(soon) {
+    if (timer !== null) {
+      window.clearTimeout(timer);
+      timer = null;
+    }
+
+    if (!open) {
+      return;
+    }
+
+    const busy = shown.some(function (item) {
+      return localForwardBusy.indexOf(item.status) !== -1;
+    });
+
+    if (!soon && !busy) {
+      return;
+    }
+
+    timer = window.setTimeout(function () {
+      timer = null;
+
+      run(function () {
+        return reread(false);
+      });
+    }, statusRefreshMs);
+  }
+
+  async function reread(soon) {
+    try {
+      await readList();
+    } catch (error) {
+      if (error instanceof Redirected) {
+        throw error;
+      }
+
+      showPanelProblem(problem, error.message);
+
+      return;
+    }
+
+    settle(soon);
+  }
+
+  // write sends one change and says in the panel how it went. A refusal leaves
+  // the form as it was, with what was typed still in it.
+  async function write(method, path, body, done) {
+    problem.hidden = true;
+    said.hidden = true;
+
+    try {
+      await apiCall(method, path, body);
+    } catch (error) {
+      if (error instanceof Redirected) {
+        throw error;
+      }
+
+      showPanelProblem(problem, error.message);
+
+      return;
+    }
+
+    sayInPanel(said, done());
+
+    return reread(true);
+  }
+
+  function add(values) {
+    const body = localForwardBody(values);
+
+    return write("POST", "/api/host/" + host.id + "/local-forward", body, function () {
+      drawForm();
+
+      return t("local-forwards.added.notice", { port: body.local_port });
+    });
+  }
+
+  function change(values) {
+    const body = localForwardBody(values);
+
+    return write("PUT", "/api/local-forward/" + editing.id, body, function () {
+      editing = null;
+      drawForm();
+
+      return t("local-forwards.updated.notice", { port: body.local_port });
+    });
+  }
+
+  function edit(item) {
+    editing = item;
+    drawForm();
+    holder.scrollIntoView({ block: "nearest" });
+  }
+
+  function remove(item) {
+    if (!window.confirm(t("local-forwards.delete.confirm", { port: item.local_port }))) {
+      return;
+    }
+
+    return write("DELETE", "/api/local-forward/" + item.id, undefined, function () {
+      if (editing !== null && editing.id === item.id) {
+        editing = null;
+        drawForm();
+      }
+
+      return t("local-forwards.deleted.notice", { port: item.local_port });
+    });
+  }
+
+  // The list is read before the panel goes up, so that a refusal is answered
+  // with the line above the screen rather than with an empty panel.
+  await readList();
+
+  drawForm();
+
+  const panel = openModal({
+    name: "local-forwards",
+    title: t("local-forwards.panel.title", { id: host.id, ip: host.ip }),
+    body: [
+      element("p", t("local-forwards.panel.text")),
+      problem,
+      said,
+      list,
+      holder
+    ],
+    buttons: [
+      { label: t("common.close.button"), name: "close" }
+    ]
+  });
+
+  settle(false);
+
+  await panel;
+
+  open = false;
+  settle(false);
+}
+
+// localForwardRow is the cells of one local forward in that panel. The last
+// error goes under the row, as it does on the status screen, because a
+// sentence in a column of a table this narrow is a column of single words.
+function localForwardRow(item, edit, remove) {
+  const buttons = document.createElement("div");
+
+  buttons.className = "buttons";
+  buttons.appendChild(actionButton(t("common.edit.button"), "local-forward-edit-" + item.id, function () {
+    return edit(item);
+  }));
+  buttons.appendChild(actionButton(t("common.delete.button"), "local-forward-delete-" + item.id, function () {
+    return remove(item);
+  }, "danger"));
+
+  const description = item.description === undefined || item.description === null
+    ? ""
+    : String(item.description);
+
+  const cells = [
+    item.local_port,
+    localForwardScopeText(item.bind_scope),
+    item.target_ip + ":" + item.target_port,
+    description,
+    statusBadge(item.status),
+    buttons
+  ];
+
+  const failure = typeof item.last_error === "string" ? item.last_error : "";
+  if (failure === "") {
+    return cells;
+  }
+
+  const line = element("span", failure);
+
+  line.className = "last-error";
+
+  return { cells: cells, under: line };
+}
+
+// localForwardScopeOptions are the two scopes a local forward can be opened
+// on. They are the words bindScopeOptions sends, under other names: there the
+// port is opened on the Host, and here it is opened on this machine.
+function localForwardScopeOptions() {
+  return [
+    { value: bindScopeWildcard, text: t("local-forwards.scope-wildcard.option") },
+    { value: bindScopeLoopback, text: t("local-forwards.scope-loopback.option") }
+  ];
+}
+
+function localForwardScopeText(value) {
+  const stored = bindScopeStored(value);
+  const option = localForwardScopeOptions().find(function (one) {
+    return one.value === stored;
+  });
+
+  return option.text;
+}
+
+// localForwardForm is the add form when item is null and the edit form of item
+// otherwise. The two ask for the same values, because the update takes the
+// whole record the way the update of a service port does.
+function localForwardForm(item, onSubmit, onCancel) {
+  const stored = item === null ? {} : item;
+
+  const localPort = portField("local_port", t("local-forwards.local-port.label"), stored.local_port);
+
+  localPort.note = t("local-forwards.local-port.hint");
+
+  const targetIP = ipField("target_ip", t("local-forwards.target-ip.label"), stored.target_ip);
+
+  targetIP.note = t("local-forwards.target-ip.hint");
+
+  const spec = {
+    name: item === null ? "local-forward-create" : "local-forward-edit",
+    legend: item === null
+      ? t("local-forwards.add.title")
+      : t("local-forwards.edit.title", { port: item.local_port }),
+    submitLabel: item === null ? t("common.add.button") : t("common.save.button"),
+    fields: [
+      localPort,
+      {
+        name: "bind_scope",
+        label: t("local-forwards.scope.label"),
+        value: bindScopeStored(stored.bind_scope),
+        options: localForwardScopeOptions(),
+        note: t("local-forwards.scope.hint")
+      },
+      targetIP,
+      portField("target_port", t("local-forwards.target-port.label"), stored.target_port),
+      { name: "description", label: t("local-forwards.description.label"), value: stored.description }
+    ],
+    onSubmit: onSubmit
+  };
+
+  if (onCancel !== undefined) {
+    spec.onCancel = onCancel;
+  }
+
+  return buildForm(spec);
+}
+
+function localForwardBody(values) {
+  return {
+    bind_scope: values.bind_scope,
+    local_port: asNumber(values.local_port),
+    target_ip: values.target_ip.trim(),
+    target_port: asNumber(values.target_port),
+    description: values.description
+  };
 }
 
 // assignPickedToHosts is the second press over the ticks of the service port
@@ -6384,14 +6730,25 @@ async function exportTunnels(values) {
   const name = handTheFileOut(data, "tunnels");
   const hosts = countOf(data, "hosts");
   const ports = countOf(data, "service_ports");
+  const forwards = countOf(data, "local_forwards");
 
   setToast(function () {
-    return t(plural(hosts,
+    const said = [t(plural(hosts,
       plural(ports, "transfer.exported-host-one-port-one.notice",
         "transfer.exported-host-one-port-many.notice"),
       plural(ports, "transfer.exported-host-many-port-one.notice",
         "transfer.exported-host-many-port-many.notice")),
-    { name: name, hosts: hosts, ports: ports });
+    { name: name, hosts: hosts, ports: ports })];
+
+    // The local forwards are a sentence of their own rather than a third count
+    // in the one above, which would take the four sentences to eight. A file
+    // with none says nothing about them, as a file from before they existed.
+    if (forwards > 0) {
+      said.push(t(plural(forwards, "transfer.exported-local-forwards-one.notice",
+        "transfer.exported-local-forwards-many.notice"), { count: forwards }));
+    }
+
+    return said.join(" ");
   });
 
   // The screen is drawn again, which is what takes the password out of the box
@@ -6565,6 +6922,10 @@ function transferItemKind(kind) {
 
   if (kind === "service_port") {
     return t("transfer.kind-service-port.text");
+  }
+
+  if (kind === "local_forward") {
+    return t("transfer.kind-local-forward.text");
   }
 
   return kind === null || kind === undefined ? "" : String(kind);

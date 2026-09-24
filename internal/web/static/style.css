@@ -2051,6 +2051,13 @@ body.modal-open {
   box-shadow: 0 8px 24px var(--shadow);
 }
 
+/* The local forwards are a table of six columns with a form under it, which
+   the width of a panel that asks one question squeezes into a column of single
+   words. */
+.modal-panel[data-modal-panel="local-forwards"] {
+  max-width: 56rem;
+}
+
 .modal-panel:focus-visible {
   outline: 2px solid var(--accent);
   outline-offset: 2px;
