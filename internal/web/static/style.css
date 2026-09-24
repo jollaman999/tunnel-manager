@@ -381,19 +381,6 @@ h1 {
   margin-bottom: 1rem;
 }
 
-/* Where there is room beside the card, they drop to the line the name of the
-   program is on: the middle of this row on the middle of that name.
-
-   The width is what it takes for the card and this row to stand side by side.
-   The card is held to 60rem and carries 20px of padding and a border, so it is
-   1002px at its widest; this row is about 180px and sits 12px from the edge.
-   Two of those margins either side of the card is the 1400px below. Under it
-   the row would be over the card, and a control sitting on the corner of a
-   panel reads as part of that panel rather than as something belonging to the
-   page.
-
-   The 41px is the card's own first line: it begins 24px down and carries 20px
-   of padding above the name. Anything that changes that padding moves this. */
 /* The button is painted by the rules every other button is painted by; only
    how small it is is said here. */
 /* A change of theme moves every colour on the page together, rather than
