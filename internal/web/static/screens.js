@@ -149,6 +149,11 @@ const listPages = {
 // row that is not ticked is deleted rather than held against false, so the
 // count of what is ticked is the count of the keys.
 //
+// The keys of listPicks["local-forwards"] are numbers within a Host and not
+// identifiers of the table, because that is what a local forward is keyed by.
+// A number names one row here for the same reason the entry is emptied: what
+// the panel is holding is one Host's rows.
+//
 // Two things narrow what can be in there, and both are done in keepPicksOnPage
 // as the list is drawn rather than left to the press to deal with:
 //
@@ -176,16 +181,24 @@ function pickedIDs(name) {
     });
 }
 
+// pickIdentity is what a row's tick is held under where the list does not say
+// otherwise: the id of the row. The local forward list says otherwise, since a
+// local forward carries no id of the table; it hands in its number instead.
+function pickIdentity(item) {
+  return item.id;
+}
+
 // keepPicksOnPage drops every tick that is not on the page of rows just
 // fetched. It is the same treatment the row with the edit form open is given a
 // few lines below every call of it: what the screen is holding the identifier
 // of has to be something in the answer that screen was drawn from, or it is
 // holding a row that is not there.
-function keepPicksOnPage(name, items) {
+function keepPicksOnPage(name, items, key) {
+  const identify = key === undefined ? pickIdentity : key;
   const here = {};
 
   for (const item of items) {
-    here[String(item.id)] = true;
+    here[String(identify(item))] = true;
   }
 
   for (const id of Object.keys(listPicks[name])) {
@@ -209,7 +222,8 @@ function keepPicksOnPage(name, items) {
 //
 // describe is what a reader who cannot see the column is told a row's tick is
 // for. A box on its own is read out as a box, and there are ten of them.
-function listPickColumn(name, items, describe) {
+function listPickColumn(name, items, describe, key) {
+  const identify = key === undefined ? pickIdentity : key;
   const picked = listPicks[name];
   const boxes = [];
   const head = document.createElement("input");
@@ -218,7 +232,7 @@ function listPickColumn(name, items, describe) {
   head.dataset.field = name + "-pick-all";
   head.setAttribute("aria-label", t("list.pick-all.aria"));
   head.checked = items.length > 0 && items.every(function (item) {
-    return Object.prototype.hasOwnProperty.call(picked, String(item.id));
+    return Object.prototype.hasOwnProperty.call(picked, String(identify(item)));
   });
 
   function hold(id, on) {
@@ -2845,9 +2859,10 @@ function ticksWakeThePress(name, table, button) {
 // rows of this page gone and rows of the pages after it moved up into their
 // places; neither is what is on the screen behind the panel.
 async function deletePicked(spec) {
+  const identify = spec.key === undefined ? pickIdentity : spec.key;
   const wanted = pickedIDs(spec.name);
   const chosen = spec.items.filter(function (item) {
-    return wanted.indexOf(item.id) !== -1;
+    return wanted.indexOf(identify(item)) !== -1;
   });
 
   // Nothing is ticked, which is the state the press is dead in. It is read
@@ -2936,11 +2951,12 @@ async function confirmPickedDeletes(spec, chosen) {
 // identifier and address the table names it by, and where it was refused, what
 // the server said about it.
 function pickedDeleteRow(spec, item, reason) {
+  const identify = spec.key === undefined ? pickIdentity : spec.key;
   const row = document.createElement("div");
   const refused = reason !== null && reason !== undefined;
 
   row.className = refused ? "picked-row bad" : "picked-row";
-  row.dataset.picked = String(item.id);
+  row.dataset.picked = String(identify(item));
   row.appendChild(element("span", spec.describe(item)));
 
   if (refused) {
@@ -3956,6 +3972,20 @@ function showPanelProblem(problem, message) {
 // because nothing else on the screen would say that the row has settled.
 const localForwardBusy = ["starting", "reconnecting"];
 
+// localForwardNumber is what one local forward is picked and reached by: the
+// number it carries within its Host. A local forward has no identifier of the
+// table, so this is the whole of what names it beside the Host it belongs to.
+function localForwardNumber(item) {
+  return item.number;
+}
+
+// localForwardPath is where one local forward is read, changed and deleted.
+// The Host is in the path and not only the number, because a number on its own
+// names a row on every Host.
+function localForwardPath(hostID, number) {
+  return "/api/host/" + hostID + "/local-forward/" + number;
+}
+
 // openHostLocalForwards puts up the panel that lists the local forwards of a
 // Host a page at a time, and adds, changes, switches and deletes them.
 //
@@ -4020,7 +4050,7 @@ async function openHostLocalForwards(host) {
 
     list.textContent = "";
 
-    keepPicksOnPage("local-forwards", shown);
+    keepPicksOnPage("local-forwards", shown, localForwardNumber);
 
     // The Add is at the far end of the row that turns the page, over the list
     // it adds to, and is there on an empty list too.
@@ -4046,26 +4076,30 @@ async function openHostLocalForwards(host) {
       return;
     }
 
-    const picks = listPickColumn("local-forwards", shown, function (id) {
+    const picks = listPickColumn("local-forwards", shown, function (number) {
       const item = shown.find(function (one) {
-        return one.id === id;
+        return one.number === number;
       });
 
       return t("local-forwards.pick-row.aria", { port: item.local_port });
-    });
+    }, localForwardNumber);
 
+    // The number leads the row, where the id leads a row of the Host list and
+    // of the service port list. It is what names the row everywhere outside
+    // this table - it is the path every press here sends to - so it is read
+    // first and the values it stands for follow it.
     const table = buildTable(
-      [t("local-forwards.local-port.column"), t("local-forwards.scope.column"),
-        t("local-forwards.target.column"), t("local-forwards.description.column"),
-        t("local-forwards.status.column"), ""],
+      [t("local-forwards.number.column"), t("local-forwards.local-port.column"),
+        t("local-forwards.scope.column"), t("local-forwards.target.column"),
+        t("local-forwards.description.column"), t("local-forwards.status.column"), ""],
       shown.map(function (item) {
         const row = localForwardRow(item, openForm, flipOne, remove);
 
-        row.pick = picks.box(item.id);
+        row.pick = picks.box(item.number);
 
         return row;
       }),
-      [0],
+      [0, 1],
       picks.head
     );
 
@@ -4077,8 +4111,9 @@ async function openHostLocalForwards(host) {
       title: t("local-forwards.delete-picked.title"),
       text: t("local-forwards.delete-picked.text"),
       describe: describe,
+      key: localForwardNumber,
       path: function (item) {
-        return "/api/local-forward/" + item.id;
+        return localForwardPath(host.id, item.number);
       },
       said: function (count) {
         return t(plural(count, "local-forwards.deleted-picked-one.notice",
@@ -4118,7 +4153,8 @@ async function openHostLocalForwards(host) {
       refused.dataset.list = "local-forwards-flip-picked";
 
       for (const refusal of refusals) {
-        refused.appendChild(pickedDeleteRow({ describe: describe }, refusal.item, refusal.reason));
+        refused.appendChild(pickedDeleteRow({ describe: describe, key: localForwardNumber },
+          refusal.item, refusal.reason));
       }
 
       list.appendChild(refused);
@@ -4251,7 +4287,7 @@ async function openHostLocalForwards(host) {
       if (item === null) {
         await apiCall("POST", "/api/host/" + host.id + "/local-forward", body);
       } else {
-        await apiCall("PUT", "/api/local-forward/" + item.id, body);
+        await apiCall("PUT", localForwardPath(host.id, item.number), body);
       }
     } catch (error) {
       refuse(error, said);
@@ -4266,8 +4302,8 @@ async function openHostLocalForwards(host) {
         { port: body.local_port });
     });
 
-    // The list is in the order of ids and a new row has the highest, so it is
-    // on the last page.
+    // The list is in the order of numbers and a new row has the highest, so it
+    // is on the last page.
     if (item === null) {
       page.number = lastPageOf(total + 1, page.size);
     }
@@ -4281,7 +4317,7 @@ async function openHostLocalForwards(host) {
     problem.hidden = true;
 
     try {
-      await apiCall("PUT", "/api/local-forward/" + item.id, localForwardFlipBody(item, on));
+      await apiCall("PUT", localForwardPath(host.id, item.number), localForwardFlipBody(item, on));
     } catch (error) {
       refuse(error, problem);
 
@@ -4301,7 +4337,7 @@ async function openHostLocalForwards(host) {
   async function flipPicked(on) {
     const wanted = pickedIDs("local-forwards");
     const chosen = shown.filter(function (item) {
-      return wanted.indexOf(item.id) !== -1;
+      return wanted.indexOf(item.number) !== -1;
     });
 
     if (chosen.length === 0) {
@@ -4322,7 +4358,7 @@ async function openHostLocalForwards(host) {
       }
 
       try {
-        await apiCall("PUT", "/api/local-forward/" + item.id, localForwardFlipBody(item, on));
+        await apiCall("PUT", localForwardPath(host.id, item.number), localForwardFlipBody(item, on));
       } catch (error) {
         if (error instanceof Redirected) {
           throw error;
@@ -4372,14 +4408,14 @@ async function openHostLocalForwards(host) {
     problem.hidden = true;
 
     try {
-      await apiCall("DELETE", "/api/local-forward/" + item.id);
+      await apiCall("DELETE", localForwardPath(host.id, item.number));
     } catch (error) {
       refuse(error, problem);
 
       return;
     }
 
-    delete listPicks["local-forwards"][String(item.id)];
+    delete listPicks["local-forwards"][String(item.number)];
 
     setToast(function () {
       return t("local-forwards.deleted.notice", { port: item.local_port });
@@ -4422,19 +4458,21 @@ function localForwardRow(item, edit, flip, remove) {
   const buttons = document.createElement("div");
 
   buttons.className = "buttons";
-  buttons.appendChild(actionButton(t("common.edit.button"), "local-forward-edit-" + item.id, function () {
-    return edit(item);
-  }));
+  buttons.appendChild(actionButton(t("common.edit.button"), "local-forward-edit-" + item.number,
+    function () {
+      return edit(item);
+    }));
   buttons.appendChild(actionButton(
     item.enabled ? t("local-forwards.disable.button") : t("local-forwards.enable.button"),
-    "local-forward-toggle-" + item.id,
+    "local-forward-toggle-" + item.number,
     function () {
       return flip(item);
     }
   ));
-  buttons.appendChild(actionButton(t("common.delete.button"), "local-forward-delete-" + item.id, function () {
-    return remove(item);
-  }, "danger"));
+  buttons.appendChild(actionButton(t("common.delete.button"), "local-forward-delete-" + item.number,
+    function () {
+      return remove(item);
+    }, "danger"));
 
   const description = item.description === undefined || item.description === null
     ? ""
@@ -4442,6 +4480,7 @@ function localForwardRow(item, edit, flip, remove) {
 
   const row = {
     cells: [
+      item.number,
       item.local_port,
       localForwardScopeText(item.bind_scope),
       item.target_ip + ":" + item.target_port,
@@ -6570,7 +6609,7 @@ async function apiPortTakenPanel(taken, offerAPI) {
 
           try {
             if (socks === null) {
-              await moveLocalForward(forward.id, port);
+              await moveLocalForward(forward.host_id, forward.number, port);
             } else {
               await apiCall("PUT", "/api/host/" + socks.host_id, { socks_port: port });
             }
@@ -6599,10 +6638,14 @@ async function apiPortTakenPanel(taken, offerAPI) {
 // moveLocalForward gives a local forward another local port and leaves the
 // rest of it as it is stored. It is read first because the update takes the
 // whole record, and a scope left out of it would be stored as the wildcard.
-async function moveLocalForward(id, port) {
-  const item = await apiCall("GET", "/api/local-forward/" + id);
+//
+// The forward is named by its Host and its number, which is what the refusal
+// that brought the operator here carries.
+async function moveLocalForward(hostID, number, port) {
+  const path = localForwardPath(hostID, number);
+  const item = await apiCall("GET", path);
 
-  return apiCall("PUT", "/api/local-forward/" + id,
+  return apiCall("PUT", path,
     localForwardBody(Object.assign({}, item, { local_port: String(port) })));
 }
 

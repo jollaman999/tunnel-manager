@@ -138,7 +138,7 @@ const (
 	errServicePortCreateHostsRead  errorCode = "service_port.create.hosts_read_failed"
 	errServicePortCreateHostsStore errorCode = "service_port.create.hosts_store_failed"
 
-	errLocalForwardIDInvalid     errorCode = "local_forward.id.invalid"
+	errLocalForwardNumberInvalid errorCode = "local_forward.number.invalid"
 	errLocalForwardNotFound      errorCode = "local_forward.not_found"
 	errLocalForwardFetchFailed   errorCode = "local_forward.fetch_failed"
 	errLocalForwardListFailed    errorCode = "local_forward.list_failed"
@@ -372,7 +372,7 @@ var errorMessages = map[errorCode]string{
 	// conflicts rather than a malformed body: the port is opened on this
 	// machine, and a port something here already opens leaves one of the two
 	// unable to start.
-	errLocalForwardIDInvalid:     "Invalid local forward ID: {reason}",
+	errLocalForwardNumberInvalid: "Invalid local forward number: {reason}",
 	errLocalForwardNotFound:      "Local forward not found",
 	errLocalForwardFetchFailed:   "Failed to fetch local forward",
 	errLocalForwardListFailed:    "Failed to fetch local forwards",
