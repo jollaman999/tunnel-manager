@@ -935,11 +935,11 @@ func newRowsDB(t *testing.T, hosts []models.Host, sps []models.ServicePort, tunn
 	}
 
 	for _, host := range hosts {
-		// Enabled carries a default of true, and gorm writes that default in
-		// place of a field that holds a zero value, onto the row and onto the
-		// struct it was given. A Host stored as disabled comes back enabled, so
-		// what the caller asked for is kept here and written by name once the
-		// row is there, which is the one thing a disabled Host in a test is for.
+		// Enabled carries no database default any more (see models.Host), so
+		// Create writes a disabled Host as disabled. The write of Enabled by
+		// name after it is from when the column had a default of true and gorm
+		// put that default in place of a false. It changes nothing now, and it
+		// would keep a disabled Host disabled here if a default came back.
 		enabled := host.Enabled
 
 		err = db.Create(&host).Error
