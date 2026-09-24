@@ -1189,6 +1189,9 @@ everything it has stored gets `[]`.
 **A stored `api_port` that another program holds does not stop the start.** The
 process listens on a port the system picks instead, one no local forward opens,
 and logs it under `api_server.port_taken_fallback` with `stored_port` and `port`.
+On Windows a stored port the system keeps for itself, such as one in a range
+reserved for Hyper-V or WinNAT, is refused with an access error and passed over
+the same way.
 A restart tries the port it was running on first, before one the system picks,
 and logs `reused_previous` as `true` when it lands there.
 That port is not stored: the next start tries the stored one again, and until

@@ -130,7 +130,7 @@ func TestListenAPIGivesUpWithTheStoredPortError(t *testing.T) {
 		t.Fatalf("opened port %d while avoid refused every one", port)
 	}
 
-	if !addressInUse(err) {
+	if !portUnavailable(err) {
 		t.Fatalf("the error is not the one of the taken stored port: %v", err)
 	}
 
@@ -152,7 +152,7 @@ func TestListenAPILeavesOtherFailuresAlone(t *testing.T) {
 		t.Skip("this process may open port 1, so there is no refusal to observe")
 	}
 
-	if addressInUse(err) {
+	if portUnavailable(err) {
 		t.Skip("port 1 is taken here rather than refused")
 	}
 

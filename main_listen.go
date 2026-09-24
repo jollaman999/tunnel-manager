@@ -21,8 +21,8 @@ const previousAPIPortEnv = "TUNNEL_MANAGER_PREVIOUS_API_PORT"
 
 // listenAPI opens the port the API is served on and reports which one it is.
 //
-// The stored port is tried first. Only when another program holds it is
-// another port tried instead: the screen that would change the stored port is
+// The stored port is tried first. Only when another program holds it, or on
+// Windows the system reserved it, is another port tried instead: the screen that would change the stored port is
 // served on this port, so a process that ended here would leave no way to
 // change it. Any other failure, a port below 1024 without the privilege for it
 // among them, is returned as it is, because another port would hide a setting
@@ -45,7 +45,7 @@ func listenAPI(host string, stored, previous int, avoid func(port int) bool) (ne
 		return listener, stored, nil
 	}
 
-	if !addressInUse(err) {
+	if !portUnavailable(err) {
 		return nil, stored, err
 	}
 
