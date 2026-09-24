@@ -337,7 +337,7 @@ Host 就能到达 Host 眼中的 `target_ip:target_port`，因为 SSH 登录已�
 | `host_key_unapproved`、`host_key_mismatch` | 和隧道一样，主机密钥被拒绝了。会停在这里直到批准密钥 |
 
 **状态保存在运行本地转发的那个进程的内存里**，本地转发的接口和 `GET /api/status` 都会返回
-它。`GET /api/status` 把本地转发和隧道放在一起，并用另外的名字单独统计，见
+它。`GET /api/status` 把本地转发和隧道放在一起，并和隧道合在一起统计，见
 [读懂隧道状态](#读懂隧道状态)。
 
 **加入 `enabled` 的那次升级让所有本地转发保持开启。** 在它之前保存的本地转发都在运行，所以加上
@@ -914,7 +914,7 @@ curl -s -b cookies.txt -X PUT "$BASE/api/account" \
 
 | 页面 | 路径 | 显示什么、能做什么 |
 |------|------|--------------------|
-| Status | `/ui/status` | 两种转发的计数（期望、行数、已连接，隧道和本地转发各一组）、一句话说明它们之间的差是怎么回事，以及两种行各占一行：Host、种类、服务端口、状态、服务器、开在哪、连到哪、端口是否可达、重试次数、上次连上的时间。本地转发那一行的服务端口一栏是 `-`，开在哪和连到哪两栏里还写着那个地址属于哪一台机器，因为两种转发打开端口的那一端正好相反。出了问题的隧道会在它下面横跨整张表再加一行写清哪里不对；转发端口无法连接的隧道，多出来的那一行写的是要在它指出的那台 SSH 服务器上修改什么、还要检查什么。已建立的隧道，下面还会写出关于这条转发的地址已知的信息，把请求过的、SSH 服务器应答的、从这里发起的连接确认过的分开来写；它从不说端口是开着的。这些行是一页一页出的，一开始每页十行，页大小和页码在表格上方选；计数始终是整套安装的计数，不是这一页的。它每 5 秒刷新一次，刷新后仍停在你正在看的那一页。 |
+| Status | `/ui/status` | 四个计数（期望、已连接、重连中、出错，四个都把两种转发合在一起数）、一句话说明它们之间的差是怎么回事，以及两种行各占一行：Host、种类、服务端口、状态、服务器、开在哪、连到哪、端口是否可达、重试次数、上次连上的时间。本地转发那一行的服务端口一栏是 `-`，开在哪和连到哪两栏里还写着那个地址属于哪一台机器，因为两种转发打开端口的那一端正好相反。端口是否可达这一栏两种行上都会填，而且问的不是同一件事：在隧道上问的是开在 Host 上的那个端口，在本地转发上问的是从 Host 那边连到的目标。出了问题的隧道会在它下面横跨整张表再加一行写清哪里不对；转发端口无法连接的隧道，多出来的那一行写的是要在它指出的那台 SSH 服务器上修改什么、还要检查什么。已建立的隧道，下面还会写出关于这条转发的地址已知的信息，把请求过的、SSH 服务器应答的、从这里发起的连接确认过的分开来写；它从不说端口是开着的。这些行是一页一页出的，一开始每页十行，页大小和页码在表格上方选；计数始终是整套安装的计数，不是这一页的。它每 5 秒刷新一次，刷新后仍停在你正在看的那一页。 |
 | Hosts | `/ui/hosts` | 每台 Host 一行，有 ID、IP、端口、用户、描述、是否启用、SOCKS5 代理和更新时间。行是一页一页出的，一开始每页十行，页大小（10、20、30、50 或 100）和页码在表格上方选。这个选择只记在这个页面上，而短到一页最小页大小就放得下的列表，索性连控件都不显示。可以添加 Host、编辑、启用或停用、删除。添加和编辑表单里有粘贴私钥的框、拖放密钥文件的区域，还有给带密码的密钥填密码的框；添加表单里有一个默认勾上的 **Assign all service ports**，它决定这台 Host 一开始负责什么，旁边的 **在 Host 上的可达范围** 列表则是这个勾选所建立的全部分配关系的起点范围。行里的 **Service ports** 会打开一个面板，列出所有服务端口，这台 Host 负责的那些已勾选，每一行旁边还有它的可达范围：可以在上方选一个范围套用到所有勾选的行，也可以单独改一行，没勾的行不会被动；保存时只发送改动过的部分，所以在这个面板里勾选一项，不会影响你没有查看的那些页。行里的 **Local forwards** 会打开一个面板，一页一页地列出这台 Host 的本地转发及各自的状态，在那里添加、修改、开启和关闭、删除，可以一行一行地做，也可以对勾选的行一起做，见[本地转发](#本地转发)。添加和编辑表单还能开启这台 Host 的 SOCKS5 代理，那一栏显示端口和状态，见 [Host 的 SOCKS5 代理](#host-的-socks5-代理)。 |
 | Service Ports | `/ui/service-ports` | 每个服务端口一行，有 ID、服务 IP、服务端口、本地端口、描述和更新时间。行和 Hosts 一样是一页一页出的，页大小和页码各记各的。可以添加、编辑和删除。添加表单里有一个默认勾上的 **Assign to all hosts**，它决定一开始哪些 Host 负责它，旁边的 **在 Host 上的可达范围** 列表则是这个勾选所建立的分配关系的起点范围；之后哪些 Host 负责它、每条分配关系各能到多远，都在 Hosts 页面上修改。 |
 | Logs | `/ui/logs` | 日志文件的末尾，最新的在最下面，可以按级别过滤，也可以选看多少行。它每 5 秒刷新一次。它读的是进程此刻正在写的那个文件，轮转后的文件不显示。行按页面的语言显示，文件本身还是英文；见[页面的语言](#页面的语言)。 |
@@ -2019,52 +2019,50 @@ curl -s -b cookies.txt https://127.0.0.1:8888/api/status
 {
   "success": true,
   "data": {
-    "desired_tunnels": 1,
-    "total_tunnels": 1,
-    "connected_tunnels": 0,
-    "desired_local_forwards": 1,
-    "total_local_forwards": 1,
-    "connected_local_forwards": 0,
-    "total_rows": 2,
-    "host_keys_unapproved": 0,
+    "connected_tunnels": 2,
+    "desired_tunnels": 2,
+    "error_tunnels": 0,
     "host_keys_mismatched": 0,
+    "host_keys_unapproved": 0,
     "page": 1,
+    "reconnecting_tunnels": 0,
     "size": 10,
+    "total_rows": 2,
     "tunnels": [
       {
         "host_id": 1,
-        "kind": "service_port",
-        "sp_id": 1,
-        "status": "starting",
+        "status": "connected",
         "last_error": "",
         "retry_count": 0,
-        "last_connected_at": "0001-01-01T00:00:00Z",
-        "server": "192.0.2.10:22",
-        "local": "0.0.0.0:18080",
-        "remote": "198.51.100.20:8080",
-        "server_banner": "",
-        "forward_reach": "unknown",
+        "last_connected_at": "2026-09-24T23:18:56.203964519+09:00",
+        "server": "192.0.2.10:2222",
+        "local": "0.0.0.0:8080",
+        "remote": "198.51.100.20:18080",
+        "server_banner": "SSH-2.0-OpenSSH_9.9",
+        "forward_reach": "reachable",
         "error_kind": "",
-        "open_reach": "",
-        "listen_addresses": ""
+        "open_reach": "ipv4",
+        "listen_addresses": "0.0.0.0,::",
+        "kind": "service_port",
+        "sp_id": 1
       },
       {
         "host_id": 1,
-        "kind": "local_forward",
-        "sp_id": null,
-        "number": 1,
-        "status": "starting",
+        "status": "connected",
         "last_error": "",
         "retry_count": 0,
-        "last_connected_at": "0001-01-01T00:00:00Z",
-        "server": "192.0.2.10:22",
+        "last_connected_at": "2026-09-24T23:18:56.120064834+09:00",
+        "server": "192.0.2.10:2222",
         "local": "127.0.0.1:15432",
-        "remote": "198.51.100.30:5432",
+        "remote": "198.51.100.30:80",
         "server_banner": "",
-        "forward_reach": "",
+        "forward_reach": "reachable",
         "error_kind": "",
         "open_reach": "",
-        "listen_addresses": ""
+        "listen_addresses": "",
+        "kind": "local_forward",
+        "sp_id": null,
+        "number": 1
       }
     ]
   }
@@ -2086,37 +2084,60 @@ curl -s -b cookies.txt https://127.0.0.1:8888/api/status
 是 `null`；顶替它位置的 `number` 说这一行是这台 Host 的第几个本地转发，也就是
 [一台 Host 的本地转发](#一台-host-的本地转发)里用来指到某一个的那个编号。隧道的行上根本没有
 `number`：它不是发成 0，而是整个字段都不发，所以有 `host_id` 和 `number` 的是本地转发的行，有
-`host_id` 和 `sp_id` 的是隧道的行。本地转发也没有谁从对面去量它的转发端口，所以 `forward_reach`、`server_banner`、
-`error_kind`、`open_reach` 和 `listen_addresses` 在它上面都是空的。这些字段对隧道意味着什么，
-写在下面。
+`host_id` 和 `sp_id` 的是隧道的行。`forward_reach` 两种行上都有，而且问的不是同一件事，写在
+[本地转发能不能到达目标](#本地转发能不能到达目标)里。`server_banner`、`error_kind`、
+`open_reach` 和 `listen_addresses` 只在服务端口的行上填，本地转发的行上都是空的：本地转发不在
+Host 上开端口，这些字段没有可说的对象。
 
 计数是对所有行算的，不是对这一页算的：一套有二十五行的安装，在十行一页上报出来的还是二十五，
 而 `connected_tunnels` 数的是这套安装里连上的隧道，不是恰好落在这一页上的那些。
 
-**三个隧道计数和从前一样，只数服务端口的隧道。** 本地转发在它们旁边用另外三个名字来数：名字
-没变而数的东西变多了的计数，读这份答复的脚本会照旧读下去，悄无声息地读错。
+**计数一共四个，四个都把两种转发合在一起数。** 在读这份答复的人看来，本地转发也是隧道，所以
+这四个数说的是：这套安装里有多少在跑、有多少正在自己回来、有多少在等人，不分它是哪一种。
 
 | 计数 | 数的是什么 |
 |------|------------|
-| `desired_tunnels` | **应该**运行多少条隧道：Host 处于启用状态的那些分配关系，算法和调谐时构造期望状态的一样 |
-| `total_tunnels` | 存在多少条隧道**行**，凡是启动过的隧道都各占一行，不管它最后落在什么状态 |
-| `connected_tunnels` | 这些行里有多少条写着 `connected` |
-| `desired_local_forwards` | **应该**运行多少条本地转发：开着的、Host 还在而且处于启用状态的那些，算法和上面一样 |
-| `total_local_forwards` | **存了**多少条本地转发，关掉的也算在内 |
-| `connected_local_forwards` | 它们里面有多少条报告 `connected` |
-| `total_rows` | 两种加起来的数，页就是从它上面切下来的 |
+| `desired_tunnels` | 两种合起来**应该**运行多少行：Host 处于启用状态的那些分配关系，加上开着的、Host 处于启用状态的本地转发 |
+| `connected_tunnels` | 有多少行写着 `connected` |
+| `reconnecting_tunnels` | 有多少行写着 `reconnecting`：没人动手也会自己回来的那些 |
+| `error_tunnels` | 有多少行写着 `error`：在等人的那些 |
+| `total_rows` | 两种的行加起来的数，页就是从它上面切下来的 |
 
-三个隧道计数回答的是三个不同的问题，它们之间的差各有各的意思。
+**把 `reconnecting` 和 `error` 分开数，是因为要人做的事不一样。** 重连中的行是自己在往回走，
+出错的行是在等人；把两者合成一个数，就说不出眼前看到的是哪一种了。
 
-| 差 | 是什么意思 |
-|----|------------|
-| `desired > total` | 一条本应运行的隧道根本没有被启动过。要么是调谐还没有执行到，那只是一瞬间的事；要么是调谐无法启动它，比如已保存的密码用当前这把加密密钥无法解密。原因在日志里。 |
-| `total > connected` | 隧道已启动，但没有在转发流量。它那一行的 `status` 和 `last_error` 里写着为什么。 |
+**四个数彼此加不起来，本来也不是为了加起来。** `starting` 的行，以及卡在主机密钥上的行，三个
+状态计数里哪一个都不算；后者由下面那两个 Host 的计数来回答。下面这些数是从一套六行的安装上取
+回来的，其中一行在重连，两行出错。
 
-**本地转发这边要看的差只有一个，不是两个。** `total_local_forwards` 数的是存下来的行，不是启动
-过的行，所以它不会低于 `desired_local_forwards`：关掉的转发算在总数里，不算在期望数里。有意思
-的那个差是 `desired_local_forwards` 大于 `connected_local_forwards`，那说明本该转发流量的转发
-没有在转发，原因和隧道一样，写在它那一行的 `status` 和 `last_error` 里。
+```json
+{
+  "connected_tunnels": 3,
+  "desired_tunnels": 6,
+  "error_tunnels": 2,
+  "host_keys_mismatched": 0,
+  "host_keys_unapproved": 0,
+  "page": 1,
+  "reconnecting_tunnels": 1,
+  "size": 10,
+  "total_rows": 6
+}
+```
+
+这些数之间值得比的有三处。
+
+| 比较 | 是什么意思 |
+|------|------------|
+| `desired_tunnels` 大于 `connected_tunnels` | 本该转发流量的没有在转发。其中多少在自己往回走、多少在等你，由 `reconnecting_tunnels` 和 `error_tunnels` 说明，原因写在各自那一行的 `status` 和 `last_error` 里 |
+| `error_tunnels` 大于零 | 有些行放着不管不会自己好。被拒绝的登录和被拒绝的主机密钥会一直停在那里，直到构成它的某样东西发生变化。要动手处理的东西，数的就是这个计数 |
+| `total_rows` 大于 `desired_tunnels` | 存着一些谁都不想让它运行的行：关掉的本地转发写着 `off`，禁用 Host 的本地转发写着 `disabled`，两者都作为行留着，除了 `total_rows` 不进任何计数。禁用 Host 的隧道行不会留着：调谐会把它们删掉，所以它们也从 `total_rows` 里消失 |
+
+**v3.13.0 给过的四个计数没有了，名字留下来的两个数的东西变多了。**`total_tunnels`、
+`total_local_forwards`、`connected_local_forwards` 和 `desired_local_forwards` 只在这份答复里
+待了一个版本，现在没有了；原本只数服务端口隧道的 `desired_tunnels` 和 `connected_tunnels`，
+现在把本地转发也一起数。读这两个的脚本读到的会比以前大，读那没了的四个的脚本什么也读不到。
+`GET /api/status/:hostId` 是另一个调用，仍然按一台 Host 的隧道返回 `total_tunnels` 和
+`connected_tunnels`。
 
 **它们旁边还有两个计数，这两个数的是 Host，不是隧道。**
 
@@ -2204,8 +2225,57 @@ address"，把 `no` 写作 "force ... available to the local host only"。**两�
 的隧道，不该被画成失败的。服务器拒绝掉的那个地址族，以及本安装只用一个 IPv4 地址认识的 Host 的
 IPv6 那一侧，也是同样的情况。这个程序关于一台 Host 所持有的地址，就只有那一个。
 
+### 本地转发能不能到达目标
+
+`forward_reach` 在本地转发的行上也有，而且**两种行问的不是同一个问题**。服务端口的行问的是：
+Host 开出来的那个端口，对从这里发起的连接答不答应。本地转发的行问的是：目标对**从 Host** 发起
+的连接答不答应，而那正是每一个连到这条转发上的客户端要 Host 去做的事。
+
+| | 服务端口的行 | 本地转发的行 |
+|---|--------------|--------------|
+| 问的是什么 | 开在 Host 上的端口，对从这里发起的连接答不答应 | 目标对从 Host 发起的连接答不答应 |
+| 谁去连 | 这个进程，从它运行的那台机器上连，而那台机器不是转发的任何一端 | Host，走的就是这条转发承载流量的那条 SSH 连接 |
+| 沉默记作什么 | 这一端本来就看不到应答时记作 `unknown`，看得到时记作 `unreachable` | `unreachable` |
+
+**本地转发把沉默记作 `unreachable`，隧道把同样的沉默记作 `unknown`。** 量的办法是让 Host 去连
+目标，这一连走的就是这条转发的客户端所走的那条连接；这里得到的答复，就是客户端过一会儿会得到的
+答复，所以这里的沉默不可能有别的意思。隧道是从第三个位置量的，那个位置既不是转发的这一端也不是
+那一端，而且没法把端口可能绑上的地址都试一遍，所以那里的沉默可能只是这一端本来就看不到应答。
+两者分开正是为了这个。
+
+本地转发的 `connected` 只说 SSH 连接立着、本地端口开着，关于目标什么也没说。回答目标的是
+`forward_reach`。一行既是 `connected` 又是 `unreachable`，那是一条什么也运不了的转发：端口在
+这边开着，而到达那里的连接都被 Host 关掉。
+
+```json
+{
+  "host_id": 2,
+  "status": "connected",
+  "last_error": "",
+  "retry_count": 0,
+  "last_connected_at": "2026-09-24T23:19:43.888989884+09:00",
+  "server": "192.0.2.11:2222",
+  "local": "127.0.0.1:15433",
+  "remote": "198.51.100.31:5432",
+  "server_banner": "",
+  "forward_reach": "unreachable",
+  "error_kind": "",
+  "open_reach": "",
+  "listen_addresses": "",
+  "kind": "local_forward",
+  "sp_id": null,
+  "number": 1
+}
+```
+
+量的时机和隧道一样：转发连上之后量一次，以后每次重连再量。连接一立起来，这个值就回到 `unknown`，
+直到这条连接被量过，所以 `unknown` 是刚连上的转发，不是量出来的结果。断了正在重连的
+转发，在下一条连接立起来之前，带的是上一条连接量到的值。什么都没在跑的行根本没有这个值：关掉的
+转发，以及 Host 被禁用的转发，这里是空的，而不是把它还在跑时量到的值摆出来。
+
 `GET /api/status/:hostId` 返回按这台 Host 算的 `total_tunnels` 和 `connected_tunnels`，
-`desired_tunnels` 和两个主机密钥计数都不带，另外还带上 Host
+这两个只数这台 Host 的隧道，不数它的本地转发，这个调用本来也不带本地转发；把两种合在一起数的
+是 `GET /api/status` 的那四个。`desired_tunnels` 和两个主机密钥计数都不带，另外还带上 Host
 本身。它不分页，这台 Host 的每条隧道都在里面。
 
 ## 加密密钥
