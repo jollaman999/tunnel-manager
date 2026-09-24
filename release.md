@@ -1,3 +1,32 @@
+# v3.12.0
+
+## Add/fix features:
+
+- **A Host can carry local forwards.** A local forward runs the other way from a tunnel: this machine opens a local port, and every connection to it goes over the SSH connection of the Host to a target the Host reaches, which is what `ssh -L` does, kept up the way a tunnel is. They are added, changed and deleted from the Local forwards button in the row of a Host, and through `/api/host/:id/local-forward` and `/api/local-forward/:id`.
+  - A local port opens on every interface unless the forward is set to this machine alone, and it cannot be the port of another forward, of a SOCKS5 proxy or of this server.
+  - A forward runs while its Host is enabled, is built again when the connection drops, and stops on a refused login or host key until that is put right. Its state is shown in the panel.
+  - The tunnel file carries the local forwards of each Host. A file from an earlier release leaves the local forwards of a Host as they are.
+- **A Host can open a SOCKS5 proxy.** A box on the Host form turns it on, with the port (1080 to begin with), where it is opened and which client addresses it answers. A browser set to the proxy reaches whatever the Host reaches, names included, since they are looked up on the Host. It answers CONNECT and asks for no password, so an empty list of client addresses on every interface lets anyone who can reach this machine into the network behind the Host. The Host list shows the port and the state of the proxy.
+- **The server starts on another port when the stored one is taken.** It used to stop, which left no screen to change the port on. The port it moves to is logged with the reason and is not stored; the next start tries the stored port again, a restart from the Settings screen tries the one it was running on first (on Linux and macOS; on Windows the service manager starts it afresh), and the Settings screen lists the port as waiting for a restart.
+  - A port the stored API port meets on a local forward or a SOCKS5 proxy is refused on the Settings screen and on a settings import, with a window that offers to move either one. `-reset-settings` warns when it puts the port back onto one of them.
+- **Windows is looked after.**
+  - A Windows installation starts again on the data it made. The check on the mode of the key file refused every start after the first.
+  - The key file, the initial password, the database with its journal files, the logs and the directories made for them are kept to their owner, SYSTEM and Administrators, and files an earlier release left readable to other accounts are narrowed at startup with a line in the log.
+  - A port held by another program on any address, or kept by Windows for itself, is seen as taken by the server, the local forwards and the proxies.
+- **The SSH handshake is bounded by the connection timeout.** A server that accepted the connection and said nothing held a tunnel from ever trying again.
+- **The screens:**
+  - The card is wider on a wide window, so the Host list shows its buttons on one line; running text keeps its old measure. A list too wide for its window scrolls sideways, and the buttons over it that act on the checked rows fold into one menu where they do not fit.
+  - The status badges, and the kind, the action and the reason of every row an import reports, are said in the language of the screen, and a settings import shows what it put back to the default.
+  - After a row button, a button over the checked rows or a closing panel draws the list again, the keyboard focus goes back to where it was rather than to the top of the page.
+  - The pages carry an icon, also answered at `/favicon.ico`.
+  - The Manual screen explains local forwards and the SOCKS5 proxy.
+
+## Notes:
+
+- The database gains a table for the local forwards and four columns on the Hosts for the proxy. They are added on the first start; a proxy is off on every Host that was stored before.
+- On Windows the first start narrows who can read the files named above, and says so in the log.
+- The upgrade note of v3.7.0 still holds: every Host stops until its key is approved, a stored path outside the data directory is put back to its default, and the data directory becomes 0700.
+
 # v3.11.2
 
 ## Add/fix features:
