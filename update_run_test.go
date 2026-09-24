@@ -1,7 +1,9 @@
 package main
 
 import (
+	"errors"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strings"
@@ -30,10 +32,12 @@ func TestInstallCommandRunsOutsideThisServiceOnSystemd(t *testing.T) {
 
 	t.Setenv("PATH", filepath.Dir(runner))
 
-	command, apart, err := installCommand("/usr/local/bin/tunnel-manager", "/var/lib/tunnel-manager/tunnel-manager.db")
+	command, apart, release, err := installCommand("/usr/local/bin/tunnel-manager", "/var/lib/tunnel-manager/tunnel-manager.db")
 	if err != nil {
 		t.Fatalf("building the command failed: %v", err)
 	}
+
+	t.Cleanup(release)
 
 	if !apart {
 		t.Fatal("the install is a plain child of this service, want it handed to systemd as a unit of its own")
@@ -71,17 +75,12 @@ func TestInstallCommandWritesItsReportSomewhereReadable(t *testing.T) {
 
 	database := filepath.Join(dir, "tunnel-manager.db")
 
-	command, apart, err := installCommand("/usr/local/bin/tunnel-manager", database)
+	command, apart, release, err := installCommand("/usr/local/bin/tunnel-manager", database)
 	if err != nil {
 		t.Fatalf("building the command failed: %v", err)
 	}
 
-	t.Cleanup(func() {
-		opened, ok := command.Stdout.(*os.File)
-		if ok {
-			_ = opened.Close()
-		}
-	})
+	t.Cleanup(release)
 
 	if apart {
 		t.Fatal("the install was handed to systemd, want a plain child where there is no systemd-run")
@@ -99,4 +98,124 @@ func TestInstallCommandWritesItsReportSomewhereReadable(t *testing.T) {
 	}
 
 	requireReportKeptToTheOwner(t, report)
+}
+
+// reportPlace makes the directory the report of an install goes in, keeps
+// systemd-run out of reach so that the install is a plain child, and returns
+// the database file the report sits beside.
+func reportPlace(t *testing.T) string {
+	t.Helper()
+
+	dir := t.TempDir()
+
+	err := os.MkdirAll(filepath.Join(dir, "logs"), 0o700)
+	if err != nil {
+		t.Fatalf("failed to make the directory the report goes in: %v", err)
+	}
+
+	t.Setenv("PATH", filepath.Join(dir, "nothing-here"))
+
+	return filepath.Join(dir, "tunnel-manager.db")
+}
+
+// requireReportLetGo fails unless this process no longer holds the report file
+// it opened for the install, and the file can be deleted, which on Windows it
+// cannot while a handle is open on it.
+func requireReportLetGo(t *testing.T, command *exec.Cmd, report string) {
+	t.Helper()
+
+	opened, ok := command.Stdout.(*os.File)
+	if !ok {
+		t.Fatalf("the install writes its report to %T, want a file", command.Stdout)
+	}
+
+	err := opened.Close()
+	if !errors.Is(err, os.ErrClosed) {
+		t.Errorf("the report file was still open in this process after the start: closing it gave %v", err)
+	}
+
+	err = os.Remove(report)
+	if err != nil {
+		t.Errorf("the report file could not be deleted after the start: %v", err)
+	}
+}
+
+// TestStartInstallLetsGoOfTheReportWhenTheStartFails covers a start that does
+// not happen. Nothing is going to write to the report then, and the file this
+// process opened for it has to be let go of all the same.
+func TestStartInstallLetsGoOfTheReportWhenTheStartFails(t *testing.T) {
+	database := reportPlace(t)
+
+	missing := filepath.Join(filepath.Dir(database), "no-such-program")
+
+	command, _, release, err := installCommand(missing, database)
+	if err != nil {
+		t.Fatalf("building the command failed: %v", err)
+	}
+
+	err = startInstall(command, release)
+	if err == nil {
+		_ = command.Wait()
+		t.Fatalf("starting %s worked, want it to fail", missing)
+	}
+
+	requireReportLetGo(t, command, installReportPath(database, false))
+}
+
+// TestStartInstallLetsGoOfTheReportTheInstallGoesOnWritingTo covers a start
+// that happens. This process lets go of the report as soon as the child is
+// running, and the child still writes its report through the copy it was
+// handed.
+//
+// The child is this test binary, which has no -install flag and says so on its
+// standard error, after the start has returned.
+func TestStartInstallLetsGoOfTheReportTheInstallGoesOnWritingTo(t *testing.T) {
+	database := reportPlace(t)
+
+	running, err := os.Executable()
+	if err != nil {
+		t.Fatalf("failed to find the test binary: %v", err)
+	}
+
+	command, apart, release, err := installCommand(running, database)
+	if err != nil {
+		t.Fatalf("building the command failed: %v", err)
+	}
+
+	if apart {
+		t.Fatal("the install was handed to systemd, want a plain child where there is no systemd-run")
+	}
+
+	err = startInstall(command, release)
+	if err != nil {
+		t.Fatalf("starting %s failed: %v", running, err)
+	}
+
+	opened, ok := command.Stdout.(*os.File)
+	if !ok {
+		t.Fatalf("the install writes its report to %T, want a file", command.Stdout)
+	}
+
+	err = opened.Close()
+	if !errors.Is(err, os.ErrClosed) {
+		t.Errorf("the report file was still open in this process after the start: closing it gave %v", err)
+	}
+
+	_ = command.Wait()
+
+	report := installReportPath(database, false)
+
+	written, err := os.ReadFile(report)
+	if err != nil {
+		t.Fatalf("failed to read the report file %s: %v", report, err)
+	}
+
+	if !strings.Contains(string(written), "-install") {
+		t.Errorf("the report is %q, want what the install said after the start", written)
+	}
+
+	err = os.Remove(report)
+	if err != nil {
+		t.Errorf("the report file could not be deleted once the install had ended: %v", err)
+	}
 }

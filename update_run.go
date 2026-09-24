@@ -87,12 +87,12 @@ func startUpdateInstall(logger *zap.Logger, databaseFile string) error {
 		return fmt.Errorf("failed to find the file this process was started from: %w", err)
 	}
 
-	command, apart, err := installCommand(running, databaseFile)
+	command, apart, release, err := installCommand(running, databaseFile)
 	if err != nil {
 		return err
 	}
 
-	err = command.Start()
+	err = startInstall(command, release)
 	if err != nil {
 		return fmt.Errorf("failed to run %s with -install: %w", running, err)
 	}
@@ -114,8 +114,23 @@ func startUpdateInstall(logger *zap.Logger, databaseFile string) error {
 	return nil
 }
 
-// installCommand is the command that runs the install, and whether it will run
-// outside this service.
+// startInstall starts the command installCommand made and then lets go of what
+// this process opened for it, whether the start worked or not.
+//
+// The child is handed a copy of the report file and writes through that copy,
+// so the one this process holds is of no further use. Kept open, it is a handle
+// leaked on every press, and on Windows a file with a handle open on it cannot
+// be deleted or renamed, which is a report nobody can clear away while this
+// service runs.
+func startInstall(command *exec.Cmd, release func()) error {
+	defer release()
+
+	return command.Start()
+}
+
+// installCommand is the command that runs the install, whether it will run
+// outside this service, and what lets go of what was opened for it. The last
+// is called once the command has been started, or once starting it failed.
 //
 // Where systemd is the service manager and systemd-run is on the machine, the
 // install is asked for as a transient unit. --collect has systemd forget the
@@ -128,14 +143,14 @@ func startUpdateInstall(logger *zap.Logger, databaseFile string) error {
 // report then goes to a file rather than to nothing: an install that fails is
 // the one moment those lines are worth having, and the process that would have
 // read them from a terminal is not there.
-func installCommand(running string, databaseFile string) (*exec.Cmd, bool, error) {
+func installCommand(running string, databaseFile string) (*exec.Cmd, bool, func(), error) {
 	if runtime.GOOS == "linux" {
 		runner, err := exec.LookPath("systemd-run")
 		if err == nil {
 			unit := fmt.Sprintf("tunnel-manager-install-%d", os.Getpid())
 
 			return exec.Command(runner, "--collect", "--quiet", "--unit", unit,
-				running, "-install", "-db", databaseFile), true, nil
+				running, "-install", "-db", databaseFile), true, func() {}, nil
 		}
 	}
 
@@ -145,19 +160,21 @@ func installCommand(running string, databaseFile string) (*exec.Cmd, bool, error
 	// Administrators first, as the log beside it is. On Unix this does nothing.
 	err := crypto.ReservePrivateFile(installReportPath(databaseFile, false))
 	if err != nil {
-		return nil, false, fmt.Errorf("failed to open the file the install writes its report to: %w", err)
+		return nil, false, nil, fmt.Errorf("failed to open the file the install writes its report to: %w", err)
 	}
 
 	report, err := os.OpenFile(installReportPath(databaseFile, false),
 		os.O_CREATE|os.O_WRONLY|os.O_TRUNC, installReportMode)
 	if err != nil {
-		return nil, false, fmt.Errorf("failed to open the file the install writes its report to: %w", err)
+		return nil, false, nil, fmt.Errorf("failed to open the file the install writes its report to: %w", err)
 	}
 
 	command.Stdout = report
 	command.Stderr = report
 
-	return command, false, nil
+	return command, false, func() {
+		_ = report.Close()
+	}, nil
 }
 
 // installReportMode is what the file the install writes its report to is made
