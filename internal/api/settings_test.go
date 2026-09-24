@@ -1020,3 +1020,29 @@ func TestSaveTakesAnAPIPortNoLocalForwardOpens(t *testing.T) {
 		t.Errorf("api_port = %d, want 15500", after.APIPort)
 	}
 }
+
+// TestSaveSuggestsAPortClearOfTheRunningAPIPort is the refusal of a port a
+// local forward opens while this process listens on a port other than the
+// stored one: the port suggested steps over the running port as it does over
+// the stored one.
+func TestSaveSuggestsAPortClearOfTheRunningAPIPort(t *testing.T) {
+	db := newLocalForwardDB(t, []models.Host{statusHost(1, true)}, []models.LocalForward{
+		storedLocalForward(1, 1, 15432),
+	})
+	h, _, _, _ := newSettingsHandler(t, db)
+	h.startup.APIPort = 15433
+
+	rec := settingsRequest(t, h, `{"api_port":15432}`)
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("status = %d, want %d, body: %s", rec.Code, http.StatusConflict, rec.Body.String())
+	}
+
+	answer := readAPIPortTaken(t, rec)
+	if answer.Code != string(errSettingsAPIPortLocalForward) {
+		t.Errorf("error_code = %q, want %q", answer.Code, errSettingsAPIPortLocalForward)
+	}
+
+	if answer.Data.SuggestedPort != 15434 {
+		t.Errorf("suggested_port = %d, want 15434, past the running port 15433", answer.Data.SuggestedPort)
+	}
+}

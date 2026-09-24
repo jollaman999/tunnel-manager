@@ -2528,6 +2528,124 @@ func TestALocalForwardOnThePortOfThisServerIsRefused(t *testing.T) {
 	}
 }
 
+// TestALocalForwardOnTheRunningPortOfThisServerIsRefused is the port this
+// process listens on when it is not the stored one: a local forward of the file
+// on it is refused as one on the stored port is, and with no running port told
+// the same file is imported.
+func TestALocalForwardOnTheRunningPortOfThisServerIsRefused(t *testing.T) {
+	for _, running := range []int{19500, 0} {
+		t.Run(strconv.Itoa(running), func(t *testing.T) {
+			source := newTransferInstall(t)
+			target := newTransferInstall(t)
+			target.handler.hosts.SetRunningAPIPort(running)
+
+			stored := settings.Defaults()
+			stored.APIPort = 19443
+
+			err := settings.Save(target.db, &stored)
+			if err != nil {
+				t.Fatalf("failed to store the settings: %v", err)
+			}
+
+			host := passwordHost("192.0.2.10")
+			host.LocalForwards = []localForwardContent{{LocalPort: 19500, TargetIP: "192.0.2.30", TargetPort: 443}}
+
+			file := sealedTunnelsFile(t, source, tunnelsContent{Hosts: []hostContent{host}}, testExportPassword)
+
+			rec := target.importTunnels(t, file, testExportPassword, false)
+
+			if running == 0 {
+				if rec.Code != http.StatusOK || target.count(t, &models.LocalForward{}) != 1 {
+					t.Fatalf("the import answered %d and stored %d local forwards, want %d and 1: %s",
+						rec.Code, target.count(t, &models.LocalForward{}), http.StatusOK, rec.Body.String())
+				}
+				return
+			}
+
+			if rec.Code != http.StatusConflict {
+				t.Fatalf("the import answered %d, want %d: %s", rec.Code, http.StatusConflict, rec.Body.String())
+			}
+
+			if errorCodeOf(t, rec) != errImportLocalForwardAPIPort {
+				t.Errorf("the import was refused under %s, want %s", errorCodeOf(t, rec), errImportLocalForwardAPIPort)
+			}
+
+			var answer struct {
+				Args errorArgs `json:"error_args"`
+			}
+
+			err = json.Unmarshal(rec.Body.Bytes(), &answer)
+			if err != nil {
+				t.Fatalf("failed to read the answer: %v", err)
+			}
+			if answer.Args["local_port"] != "19500" || answer.Args["host"] != "192.0.2.10" {
+				t.Errorf("error_args = %v, want local_port 19500 and host 192.0.2.10", answer.Args)
+			}
+
+			if target.count(t, &models.Host{}) != 0 || target.count(t, &models.LocalForward{}) != 0 {
+				t.Fatalf("the refused import left rows behind")
+			}
+		})
+	}
+}
+
+// TestImportedSettingsSuggestAPortClearOfTheRunningAPIPort is a settings file
+// whose api_port a local forward opens, while this process listens on a port
+// other than the stored one: the port suggested steps over the running port.
+func TestImportedSettingsSuggestAPortClearOfTheRunningAPIPort(t *testing.T) {
+	source := newTransferInstall(t)
+	target := newTransferInstall(t)
+	target.handler.hosts.SetRunningAPIPort(15433)
+
+	host := models.Host{IP: "192.0.2.10", Port: 22, User: "root"}
+
+	err := target.db.Create(&host).Error
+	if err != nil {
+		t.Fatalf("failed to store a Host: %v", err)
+	}
+
+	forward := models.LocalForward{HostID: host.ID, BindScope: models.BindScopeLoopback, LocalPort: 15432,
+		TargetIP: "127.0.0.1", TargetPort: 5432}
+
+	err = target.db.Create(&forward).Error
+	if err != nil {
+		t.Fatalf("failed to store a local forward: %v", err)
+	}
+
+	stored, err := settings.Load(source.db)
+	if err != nil {
+		t.Fatalf("failed to read the settings: %v", err)
+	}
+
+	stored.APIPort = 15432
+
+	err = settings.Save(source.db, stored)
+	if err != nil {
+		t.Fatalf("failed to store the settings: %v", err)
+	}
+
+	file := source.exportSettings(t, testExportPassword)
+
+	request, err := json.Marshal(importRequest{Password: testExportPassword, File: file})
+	if err != nil {
+		t.Fatalf("failed to write the import request: %v", err)
+	}
+
+	rec := target.call(t, target.handler.ImportSettings, string(request))
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("the import answered %d, want %d: %s", rec.Code, http.StatusConflict, rec.Body.String())
+	}
+
+	answer := readAPIPortTaken(t, rec)
+	if answer.Code != string(errImportSettingsAPIPortForward) {
+		t.Errorf("error_code = %q, want %q", answer.Code, errImportSettingsAPIPortForward)
+	}
+
+	if answer.Data.SuggestedPort != 15434 {
+		t.Errorf("suggested_port = %d, want 15434, past the running port 15433", answer.Data.SuggestedPort)
+	}
+}
+
 // TestALocalPortAnotherHostHoldsIsRefused is a local forward of the file on a
 // port a Host the file does not write already opens here. An overwrite replaces
 // what the Hosts of the file carry and nothing of any other Host, so the port is

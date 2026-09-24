@@ -1773,7 +1773,7 @@ func (h *TransferHandler) importLocalForwards(tx *gorm.DB, written []hostContent
 				"local_port": localPort,
 				"target":     net.JoinHostPort(lf.TargetIP, strconv.Itoa(lf.TargetPort))}}
 
-			if lf.LocalPort == apiPort {
+			if isAPIPort(lf.LocalPort, apiPort, h.hosts.runningAPIPort) {
 				return nil, refuse(http.StatusConflict, errImportLocalForwardAPIPort,
 					errorArgs{"host": host.IP, "local_port": localPort})
 			}
@@ -1985,7 +1985,8 @@ func (h *TransferHandler) ImportSettings(c echo.Context) error {
 	// Held to the local forwards the way a save on the Settings screen is, and
 	// only when the port changes, for the same reason.
 	if updated.APIPort != before.APIPort {
-		refused, err := apiPortRefused(tx, errImportSettingsAPIPortForward, updated.APIPort, before.APIPort)
+		refused, err := apiPortRefused(tx, errImportSettingsAPIPortForward, updated.APIPort, before.APIPort,
+			h.hosts.runningAPIPort)
 		if err != nil {
 			tx.Rollback()
 			h.hosts.logger.Error("failed to look for a local forward while importing",

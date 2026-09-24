@@ -602,16 +602,20 @@ func TestLocalForwardReadsAnswerNotFound(t *testing.T) {
 // that is not the stored api_port, going on from 1024 past 65535.
 func TestFreeLocalPortSkipsWhatIsHeld(t *testing.T) {
 	tests := []struct {
-		name   string
-		ports  []int
-		taken  int
-		stored int
-		want   int
+		name    string
+		ports   []int
+		taken   int
+		stored  int
+		running int
+		want    int
 	}{
 		{name: "the next port", ports: []int{15432}, taken: 15432, stored: 8888, want: 15433},
 		{name: "a run of held ports", ports: []int{15432, 15433, 15434}, taken: 15432, stored: 8888, want: 15435},
 		{name: "the stored api_port", ports: []int{15432, 15433}, taken: 15432, stored: 15434, want: 15435},
 		{name: "past the top", ports: []int{65534, 65535}, taken: 65534, stored: 1024, want: 1025},
+		{name: "the running port", ports: []int{15432}, taken: 15432, stored: 8888, running: 15433, want: 15434},
+		{name: "the running port and the stored one", ports: []int{15432}, taken: 15432, stored: 15433,
+			running: 15434, want: 15435},
 	}
 
 	for _, tt := range tests {
@@ -623,12 +627,88 @@ func TestFreeLocalPortSkipsWhatIsHeld(t *testing.T) {
 
 			db := newLocalForwardDB(t, []models.Host{statusHost(1, true)}, forwards)
 
-			got, err := freeLocalPort(db, tt.taken, tt.stored)
+			got, err := freeLocalPort(db, tt.taken, tt.stored, tt.running)
 			if err != nil {
 				t.Fatalf("freeLocalPort returned error: %v", err)
 			}
 			if got != tt.want {
 				t.Errorf("freeLocalPort = %d, want %d", got, tt.want)
+			}
+		})
+	}
+}
+
+// runningAPIPort is the port the tests below tell the handler this process
+// listens on. It is apart from localForwardAPIPort, as it is when the stored
+// port was taken at startup.
+const runningAPIPort = 19500
+
+// TestALocalPortOnTheRunningAPIPortIsRefused pins that a create or an update
+// onto the port this process listens on is refused under the code the stored
+// port is, with that port in the answer, and that with no running port told
+// the same write goes through as it did before.
+func TestALocalPortOnTheRunningAPIPortIsRefused(t *testing.T) {
+	const body = `{"local_port":19500,"target_ip":"127.0.0.1","target_port":5432}`
+
+	tests := []struct {
+		name    string
+		method  string
+		running int
+		status  int
+	}{
+		{name: "create on the running port", method: http.MethodPost, running: runningAPIPort,
+			status: http.StatusConflict},
+		{name: "update onto the running port", method: http.MethodPut, running: runningAPIPort,
+			status: http.StatusConflict},
+		{name: "create with no running port told", method: http.MethodPost, status: http.StatusCreated},
+		{name: "update with no running port told", method: http.MethodPut, status: http.StatusOK},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			db := newLocalForwardDB(t, []models.Host{statusHost(1, true)},
+				[]models.LocalForward{storedLocalForward(1, 1, 15001)})
+			h := NewHandler(db, &wakeRecorder{tx: &txConnPool{}}, zap.NewNop(), newTestCipher(t))
+			h.SetRunningAPIPort(tt.running)
+
+			call := h.UpdateLocalForward
+			target := "/api/local-forward/1"
+			if tt.method == http.MethodPost {
+				call = h.CreateHostLocalForward
+				target = "/api/host/1/local-forward"
+			}
+
+			c, rec := localForwardRequest(t, tt.method, target, body, "1")
+
+			err := call(c)
+			if err != nil {
+				t.Fatalf("the handler returned error: %v", err)
+			}
+			if rec.Code != tt.status {
+				t.Fatalf("status = %d, want %d, body: %s", rec.Code, tt.status, rec.Body.String())
+			}
+
+			if tt.status != http.StatusConflict {
+				return
+			}
+
+			var answer struct {
+				Code string    `json:"error_code"`
+				Args errorArgs `json:"error_args"`
+			}
+
+			err = json.Unmarshal(rec.Body.Bytes(), &answer)
+			if err != nil {
+				t.Fatalf("failed to read the answer: %v, body: %s", err, rec.Body.String())
+			}
+			if answer.Code != string(errLocalForwardPortIsAPIPort) || answer.Args["local_port"] != "19500" {
+				t.Errorf("error_code = %q, error_args = %v, want %q with local_port 19500", answer.Code,
+					answer.Args, errLocalForwardPortIsAPIPort)
+			}
+
+			rows := storedLocalForwards(t, db)
+			if len(rows) != 1 || rows[0].LocalPort != 15001 {
+				t.Errorf("rows = %+v, want the one forward left on 15001", rows)
 			}
 		})
 	}

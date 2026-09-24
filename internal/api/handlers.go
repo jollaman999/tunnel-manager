@@ -41,6 +41,11 @@ type Handler struct {
 	manager tunnelManager
 	logger  *zap.Logger
 	cipher  *crypto.Cipher
+	// runningAPIPort is the port this process listens on, which differs from
+	// the stored api_port when that one was taken at startup. It is 0 until
+	// SetRunningAPIPort is called, and a local port is then held to the stored
+	// api_port alone.
+	runningAPIPort int
 }
 
 func NewHandler(db *gorm.DB, manager tunnelManager, logger *zap.Logger, cipher *crypto.Cipher) *Handler {
@@ -50,6 +55,13 @@ func NewHandler(db *gorm.DB, manager tunnelManager, logger *zap.Logger, cipher *
 		logger:  logger,
 		cipher:  cipher,
 	}
+}
+
+// SetRunningAPIPort tells the handler the port this process listens on. It is
+// called once, after the listener is opened and before anything is served, so
+// the field is not written while a request reads it.
+func (h *Handler) SetRunningAPIPort(port int) {
+	h.runningAPIPort = port
 }
 
 // pageSizes are the sizes a list request may ask a page in. The size is taken

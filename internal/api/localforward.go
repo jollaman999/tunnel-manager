@@ -70,9 +70,9 @@ func localForwardViewOf(lf models.LocalForward, hostEnabled bool, states map[uin
 // before the transaction is opened: the pool holds one connection, and a read
 // through h.db inside the transaction would wait on it forever.
 //
-// The stored port is the one checked rather than the one this process came up
-// on, because a forward is kept for longer than this process runs and the
-// stored port is the one every later startup listens on.
+// The stored port is checked as well as the one this process came up on
+// (runningAPIPort), because a forward is kept for longer than this process runs
+// and the stored port is the one every later startup listens on.
 func (h *Handler) storedAPIPort() (int, error) {
 	stored, err := settings.Load(h.db)
 	if err != nil {
@@ -82,13 +82,20 @@ func (h *Handler) storedAPIPort() (int, error) {
 	return stored.APIPort, nil
 }
 
+// isAPIPort reports whether port is the stored api_port or the port this
+// process listens on. runningPort is 0 when that port is not known, and then
+// only the stored one is held against port.
+func isAPIPort(port int, storedPort int, runningPort int) bool {
+	return port == storedPort || (runningPort != 0 && port == runningPort)
+}
+
 // localPortRefused checks the local port of a forward against the two things
-// on this machine it must not meet: the port of this server, and the port of
-// another forward. id is the row being changed, or zero for a new one. A
-// non-nil refusal is the answer; a non-nil error is a failed read, which the
-// caller answers with the failure of its own write.
-func localPortRefused(tx *gorm.DB, id uint, localPort int, apiPort int) (*refusal, error) {
-	if localPort == apiPort {
+// on this machine it must not meet: the port of this server, stored or running,
+// and the port of another forward. id is the row being changed, or zero for a
+// new one. A non-nil refusal is the answer; a non-nil error is a failed read,
+// which the caller answers with the failure of its own write.
+func localPortRefused(tx *gorm.DB, id uint, localPort int, apiPort int, runningPort int) (*refusal, error) {
+	if isAPIPort(localPort, apiPort, runningPort) {
 		return refuse(http.StatusConflict, errLocalForwardPortIsAPIPort,
 			errorArgs{"local_port": strconv.Itoa(localPort)}), nil
 	}
@@ -127,10 +134,11 @@ type apiPortTaken struct {
 }
 
 // apiPortRefused checks a port asked for as api_port against the local ports
-// of the forwards. code is the refusal the caller answers under, and
-// storedPort is the api_port stored now, which the suggested port stays clear
-// of as well. Like localPortRefused, a non-nil error is a failed read.
-func apiPortRefused(tx *gorm.DB, code errorCode, apiPort int, storedPort int) (*refusal, error) {
+// of the forwards. code is the refusal the caller answers under, storedPort is
+// the api_port stored now and runningPort the port this process listens on,
+// which the suggested port stays clear of as well. Like localPortRefused, a
+// non-nil error is a failed read.
+func apiPortRefused(tx *gorm.DB, code errorCode, apiPort int, storedPort int, runningPort int) (*refusal, error) {
 	var holder models.LocalForward
 
 	err := tx.Where("local_port = ?", apiPort).First(&holder).Error
@@ -151,7 +159,7 @@ func apiPortRefused(tx *gorm.DB, code errorCode, apiPort int, storedPort int) (*
 		host = owner.IP
 	}
 
-	suggested, err := freeLocalPort(tx, apiPort, storedPort)
+	suggested, err := freeLocalPort(tx, apiPort, storedPort, runningPort)
 	if err != nil {
 		return nil, err
 	}
@@ -174,9 +182,10 @@ func apiPortRefused(tx *gorm.DB, code errorCode, apiPort int, storedPort int) (*
 }
 
 // freeLocalPort is the first port after taken that no local forward opens and
-// that is neither taken nor storedPort. It goes up to 65535 and goes on from
-// 1024, below which a port is one the operator picks on purpose; 0 is none.
-func freeLocalPort(tx *gorm.DB, taken int, storedPort int) (int, error) {
+// that is none of taken, storedPort and runningPort. It goes up to 65535 and
+// goes on from 1024, below which a port is one the operator picks on purpose;
+// 0 is none.
+func freeLocalPort(tx *gorm.DB, taken int, storedPort int, runningPort int) (int, error) {
 	var ports []int
 
 	err := tx.Model(&models.LocalForward{}).Pluck("local_port", &ports).Error
@@ -184,7 +193,7 @@ func freeLocalPort(tx *gorm.DB, taken int, storedPort int) (int, error) {
 		return 0, err
 	}
 
-	held := map[int]bool{taken: true, storedPort: true}
+	held := map[int]bool{taken: true, storedPort: true, runningPort: true}
 	for _, port := range ports {
 		held[port] = true
 	}
@@ -310,7 +319,7 @@ func (h *Handler) CreateHostLocalForward(c echo.Context) error {
 		return failure(c, http.StatusInternalServerError, errHostFetchFailed)
 	}
 
-	refused, err := localPortRefused(tx, 0, req.LocalPort, apiPort)
+	refused, err := localPortRefused(tx, 0, req.LocalPort, apiPort, h.runningAPIPort)
 	if err != nil {
 		tx.Rollback()
 		h.logger.Error("failed to fetch local forwards", logid.LocalForwardListFetchFailed.Field(),
@@ -454,7 +463,7 @@ func (h *Handler) UpdateLocalForward(c echo.Context) error {
 		return failure(c, http.StatusInternalServerError, errLocalForwardFetchFailed)
 	}
 
-	refused, err := localPortRefused(tx, lf.ID, req.LocalPort, apiPort)
+	refused, err := localPortRefused(tx, lf.ID, req.LocalPort, apiPort, h.runningAPIPort)
 	if err != nil {
 		tx.Rollback()
 		h.logger.Error("failed to fetch local forwards", logid.LocalForwardListFetchFailed.Field(),

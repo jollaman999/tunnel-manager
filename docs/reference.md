@@ -352,11 +352,13 @@ reports `error` and tries again.
 **`local_port` is unique across every local forward**, whichever Host carries
 them, because every one of them opens its port on this same machine. A second
 forward on a port that is taken is refused with `409`, and so is a forward on
-the port this server is stored to listen on (`api_port`). The same check is made
+the port this server is stored to listen on (`api_port`) or on the port it
+listens on now, when a start moved to another one. The same check is made
 the other way when `api_port` changes, by a save on the Settings screen or by a
 settings import: a port a forward opens is refused with `409` and nothing is
 stored. The refusal carries that forward and `suggested_port`, the first port
-above it that no forward, the stored `api_port` and the asked for one hold, and
+above it that no forward, the stored `api_port`, the port listened on now and
+the asked for one hold, and
 the Settings screen answers it with a panel that moves the forward to another
 port, or on a save the API port instead. A port below 1024 is opened by this process itself, so it is held to
 the rule in [Running as a non-root user](#running-as-a-non-root-user).

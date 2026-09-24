@@ -1718,6 +1718,7 @@ func serve() {
 	// that was read.
 	running := *set
 	running.APIPort = apiPort
+	h.SetRunningAPIPort(apiPort)
 
 	// The level handle goes to the handler that stores the settings, so that a
 	// stored logging.level reaches the running loggers as it is saved. It is

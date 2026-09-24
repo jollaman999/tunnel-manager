@@ -330,7 +330,8 @@ func (h *SettingsHandler) UpdateSettings(c echo.Context) error {
 	// Only a port that changes is held to the local forwards, so a save of
 	// another setting is not refused over a port that is already stored.
 	if updated.APIPort != before.APIPort {
-		refused, err := apiPortRefused(tx, errSettingsAPIPortLocalForward, updated.APIPort, before.APIPort)
+		refused, err := apiPortRefused(tx, errSettingsAPIPortLocalForward, updated.APIPort, before.APIPort,
+			h.startup.APIPort)
 		if err != nil {
 			tx.Rollback()
 			h.logger.Error("failed to fetch local forwards", logid.LocalForwardListFetchFailed.Field(),
