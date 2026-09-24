@@ -20,3 +20,23 @@ func TestPortUnavailableTakesAReservedPort(t *testing.T) {
 		}
 	}
 }
+
+// A port another socket holds and one the system refused are both moved away
+// from, and the log says which of the two it was.
+func TestPortUnavailableReasonTellsATakenPortFromAReservedOne(t *testing.T) {
+	cases := []struct {
+		errno windows.Errno
+		want  string
+	}{
+		{windows.WSAEADDRINUSE, apiPortInUse},
+		{windows.WSAEACCES, apiPortReserved},
+		{windows.WSAEINVAL, ""},
+	}
+
+	for _, c := range cases {
+		err := &net.OpError{Op: "listen", Net: "tcp", Err: os.NewSyscallError("bind", c.errno)}
+		if got := portUnavailableReason(err); got != c.want {
+			t.Errorf("a listen that failed with %d gives the reason %q, want %q", c.errno, got, c.want)
+		}
+	}
+}

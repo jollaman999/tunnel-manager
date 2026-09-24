@@ -1684,7 +1684,7 @@ func serve() {
 
 	previousAPIPort := takePreviousAPIPort()
 
-	listener, apiPort, listenErr := listenAPI("", set.APIPort, previousAPIPort, func(port int) bool {
+	listener, apiPort, fallbackReason, listenErr := listenAPI("", set.APIPort, previousAPIPort, func(port int) bool {
 		if forwardsReadErr != nil {
 			return true
 		}
@@ -1704,9 +1704,11 @@ func serve() {
 	}
 
 	if listenErr == nil && apiPort != set.APIPort {
-		logger.Warn("the stored API port is taken by another program, so this start listens on another port "+
-			"instead. The stored setting is left as it is, and the next start tries it again",
+		logger.Warn("the stored API port could not be opened, because another program holds it (reason in_use) "+
+			"or Windows keeps it reserved (reason reserved), so this start listens on another port instead. "+
+			"The stored setting is left as it is, and the next start tries it again",
 			logid.ApiServerPortTakenFallback.Field(),
+			zap.String("reason", fallbackReason),
 			zap.Int("stored_port", set.APIPort),
 			zap.Int("port", apiPort),
 			zap.Bool("reused_previous", apiPort == previousAPIPort))

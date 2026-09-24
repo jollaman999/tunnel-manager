@@ -408,7 +408,7 @@
   "log.account.setup_no_account_on_context.text": "se llegó a la configuración sin ninguna cuenta en el contexto",
   "log.account.store_failed.text": "no se pudo guardar la cuenta ya cambiada",
   "log.api_server.port_close_failed.text": "no se pudo cerrar el puerto de la API",
-  "log.api_server.port_taken_fallback.text": "otro programa ocupa el puerto de la API guardado, así que este arranque escucha en otro puerto. El ajuste guardado se deja como está y el próximo arranque vuelve a probarlo",
+  "log.api_server.port_taken_fallback.text": "no se pudo abrir el puerto de la API guardado, porque otro programa lo ocupa (reason in_use) o Windows lo tiene reservado (reason reserved), así que este arranque escucha en otro puerto. El ajuste guardado se deja como está y el próximo arranque vuelve a probarlo",
   "log.api_server.redirect_server_stopped.text": "se detuvo el servidor que redirige las peticiones sin cifrar",
   "log.api_server.redirect_shutdown_failed.text": "no se pudo apagar ordenadamente el servidor de redirección",
   "log.api_server.serving_https.text": "se sirven la API y la interfaz web por HTTPS. Una petición que llegue sin cifrar a ese mismo puerto se responde con una redirección a https",

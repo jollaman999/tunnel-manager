@@ -25,5 +25,14 @@ func TestPortUnavailableTakesOnlyATakenPort(t *testing.T) {
 		if got := portUnavailable(err); got != c.want {
 			t.Errorf("a listen that failed with %v is read as unavailable %v, want %v", c.errno, got, c.want)
 		}
+
+		wantReason := ""
+		if c.want {
+			wantReason = apiPortInUse
+		}
+
+		if got := portUnavailableReason(err); got != wantReason {
+			t.Errorf("a listen that failed with %v gives the reason %q, want %q", c.errno, got, wantReason)
+		}
 	}
 }

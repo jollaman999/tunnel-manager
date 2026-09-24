@@ -408,7 +408,7 @@
   "log.account.setup_no_account_on_context.text": "وصل الطلب إلى الإعداد بلا حساب في السياق",
   "log.account.store_failed.text": "تعذّر حفظ الحساب بعد تغييره",
   "log.api_server.port_close_failed.text": "تعذّر إغلاق منفذ API",
-  "log.api_server.port_taken_fallback.text": "منفذ API المحفوظ يشغله برنامج آخر، فيستمع هذا التشغيل على منفذ آخر بدلًا منه. ويبقى الإعداد المحفوظ كما هو، ويحاوله التشغيل التالي من جديد",
+  "log.api_server.port_taken_fallback.text": "تعذّر فتح منفذ API المحفوظ، لأن برنامجًا آخر يشغله (reason in_use) أو لأن Windows يحجزه (reason reserved)، فيستمع هذا التشغيل على منفذ آخر بدلًا منه. ويبقى الإعداد المحفوظ كما هو، ويحاوله التشغيل التالي من جديد",
   "log.api_server.redirect_server_stopped.text": "توقف الخادم الذي يعيد توجيه الطلبات غير المشفّرة",
   "log.api_server.redirect_shutdown_failed.text": "تعذّر إيقاف خادم إعادة التوجيه بلطف",
   "log.api_server.serving_https.text": "تُقدَّم واجهة API وواجهة الويب عبر HTTPS. والطلب الذي يصل بلا تشفير على المنفذ نفسه يُجاب بإعادة توجيه إلى https",

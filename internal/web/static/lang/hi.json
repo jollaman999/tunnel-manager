@@ -408,7 +408,7 @@
   "log.account.setup_no_account_on_context.text": "सेटअप का अनुरोध कॉन्टेक्स्ट में किसी खाते के बिना आया",
   "log.account.store_failed.text": "बदला हुआ खाता सेव नहीं किया जा सका",
   "log.api_server.port_close_failed.text": "API पोर्ट बंद नहीं किया जा सका",
-  "log.api_server.port_taken_fallback.text": "सहेजा गया API पोर्ट किसी दूसरे प्रोग्राम के पास है, इसलिए इस बार कोई दूसरा पोर्ट सुना जा रहा है। सहेजी गई सेटिंग जैसी थी वैसी ही रहती है, और अगली बार शुरू होने पर फिर उसी को आज़माया जाएगा",
+  "log.api_server.port_taken_fallback.text": "सहेजा गया API पोर्ट खोला नहीं जा सका, क्योंकि वह किसी दूसरे प्रोग्राम के पास है (reason in_use) या Windows ने उसे आरक्षित रखा है (reason reserved), इसलिए इस बार कोई दूसरा पोर्ट सुना जा रहा है। सहेजी गई सेटिंग जैसी थी वैसी ही रहती है, और अगली बार शुरू होने पर फिर उसी को आज़माया जाएगा",
   "log.api_server.redirect_server_stopped.text": "प्लेन HTTP अनुरोधों को रीडायरेक्ट करने वाला सर्वर रुक गया",
   "log.api_server.redirect_shutdown_failed.text": "रीडायरेक्ट करने वाला सर्वर ठीक से बंद नहीं किया जा सका",
   "log.api_server.serving_https.text": "API और वेब UI HTTPS पर चल रहे हैं। उसी पोर्ट पर प्लेन HTTP में आने वाले अनुरोध को https पर रीडायरेक्ट कर दिया जाता है",

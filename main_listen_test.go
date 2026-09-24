@@ -54,7 +54,7 @@ func avoidNothing(int) bool {
 func TestListenAPIOpensTheStoredPortWhenItIsFree(t *testing.T) {
 	stored := freeLoopbackPort(t)
 
-	l, port, err := listenAPI("127.0.0.1", stored, 0, func(int) bool {
+	l, port, reason, err := listenAPI("127.0.0.1", stored, 0, func(int) bool {
 		t.Fatalf("avoid was asked while the stored port was free")
 		return false
 	})
@@ -66,12 +66,16 @@ func TestListenAPIOpensTheStoredPortWhenItIsFree(t *testing.T) {
 	if port != stored || l.Addr().(*net.TCPAddr).Port != stored {
 		t.Fatalf("opened %s and reported %d, want the stored port %d", l.Addr(), port, stored)
 	}
+
+	if reason != "" {
+		t.Fatalf("gave the reason %q for a stored port that was opened", reason)
+	}
 }
 
 func TestListenAPIOpensAnotherPortWhenTheStoredOneIsTaken(t *testing.T) {
 	stored := holdLoopbackPort(t)
 
-	l, port, err := listenAPI("127.0.0.1", stored, 0, avoidNothing)
+	l, port, reason, err := listenAPI("127.0.0.1", stored, 0, avoidNothing)
 	if err != nil {
 		t.Fatalf("listenAPI: %v", err)
 	}
@@ -81,8 +85,44 @@ func TestListenAPIOpensAnotherPortWhenTheStoredOneIsTaken(t *testing.T) {
 		t.Fatalf("reported the taken port %d", stored)
 	}
 
+	if reason != apiPortInUse {
+		t.Fatalf("gave the reason %q for a port another socket holds, want %q", reason, apiPortInUse)
+	}
+
 	if l.Addr().(*net.TCPAddr).Port != port {
 		t.Fatalf("opened %s and reported %d", l.Addr(), port)
+	}
+}
+
+// The API listens on the wildcard of both families. Another program that holds
+// the stored port on an IPv4 address alone takes the IPv4 clients of it, so
+// the port counts as taken. Windows would let a dual-stack socket bind over
+// such a holder, which is what SO_EXCLUSIVEADDRUSE is there to refuse.
+func TestListenAPIOnTheWildcardMovesAwayFromAPortHeldOnIPv4Alone(t *testing.T) {
+	for _, address := range []string{"0.0.0.0:0", "127.0.0.1:0"} {
+		held, err := net.Listen("tcp4", address)
+		if err != nil {
+			t.Fatalf("failed to hold %s: %v", address, err)
+		}
+
+		stored := held.Addr().(*net.TCPAddr).Port
+
+		l, port, reason, err := listenAPI("", stored, 0, avoidNothing)
+		if err != nil {
+			_ = held.Close()
+			t.Fatalf("listenAPI with %s held: %v", held.Addr(), err)
+		}
+
+		_ = l.Close()
+		_ = held.Close()
+
+		if port == stored {
+			t.Errorf("opened the stored port %d while another socket held it on %s", stored, address)
+		}
+
+		if reason != apiPortInUse {
+			t.Errorf("gave the reason %q with %s held, want %q", reason, address, apiPortInUse)
+		}
 	}
 }
 
@@ -91,7 +131,7 @@ func TestListenAPIPicksAgainWhileAvoidRefuses(t *testing.T) {
 
 	refused := map[int]bool{}
 
-	l, port, err := listenAPI("127.0.0.1", stored, 0, func(p int) bool {
+	l, port, _, err := listenAPI("127.0.0.1", stored, 0, func(p int) bool {
 		if len(refused) < 3 {
 			refused[p] = true
 			return true
@@ -127,7 +167,7 @@ func TestListenAPIGivesUpWithTheStoredPortError(t *testing.T) {
 
 	asked := 0
 
-	l, port, err := listenAPI("127.0.0.1", stored, 0, func(int) bool {
+	l, port, _, err := listenAPI("127.0.0.1", stored, 0, func(int) bool {
 		asked++
 		return true
 	})
@@ -162,7 +202,7 @@ func TestListenAPILeavesOtherFailuresAlone(t *testing.T) {
 		t.Skip("port 1 is taken here rather than refused")
 	}
 
-	l, port, err := listenAPI("127.0.0.1", 1, 0, func(int) bool {
+	l, port, _, err := listenAPI("127.0.0.1", 1, 0, func(int) bool {
 		t.Fatalf("avoid was asked for a failure that was not a taken port")
 		return false
 	})
@@ -180,7 +220,7 @@ func TestListenAPIOpensThePreviousPortWhenTheStoredOneIsTaken(t *testing.T) {
 	stored := holdLoopbackPort(t)
 	previous := freeLoopbackPort(t)
 
-	l, port, err := listenAPI("127.0.0.1", stored, previous, avoidNothing)
+	l, port, _, err := listenAPI("127.0.0.1", stored, previous, avoidNothing)
 	if err != nil {
 		t.Fatalf("listenAPI: %v", err)
 	}
@@ -195,7 +235,7 @@ func TestListenAPIOpensTheStoredPortOverThePreviousOne(t *testing.T) {
 	stored := freeLoopbackPort(t)
 	previous := freeLoopbackPort(t)
 
-	l, port, err := listenAPI("127.0.0.1", stored, previous, avoidNothing)
+	l, port, _, err := listenAPI("127.0.0.1", stored, previous, avoidNothing)
 	if err != nil {
 		t.Fatalf("listenAPI: %v", err)
 	}
@@ -210,7 +250,7 @@ func TestListenAPIPicksAnotherPortWhenThePreviousOneIsTakenToo(t *testing.T) {
 	stored := holdLoopbackPort(t)
 	previous := holdLoopbackPort(t)
 
-	l, port, err := listenAPI("127.0.0.1", stored, previous, avoidNothing)
+	l, port, _, err := listenAPI("127.0.0.1", stored, previous, avoidNothing)
 	if err != nil {
 		t.Fatalf("listenAPI: %v", err)
 	}
@@ -229,7 +269,7 @@ func TestListenAPISkipsAPreviousPortThatAvoidRefuses(t *testing.T) {
 	stored := holdLoopbackPort(t)
 	previous := freeLoopbackPort(t)
 
-	l, port, err := listenAPI("127.0.0.1", stored, previous, func(p int) bool {
+	l, port, _, err := listenAPI("127.0.0.1", stored, previous, func(p int) bool {
 		return p == previous
 	})
 	if err != nil {
@@ -366,7 +406,7 @@ func TestTheFallbackPortStaysClearOfTheSocksProxies(t *testing.T) {
 		t.Fatalf("heldLocalPorts: %v", err)
 	}
 
-	listener, port, err := listenAPI("127.0.0.1", stored, socks, func(port int) bool {
+	listener, port, _, err := listenAPI("127.0.0.1", stored, socks, func(port int) bool {
 		return held[port]
 	})
 	if err != nil {

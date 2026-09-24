@@ -408,7 +408,7 @@
   "log.account.setup_no_account_on_context.text": "初始化时上下文中没有账号",
   "log.account.store_failed.text": "保存修改后的账号失败",
   "log.api_server.port_close_failed.text": "关闭 API 端口失败",
-  "log.api_server.port_taken_fallback.text": "保存的 API 端口被其他程序占用，所以本次启动改为在另一个端口上监听。保存的设置保持不变，下次启动仍会先尝试该端口",
+  "log.api_server.port_taken_fallback.text": "无法打开保存的 API 端口，所以本次启动改为在另一个端口上监听。端口被其他程序占用时 reason 为 in_use，被 Windows 保留时为 reserved。保存的设置保持不变，下次启动仍会先尝试该端口",
   "log.api_server.redirect_server_stopped.text": "重定向明文请求的服务器已停止",
   "log.api_server.redirect_shutdown_failed.text": "重定向服务器未能正常关闭",
   "log.api_server.serving_https.text": "正在通过 HTTPS 提供 API 和 Web 界面。同一端口上收到的明文请求会被重定向到 https",

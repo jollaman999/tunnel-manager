@@ -951,8 +951,9 @@ curl -s -b cookies.txt "$BASE/api/settings"
 
 **保存的 `api_port` 被其他程序占用时，启动不会停下。** 进程改在系统选定的一个端口上监听，
 这个端口不会是任何本地转发要开的端口，并在日志 `api_server.port_taken_fallback` 里用
-`stored_port` 和 `port` 记下来。在 Windows 上，保存的端口若被系统留作自用，比如落在
-为 Hyper-V 或 WinNAT 保留的范围里，会以拒绝访问失败，也同样改用别的端口。如果是重启，会先再试一次重启前在用的端口，再用系统选定的端口，
+`reason`、`stored_port` 和 `port` 记下来。其他程序只在 `0.0.0.0` 上占用的端口也算被占用，
+`reason` 为 `in_use`。在 Windows 上，保存的端口若被系统留作自用，比如落在
+为 Hyper-V 或 WinNAT 保留的范围里，会以拒绝访问失败，也同样改用别的端口，`reason` 记为 `reserved`。如果是重启，会先再试一次重启前在用的端口，再用系统选定的端口，
 落在那个端口上时 `reused_previous` 记为 `true`。这个端口不会被保存：下次启动仍先尝试保存的端口，在那之前
 `pending_restart` 会列出 `api.port`，`running` 是实际在用的端口。如果 Docker 按端口号发布了
 端口，或者防火墙按端口号放行，改用的端口从外面可能访问不到，这时请腾出保存的端口再重启。

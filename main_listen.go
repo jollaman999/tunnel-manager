@@ -19,7 +19,17 @@ const apiListenAttempts = 20
 // environment.
 const previousAPIPortEnv = "TUNNEL_MANAGER_PREVIOUS_API_PORT"
 
-// listenAPI opens the port the API is served on and reports which one it is.
+// The reasons listenAPI gives for passing over the stored port. apiPortInUse is
+// a port another socket holds. apiPortReserved is a port Windows refused with
+// an access error, which is one the system keeps for itself or one another
+// socket holds for itself alone.
+const (
+	apiPortInUse    = "in_use"
+	apiPortReserved = "reserved"
+)
+
+// listenAPI opens the port the API is served on and reports which one it is,
+// and why the stored port was passed over, which is empty when it was not.
 //
 // The stored port is tried first. Only when another program holds it, or on
 // Windows the system reserved it, is another port tried instead: the screen that would change the stored port is
@@ -39,20 +49,21 @@ const previousAPIPortEnv = "TUNNEL_MANAGER_PREVIOUS_API_PORT"
 // port is settled on, so that the system does not hand the same one back. When
 // no attempt lands on a port avoid accepts, the error of the stored port is
 // returned.
-func listenAPI(host string, stored, previous int, avoid func(port int) bool) (net.Listener, int, error) {
-	listener, err := net.Listen("tcp", net.JoinHostPort(host, strconv.Itoa(stored)))
+func listenAPI(host string, stored, previous int, avoid func(port int) bool) (net.Listener, int, string, error) {
+	listener, err := listenAPIPort(net.JoinHostPort(host, strconv.Itoa(stored)))
 	if err == nil {
-		return listener, stored, nil
+		return listener, stored, "", nil
 	}
 
-	if !portUnavailable(err) {
-		return nil, stored, err
+	reason := portUnavailableReason(err)
+	if reason == "" {
+		return nil, stored, "", err
 	}
 
 	if previous > 0 && previous != stored && !avoid(previous) {
-		again, againErr := net.Listen("tcp", net.JoinHostPort(host, strconv.Itoa(previous)))
+		again, againErr := listenAPIPort(net.JoinHostPort(host, strconv.Itoa(previous)))
 		if againErr == nil {
-			return again, previous, nil
+			return again, previous, reason, nil
 		}
 	}
 
@@ -65,20 +76,20 @@ func listenAPI(host string, stored, previous int, avoid func(port int) bool) (ne
 	}()
 
 	for range apiListenAttempts {
-		other, otherErr := net.Listen("tcp", net.JoinHostPort(host, "0"))
+		other, otherErr := listenAPIPort(net.JoinHostPort(host, "0"))
 		if otherErr != nil {
-			return nil, stored, errors.Join(err, otherErr)
+			return nil, stored, "", errors.Join(err, otherErr)
 		}
 
 		port := other.Addr().(*net.TCPAddr).Port
 		if !avoid(port) {
-			return other, port, nil
+			return other, port, reason, nil
 		}
 
 		refused = append(refused, other)
 	}
 
-	return nil, stored, err
+	return nil, stored, "", err
 }
 
 // takePreviousAPIPort reads the port a restart handed over and takes it out of

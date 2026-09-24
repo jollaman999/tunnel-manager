@@ -1079,9 +1079,10 @@ curl -s -b cookies.txt "$BASE/api/settings"
 
 **保存されている `api_port` を別のプログラムが使っていても、起動は止まりません。** 代わりに
 システムが選んだポート、ローカルフォワードが開かないポートで待ち受け、そのことを
-`api_server.port_taken_fallback` のログに `stored_port` と `port` 付きで残します。Windows では
+`api_server.port_taken_fallback` のログに `reason`、`stored_port`、`port` 付きで残します。
+別のプログラムが `0.0.0.0` だけで使っているポートも使用中とみなし、`reason` は `in_use` です。Windows では
 Hyper-V や WinNAT 用に予約された範囲のように、システムが確保しているポートもアクセス拒否で
-失敗するので、同じように代わりのポートに移ります。再起動の場合は
+失敗するので、同じように代わりのポートに移り、`reason` を `reserved` として残します。再起動の場合は
 システムが選ぶポートより先に再起動前のポートをもう一度試し、そこで待ち受けたら `reused_previous`
 を `true` として残します。そのポートは
 保存しません。次の起動はまた保存されているポートから試し、それまで `pending_restart` には
