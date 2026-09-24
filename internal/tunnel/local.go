@@ -379,29 +379,42 @@ func (f *localTunnel) forward(localConn net.Conn, client *ssh.Client, idleTimeou
 // Closing it is all it does: establish sees the connection end and takes the
 // forward down to be connected again.
 func (f *localTunnel) monitor(stop <-chan struct{}) {
-	ticker := time.NewTicker(f.interval)
+	watchSSHConnection(stop, f.interval, f.server.String(), f.currentClient, f.logger, f.fields)
+}
+
+func (f *localTunnel) currentClient() (*ssh.Client, net.Conn) {
+	f.clientMu.RLock()
+	defer f.clientMu.RUnlock()
+
+	return f.client, f.clientConn
+}
+
+// watchSSHConnection is the loop of monitor, shared with the SOCKS5 proxies,
+// which hold their connection the same way. current returns the connection
+// that stands, or a nil client while there is none, and fields are what every
+// line about the owner carries.
+func watchSSHConnection(stop <-chan struct{}, interval time.Duration, server string,
+	current func() (*ssh.Client, net.Conn), logger *zap.Logger, fields func(extra ...zap.Field) []zap.Field) {
+	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
 
-	intervalSec := int(f.interval / time.Second)
+	intervalSec := int(interval / time.Second)
 
 	for {
 		select {
 		case <-stop:
 			return
 		case <-ticker.C:
-			f.clientMu.RLock()
-			client := f.client
-			clientConn := f.clientConn
-			f.clientMu.RUnlock()
+			client, clientConn := current()
 
 			if client == nil {
 				continue
 			}
 
-			conn, err := net.DialTimeout("tcp", f.server.String(), monitorDialTimeout(intervalSec))
+			conn, err := net.DialTimeout("tcp", server, monitorDialTimeout(intervalSec))
 			if err != nil {
-				f.logger.Warn("SSH connection lost, attempting reconnection",
-					append([]zap.Field{logid.TunnelServerUnreachable.Field()}, f.fields(zap.Error(err))...)...)
+				logger.Warn("SSH connection lost, attempting reconnection",
+					append([]zap.Field{logid.TunnelServerUnreachable.Field()}, fields(zap.Error(err))...)...)
 				_ = client.Close()
 				continue
 			}
@@ -409,8 +422,8 @@ func (f *localTunnel) monitor(stop <-chan struct{}) {
 
 			err = sendKeepalive(client, clientConn, monitorKeepaliveTimeout(intervalSec))
 			if err != nil {
-				f.logger.Warn("SSH keepalive check failed, attempting reconnection",
-					append([]zap.Field{logid.TunnelKeepaliveFailed.Field()}, f.fields(zap.Error(err))...)...)
+				logger.Warn("SSH keepalive check failed, attempting reconnection",
+					append([]zap.Field{logid.TunnelKeepaliveFailed.Field()}, fields(zap.Error(err))...)...)
 				_ = client.Close()
 			}
 		}
@@ -420,11 +433,18 @@ func (f *localTunnel) monitor(stop <-chan struct{}) {
 // waitBeforeRetry waits for the retry interval and reports whether the
 // forward should keep running.
 func (f *localTunnel) waitBeforeRetry() bool {
-	timer := time.NewTimer(f.interval)
+	return waitUnlessDone(f.done, f.interval)
+}
+
+// waitUnlessDone waits for wait and reports false if done closes first. It is
+// waitBeforeRetry for anything that retries on an interval until it is
+// stopped.
+func waitUnlessDone(done <-chan struct{}, wait time.Duration) bool {
+	timer := time.NewTimer(wait)
 	defer timer.Stop()
 
 	select {
-	case <-f.done:
+	case <-done:
 		return false
 	case <-timer.C:
 		return true
