@@ -663,19 +663,31 @@ async function drawStatus() {
 }
 
 // statusBadge is what a tunnel is, drawn so that the one row that is not
-// working is found without reading the column. The word itself is kept and is
-// whatever the server said, so a state added later still shows up; only the
-// three that are known are coloured.
+// working is found without reading the column. A state the server is known to
+// send is drawn as a word in the language of the page, and one added later is
+// drawn as the server said it, so it still shows up; only the three that are
+// known are coloured. data-status carries the word as the server said it in
+// every case, since that is what the styles and the recorder pick a row by.
 function statusBadge(status) {
   const known = { connected: "ok", error: "bad", reconnecting: "waiting" };
+  const words = {
+    starting: "status.state-starting.text",
+    connected: "status.state-connected.text",
+    reconnecting: "status.state-reconnecting.text",
+    error: "status.state-error.text",
+    stopped: "status.state-stopped.text",
+    disabled: "status.state-disabled.text"
+  };
   const text = status === null || status === undefined ? "" : String(status);
 
-  // The two the host key check leaves behind are the exception to the word
-  // being whatever the server said. They are the states an operator answers,
-  // so what they say has to be a sentence in the language of the page rather
-  // than a name out of the database; every other state stays as it came.
+  // The two the host key check leaves behind carry a word of their own as well
+  // as a colour of their own. They are the states an operator answers, so what
+  // they say is a sentence rather than a name out of the database.
   const asked = hostKeyState(text);
-  const badge = element("span", asked === null ? text : t(asked.word));
+  const word = asked !== null
+    ? t(asked.word)
+    : Object.prototype.hasOwnProperty.call(words, text) ? t(words[text]) : text;
+  const badge = element("span", word);
 
   // Asked of the table itself and not of what every object inherits, so that a
   // status the server names "constructor" is coloured as unknown rather than
@@ -689,14 +701,21 @@ function statusBadge(status) {
 }
 
 // reachBadge is whether the forwarded port answered a connection opened by
-// tunnel-manager. The word is drawn as the server sent it, the way the status
-// beside it is, so a value added later still shows up. A row that carries none,
-// which is one written before the reading existed, reads as not measured rather
-// than as an empty cell.
+// tunnel-manager. A reading the server is known to send is drawn in the language
+// of the page and one added later as the server sent it, the way the status
+// beside it is, so it still shows up. A row that carries none, which is one
+// written before the reading existed, reads as not measured rather than as an
+// empty cell. data-reach keeps the word the server sent.
 function reachBadge(reach) {
+  const words = {
+    reachable: "status.reach-reachable.text",
+    unreachable: "status.reach-unreachable.text",
+    unknown: "status.reach-unknown.text"
+  };
   const said = reach === null || reach === undefined ? "" : String(reach);
   const text = said === "" ? "unknown" : said;
-  const badge = element("span", text);
+  const badge = element("span",
+    Object.prototype.hasOwnProperty.call(words, text) ? t(words[text]) : text);
 
   badge.className = "badge " + reachClass(text);
   badge.dataset.reach = text;
