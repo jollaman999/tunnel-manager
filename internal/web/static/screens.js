@@ -7944,7 +7944,7 @@ function manualOneTunnel() {
 // The addresses are the documentation ranges, so they name no real machine.
 const manualExampleHost = "203.0.113.10";
 const manualExampleUser = "deploy";
-const manualExampleService = "192.168.1.20:8080";
+const manualExampleService = "198.51.100.50:8080";
 const manualExampleLocalPort = "18080";
 
 // manualTopology is the drawing of the machines: the Host with its SSH server
