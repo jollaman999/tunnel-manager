@@ -397,6 +397,8 @@
   "log.account.change_password_wrong.text": "มีคำขอแก้ไขบัญชีมาพร้อมรหัสผ่านที่ไม่ตรงกับบัญชี จึงไม่มีอะไรถูกเปลี่ยนและไม่มีเซสชันใดถูกปิด",
   "log.account.created_with_initial_password.text": "สร้างบัญชีพร้อมรหัสผ่านเริ่มต้นแล้ว อ่านรหัสผ่านจากไฟล์ เข้าสู่ระบบด้วยรหัสผ่านนั้น แล้วตั้งชื่อผู้ใช้และรหัสผ่านใหม่ ไฟล์นี้ถูกเขียนด้วยสิทธิ์ 0600 และเก็บรหัสผ่านนั้นไว้เพียงชุดเดียว",
   "log.account.credentials_changed.text": "ข้อมูลยืนยันตัวตนของบัญชีถูกเปลี่ยน เซสชันอื่นทั้งหมดจึงถูกปิด",
+  "log.account.initial_password_file_narrow_failed.text": "จำกัดไฟล์รหัสผ่านเริ่มต้นให้เหลือแค่เจ้าของ SYSTEM และ Administrators ไม่สำเร็จ บัญชีอื่นจึงอาจยังอ่านได้ (initial_password_file={initial_password_file})",
+  "log.account.initial_password_file_narrowed.text": "บัญชีอื่นอ่านไฟล์รหัสผ่านเริ่มต้นได้ จึงจำกัดให้เหลือแค่เจ้าของ SYSTEM และ Administrators (initial_password_file={initial_password_file}, readers={readers})",
   "log.account.initial_password_file_remove_failed.text": "ลบไฟล์รหัสผ่านเริ่มต้นไม่สำเร็จ บัญชีถูกตั้งค่าแล้วและรหัสผ่านในไฟล์ใช้กับบัญชีไม่ได้อีกต่อไป แต่ไฟล์ยังอยู่และต้องลบด้วยมือ",
   "log.account.initial_setup_failed.text": "ตั้งค่าบัญชีไม่สำเร็จ รหัสผ่านเริ่มต้นถูกเขียนไว้ข้างไฟล์ฐานข้อมูล โปรเซสจึงต้องมีสิทธิ์เขียนลงไดเรกทอรีนั้น",
   "log.account.password_hash_failed.text": "ทำแฮชรหัสผ่านไม่สำเร็จ",

@@ -397,6 +397,8 @@
   "log.account.change_password_wrong.text": "das Konto sollte mit einem Passwort geändert werden, das es nicht öffnet; es wurde nichts geändert und keine Sitzung beendet",
   "log.account.created_with_initial_password.text": "das Konto mit einem Anfangspasswort angelegt. Lesen Sie das Passwort aus der Datei, melden Sie sich damit an und legen Sie einen Benutzernamen und ein Passwort fest. Die Datei wird mit der Berechtigung 0600 geschrieben und enthält die einzige Kopie des Passworts",
   "log.account.credentials_changed.text": "die Zugangsdaten des Kontos wurden geändert, daher wurde jede andere Sitzung beendet",
+  "log.account.initial_password_file_narrow_failed.text": "die Datei mit dem Anfangspasswort konnte nicht auf ihren Besitzer, SYSTEM und Administrators eingeschränkt werden, andere Konten können sie womöglich lesen (initial_password_file={initial_password_file})",
+  "log.account.initial_password_file_narrowed.text": "andere Konten konnten die Datei mit dem Anfangspasswort lesen, daher wurde sie auf ihren Besitzer, SYSTEM und Administrators eingeschränkt (initial_password_file={initial_password_file}, readers={readers})",
   "log.account.initial_password_file_remove_failed.text": "die Datei mit dem Anfangspasswort konnte nicht entfernt werden. Das Konto ist eingerichtet und das Passwort in der Datei öffnet es nicht mehr, aber die Datei ist noch vorhanden und muss von Hand entfernt werden",
   "log.account.initial_setup_failed.text": "das Konto konnte nicht eingerichtet werden. Das Anfangspasswort wird neben die Datenbankdatei geschrieben, der Prozess muss also in dieses Verzeichnis schreiben dürfen",
   "log.account.password_hash_failed.text": "das Passwort konnte nicht gehasht werden",

@@ -397,6 +397,8 @@
   "log.account.change_password_wrong.text": "учётную запись попросили изменить с паролем, который её не открывает, поэтому ничего не изменено и ни одна сессия не завершена",
   "log.account.created_with_initial_password.text": "учётная запись создана с первоначальным паролем. Прочитайте пароль из файла, войдите с ним и задайте имя пользователя и пароль. Файл записан с правами 0600 и хранит единственную копию пароля",
   "log.account.credentials_changed.text": "учётные данные учётной записи изменены, поэтому все остальные сессии завершены",
+  "log.account.initial_password_file_narrow_failed.text": "не удалось ограничить файл первоначального пароля владельцем, SYSTEM и Administrators, поэтому другие учётные записи, возможно, могут его прочитать (initial_password_file={initial_password_file})",
+  "log.account.initial_password_file_narrowed.text": "другие учётные записи могли прочитать файл первоначального пароля, поэтому доступ к нему ограничен владельцем, SYSTEM и Administrators (initial_password_file={initial_password_file}, readers={readers})",
   "log.account.initial_password_file_remove_failed.text": "не удалось удалить файл первоначального пароля. Учётная запись настроена и пароль из файла её больше не открывает, но файл всё ещё на месте, и убрать его нужно вручную",
   "log.account.initial_setup_failed.text": "не удалось настроить учётную запись. Первоначальный пароль пишется рядом с файлом базы данных, поэтому процессу нужно разрешить запись в этот каталог",
   "log.account.password_hash_failed.text": "не удалось захешировать пароль",

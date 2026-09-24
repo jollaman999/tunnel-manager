@@ -135,6 +135,25 @@ func writeInitialPasswordFile(path, password string) error {
 	return nil
 }
 
+// NarrowInitialPasswordFile brings an initial password file that is already
+// there to the DACL writeInitialPasswordFile creates one with, and returns the
+// accounts other than its owner, SYSTEM and Administrators that could read it.
+// A file that is not there is nothing to narrow.
+//
+// EnsureUser leaves the file alone once the account row exists, so a file an
+// earlier release wrote on Windows, where it took the DACL of its directory,
+// would stay that way until the account is set up and the file is removed.
+// This is called on every startup to close that. On Unix it does nothing: the
+// file has been created with initialPasswordFileMode from the start.
+func NarrowInitialPasswordFile(path string) ([]string, error) {
+	readers, err := crypto.NarrowPrivateFile(path)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil, nil
+	}
+
+	return readers, err
+}
+
 // EnsureUser creates the account when there is none, and reports whether it
 // created one. The account is made without a username and with SetupRequired
 // set, and its initial password is written to passwordFile and nowhere else.

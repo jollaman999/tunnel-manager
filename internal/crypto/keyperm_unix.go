@@ -16,6 +16,13 @@ func CreatePrivateFile(path string) (*os.File, error) {
 	return os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, keyFileMode)
 }
 
+// NarrowPrivateFile does nothing on Unix. The mode a file of secrets is
+// created with already keeps others out, and a key file of a wider mode is
+// refused where it is loaded rather than narrowed.
+func NarrowPrivateFile(path string) ([]string, error) {
+	return nil, nil
+}
+
 // checkKeyFilePermission refuses a key file that the group or others may read.
 func checkKeyFilePermission(path string, info os.FileInfo, logger *zap.Logger) error {
 	perm := info.Mode().Perm()

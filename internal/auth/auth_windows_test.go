@@ -113,3 +113,74 @@ func TestWriteInitialPasswordFileReplacesAWideFileWithANarrowOne(t *testing.T) {
 
 	requireOwnerSystemAdminsOnly(t, path)
 }
+
+// TestNarrowInitialPasswordFileNarrowsALeftoverOfAnEarlierRelease covers the
+// file EnsureUser does not reach: one an earlier release wrote with the DACL of
+// its directory while the account row is already there.
+func TestNarrowInitialPasswordFileNarrowsALeftoverOfAnEarlierRelease(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "initial-password")
+
+	err := writeInitialPasswordFile(path, "test-password")
+	if err != nil {
+		t.Fatalf("failed to write: %v", err)
+	}
+
+	user, err := windows.GetCurrentProcessToken().GetTokenUser()
+	if err != nil {
+		t.Fatalf("failed to read the user of this process: %v", err)
+	}
+
+	// What a file under C:\ ends up with: Users may read it, and it takes
+	// what its directory hands down.
+	wide, err := windows.SecurityDescriptorFromString(
+		"D:(A;;FA;;;" + user.User.Sid.String() + ")(A;;FA;;;SY)(A;;FA;;;BA)(A;;FR;;;BU)")
+	if err != nil {
+		t.Fatalf("failed to build a wide security descriptor: %v", err)
+	}
+
+	wideDACL, _, err := wide.DACL()
+	if err != nil {
+		t.Fatalf("failed to read the wide DACL: %v", err)
+	}
+
+	err = windows.SetNamedSecurityInfo(path, windows.SE_FILE_OBJECT,
+		windows.DACL_SECURITY_INFORMATION|windows.UNPROTECTED_DACL_SECURITY_INFORMATION, nil, nil, wideDACL, nil)
+	if err != nil {
+		t.Fatalf("failed to widen the file: %v", err)
+	}
+
+	readers, err := NarrowInitialPasswordFile(path)
+	if err != nil {
+		t.Fatalf("NarrowInitialPasswordFile returned an error: %v", err)
+	}
+
+	if len(readers) == 0 {
+		t.Error("NarrowInitialPasswordFile named nobody who could read the wide file")
+	}
+
+	requireOwnerSystemAdminsOnly(t, path)
+
+	readers, err = NarrowInitialPasswordFile(path)
+	if err != nil || len(readers) != 0 {
+		t.Errorf("narrowing the narrowed file again returned %v, %v, want nothing", readers, err)
+	}
+
+	got, err := os.ReadFile(path)
+	if err != nil || string(got) != "test-password\n" {
+		t.Errorf("the file reads %q, %v after the narrowing, want the password it held", got, err)
+	}
+}
+
+func TestNarrowInitialPasswordFileLeavesAMissingFileAlone(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "initial-password")
+
+	readers, err := NarrowInitialPasswordFile(path)
+	if err != nil || len(readers) != 0 {
+		t.Errorf("NarrowInitialPasswordFile returned %v, %v for a file that is not there, want nothing", readers, err)
+	}
+
+	_, err = os.Stat(path)
+	if !os.IsNotExist(err) {
+		t.Errorf("the file is there after the narrowing: %v", err)
+	}
+}

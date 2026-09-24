@@ -397,6 +397,8 @@
   "log.account.change_password_wrong.text": "the account was asked to be changed with a password that does not open it, so nothing was changed and no session was ended",
   "log.account.created_with_initial_password.text": "created the account with an initial password. Read the password from the file, log in with it, and set a username and a password. The file is written with permission 0600 and holds the only copy of the password",
   "log.account.credentials_changed.text": "the credentials of the account were changed, so every other session was ended",
+  "log.account.initial_password_file_narrow_failed.text": "failed to narrow the initial password file to its owner, SYSTEM and Administrators, so other accounts may be able to read it (initial_password_file={initial_password_file})",
+  "log.account.initial_password_file_narrowed.text": "other accounts could read the initial password file, so it was narrowed to its owner, SYSTEM and Administrators (initial_password_file={initial_password_file}, readers={readers})",
   "log.account.initial_password_file_remove_failed.text": "failed to remove the initial password file. The account is set up and the password in the file no longer opens it, but the file is still there and has to be removed by hand",
   "log.account.initial_setup_failed.text": "failed to set up the account. The initial password is written next to the database file, so the process has to be allowed to write to that directory",
   "log.account.password_hash_failed.text": "failed to hash the password",

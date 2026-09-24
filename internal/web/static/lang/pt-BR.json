@@ -397,6 +397,8 @@
   "log.account.change_password_wrong.text": "pediram para alterar a conta com uma senha que não a abre, então nada foi alterado e nenhuma sessão foi encerrada",
   "log.account.created_with_initial_password.text": "criou a conta com uma senha inicial. Leia a senha no arquivo, faça login com ela e defina um nome de usuário e uma senha. O arquivo é escrito com permissão 0600 e guarda a única cópia da senha",
   "log.account.credentials_changed.text": "as credenciais da conta foram alteradas, então todas as outras sessões foram encerradas",
+  "log.account.initial_password_file_narrow_failed.text": "falha ao restringir o arquivo da senha inicial ao proprietário, SYSTEM e Administrators, então outras contas talvez consigam lê-lo (initial_password_file={initial_password_file})",
+  "log.account.initial_password_file_narrowed.text": "outras contas conseguiam ler o arquivo da senha inicial, então ele foi restrito ao proprietário, SYSTEM e Administrators (initial_password_file={initial_password_file}, readers={readers})",
   "log.account.initial_password_file_remove_failed.text": "falha ao remover o arquivo da senha inicial. A conta está configurada e a senha do arquivo não a abre mais, mas o arquivo continua lá e precisa ser removido manualmente",
   "log.account.initial_setup_failed.text": "falha ao configurar a conta. A senha inicial é escrita ao lado do arquivo do banco de dados, então o processo precisa ter permissão de escrita nesse diretório",
   "log.account.password_hash_failed.text": "falha ao gerar o hash da senha",

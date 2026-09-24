@@ -1028,7 +1028,8 @@ will not be able to log in.
 2. The initial password is written to a file named `initial-password` **in the
    directory the database file is in**, with permission `0600`. On Windows it
    is created with an ACL that lets only its owner, SYSTEM and Administrators
-   read it, instead of the ACL of its directory. It is 52
+   read it, instead of the ACL of its directory, and one that an earlier
+   release left there is narrowed to that ACL at startup. It is 52
    characters of upper case letters and digits.
 3. **The log holds the path, never the password.** The log goes to the console
    as well as to a file that is kept and rotated, so a password written there

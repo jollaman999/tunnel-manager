@@ -397,6 +397,8 @@
   "log.account.change_password_wrong.text": "アカウントのものと一致しないパスワードで変更が要求されたので、何も変えず、セッションも終了しませんでした",
   "log.account.created_with_initial_password.text": "初期パスワードでアカウントを作りました。ファイルからそのパスワードを読み、それでログインして、ユーザー名とパスワードを決めてください。ファイルはパーミッション 0600 で書かれ、そのパスワードの唯一のコピーを含んでいます",
   "log.account.credentials_changed.text": "アカウントの認証情報が変わったので、ほかのセッションをすべて終了しました",
+  "log.account.initial_password_file_narrow_failed.text": "初期パスワードのファイルを所有者・SYSTEM・Administrators だけが読めるように絞れなかったため、他のアカウントが読める可能性があります (initial_password_file={initial_password_file})",
+  "log.account.initial_password_file_narrowed.text": "他のアカウントが初期パスワードのファイルを読めたため、所有者・SYSTEM・Administrators だけが読めるように絞りました (initial_password_file={initial_password_file}, readers={readers})",
   "log.account.initial_password_file_remove_failed.text": "初期パスワードのファイルを削除できませんでした。アカウントの初期設定は終わっていて、ファイルの中のパスワードではもうログインできませんが、ファイルはまだ残っているので手動で削除してください",
   "log.account.initial_setup_failed.text": "アカウントの初期設定に失敗しました。初期パスワードはデータベースファイルと同じディレクトリに書くので、プロセスがそのディレクトリに書き込めるようにしてください",
   "log.account.password_hash_failed.text": "パスワードをハッシュ化できませんでした",

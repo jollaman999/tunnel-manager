@@ -102,22 +102,7 @@ func CreatePrivateFile(path string) (*os.File, error) {
 // narrowing that fails leaves the startup going as well, with the line saying
 // that the file is still readable.
 func checkKeyFilePermission(path string, info os.FileInfo, logger *zap.Logger) error {
-	readers, err := keyFileOtherReaders(path)
-	if err != nil {
-		logger.Warn("failed to narrow the key file to its owner, SYSTEM and Administrators, "+
-			"so other accounts may be able to read it",
-			logid.EncryptionKeyFileNarrowFailed.Field(),
-			zap.String("key_file", path),
-			zap.Error(err))
-
-		return nil
-	}
-
-	if len(readers) == 0 {
-		return nil
-	}
-
-	err = narrowKeyFile(path)
+	readers, err := NarrowPrivateFile(path)
 	if err != nil {
 		logger.Warn("failed to narrow the key file to its owner, SYSTEM and Administrators, "+
 			"so other accounts may be able to read it",
@@ -129,12 +114,43 @@ func checkKeyFilePermission(path string, info os.FileInfo, logger *zap.Logger) e
 		return nil
 	}
 
+	if len(readers) == 0 {
+		return nil
+	}
+
 	logger.Warn("other accounts could read the key file, so it was narrowed to its owner, SYSTEM and Administrators",
 		logid.EncryptionKeyFileNarrowed.Field(),
 		zap.String("key_file", path),
 		zap.Strings("readers", readers))
 
 	return nil
+}
+
+// NarrowPrivateFile puts the DACL of keyFileSecurityDescriptor on a file of
+// secrets that others than the ones it names may read, and returns those
+// others. It returns none and changes nothing when the file is narrow already.
+//
+// This is what a file created before CreatePrivateFile was used for it is
+// brought to: such a file carries the DACL of its directory. The accounts are
+// returned on a failed narrowing too, so that the caller can say who may still
+// read the file. A file that is not there fails with an error that is
+// os.ErrNotExist.
+func NarrowPrivateFile(path string) ([]string, error) {
+	readers, err := keyFileOtherReaders(path)
+	if err != nil {
+		return nil, err
+	}
+
+	if len(readers) == 0 {
+		return nil, nil
+	}
+
+	err = narrowKeyFile(path)
+	if err != nil {
+		return readers, err
+	}
+
+	return readers, nil
 }
 
 // keyFileOtherReaders names the accounts other than the ones
@@ -144,12 +160,12 @@ func checkKeyFilePermission(path string, info os.FileInfo, logger *zap.Logger) e
 func keyFileOtherReaders(path string) ([]string, error) {
 	sd, err := windows.GetNamedSecurityInfo(path, windows.SE_FILE_OBJECT, windows.DACL_SECURITY_INFORMATION)
 	if err != nil {
-		return nil, fmt.Errorf("failed to read the DACL of the key file: %w", err)
+		return nil, fmt.Errorf("failed to read the DACL of %s: %w", path, err)
 	}
 
 	dacl, _, err := sd.DACL()
 	if err != nil {
-		return nil, fmt.Errorf("failed to read the DACL of the key file: %w", err)
+		return nil, fmt.Errorf("failed to read the DACL of %s: %w", path, err)
 	}
 
 	if dacl == nil {
@@ -178,7 +194,7 @@ func keyFileOtherReaders(path string) ([]string, error) {
 
 		err = windows.GetAce(dacl, i, &ace)
 		if err != nil {
-			return nil, fmt.Errorf("failed to read entry %d of the DACL of the key file: %w", i, err)
+			return nil, fmt.Errorf("failed to read entry %d of the DACL of %s: %w", i, path, err)
 		}
 
 		switch ace.Header.AceType {
@@ -259,7 +275,7 @@ func narrowKeyFile(path string) error {
 	err = windows.SetNamedSecurityInfo(path, windows.SE_FILE_OBJECT,
 		windows.DACL_SECURITY_INFORMATION|windows.PROTECTED_DACL_SECURITY_INFORMATION, nil, nil, dacl, nil)
 	if err != nil {
-		return fmt.Errorf("failed to set the DACL of the key file: %w", err)
+		return fmt.Errorf("failed to set the DACL of %s: %w", path, err)
 	}
 
 	return nil

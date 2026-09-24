@@ -397,6 +397,8 @@
   "log.account.change_password_wrong.text": "طُلب تغيير الحساب بكلمة مرور لا تطابقه، فلم يتغير شيء ولم تُنهَ أي جلسة",
   "log.account.created_with_initial_password.text": "أُنشئ الحساب بكلمة مرور أولى. اقرأ كلمة المرور من الملف، وسجّل الدخول بها، ثم اضبط اسم مستخدم وكلمة مرور. الملف مكتوب بالصلاحية 0600 ويتضمن النسخة الوحيدة من كلمة المرور",
   "log.account.credentials_changed.text": "تغيّرت بيانات دخول الحساب، فأُنهيت كل جلسة أخرى",
+  "log.account.initial_password_file_narrow_failed.text": "تعذّر حصر ملف كلمة المرور الأولى في مالكه وSYSTEM وAdministrators، لذا قد تتمكن حسابات أخرى من قراءته (initial_password_file={initial_password_file})",
+  "log.account.initial_password_file_narrowed.text": "كانت حسابات أخرى تستطيع قراءة ملف كلمة المرور الأولى، فحُصر في مالكه وSYSTEM وAdministrators (initial_password_file={initial_password_file}, readers={readers})",
   "log.account.initial_password_file_remove_failed.text": "تعذّرت إزالة ملف كلمة المرور الأولى. الحساب مُعد وكلمة المرور التي في الملف لم تعد صالحة له، لكن الملف ما زال موجودًا ولا بد من إزالته يدويًا",
   "log.account.initial_setup_failed.text": "تعذّر إعداد الحساب. كلمة المرور الأولى تُكتب بجانب ملف قاعدة البيانات، فلا بد أن يُسمح للعملية بالكتابة في ذلك الدليل",
   "log.account.password_hash_failed.text": "تعذّر حساب تجزئة كلمة المرور",

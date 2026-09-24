@@ -397,6 +397,8 @@
   "log.account.change_password_wrong.text": "se pidió cambiar la cuenta con una contraseña que no coincide, así que no se cambió nada ni se cerró ninguna sesión",
   "log.account.created_with_initial_password.text": "se creó la cuenta con una contraseña inicial. Lea la contraseña del archivo, inicie sesión con ella y establezca un nombre de usuario y una contraseña. El archivo se escribe con permiso 0600 y contiene la única copia de la contraseña",
   "log.account.credentials_changed.text": "cambiaron las credenciales de la cuenta, así que se cerraron todas las demás sesiones",
+  "log.account.initial_password_file_narrow_failed.text": "no se pudo restringir el archivo de la contraseña inicial a su propietario, SYSTEM y Administrators, así que otras cuentas quizá puedan leerlo (initial_password_file={initial_password_file})",
+  "log.account.initial_password_file_narrowed.text": "otras cuentas podían leer el archivo de la contraseña inicial, así que se restringió a su propietario, SYSTEM y Administrators (initial_password_file={initial_password_file}, readers={readers})",
   "log.account.initial_password_file_remove_failed.text": "no se pudo borrar el archivo de la contraseña inicial. La cuenta está configurada y la contraseña del archivo ya no es válida, pero el archivo sigue ahí y hay que borrarlo a mano",
   "log.account.initial_setup_failed.text": "no se pudo configurar la cuenta. La contraseña inicial se escribe junto al archivo de la base de datos, así que el proceso tiene que poder escribir en ese directorio",
   "log.account.password_hash_failed.text": "no se pudo calcular el hash de la contraseña",

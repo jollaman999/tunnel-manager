@@ -397,6 +397,8 @@
   "log.account.change_password_wrong.text": "修改账号的请求带的密码与账号不匹配，所以没有任何改动，也没有结束任何会话",
   "log.account.created_with_initial_password.text": "已用初始密码创建账号。请从文件中读取密码，用它登录，然后设置用户名和密码。文件以 0600 权限写入，是密码的唯一副本",
   "log.account.credentials_changed.text": "账号的凭据已修改，所以其他会话全部结束",
+  "log.account.initial_password_file_narrow_failed.text": "未能把初始密码文件收窄为只有所有者、SYSTEM 和 Administrators 可读，其他账户可能仍读得到 (initial_password_file={initial_password_file})",
+  "log.account.initial_password_file_narrowed.text": "其他账户读得到初始密码文件，已收窄为只有所有者、SYSTEM 和 Administrators 可读 (initial_password_file={initial_password_file}, readers={readers})",
   "log.account.initial_password_file_remove_failed.text": "删除初始密码文件失败。账号已初始化，文件里的密码已不能登录，但文件还在，需要手动删除",
   "log.account.initial_setup_failed.text": "账号初始化失败。初始密码写在数据库文件旁边，所以进程需要那个目录的写权限",
   "log.account.password_hash_failed.text": "密码哈希失败",

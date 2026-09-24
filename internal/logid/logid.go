@@ -210,6 +210,8 @@ const (
 	AccountSetupFailed                     ID = "account.setup_failed"
 	AccountSetupCommitFailed               ID = "account.setup_commit_failed"
 	AccountInitialPasswordFileRemoveFailed ID = "account.initial_password_file_remove_failed"
+	AccountInitialPasswordFileNarrowed     ID = "account.initial_password_file_narrowed"
+	AccountInitialPasswordFileNarrowFailed ID = "account.initial_password_file_narrow_failed"
 	AccountReadNoAccountOnContext          ID = "account.read_no_account_on_context"
 	AccountChangeNoAccountOnContext        ID = "account.change_no_account_on_context"
 	AccountChangePasswordWrong             ID = "account.change_password_wrong"

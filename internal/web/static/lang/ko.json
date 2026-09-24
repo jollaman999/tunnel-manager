@@ -397,6 +397,8 @@
   "log.account.change_password_wrong.text": "계정을 바꿔 달라는 요청이 왔는데 비밀번호가 맞지 않아서, 아무것도 바꾸지 않고 어떤 세션도 끊지 않았습니다",
   "log.account.created_with_initial_password.text": "임시 비밀번호와 함께 계정을 만들었습니다. 파일에서 비밀번호를 읽어 그것으로 로그인한 뒤 사용자명과 비밀번호를 정하십시오. 파일은 권한 0600 으로 써지며 그 비밀번호의 유일한 사본입니다",
   "log.account.credentials_changed.text": "계정의 접속 정보가 바뀌어서 다른 세션을 전부 끊었습니다",
+  "log.account.initial_password_file_narrow_failed.text": "임시 비밀번호 파일을 소유자·SYSTEM·Administrators 만 읽을 수 있게 좁히지 못해서 다른 계정이 읽을 수 있을 수 있습니다 (initial_password_file={initial_password_file})",
+  "log.account.initial_password_file_narrowed.text": "다른 계정이 임시 비밀번호 파일을 읽을 수 있어서 소유자·SYSTEM·Administrators 만 읽을 수 있게 좁혔습니다 (initial_password_file={initial_password_file}, readers={readers})",
   "log.account.initial_password_file_remove_failed.text": "임시 비밀번호 파일을 지우지 못했습니다. 계정 설정은 끝났고 파일에 든 비밀번호로는 이제 로그인되지 않지만, 파일이 남아 있으니 손으로 지워야 합니다",
   "log.account.initial_setup_failed.text": "계정을 설정하지 못했습니다. 임시 비밀번호는 데이터베이스 파일 옆에 써지므로 프로세스가 그 디렉터리에 쓸 수 있어야 합니다",
   "log.account.password_hash_failed.text": "비밀번호를 해시하지 못했습니다",

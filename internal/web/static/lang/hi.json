@@ -397,6 +397,8 @@
   "log.account.change_password_wrong.text": "खाता बदलने को कहा गया, पर पासवर्ड ऐसा था जो उसे खोलता ही नहीं, इसलिए न कुछ बदला गया और न कोई सेशन खत्म किया गया",
   "log.account.created_with_initial_password.text": "खाता एक शुरुआती पासवर्ड के साथ बना दिया। पासवर्ड फ़ाइल से पढ़ें, उससे लॉगिन करें, और फिर उपयोगकर्ता नाम और पासवर्ड तय करें। फ़ाइल 0600 अनुमति के साथ लिखी जाती है और पासवर्ड की इकलौती कॉपी उसी में है",
   "log.account.credentials_changed.text": "खाते के क्रेडेंशियल बदल गए, इसलिए बाकी हर सेशन खत्म कर दिया गया",
+  "log.account.initial_password_file_narrow_failed.text": "शुरुआती पासवर्ड की फ़ाइल को उसके मालिक, SYSTEM और Administrators तक सीमित नहीं किया जा सका, इसलिए दूसरे खाते शायद उसे पढ़ सकते हैं (initial_password_file={initial_password_file})",
+  "log.account.initial_password_file_narrowed.text": "दूसरे खाते शुरुआती पासवर्ड की फ़ाइल पढ़ सकते थे, इसलिए उसे उसके मालिक, SYSTEM और Administrators तक सीमित किया गया (initial_password_file={initial_password_file}, readers={readers})",
   "log.account.initial_password_file_remove_failed.text": "शुरुआती पासवर्ड की फ़ाइल हटाई नहीं जा सकी। खाते का सेटअप हो चुका है और उस फ़ाइल वाला पासवर्ड अब उसे नहीं खोलता, पर फ़ाइल अब भी वहीं पड़ी है और उसे हाथ से हटाना होगा",
   "log.account.initial_setup_failed.text": "खाते का सेटअप नहीं हो सका। शुरुआती पासवर्ड डेटाबेस फ़ाइल के बगल में लिखा जाता है, इसलिए प्रोसेस को उस डायरेक्टरी में लिखने की अनुमति होनी चाहिए",
   "log.account.password_hash_failed.text": "पासवर्ड हैश नहीं किया जा सका",

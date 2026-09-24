@@ -397,6 +397,8 @@
   "log.account.change_password_wrong.text": "la modification du compte a été demandée avec un mot de passe qui ne correspond pas : rien n'a été changé et aucune session n'a pris fin",
   "log.account.created_with_initial_password.text": "compte créé avec un mot de passe initial. Lisez le mot de passe dans le fichier, connectez-vous avec, puis définissez un nom d'utilisateur et un mot de passe. Le fichier est écrit avec la permission 0600 et contient l'unique copie du mot de passe",
   "log.account.credentials_changed.text": "les identifiants du compte ont changé, toutes les autres sessions ont donc pris fin",
+  "log.account.initial_password_file_narrow_failed.text": "échec de la restriction du fichier de mot de passe initial à son propriétaire, SYSTEM et Administrators, d'autres comptes peuvent donc peut-être le lire (initial_password_file={initial_password_file})",
+  "log.account.initial_password_file_narrowed.text": "d'autres comptes pouvaient lire le fichier de mot de passe initial, il a donc été restreint à son propriétaire, SYSTEM et Administrators (initial_password_file={initial_password_file}, readers={readers})",
   "log.account.initial_password_file_remove_failed.text": "échec de la suppression du fichier de mot de passe initial. Le compte est configuré et le mot de passe du fichier ne permet plus de s'y connecter, mais le fichier est encore là et doit être supprimé à la main",
   "log.account.initial_setup_failed.text": "échec de la configuration du compte. Le mot de passe initial est écrit à côté du fichier de base de données, le processus doit donc avoir le droit d'écrire dans ce répertoire",
   "log.account.password_hash_failed.text": "échec du hachage du mot de passe",

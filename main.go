@@ -595,6 +595,27 @@ func ensureUser(db *gorm.DB, logger *zap.Logger, passwordFile string) {
 		return
 	}
 
+	// A file that is still there was written by an earlier startup, and on
+	// Windows one written by an earlier release carries the DACL of its
+	// directory. The password in it may still open the account, so it is
+	// narrowed here rather than left until the account is set up.
+	readers, err := auth.NarrowInitialPasswordFile(passwordFile)
+	switch {
+	case err != nil:
+		logger.Warn("failed to narrow the initial password file to its owner, SYSTEM and Administrators, "+
+			"so other accounts may be able to read it",
+			logid.AccountInitialPasswordFileNarrowFailed.Field(),
+			zap.String("initial_password_file", passwordFile),
+			zap.Strings("readers", readers),
+			zap.Error(err))
+	case len(readers) > 0:
+		logger.Warn("other accounts could read the initial password file, so it was narrowed to its owner, "+
+			"SYSTEM and Administrators",
+			logid.AccountInitialPasswordFileNarrowed.Field(),
+			zap.String("initial_password_file", passwordFile),
+			zap.Strings("readers", readers))
+	}
+
 	logger.Info("the account is already set up", logid.AccountAlreadySetUp.Field())
 }
 

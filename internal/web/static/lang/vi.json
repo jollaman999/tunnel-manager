@@ -397,6 +397,8 @@
   "log.account.change_password_wrong.text": "có yêu cầu đổi tài khoản kèm mật khẩu không mở được tài khoản, nên không có gì được đổi và không phiên nào bị kết thúc",
   "log.account.created_with_initial_password.text": "đã tạo tài khoản với một mật khẩu ban đầu. Hãy đọc mật khẩu từ tệp, đăng nhập bằng nó, rồi đặt tên đăng nhập và mật khẩu. Tệp được ghi với quyền 0600 và giữ bản duy nhất của mật khẩu đó",
   "log.account.credentials_changed.text": "thông tin đăng nhập của tài khoản đã đổi, nên mọi phiên khác đều bị kết thúc",
+  "log.account.initial_password_file_narrow_failed.text": "không thu hẹp được tệp mật khẩu ban đầu chỉ còn chủ sở hữu, SYSTEM và Administrators, nên các tài khoản khác có thể vẫn đọc được (initial_password_file={initial_password_file})",
+  "log.account.initial_password_file_narrowed.text": "các tài khoản khác đọc được tệp mật khẩu ban đầu, nên đã thu hẹp chỉ còn chủ sở hữu, SYSTEM và Administrators (initial_password_file={initial_password_file}, readers={readers})",
   "log.account.initial_password_file_remove_failed.text": "không xóa được tệp mật khẩu ban đầu. Tài khoản đã thiết lập xong và mật khẩu trong tệp không còn mở được nó nữa, nhưng tệp vẫn còn đó và phải xóa bằng tay",
   "log.account.initial_setup_failed.text": "không thiết lập được tài khoản. Mật khẩu ban đầu được ghi cạnh tệp cơ sở dữ liệu, nên tiến trình phải được phép ghi vào thư mục đó",
   "log.account.password_hash_failed.text": "không băm được mật khẩu",
