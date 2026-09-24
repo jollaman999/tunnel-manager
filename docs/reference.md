@@ -317,8 +317,8 @@ flowchart LR
 **A local forward belongs to one Host.** It is a row of its own, carried by the
 Host it was made on and by no other, and there is no assignment for it: a
 service port is shared by the Hosts that carry it, a local forward is not. It is
-added, changed and deleted from the **Local forwards** button in the row of that
-Host on the Hosts screen, or through the API, see
+added, changed, switched off and on, and deleted from the **Local forwards**
+button in the row of that Host on the Hosts screen, or through the API, see
 [The local forwards of a Host](#the-local-forwards-of-a-host). Deleting the Host
 deletes its local forwards in the same transaction.
 
@@ -329,6 +329,7 @@ deletes its local forwards in the same transaction.
 | `target_ip` | Where a connection goes from the Host. An IPv4 or an IPv6 address, not a name |
 | `target_port` | The port of the target, 1 to 65535 |
 | `description` | Free text |
+| `enabled` | Whether it runs. A create that leaves it out makes a forward that runs, and an update that leaves it out keeps what is stored |
 
 **`bind_scope` here is about this machine, not the Host.** It takes the same two
 words an assignment does and names the same pairs of addresses.
@@ -369,7 +370,15 @@ the Settings screen answers it with a panel that moves the forward or the proxy
 to another port, or on a save the API port instead. A port below 1024 is opened by this process itself, so it is held to
 the rule in [Running as a non-root user](#running-as-a-non-root-user).
 
-**A local forward runs while its Host is enabled** and on no other Host. The
+**A forward that is switched off still holds its `local_port`.** It opens no
+port and makes no SSH connection, but every check above counts it as it counts
+one that runs, so another forward, a SOCKS5 proxy or `api_port` is refused that
+port with `409` all the same, and switching it on again never finds its port
+given away.
+
+**A local forward runs while it is switched on and its Host is enabled**, and on
+no other Host. Switching it off stops it on the next reconcile pass: its port is
+closed and its SSH connection is dropped. The
 reconcile loop starts, rebuilds and stops local forwards the way it does tunnels:
 one row is one SSH connection of its own, and a forward whose Host, credentials,
 trusted host key, port, scope or target changed is stopped and started again. A
@@ -395,8 +404,9 @@ direction; OpenSSH refuses it where `AllowTcpForwarding` is `no` or `remote`.
 
 | `status` | What it means |
 |----------|---------------|
-| `disabled` | The Host is disabled. Nothing is opened |
-| `stopped` | The Host is enabled and no forward runs: the reconcile loop has not reached the row yet, or it failed to start it, which the log says |
+| `disabled` | The Host is disabled. Nothing is opened, whether the forward is switched on or off |
+| `off` | The Host is enabled and the forward is switched off. Nothing is opened |
+| `stopped` | The Host and the forward are both on and no forward runs: the reconcile loop has not reached the row yet, or it failed to start it, which the log says |
 | `starting` | The first connection is being made |
 | `connected` | The SSH connection stands and `local_port` is open |
 | `reconnecting` | The connection dropped or an attempt failed, and it is being made again. `retry_count` counts these |
@@ -406,6 +416,11 @@ direction; OpenSSH refuses it where `AllowTcpForwarding` is `no` or `remote`.
 **The status is kept in memory**, by the process that runs the forward, and is
 answered only by the local forward calls. It is not in `GET /api/status`, and
 the Status screen does not count local forwards.
+
+**The upgrade that added `enabled` leaves every local forward switched on.**
+Every forward stored before it was running, so the startup that adds the column
+switches all of them on, and no other startup does: a forward switched off since
+stays off across a restart.
 
 **An export carries the local forwards of each Host**, in `local_forwards` on
 that Host. See [Export and import](#export-and-import).
@@ -1118,7 +1133,7 @@ no directory travels next to it and no path has to be configured.
 | Screen | Path | What it shows and does |
 |--------|------|------------------------|
 | Status | `/ui/status` | The three counts (desired, rows, connected), a sentence about the difference between them, and one line per tunnel: Host, service port, status, server, local, remote, port reached, retries, last connected. A tunnel with something wrong carries what went wrong on a line under it, across the whole table, and a tunnel whose forwarded port was not reached carries there what to change on the SSH server it named and what else to check. A tunnel that is up carries under it what is known about the addresses of its forward, kept in three: what was asked for, what the SSH server answered, and what a connection from here confirmed. It never says a port is open. The tunnel rows come a page at a time, ten to a page to begin with, with the size and the page chosen above the table; the three counts stay counts of every tunnel and not of the page. It asks again every 5 seconds and comes back on the page being read. |
-| Hosts | `/ui/hosts` | One row per Host with ID, IP, port, user, description, enabled, SOCKS5 proxy and updated. The rows come a page at a time, ten to a page to begin with, with the size (10, 20, 30, 50 or 100) and the page chosen above the table. The choice is remembered for this screen on its own, and a list short enough to fit a page of the smallest size carries no controls at all. Add a Host, edit one, enable or disable one, delete one. The add and edit forms have a box to paste a private key into, an area to drop the key file onto, and a box for the passphrase of a key that has one, and the add form has an **Assign all service ports** tick, on by default, that says what the Host starts out carrying, with a **Reach on the Host** list beside it that every assignment that tick makes starts on. **Service ports** in a row opens a panel of every service port with a tick against the ones this Host carries, and a reach beside each row: pick a reach above and apply it to everything ticked, or set one row on its own, and a row that was not ticked is left alone. Only what was changed is sent when it is saved, so a tick made there leaves the pages that were not read alone. **Local forwards** in a row opens a panel of the local forwards of that Host with the status of each, where they are added, changed and deleted; see [Local forwards](#local-forwards). The add and edit forms also switch on the SOCKS5 proxy of the Host, and its column shows the port and the status; see [A SOCKS5 proxy on a Host](#a-socks5-proxy-on-a-host). |
+| Hosts | `/ui/hosts` | One row per Host with ID, IP, port, user, description, enabled, SOCKS5 proxy and updated. The rows come a page at a time, ten to a page to begin with, with the size (10, 20, 30, 50 or 100) and the page chosen above the table. The choice is remembered for this screen on its own, and a list short enough to fit a page of the smallest size carries no controls at all. Add a Host, edit one, enable or disable one, delete one. The add and edit forms have a box to paste a private key into, an area to drop the key file onto, and a box for the passphrase of a key that has one, and the add form has an **Assign all service ports** tick, on by default, that says what the Host starts out carrying, with a **Reach on the Host** list beside it that every assignment that tick makes starts on. **Service ports** in a row opens a panel of every service port with a tick against the ones this Host carries, and a reach beside each row: pick a reach above and apply it to everything ticked, or set one row on its own, and a row that was not ticked is left alone. Only what was changed is sent when it is saved, so a tick made there leaves the pages that were not read alone. **Local forwards** in a row opens a panel of the local forwards of that Host with the status of each, a page at a time, where they are added, changed, switched off and on, and deleted, one row at a time or the ticked rows together; see [Local forwards](#local-forwards). The add and edit forms also switch on the SOCKS5 proxy of the Host, and its column shows the port and the status; see [A SOCKS5 proxy on a Host](#a-socks5-proxy-on-a-host). |
 | Service Ports | `/ui/service-ports` | One row per service port with ID, service IP, service port, local port, description and updated. The rows come a page at a time the same way the Hosts do, with a size and a page of their own. Add, edit and delete. The add form has an **Assign to all hosts** tick, on by default, that says which Hosts carry it from the start, with a **Reach on the Host** list beside it that the assignments that tick makes start on; which Hosts carry it after that, and what each of those assignments reaches, is changed from the Hosts screen. |
 | Logs | `/ui/logs` | The end of the log file, newest last, with a level filter and a count to show. It asks again every 5 seconds. It reads the file the process is writing now; rotated files are not shown. The lines are shown in the language of the screen while the file stays English; see [The language of the screens](#the-language-of-the-screens). |
 | Settings | `/ui/settings` | What is stored but not being run on yet, with a Restart in that card that puts it into place, every stored setting and what a save changed, among them the language this installation shows a browser that has picked none, the certificate being served with a button to renew it and boxes to register one of your own, the username and the password of this account, an export of the tunnel configuration and of the settings of this manager into one encrypted file each and an import that takes such a file back, a Restart that takes the service down and brings it back, and the Uninstall at the bottom. See [Settings](#settings). |
@@ -1811,6 +1826,10 @@ array of rows and is now an object carrying the page:
 `size` are what was answered, which is not always what was asked for. A client
 reading `data[0]` reads `data.items[0]` now.
 
+`GET /api/host/:id/local-forward` answered every local forward of the Host as
+that array too, and takes `page` and `size` and answers in this shape now, see
+[The local forwards of a Host](#the-local-forwards-of-a-host).
+
 `/api/status` was an object already. `tunnels` is one page of the tunnel rows
 now and `page` and `size` stand beside it, while **the three counts are over
 every row and not over the page**: they say what the installation is doing, not
@@ -1845,7 +1864,7 @@ curl -s -b cookies.txt "$BASE/api/status?page=99999&size=10"
 | `DELETE` | `/api/host/:id` | Deletes a Host, the assignments naming it and its local forwards |
 | `GET` | `/api/host/:id/service-port` | One page of the service ports with the assignments of this Host laid over them, see [The service ports a Host carries](#the-service-ports-a-host-carries) |
 | `PUT` | `/api/host/:id/service-port` | Adds and removes assignments of this Host |
-| `GET` | `/api/host/:id/local-forward` | The local forwards of this Host with their status, see [The local forwards of a Host](#the-local-forwards-of-a-host) |
+| `GET` | `/api/host/:id/local-forward` | One page of the local forwards of this Host with their status, see [The local forwards of a Host](#the-local-forwards-of-a-host) |
 | `POST` | `/api/host/:id/local-forward` | Adds a local forward to this Host |
 
 The body of a create and of an update takes these fields.
@@ -2133,10 +2152,10 @@ one line over the table while anything is waiting, drawn from the two counts in
 
 | Method | Path | What it does |
 |--------|------|--------------|
-| `GET` | `/api/host/:id/local-forward` | Every local forward of this Host with what it reports, ordered by id. Not paged |
+| `GET` | `/api/host/:id/local-forward` | One page of the local forwards of this Host with what each reports, oldest first. Takes `page` and `size`, see [Paging](#paging) |
 | `POST` | `/api/host/:id/local-forward` | Adds a local forward to this Host |
 | `GET` | `/api/local-forward/:id` | Reads one local forward |
-| `PUT` | `/api/local-forward/:id` | Updates a local forward. The Host it belongs to is not changed |
+| `PUT` | `/api/local-forward/:id` | Updates a local forward, and switches it on or off with `enabled`. The Host it belongs to is not changed |
 | `DELETE` | `/api/local-forward/:id` | Deletes a local forward |
 
 What a local forward is and what its status means are in
@@ -2152,24 +2171,46 @@ curl -s -b cookies.txt -X POST "$BASE/api/host/1/local-forward" \
 ```json
 {
   "success": true,
-  "data": [
-    { "id": 1, "host_id": 1, "bind_scope": "loopback", "local_port": 15432,
-      "target_ip": "198.51.100.30", "target_port": 5432, "description": "database",
-      "status": "connected", "last_error": "", "retry_count": 0,
-      "last_connected_at": "<when the connection was made>",
-      "created_at": "<...>", "updated_at": "<...>" }
-  ]
+  "data": {
+    "items": [
+      { "id": 1, "host_id": 1, "bind_scope": "loopback", "local_port": 15432,
+        "target_ip": "198.51.100.30", "target_port": 5432, "description": "database",
+        "enabled": true,
+        "status": "connected", "last_error": "", "retry_count": 0,
+        "last_connected_at": "<when the connection was made>",
+        "created_at": "<...>", "updated_at": "<...>" }
+    ],
+    "total": 1,
+    "page": 1,
+    "size": 10
+  }
 }
 ```
 
-That is what `GET /api/host/1/local-forward` answers afterwards. A create, a
-read and an update answer with one such object. `bind_scope` in an answer is
-always `loopback` or `wildcard`, never empty.
+That is what `GET /api/host/1/local-forward` answers afterwards: one page, in
+the shape every paged list is answered in, see [Paging](#paging). A create, a
+read and an update answer with one object like those in `items`. `bind_scope` in
+an answer is always `loopback` or `wildcard`, never empty.
+
+**This list used to answer every row, with `data` the array of them.** It is
+paged now and `data` is the object above, so a client reading `data[0]` reads
+`data.items[0]`.
 
 The body of a create and of an update takes the same fields, and an update
 takes the whole of them: `local_port`, `target_ip` and `target_port` are
 required on both, and **an update that leaves `bind_scope` out puts the forward
-on the wildcard**, so send the scope it is on to keep it there.
+on the wildcard**, so send the scope it is on to keep it there. `enabled` is the
+one field an update can leave out and keep: left out, the forward stays on or
+off as it is, while a create that leaves it out makes a forward that runs.
+
+```bash
+# Switch local forward 1 off. The update takes the whole of the fields, so the
+# ones it keeps are sent again.
+curl -s -b cookies.txt -X PUT "$BASE/api/local-forward/1" \
+  -H 'Content-Type: application/json' \
+  -H "X-CSRF-Token: $CSRF" \
+  -d '{"local_port":15432,"bind_scope":"loopback","target_ip":"198.51.100.30","target_port":5432,"description":"database","enabled":false}'
+```
 
 The answer to a write is made before the reconcile loop has reached the row, so
 the status in it can be from before the forward was started or rebuilt. Read the
@@ -2313,6 +2354,11 @@ and a file this version writes carries no `bind_address` at all.
 Host, and `local_forwards` in the answer of the export counts them. Like
 `assigned_local_ports`, the list is what the Host carries after the import, and
 a missing field and an empty list are two different answers.
+
+Each forward in the list carries `enabled`, and the export always writes it. A
+forward with no `enabled`, which is every forward of a file written before a
+forward could be switched off, is stored switched on: each of them was running
+where the file came from.
 
 | `local_forwards` on a Host in the file | What an import that writes that Host does |
 |----------------------------------------|-------------------------------------------|
