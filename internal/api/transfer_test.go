@@ -787,6 +787,38 @@ func TestAServicePortMeetingTwoStoredRowsIsRefused(t *testing.T) {
 		t.Fatalf("the refused import changed the stored service ports")
 	}
 
+	var refused struct {
+		Error string            `json:"error"`
+		Code  string            `json:"error_code"`
+		Args  map[string]string `json:"error_args"`
+	}
+
+	if err := json.Unmarshal(rec.Body.Bytes(), &refused); err != nil {
+		t.Fatalf("the refusal is not JSON: %v", err)
+	}
+
+	if refused.Code != string(errImportServicePortTwoRows) {
+		t.Fatalf("the refusal is %q, want %q", refused.Code, errImportServicePortTwoRows)
+	}
+
+	want := map[string]string{
+		"service_port":      "192.0.2.20:80 on 18080",
+		"service_port_code": string(textImportNameServicePort),
+		"service_address":   "192.0.2.20:80",
+		"local_port":        "18080",
+	}
+
+	if !reflect.DeepEqual(refused.Args, want) {
+		t.Errorf("the refusal carries %v, want %v", refused.Args, want)
+	}
+
+	wantEnglish := "Nothing was imported. The service port 192.0.2.20:80 on 18080 in the file meets two rows " +
+		"that are registered here: 192.0.2.20:80 belongs to one and the local port 18080 to another. " +
+		"Delete one of the two and import again"
+	if refused.Error != wantEnglish {
+		t.Errorf("the English sentence is %q, want %q", refused.Error, wantEnglish)
+	}
+
 	// Without the overwrite the same file is skipped rather than refused, and
 	// the reason names the rule that stood in the way.
 	rec = target.importTunnels(t, file, testExportPassword, false)
@@ -800,6 +832,61 @@ func TestAServicePortMeetingTwoStoredRowsIsRefused(t *testing.T) {
 
 	if imported.Skipped != 1 || imported.Added != 0 {
 		t.Fatalf("the import added %d and skipped %d, want 1 skipped", imported.Added, imported.Skipped)
+	}
+}
+
+// TestARefusedServicePortIsNamedByCode reads the refusal of a service port the
+// file carries with a value no service port may have. The name of the service
+// port is the server's own English, so it is carried with a code beside it and
+// the values that code's phrase is written with.
+func TestARefusedServicePortIsNamedByCode(t *testing.T) {
+	source := newTransferInstall(t)
+	target := newTransferInstall(t)
+
+	file := sealedTunnelsFile(t, source, tunnelsContent{
+		ServicePorts: []servicePortContent{
+			{ServiceIP: "192.0.2.20", ServicePort: 80, LocalPort: 0},
+		},
+	}, testExportPassword)
+
+	rec := target.importTunnels(t, file, testExportPassword, false)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("the import answered %d, want %d: %s", rec.Code, http.StatusBadRequest, rec.Body.String())
+	}
+
+	var body struct {
+		Error string            `json:"error"`
+		Code  string            `json:"error_code"`
+		Args  map[string]string `json:"error_args"`
+	}
+
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatalf("the refusal is not JSON: %v", err)
+	}
+
+	if body.Code != string(errImportServicePortRefused) {
+		t.Fatalf("the refusal is %q, want %q", body.Code, errImportServicePortRefused)
+	}
+
+	want := map[string]string{
+		"service_port":      "192.0.2.20:80 on 0",
+		"service_port_code": string(textImportNameServicePort),
+		"service_address":   "192.0.2.20:80",
+		"local_port":        "0",
+	}
+
+	for name, value := range want {
+		if body.Args[name] != value {
+			t.Errorf("the refusal carries %q under %q, want %q", body.Args[name], name, value)
+		}
+	}
+
+	if body.Args["reason"] == "" {
+		t.Errorf("the refusal carries no reason: %v", body.Args)
+	}
+
+	if !strings.HasPrefix(body.Error, "Nothing was imported. The service port 192.0.2.20:80 on 0 in the file was refused: ") {
+		t.Errorf("the English sentence no longer says what it did: %q", body.Error)
 	}
 }
 

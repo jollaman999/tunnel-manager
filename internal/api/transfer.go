@@ -1402,6 +1402,7 @@ func (h *TransferHandler) importServicePort(c echo.Context, tx *gorm.DB, sp serv
 	named := transferText{textImportNameServicePort,
 		textArgs{"service_address": serviceAddress, "local_port": localPort}}
 	name := named.english()
+	nameCodes := map[string]textCode{"service_port": named.code}
 
 	err := c.Validate(&models.CreateServicePortRequest{
 		ServiceIP:   sp.ServiceIP,
@@ -1410,7 +1411,8 @@ func (h *TransferHandler) importServicePort(c echo.Context, tx *gorm.DB, sp serv
 		Description: sp.Description,
 	})
 	if err != nil {
-		return nil, refuse(http.StatusBadRequest, errImportServicePortRefused, errorArgs{"service_port": name, "reason": err.Error()})
+		return nil, refuse(http.StatusBadRequest, errImportServicePortRefused,
+			errorArgs{"service_port": name, "reason": err.Error()}).named(nameCodes, named.values)
 	}
 
 	var onService models.ServicePort
@@ -1451,7 +1453,8 @@ func (h *TransferHandler) importServicePort(c echo.Context, tx *gorm.DB, sp serv
 			h.hosts.logger.Error("failed to create a service port while importing",
 				logid.TransferServicePortCreateFailed.Field(),
 				zap.Error(err))
-			return nil, refuse(http.StatusInternalServerError, errImportServicePortCreate, errorArgs{"service_port": name})
+			return nil, refuse(http.StatusInternalServerError, errImportServicePortCreate,
+				errorArgs{"service_port": name}).named(nameCodes, named.values)
 		}
 
 		item := transferItem{Kind: "service_port", Action: transferAdded}.namedBy(named)
@@ -1479,7 +1482,7 @@ func (h *TransferHandler) importServicePort(c echo.Context, tx *gorm.DB, sp serv
 	if foundOnService && foundOnLocal && onService.ID != onLocal.ID {
 		return nil, refuse(http.StatusConflict, errImportServicePortTwoRows, errorArgs{"service_port": name,
 			"service_address": serviceAddress,
-			"local_port":      localPort})
+			"local_port":      localPort}).named(nameCodes, named.values)
 	}
 
 	stored := onService
@@ -1497,7 +1500,8 @@ func (h *TransferHandler) importServicePort(c echo.Context, tx *gorm.DB, sp serv
 		h.hosts.logger.Error("failed to replace a service port while importing",
 			logid.TransferServicePortReplaceFailed.Field(),
 			zap.Error(err))
-		return nil, refuse(http.StatusInternalServerError, errImportServicePortReplace, errorArgs{"service_port": name})
+		return nil, refuse(http.StatusInternalServerError, errImportServicePortReplace,
+			errorArgs{"service_port": name}).named(nameCodes, named.values)
 	}
 
 	item := transferItem{Kind: "service_port", Action: transferReplaced}.namedBy(named)
