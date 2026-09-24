@@ -951,6 +951,8 @@ func resetStoredSettings(db *gorm.DB, logger *zap.Logger) {
 			zap.String("to", change.To))
 	}
 
+	settings.WarnForwardsOnAPIPort(db, logger, after.APIPort)
+
 	// os.Exit runs no deferred call, so what was logged is flushed here.
 	_ = logger.Sync()
 	os.Exit(0)

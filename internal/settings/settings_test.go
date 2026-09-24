@@ -9,6 +9,11 @@ import (
 	"time"
 
 	"github.com/glebarez/sqlite"
+	"github.com/jollaman999/tunnel-manager/internal/logid"
+	"github.com/jollaman999/tunnel-manager/internal/models"
+	"go.uber.org/zap"
+	"go.uber.org/zap/zapcore"
+	"go.uber.org/zap/zaptest/observer"
 	"gorm.io/gorm"
 	gormlogger "gorm.io/gorm/logger"
 )
@@ -567,6 +572,103 @@ func TestResetReportsEverythingWhenNothingWasStored(t *testing.T) {
 		if change.From != "" {
 			t.Errorf("%s was reported as coming from %q, want nothing", change.Name, change.From)
 		}
+	}
+}
+
+// resetWithForwards stores a moved API port and the given local forwards, runs
+// Reset and the check that follows it on the flag, and hands back what was
+// logged.
+func resetWithForwards(t *testing.T, forwards []models.LocalForward) *observer.ObservedLogs {
+	t.Helper()
+
+	db := newDB(t)
+
+	err := db.AutoMigrate(&models.LocalForward{})
+	if err != nil {
+		t.Fatalf("failed to migrate the local forwards: %v", err)
+	}
+
+	stored, err := Load(db)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+
+	stored.APIPort = 9443
+
+	err = Save(db, stored)
+	if err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+
+	for i := range forwards {
+		err = db.Create(&forwards[i]).Error
+		if err != nil {
+			t.Fatalf("storing local forward %+v: %v", forwards[i], err)
+		}
+	}
+
+	_, after, err := Reset(db)
+	if err != nil {
+		t.Fatalf("Reset: %v", err)
+	}
+	if after.APIPort != Defaults().APIPort {
+		t.Fatalf("Reset stored API port %d, want %d", after.APIPort, Defaults().APIPort)
+	}
+
+	core, logs := observer.New(zapcore.DebugLevel)
+	WarnForwardsOnAPIPort(db, zap.New(core), after.APIPort)
+
+	return logs
+}
+
+// TestResetNamesTheForwardOnTheDefaultAPIPort covers a forward given the
+// default API port while the API was on another one. The reset goes through,
+// and the forward is named with the port it holds.
+func TestResetNamesTheForwardOnTheDefaultAPIPort(t *testing.T) {
+	defaultPort := Defaults().APIPort
+
+	logs := resetWithForwards(t, []models.LocalForward{
+		{HostID: 3, LocalPort: 15432, TargetIP: "127.0.0.1", TargetPort: 5432},
+		{HostID: 7, LocalPort: defaultPort, TargetIP: "127.0.0.1", TargetPort: 80},
+	})
+
+	entries := logs.All()
+	if len(entries) != 1 {
+		t.Fatalf("logged %d lines, want 1: %+v", len(entries), entries)
+	}
+
+	entry := entries[0]
+	if entry.Level != zapcore.WarnLevel {
+		t.Errorf("the line was logged at %s, want warn", entry.Level)
+	}
+	if !strings.Contains(entry.Message, "the next start may listen on another port") {
+		t.Errorf("the line %q does not say the next start may listen on another port", entry.Message)
+	}
+
+	fields := entry.ContextMap()
+	if fields[logid.FieldKey] != string(logid.SettingsDefaultPortHeldByForward) {
+		t.Errorf("the line carries log_id %v, want %s", fields[logid.FieldKey], logid.SettingsDefaultPortHeldByForward)
+	}
+	if fields["local_forward_id"] != uint64(2) {
+		t.Errorf("local_forward_id is %v, want 2", fields["local_forward_id"])
+	}
+	if fields["host_id"] != uint64(7) {
+		t.Errorf("host_id is %v, want 7", fields["host_id"])
+	}
+	if fields["local_port"] != int64(defaultPort) {
+		t.Errorf("local_port is %v, want %d", fields["local_port"], defaultPort)
+	}
+}
+
+// TestResetSaysNothingWhenNoForwardIsOnTheDefaultAPIPort is the other half: a
+// forward on any other port is not a reason for a line.
+func TestResetSaysNothingWhenNoForwardIsOnTheDefaultAPIPort(t *testing.T) {
+	logs := resetWithForwards(t, []models.LocalForward{
+		{HostID: 3, LocalPort: 15432, TargetIP: "127.0.0.1", TargetPort: 5432},
+	})
+
+	if entries := logs.All(); len(entries) != 0 {
+		t.Fatalf("logged %d lines, want none: %+v", len(entries), entries)
 	}
 }
 

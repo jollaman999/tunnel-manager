@@ -463,6 +463,7 @@
   "log.service_port.list_fetch_failed.text": "서비스 포트 목록을 가져오지 못했습니다",
   "log.service_port.update_failed.text": "서비스 포트를 수정하지 못했습니다",
   "log.settings.already_at_default.text": "모든 설정이 이미 기본값이라 아무것도 바뀌지 않았습니다",
+  "log.settings.default_port_held_by_forward.text": "API 포트를 되돌린 값과 같은 포트를 로컬 포워딩이 열고 있어서, 다음 시작 때는 다른 포트로 뜰 수 있습니다 (local_forward_id={local_forward_id}, host_id={host_id}, local_port={local_port})",
   "log.settings.log_level_unknown.text": "저장된 로그 레벨은 로거가 아는 값이 아닙니다",
   "log.settings.missing_setting_stored.text": "데이터베이스에 아직 없던 설정을 저장했습니다",
   "log.settings.read.text": "데이터베이스에서 설정을 읽었습니다",

@@ -463,6 +463,7 @@
   "log.service_port.list_fetch_failed.text": "failed to fetch service ports",
   "log.service_port.update_failed.text": "failed to update service port",
   "log.settings.already_at_default.text": "every setting was already at its default, so nothing was changed",
+  "log.settings.default_port_held_by_forward.text": "a local forward opens the port the API was put back to, so the next start may listen on another port (local_forward_id={local_forward_id}, host_id={host_id}, local_port={local_port})",
   "log.settings.log_level_unknown.text": "the stored log level is not one the logger knows",
   "log.settings.missing_setting_stored.text": "stored a setting that the database did not hold yet",
   "log.settings.read.text": "read the settings from the database",

@@ -463,6 +463,7 @@
   "log.service_port.list_fetch_failed.text": "获取服务端口列表失败",
   "log.service_port.update_failed.text": "更新服务端口失败",
   "log.settings.already_at_default.text": "每一项设置本来就是默认值，所以没有任何改动",
+  "log.settings.default_port_held_by_forward.text": "有一条本地转发占用了 API 端口恢复后的端口，下次启动时可能会在另一个端口上监听（local_forward_id={local_forward_id}, host_id={host_id}, local_port={local_port}）",
   "log.settings.log_level_unknown.text": "已保存的日志级别不是日志器支持的级别",
   "log.settings.missing_setting_stored.text": "已保存一项数据库里原来没有的设置",
   "log.settings.read.text": "已从数据库读取设置",

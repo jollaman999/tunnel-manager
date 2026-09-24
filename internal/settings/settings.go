@@ -8,6 +8,9 @@ import (
 	"strings"
 	"time"
 
+	"github.com/jollaman999/tunnel-manager/internal/logid"
+	"github.com/jollaman999/tunnel-manager/internal/models"
+	"go.uber.org/zap"
 	"gorm.io/gorm"
 )
 
@@ -531,6 +534,39 @@ func Reset(db *gorm.DB) (before *Settings, after *Settings, err error) {
 	}
 
 	return before, &defaults, nil
+}
+
+// WarnForwardsOnAPIPort names every local forward that opens the port the API
+// is set to be served on. Reset calls for it: it puts the API port back to its
+// default, and a forward may have been given that port while the API was on
+// another one. The reset is not refused over it, because it is the way out of a
+// process that will not start, and the next start is not stopped by it either:
+// whichever of the two opens the port first holds it, and when that is the
+// forward the API is served on another port. What is left is to say so, so that
+// the operator knows to look for the screen elsewhere or to move the forward.
+//
+// A read that fails is reported and left there, since the reset it follows has
+// already been stored.
+func WarnForwardsOnAPIPort(db *gorm.DB, logger *zap.Logger, apiPort int) {
+	var forwards []models.LocalForward
+
+	err := db.Where("local_port = ?", apiPort).Order("id").Find(&forwards).Error
+	if err != nil {
+		logger.Warn("failed to fetch local forwards",
+			logid.LocalForwardListFetchFailed.Field(),
+			zap.Error(err))
+
+		return
+	}
+
+	for _, forward := range forwards {
+		logger.Warn("a local forward opens the port the API was put back to, "+
+			"so the next start may listen on another port",
+			logid.SettingsDefaultPortHeldByForward.Field(),
+			zap.Uint("local_forward_id", forward.ID),
+			zap.Uint("host_id", forward.HostID),
+			zap.Int("local_port", forward.LocalPort))
+	}
 }
 
 // Change is one setting that differs between two sets, named as the

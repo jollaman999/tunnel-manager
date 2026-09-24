@@ -463,6 +463,7 @@
   "log.service_port.list_fetch_failed.text": "ดึงรายการพอร์ตบริการไม่สำเร็จ",
   "log.service_port.update_failed.text": "แก้ไขพอร์ตบริการไม่สำเร็จ",
   "log.settings.already_at_default.text": "ทุกการตั้งค่าเป็นค่าตั้งต้นอยู่แล้ว จึงไม่มีอะไรถูกเปลี่ยน",
+  "log.settings.default_port_held_by_forward.text": "มีการส่งต่อพอร์ตภายในเครื่องที่เปิดพอร์ตเดียวกับที่คืนพอร์ต API กลับไป การเริ่มครั้งถัดไปจึงอาจรอรับที่พอร์ตอื่น (local_forward_id={local_forward_id}, host_id={host_id}, local_port={local_port})",
   "log.settings.log_level_unknown.text": "ระดับล็อกที่เก็บไว้ไม่ใช่ระดับที่ตัวเขียนล็อกรู้จัก",
   "log.settings.missing_setting_stored.text": "เก็บการตั้งค่าที่ฐานข้อมูลยังไม่มีลงไปแล้ว",
   "log.settings.read.text": "อ่านการตั้งค่าจากฐานข้อมูลแล้ว",

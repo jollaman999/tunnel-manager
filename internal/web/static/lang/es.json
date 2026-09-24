@@ -463,6 +463,7 @@
   "log.service_port.list_fetch_failed.text": "no se pudieron obtener los puertos de servicio",
   "log.service_port.update_failed.text": "no se pudo actualizar el puerto de servicio",
   "log.settings.already_at_default.text": "todos los ajustes ya estaban en su valor predeterminado, así que no se cambió nada",
+  "log.settings.default_port_held_by_forward.text": "un reenvío local abre el puerto al que se devolvió el puerto de la API, así que el próximo inicio puede escuchar en otro puerto (local_forward_id={local_forward_id}, host_id={host_id}, local_port={local_port})",
   "log.settings.log_level_unknown.text": "el nivel de registro guardado no es uno de los que admite el registrador",
   "log.settings.missing_setting_stored.text": "se guardó un ajuste que la base de datos todavía no tenía",
   "log.settings.read.text": "se leyeron los ajustes de la base de datos",

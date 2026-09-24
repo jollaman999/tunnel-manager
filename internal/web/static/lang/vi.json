@@ -463,6 +463,7 @@
   "log.service_port.list_fetch_failed.text": "không lấy được danh sách cổng dịch vụ",
   "log.service_port.update_failed.text": "không cập nhật được cổng dịch vụ",
   "log.settings.already_at_default.text": "mọi cài đặt đều đã ở mức mặc định, nên không có gì thay đổi",
+  "log.settings.default_port_held_by_forward.text": "một chuyển tiếp cục bộ đang mở cổng mà cổng API vừa được đưa về, nên lần khởi động tới có thể lắng nghe trên cổng khác (local_forward_id={local_forward_id}, host_id={host_id}, local_port={local_port})",
   "log.settings.log_level_unknown.text": "mức nhật ký đã lưu không phải mức mà bộ ghi nhật ký biết",
   "log.settings.missing_setting_stored.text": "đã lưu một cài đặt mà cơ sở dữ liệu chưa có",
   "log.settings.read.text": "đã đọc cài đặt từ cơ sở dữ liệu",

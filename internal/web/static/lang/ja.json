@@ -463,6 +463,7 @@
   "log.service_port.list_fetch_failed.text": "サービスポートの一覧を取得できませんでした",
   "log.service_port.update_failed.text": "サービスポートを更新できませんでした",
   "log.settings.already_at_default.text": "すべての設定がすでに既定値だったので、何も変わりませんでした",
+  "log.settings.default_port_held_by_forward.text": "API ポートを戻した先のポートをローカルフォワードが開いているため、次の起動では別のポートで待ち受けることがあります (local_forward_id={local_forward_id}, host_id={host_id}, local_port={local_port})",
   "log.settings.log_level_unknown.text": "保存されているログレベルは、ロガーが認識しない値です",
   "log.settings.missing_setting_stored.text": "データベースがまだ持っていなかった設定を保存しました",
   "log.settings.read.text": "データベースから設定を読みました",

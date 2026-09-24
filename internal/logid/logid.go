@@ -207,14 +207,15 @@ const (
 
 // settings: the stored settings, read as the process comes up and changed on the Settings screen.
 const (
-	SettingsResetFailed             ID = "settings.reset_failed"
-	SettingsAlreadyAtDefault        ID = "settings.already_at_default"
-	SettingsMissingSettingStored    ID = "settings.missing_setting_stored"
-	SettingsSettingPutBackToDefault ID = "settings.setting_put_back_to_default"
-	SettingsReadFailed              ID = "settings.read_failed"
-	SettingsRead                    ID = "settings.read"
-	SettingsStoreFailed             ID = "settings.store_failed"
-	SettingsLogLevelUnknown         ID = "settings.log_level_unknown"
+	SettingsResetFailed              ID = "settings.reset_failed"
+	SettingsAlreadyAtDefault         ID = "settings.already_at_default"
+	SettingsMissingSettingStored     ID = "settings.missing_setting_stored"
+	SettingsSettingPutBackToDefault  ID = "settings.setting_put_back_to_default"
+	SettingsReadFailed               ID = "settings.read_failed"
+	SettingsRead                     ID = "settings.read"
+	SettingsStoreFailed              ID = "settings.store_failed"
+	SettingsLogLevelUnknown          ID = "settings.log_level_unknown"
+	SettingsDefaultPortHeldByForward ID = "settings.default_port_held_by_forward"
 )
 
 // certificate: the TLS certificate this installation is served under.

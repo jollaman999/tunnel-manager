@@ -463,6 +463,7 @@
   "log.service_port.list_fetch_failed.text": "échec de la récupération des ports de service",
   "log.service_port.update_failed.text": "échec de la mise à jour du port de service",
   "log.settings.already_at_default.text": "chaque paramètre était déjà à sa valeur par défaut, rien n'a donc été changé",
+  "log.settings.default_port_held_by_forward.text": "un transfert local ouvre le port auquel le port de l'API a été remis, le prochain démarrage pourra donc écouter sur un autre port (local_forward_id={local_forward_id}, host_id={host_id}, local_port={local_port})",
   "log.settings.log_level_unknown.text": "le niveau de journalisation enregistré n'est pas un niveau reconnu",
   "log.settings.missing_setting_stored.text": "un paramètre que la base de données ne contenait pas encore a été enregistré",
   "log.settings.read.text": "paramètres lus dans la base de données",

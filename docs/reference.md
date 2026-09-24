@@ -1256,7 +1256,10 @@ server that will not start. `-reset-settings` is the way out.
 ```
 
 It puts every setting back to its default, prints what it changed and exits. The
-next start runs on the defaults, and the Settings screen is reachable again.
+next start runs on the defaults, and the Settings screen is reachable again. A
+local forward that opens the default API port is named in a warning
+(`settings.default_port_held_by_forward`), since the next start may listen on
+another port.
 
 **Only the settings go back.** The registered hosts, the service ports, the
 account and the certificate are in the same database file and are left as they
