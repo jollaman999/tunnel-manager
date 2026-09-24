@@ -1,3 +1,20 @@
+# v3.13.1
+
+## Add/fix features:
+
+- **The counts over the status table are four, and each counts the tunnels and the local forwards together.** They were six, three about the tunnels alone and three about the local forwards, over a table that had just been made to hold both sorts in one. A local forward is a tunnel to whoever is reading the screen, so the counts read Desired, Connected, Reconnecting and Errors over everything in the table.
+  - The count of rows is gone. The table says how many rows there are, and the page controls under it say so in words, so a box over the table holding the same number was the screen counting its own rows back at the reader.
+  - Errors and Reconnecting are apart because they leave the reader with different work. A row that is reconnecting is on its way back by itself and one in error is waiting for somebody.
+- **A local forward says whether its target answered.** The Port reached column was empty on a local forward, because nothing had ever measured one: the target was only ever dialled when a client turned up on the local port. It is dialled once from the Host over the same SSH connection a client would use, as soon as the forward comes up, and the column reads reachable or unreachable the way it does on a tunnel.
+  - The advice about GatewayPorts and PermitListen that sits under a tunnel whose port did not answer is not drawn under a local forward. Every line of it is about a port the SSH server was asked to open on the Host, and a local forward asks for no such port.
+
+## Notes:
+
+- `GET /api/status` no longer answers `total_tunnels`, `total_local_forwards`, `connected_local_forwards` or `desired_local_forwards`. A script that read any of them reads nothing now.
+- `desired_tunnels` and `connected_tunnels` keep their names and count more than they did: the local forwards are in them as well as the tunnels. `reconnecting_tunnels` and `error_tunnels` are new and count both sorts too. `total_rows` is unchanged and is what the pages are cut from.
+- `forward_reach` is on a local forward row as well now. On a tunnel it says whether the port opened on the Host answered a connection from here; on a local forward, whether the target answered one dialled from the Host.
+- The upgrade note of v3.7.0 still holds: every Host stops until its key is approved, a stored path outside the data directory is put back to its default, and the data directory becomes 0700.
+
 # v3.13.0
 
 ## Add/fix features:
