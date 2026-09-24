@@ -7086,11 +7086,13 @@ function transferItemsTable(result) {
   wrap.appendChild(buildTable([t("transfer.item-kind.column"), t("transfer.item-name.column"),
     t("transfer.item-action.column"), t("transfer.item-reason.column")],
     items.map(function (item) {
+      const reason = item.reason === null || item.reason === undefined ? "" : item.reason;
+
       return [
         transferItemKind(item.kind),
-        item.name,
+        serverText(item.name, item.name_code, item.name_values),
         item.action,
-        item.reason === null || item.reason === undefined ? "" : item.reason
+        serverText(reason, item.reason_code, item.reason_values)
       ];
     })));
 

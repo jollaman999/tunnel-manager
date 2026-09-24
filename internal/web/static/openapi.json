@@ -3584,8 +3584,20 @@
                 "name": {
                     "type": "string"
                 },
+                "name_code": {
+                    "type": "string"
+                },
+                "name_values": {
+                    "$ref": "#/definitions/api.textArgs"
+                },
                 "reason": {
                     "type": "string"
+                },
+                "reason_code": {
+                    "type": "string"
+                },
+                "reason_values": {
+                    "$ref": "#/definitions/api.textArgs"
                 }
             }
         },

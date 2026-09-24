@@ -2174,7 +2174,9 @@ listed in the answer as `added`, `replaced` or `skipped`, which is what you read
 before deciding about an overwrite. The whole import is one transaction: a file
 that is refused half way through leaves the database exactly as it was. The
 tunnels themselves are not carried, since the reconcile loop builds them from
-the Hosts, the service ports and the assignments between them.
+the Hosts, the service ports and the assignments between them. A `reason` or a `name` that
+is an English sentence comes with `reason_code` and `reason_values`, or `name_code` and
+`name_values`, the code and the values a screen says it from in its own language.
 
 The settings import **stores** the settings and puts none of them onto the
 running process, `api_port` and `api_https_enabled` included. What is stored is

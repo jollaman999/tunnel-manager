@@ -2786,3 +2786,244 @@ func TestImportedSettingsWithAnAPIPortALocalForwardOpensAreNotStored(t *testing.
 		t.Errorf("the local forwards changed: %+v", rows)
 	}
 }
+
+// namedItem is what an item of an import is expected to say, by code and by
+// the English written from it.
+type namedItem struct {
+	kind         string
+	name         string
+	nameCode     textCode
+	nameValues   textArgs
+	action       string
+	reason       string
+	reasonCode   textCode
+	reasonValues textArgs
+}
+
+// checkNamedItems holds the items of an answer to what they are expected to
+// say. The English is compared as a literal, so that a sentence moved into
+// transferTexts reads as it did before, and as the sentence of its code filled
+// in with the values the item carries, so that the two cannot drift apart. The
+// field names are read from the raw answer, since they are what a screen and a
+// script look for.
+func checkNamedItems(t *testing.T, raw json.RawMessage, want []namedItem) {
+	t.Helper()
+
+	var answer struct {
+		Items []transferItem `json:"items"`
+	}
+
+	err := json.Unmarshal(raw, &answer)
+	if err != nil {
+		t.Fatalf("failed to read the items: %v", err)
+	}
+
+	var fields struct {
+		Items []map[string]json.RawMessage `json:"items"`
+	}
+
+	err = json.Unmarshal(raw, &fields)
+	if err != nil {
+		t.Fatalf("failed to read the items: %v", err)
+	}
+
+	got := map[string]transferItem{}
+	gotFields := map[string]map[string]json.RawMessage{}
+
+	for i, item := range answer.Items {
+		got[item.Kind+" "+item.Name] = item
+		gotFields[item.Kind+" "+item.Name] = fields.Items[i]
+	}
+
+	for _, w := range want {
+		item, found := got[w.kind+" "+w.name]
+		if !found {
+			t.Errorf("the answer has no %s named %q: %+v", w.kind, w.name, answer.Items)
+			continue
+		}
+
+		if item.Action != w.action {
+			t.Errorf("%s %q was %q, want %q", w.kind, w.name, item.Action, w.action)
+		}
+
+		if item.NameCode != w.nameCode || !reflect.DeepEqual(item.NameValues, w.nameValues) {
+			t.Errorf("%s %q is named by %q %v, want %q %v", w.kind, w.name,
+				item.NameCode, item.NameValues, w.nameCode, w.nameValues)
+		}
+
+		if item.Reason != w.reason {
+			t.Errorf("%s %q carries the reason %q, want %q", w.kind, w.name, item.Reason, w.reason)
+		}
+
+		if item.ReasonCode != w.reasonCode || !reflect.DeepEqual(item.ReasonValues, w.reasonValues) {
+			t.Errorf("%s %q gives its reason as %q %v, want %q %v", w.kind, w.name,
+				item.ReasonCode, item.ReasonValues, w.reasonCode, w.reasonValues)
+		}
+
+		for _, text := range []struct {
+			english string
+			code    textCode
+			values  textArgs
+			fields  []string
+		}{
+			{item.Name, item.NameCode, item.NameValues, []string{"name_code", "name_values"}},
+			{item.Reason, item.ReasonCode, item.ReasonValues, []string{"reason_code", "reason_values"}},
+		} {
+			if text.code == "" {
+				for _, field := range text.fields {
+					if _, carried := gotFields[w.kind+" "+w.name][field]; carried {
+						t.Errorf("%s %q carries %s with nothing to name", w.kind, w.name, field)
+					}
+				}
+
+				continue
+			}
+
+			if _, carried := gotFields[w.kind+" "+w.name][text.fields[0]]; !carried {
+				t.Errorf("%s %q has no %s in the answer", w.kind, w.name, text.fields[0])
+			}
+
+			template, known := transferTexts[text.code]
+			if !known {
+				t.Errorf("%s %q is named by %q, which has no sentence", w.kind, w.name, text.code)
+				continue
+			}
+
+			written, filled := renderErrorMessage(template, errorArgs(text.values))
+			if !filled {
+				t.Errorf("the sentence of %q is not filled by %v", text.code, text.values)
+			}
+
+			if written != text.english {
+				t.Errorf("%s %q carries %q, and its code %q writes %q", w.kind, w.name,
+					text.english, text.code, written)
+			}
+		}
+	}
+}
+
+// TestTheItemsOfAnImportNameTheirSentences is every way a row of a tunnel
+// configuration can be named by a sentence or skipped for a reason, in one
+// import: a Host that is here already, a service port meeting a stored service
+// address, one meeting a stored local port, an assignment to a service port
+// that is nowhere, and a local forward, which is named by a sentence.
+func TestTheItemsOfAnImportNameTheirSentences(t *testing.T) {
+	target := newTransferInstall(t)
+
+	target.registerHost(t, passwordHost("192.0.2.10"))
+	target.registerServicePort(t, servicePortContent{ServiceIP: "192.0.2.20", ServicePort: 80, LocalPort: 18080})
+	target.registerServicePort(t, servicePortContent{ServiceIP: "192.0.2.21", ServicePort: 81, LocalPort: 18090})
+
+	carrying := passwordHost("192.0.2.11")
+	carrying.AssignedLocalPorts = []int{19999}
+	carrying.LocalForwards = []localForwardContent{{BindScope: models.BindScopeLoopback,
+		LocalPort: 15432, TargetIP: "127.0.0.1", TargetPort: 5432}}
+
+	file := sealedTunnelsFile(t, target, tunnelsContent{
+		Hosts: []hostContent{passwordHost("192.0.2.10"), carrying},
+		ServicePorts: []servicePortContent{
+			{ServiceIP: "192.0.2.20", ServicePort: 80, LocalPort: 18081},
+			{ServiceIP: "192.0.2.22", ServicePort: 82, LocalPort: 18090},
+		},
+	}, testExportPassword)
+
+	rec := target.importTunnels(t, file, testExportPassword, false)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("the import answered %d: %s", rec.Code, rec.Body.String())
+	}
+
+	checkNamedItems(t, decodeTransfer(t, rec).Data, []namedItem{
+		{
+			kind: "host", name: "192.0.2.10", action: transferSkipped,
+			reason:     "a Host with this IP is registered here already",
+			reasonCode: textImportReasonHostRegistered,
+		},
+		{
+			kind: "host", name: "192.0.2.11", action: transferAdded,
+		},
+		{
+			kind: "service_port", name: "192.0.2.20:80 on 18081", action: transferSkipped,
+			nameCode:     textImportNameServicePort,
+			nameValues:   textArgs{"service_address": "192.0.2.20:80", "local_port": "18081"},
+			reason:       "a service port for 192.0.2.20:80 is registered here already",
+			reasonCode:   textImportReasonServiceAddressTaken,
+			reasonValues: textArgs{"service_address": "192.0.2.20:80"},
+		},
+		{
+			kind: "service_port", name: "192.0.2.22:82 on 18090", action: transferSkipped,
+			nameCode:     textImportNameServicePort,
+			nameValues:   textArgs{"service_address": "192.0.2.22:82", "local_port": "18090"},
+			reason:       "the local port 18090 is in use here by another service port",
+			reasonCode:   textImportReasonLocalPortTaken,
+			reasonValues: textArgs{"local_port": "18090"},
+		},
+		{
+			kind: "assignment", name: "192.0.2.11 carries 19999", action: transferSkipped,
+			nameCode:   textImportNameAssignment,
+			nameValues: textArgs{"host": "192.0.2.11", "local_port": "19999"},
+			reason: "no service port on the local port 19999 is registered here, so there is " +
+				"nothing for the Host to carry",
+			reasonCode:   textImportReasonNoServicePort,
+			reasonValues: textArgs{"local_port": "19999"},
+		},
+		{
+			kind: "local_forward", name: "192.0.2.11 opens 15432 to 127.0.0.1:5432", action: transferAdded,
+			nameCode: textImportNameLocalForward,
+			nameValues: textArgs{"host": "192.0.2.11", "local_port": "15432",
+				"target": "127.0.0.1:5432"},
+		},
+	})
+}
+
+// TestADroppedPathNamesItsReason is the same for the settings: a path outside
+// the installation and an empty one are each skipped under a code of their own,
+// the empty one because "an empty path" is not a value a translator can place.
+func TestADroppedPathNamesItsReason(t *testing.T) {
+	source := newTransferInstall(t)
+	target := newTransferInstall(t)
+
+	stored, err := settings.Load(source.db)
+	if err != nil {
+		t.Fatalf("failed to read the settings: %v", err)
+	}
+
+	content := settingsOf(stored)
+	content.SecurityKeyFile = "/var/lib/tunnel-manager/tunnel-manager.key"
+	content.LoggingFilePath = ""
+
+	file, err := source.handler.seal(transferKindSettings, content, testExportPassword, time.Now())
+	if err != nil {
+		t.Fatalf("failed to seal a file: %v", err)
+	}
+
+	request, err := json.Marshal(importRequest{Password: testExportPassword, File: file})
+	if err != nil {
+		t.Fatalf("failed to write the import request: %v", err)
+	}
+
+	rec := target.call(t, target.handler.ImportSettings, string(request))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("the import answered %d, want %d: %s", rec.Code, http.StatusOK, rec.Body.String())
+	}
+
+	defaults := settings.Defaults()
+
+	checkNamedItems(t, decodeTransfer(t, rec).Data, []namedItem{
+		{
+			kind: "setting", name: "security.key_file", action: transferSkipped,
+			reason: "the file carries /var/lib/tunnel-manager/tunnel-manager.key, which does not name " +
+				"a file under the directory the database file is in, so " + defaults.SecurityKeyFile +
+				" was stored instead",
+			reasonCode: textImportReasonPathOutside,
+			reasonValues: textArgs{"carried": "/var/lib/tunnel-manager/tunnel-manager.key",
+				"stored": defaults.SecurityKeyFile},
+		},
+		{
+			kind: "setting", name: "logging.file.path", action: transferSkipped,
+			reason: "the file carries an empty path, which does not name a file under the directory " +
+				"the database file is in, so " + defaults.LoggingFilePath + " was stored instead",
+			reasonCode:   textImportReasonEmptyPathOutside,
+			reasonValues: textArgs{"stored": defaults.LoggingFilePath},
+		},
+	})
+}

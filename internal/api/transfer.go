@@ -355,11 +355,89 @@ const (
 // transferItem is one row of the file and what the import did with it. The name
 // is how the operator finds the row on the screens: the IP of a Host, and the
 // service and local port of a service port.
+//
+// A name or a reason that is an English sentence is named beside it by a
+// textCode and the values written into it, the way a refusal is, so that a
+// screen says it in the language it is drawn in. The code is left out for a
+// name that is only an address or the name of a setting.
 type transferItem struct {
-	Kind   string `json:"kind"`
-	Name   string `json:"name"`
-	Action string `json:"action"`
-	Reason string `json:"reason,omitempty"`
+	Kind         string   `json:"kind"`
+	Name         string   `json:"name"`
+	NameCode     textCode `json:"name_code,omitempty"`
+	NameValues   textArgs `json:"name_values,omitempty"`
+	Action       string   `json:"action"`
+	Reason       string   `json:"reason,omitempty"`
+	ReasonCode   textCode `json:"reason_code,omitempty"`
+	ReasonValues textArgs `json:"reason_values,omitempty"`
+}
+
+// The names and the reasons an item of an import is written with.
+const (
+	textImportNameServicePort  textCode = "import.name.service_port"
+	textImportNameAssignment   textCode = "import.name.assignment"
+	textImportNameLocalForward textCode = "import.name.local_forward"
+
+	textImportReasonHostRegistered      textCode = "import.reason.host_registered"
+	textImportReasonServiceAddressTaken textCode = "import.reason.service_address_taken"
+	textImportReasonLocalPortTaken      textCode = "import.reason.local_port_taken"
+	textImportReasonNoServicePort       textCode = "import.reason.no_service_port"
+	textImportReasonPathOutside         textCode = "import.reason.path_outside"
+	textImportReasonEmptyPathOutside    textCode = "import.reason.empty_path_outside"
+)
+
+// transferTexts is the English of each of those codes, written with {name} for
+// a value the way errorMessages is. This is the only place they are written:
+// the English an item carries is this sentence filled in, so it cannot say
+// something other than what the code stands for.
+//
+// An empty path has a sentence of its own rather than a phrase written into the
+// other one, because "an empty path" is English a translator would not be
+// handed.
+var transferTexts = map[textCode]string{
+	textImportNameServicePort:  "{service_address} on {local_port}",
+	textImportNameAssignment:   "{host} carries {local_port}",
+	textImportNameLocalForward: "{host} opens {local_port} to {target}",
+
+	textImportReasonHostRegistered:      "a Host with this IP is registered here already",
+	textImportReasonServiceAddressTaken: "a service port for {service_address} is registered here already",
+	textImportReasonLocalPortTaken:      "the local port {local_port} is in use here by another service port",
+	textImportReasonNoServicePort: "no service port on the local port {local_port} is registered here, " +
+		"so there is nothing for the Host to carry",
+	textImportReasonPathOutside: "the file carries {carried}, which does not name a file under the " +
+		"directory the database file is in, so {stored} was stored instead",
+	textImportReasonEmptyPathOutside: "the file carries an empty path, which does not name a file under the " +
+		"directory the database file is in, so {stored} was stored instead",
+}
+
+// transferText is one of those sentences with its values.
+type transferText struct {
+	code   textCode
+	values textArgs
+}
+
+// english is the sentence filled in.
+func (t transferText) english() string {
+	english, _ := renderErrorMessage(transferTexts[t.code], errorArgs(t.values))
+
+	return english
+}
+
+// namedBy writes the name of the item from a sentence.
+func (item transferItem) namedBy(name transferText) transferItem {
+	item.Name = name.english()
+	item.NameCode = name.code
+	item.NameValues = name.values
+
+	return item
+}
+
+// because writes the reason of the item from a sentence.
+func (item transferItem) because(reason transferText) transferItem {
+	item.Reason = reason.english()
+	item.ReasonCode = reason.code
+	item.ReasonValues = reason.values
+
+	return item
 }
 
 // importedTunnels is the answer to an import of the tunnel configuration. Every
@@ -480,18 +558,17 @@ func droppedPathItems(dropped []settings.Change) []transferItem {
 	items := make([]transferItem, 0, len(dropped))
 
 	for _, change := range dropped {
-		carried := change.From
-		if carried == "" {
-			carried = "an empty path"
+		reason := transferText{textImportReasonPathOutside,
+			textArgs{"carried": change.From, "stored": change.To}}
+		if change.From == "" {
+			reason = transferText{textImportReasonEmptyPathOutside, textArgs{"stored": change.To}}
 		}
 
 		items = append(items, transferItem{
 			Kind:   "setting",
 			Name:   change.Name,
 			Action: transferSkipped,
-			Reason: "the file carries " + carried + ", which does not name a file under the " +
-				"directory the database file is in, so " + change.To + " was stored instead",
-		})
+		}.because(reason))
 	}
 
 	return items
@@ -1211,12 +1288,13 @@ func (h *TransferHandler) importHost(c echo.Context, tx *gorm.DB, host hostConte
 	}
 
 	if found && !overwrite {
-		return &transferItem{
+		item := transferItem{
 			Kind:   "host",
 			Name:   name,
 			Action: transferSkipped,
-			Reason: "a Host with this IP is registered here already",
-		}, nil
+		}.because(transferText{textImportReasonHostRegistered, nil})
+
+		return &item, nil
 	}
 
 	// Sealed with the key of this installation, which is what makes the file
@@ -1319,7 +1397,11 @@ func (h *TransferHandler) importHost(c echo.Context, tx *gorm.DB, host hostConte
 // are looked up.
 func (h *TransferHandler) importServicePort(c echo.Context, tx *gorm.DB, sp servicePortContent,
 	overwrite bool) (*transferItem, *refusal) {
-	name := sp.ServiceIP + ":" + strconv.Itoa(sp.ServicePort) + " on " + strconv.Itoa(sp.LocalPort)
+	serviceAddress := sp.ServiceIP + ":" + strconv.Itoa(sp.ServicePort)
+	localPort := strconv.Itoa(sp.LocalPort)
+	named := transferText{textImportNameServicePort,
+		textArgs{"service_address": serviceAddress, "local_port": localPort}}
+	name := named.english()
 
 	err := c.Validate(&models.CreateServicePortRequest{
 		ServiceIP:   sp.ServiceIP,
@@ -1372,23 +1454,21 @@ func (h *TransferHandler) importServicePort(c echo.Context, tx *gorm.DB, sp serv
 			return nil, refuse(http.StatusInternalServerError, errImportServicePortCreate, errorArgs{"service_port": name})
 		}
 
-		return &transferItem{Kind: "service_port", Name: name, Action: transferAdded}, nil
+		item := transferItem{Kind: "service_port", Action: transferAdded}.namedBy(named)
+
+		return &item, nil
 	}
 
 	if !overwrite {
-		reason := "the local port " + strconv.Itoa(sp.LocalPort) + " is in use here by another " +
-			"service port"
+		reason := transferText{textImportReasonLocalPortTaken, textArgs{"local_port": localPort}}
 		if foundOnService {
-			reason = "a service port for " + sp.ServiceIP + ":" + strconv.Itoa(sp.ServicePort) +
-				" is registered here already"
+			reason = transferText{textImportReasonServiceAddressTaken,
+				textArgs{"service_address": serviceAddress}}
 		}
 
-		return &transferItem{
-			Kind:   "service_port",
-			Name:   name,
-			Action: transferSkipped,
-			Reason: reason,
-		}, nil
+		item := transferItem{Kind: "service_port", Action: transferSkipped}.namedBy(named).because(reason)
+
+		return &item, nil
 	}
 
 	// Two rows can stand in the way of one row of the file: one holding the
@@ -1398,8 +1478,8 @@ func (h *TransferHandler) importServicePort(c echo.Context, tx *gorm.DB, sp serv
 	// with the two rows named and the whole import is taken back.
 	if foundOnService && foundOnLocal && onService.ID != onLocal.ID {
 		return nil, refuse(http.StatusConflict, errImportServicePortTwoRows, errorArgs{"service_port": name,
-			"service_address": sp.ServiceIP + ":" + strconv.Itoa(sp.ServicePort),
-			"local_port":      strconv.Itoa(sp.LocalPort)})
+			"service_address": serviceAddress,
+			"local_port":      localPort})
 	}
 
 	stored := onService
@@ -1420,7 +1500,9 @@ func (h *TransferHandler) importServicePort(c echo.Context, tx *gorm.DB, sp serv
 		return nil, refuse(http.StatusInternalServerError, errImportServicePortReplace, errorArgs{"service_port": name})
 	}
 
-	return &transferItem{Kind: "service_port", Name: name, Action: transferReplaced}, nil
+	item := transferItem{Kind: "service_port", Action: transferReplaced}.namedBy(named)
+
+	return &item, nil
 }
 
 // unknownBindScope names the first entry of a file that is not a scope an
@@ -1534,19 +1616,17 @@ func (h *TransferHandler) importAssignments(tx *gorm.DB, host hostContent,
 	assigned := make(map[uint]bool, len(wanted))
 
 	for _, localPort := range wanted {
-		name := host.IP + " carries " + strconv.Itoa(localPort)
+		named := transferText{textImportNameAssignment,
+			textArgs{"host": host.IP, "local_port": strconv.Itoa(localPort)}}
 
 		var sp models.ServicePort
 
 		err = tx.Where("local_port = ?", localPort).First(&sp).Error
 		if errors.Is(err, gorm.ErrRecordNotFound) {
-			items = append(items, transferItem{
-				Kind:   "assignment",
-				Name:   name,
-				Action: transferSkipped,
-				Reason: "no service port on the local port " + strconv.Itoa(localPort) +
-					" is registered here, so there is nothing for the Host to carry",
-			})
+			items = append(items, transferItem{Kind: "assignment", Action: transferSkipped}.
+				namedBy(named).
+				because(transferText{textImportReasonNoServicePort,
+					textArgs{"local_port": strconv.Itoa(localPort)}}))
 
 			continue
 		}
@@ -1689,8 +1769,9 @@ func (h *TransferHandler) importLocalForwards(tx *gorm.DB, written []hostContent
 	for i, host := range written {
 		for _, lf := range host.LocalForwards {
 			localPort := strconv.Itoa(lf.LocalPort)
-			name := host.IP + " opens " + localPort + " to " +
-				net.JoinHostPort(lf.TargetIP, strconv.Itoa(lf.TargetPort))
+			named := transferText{textImportNameLocalForward, textArgs{"host": host.IP,
+				"local_port": localPort,
+				"target":     net.JoinHostPort(lf.TargetIP, strconv.Itoa(lf.TargetPort))}}
 
 			if lf.LocalPort == apiPort {
 				return nil, refuse(http.StatusConflict, errImportLocalForwardAPIPort,
@@ -1748,7 +1829,7 @@ func (h *TransferHandler) importLocalForwards(tx *gorm.DB, written []hostContent
 				action = transferReplaced
 			}
 
-			items = append(items, transferItem{Kind: "local_forward", Name: name, Action: action})
+			items = append(items, transferItem{Kind: "local_forward", Action: action}.namedBy(named))
 		}
 	}
 
