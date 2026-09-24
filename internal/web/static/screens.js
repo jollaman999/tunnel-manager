@@ -7878,6 +7878,8 @@ function manualNodes() {
     manualOneTunnel(),
     manualParts(),
     manualReach(),
+    manualForward(),
+    manualSocks(),
     manualPeriods(),
     manualPaths()
   ];
@@ -8077,10 +8079,11 @@ function topologyBox(x, y, width, height, title, address) {
 // topologyLeg is one connection: the line it takes, with its arrowhead at the
 // end it is opened towards, and the number of the step it is in a circle on the
 // line.
-function topologyLeg(path, step, cx, cy, variant) {
+function topologyLeg(path, step, cx, cy, variant, marker) {
   const group = svgElement("g", { class: ("topology-leg " + variant).trim() });
+  const head = marker === undefined ? "topology-arrow" : marker;
 
-  group.appendChild(svgElement("path", { d: path, "marker-end": "url(#topology-arrow)" }));
+  group.appendChild(svgElement("path", { d: path, "marker-end": "url(#" + head + ")" }));
   group.appendChild(svgElement("circle", { cx, cy, r: "11" }));
 
   const number = svgElement("text", { x: cx, y: cy + 4, class: "topology-step" });
@@ -8171,7 +8174,128 @@ function manualParts() {
     ]),
     t("manual.parts-built-from.text"),
     t("manual.parts-where.text"),
-    t("manual.parts-disabling.text")
+    t("manual.parts-disabling.text"),
+    t("manual.parts-local-forward.text"),
+    t("manual.parts-socks.text")
+  ]);
+}
+
+const manualForwardHost = "203.0.113.10";
+const manualForwardPort = "15432";
+const manualForwardTarget = "198.51.100.20:5432";
+
+function manualForward() {
+  const names = { host: manualForwardHost, port: manualForwardPort, target: manualForwardTarget };
+  const steps = document.createElement("ol");
+
+  steps.appendChild(element("li", t("manual.forward-step-1.text", names)));
+  steps.appendChild(element("li", t("manual.forward-step-2.text", names)));
+  steps.appendChild(element("li", t("manual.forward-step-3.text", names)));
+  steps.appendChild(element("li", t("manual.forward-step-4.text", names)));
+
+  return manualCard("forward", t("manual.forward.title"), [
+    t("manual.forward-direction.text"),
+    manualForwardTopology(),
+    t("manual.forward-example.text", names),
+    steps,
+    t("manual.forward-where.text"),
+    t("manual.forward-scope.text"),
+    t("manual.forward-port.text"),
+    t("manual.forward-status.text"),
+    bulletList([
+      t("manual.forward-status-connected.text"),
+      t("manual.forward-status-reconnecting.text"),
+      t("manual.forward-status-error.text"),
+      t("manual.forward-status-disabled.text")
+    ]),
+    t("manual.forward-sshd.text")
+  ]);
+}
+
+// manualForwardTopology is manualTopology drawn the other way round: the two
+// machines trade places, so the port a client reaches is on this one and the
+// connection leaves from the Host. It keeps its own arrowhead id because both
+// drawings are on the same page.
+function manualForwardTopology() {
+  const wrap = document.createElement("div");
+
+  wrap.className = "topology";
+  wrap.dir = "ltr";
+
+  const svg = svgElement("svg", {
+    viewBox: "0 0 900 330",
+    role: "img",
+    "aria-label": t("manual.forward-diagram.aria")
+  });
+
+  const defs = svgElement("defs");
+  const marker = svgElement("marker", {
+    id: "forward-arrow",
+    viewBox: "0 0 10 10",
+    refX: "9",
+    refY: "5",
+    markerWidth: "7",
+    markerHeight: "7",
+    orient: "auto-start-reverse"
+  });
+
+  marker.appendChild(svgElement("path", { d: "M 0 0 L 10 5 L 0 10 z", class: "topology-head" }));
+  defs.appendChild(marker);
+  svg.appendChild(defs);
+
+  svg.appendChild(topologyFrame(200, 30, 230, 260, t("manual.diagram-here.label")));
+  svg.appendChild(topologyFrame(480, 30, 210, 260, t("manual.diagram-host.label") + " " +
+    manualForwardHost));
+
+  svg.appendChild(topologyBox(20, 200, 140, 60, t("manual.diagram-client.label"), ""));
+  svg.appendChild(topologyBox(225, 75, 180, 60, "tunnel-manager", ""));
+  svg.appendChild(topologyBox(225, 200, 180, 60, t("manual.forward-diagram-port.label"),
+    "0.0.0.0:" + manualForwardPort));
+  svg.appendChild(topologyBox(500, 75, 170, 60, t("manual.diagram-sshd.label"), ":22"));
+  svg.appendChild(topologyBox(720, 200, 170, 60, t("manual.forward-diagram-target.label"),
+    manualForwardTarget));
+
+  svg.appendChild(topologyLeg("M 405 105 L 500 105", 1, 452, 105, "topology-ssh", "forward-arrow"));
+  svg.appendChild(topologyLeg("M 160 230 L 225 230", 2, 192, 230, "", "forward-arrow"));
+  svg.appendChild(topologyLeg("M 405 230 L 585 230 L 585 135", 3, 500, 230, "topology-back",
+    "forward-arrow"));
+  svg.appendChild(topologyLeg("M 670 105 L 805 105 L 805 200", 4, 805, 150, "", "forward-arrow"));
+
+  wrap.appendChild(svg);
+
+  return wrap;
+}
+
+const manualSocksAddress = "192.0.2.20:1080";
+
+function manualSocksCommand(text) {
+  const block = element("pre");
+
+  block.dir = "ltr";
+  block.appendChild(element("code", text));
+
+  return block;
+}
+
+function manualSocks() {
+  const browsers = document.createElement("ul");
+  const chrome = document.createElement("li");
+
+  browsers.appendChild(element("li", t("manual.socks-firefox.text")));
+  chrome.appendChild(element("p", t("manual.socks-chrome.text")));
+  chrome.appendChild(manualSocksCommand("google-chrome --proxy-server=\"socks5://" +
+    manualSocksAddress + "\""));
+  chrome.appendChild(element("p", t("manual.socks-chrome-loopback.text")));
+  chrome.appendChild(manualSocksCommand("--proxy-bypass-list=\"<-loopback>\""));
+  browsers.appendChild(chrome);
+
+  return manualCard("socks", t("manual.socks.title"), [
+    t("manual.socks-what.text"),
+    t("manual.socks-switch.text"),
+    t("manual.socks-open.text"),
+    t("manual.socks-browser.text", { address: manualSocksAddress }),
+    browsers,
+    t("manual.socks-connect.text")
   ]);
 }
 
