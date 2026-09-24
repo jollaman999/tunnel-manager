@@ -3,6 +3,7 @@
 package crypto
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"slices"
@@ -216,5 +217,208 @@ func TestLoadOrCreateKeyNarrowsAWideKeyFile(t *testing.T) {
 
 	if logs.Len() != 0 {
 		t.Errorf("loading a narrowed key file wrote %v", logs.All())
+	}
+}
+
+// widenPath puts on path what a directory under C:\ hands down: Users may read,
+// and every entry is handed on to what is created inside.
+func widenPath(t *testing.T, path string) {
+	t.Helper()
+
+	user, err := windows.GetCurrentProcessToken().GetTokenUser()
+	if err != nil {
+		t.Fatalf("failed to read the user of this process: %v", err)
+	}
+
+	wide, err := windows.SecurityDescriptorFromString("D:P(A;OICI;FA;;;" + user.User.Sid.String() +
+		")(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)(A;OICI;FR;;;BU)")
+	if err != nil {
+		t.Fatalf("failed to build a wide security descriptor: %v", err)
+	}
+
+	wideDACL, _, err := wide.DACL()
+	if err != nil {
+		t.Fatalf("failed to read the wide DACL: %v", err)
+	}
+
+	err = windows.SetNamedSecurityInfo(path, windows.SE_FILE_OBJECT,
+		windows.DACL_SECURITY_INFORMATION|windows.PROTECTED_DACL_SECURITY_INFORMATION, nil, nil, wideDACL, nil)
+	if err != nil {
+		t.Fatalf("failed to widen %s: %v", path, err)
+	}
+}
+
+// requireNoOtherReaders fails when anybody but the owner, SYSTEM and
+// Administrators may read path, whether the entries are its own or handed down.
+func requireNoOtherReaders(t *testing.T, path string) {
+	t.Helper()
+
+	readers, err := keyFileOtherReaders(path)
+	if err != nil {
+		t.Fatalf("failed to read who may read %s: %v", path, err)
+	}
+
+	if len(readers) != 0 {
+		t.Errorf("%s may be read by %v", path, readers)
+	}
+}
+
+func TestMkdirAllPrivateMakesDirectoriesForOwnerSystemAndAdminsOnly(t *testing.T) {
+	parent := t.TempDir()
+	widenPath(t, parent)
+
+	dir := filepath.Join(parent, "data", "keys")
+
+	err := MkdirAllPrivate(dir, keyDirMode)
+	if err != nil {
+		t.Fatalf("MkdirAllPrivate returned an error: %v", err)
+	}
+
+	for _, path := range []string{filepath.Join(parent, "data"), dir} {
+		_, protected := daclOf(t, path)
+		if !protected {
+			t.Errorf("the DACL of %s is not protected, so it takes what its directory hands down", path)
+		}
+
+		requireNoOtherReaders(t, path)
+	}
+
+	// A file something else creates inside takes what the directory hands
+	// down, which is what the write-ahead log of SQLite relies on.
+	file := filepath.Join(dir, "made-by-another")
+
+	err = os.WriteFile(file, []byte("x"), 0644)
+	if err != nil {
+		t.Fatalf("failed to create a file inside: %v", err)
+	}
+
+	requireNoOtherReaders(t, file)
+
+	err = MkdirAllPrivate(dir, keyDirMode)
+	if err != nil {
+		t.Errorf("MkdirAllPrivate refused a directory that is there: %v", err)
+	}
+}
+
+func TestMkdirAllPrivateLeavesADirectoryThatIsThereAlone(t *testing.T) {
+	dir := t.TempDir()
+	widenPath(t, dir)
+
+	err := MkdirAllPrivate(dir, keyDirMode)
+	if err != nil {
+		t.Fatalf("MkdirAllPrivate returned an error: %v", err)
+	}
+
+	readers, err := keyFileOtherReaders(dir)
+	if err != nil {
+		t.Fatalf("failed to read who may read %s: %v", dir, err)
+	}
+
+	if len(readers) == 0 {
+		t.Error("MkdirAllPrivate narrowed a directory that was already there")
+	}
+}
+
+func TestNarrowPrivateDirNarrowsTheDirectoryAndWhatTookItsDACL(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "logs")
+
+	err := os.Mkdir(dir, 0755)
+	if err != nil {
+		t.Fatalf("failed to create the directory: %v", err)
+	}
+
+	widenPath(t, dir)
+
+	file := filepath.Join(dir, "tunnel-manager.log")
+
+	err = os.WriteFile(file, []byte("a line\n"), 0644)
+	if err != nil {
+		t.Fatalf("failed to create a file inside: %v", err)
+	}
+
+	readers, err := keyFileOtherReaders(file)
+	if err != nil || len(readers) == 0 {
+		t.Fatalf("the file inside was not wide to begin with: %v, %v", readers, err)
+	}
+
+	readers, err = NarrowPrivateDir(dir)
+	if err != nil {
+		t.Fatalf("NarrowPrivateDir returned an error: %v", err)
+	}
+
+	users, err := windows.CreateWellKnownSid(windows.WinBuiltinUsersSid)
+	if err != nil {
+		t.Fatalf("failed to build the SID of Users: %v", err)
+	}
+
+	if !slices.Contains(readers, accountName(users)) {
+		t.Errorf("NarrowPrivateDir named %v, want %s among them", readers, accountName(users))
+	}
+
+	_, protected := daclOf(t, dir)
+	if !protected {
+		t.Error("the DACL of the directory is not protected after the narrowing")
+	}
+
+	requireNoOtherReaders(t, dir)
+	requireNoOtherReaders(t, file)
+
+	readers, err = NarrowPrivateDir(dir)
+	if err != nil || len(readers) != 0 {
+		t.Errorf("narrowing the narrowed directory again returned %v, %v, want nothing", readers, err)
+	}
+}
+
+func TestNarrowPrivateFileNarrowsAWideFile(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "tunnel-manager.db")
+
+	err := os.WriteFile(path, []byte("rows"), 0644)
+	if err != nil {
+		t.Fatalf("failed to create the file: %v", err)
+	}
+
+	widenPath(t, path)
+
+	readers, err := NarrowPrivateFile(path)
+	if err != nil || len(readers) == 0 {
+		t.Fatalf("NarrowPrivateFile returned %v, %v, want the readers of the wide file", readers, err)
+	}
+
+	requireOwnerSystemAdminsOnly(t, path)
+
+	_, err = NarrowPrivateFile(filepath.Join(t.TempDir(), "missing"))
+	if !errors.Is(err, os.ErrNotExist) {
+		t.Errorf("NarrowPrivateFile returned %v for a file that is not there, want os.ErrNotExist", err)
+	}
+}
+
+func TestReservePrivateFileCreatesANarrowFileAndLeavesOneThatIsThere(t *testing.T) {
+	dir := t.TempDir()
+	widenPath(t, dir)
+
+	path := filepath.Join(dir, "tunnel-manager.log")
+
+	err := ReservePrivateFile(path)
+	if err != nil {
+		t.Fatalf("ReservePrivateFile returned an error: %v", err)
+	}
+
+	requireOwnerSystemAdminsOnly(t, path)
+
+	err = os.WriteFile(path, []byte("a line\n"), 0600)
+	if err != nil {
+		t.Fatalf("failed to write the reserved file: %v", err)
+	}
+
+	requireOwnerSystemAdminsOnly(t, path)
+
+	err = ReservePrivateFile(path)
+	if err != nil {
+		t.Fatalf("ReservePrivateFile refused a file that is there: %v", err)
+	}
+
+	got, err := os.ReadFile(path)
+	if err != nil || string(got) != "a line\n" {
+		t.Errorf("the file reads %q, %v after the second reserve, want what was written", got, err)
 	}
 }

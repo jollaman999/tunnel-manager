@@ -501,6 +501,8 @@
   "log.shutdown.signal_received.text": "Señal recibida, apagando...",
   "log.shutdown.stopping_tunnels.text": "Deteniendo todos los túneles...",
   "log.shutdown.uninstalled.text": "Se eliminó la instalación, apagando...",
+  "log.startup.files_narrow_failed.text": "no se pudieron restringir los archivos de esta instalación a su propietario, SYSTEM y Administrators, así que otras cuentas quizá puedan leerlos (dir={dir}, paths={paths})",
+  "log.startup.files_narrowed.text": "otras cuentas podían leer archivos de esta instalación, así que se restringieron a su propietario, SYSTEM y Administrators (dir={dir}, paths={paths}, readers={readers})",
   "log.startup.not_root.text": "no se está ejecutando como root",
   "log.startup.starting.text": "Arrancando tunnel-manager...",
   "log.status.connected_tunnels_count_failed.text": "no se pudieron contar los túneles conectados",

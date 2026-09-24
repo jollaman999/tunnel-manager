@@ -501,6 +501,8 @@
   "log.shutdown.signal_received.text": "シグナルを受け取ったので、終了処理をします...",
   "log.shutdown.stopping_tunnels.text": "すべてのトンネルを停止します...",
   "log.shutdown.uninstalled.text": "インストールが削除されたので、終了処理をします...",
+  "log.startup.files_narrow_failed.text": "このインストールのファイルを所有者・SYSTEM・Administrators だけが読めるように絞れなかったため、他のアカウントが読める可能性があります (dir={dir}, paths={paths})",
+  "log.startup.files_narrowed.text": "他のアカウントがこのインストールのファイルを読めたため、所有者・SYSTEM・Administrators だけが読めるように絞りました (dir={dir}, paths={paths}, readers={readers})",
   "log.startup.not_root.text": "root で実行されていません",
   "log.startup.starting.text": "tunnel-manager を起動します...",
   "log.status.connected_tunnels_count_failed.text": "接続中のトンネルの数を数えられませんでした",

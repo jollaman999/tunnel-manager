@@ -161,7 +161,7 @@ func LoadOrCreateKeyWithLogger(path string, logger *zap.Logger) ([]byte, error) 
 
 func createKey(path string) ([]byte, error) {
 	dir := filepath.Dir(path)
-	err := os.MkdirAll(dir, keyDirMode)
+	err := MkdirAllPrivate(dir, keyDirMode)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create the key directory %s: %w", dir, err)
 	}

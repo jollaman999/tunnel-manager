@@ -155,8 +155,10 @@ const (
 
 // startup: what the process checks and reports as it comes up.
 const (
-	StartupNotRoot  ID = "startup.not_root"
-	StartupStarting ID = "startup.starting"
+	StartupNotRoot           ID = "startup.not_root"
+	StartupStarting          ID = "startup.starting"
+	StartupFilesNarrowed     ID = "startup.files_narrowed"
+	StartupFilesNarrowFailed ID = "startup.files_narrow_failed"
 )
 
 // logging: the log file this process writes and the Logs screen reads.

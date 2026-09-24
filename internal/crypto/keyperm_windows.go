@@ -3,8 +3,10 @@
 package crypto
 
 import (
+	"errors"
 	"fmt"
 	"os"
+	"path/filepath"
 	"slices"
 	"unsafe"
 
@@ -35,12 +37,27 @@ const keyFileReadAccess = windows.FILE_READ_DATA | windows.GENERIC_READ | window
 // read-only attribute, and the file takes the DACL of its directory, which
 // under C:\ lets every user read it.
 func keyFileSecurityDescriptor() (*windows.SECURITY_DESCRIPTOR, error) {
+	return privateSecurityDescriptor("")
+}
+
+// privateDirSecurityDescriptor is keyFileSecurityDescriptor for a directory
+// this program makes: the same three accounts, with every entry handed down to
+// the files and directories made inside it (OI and CI). A file that something
+// else creates in it, such as the write-ahead log and the shared memory file
+// SQLite makes beside the database, takes those entries and nothing wider.
+func privateDirSecurityDescriptor() (*windows.SECURITY_DESCRIPTOR, error) {
+	return privateSecurityDescriptor("OICI")
+}
+
+// privateSecurityDescriptor builds the protected DACL of the owner, SYSTEM and
+// Administrators with aceFlags on every entry.
+func privateSecurityDescriptor(aceFlags string) (*windows.SECURITY_DESCRIPTOR, error) {
 	user, err := windows.GetCurrentProcessToken().GetTokenUser()
 	if err != nil {
 		return nil, fmt.Errorf("failed to read the user this process runs as: %w", err)
 	}
 
-	sddl := "D:P(A;;FA;;;SY)(A;;FA;;;BA)"
+	sddl := fmt.Sprintf("D:P(A;%[1]s;FA;;;SY)(A;%[1]s;FA;;;BA)", aceFlags)
 
 	system, err := windows.CreateWellKnownSid(windows.WinLocalSystemSid)
 	if err != nil {
@@ -53,12 +70,12 @@ func keyFileSecurityDescriptor() (*windows.SECURITY_DESCRIPTOR, error) {
 	}
 
 	if !user.User.Sid.Equals(system) && !user.User.Sid.Equals(admins) {
-		sddl += fmt.Sprintf("(A;;FA;;;%s)", user.User.Sid.String())
+		sddl += fmt.Sprintf("(A;%s;FA;;;%s)", aceFlags, user.User.Sid.String())
 	}
 
 	sd, err := windows.SecurityDescriptorFromString(sddl)
 	if err != nil {
-		return nil, fmt.Errorf("failed to build the security descriptor of the key file: %w", err)
+		return nil, fmt.Errorf("failed to build the private security descriptor: %w", err)
 	}
 
 	return sd, nil
@@ -151,6 +168,113 @@ func NarrowPrivateFile(path string) ([]string, error) {
 	}
 
 	return readers, nil
+}
+
+// NarrowPrivateDir is NarrowPrivateFile for a directory this program makes. It
+// puts the DACL of privateDirSecurityDescriptor on it, and Windows hands that
+// down to what the directory holds and takes its own entries from, so a file
+// in it that carried the DACL of the directory is narrowed along with it. A
+// file in it that carries entries of its own keeps them.
+func NarrowPrivateDir(path string) ([]string, error) {
+	readers, err := keyFileOtherReaders(path)
+	if err != nil {
+		return nil, err
+	}
+
+	if len(readers) == 0 {
+		return nil, nil
+	}
+
+	sd, err := privateDirSecurityDescriptor()
+	if err != nil {
+		return readers, err
+	}
+
+	err = narrowPath(path, sd)
+	if err != nil {
+		return readers, err
+	}
+
+	return readers, nil
+}
+
+// MkdirAllPrivate is os.MkdirAll that gives every directory it makes the DACL
+// of privateDirSecurityDescriptor, so that what is created in them later is
+// kept to the owner, SYSTEM and Administrators without being narrowed one file
+// at a time. The mode reaches nothing on Windows and is taken for the sake of
+// the Unix one. A directory that is already there is left as it is: it may be
+// one the operator made and pointed this program at, and its DACL is theirs.
+func MkdirAllPrivate(path string, perm os.FileMode) error {
+	info, err := os.Stat(path)
+	if err == nil {
+		if info.IsDir() {
+			return nil
+		}
+
+		return &os.PathError{Op: "mkdir", Path: path, Err: windows.ERROR_DIRECTORY}
+	}
+
+	parent := filepath.Dir(path)
+	if parent != path {
+		err = MkdirAllPrivate(parent, perm)
+		if err != nil {
+			return err
+		}
+	}
+
+	sd, err := privateDirSecurityDescriptor()
+	if err != nil {
+		return err
+	}
+
+	name, err := windows.UTF16PtrFromString(path)
+	if err != nil {
+		return &os.PathError{Op: "mkdir", Path: path, Err: err}
+	}
+
+	sa := windows.SecurityAttributes{SecurityDescriptor: sd}
+	sa.Length = uint32(unsafe.Sizeof(sa))
+
+	err = windows.CreateDirectory(name, &sa)
+	if err != nil {
+		// Made by somebody else in the meantime, which is what os.MkdirAll
+		// takes as done as well.
+		info, statErr := os.Lstat(path)
+		if statErr == nil && info.IsDir() {
+			return nil
+		}
+
+		return &os.PathError{Op: "mkdir", Path: path, Err: err}
+	}
+
+	return nil
+}
+
+// ReservePrivateFile creates the file empty with CreatePrivateFile when it is
+// not there yet, and leaves one that is there alone.
+//
+// It is for a file that something else opens and writes afterwards, the
+// database file SQLite opens or the log lumberjack appends to: those open the
+// file with the DACL their caller gives it, which is the one of its directory.
+// A file that is already there keeps its DACL when it is opened again, so the
+// one made here is what they write into. Whatever else is at the path, a
+// directory for one, is left for the opener to report, since CreatePrivateFile
+// would fail on it with no more than "access denied".
+func ReservePrivateFile(path string) error {
+	_, err := os.Lstat(path)
+	if err == nil {
+		return nil
+	}
+
+	f, err := CreatePrivateFile(path)
+	if errors.Is(err, os.ErrExist) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+
+	return f.Close()
 }
 
 // keyFileOtherReaders names the accounts other than the ones
@@ -267,9 +391,15 @@ func narrowKeyFile(path string) error {
 		return err
 	}
 
+	return narrowPath(path, sd)
+}
+
+// narrowPath puts the DACL of sd on the file or directory and cuts it off from
+// what its directory hands down.
+func narrowPath(path string, sd *windows.SECURITY_DESCRIPTOR) error {
 	dacl, _, err := sd.DACL()
 	if err != nil {
-		return fmt.Errorf("failed to read the DACL of the key file security descriptor: %w", err)
+		return fmt.Errorf("failed to read the DACL of the private security descriptor: %w", err)
 	}
 
 	err = windows.SetNamedSecurityInfo(path, windows.SE_FILE_OBJECT,

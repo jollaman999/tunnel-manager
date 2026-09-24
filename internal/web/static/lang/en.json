@@ -501,6 +501,8 @@
   "log.shutdown.signal_received.text": "Received signal, shutting down...",
   "log.shutdown.stopping_tunnels.text": "Stopping all tunnels...",
   "log.shutdown.uninstalled.text": "The installation was removed, shutting down...",
+  "log.startup.files_narrow_failed.text": "failed to narrow files of this installation to their owner, SYSTEM and Administrators, so other accounts may be able to read them (dir={dir}, paths={paths})",
+  "log.startup.files_narrowed.text": "other accounts could read files of this installation, so they were narrowed to their owner, SYSTEM and Administrators (dir={dir}, paths={paths}, readers={readers})",
   "log.startup.not_root.text": "not running as root",
   "log.startup.starting.text": "Starting tunnel-manager...",
   "log.status.connected_tunnels_count_failed.text": "failed to count the connected tunnels",

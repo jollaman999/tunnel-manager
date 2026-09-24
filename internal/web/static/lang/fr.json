@@ -501,6 +501,8 @@
   "log.shutdown.signal_received.text": "Signal reçu, arrêt en cours...",
   "log.shutdown.stopping_tunnels.text": "Arrêt de tous les tunnels...",
   "log.shutdown.uninstalled.text": "L'installation a été supprimée, arrêt en cours...",
+  "log.startup.files_narrow_failed.text": "échec de la restriction des fichiers de cette installation à leur propriétaire, SYSTEM et Administrators, d'autres comptes peuvent donc peut-être les lire (dir={dir}, paths={paths})",
+  "log.startup.files_narrowed.text": "d'autres comptes pouvaient lire des fichiers de cette installation, ils ont donc été restreints à leur propriétaire, SYSTEM et Administrators (dir={dir}, paths={paths}, readers={readers})",
   "log.startup.not_root.text": "ne s'exécute pas en tant que root",
   "log.startup.starting.text": "Démarrage de tunnel-manager...",
   "log.status.connected_tunnels_count_failed.text": "échec du comptage des tunnels connectés",

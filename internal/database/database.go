@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/glebarez/sqlite"
+	"github.com/jollaman999/tunnel-manager/internal/crypto"
 	"github.com/jollaman999/tunnel-manager/internal/logid"
 	"github.com/jollaman999/tunnel-manager/internal/models"
 	"github.com/jollaman999/tunnel-manager/internal/settings"
@@ -260,6 +261,19 @@ const (
 // are rather than creating again.
 var databaseSidecars = []string{"-wal", "-shm"}
 
+// Files returns the database file at absPath and the files SQLite keeps beside
+// it, which hold what the database file holds.
+func Files(absPath string) []string {
+	paths := make([]string, 0, len(databaseSidecars)+1)
+	paths = append(paths, absPath)
+
+	for _, sidecar := range databaseSidecars {
+		paths = append(paths, absPath+sidecar)
+	}
+
+	return paths
+}
+
 // chmod is os.Chmod. It is held in a variable so that a test can put a failure
 // in its place: this process owns every file it makes, chmod on a file one owns
 // does not fail, and what is worth pinning here is that a mode which cannot be
@@ -301,14 +315,7 @@ func tightenPermissions(absPath string) error {
 			dir, err))
 	}
 
-	paths := make([]string, 0, len(databaseSidecars)+1)
-	paths = append(paths, absPath)
-
-	for _, sidecar := range databaseSidecars {
-		paths = append(paths, absPath+sidecar)
-	}
-
-	for _, path := range paths {
+	for _, path := range Files(absPath) {
 		err := chmod(path, databaseFileMode)
 		if err != nil && !errors.Is(err, os.ErrNotExist) {
 			problems = append(problems, fmt.Errorf("failed to set the permission of %q: %w", path, err))
@@ -478,10 +485,32 @@ func NewDatabase(path string, logger *zap.Logger, logLevel string) (*gorm.DB, *L
 
 	// SQLite creates the database file but not the directories above it, so a
 	// first startup against a path that does not exist yet would fail to open
-	// with nothing created.
-	err = os.MkdirAll(filepath.Dir(absPath), databaseDirMode)
+	// with nothing created. On Windows the directories made here are kept to
+	// the owner, SYSTEM and Administrators, and what SQLite creates in them
+	// takes that on.
+	err = crypto.MkdirAllPrivate(filepath.Dir(absPath), databaseDirMode)
 	if err != nil {
 		return nil, nil, fmt.Errorf("failed to create the database directory %q: %w", filepath.Dir(absPath), err)
+	}
+
+	// The directory may be one the operator made, and on Windows a file SQLite
+	// creates in it takes its DACL, which under C:\ lets every user read it.
+	// So the files SQLite would create are made here first, empty and with the
+	// DACL of the owner, SYSTEM and Administrators, and SQLite opens them as
+	// they are: an empty file is an empty database, an empty write-ahead log
+	// has nothing to replay, and SQLite empties the shared memory file itself
+	// when it is the first to open it. On Unix this does nothing, and
+	// tightenPermissions below narrows the mode instead. A path that holds
+	// something other than a file is left for the open to refuse, without
+	// files made beside it.
+	info, err := os.Stat(absPath)
+	if err != nil || info.Mode().IsRegular() {
+		for _, path := range Files(absPath) {
+			err = crypto.ReservePrivateFile(path)
+			if err != nil {
+				return nil, nil, fmt.Errorf("failed to create %q: %w", path, err)
+			}
+		}
 	}
 
 	// The level is on the handle, which the logger reads before every line, and

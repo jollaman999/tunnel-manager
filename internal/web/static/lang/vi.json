@@ -501,6 +501,8 @@
   "log.shutdown.signal_received.text": "Đã nhận tín hiệu, đang tắt...",
   "log.shutdown.stopping_tunnels.text": "Đang dừng mọi tunnel...",
   "log.shutdown.uninstalled.text": "Bản cài đã bị gỡ, đang tắt...",
+  "log.startup.files_narrow_failed.text": "không thu hẹp được các tệp của bản cài đặt này chỉ còn chủ sở hữu, SYSTEM và Administrators, nên các tài khoản khác có thể vẫn đọc được (dir={dir}, paths={paths})",
+  "log.startup.files_narrowed.text": "các tài khoản khác đọc được tệp của bản cài đặt này, nên đã thu hẹp chỉ còn chủ sở hữu, SYSTEM và Administrators (dir={dir}, paths={paths}, readers={readers})",
   "log.startup.not_root.text": "không chạy bằng quyền root",
   "log.startup.starting.text": "Đang khởi động tunnel-manager...",
   "log.status.connected_tunnels_count_failed.text": "không đếm được số tunnel đang kết nối",

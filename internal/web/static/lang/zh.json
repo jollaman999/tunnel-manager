@@ -501,6 +501,8 @@
   "log.shutdown.signal_received.text": "收到信号，正在关闭……",
   "log.shutdown.stopping_tunnels.text": "正在停止所有隧道……",
   "log.shutdown.uninstalled.text": "本安装已删除，正在关闭……",
+  "log.startup.files_narrow_failed.text": "未能把本安装的文件收窄为只有所有者、SYSTEM 和 Administrators 可读，其他账户可能仍读得到 (dir={dir}, paths={paths})",
+  "log.startup.files_narrowed.text": "其他账户读得到本安装的文件，已收窄为只有所有者、SYSTEM 和 Administrators 可读 (dir={dir}, paths={paths}, readers={readers})",
   "log.startup.not_root.text": "不是以 root 身份运行",
   "log.startup.starting.text": "正在启动 tunnel-manager……",
   "log.status.connected_tunnels_count_failed.text": "统计已连接的隧道数量失败",

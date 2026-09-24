@@ -501,6 +501,8 @@
   "log.shutdown.signal_received.text": "Signal empfangen, es wird heruntergefahren...",
   "log.shutdown.stopping_tunnels.text": "Alle Tunnel werden gestoppt...",
   "log.shutdown.uninstalled.text": "Die Installation wurde entfernt, es wird heruntergefahren...",
+  "log.startup.files_narrow_failed.text": "die Dateien dieser Installation konnten nicht auf ihren Besitzer, SYSTEM und Administrators eingeschränkt werden, andere Konten können sie womöglich lesen (dir={dir}, paths={paths})",
+  "log.startup.files_narrowed.text": "andere Konten konnten Dateien dieser Installation lesen, daher wurden sie auf ihren Besitzer, SYSTEM und Administrators eingeschränkt (dir={dir}, paths={paths}, readers={readers})",
   "log.startup.not_root.text": "läuft nicht als root",
   "log.startup.starting.text": "tunnel-manager wird gestartet...",
   "log.status.connected_tunnels_count_failed.text": "die verbundenen Tunnel konnten nicht gezählt werden",

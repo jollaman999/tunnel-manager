@@ -2601,7 +2601,8 @@ it is.
 If the key file can be read by the group or by others, the startup refuses to go
 on. Narrow it with `chmod 600` and start again. On Windows the ACL of the key
 file is set, when it is created and when it is loaded, so that only its owner,
-SYSTEM and Administrators can read it.
+SYSTEM and Administrators can read it, and the same goes for the database file,
+the log files and the directories this program makes for them.
 
 If the key opens none of the stored passwords and at least one of them is marked
 as having been encrypted, the startup stops rather than serving an API that looks

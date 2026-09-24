@@ -501,6 +501,8 @@
   "log.shutdown.signal_received.text": "وصلت إشارة، وجارٍ الإيقاف...",
   "log.shutdown.stopping_tunnels.text": "جارٍ إيقاف كل الأنفاق...",
   "log.shutdown.uninstalled.text": "أُزيل التثبيت، وجارٍ الإيقاف...",
+  "log.startup.files_narrow_failed.text": "تعذّر حصر ملفات هذا التثبيت في مالكها وSYSTEM وAdministrators، لذا قد تتمكن حسابات أخرى من قراءتها (dir={dir}, paths={paths})",
+  "log.startup.files_narrowed.text": "كانت حسابات أخرى تستطيع قراءة ملفات هذا التثبيت، فحُصرت في مالكها وSYSTEM وAdministrators (dir={dir}, paths={paths}, readers={readers})",
   "log.startup.not_root.text": "لا يعمل بصلاحية root",
   "log.startup.starting.text": "جارٍ تشغيل tunnel-manager...",
   "log.status.connected_tunnels_count_failed.text": "تعذّر عدّ الأنفاق المتصلة",

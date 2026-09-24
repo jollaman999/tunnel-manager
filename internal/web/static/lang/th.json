@@ -501,6 +501,8 @@
   "log.shutdown.signal_received.text": "ได้รับสัญญาณ กำลังปิดระบบ...",
   "log.shutdown.stopping_tunnels.text": "กำลังหยุดอุโมงค์ทั้งหมด...",
   "log.shutdown.uninstalled.text": "การติดตั้งถูกถอนออกแล้ว กำลังปิดระบบ...",
+  "log.startup.files_narrow_failed.text": "จำกัดไฟล์ของการติดตั้งนี้ให้เหลือแค่เจ้าของ SYSTEM และ Administrators ไม่สำเร็จ บัญชีอื่นจึงอาจยังอ่านได้ (dir={dir}, paths={paths})",
+  "log.startup.files_narrowed.text": "บัญชีอื่นอ่านไฟล์ของการติดตั้งนี้ได้ จึงจำกัดให้เหลือแค่เจ้าของ SYSTEM และ Administrators (dir={dir}, paths={paths}, readers={readers})",
   "log.startup.not_root.text": "ไม่ได้ทำงานด้วยสิทธิ์ root",
   "log.startup.starting.text": "กำลังเริ่ม tunnel-manager...",
   "log.status.connected_tunnels_count_failed.text": "นับจำนวนอุโมงค์ที่เชื่อมต่ออยู่ไม่สำเร็จ",

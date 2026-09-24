@@ -23,6 +23,24 @@ func NarrowPrivateFile(path string) ([]string, error) {
 	return nil, nil
 }
 
+// NarrowPrivateDir does nothing on Unix, for the reason NarrowPrivateFile does
+// nothing: the directories this program makes are made with a mode.
+func NarrowPrivateDir(path string) ([]string, error) {
+	return nil, nil
+}
+
+// MkdirAllPrivate is os.MkdirAll. The mode is what keeps others out on Unix.
+func MkdirAllPrivate(path string, perm os.FileMode) error {
+	return os.MkdirAll(path, perm)
+}
+
+// ReservePrivateFile does nothing on Unix. Whatever opens the file afterwards
+// creates it with a mode of its own and the caller narrows that mode, which is
+// how these files have been made on Unix from the start.
+func ReservePrivateFile(path string) error {
+	return nil
+}
+
 // checkKeyFilePermission refuses a key file that the group or others may read.
 func checkKeyFilePermission(path string, info os.FileInfo, logger *zap.Logger) error {
 	perm := info.Mode().Perm()

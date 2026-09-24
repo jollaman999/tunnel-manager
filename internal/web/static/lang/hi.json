@@ -501,6 +501,8 @@
   "log.shutdown.signal_received.text": "सिग्नल मिला, बंद हो रहा है...",
   "log.shutdown.stopping_tunnels.text": "सभी टनल रोके जा रहे हैं...",
   "log.shutdown.uninstalled.text": "इंस्टॉलेशन हटा दिया गया, बंद हो रहा है...",
+  "log.startup.files_narrow_failed.text": "इस इंस्टॉलेशन की फ़ाइलों को उनके मालिक, SYSTEM और Administrators तक सीमित नहीं किया जा सका, इसलिए दूसरे खाते शायद उन्हें पढ़ सकते हैं (dir={dir}, paths={paths})",
+  "log.startup.files_narrowed.text": "दूसरे खाते इस इंस्टॉलेशन की फ़ाइलें पढ़ सकते थे, इसलिए उन्हें उनके मालिक, SYSTEM और Administrators तक सीमित किया गया (dir={dir}, paths={paths}, readers={readers})",
   "log.startup.not_root.text": "root के तौर पर नहीं चल रहा",
   "log.startup.starting.text": "tunnel-manager शुरू हो रहा है...",
   "log.status.connected_tunnels_count_failed.text": "जुड़े हुए टनल की गिनती नहीं हो सकी",

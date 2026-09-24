@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/jollaman999/tunnel-manager/internal/api"
+	"github.com/jollaman999/tunnel-manager/internal/crypto"
 	"github.com/jollaman999/tunnel-manager/internal/install"
 	"github.com/jollaman999/tunnel-manager/internal/logid"
 	"github.com/jollaman999/tunnel-manager/internal/settings"
@@ -139,6 +140,13 @@ func installCommand(running string, databaseFile string) (*exec.Cmd, bool, error
 	}
 
 	command := exec.Command(running, "-install", "-db", databaseFile)
+
+	// On Windows the report is made with the DACL of the owner, SYSTEM and
+	// Administrators first, as the log beside it is. On Unix this does nothing.
+	err := crypto.ReservePrivateFile(installReportPath(databaseFile, false))
+	if err != nil {
+		return nil, false, fmt.Errorf("failed to open the file the install writes its report to: %w", err)
+	}
 
 	report, err := os.OpenFile(installReportPath(databaseFile, false),
 		os.O_CREATE|os.O_WRONLY|os.O_TRUNC, installReportMode)

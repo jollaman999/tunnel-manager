@@ -501,6 +501,8 @@
   "log.shutdown.signal_received.text": "시그널을 받아서 종료합니다...",
   "log.shutdown.stopping_tunnels.text": "터널을 전부 멈춥니다...",
   "log.shutdown.uninstalled.text": "설치본이 제거돼서 종료합니다...",
+  "log.startup.files_narrow_failed.text": "이 설치의 파일을 소유자·SYSTEM·Administrators 만 읽을 수 있게 좁히지 못해서 다른 계정이 읽을 수 있을 수 있습니다 (dir={dir}, paths={paths})",
+  "log.startup.files_narrowed.text": "다른 계정이 이 설치의 파일을 읽을 수 있어서 소유자·SYSTEM·Administrators 만 읽을 수 있게 좁혔습니다 (dir={dir}, paths={paths}, readers={readers})",
   "log.startup.not_root.text": "root 로 실행 중이 아닙니다",
   "log.startup.starting.text": "tunnel-manager 를 시작합니다...",
   "log.status.connected_tunnels_count_failed.text": "연결된 터널 수를 세지 못했습니다",

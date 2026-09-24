@@ -19,6 +19,7 @@ import (
 	"os/signal"
 	"path/filepath"
 	"reflect"
+	"slices"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -299,7 +300,7 @@ const (
 func prepareLogFile(s *settings.Settings, installDir string) error {
 	logFilePath := resolveInstallPath(installDir, s.LoggingFilePath)
 	logDir := filepath.Dir(logFilePath)
-	err := os.MkdirAll(logDir, logDirMode)
+	err := crypto.MkdirAllPrivate(logDir, logDirMode)
 	if err != nil {
 		return fmt.Errorf("failed to create log directory: %v", err)
 	}
@@ -314,6 +315,15 @@ func prepareLogFile(s *settings.Settings, installDir string) error {
 	// Unix modes would otherwise come up with its logging turned off over a
 	// file it has no way of narrowing.
 	_ = os.Chmod(logDir, logDirMode)
+
+	// On Windows the file is made with the DACL of the owner, SYSTEM and
+	// Administrators before it is opened, since the log directory may be the
+	// data directory the operator made and a file created in it by OpenFile
+	// takes its DACL. On Unix this does nothing.
+	err = crypto.ReservePrivateFile(logFilePath)
+	if err != nil {
+		return fmt.Errorf("failed to create log file: %v", err)
+	}
 
 	file, err := os.OpenFile(logFilePath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, logFileMode)
 	if err != nil {
@@ -341,6 +351,122 @@ func prepareLogFile(s *settings.Settings, installDir string) error {
 	}
 
 	return nil
+}
+
+// narrowInstallFiles brings the files this installation keeps its data in, and
+// the directories under its data directory that it made for them, to what they
+// are created with on Windows: readable by their owner, SYSTEM and
+// Administrators and nobody else. An earlier release created them with the
+// DACL of their directory, which under C:\ lets every user read the database,
+// the log and whatever the key directory holds. On Unix it does nothing: the
+// modes of these files are narrowed where they are opened.
+//
+// The data directory itself is not narrowed. It may be one the operator made
+// and pointed -db at, and its DACL is theirs to decide; what is narrowed is
+// what this program put in it. The key file is narrowed where it is loaded,
+// and the initial password file where the account is checked.
+//
+// It runs once the log file is set up, so that what it reports reaches the
+// file the Logs screen reads. One line is written for each directory that held
+// something wide. A narrowing that fails is reported and the startup goes on,
+// as it does for the key file.
+func narrowInstallFiles(logger *zap.Logger, installDir, databaseFile string, s *settings.Settings) {
+	absDatabase, err := filepath.Abs(databaseFile)
+	if err != nil {
+		absDatabase = databaseFile
+	}
+
+	installDir = filepath.Clean(installDir)
+
+	var dirs []string
+
+	for _, path := range []string{
+		resolveInstallPath(installDir, s.SecurityKeyFile),
+		resolveInstallPath(installDir, s.LoggingFilePath),
+		installReportPath(databaseFile, false),
+	} {
+		dir := filepath.Clean(filepath.Dir(path))
+		if dir != installDir && !slices.Contains(dirs, dir) {
+			dirs = append(dirs, dir)
+		}
+	}
+
+	files := database.Files(absDatabase)
+	files = append(files,
+		resolveInstallPath(installDir, s.LoggingFilePath),
+		installReportPath(databaseFile, false))
+
+	type outcome struct {
+		paths   []string
+		readers []string
+		errs    []error
+	}
+
+	var order []string
+
+	outcomes := map[string]*outcome{}
+
+	record := func(dir, path string, readers []string, err error) {
+		if errors.Is(err, os.ErrNotExist) || (err == nil && len(readers) == 0) {
+			return
+		}
+
+		o, ok := outcomes[dir]
+		if !ok {
+			o = &outcome{}
+			outcomes[dir] = o
+			order = append(order, dir)
+		}
+
+		o.paths = append(o.paths, path)
+
+		for _, reader := range readers {
+			if !slices.Contains(o.readers, reader) {
+				o.readers = append(o.readers, reader)
+			}
+		}
+
+		if err != nil {
+			o.errs = append(o.errs, err)
+		}
+	}
+
+	// The directories go first. Narrowing one hands its DACL down to the files
+	// in it that took the DACL of the directory, so those are narrow by the
+	// time the files are looked at, and only a file with entries of its own is
+	// named on its own.
+	for _, dir := range dirs {
+		readers, err := crypto.NarrowPrivateDir(dir)
+		record(dir, dir, readers, err)
+	}
+
+	for _, path := range files {
+		readers, err := crypto.NarrowPrivateFile(path)
+		record(filepath.Dir(path), path, readers, err)
+	}
+
+	for _, dir := range order {
+		o := outcomes[dir]
+
+		if len(o.errs) > 0 {
+			logger.Warn("failed to narrow files of this installation to their owner, SYSTEM and Administrators, "+
+				"so other accounts may be able to read them",
+				logid.StartupFilesNarrowFailed.Field(),
+				zap.String("dir", dir),
+				zap.Strings("paths", o.paths),
+				zap.Strings("readers", o.readers),
+				zap.Error(errors.Join(o.errs...)))
+
+			continue
+		}
+
+		logger.Warn("other accounts could read files of this installation, so they were narrowed to their owner, "+
+			"SYSTEM and Administrators",
+			logid.StartupFilesNarrowed.Field(),
+			zap.String("dir", dir),
+			zap.Strings("paths", o.paths),
+			zap.Strings("readers", o.readers))
+	}
 }
 
 // initLogger builds the core the process logs through from the stored settings,
@@ -1509,6 +1635,8 @@ func serve() {
 	warnIfNotPrivileged(logger)
 
 	checkUlimit(logger)
+
+	narrowInstallFiles(logger, installDir, databaseFile, set)
 
 	// Without the key no stored password can be read, so a key that cannot be
 	// loaded stops the startup instead of leaving every tunnel unable to connect.
