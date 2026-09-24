@@ -824,7 +824,7 @@ func TestLocalForwardWritesAreRefused(t *testing.T) {
 			value:  "one",
 			body:   `{"local_port":15100,` + valid + `}`,
 			status: http.StatusBadRequest,
-			code:   errLocalForwardIDInvalid,
+			code:   errLocalForwardNumberInvalid,
 		},
 		{
 			name:   "a Host that is not a number",
@@ -1060,5 +1060,64 @@ func TestALocalPortOnTheRunningAPIPortIsRefused(t *testing.T) {
 				t.Errorf("rows = %+v, want the one forward left on 15001", rows)
 			}
 		})
+	}
+}
+
+// TestANumberIsGivenBackAfterTheForwardHoldingItIsDeleted is the rule that a
+// Host's numbers run 1, 2, 3 with nothing missing: the gap a delete leaves is
+// what the next forward added to that Host is given, rather than a number above
+// everything that Host holds.
+func TestANumberIsGivenBackAfterTheForwardHoldingItIsDeleted(t *testing.T) {
+	held := make([]models.LocalForward, 0, 3)
+
+	for _, number := range []uint{1, 2, 3} {
+		held = append(held, models.LocalForward{
+			HostID: 1, Number: number, LocalPort: int(15000 + number),
+			TargetIP: "198.51.100.10", TargetPort: 80, Enabled: true,
+		})
+	}
+
+	db := newLocalForwardDB(t, []models.Host{statusHost(1, true)}, held)
+
+	for _, want := range []struct {
+		deleted uint
+		next    uint
+		said    string
+	}{
+		{deleted: 2, next: 2, said: "the gap in the middle"},
+		{deleted: 1, next: 1, said: "the gap at the start"},
+	} {
+		err := db.Where("host_id = ? AND number = ?", 1, want.deleted).
+			Delete(&models.LocalForward{}).Error
+		if err != nil {
+			t.Fatalf("failed to delete the forward numbered %d: %v", want.deleted, err)
+		}
+
+		got, err := nextLocalForwardNumber(db, 1)
+		if err != nil {
+			t.Fatalf("failed to work out the next number: %v", err)
+		}
+
+		if got != want.next {
+			t.Fatalf("%s: the next number is %d, want %d", want.said, got, want.next)
+		}
+
+		err = db.Create(&models.LocalForward{
+			HostID: 1, Number: got, LocalPort: int(16000 + got),
+			TargetIP: "198.51.100.10", TargetPort: 80, Enabled: true,
+		}).Error
+		if err != nil {
+			t.Fatalf("failed to store the forward numbered %d: %v", got, err)
+		}
+	}
+
+	// Nothing is missing, so the next one goes on the end.
+	got, err := nextLocalForwardNumber(db, 1)
+	if err != nil {
+		t.Fatalf("failed to work out the next number: %v", err)
+	}
+
+	if got != 4 {
+		t.Fatalf("with 1, 2 and 3 all held the next number is %d, want 4", got)
 	}
 }

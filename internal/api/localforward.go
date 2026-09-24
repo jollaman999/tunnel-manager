@@ -133,20 +133,38 @@ func localPortRefused(tx *gorm.DB, hostID uint, number uint, localPort int, apiP
 	return nil, nil
 }
 
-// nextLocalForwardNumber is the number the next forward of this Host is made
-// with: the one after the highest it carries. A number that has been handed out
-// is never handed out again, so that a number in a log line or in a path is not
-// read back against a row that was made after it.
+// nextLocalForwardNumber is the number a forward added to this Host is given:
+// the lowest one the Host is not already using.
+//
+// The gaps are filled rather than left, so the numbers of a Host are 1, 2, 3
+// with nothing missing and the one that was deleted comes back on the next
+// forward added. What that costs is that a number written down somewhere else,
+// in a log line or in a note, names the row that holds it now rather than the
+// row it was written about.
+//
+// The numbers are read and walked here instead of being worked out in SQL. A
+// Host carries a handful of forwards, the primary key makes them unique and the
+// order makes them ascending, so the first place the run breaks is the answer.
 func nextLocalForwardNumber(tx *gorm.DB, hostID uint) (uint, error) {
-	var highest uint
+	var taken []uint
 
 	err := tx.Model(&models.LocalForward{}).Where("host_id = ?", hostID).
-		Select("COALESCE(MAX(number), 0)").Scan(&highest).Error
+		Order("number").Pluck("number", &taken).Error
 	if err != nil {
 		return 0, err
 	}
 
-	return highest + 1, nil
+	next := uint(1)
+
+	for _, number := range taken {
+		if number != next {
+			break
+		}
+
+		next++
+	}
+
+	return next, nil
 }
 
 // localForwardPath reads the Host and the number the path of one forward
@@ -161,7 +179,7 @@ func localForwardPath(c echo.Context) (uint, uint, *refusal) {
 
 	number, err := strconv.ParseUint(c.Param("number"), 10, 32)
 	if err != nil {
-		return 0, 0, refuse(http.StatusBadRequest, errLocalForwardIDInvalid, errorArgs{"reason": err.Error()})
+		return 0, 0, refuse(http.StatusBadRequest, errLocalForwardNumberInvalid, errorArgs{"reason": err.Error()})
 	}
 
 	return uint(hostID), uint(number), nil
