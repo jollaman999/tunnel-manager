@@ -169,6 +169,28 @@ type hostContent struct {
 	// as a Host that carries everything, which is what transferFormatVersion
 	// would then have to be raised for.
 	AssignedBindScopes map[string]string `json:"assigned_bind_scopes,omitempty"`
+	// LocalForwards are the local forwards this Host carries, in the order of
+	// their local port. nil and an empty list are told apart the way they are
+	// for AssignedLocalPorts:
+	//
+	//	no field, or null  the file says nothing of them; they are left as they are
+	//	[]                 this Host forwards nothing
+	//
+	// A file from before they were stored carries no field, and it says nothing
+	// about the local forwards made here, so an overwrite does not clear them.
+	// The export therefore never writes nil.
+	LocalForwards []localForwardContent `json:"local_forwards"`
+}
+
+// localForwardContent is one local forward as it is carried in a file, on the
+// Host it belongs to. The id, the Host id and the timestamps are left out for
+// the reason they are left out of a Host.
+type localForwardContent struct {
+	BindScope   string `json:"bind_scope"`
+	LocalPort   int    `json:"local_port"`
+	TargetIP    string `json:"target_ip"`
+	TargetPort  int    `json:"target_port"`
+	Description string `json:"description"`
 }
 
 // servicePortContent is one service port as it is carried in a file. It holds
@@ -306,11 +328,12 @@ type importRequest struct {
 // counts are there so that the operator can see what went into the file without
 // opening it, which takes the password.
 type exportedTunnels struct {
-	Kind         string    `json:"kind"`
-	File         string    `json:"file"`
-	ExportedAt   time.Time `json:"exported_at"`
-	Hosts        int       `json:"hosts"`
-	ServicePorts int       `json:"service_ports"`
+	Kind          string    `json:"kind"`
+	File          string    `json:"file"`
+	ExportedAt    time.Time `json:"exported_at"`
+	Hosts         int       `json:"hosts"`
+	ServicePorts  int       `json:"service_ports"`
+	LocalForwards int       `json:"local_forwards"`
 }
 
 // exportedSettings is the answer to an export of the settings of the manager.
@@ -798,12 +821,40 @@ func assignedByHost(db *gorm.DB, sps []models.ServicePort) (map[uint]hostAssignm
 	return byHost, nil
 }
 
+// localForwardsByHost reads the local forwards and returns them for each Host
+// id, in the order of their local port so that the same configuration gives the
+// same file. A local forward whose Host is not among the ones exported is left
+// out by the caller, since there is no Host to write it under.
+func localForwardsByHost(db *gorm.DB) (map[uint][]localForwardContent, error) {
+	var rows []models.LocalForward
+
+	err := db.Order("local_port").Find(&rows).Error
+	if err != nil {
+		return nil, err
+	}
+
+	byHost := make(map[uint][]localForwardContent)
+
+	for _, lf := range rows {
+		byHost[lf.HostID] = append(byHost[lf.HostID], localForwardContent{
+			BindScope:   lf.BindScope,
+			LocalPort:   lf.LocalPort,
+			TargetIP:    lf.TargetIP,
+			TargetPort:  lf.TargetPort,
+			Description: lf.Description,
+		})
+	}
+
+	return byHost, nil
+}
+
 // ExportTunnels hands out every Host and every service port, sealed with the
 // password in the body.
 //
 // @Summary      Every Host and every service port, encrypted into one file
 // @Description  A POST and not a GET because the password that seals the file is in the body.
 // @Description  Inside the file the SSH password, the private key and the key passphrase of every Host are in the clear, so treat it as the credentials of every Host it names.
+// @Description  Each Host carries its local forwards in the file, and local_forwards in the answer counts them.
 // @Tags         export and import
 // @Accept   json
 // @Produce  json
@@ -851,6 +902,16 @@ func (h *TransferHandler) ExportTunnels(c echo.Context) error {
 		return failure(c, http.StatusInternalServerError, errExportAssignmentsRead)
 	}
 
+	forwards, err := localForwardsByHost(h.hosts.db)
+	if err != nil {
+		h.hosts.logger.Error("failed to read the local forwards for an export",
+			logid.TransferLocalForwardsReadFailed.Field(),
+			zap.Error(err))
+		return failure(c, http.StatusInternalServerError, errExportLocalForwardsRead)
+	}
+
+	exportedForwards := 0
+
 	content := tunnelsContent{
 		Hosts:        make([]hostContent, 0, len(hosts)),
 		ServicePorts: make([]servicePortContent, 0, len(sps)),
@@ -883,6 +944,14 @@ func (h *TransferHandler) ExportTunnels(c echo.Context) error {
 		// being on the wildcard is what no entry means.
 		opened.AssignedBindScopes = assigned[host.ID].bindScopes
 
+		// Never nil, for the reason AssignedLocalPorts is never nil.
+		opened.LocalForwards = forwards[host.ID]
+		if opened.LocalForwards == nil {
+			opened.LocalForwards = []localForwardContent{}
+		}
+
+		exportedForwards += len(opened.LocalForwards)
+
 		content.Hosts = append(content.Hosts, opened)
 	}
 
@@ -912,16 +981,18 @@ func (h *TransferHandler) ExportTunnels(c echo.Context) error {
 	h.hosts.logger.Info("exported the tunnel configuration",
 		logid.TransferExported.Field(),
 		zap.Int("hosts", len(content.Hosts)),
-		zap.Int("service_ports", len(content.ServicePorts)))
+		zap.Int("service_ports", len(content.ServicePorts)),
+		zap.Int("local_forwards", exportedForwards))
 
 	return c.JSON(http.StatusOK, models.Response{
 		Success: true,
 		Data: exportedTunnels{
-			Kind:         transferKindTunnels,
-			File:         sealed,
-			ExportedAt:   exportedAt,
-			Hosts:        len(content.Hosts),
-			ServicePorts: len(content.ServicePorts),
+			Kind:          transferKindTunnels,
+			File:          sealed,
+			ExportedAt:    exportedAt,
+			Hosts:         len(content.Hosts),
+			ServicePorts:  len(content.ServicePorts),
+			LocalForwards: exportedForwards,
 		},
 	})
 }
@@ -937,6 +1008,7 @@ func (h *TransferHandler) ExportTunnels(c echo.Context) error {
 // @Summary      Write what an exported tunnels file holds
 // @Description  Adds what is not registered here and skips what is, naming in the answer what it skipped and why. Send the same file again with overwrite true to replace those rows instead.
 // @Description  The whole import is one transaction: a file that is refused half way through leaves the database exactly as it was.
+// @Description  A Host the import writes is left carrying the local forwards the file names for it, and keeps its own when the file has no local_forwards for it. The import is refused when the file opens one local port twice, or opens the port this server is stored to listen on or a local port a local forward of another Host holds here.
 // @Tags         export and import
 // @Accept   json
 // @Produce  json
@@ -963,6 +1035,24 @@ func (h *TransferHandler) ImportTunnels(c echo.Context) error {
 	err = json.Unmarshal(file.Content, &content)
 	if err != nil {
 		return failure(c, http.StatusBadRequest, errImportTunnelsUnreadable)
+	}
+
+	refused = checkLocalForwards(c, content)
+	if refused != nil {
+		return refused.answer(c)
+	}
+
+	// Read before the transaction for the reason storedAPIPort gives, and only
+	// for a file that carries a local forward, so that a file without one
+	// reads nothing it has no use for.
+	apiPort := 0
+
+	if carriesLocalForwards(content) {
+		apiPort, err = h.hosts.storedAPIPort()
+		if err != nil {
+			h.hosts.logger.Error("failed to read the settings", logid.SettingsReadFailed.Field(), zap.Error(err))
+			return failure(c, http.StatusInternalServerError, errSettingsReadFailed)
+		}
 	}
 
 	tx := h.hosts.db.Begin()
@@ -1022,6 +1112,14 @@ func (h *TransferHandler) ImportTunnels(c echo.Context) error {
 
 		items = append(items, more...)
 	}
+
+	more, refused := h.importLocalForwards(tx, written, apiPort)
+	if refused != nil {
+		tx.Rollback()
+		return refused.answer(c)
+	}
+
+	items = append(items, more...)
 
 	err = tx.Commit().Error
 	if err != nil {
@@ -1477,6 +1575,180 @@ func (h *TransferHandler) importAssignments(tx *gorm.DB, host hostContent,
 				logid.TransferAssignmentStoreFailed.Field(),
 				zap.Error(err))
 			return nil, refuse(http.StatusInternalServerError, errImportAssignmentsStoreFailed, errorArgs{"host": host.IP})
+		}
+	}
+
+	return items, nil
+}
+
+// carriesLocalForwards reports whether any Host of a file carries a local
+// forward.
+func carriesLocalForwards(content tunnelsContent) bool {
+	for _, host := range content.Hosts {
+		if len(host.LocalForwards) > 0 {
+			return true
+		}
+	}
+
+	return false
+}
+
+// checkLocalForwards holds every local forward of a file to the rules of a
+// create, and refuses a file that opens one local port twice. It runs before
+// anything is written, because two rows of the file meeting each other is a
+// fault of the file wherever in it they are.
+func checkLocalForwards(c echo.Context, content tunnelsContent) *refusal {
+	openedBy := make(map[int]bool)
+
+	for _, host := range content.Hosts {
+		for _, lf := range host.LocalForwards {
+			localPort := strconv.Itoa(lf.LocalPort)
+
+			err := c.Validate(&models.LocalForwardRequest{
+				BindScope:   lf.BindScope,
+				LocalPort:   lf.LocalPort,
+				TargetIP:    lf.TargetIP,
+				TargetPort:  lf.TargetPort,
+				Description: lf.Description,
+			})
+			if err != nil {
+				return refuse(http.StatusBadRequest, errImportLocalForwardRefused,
+					errorArgs{"host": host.IP, "local_port": localPort, "reason": err.Error()})
+			}
+
+			if openedBy[lf.LocalPort] {
+				return refuse(http.StatusBadRequest, errImportLocalForwardDuplicate, errorArgs{"local_port": localPort})
+			}
+
+			openedBy[lf.LocalPort] = true
+		}
+	}
+
+	return nil
+}
+
+// importLocalForwards makes each Host this import wrote carry the local
+// forwards the file names for it and nothing besides, as importAssignments does
+// for the service ports. A Host that was skipped keeps what it carries, and so
+// does a Host the file names no local forwards for at all (hostContent).
+//
+// Every one of those Hosts is cleared before any row is written, so that a
+// local port that moves from one Host of the file to another is free by the
+// time it is written, whichever of the two comes first. What still holds the
+// port after that belongs to a Host this import does not write, and taking it
+// from that Host is not what an overwrite was asked for, so the import is
+// refused with that Host named.
+func (h *TransferHandler) importLocalForwards(tx *gorm.DB, written []hostContent,
+	apiPort int) ([]transferItem, *refusal) {
+	hostIDs := make([]uint, len(written))
+	heldBefore := make([]map[int]bool, len(written))
+
+	for i, host := range written {
+		if host.LocalForwards == nil {
+			continue
+		}
+
+		var stored models.Host
+
+		err := tx.Where("ip = ?", host.IP).First(&stored).Error
+		if err != nil {
+			h.hosts.logger.Error("failed to read back a Host while importing its local forwards",
+				logid.TransferHostReadBackFailed.Field(),
+				zap.Error(err))
+			return nil, refuse(http.StatusInternalServerError, errImportAssignmentsHostRead, errorArgs{"host": host.IP})
+		}
+
+		var held []models.LocalForward
+
+		err = tx.Where("host_id = ?", stored.ID).Find(&held).Error
+		if err != nil {
+			h.hosts.logger.Error("failed to look for a local forward while importing",
+				logid.TransferLocalForwardLookupFailed.Field(),
+				zap.Error(err))
+			return nil, refuse(http.StatusInternalServerError, errImportLocalForwardsReadFailed)
+		}
+
+		heldBefore[i] = make(map[int]bool, len(held))
+		for _, lf := range held {
+			heldBefore[i][lf.LocalPort] = true
+		}
+
+		err = tx.Where("host_id = ?", stored.ID).Delete(&models.LocalForward{}).Error
+		if err != nil {
+			h.hosts.logger.Error("failed to clear the local forwards of a Host while importing",
+				logid.TransferHostLocalForwardsClearFailed.Field(),
+				zap.Error(err))
+			return nil, refuse(http.StatusInternalServerError, errImportLocalForwardsClearFailed, errorArgs{"host": host.IP})
+		}
+
+		hostIDs[i] = stored.ID
+	}
+
+	items := make([]transferItem, 0)
+
+	for i, host := range written {
+		for _, lf := range host.LocalForwards {
+			localPort := strconv.Itoa(lf.LocalPort)
+			name := host.IP + " opens " + localPort + " to " +
+				net.JoinHostPort(lf.TargetIP, strconv.Itoa(lf.TargetPort))
+
+			if lf.LocalPort == apiPort {
+				return nil, refuse(http.StatusConflict, errImportLocalForwardAPIPort,
+					errorArgs{"host": host.IP, "local_port": localPort})
+			}
+
+			var holder models.LocalForward
+
+			err := tx.Where("local_port = ?", lf.LocalPort).First(&holder).Error
+			if err == nil {
+				// The Host is named by its address, which is how the screens
+				// show it; a row whose Host is gone is named by the number.
+				owner := strconv.FormatUint(uint64(holder.HostID), 10)
+
+				var ownerHost models.Host
+				if tx.First(&ownerHost, holder.HostID).Error == nil {
+					owner = ownerHost.IP
+				}
+
+				return nil, refuse(http.StatusConflict, errImportLocalForwardPortTaken,
+					errorArgs{"host": host.IP, "local_port": localPort, "owner": owner})
+			}
+
+			if !errors.Is(err, gorm.ErrRecordNotFound) {
+				h.hosts.logger.Error("failed to look for a local forward while importing",
+					logid.TransferLocalForwardLookupFailed.Field(),
+					zap.Error(err))
+				return nil, refuse(http.StatusInternalServerError, errImportLocalForwardsReadFailed)
+			}
+
+			// An empty scope is stored as the word it stands for, the way a
+			// create stores it.
+			bindScope := lf.BindScope
+			if bindScope == "" {
+				bindScope = models.BindScopeWildcard
+			}
+
+			err = tx.Create(&models.LocalForward{
+				HostID:      hostIDs[i],
+				BindScope:   bindScope,
+				LocalPort:   lf.LocalPort,
+				TargetIP:    lf.TargetIP,
+				TargetPort:  lf.TargetPort,
+				Description: lf.Description,
+			}).Error
+			if err != nil {
+				h.hosts.logger.Error("failed to store a local forward while importing",
+					logid.TransferLocalForwardStoreFailed.Field(),
+					zap.Error(err))
+				return nil, refuse(http.StatusInternalServerError, errImportLocalForwardsStoreFailed, errorArgs{"host": host.IP})
+			}
+
+			action := transferAdded
+			if heldBefore[i][lf.LocalPort] {
+				action = transferReplaced
+			}
+
+			items = append(items, transferItem{Kind: "local_forward", Name: name, Action: action})
 		}
 	}
 

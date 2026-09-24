@@ -91,7 +91,7 @@ func newTransferInstall(t *testing.T) *transferInstall {
 	}
 
 	err = db.AutoMigrate(&models.Host{}, &models.ServicePort{}, &models.HostServicePort{},
-		&settings.Settings{})
+		&models.LocalForward{}, &settings.Settings{})
 	if err != nil {
 		t.Fatalf("failed to migrate the database: %v", err)
 	}
@@ -2213,5 +2213,484 @@ func TestTheAssignmentsOfASkippedHostAreLeftAlone(t *testing.T) {
 	if !reflect.DeepEqual(target.carried(t), fourPairs) {
 		t.Fatalf("after the overwrite the installation carries %v, want %v",
 			target.carried(t), fourPairs)
+	}
+}
+
+// TestTheLocalForwardContentCarriesEveryFieldOfALocalForward does for a local
+// forward what the tests above do for a Host and a service port. The Host id is
+// left out with the id: the Host is the one the forward is written under in
+// the file.
+func TestTheLocalForwardContentCarriesEveryFieldOfALocalForward(t *testing.T) {
+	left := map[string]bool{"ID": true, "HostID": true, "CreatedAt": true, "UpdatedAt": true}
+
+	stored := reflect.TypeOf(models.LocalForward{})
+	carried := reflect.TypeOf(localForwardContent{})
+
+	for i := 0; i < stored.NumField(); i++ {
+		name := stored.Field(i).Name
+		if left[name] {
+			continue
+		}
+
+		_, found := carried.FieldByName(name)
+		if !found {
+			t.Errorf("models.LocalForward has %s and localForwardContent does not, "+
+				"so it is not carried by an export", name)
+		}
+	}
+}
+
+// passwordHost is a Host logged in to with a password, which is all the local
+// forward tests need of one.
+func passwordHost(ip string) hostContent {
+	return hostContent{
+		IP:          ip,
+		Port:        22,
+		User:        "operator",
+		Password:    "the password of the Host",
+		Description: "the Host " + ip,
+		Enabled:     true,
+	}
+}
+
+// forward stores one local forward on a registered Host.
+func (i *transferInstall) forward(t *testing.T, hostIP string, lf localForwardContent) {
+	t.Helper()
+
+	var host models.Host
+
+	err := i.db.Where("ip = ?", hostIP).First(&host).Error
+	if err != nil {
+		t.Fatalf("the Host %s is not registered here: %v", hostIP, err)
+	}
+
+	err = i.db.Create(&models.LocalForward{
+		HostID:      host.ID,
+		BindScope:   lf.BindScope,
+		LocalPort:   lf.LocalPort,
+		TargetIP:    lf.TargetIP,
+		TargetPort:  lf.TargetPort,
+		Description: lf.Description,
+	}).Error
+	if err != nil {
+		t.Fatalf("failed to store the local forward: %v", err)
+	}
+}
+
+// forwards is every local forward stored, named by what means the same on both
+// installations: "<Host IP> <scope> <local port> -> <target> (<description>)".
+func (i *transferInstall) forwards(t *testing.T) []string {
+	t.Helper()
+
+	var rows []struct {
+		IP          string
+		BindScope   string
+		LocalPort   int
+		TargetIP    string
+		TargetPort  int
+		Description string
+	}
+
+	err := i.db.Model(&models.LocalForward{}).
+		Select("hosts.ip AS ip, local_forwards.bind_scope AS bind_scope, " +
+			"local_forwards.local_port AS local_port, local_forwards.target_ip AS target_ip, " +
+			"local_forwards.target_port AS target_port, local_forwards.description AS description").
+		Joins("JOIN hosts ON hosts.id = local_forwards.host_id").
+		Order("local_forwards.local_port").
+		Scan(&rows).Error
+	if err != nil {
+		t.Fatalf("failed to read the local forwards: %v", err)
+	}
+
+	named := make([]string, 0, len(rows))
+	for _, row := range rows {
+		named = append(named, row.IP+" "+row.BindScope+" "+strconv.Itoa(row.LocalPort)+" -> "+
+			row.TargetIP+":"+strconv.Itoa(row.TargetPort)+" ("+row.Description+")")
+	}
+
+	return named
+}
+
+// errorCodeOf reads the code a refusal was answered under.
+func errorCodeOf(t *testing.T, rec *httptest.ResponseRecorder) errorCode {
+	t.Helper()
+
+	var body errorBody
+
+	err := json.Unmarshal(rec.Body.Bytes(), &body)
+	if err != nil {
+		t.Fatalf("failed to read the refusal: %v, body: %s", err, rec.Body.String())
+	}
+
+	return body.Code
+}
+
+// TestTheLocalForwardsOfAHostCrossToAnotherInstallation is the round trip: what
+// an installation forwards is what the one that took the file in forwards, on
+// the same Host, and an empty scope arrives as the wildcard it stands for.
+func TestTheLocalForwardsOfAHostCrossToAnotherInstallation(t *testing.T) {
+	source := newTransferInstall(t)
+	target := newTransferInstall(t)
+
+	source.registerHost(t, passwordHost("192.0.2.10"))
+	source.registerHost(t, passwordHost("192.0.2.11"))
+	source.forward(t, "192.0.2.10", localForwardContent{BindScope: models.BindScopeLoopback,
+		LocalPort: 15433, TargetIP: "127.0.0.1", TargetPort: 5432, Description: "the database"})
+	source.forward(t, "192.0.2.10", localForwardContent{BindScope: models.BindScopeWildcard,
+		LocalPort: 15432, TargetIP: "192.0.2.30", TargetPort: 5432})
+	source.forward(t, "192.0.2.11", localForwardContent{
+		LocalPort: 18443, TargetIP: "192.0.2.31", TargetPort: 443, Description: "no scope"})
+
+	rec := source.call(t, source.handler.ExportTunnels, `{"password":`+jsonString(t, testExportPassword)+`}`)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("the export answered %d: %s", rec.Code, rec.Body.String())
+	}
+
+	var exported exportedTunnels
+
+	decodeTransfer(t, rec).into(t, &exported)
+
+	if exported.LocalForwards != 3 {
+		t.Errorf("the export counts %d local forwards, want 3", exported.LocalForwards)
+	}
+
+	opened, err := crypto.DecryptWithPassword(exported.File, testExportPassword)
+	if err != nil {
+		t.Fatalf("the file does not open: %v", err)
+	}
+
+	// In the order of the local port, whatever order the rows were stored in.
+	if !strings.Contains(opened, `"local_forwards":[{"bind_scope":"wildcard","local_port":15432,`) {
+		t.Errorf("the file does not carry the local forwards of the Host in port order: %s", opened)
+	}
+
+	rec = target.importTunnels(t, exported.File, testExportPassword, false)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("the import answered %d: %s", rec.Code, rec.Body.String())
+	}
+
+	var imported importedTunnels
+
+	decodeTransfer(t, rec).into(t, &imported)
+
+	if imported.Added != 5 {
+		t.Errorf("the import added %d rows, want the 2 Hosts and the 3 local forwards", imported.Added)
+	}
+
+	want := []string{
+		"192.0.2.10 wildcard 15432 -> 192.0.2.30:5432 ()",
+		"192.0.2.10 loopback 15433 -> 127.0.0.1:5432 (the database)",
+		"192.0.2.11 wildcard 18443 -> 192.0.2.31:443 (no scope)",
+	}
+
+	if !reflect.DeepEqual(target.forwards(t), want) {
+		t.Fatalf("the installation that took the file in forwards %v, want %v", target.forwards(t), want)
+	}
+
+	if target.manager.count() != 1 {
+		t.Errorf("the import asked for %d reconcile passes, want 1", target.manager.count())
+	}
+}
+
+// TestAFileFromBeforeTheLocalForwardsWereStoredIsImported is a file with no
+// local_forwards field at all, which is every file an earlier release wrote.
+func TestAFileFromBeforeTheLocalForwardsWereStoredIsImported(t *testing.T) {
+	source := newTransferInstall(t)
+	target := newTransferInstall(t)
+
+	source.registerHost(t, passwordHost("192.0.2.10"))
+	source.forward(t, "192.0.2.10", localForwardContent{LocalPort: 15432, TargetIP: "192.0.2.30", TargetPort: 5432})
+
+	file := rewriteHosts(t, source.exportTunnels(t, testExportPassword), testExportPassword,
+		func(host map[string]interface{}) {
+			delete(host, "local_forwards")
+		})
+
+	opened, err := crypto.DecryptWithPassword(file, testExportPassword)
+	if err != nil {
+		t.Fatalf("the file does not open: %v", err)
+	}
+
+	if strings.Contains(opened, "local_forwards") {
+		t.Fatalf("the file still carries the local forwards: %s", opened)
+	}
+
+	rec := target.importTunnels(t, file, testExportPassword, false)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("the import answered %d: %s", rec.Code, rec.Body.String())
+	}
+
+	if target.count(t, &models.Host{}) != 1 {
+		t.Fatalf("the Host of the file was not imported")
+	}
+
+	if target.count(t, &models.LocalForward{}) != 0 {
+		t.Fatalf("a local forward was stored from a file that carries none: %v", target.forwards(t))
+	}
+}
+
+// TestALocalForwardTheFileCannotCarryIsRefused holds every local forward of the
+// file to what the screens refuse, and to the one local port per forward that
+// the table is held to, and the refusal leaves nothing behind.
+func TestALocalForwardTheFileCannotCarryIsRefused(t *testing.T) {
+	cases := []struct {
+		name   string
+		second localForwardContent
+		code   errorCode
+	}{
+		{
+			name:   "the local port of the other Host",
+			second: localForwardContent{LocalPort: 15432, TargetIP: "192.0.2.31", TargetPort: 22},
+			code:   errImportLocalForwardDuplicate,
+		},
+		{
+			name:   "a scope that is neither",
+			second: localForwardContent{BindScope: "public", LocalPort: 15433, TargetIP: "192.0.2.31", TargetPort: 22},
+			code:   errImportLocalForwardRefused,
+		},
+		{
+			name:   "a target that is not an address",
+			second: localForwardContent{LocalPort: 15433, TargetIP: "the database", TargetPort: 22},
+			code:   errImportLocalForwardRefused,
+		},
+		{
+			name:   "a port out of range",
+			second: localForwardContent{LocalPort: 70000, TargetIP: "192.0.2.31", TargetPort: 22},
+			code:   errImportLocalForwardRefused,
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			source := newTransferInstall(t)
+			target := newTransferInstall(t)
+
+			first := passwordHost("192.0.2.10")
+			first.LocalForwards = []localForwardContent{{LocalPort: 15432, TargetIP: "192.0.2.30", TargetPort: 22}}
+
+			second := passwordHost("192.0.2.11")
+			second.LocalForwards = []localForwardContent{tc.second}
+
+			file := sealedTunnelsFile(t, source, tunnelsContent{
+				Hosts: []hostContent{first, second},
+			}, testExportPassword)
+
+			rec := target.importTunnels(t, file, testExportPassword, true)
+			if rec.Code != http.StatusBadRequest {
+				t.Fatalf("the import answered %d, want %d: %s", rec.Code, http.StatusBadRequest, rec.Body.String())
+			}
+
+			if errorCodeOf(t, rec) != tc.code {
+				t.Errorf("the import was refused under %s, want %s", errorCodeOf(t, rec), tc.code)
+			}
+
+			if target.count(t, &models.Host{}) != 0 || target.count(t, &models.LocalForward{}) != 0 {
+				t.Fatalf("the refused import left rows behind")
+			}
+
+			if target.manager.count() != 0 {
+				t.Errorf("a reconcile pass was asked for although nothing was imported")
+			}
+		})
+	}
+}
+
+// TestALocalForwardOnThePortOfThisServerIsRefused is the port the stored
+// settings listen on, which a local forward opened on this machine would take.
+func TestALocalForwardOnThePortOfThisServerIsRefused(t *testing.T) {
+	source := newTransferInstall(t)
+	target := newTransferInstall(t)
+
+	stored := settings.Defaults()
+	stored.APIPort = 19443
+
+	err := settings.Save(target.db, &stored)
+	if err != nil {
+		t.Fatalf("failed to store the settings: %v", err)
+	}
+
+	host := passwordHost("192.0.2.10")
+	host.LocalForwards = []localForwardContent{{LocalPort: 19443, TargetIP: "192.0.2.30", TargetPort: 443}}
+
+	file := sealedTunnelsFile(t, source, tunnelsContent{Hosts: []hostContent{host}}, testExportPassword)
+
+	rec := target.importTunnels(t, file, testExportPassword, false)
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("the import answered %d, want %d: %s", rec.Code, http.StatusConflict, rec.Body.String())
+	}
+
+	if errorCodeOf(t, rec) != errImportLocalForwardAPIPort {
+		t.Errorf("the import was refused under %s, want %s", errorCodeOf(t, rec), errImportLocalForwardAPIPort)
+	}
+
+	if target.count(t, &models.Host{}) != 0 || target.count(t, &models.LocalForward{}) != 0 {
+		t.Fatalf("the refused import left rows behind")
+	}
+}
+
+// TestALocalPortAnotherHostHoldsIsRefused is a local forward of the file on a
+// port a Host the file does not write already opens here. An overwrite replaces
+// what the Hosts of the file carry and nothing of any other Host, so the port is
+// not taken from it: the import is refused with that Host named.
+func TestALocalPortAnotherHostHoldsIsRefused(t *testing.T) {
+	source := newTransferInstall(t)
+	target := newTransferInstall(t)
+
+	target.registerHost(t, passwordHost("192.0.2.12"))
+	target.forward(t, "192.0.2.12", localForwardContent{BindScope: models.BindScopeWildcard,
+		LocalPort: 15432, TargetIP: "192.0.2.40", TargetPort: 5432})
+
+	before := target.forwards(t)
+
+	host := passwordHost("192.0.2.10")
+	host.LocalForwards = []localForwardContent{{LocalPort: 15432, TargetIP: "192.0.2.30", TargetPort: 5432}}
+
+	file := sealedTunnelsFile(t, source, tunnelsContent{Hosts: []hostContent{host}}, testExportPassword)
+
+	for _, overwrite := range []bool{false, true} {
+		rec := target.importTunnels(t, file, testExportPassword, overwrite)
+		if rec.Code != http.StatusConflict {
+			t.Fatalf("overwrite %v: the import answered %d, want %d: %s", overwrite, rec.Code,
+				http.StatusConflict, rec.Body.String())
+		}
+
+		if errorCodeOf(t, rec) != errImportLocalForwardPortTaken {
+			t.Errorf("overwrite %v: the import was refused under %s, want %s", overwrite,
+				errorCodeOf(t, rec), errImportLocalForwardPortTaken)
+		}
+
+		if !strings.Contains(decodeTransfer(t, rec).Error, "192.0.2.12") {
+			t.Errorf("overwrite %v: the refusal does not name the Host holding the port: %q", overwrite,
+				decodeTransfer(t, rec).Error)
+		}
+
+		if target.count(t, &models.Host{}) != 1 {
+			t.Fatalf("overwrite %v: the Host of the refused file was left behind", overwrite)
+		}
+
+		if !reflect.DeepEqual(target.forwards(t), before) {
+			t.Fatalf("overwrite %v: the refused import changed the local forwards to %v, want %v",
+				overwrite, target.forwards(t), before)
+		}
+	}
+}
+
+// TestAnOverwriteReplacesTheLocalForwardsOfTheHostsItWrites is the other side
+// of the rule above. A Host the import writes carries what the file names, and
+// a port that moves between two Hosts of the file moves, whichever of them the
+// file names first. A Host the import skips keeps what it forwards.
+func TestAnOverwriteReplacesTheLocalForwardsOfTheHostsItWrites(t *testing.T) {
+	source := newTransferInstall(t)
+	target := newTransferInstall(t)
+
+	target.registerHost(t, passwordHost("192.0.2.10"))
+	target.registerHost(t, passwordHost("192.0.2.11"))
+	target.forward(t, "192.0.2.10", localForwardContent{BindScope: models.BindScopeWildcard,
+		LocalPort: 15432, TargetIP: "192.0.2.30", TargetPort: 5432})
+	target.forward(t, "192.0.2.10", localForwardContent{BindScope: models.BindScopeWildcard,
+		LocalPort: 15499, TargetIP: "192.0.2.30", TargetPort: 99})
+	target.forward(t, "192.0.2.11", localForwardContent{BindScope: models.BindScopeWildcard,
+		LocalPort: 15433, TargetIP: "192.0.2.31", TargetPort: 5432})
+
+	before := target.forwards(t)
+
+	// The two ports trade places, and the first Host drops the third.
+	first := passwordHost("192.0.2.10")
+	first.LocalForwards = []localForwardContent{{BindScope: models.BindScopeLoopback,
+		LocalPort: 15433, TargetIP: "192.0.2.30", TargetPort: 5432}}
+
+	second := passwordHost("192.0.2.11")
+	second.LocalForwards = []localForwardContent{{BindScope: models.BindScopeWildcard,
+		LocalPort: 15432, TargetIP: "192.0.2.31", TargetPort: 5432}}
+
+	file := sealedTunnelsFile(t, source, tunnelsContent{Hosts: []hostContent{first, second}}, testExportPassword)
+
+	rec := target.importTunnels(t, file, testExportPassword, false)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("the import answered %d: %s", rec.Code, rec.Body.String())
+	}
+
+	if !reflect.DeepEqual(target.forwards(t), before) {
+		t.Fatalf("an import without overwrite changed what the skipped Hosts forward to %v, want %v",
+			target.forwards(t), before)
+	}
+
+	rec = target.importTunnels(t, file, testExportPassword, true)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("the import with overwrite answered %d: %s", rec.Code, rec.Body.String())
+	}
+
+	want := []string{
+		"192.0.2.11 wildcard 15432 -> 192.0.2.31:5432 ()",
+		"192.0.2.10 loopback 15433 -> 192.0.2.30:5432 ()",
+	}
+
+	if !reflect.DeepEqual(target.forwards(t), want) {
+		t.Fatalf("after the overwrite the installation forwards %v, want %v", target.forwards(t), want)
+	}
+}
+
+// TestAFileFromBeforeTheLocalForwardsLeavesThemAlone is a file with no
+// local_forwards field imported with overwrite onto a Host that forwards
+// something here. Such a file says nothing about local forwards, so what the
+// Host forwards here stays.
+func TestAFileFromBeforeTheLocalForwardsLeavesThemAlone(t *testing.T) {
+	source := newTransferInstall(t)
+	target := newTransferInstall(t)
+
+	source.registerHost(t, passwordHost("192.0.2.10"))
+
+	target.registerHost(t, passwordHost("192.0.2.10"))
+	target.forward(t, "192.0.2.10", localForwardContent{BindScope: models.BindScopeWildcard,
+		LocalPort: 15432, TargetIP: "192.0.2.30", TargetPort: 5432})
+
+	before := target.forwards(t)
+
+	file := rewriteHosts(t, source.exportTunnels(t, testExportPassword), testExportPassword,
+		func(host map[string]interface{}) {
+			delete(host, "local_forwards")
+		})
+
+	rec := target.importTunnels(t, file, testExportPassword, true)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("the import answered %d: %s", rec.Code, rec.Body.String())
+	}
+
+	if !reflect.DeepEqual(target.forwards(t), before) {
+		t.Fatalf("a file that names no local forwards changed them to %v, want %v", target.forwards(t), before)
+	}
+}
+
+// TestAHostCarriedAsForwardingNothingForwardsNothing is the other half: an
+// empty list is a file saying the Host forwards nothing, and an overwrite
+// leaves it forwarding nothing.
+func TestAHostCarriedAsForwardingNothingForwardsNothing(t *testing.T) {
+	source := newTransferInstall(t)
+	target := newTransferInstall(t)
+
+	source.registerHost(t, passwordHost("192.0.2.10"))
+
+	target.registerHost(t, passwordHost("192.0.2.10"))
+	target.forward(t, "192.0.2.10", localForwardContent{BindScope: models.BindScopeWildcard,
+		LocalPort: 15432, TargetIP: "192.0.2.30", TargetPort: 5432})
+
+	file := source.exportTunnels(t, testExportPassword)
+
+	opened, err := crypto.DecryptWithPassword(file, testExportPassword)
+	if err != nil {
+		t.Fatalf("the file does not open: %v", err)
+	}
+
+	if !strings.Contains(opened, `"local_forwards":[]`) {
+		t.Fatalf("a Host with no local forward is not written with an empty list: %s", opened)
+	}
+
+	rec := target.importTunnels(t, file, testExportPassword, true)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("the import answered %d: %s", rec.Code, rec.Body.String())
+	}
+
+	if target.count(t, &models.LocalForward{}) != 0 {
+		t.Fatalf("after the overwrite the Host still forwards %v", target.forwards(t))
 	}
 }

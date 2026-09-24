@@ -315,7 +315,7 @@
                         "CSRFToken": []
                     }
                 ],
-                "description": "A POST and not a GET because the password that seals the file is in the body.\nInside the file the SSH password, the private key and the key passphrase of every Host are in the clear, so treat it as the credentials of every Host it names.",
+                "description": "A POST and not a GET because the password that seals the file is in the body.\nInside the file the SSH password, the private key and the key passphrase of every Host are in the clear, so treat it as the credentials of every Host it names.\nEach Host carries its local forwards in the file, and local_forwards in the answer counts them.",
                 "consumes": [
                     "application/json"
                 ],
@@ -1210,7 +1210,7 @@
                         "CSRFToken": []
                     }
                 ],
-                "description": "Adds what is not registered here and skips what is, naming in the answer what it skipped and why. Send the same file again with overwrite true to replace those rows instead.\nThe whole import is one transaction: a file that is refused half way through leaves the database exactly as it was.",
+                "description": "Adds what is not registered here and skips what is, naming in the answer what it skipped and why. Send the same file again with overwrite true to replace those rows instead.\nThe whole import is one transaction: a file that is refused half way through leaves the database exactly as it was.\nA Host the import writes is left carrying the local forwards the file names for it, and keeps its own when the file has no local_forwards for it. The import is refused when the file opens one local port twice, or opens the port this server is stored to listen on or a local port a local forward of another Host holds here.",
                 "consumes": [
                     "application/json"
                 ],
@@ -2666,6 +2666,7 @@
                 "export.hosts.read_failed",
                 "export.service_ports.read_failed",
                 "export.assignments.read_failed",
+                "export.local_forwards.read_failed",
                 "export.host.secrets_unreadable",
                 "export.seal_failed",
                 "import.file.missing",
@@ -2698,6 +2699,13 @@
                 "import.assignments.store_failed",
                 "import.settings.unreadable",
                 "import.settings.refused",
+                "import.local_forward.refused",
+                "import.local_forward.duplicate",
+                "import.local_forward.local_port.api_port",
+                "import.local_forward.local_port.taken",
+                "import.local_forwards.read_failed",
+                "import.local_forwards.clear_failed",
+                "import.local_forwards.store_failed",
                 "uninstall.password.wrong"
             ],
             "x-enum-varnames": [
@@ -2800,6 +2808,7 @@
                 "errExportHostsReadFailed",
                 "errExportServicePortsRead",
                 "errExportAssignmentsRead",
+                "errExportLocalForwardsRead",
                 "errExportHostSecretsSealed",
                 "errExportSealFailed",
                 "errImportFileMissing",
@@ -2832,6 +2841,13 @@
                 "errImportAssignmentsStoreFailed",
                 "errImportSettingsUnreadable",
                 "errImportSettingsRefused",
+                "errImportLocalForwardRefused",
+                "errImportLocalForwardDuplicate",
+                "errImportLocalForwardAPIPort",
+                "errImportLocalForwardPortTaken",
+                "errImportLocalForwardsReadFailed",
+                "errImportLocalForwardsClearFailed",
+                "errImportLocalForwardsStoreFailed",
                 "errUninstallPasswordWrong"
             ]
         },
@@ -2871,6 +2887,9 @@
                 },
                 "kind": {
                     "type": "string"
+                },
+                "local_forwards": {
+                    "type": "integer"
                 },
                 "service_ports": {
                     "type": "integer"

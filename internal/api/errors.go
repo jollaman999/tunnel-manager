@@ -184,6 +184,7 @@ const (
 	errExportHostsReadFailed   errorCode = "export.hosts.read_failed"
 	errExportServicePortsRead  errorCode = "export.service_ports.read_failed"
 	errExportAssignmentsRead   errorCode = "export.assignments.read_failed"
+	errExportLocalForwardsRead errorCode = "export.local_forwards.read_failed"
 	errExportHostSecretsSealed errorCode = "export.host.secrets_unreadable"
 	errExportSealFailed        errorCode = "export.seal_failed"
 
@@ -218,6 +219,14 @@ const (
 	errImportAssignmentsStoreFailed errorCode = "import.assignments.store_failed"
 	errImportSettingsUnreadable     errorCode = "import.settings.unreadable"
 	errImportSettingsRefused        errorCode = "import.settings.refused"
+
+	errImportLocalForwardRefused      errorCode = "import.local_forward.refused"
+	errImportLocalForwardDuplicate    errorCode = "import.local_forward.duplicate"
+	errImportLocalForwardAPIPort      errorCode = "import.local_forward.local_port.api_port"
+	errImportLocalForwardPortTaken    errorCode = "import.local_forward.local_port.taken"
+	errImportLocalForwardsReadFailed  errorCode = "import.local_forwards.read_failed"
+	errImportLocalForwardsClearFailed errorCode = "import.local_forwards.clear_failed"
+	errImportLocalForwardsStoreFailed errorCode = "import.local_forwards.store_failed"
 
 	errUninstallPasswordWrong errorCode = "uninstall.password.wrong"
 )
@@ -398,6 +407,7 @@ var errorMessages = map[errorCode]string{
 	errExportHostsReadFailed:   "Failed to read the Hosts",
 	errExportServicePortsRead:  "Failed to read the service ports",
 	errExportAssignmentsRead:   "Failed to read the service port assignments",
+	errExportLocalForwardsRead: "Failed to read the local forwards",
 	errExportHostSecretsSealed: "No export was made: the stored secrets of the Host {host} do not open with the encryption key of this installation",
 	errExportSealFailed:        "Failed to encrypt the file",
 
@@ -438,6 +448,14 @@ var errorMessages = map[errorCode]string{
 	errImportAssignmentsStoreFailed: "Nothing was imported: failed to store the service ports the Host {host} carries",
 	errImportSettingsUnreadable:     "The file says it holds the settings of the manager, but the settings in it cannot be read",
 	errImportSettingsRefused:        "Nothing was imported. The settings in the file are refused: {reason}",
+
+	errImportLocalForwardRefused:      "Nothing was imported. The local forward on the local port {local_port} of the Host {host} in the file was refused: {reason}",
+	errImportLocalForwardDuplicate:    "Nothing was imported. The file opens the local port {local_port} with more than one local forward",
+	errImportLocalForwardAPIPort:      "Nothing was imported. The local forward of the Host {host} in the file opens the local port {local_port}, which is the port this server listens on",
+	errImportLocalForwardPortTaken:    "Nothing was imported. The local forward of the Host {host} in the file opens the local port {local_port}, which a local forward of the Host {owner} opens here already. Change or delete one of the two and import again",
+	errImportLocalForwardsReadFailed:  "Nothing was imported: failed to read the local forwards",
+	errImportLocalForwardsClearFailed: "Nothing was imported: failed to replace the local forwards of the Host {host}",
+	errImportLocalForwardsStoreFailed: "Nothing was imported: failed to store the local forwards of the Host {host}",
 
 	// Removing the installation.
 	errUninstallPasswordWrong: "The password does not open this account",
