@@ -277,10 +277,16 @@ h1 {
 /* The card is wide enough for the Host list to show its row buttons on one
    line, which is wider than a paragraph reads well at. Running text keeps the
    measure the card had before; the boxes a notice or a summary is drawn in are
-   left the width of the card, so they do not stop short of its edge. */
+   left the width of the card, so they do not stop short of its edge, and the
+   text inside them is held to the same measure by the room at their end. */
 #app p:not(.notice):not(.summary),
 #app li {
   max-width: 60rem;
+}
+
+#app .notice,
+#app .summary {
+  padding-inline-end: max(0.75rem, calc(100% - 60.75rem));
 }
 
 #app {
