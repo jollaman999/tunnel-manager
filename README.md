@@ -15,6 +15,10 @@ are in that file and are changed in the browser, and the UI and the API are
 compiled into the binary. There is nothing to install beside it and nothing to
 configure before the first start.
 
+**Service port: the Host opens the port.** Each Host that carries a service
+port opens `local_port`, and tunnel-manager carries every connection that
+arrives there to `service_ip:service_port`.
+
 ```mermaid
 flowchart LR
     client([A client that reaches the Host])
@@ -32,6 +36,29 @@ flowchart LR
     tm -->|"4. connects to the service"| service
 ```
 
+**Local forward: this machine opens the port.** It runs the other way, the way
+`ssh -L` does. tunnel-manager opens `local_port` on this machine and carries
+every connection to it over the SSH connection of a Host to
+`target_ip:target_port`, an address that Host reaches.
+
+```mermaid
+flowchart LR
+    client([A client that reaches this machine])
+    subgraph here [This machine]
+        port[["local_port<br/>opened by tunnel-manager"]]
+        tm[tunnel-manager]
+    end
+    subgraph host [Host - an SSH server you register]
+        sshd[SSH server]
+    end
+    target[("target_ip:target_port<br/>any address the Host can reach")]
+
+    tm ==>|"1. connects over SSH, then opens local_port"| sshd
+    client -->|"2. connects to local_port"| port
+    port -->|"3. through the SSH connection"| sshd
+    sshd -->|"4. connects to the target"| target
+```
+
 An installation is made of three things. You register a Host and a service
 port, the assignment between them is made for you unless you say otherwise, and
 one assignment is what one tunnel is built from.
@@ -43,8 +70,7 @@ one assignment is what one tunnel is built from.
 | Assignment | Which Host carries which service port. One assignment whose Host is enabled is one tunnel |
 | Local forward | A port opened on this machine, carried through one Host to an address that Host reaches |
 
-The last row is optional and runs the other way, the way `ssh -L` does: this
-machine opens the port and the connection is made from the Host. A local forward
+The last row is optional and is the second picture above. A local forward
 belongs to the Host it is made on and is added from the **Local forwards** button
 in the row of that Host.
 

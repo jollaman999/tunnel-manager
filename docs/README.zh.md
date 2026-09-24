@@ -12,6 +12,9 @@
 在浏览器里改，界面和 API 都编译进了可执行文件。旁边不需要安装其他组件，第一次启动前也没有
 什么需要配置。
 
+**服务端口：由 Host 打开端口。** 负责服务端口的每台 Host 各打开 `local_port`，tunnel-manager
+把到达那里的每个连接送到 `service_ip:service_port`。
+
 ```mermaid
 flowchart LR
     client(["能访问到 Host 的客户端"])
@@ -29,6 +32,28 @@ flowchart LR
     tm -->|"4. 连接服务"| service
 ```
 
+**本地转发：由本机打开端口。** 方向相反，和 `ssh -L` 一样。tunnel-manager 在本机打开
+`local_port`，把连到它的每个连接通过 Host 的 SSH 连接送到 `target_ip:target_port`，也就是这台
+Host 能访问到的地址。
+
+```mermaid
+flowchart LR
+    client(["能访问到本机的客户端"])
+    subgraph here ["本机"]
+        port[["local_port<br/>由 tunnel-manager 打开"]]
+        tm["tunnel-manager"]
+    end
+    subgraph host ["Host - 你注册的 SSH 服务器"]
+        sshd["SSH 服务器"]
+    end
+    target[("target_ip:target_port<br/>Host 能访问到的任意地址")]
+
+    tm ==>|"1. 通过 SSH 连接，然后打开 local_port"| sshd
+    client -->|"2. 连接 local_port"| port
+    port -->|"3. 顺着 SSH 连接过去"| sshd
+    sshd -->|"4. 连接目标"| target
+```
+
 一套安装由三样东西组成。你注册 Host 和服务端口，两者之间的分配关系会自动生成（除非你另行
 指定），一条隧道就是根据一条分配关系建立的。
 
@@ -39,8 +64,7 @@ flowchart LR
 | 分配关系 | 哪台 Host 负责哪个服务端口。一条分配关系，只要它的 Host 是启用的，就是一条隧道 |
 | 本地转发 | 在本机打开的端口，进来的连接经由一台 Host 转发到这台 Host 能访问到的地址 |
 
-最后一行是可选的，方向相反：和 `ssh -L` 一样，由本机打开端口，连接从 Host 那边发出。本地转发
-属于创建它的那台 Host，在那台 Host 所在行的 **Local forwards** 按钮里添加。
+最后一行是可选的，就是上面的第二张图。本地转发属于创建它的那台 Host，在那台 Host 所在行的 **Local forwards** 按钮里添加。
 
 ## 它做什么
 

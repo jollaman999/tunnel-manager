@@ -13,6 +13,9 @@ SSH 接続を通してサービスまで転送します。あとはトンネル�
 ブラウザから変更でき、UI と API はバイナリに組み込まれています。ほかにインストールするもの
 はなく、最初の起動の前に用意しておく設定もありません。
 
+**サービスポート: Host がポートを開きます。** サービスポートを担当する Host がそれぞれ
+`local_port` を開き、そこに届いた接続を tunnel-manager が `service_ip:service_port` へ運びます。
+
 ```mermaid
 flowchart LR
     client(["Host に接続できるクライアント"])
@@ -30,6 +33,28 @@ flowchart LR
     tm -->|"4. サービスに接続する"| service
 ```
 
+**ローカルフォワード: このマシンがポートを開きます。** 向きが逆で、`ssh -L` と同じです。
+tunnel-manager がこのマシンに `local_port` を開き、そこへの接続を Host の SSH 接続を通して、
+その Host が接続できるアドレス `target_ip:target_port` へ運びます。
+
+```mermaid
+flowchart LR
+    client(["このマシンに接続できるクライアント"])
+    subgraph here ["このマシン"]
+        port[["local_port<br/>tunnel-manager が開くポート"]]
+        tm["tunnel-manager"]
+    end
+    subgraph host ["Host - 登録した SSH サーバー"]
+        sshd["SSH サーバー"]
+    end
+    target[("target_ip:target_port<br/>Host が接続できるアドレス")]
+
+    tm ==>|"1. SSH で接続してから local_port を開く"| sshd
+    client -->|"2. local_port に接続する"| port
+    port -->|"3. SSH 接続を通って"| sshd
+    sshd -->|"4. 転送先に接続する"| target
+```
+
 インストールは 3 つのものからできています。Host とサービスポートは自分で登録し、両者をつなぐ
 割り当ては、別に指定しなければ登録と同時に作られます。トンネル 1 本は割り当て 1 つから
 作られます。
@@ -41,8 +66,7 @@ flowchart LR
 | 割り当て | どの Host がどのサービスポートを担当するかです。Host が有効になっている割り当て 1 つが、トンネル 1 本です |
 | ローカルフォワード | このマシンに開くポートです。届いた接続を 1 台の Host を経由して、その Host が届くアドレスへ送ります |
 
-最後の行は任意で、向きが逆です。`ssh -L` と同じく、このマシンがポートを開き、接続は Host から
-出ていきます。ローカルフォワードは作成した Host に属し、その Host の行の **Local forwards**
+最後の行は任意で、上の 2 つ目の図がこれです。ローカルフォワードは作成した Host に属し、その Host の行の **Local forwards**
 ボタンから追加します。
 
 ## できること

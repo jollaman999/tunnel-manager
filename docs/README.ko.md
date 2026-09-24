@@ -13,6 +13,9 @@
 파일 안에 있으며 브라우저에서 고칩니다. UI 와 API 는 바이너리 안에 들어 있습니다. 옆에 따로
 설치할 것도, 처음 띄우기 전에 정해 둘 것도 없습니다.
 
+**서비스 포트: Host 가 포트를 엽니다.** 서비스 포트를 담당하는 Host 마다 `local_port` 를 열고,
+거기로 들어온 연결을 tunnel-manager 가 `service_ip:service_port` 로 전달합니다.
+
 ```mermaid
 flowchart LR
     client([Host 에 접속할 수 있는 클라이언트])
@@ -30,6 +33,28 @@ flowchart LR
     tm -->|"4. 서비스로 연결"| service
 ```
 
+**로컬 포워딩: 이 장비가 포트를 엽니다.** 방향이 반대이며 `ssh -L` 과 같습니다.
+tunnel-manager 가 이 장비에 `local_port` 를 열고, 거기로 온 연결을 Host 의 SSH 연결을 타고 그
+Host 가 닿는 주소 `target_ip:target_port` 로 나릅니다.
+
+```mermaid
+flowchart LR
+    client([이 장비에 접속할 수 있는 클라이언트])
+    subgraph here [이 장비]
+        port[["local_port<br/>tunnel-manager 가 여는 포트"]]
+        tm[tunnel-manager]
+    end
+    subgraph host [Host - 등록한 SSH 서버]
+        sshd[SSH 서버]
+    end
+    target[("target_ip:target_port<br/>Host 가 접속할 수 있는 주소")]
+
+    tm ==>|"1. SSH 로 접속한 뒤 local_port 를 엶"| sshd
+    client -->|"2. local_port 로 접속"| port
+    port -->|"3. SSH 연결을 타고"| sshd
+    sshd -->|"4. 대상으로 연결"| target
+```
+
 설치본은 세 가지로 이루어집니다. Host 와 서비스 포트는 직접 등록하고, 둘을 잇는 할당은 따로
 정하지 않으면 등록할 때 같이 만들어집니다. 터널 하나는 할당 하나에서 만들어집니다.
 
@@ -40,8 +65,7 @@ flowchart LR
 | 할당 | 어느 Host 가 어느 서비스 포트를 담당하는지. 활성 Host 의 할당 하나가 터널 하나 |
 | 로컬 포워딩 | 이 장비에 여는 포트. 들어온 연결을 Host 하나를 거쳐 그 Host 가 닿는 주소로 보냄 |
 
-마지막 줄은 없어도 되고, 방향이 반대입니다. `ssh -L` 처럼 이 장비가 포트를 열고 연결은 Host 에서
-나갑니다. 로컬 포워딩은 만든 Host 에 딸리며, 그 Host 행의 **Local forwards** 버튼에서 추가합니다.
+마지막 줄은 없어도 되고, 위의 두 번째 그림이 이것입니다. 로컬 포워딩은 만든 Host 에 딸리며, 그 Host 행의 **Local forwards** 버튼에서 추가합니다.
 
 ## 하는 일
 
