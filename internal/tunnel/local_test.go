@@ -566,7 +566,7 @@ func TestALocalPortInUseLeavesTheForwardInError(t *testing.T) {
 		return state.Status == localStatusError
 	})
 
-	if !strings.Contains(state.LastError, "address already in use") {
+	if !strings.Contains(state.LastError, ":"+strconv.Itoa(localPort)) {
 		t.Fatalf("the forward reports the error %q, want the port in use named", state.LastError)
 	}
 	if f.server.handled.Load() == 0 {
