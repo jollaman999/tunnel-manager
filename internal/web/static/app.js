@@ -818,7 +818,7 @@ function paint(title, nodes) {
   // onto the second scroller of the same screen, which is the same box drawn
   // again.
   const scrolledTo = insideScrolls(app);
-  const barFocus = sameScreen ? barFocusOf(app) : null;
+  const focused = sameScreen ? focusOf(app) : null;
 
   app.textContent = "";
 
@@ -857,15 +857,17 @@ function paint(title, nodes) {
       boxes[at].node.scrollTop = scrolledTo[at].top;
     }
 
-    putBackBarFocus(app, heading, barFocus);
+    putBackFocus(app, heading, focused);
   } else {
     window.scrollTo(0, 0);
   }
 }
 
-// barFocusOf is the press over the ticks of a list that has the keyboard, as
-// the place of its row and the action it runs, or null.
-function barFocusOf(app) {
+// focusOf is the press on the screen that has the keyboard, noted as what can
+// find it again on a screen drawn anew, or null. A press over the ticks of a
+// list is noted by the place of its row, and a press in the buttons of a list
+// row by its name and the place of that row, since the row may be gone by then.
+function focusOf(app) {
   const at = document.activeElement;
 
   if (at === null || !app.contains(at)) {
@@ -874,51 +876,100 @@ function barFocusOf(app) {
 
   const bar = at.closest(".list-actions");
 
-  if (bar === null) {
+  if (bar !== null) {
+    return {
+      bar: Array.prototype.indexOf.call(app.querySelectorAll(".list-actions"), bar),
+      action: at.classList.contains("bar-menu") ? null : at.dataset.action
+    };
+  }
+
+  if (at.dataset.action === undefined) {
     return null;
   }
 
+  const cell = at.closest("td.actions");
+
   return {
-    bar: Array.prototype.indexOf.call(app.querySelectorAll(".list-actions"), bar),
-    action: at.classList.contains("bar-menu") ? null : at.dataset.action
+    row: cell === null ? -1 : Array.prototype.indexOf.call(app.querySelectorAll("td.actions"), cell),
+    action: at.dataset.action
   };
 }
 
-// putBackBarFocus gives the keyboard to the press in the row drawn again that
-// stands where the one noted by barFocusOf stood: the menu button of a folded
-// row, the same press of one that is not, and the first live press or else the
-// heading where that one is dead.
-function putBackBarFocus(app, heading, was) {
+// putBackFocus gives the keyboard to the press on the screen drawn anew that
+// stands where the one noted by focusOf stood, and to the heading where there
+// is none.
+//
+// Over the ticks that is the menu button of a folded row, the same press of one
+// that is not, and the first live press where that one is dead. In a list row
+// it is the press of the same name, whose words may have changed with what it
+// did, and else the press doing the same to the row now in that place, which
+// is how a row that was deleted is left: the row after it has moved up.
+function putBackFocus(app, heading, was) {
   if (was === null) {
     return;
   }
 
-  const bar = app.querySelectorAll(".list-actions")[was.bar];
   let target = null;
 
-  if (bar !== undefined) {
-    fitBarActions(bar);
+  if (was.bar !== undefined) {
+    const bar = app.querySelectorAll(".list-actions")[was.bar];
 
-    const trigger = barMenuButton(bar);
-    const live = barActions(bar).filter(function (button) {
-      return !button.disabled;
+    if (bar !== undefined) {
+      fitBarActions(bar);
+
+      const trigger = barMenuButton(bar);
+      const live = barActions(bar).filter(function (button) {
+        return !button.disabled;
+      });
+
+      if (bar.classList.contains("folded")) {
+        target = trigger !== null && !trigger.disabled ? trigger : null;
+      } else {
+        target = live.find(function (button) {
+          return button.dataset.action === was.action;
+        }) || live[0] || null;
+      }
+    }
+  } else {
+    target = livePress(app, function (action) {
+      return action === was.action;
     });
 
-    if (bar.classList.contains("folded")) {
-      target = trigger !== null && !trigger.disabled ? trigger : null;
-    } else {
-      target = live.find(function (button) {
-        return button.dataset.action === was.action;
-      }) || live[0] || null;
+    const cells = app.querySelectorAll("td.actions");
+
+    if (target === null && was.row !== -1 && cells.length > 0) {
+      const role = rowPressRole(was.action);
+
+      target = livePress(cells[Math.min(was.row, cells.length - 1)], function (action) {
+        return rowPressRole(action) === role;
+      });
     }
   }
 
   if (target === null) {
+    if (heading === null) {
+      return;
+    }
+
     heading.tabIndex = -1;
     target = heading;
   }
 
   target.focus({ preventScroll: true });
+}
+
+// livePress is the first press under node that is not dead and whose name is
+// taken by wanted, or null.
+function livePress(node, wanted) {
+  return Array.prototype.find.call(node.querySelectorAll("button[data-action]"), function (button) {
+    return !button.disabled && wanted(button.dataset.action);
+  }) || null;
+}
+
+// rowPressRole is the name of a press in a list row without the id of the row,
+// which is what the same press of another row is found by.
+function rowPressRole(action) {
+  return action.replace(/-\d+$/, "");
 }
 
 // insideScrolls is every box on the screen that scrolls inside itself, in the
@@ -2404,6 +2455,7 @@ function openModal(spec) {
     // goes back to when the panel leaves, so the operator carries on from the
     // button they pressed instead of from the top of the page.
     const opener = document.activeElement;
+    const openerPlace = focusOf(document.getElementById("app"));
 
     const backdrop = document.createElement("div");
     backdrop.className = "modal-backdrop";
@@ -2499,8 +2551,9 @@ function openModal(spec) {
       }
 
       // The button that opened the panel may have been drawn again while it
-      // was up, and the node that was noted is then no longer on the page.
-      // Focus is only put back where there is something to put it on.
+      // was up, as the refresh of the status screen does, and the node that
+      // was noted is then no longer on the page. The keyboard goes to the one
+      // drawn in its place instead, found the way a draw finds it.
       //
       // It is put back without scrolling to it. A browser handed the focus
       // scrolls what it lands on into view, which here would be scrolling away
@@ -2508,6 +2561,10 @@ function openModal(spec) {
       // panel was up, so what the focus is going back to is where it was left.
       if (opener !== null && typeof opener.focus === "function" && document.body.contains(opener)) {
         opener.focus({ preventScroll: true });
+      } else if (modalStack.length === 0) {
+        const app = document.getElementById("app");
+
+        putBackFocus(app, app.querySelector("h1"), openerPlace);
       }
 
       resolve(value === undefined ? null : value);
