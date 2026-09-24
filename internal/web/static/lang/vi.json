@@ -434,6 +434,8 @@
   "log.database.transaction_start_failed.text": "không bắt đầu được giao dịch",
   "log.encryption.init_failed.text": "không khởi tạo được phần mã hóa",
   "log.encryption.key_check_hosts_read_failed.text": "không đọc được danh sách Host để đối chiếu khóa mã hóa",
+  "log.encryption.key_file_narrow_failed.text": "không thu hẹp được tệp khóa chỉ còn chủ sở hữu, SYSTEM và Administrators, nên các tài khoản khác có thể vẫn đọc được (key_file={key_file})",
+  "log.encryption.key_file_narrowed.text": "các tài khoản khác đọc được tệp khóa, nên đã thu hẹp chỉ còn chủ sở hữu, SYSTEM và Administrators (key_file={key_file}, readers={readers})",
   "log.encryption.key_load_failed.text": "không nạp được khóa mã hóa",
   "log.encryption.key_loaded.text": "đã nạp khóa mã hóa",
   "log.encryption.key_opens_no_stored_password.text": "tệp khóa đang cấu hình không mở được mật khẩu nào trong số đã lưu, nên nó không phải khóa đã dùng để mã hóa chúng. Hãy đặt lại đúng tệp khóa mà các mật khẩu được lưu cùng, hoặc đặt lại mật khẩu của từng Host qua API. Việc khởi động với khóa khác bị từ chối, vì khi đó không tunnel nào thiết lập được và không mật khẩu đã lưu nào đọc được",

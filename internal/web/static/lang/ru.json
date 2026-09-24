@@ -434,6 +434,8 @@
   "log.database.transaction_start_failed.text": "не удалось начать транзакцию",
   "log.encryption.init_failed.text": "не удалось инициализировать шифрование",
   "log.encryption.key_check_hosts_read_failed.text": "не удалось прочитать Host, на которых проверяется ключ шифрования",
+  "log.encryption.key_file_narrow_failed.text": "не удалось ограничить файл ключа владельцем, SYSTEM и Administrators, поэтому другие учётные записи, возможно, могут его прочитать (key_file={key_file})",
+  "log.encryption.key_file_narrowed.text": "другие учётные записи могли прочитать файл ключа, поэтому доступ к нему ограничен владельцем, SYSTEM и Administrators (key_file={key_file}, readers={readers})",
   "log.encryption.key_load_failed.text": "не удалось загрузить ключ шифрования",
   "log.encryption.key_loaded.text": "ключ шифрования загружен",
   "log.encryption.key_opens_no_stored_password.text": "заданный файл ключа не открывает ни один из сохранённых паролей, значит это не тот ключ, которым их шифровали. Верните на место файл ключа, с которым пароли сохранялись, или задайте пароль каждого Host заново через API. Запуск с другим ключом отклоняется, потому что ни один туннель не установился бы и ни один сохранённый пароль не прочитался бы",

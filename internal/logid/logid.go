@@ -194,6 +194,8 @@ const (
 	EncryptionKeyLoadFailed             ID = "encryption.key_load_failed"
 	EncryptionInitFailed                ID = "encryption.init_failed"
 	EncryptionKeyLoaded                 ID = "encryption.key_loaded"
+	EncryptionKeyFileNarrowed           ID = "encryption.key_file_narrowed"
+	EncryptionKeyFileNarrowFailed       ID = "encryption.key_file_narrow_failed"
 )
 
 // account: the one account that opens the screens, and the sessions opened on it.

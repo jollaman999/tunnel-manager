@@ -434,6 +434,8 @@
   "log.database.transaction_start_failed.text": "เริ่มทรานแซกชันไม่สำเร็จ",
   "log.encryption.init_failed.text": "เริ่มต้นระบบเข้ารหัสไม่สำเร็จ",
   "log.encryption.key_check_hosts_read_failed.text": "อ่านรายการ Host มาตรวจกับคีย์เข้ารหัสไม่สำเร็จ",
+  "log.encryption.key_file_narrow_failed.text": "จำกัดไฟล์คีย์ให้เหลือแค่เจ้าของ SYSTEM และ Administrators ไม่สำเร็จ บัญชีอื่นจึงอาจยังอ่านได้ (key_file={key_file})",
+  "log.encryption.key_file_narrowed.text": "บัญชีอื่นอ่านไฟล์คีย์ได้ จึงจำกัดให้เหลือแค่เจ้าของ SYSTEM และ Administrators (key_file={key_file}, readers={readers})",
   "log.encryption.key_load_failed.text": "โหลดคีย์เข้ารหัสไม่สำเร็จ",
   "log.encryption.key_loaded.text": "โหลดคีย์เข้ารหัสแล้ว",
   "log.encryption.key_opens_no_stored_password.text": "ไฟล์คีย์ที่ตั้งไว้ถอดรหัสรหัสผ่านที่เก็บไว้ไม่ได้เลยสักรายการ จึงไม่ใช่คีย์ที่ใช้เข้ารหัสรหัสผ่านเหล่านั้น นำไฟล์คีย์ที่ใช้ตอนเก็บรหัสผ่านกลับมาวางไว้ที่เดิม หรือตั้งรหัสผ่านของ Host ทุกตัวใหม่ผ่าน API การเริ่มทำงานด้วยคีย์อื่นถูกปฏิเสธ เพราะจะเชื่อมต่ออุโมงค์ไม่ได้เลยและอ่านรหัสผ่านที่เก็บไว้ไม่ได้เลย",

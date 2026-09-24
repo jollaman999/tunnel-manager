@@ -434,6 +434,8 @@
   "log.database.transaction_start_failed.text": "ट्रांज़ैक्शन शुरू नहीं हो सका",
   "log.encryption.init_failed.text": "एन्क्रिप्शन तैयार नहीं हो सका",
   "log.encryption.key_check_hosts_read_failed.text": "एन्क्रिप्शन कुंजी जाँचने के लिए Host पढ़े नहीं जा सके",
+  "log.encryption.key_file_narrow_failed.text": "कुंजी फ़ाइल को उसके मालिक, SYSTEM और Administrators तक सीमित नहीं किया जा सका, इसलिए दूसरे खाते शायद उसे पढ़ सकते हैं (key_file={key_file})",
+  "log.encryption.key_file_narrowed.text": "दूसरे खाते कुंजी फ़ाइल पढ़ सकते थे, इसलिए उसे उसके मालिक, SYSTEM और Administrators तक सीमित किया गया (key_file={key_file}, readers={readers})",
   "log.encryption.key_load_failed.text": "एन्क्रिप्शन कुंजी लोड नहीं हो सकी",
   "log.encryption.key_loaded.text": "एन्क्रिप्शन कुंजी लोड हो गई",
   "log.encryption.key_opens_no_stored_password.text": "जो कुंजी फ़ाइल सेट है वह सेव किए हुए किसी भी पासवर्ड को नहीं खोलती, यानी पासवर्ड इस कुंजी से एन्क्रिप्ट नहीं हुए थे। जिस कुंजी फ़ाइल से पासवर्ड सेव हुए थे उसे वापस उसी जगह रखें, या API से हर Host का पासवर्ड दोबारा सेट करें। दूसरी कुंजी के साथ शुरू करना इसलिए मना है कि न कोई टनल कनेक्ट हो पाता और न सेव किया हुआ कोई पासवर्ड पढ़ा जाता",

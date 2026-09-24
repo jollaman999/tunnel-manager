@@ -12,6 +12,8 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+
+	"go.uber.org/zap"
 )
 
 // KeySize is the key length of AES-256 in bytes.
@@ -122,6 +124,12 @@ func (c *Cipher) Decrypt(encoded string) (string, error) {
 // LoadOrCreateKey reads the key file at path. The key is generated and stored
 // with keyFileMode when the file does not exist yet.
 func LoadOrCreateKey(path string) ([]byte, error) {
+	return LoadOrCreateKeyWithLogger(path, zap.NewNop())
+}
+
+// LoadOrCreateKeyWithLogger is LoadOrCreateKey with the lines about the
+// permission of the key file written on logger.
+func LoadOrCreateKeyWithLogger(path string, logger *zap.Logger) ([]byte, error) {
 	info, err := os.Stat(path)
 	if err != nil {
 		if !errors.Is(err, os.ErrNotExist) {
@@ -134,7 +142,7 @@ func LoadOrCreateKey(path string) ([]byte, error) {
 		return nil, fmt.Errorf("the key file path %s is a directory", path)
 	}
 
-	err = checkKeyFilePermission(path, info)
+	err = checkKeyFilePermission(path, info, logger)
 	if err != nil {
 		return nil, err
 	}
@@ -164,8 +172,7 @@ func createKey(path string) ([]byte, error) {
 		return nil, fmt.Errorf("failed to generate a key: %w", err)
 	}
 
-	// O_EXCL keeps a key file that appeared in the meantime from being overwritten.
-	f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, keyFileMode)
+	f, err := createKeyFile(path)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create the key file %s: %w", path, err)
 	}

@@ -434,6 +434,8 @@
   "log.database.transaction_start_failed.text": "failed to start the transaction",
   "log.encryption.init_failed.text": "failed to initialize the encryption",
   "log.encryption.key_check_hosts_read_failed.text": "failed to read the Hosts to check the encryption key against",
+  "log.encryption.key_file_narrow_failed.text": "failed to narrow the key file to its owner, SYSTEM and Administrators, so other accounts may be able to read it (key_file={key_file})",
+  "log.encryption.key_file_narrowed.text": "other accounts could read the key file, so it was narrowed to its owner, SYSTEM and Administrators (key_file={key_file}, readers={readers})",
   "log.encryption.key_load_failed.text": "failed to load the encryption key",
   "log.encryption.key_loaded.text": "loaded the encryption key",
   "log.encryption.key_opens_no_stored_password.text": "the configured key file opens none of the stored passwords, so it is not the key they were encrypted with. Put the key file that the passwords were stored with back in place, or set the password of every Host again through the API. Starting against another key is refused because no tunnel could be built and no stored password could be read",

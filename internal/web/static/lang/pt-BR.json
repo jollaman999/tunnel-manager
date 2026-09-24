@@ -434,6 +434,8 @@
   "log.database.transaction_start_failed.text": "falha ao iniciar a transação",
   "log.encryption.init_failed.text": "falha ao inicializar a criptografia",
   "log.encryption.key_check_hosts_read_failed.text": "falha ao ler os Hosts contra os quais a chave de criptografia seria conferida",
+  "log.encryption.key_file_narrow_failed.text": "falha ao restringir o arquivo de chave ao proprietário, SYSTEM e Administrators, então outras contas talvez consigam lê-lo (key_file={key_file})",
+  "log.encryption.key_file_narrowed.text": "outras contas conseguiam ler o arquivo de chave, então ele foi restrito ao proprietário, SYSTEM e Administrators (key_file={key_file}, readers={readers})",
   "log.encryption.key_load_failed.text": "falha ao carregar a chave de criptografia",
   "log.encryption.key_loaded.text": "carregou a chave de criptografia",
   "log.encryption.key_opens_no_stored_password.text": "o arquivo de chave configurado não abre nenhuma das senhas armazenadas, então não é a chave com que elas foram criptografadas. Reponha o arquivo de chave com que as senhas foram armazenadas, ou defina de novo a senha de cada Host pela API. Iniciar com outra chave é recusado porque nenhum túnel poderia ser estabelecido e nenhuma senha armazenada poderia ser lida",

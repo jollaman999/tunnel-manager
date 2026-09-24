@@ -1493,7 +1493,7 @@ func serve() {
 	// loaded stops the startup instead of leaving every tunnel unable to connect.
 	keyFile := resolveInstallPath(installDir, set.SecurityKeyFile)
 
-	key, err := crypto.LoadOrCreateKey(keyFile)
+	key, err := crypto.LoadOrCreateKeyWithLogger(keyFile, logger)
 	if err != nil {
 		logger.Fatal("failed to load the encryption key",
 			logid.EncryptionKeyLoadFailed.Field(),

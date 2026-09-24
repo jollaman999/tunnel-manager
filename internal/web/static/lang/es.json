@@ -434,6 +434,8 @@
   "log.database.transaction_start_failed.text": "no se pudo iniciar la transacción",
   "log.encryption.init_failed.text": "no se pudo inicializar el cifrado",
   "log.encryption.key_check_hosts_read_failed.text": "no se pudieron leer los Hosts con los que comprobar la clave de cifrado",
+  "log.encryption.key_file_narrow_failed.text": "no se pudo restringir el archivo de clave a su propietario, SYSTEM y Administrators, así que otras cuentas quizá puedan leerlo (key_file={key_file})",
+  "log.encryption.key_file_narrowed.text": "otras cuentas podían leer el archivo de clave, así que se restringió a su propietario, SYSTEM y Administrators (key_file={key_file}, readers={readers})",
   "log.encryption.key_load_failed.text": "no se pudo cargar la clave de cifrado",
   "log.encryption.key_loaded.text": "se cargó la clave de cifrado",
   "log.encryption.key_opens_no_stored_password.text": "el archivo de clave configurado no descifra ninguna de las contraseñas guardadas, así que no es la clave con la que se cifraron. Restaure el archivo de clave con el que se guardaron las contraseñas, o vuelva a establecer la contraseña de cada Host a través de la API. Se rechaza arrancar con otra clave porque no se podría establecer ningún túnel ni leer ninguna contraseña guardada",

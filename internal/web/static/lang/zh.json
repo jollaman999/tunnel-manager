@@ -434,6 +434,8 @@
   "log.database.transaction_start_failed.text": "开启事务失败",
   "log.encryption.init_failed.text": "初始化加密失败",
   "log.encryption.key_check_hosts_read_failed.text": "读取用来核对加密密钥的 Host 失败",
+  "log.encryption.key_file_narrow_failed.text": "未能把密钥文件收窄为只有所有者、SYSTEM 和 Administrators 可读，其他账户可能仍读得到 (key_file={key_file})",
+  "log.encryption.key_file_narrowed.text": "其他账户读得到密钥文件，已收窄为只有所有者、SYSTEM 和 Administrators 可读 (key_file={key_file}, readers={readers})",
   "log.encryption.key_load_failed.text": "加载加密密钥失败",
   "log.encryption.key_loaded.text": "加密密钥已加载",
   "log.encryption.key_opens_no_stored_password.text": "配置的密钥文件无法解密任何已保存的密码，所以它不是加密这些密码时用的那把密钥。请把保存密码时用的密钥文件放回原处，或者通过 API 重新设置每台 Host 的密码。用另一把密钥启动会被拒绝，因为那样一条隧道都无法建立，一个已保存的密码也无法读取",

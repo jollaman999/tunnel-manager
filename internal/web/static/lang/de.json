@@ -434,6 +434,8 @@
   "log.database.transaction_start_failed.text": "die Transaktion konnte nicht begonnen werden",
   "log.encryption.init_failed.text": "die Verschlüsselung konnte nicht eingerichtet werden",
   "log.encryption.key_check_hosts_read_failed.text": "die Hosts, an denen der Verschlüsselungsschlüssel zu prüfen ist, konnten nicht gelesen werden",
+  "log.encryption.key_file_narrow_failed.text": "die Schlüsseldatei konnte nicht auf ihren Besitzer, SYSTEM und Administrators eingeschränkt werden, andere Konten können sie womöglich lesen (key_file={key_file})",
+  "log.encryption.key_file_narrowed.text": "andere Konten konnten die Schlüsseldatei lesen, daher wurde sie auf ihren Besitzer, SYSTEM und Administrators eingeschränkt (key_file={key_file}, readers={readers})",
   "log.encryption.key_load_failed.text": "der Verschlüsselungsschlüssel konnte nicht geladen werden",
   "log.encryption.key_loaded.text": "den Verschlüsselungsschlüssel geladen",
   "log.encryption.key_opens_no_stored_password.text": "die eingestellte Schlüsseldatei öffnet keines der gespeicherten Passwörter, sie ist also nicht der Schlüssel, mit dem sie verschlüsselt wurden. Legen Sie die Schlüsseldatei zurück, mit der die Passwörter gespeichert wurden, oder setzen Sie das Passwort jedes Hosts über die API neu. Ein Start gegen einen anderen Schlüssel wird abgelehnt, weil kein Tunnel aufgebaut und kein gespeichertes Passwort gelesen werden könnte",

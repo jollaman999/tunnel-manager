@@ -434,6 +434,8 @@
   "log.database.transaction_start_failed.text": "تعذّر بدء المعاملة",
   "log.encryption.init_failed.text": "تعذّرت تهيئة التشفير",
   "log.encryption.key_check_hosts_read_failed.text": "تعذّرت قراءة الـ Hosts لفحص مفتاح التشفير عليها",
+  "log.encryption.key_file_narrow_failed.text": "تعذّر حصر ملف المفتاح في مالكه وSYSTEM وAdministrators، لذا قد تتمكن حسابات أخرى من قراءته (key_file={key_file})",
+  "log.encryption.key_file_narrowed.text": "كانت حسابات أخرى تستطيع قراءة ملف المفتاح، فحُصر في مالكه وSYSTEM وAdministrators (key_file={key_file}, readers={readers})",
   "log.encryption.key_load_failed.text": "تعذّر تحميل مفتاح التشفير",
   "log.encryption.key_loaded.text": "حُمّل مفتاح التشفير",
   "log.encryption.key_opens_no_stored_password.text": "ملف المفتاح المضبوط لا يفك تشفير أي كلمة مرور محفوظة، فهو ليس المفتاح الذي شُفّرت به. أعد ملف المفتاح الذي شُفّرت به كلمات المرور إلى مكانه، أو اضبط كلمة مرور كل Host من جديد عبر API. والتشغيل بمفتاح آخر مرفوض لأنه لا يمكن إنشاء أي نفق ولا قراءة أي كلمة مرور محفوظة",

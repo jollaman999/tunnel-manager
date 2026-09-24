@@ -434,6 +434,8 @@
   "log.database.transaction_start_failed.text": "échec du démarrage de la transaction",
   "log.encryption.init_failed.text": "échec de l'initialisation du chiffrement",
   "log.encryption.key_check_hosts_read_failed.text": "échec de la lecture des Hosts sur lesquels vérifier la clé de chiffrement",
+  "log.encryption.key_file_narrow_failed.text": "échec de la restriction du fichier de clé à son propriétaire, SYSTEM et Administrators, d'autres comptes peuvent donc peut-être le lire (key_file={key_file})",
+  "log.encryption.key_file_narrowed.text": "d'autres comptes pouvaient lire le fichier de clé, il a donc été restreint à son propriétaire, SYSTEM et Administrators (key_file={key_file}, readers={readers})",
   "log.encryption.key_load_failed.text": "échec du chargement de la clé de chiffrement",
   "log.encryption.key_loaded.text": "clé de chiffrement chargée",
   "log.encryption.key_opens_no_stored_password.text": "le fichier de clé configuré ne déchiffre aucun des mots de passe enregistrés : ce n'est donc pas la clé avec laquelle ils ont été chiffrés. Restaurez le fichier de clé avec lequel les mots de passe ont été enregistrés, ou redéfinissez le mot de passe de chaque Host via l'API. Le démarrage avec une autre clé est refusé, car aucun tunnel ne pourrait être établi et aucun mot de passe enregistré ne pourrait être lu",

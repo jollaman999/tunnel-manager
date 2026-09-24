@@ -434,6 +434,8 @@
   "log.database.transaction_start_failed.text": "トランザクションを開始できませんでした",
   "log.encryption.init_failed.text": "暗号化を初期化できませんでした",
   "log.encryption.key_check_hosts_read_failed.text": "暗号化キーを照合する Host を読めませんでした",
+  "log.encryption.key_file_narrow_failed.text": "キーファイルを所有者・SYSTEM・Administrators だけが読めるように絞れなかったため、他のアカウントが読める可能性があります (key_file={key_file})",
+  "log.encryption.key_file_narrowed.text": "他のアカウントがキーファイルを読めたため、所有者・SYSTEM・Administrators だけが読めるように絞りました (key_file={key_file}, readers={readers})",
   "log.encryption.key_load_failed.text": "暗号化キーを読み込めませんでした",
   "log.encryption.key_loaded.text": "暗号化キーを読み込みました",
   "log.encryption.key_opens_no_stored_password.text": "設定されているキーファイルでは、保存されているどのパスワードも復号できないので、これはパスワードを暗号化したキーではありません。パスワードを保存したときのキーファイルを戻すか、すべての Host のパスワードを API からもう一度設定してください。別のキーでの起動は拒否します。トンネルを 1 本も確立できず、保存されたパスワードも読めないからです",
