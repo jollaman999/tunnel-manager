@@ -348,7 +348,9 @@ something is.
 Both addresses of the pair are tried, each in its own address family, and **one
 of them opening is enough**: a machine without IPv6 opens the IPv4 half alone.
 Where neither opens, a port another program holds for instance, the forward
-reports `error` and tries again.
+reports `error` and tries again. On Windows the wildcard is opened as one
+socket on `::` that takes both families instead, so a port another program
+holds on any address is `error` there.
 
 **`local_port` is unique across every local forward and every SOCKS5 proxy**,
 whichever Host carries them, because every one of them opens its port on this
