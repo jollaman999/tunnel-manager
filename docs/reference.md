@@ -414,8 +414,9 @@ direction; OpenSSH refuses it where `AllowTcpForwarding` is `no` or `remote`.
 | `host_key_unapproved`, `host_key_mismatch` | The host key was refused, as on a tunnel. It stays here until the key is approved |
 
 **The status is kept in memory**, by the process that runs the forward, and is
-answered only by the local forward calls. It is not in `GET /api/status`, and
-the Status screen does not count local forwards.
+answered by the local forward calls and by `GET /api/status`, which carries the
+local forwards beside the tunnels and counts them under names of their own; see
+[Reading the tunnel status](#reading-the-tunnel-status).
 
 **The upgrade that added `enabled` leaves every local forward switched on.**
 Every forward stored before it was running, so the startup that adds the column
@@ -1132,7 +1133,7 @@ no directory travels next to it and no path has to be configured.
 
 | Screen | Path | What it shows and does |
 |--------|------|------------------------|
-| Status | `/ui/status` | The three counts (desired, rows, connected), a sentence about the difference between them, and one line per tunnel: Host, service port, status, server, local, remote, port reached, retries, last connected. A tunnel with something wrong carries what went wrong on a line under it, across the whole table, and a tunnel whose forwarded port was not reached carries there what to change on the SSH server it named and what else to check. A tunnel that is up carries under it what is known about the addresses of its forward, kept in three: what was asked for, what the SSH server answered, and what a connection from here confirmed. It never says a port is open. The tunnel rows come a page at a time, ten to a page to begin with, with the size and the page chosen above the table; the three counts stay counts of every tunnel and not of the page. It asks again every 5 seconds and comes back on the page being read. |
+| Status | `/ui/status` | The counts of both sorts of forward (desired, rows, connected for the tunnels and for the local forwards), a sentence about the difference between them, and one line per row of either sort: Host, kind, service port, status, server, opened, reaches, port reached, retries, last connected. The service port of a local forward is a dash, and the opened and the reaches cells name the machine the address is on, since the two sorts open their port at opposite ends. A tunnel with something wrong carries what went wrong on a line under it, across the whole table, and a tunnel whose forwarded port was not reached carries there what to change on the SSH server it named and what else to check. A tunnel that is up carries under it what is known about the addresses of its forward, kept in three: what was asked for, what the SSH server answered, and what a connection from here confirmed. It never says a port is open. The rows come a page at a time, ten to a page to begin with, with the size and the page chosen above the table; the counts stay counts of the whole installation and not of the page. It asks again every 5 seconds and comes back on the page being read. |
 | Hosts | `/ui/hosts` | One row per Host with ID, IP, port, user, description, enabled, SOCKS5 proxy and updated. The rows come a page at a time, ten to a page to begin with, with the size (10, 20, 30, 50 or 100) and the page chosen above the table. The choice is remembered for this screen on its own, and a list short enough to fit a page of the smallest size carries no controls at all. Add a Host, edit one, enable or disable one, delete one. The add and edit forms have a box to paste a private key into, an area to drop the key file onto, and a box for the passphrase of a key that has one, and the add form has an **Assign all service ports** tick, on by default, that says what the Host starts out carrying, with a **Reach on the Host** list beside it that every assignment that tick makes starts on. **Service ports** in a row opens a panel of every service port with a tick against the ones this Host carries, and a reach beside each row: pick a reach above and apply it to everything ticked, or set one row on its own, and a row that was not ticked is left alone. Only what was changed is sent when it is saved, so a tick made there leaves the pages that were not read alone. **Local forwards** in a row opens a panel of the local forwards of that Host with the status of each, a page at a time, where they are added, changed, switched off and on, and deleted, one row at a time or the ticked rows together; see [Local forwards](#local-forwards). The add and edit forms also switch on the SOCKS5 proxy of the Host, and its column shows the port and the status; see [A SOCKS5 proxy on a Host](#a-socks5-proxy-on-a-host). |
 | Service Ports | `/ui/service-ports` | One row per service port with ID, service IP, service port, local port, description and updated. The rows come a page at a time the same way the Hosts do, with a size and a page of their own. Add, edit and delete. The add form has an **Assign to all hosts** tick, on by default, that says which Hosts carry it from the start, with a **Reach on the Host** list beside it that the assignments that tick makes start on; which Hosts carry it after that, and what each of those assignments reaches, is changed from the Hosts screen. |
 | Logs | `/ui/logs` | The end of the log file, newest last, with a level filter and a count to show. It asks again every 5 seconds. It reads the file the process is writing now; rotated files are not shown. The lines are shown in the language of the screen while the file stays English; see [The language of the screens](#the-language-of-the-screens). |
@@ -1830,13 +1831,13 @@ reading `data[0]` reads `data.items[0]` now.
 that array too, and takes `page` and `size` and answers in this shape now, see
 [The local forwards of a Host](#the-local-forwards-of-a-host).
 
-`/api/status` was an object already. `tunnels` is one page of the tunnel rows
-now and `page` and `size` stand beside it, while **the three counts are over
-every row and not over the page**: they say what the installation is doing, not
-what is on the page being looked at.
+`/api/status` was an object already. `tunnels` is one page of the status rows
+now, both sorts of forward in the one list, and `page` and `size` stand beside
+it, while **the counts are over every row and not over the page**: they say what
+the installation is doing, not what is on the page being looked at.
 
 ```bash
-# The second page of twenty Hosts, and the last page of the tunnel rows: a page
+# The second page of twenty Hosts, and the last page of the status rows: a page
 # past the end comes back as the last one, so a large number asks for it.
 curl -s -b cookies.txt "$BASE/api/host?page=2&size=20"
 curl -s -b cookies.txt "$BASE/api/status?page=99999&size=10"
@@ -2245,7 +2246,7 @@ an address they do not have.
 
 | Method | Path | What it does |
 |--------|------|--------------|
-| `GET` | `/api/status` | The counts of the installation and one page of the tunnel rows. Takes `page` and `size`, see [Paging](#paging) |
+| `GET` | `/api/status` | The counts of the installation and one page of the status rows, the service port tunnels and the local forwards together with `kind` on each. Takes `page` and `size`, see [Paging](#paging) |
 | `GET` | `/api/status/:hostId` | The Host and the tunnels of that Host. Not paged: a Host holds one tunnel per service port it carries |
 
 ### Settings and uninstall
@@ -2481,6 +2482,10 @@ curl -s -b cookies.txt https://127.0.0.1:8888/api/status
     "desired_tunnels": 1,
     "total_tunnels": 1,
     "connected_tunnels": 0,
+    "desired_local_forwards": 1,
+    "total_local_forwards": 1,
+    "connected_local_forwards": 0,
+    "total_rows": 2,
     "host_keys_unapproved": 0,
     "host_keys_mismatched": 0,
     "page": 1,
@@ -2488,6 +2493,7 @@ curl -s -b cookies.txt https://127.0.0.1:8888/api/status
     "tunnels": [
       {
         "host_id": 1,
+        "kind": "service_port",
         "sp_id": 1,
         "status": "starting",
         "last_error": "",
@@ -2501,32 +2507,86 @@ curl -s -b cookies.txt https://127.0.0.1:8888/api/status
         "error_kind": "",
         "open_reach": "",
         "listen_addresses": ""
+      },
+      {
+        "host_id": 1,
+        "kind": "local_forward",
+        "sp_id": null,
+        "status": "starting",
+        "last_error": "",
+        "retry_count": 0,
+        "last_connected_at": "0001-01-01T00:00:00Z",
+        "server": "192.0.2.10:22",
+        "local": "127.0.0.1:15432",
+        "remote": "198.51.100.30:5432",
+        "server_banner": "",
+        "forward_reach": "",
+        "error_kind": "",
+        "open_reach": "",
+        "listen_addresses": ""
       }
     ]
   }
 }
 ```
 
-`tunnels` is one page of the rows, ordered by Host and then by service port, and
-`page` and `size` say which page of which size it is. The three counts are over
-every row: an installation of twenty-five tunnels reports twenty-five on a page
-of ten, and `connected_tunnels` counts the connected tunnels of the
-installation and not the ones that happen to be on the page. See
-[Paging](#paging).
+`tunnels` carries **both sorts of forward**: the service port tunnels and the
+local forwards, in one list. `kind` says which sort a row is, `service_port` or
+`local_forward`, and the rows are ordered by Host, then by sort, then by the
+service port or the local forward id within it, so the rows of one Host stay
+together. `page` and `size` say which page of which size it is, and the pages
+are cut from `total_rows`, the two sorts added together. See [Paging](#paging).
 
-The three counts answer three different questions, and the gaps between them
-mean different things.
+**`local` and `remote` are mirrored between the two sorts, so read them with
+`kind` in hand.** On a service port row, `local` is the address opened on the
+**Host** and `remote` the service this end reaches on its behalf. On a local
+forward row it is the other way round: `local` is the address opened on **this
+machine** and `remote` the target reached from the Host. Both are an address
+with a port and they look alike, `0.0.0.0:18080` on the one above and
+`127.0.0.1:15432` on the other, so nothing but `kind` says which machine a row
+is talking about. `server` is the SSH connection underneath and means the same
+on either.
+
+**A local forward fills the fields that mean something for it and leaves the
+rest empty.** No service port carries it, so `sp_id` is `null` rather than a
+number, and nothing here measures its forwarded port from the far end, so
+`forward_reach`, `server_banner`, `error_kind`, `open_reach` and
+`listen_addresses` stay empty on it. What those say about a tunnel is below.
+
+The counts are over every row and not over the page: an installation of
+twenty-five rows reports twenty-five on a page of ten, and `connected_tunnels`
+counts the connected tunnels of the installation and not the ones that happen to
+be on the page.
+
+**The three tunnel counts are over the service port tunnels alone**, as they
+always were, and the local forwards are counted under three names of their own.
+A count whose name stayed while what it counts grew is one a script goes on
+reading the old way and gets wrong without noticing.
 
 | Count | What it counts |
 |-------|----------------|
 | `desired_tunnels` | How many tunnels **should** be running: the assignments whose Host is enabled, counted the same way a reconcile pass builds its desired state |
 | `total_tunnels` | How many tunnel **rows** exist, one per tunnel that has been started at all, whatever state it ended in |
 | `connected_tunnels` | How many of those rows say `connected` |
+| `desired_local_forwards` | How many local forwards **should** be running: the ones switched on whose Host is there and enabled, counted the same way |
+| `total_local_forwards` | How many local forwards are **stored**, the ones switched off included |
+| `connected_local_forwards` | How many of them report `connected` |
+| `total_rows` | The two sorts added together, which is what the pages are cut from |
+
+The three tunnel counts answer three different questions, and the gaps between
+them mean different things.
 
 | Gap | What it means |
 |-----|---------------|
 | `desired > total` | A tunnel that should be running has not been started at all. Either a pass has not run yet, which lasts a moment, or the pass could not start it, for example because the stored password does not open with the encryption key in use. The reason is in the log. |
 | `total > connected` | A tunnel was started and is not carrying traffic. Its row says why in `status` and `last_error`. |
+
+**The local forward counts have one gap and not two.** `total_local_forwards`
+counts the rows that are stored rather than the ones that were started, so it is
+never below `desired_local_forwards`: a forward switched off is in the total and
+not in the desired. The gap that says something is `desired_local_forwards`
+above `connected_local_forwards`, a forward that should be carrying traffic and
+is not, and that row says why in `status` and `last_error` the way a tunnel does.
 
 **Two more counts stand beside them, and they are over Hosts and not over
 tunnels.**
@@ -2537,7 +2597,7 @@ tunnels.**
 | `host_keys_mismatched` | Hosts that are trusted on one key and were presented another |
 
 They are over the whole installation and not over the page, for the reason the
-other three are, and for one more: a Host that carries four service ports is
+counts above are, and for one more: a Host that carries four service ports is
 refused on the same key four times, so a count over the page would carry the
 same question four times over. What is waiting is the two added together, and
 the list behind them is `GET /api/host-key`; see [Host keys](#host-keys).
@@ -2552,6 +2612,10 @@ the list behind them is `GET /api/host-key`; see [Host keys](#host-keys).
 | `error` | The attempt failed. `last_error` holds the reason |
 | `host_key_unapproved` | The SSH server presented a host key and none has been approved for this Host, so the connection was refused. See [Host keys](#host-keys) |
 | `host_key_mismatch` | The SSH server presented a key other than the one this Host is trusted on, so the connection was refused. See [Host keys](#host-keys) |
+
+Those are the words a **service port** row carries. A local forward row carries
+the words a local forward reports, `disabled`, `off` and `stopped` among them;
+they are in [Local forwards](#local-forwards).
 
 `error_kind` names what sort of failure `last_error` is, for the one sort there
 is somewhere to send you: `forward_denied` is the SSH server refusing to open

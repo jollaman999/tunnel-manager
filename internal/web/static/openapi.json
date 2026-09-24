@@ -2245,14 +2245,14 @@
         },
         "/status": {
             "get": {
-                "description": "The three counts are over every row and not over the page: they say what the installation is doing, not what is on the page being looked at.",
+                "description": "tunnels carries both sorts of forward: kind is service_port or local_forward, and sp_id is null on a local forward, which is carried by no service port. On a local forward row, local is the address opened on this machine and remote the target reached from the Host, which is the mirror of what they hold on a service port row.\nThe counts are over every row and not over the page: they say what the installation is doing, not what is on the page being looked at. The three tunnel counts are over the service port tunnels alone; the local forwards are counted under names of their own. total_rows is the two together, which is what the pages are cut from.",
                 "produces": [
                     "application/json"
                 ],
                 "tags": [
                     "status"
                 ],
-                "summary": "The counts of the installation and one page of the tunnel rows",
+                "summary": "The counts of the installation and one page of the status rows",
                 "parameters": [
                     {
                         "type": "integer",
@@ -2276,7 +2276,7 @@
                 ],
                 "responses": {
                     "200": {
-                        "description": "counts, and tunnels holding one page of the tunnel rows",
+                        "description": "counts, and tunnels holding one page of the status rows",
                         "schema": {
                             "$ref": "#/definitions/models.Response"
                         }
