@@ -1679,7 +1679,9 @@ func serve() {
 		forwardsReadErr error
 	)
 
-	listener, apiPort, listenErr := listenAPI("", set.APIPort, func(port int) bool {
+	previousAPIPort := takePreviousAPIPort()
+
+	listener, apiPort, listenErr := listenAPI("", set.APIPort, previousAPIPort, func(port int) bool {
 		if forwardsReadErr != nil {
 			return true
 		}
@@ -1710,7 +1712,8 @@ func serve() {
 			"system picked instead. The stored setting is left as it is, and the next start tries it again",
 			logid.ApiServerPortTakenFallback.Field(),
 			zap.Int("stored_port", set.APIPort),
-			zap.Int("port", apiPort))
+			zap.Int("port", apiPort),
+			zap.Bool("reused_previous", apiPort == previousAPIPort))
 	}
 
 	// The Settings handler holds what this process runs on against what is
@@ -2079,7 +2082,7 @@ func serve() {
 	// process needs to have finished: the port above all, since a listener that
 	// is still open is one the new image cannot bind.
 	if restartAsked {
-		finishRestart(logger)
+		finishRestart(logger, apiPort)
 	}
 
 	logger.Info("Exiting tunnel-manager...", logid.ShutdownExiting.Field())
@@ -2100,7 +2103,7 @@ func serve() {
 // A platform without exec ends here instead. The process goes down in order and
 // what starts it again, if anything does, is whatever supervises it. The screen
 // was told which of the two this is before the operator pressed anything.
-func finishRestart(logger *zap.Logger) {
+func finishRestart(logger *zap.Logger, apiPort int) {
 	if !canReexec() {
 		logger.Info("the restart ends with this process. This platform cannot replace the "+
 			"image of a running process, so starting this program again is left to whatever "+
@@ -2119,7 +2122,7 @@ func finishRestart(logger *zap.Logger) {
 	// this process, the one above among them, are lost in the buffer.
 	_ = logger.Sync()
 
-	err := reexec()
+	err := reexec(apiPort)
 
 	// Only a failure comes back from that call. The logger is still the one of
 	// this process, since nothing was replaced.

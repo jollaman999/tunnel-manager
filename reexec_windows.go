@@ -18,8 +18,9 @@ func canReexec() bool {
 }
 
 // reexec reports that this platform has no way to do it. The caller ends the
-// process instead of running this program again.
-func reexec() error {
+// process instead of running this program again, and apiPort is handed to no
+// one: whatever starts the program again does so with its own environment.
+func reexec(apiPort int) error {
 	return errors.New("this platform cannot replace the image of a running process, " +
 		"so starting this program again is left to whatever supervises it")
 }

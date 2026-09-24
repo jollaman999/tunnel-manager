@@ -1045,7 +1045,8 @@ curl -s -b cookies.txt "$BASE/api/settings"
 
 **저장된 `api_port` 를 다른 프로그램이 잡고 있어도 기동은 멈추지 않습니다.** 대신 시스템이
 고른 포트, 로컬 포워드가 쓰지 않는 포트에서 받고, 그 사실을 `api_server.port_taken_fallback`
-로그에 `stored_port` 와 `port` 로 남깁니다. 그 포트는 저장하지 않습니다. 다음 기동은 다시 저장된
+로그에 `stored_port` 와 `port` 로 남깁니다. 재기동이면 시스템이 고른 포트보다 먼저 재기동 전에
+쓰던 포트를 다시 시도하고, 거기서 받으면 `reused_previous` 를 `true` 로 남깁니다. 그 포트는 저장하지 않습니다. 다음 기동은 다시 저장된
 포트부터 시도하고, 그때까지 `pending_restart` 에 `api.port` 가 실제로 쓰는 포트를 `running` 으로
 해서 나옵니다. Docker 가 포트를 번호로 게시하거나 방화벽이 번호로 열어 둔 곳에서는 대신 연
 포트가 밖에서 닿지 않을 수 있으니, 저장된 포트를 비우고 재기동하세요.

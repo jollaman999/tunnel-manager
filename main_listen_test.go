@@ -2,8 +2,10 @@ package main
 
 import (
 	"net"
+	"os"
 	"runtime"
 	"strconv"
+	"strings"
 	"testing"
 )
 
@@ -46,7 +48,7 @@ func avoidNothing(int) bool {
 func TestListenAPIOpensTheStoredPortWhenItIsFree(t *testing.T) {
 	stored := freeLoopbackPort(t)
 
-	l, port, err := listenAPI("127.0.0.1", stored, func(int) bool {
+	l, port, err := listenAPI("127.0.0.1", stored, 0, func(int) bool {
 		t.Fatalf("avoid was asked while the stored port was free")
 		return false
 	})
@@ -63,7 +65,7 @@ func TestListenAPIOpensTheStoredPortWhenItIsFree(t *testing.T) {
 func TestListenAPIOpensAnotherPortWhenTheStoredOneIsTaken(t *testing.T) {
 	stored := holdLoopbackPort(t)
 
-	l, port, err := listenAPI("127.0.0.1", stored, avoidNothing)
+	l, port, err := listenAPI("127.0.0.1", stored, 0, avoidNothing)
 	if err != nil {
 		t.Fatalf("listenAPI: %v", err)
 	}
@@ -83,7 +85,7 @@ func TestListenAPIPicksAgainWhileAvoidRefuses(t *testing.T) {
 
 	refused := map[int]bool{}
 
-	l, port, err := listenAPI("127.0.0.1", stored, func(p int) bool {
+	l, port, err := listenAPI("127.0.0.1", stored, 0, func(p int) bool {
 		if len(refused) < 3 {
 			refused[p] = true
 			return true
@@ -119,7 +121,7 @@ func TestListenAPIGivesUpWithTheStoredPortError(t *testing.T) {
 
 	asked := 0
 
-	l, port, err := listenAPI("127.0.0.1", stored, func(int) bool {
+	l, port, err := listenAPI("127.0.0.1", stored, 0, func(int) bool {
 		asked++
 		return true
 	})
@@ -154,7 +156,7 @@ func TestListenAPILeavesOtherFailuresAlone(t *testing.T) {
 		t.Skip("port 1 is taken here rather than refused")
 	}
 
-	l, port, err := listenAPI("127.0.0.1", 1, func(int) bool {
+	l, port, err := listenAPI("127.0.0.1", 1, 0, func(int) bool {
 		t.Fatalf("avoid was asked for a failure that was not a taken port")
 		return false
 	})
@@ -165,5 +167,135 @@ func TestListenAPILeavesOtherFailuresAlone(t *testing.T) {
 
 	if port != 1 {
 		t.Fatalf("reported port %d, want the stored 1", port)
+	}
+}
+
+func TestListenAPIOpensThePreviousPortWhenTheStoredOneIsTaken(t *testing.T) {
+	stored := holdLoopbackPort(t)
+	previous := freeLoopbackPort(t)
+
+	l, port, err := listenAPI("127.0.0.1", stored, previous, avoidNothing)
+	if err != nil {
+		t.Fatalf("listenAPI: %v", err)
+	}
+	defer l.Close()
+
+	if port != previous || l.Addr().(*net.TCPAddr).Port != previous {
+		t.Fatalf("opened %s and reported %d, want the previous port %d", l.Addr(), port, previous)
+	}
+}
+
+func TestListenAPIOpensTheStoredPortOverThePreviousOne(t *testing.T) {
+	stored := freeLoopbackPort(t)
+	previous := freeLoopbackPort(t)
+
+	l, port, err := listenAPI("127.0.0.1", stored, previous, avoidNothing)
+	if err != nil {
+		t.Fatalf("listenAPI: %v", err)
+	}
+	defer l.Close()
+
+	if port != stored {
+		t.Fatalf("reported %d, want the stored port %d", port, stored)
+	}
+}
+
+func TestListenAPIPicksAnotherPortWhenThePreviousOneIsTakenToo(t *testing.T) {
+	stored := holdLoopbackPort(t)
+	previous := holdLoopbackPort(t)
+
+	l, port, err := listenAPI("127.0.0.1", stored, previous, avoidNothing)
+	if err != nil {
+		t.Fatalf("listenAPI: %v", err)
+	}
+	defer l.Close()
+
+	if port == stored || port == previous {
+		t.Fatalf("reported %d, which is the taken stored %d or previous %d", port, stored, previous)
+	}
+
+	if l.Addr().(*net.TCPAddr).Port != port {
+		t.Fatalf("opened %s and reported %d", l.Addr(), port)
+	}
+}
+
+func TestListenAPISkipsAPreviousPortThatAvoidRefuses(t *testing.T) {
+	stored := holdLoopbackPort(t)
+	previous := freeLoopbackPort(t)
+
+	l, port, err := listenAPI("127.0.0.1", stored, previous, func(p int) bool {
+		return p == previous
+	})
+	if err != nil {
+		t.Fatalf("listenAPI: %v", err)
+	}
+	defer l.Close()
+
+	if port == previous || port == stored {
+		t.Fatalf("reported %d, which is the refused previous %d or the taken stored %d", port, previous, stored)
+	}
+
+	// The previous port was not opened on the way.
+	again, err := net.Listen("tcp", net.JoinHostPort("127.0.0.1", strconv.Itoa(previous)))
+	if err != nil {
+		t.Fatalf("the refused previous port %d is held: %v", previous, err)
+	}
+	_ = again.Close()
+}
+
+func TestTakePreviousAPIPortReadsAndClearsIt(t *testing.T) {
+	cases := []struct {
+		value string
+		want  int
+	}{
+		{"35351", 35351},
+		{" 8888 ", 8888},
+		{"1", 1},
+		{"65535", 65535},
+		{"0", 0},
+		{"65536", 0},
+		{"-1", 0},
+		{"port", 0},
+		{"", 0},
+	}
+
+	for _, c := range cases {
+		t.Setenv(previousAPIPortEnv, c.value)
+
+		got := takePreviousAPIPort()
+		if got != c.want {
+			t.Errorf("%s=%q read as %d, want %d", previousAPIPortEnv, c.value, got, c.want)
+		}
+
+		if _, ok := os.LookupEnv(previousAPIPortEnv); ok {
+			t.Errorf("%s=%q is still in the environment after it was read", previousAPIPortEnv, c.value)
+		}
+
+		if again := takePreviousAPIPort(); again != 0 {
+			t.Errorf("a second read gave %d, want 0", again)
+		}
+	}
+}
+
+func TestRestartEnvironHandsOverOnlyThePortInUse(t *testing.T) {
+	t.Setenv(previousAPIPortEnv, "1111")
+
+	env := restartEnviron(2222)
+
+	var found []string
+	for _, kv := range env {
+		if strings.HasPrefix(kv, previousAPIPortEnv+"=") {
+			found = append(found, kv)
+		}
+	}
+
+	if len(found) != 1 || found[0] != previousAPIPortEnv+"=2222" {
+		t.Fatalf("handed over %v, want only %s=2222", found, previousAPIPortEnv)
+	}
+
+	for _, kv := range restartEnviron(0) {
+		if strings.HasPrefix(kv, previousAPIPortEnv+"=") {
+			t.Fatalf("a port of 0 handed over %s", kv)
+		}
 	}
 }

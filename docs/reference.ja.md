@@ -1079,7 +1079,9 @@ curl -s -b cookies.txt "$BASE/api/settings"
 
 **保存されている `api_port` を別のプログラムが使っていても、起動は止まりません。** 代わりに
 システムが選んだポート、ローカルフォワードが開かないポートで待ち受け、そのことを
-`api_server.port_taken_fallback` のログに `stored_port` と `port` 付きで残します。そのポートは
+`api_server.port_taken_fallback` のログに `stored_port` と `port` 付きで残します。再起動の場合は
+システムが選ぶポートより先に再起動前のポートをもう一度試し、そこで待ち受けたら `reused_previous`
+を `true` として残します。そのポートは
 保存しません。次の起動はまた保存されているポートから試し、それまで `pending_restart` には
 `api.port` が、使っているポートを `running` として載ります。Docker がポートを番号で公開して
 いたり、ファイアウォールが番号で開けていたりする環境では、代わりに開いたポートに外から届かない

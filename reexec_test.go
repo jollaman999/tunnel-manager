@@ -72,7 +72,7 @@ func TestReexecReportsThatItCannotRunAgainWhereItCannot(t *testing.T) {
 		t.Skip("this platform replaces the process image, which the test above covers")
 	}
 
-	err := reexec()
+	err := reexec(0)
 	if err == nil {
 		t.Fatal("reexec reported no failure on a platform that cannot run this program again")
 	}
@@ -102,7 +102,7 @@ func TestReexecHelperProcess(t *testing.T) {
 		t.Fatalf("failed to set %s: %v", reexecRoundEnv, err)
 	}
 
-	err = reexec()
+	err = reexec(0)
 
 	// Only a failure comes back from that call. The message is printed rather
 	// than reported through t, so that the test that reads this output says

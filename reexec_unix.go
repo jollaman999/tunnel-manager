@@ -17,6 +17,10 @@ func canReexec() bool {
 
 // reexec replaces the image of this process with this program again.
 //
+// apiPort is the port the API was served on. It is handed over in
+// previousAPIPortEnv, so that the new image tries it again when the stored port
+// is still taken; 0 hands over none.
+//
 // It is exec and not a child process on purpose. A child leaves the session but
 // not the cgroup, and systemd takes down what is left in the cgroup of a unit
 // whose main process ended, while docker ends the container when PID 1 does. So
@@ -29,7 +33,7 @@ func canReexec() bool {
 //
 // A return from this is a failure. On success there is no code here any more to
 // return to: the image was replaced.
-func reexec() error {
+func reexec(apiPort int) error {
 	// The path comes from the kernel rather than from os.Args[0], which may be
 	// relative to a working directory that has changed since, and may not name
 	// this program at all when the process was started through a shell that set
@@ -42,7 +46,7 @@ func reexec() error {
 	// The arguments and the environment are handed over as they are, so the new
 	// image opens the same database and reads the same settings. A -db that was
 	// dropped here would silently start a second, empty installation.
-	err = syscall.Exec(path, os.Args, os.Environ())
+	err = syscall.Exec(path, os.Args, restartEnviron(apiPort))
 	if err != nil {
 		return fmt.Errorf("failed to run %s again: %w", path, err)
 	}
