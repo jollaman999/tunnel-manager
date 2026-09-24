@@ -546,6 +546,7 @@ func NewDatabase(path string, logger *zap.Logger, logLevel string) (*gorm.DB, *L
 		&models.Host{},
 		&models.ServicePort{},
 		&models.HostServicePort{},
+		&models.LocalForward{},
 		&models.Tunnel{},
 		&models.User{},
 		&settings.Settings{},

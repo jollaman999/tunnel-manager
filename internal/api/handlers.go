@@ -700,6 +700,16 @@ func (h *Handler) DeleteHost(c echo.Context) error {
 		return failure(c, http.StatusInternalServerError, errHostDeleteFailed)
 	}
 
+	// The local forwards of this Host go with it for the same reason. The
+	// line carries HostDeleteFailed rather than an identifier of its own, since
+	// the Host is what failed to be deleted and the rollback leaves it stored.
+	err = tx.Where("host_id = ?", host.ID).Delete(&models.LocalForward{}).Error
+	if err != nil {
+		tx.Rollback()
+		h.logger.Error("failed to delete Host", logid.HostDeleteFailed.Field(), zap.Error(err), zap.Uint64("host_id", id))
+		return failure(c, http.StatusInternalServerError, errHostDeleteFailed)
+	}
+
 	err = tx.Commit().Error
 	if err != nil {
 		h.logger.Error("failed to commit the transaction", logid.DatabaseTransactionCommitFailed.Field(), zap.Error(err))

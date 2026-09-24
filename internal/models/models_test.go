@@ -560,3 +560,65 @@ func TestCreateRequestsTellAnAbsentAssignmentFromFalse(t *testing.T) {
 			sp.AssignToAllHosts)
 	}
 }
+
+// newLocalForwardTable opens a database holding the local forwards alone. The
+// Host a row names is not there, because nothing here asks the database to
+// follow HostID to a row.
+func newLocalForwardTable(t *testing.T) *gorm.DB {
+	t.Helper()
+
+	db, err := gorm.Open(sqlite.Open(filepath.Join(t.TempDir(), "tm.db")), &gorm.Config{})
+	if err != nil {
+		t.Fatalf("failed to open the database: %v", err)
+	}
+
+	err = db.AutoMigrate(&LocalForward{})
+	if err != nil {
+		t.Fatalf("failed to build the table: %v", err)
+	}
+
+	return db
+}
+
+// TestALocalForwardBindScopeThatIsNeitherIsRefused is the rule
+// TestABindScopeThatIsNeitherIsRefused pins on the assignments, held on the
+// local forwards: the database refuses a scope that is neither word.
+func TestALocalForwardBindScopeThatIsNeitherIsRefused(t *testing.T) {
+	db := newLocalForwardTable(t)
+
+	for i, scope := range []string{"127.0.0.1", "0.0.0.0", "LOOPBACK", "anywhere"} {
+		err := db.Create(&LocalForward{HostID: 1, BindScope: scope, LocalPort: 10000 + i, TargetIP: "192.0.2.1", TargetPort: 22}).Error
+		if err == nil {
+			t.Fatalf("a local forward was stored with the bind scope %q", scope)
+		}
+	}
+
+	for i, scope := range []string{"", BindScopeLoopback, BindScopeWildcard} {
+		err := db.Create(&LocalForward{HostID: 1, BindScope: scope, LocalPort: 20000 + i, TargetIP: "192.0.2.1", TargetPort: 22}).Error
+		if err != nil {
+			t.Fatalf("a local forward with the bind scope %q was refused: %v", scope, err)
+		}
+	}
+}
+
+// TestALocalPortIsOpenedByOneLocalForward pins the unique index on LocalPort.
+// Every row opens its port on this machine, so a second row on the same port
+// is refused even when it belongs to another Host or goes somewhere else.
+func TestALocalPortIsOpenedByOneLocalForward(t *testing.T) {
+	db := newLocalForwardTable(t)
+
+	err := db.Create(&LocalForward{HostID: 1, LocalPort: 15432, TargetIP: "192.0.2.1", TargetPort: 5432}).Error
+	if err != nil {
+		t.Fatalf("the first local forward was refused: %v", err)
+	}
+
+	err = db.Create(&LocalForward{HostID: 2, LocalPort: 15432, TargetIP: "192.0.2.2", TargetPort: 5433}).Error
+	if err == nil {
+		t.Fatal("a second local forward was stored on the same local port")
+	}
+
+	err = db.Create(&LocalForward{HostID: 1, LocalPort: 15433, TargetIP: "192.0.2.1", TargetPort: 5432}).Error
+	if err != nil {
+		t.Fatalf("a local forward on another local port was refused: %v", err)
+	}
+}

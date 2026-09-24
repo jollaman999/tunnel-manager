@@ -922,7 +922,7 @@ func newRowsDB(t *testing.T, hosts []models.Host, sps []models.ServicePort, tunn
 		t.Fatalf("failed to open the database: %v", err)
 	}
 
-	err = db.AutoMigrate(&models.Host{}, &models.ServicePort{}, &models.Tunnel{}, &models.HostServicePort{})
+	err = db.AutoMigrate(&models.Host{}, &models.ServicePort{}, &models.Tunnel{}, &models.HostServicePort{}, &models.LocalForward{})
 	if err != nil {
 		t.Fatalf("failed to migrate the database: %v", err)
 	}
@@ -3724,6 +3724,46 @@ func TestDeleteHostTakesItsAssignmentsWithIt(t *testing.T) {
 	after := storedAssignments(t, db)
 	if strings.Join(after, ",") != "2-1,2-2" {
 		t.Fatalf("the assignments after the delete are %v, want the ones of the Host that is left", after)
+	}
+}
+
+// TestDeleteHostTakesItsLocalForwardsWithIt is the same for the local forwards
+// of the Host: they are deleted with it and those of another Host are left.
+func TestDeleteHostTakesItsLocalForwardsWithIt(t *testing.T) {
+	hosts := []models.Host{statusHost(1, true), statusHost(2, true)}
+
+	db := newRowsDB(t, hosts, nil, nil)
+
+	for _, lf := range []models.LocalForward{
+		{HostID: 1, LocalPort: 15432, TargetIP: "192.0.2.1", TargetPort: 5432},
+		{HostID: 1, LocalPort: 15433, TargetIP: "192.0.2.1", TargetPort: 5433},
+		{HostID: 2, LocalPort: 15434, TargetIP: "192.0.2.2", TargetPort: 5432},
+	} {
+		err := db.Create(&lf).Error
+		if err != nil {
+			t.Fatalf("failed to store a local forward: %v", err)
+		}
+	}
+
+	h := NewHandler(db, &wakeRecorder{tx: &txConnPool{}}, zap.NewNop(), newTestCipher(t))
+
+	c, rec := deleteRequest(t, "/api/host/1", "id", "1")
+
+	err := h.DeleteHost(c)
+	if err != nil {
+		t.Fatalf("DeleteHost returned an error: %v", err)
+	}
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d, body: %s", rec.Code, http.StatusOK, rec.Body.String())
+	}
+
+	var left []models.LocalForward
+	err = db.Order("local_port").Find(&left).Error
+	if err != nil {
+		t.Fatalf("failed to read the local forwards: %v", err)
+	}
+	if len(left) != 1 || left[0].HostID != 2 || left[0].LocalPort != 15434 {
+		t.Fatalf("the local forwards after the delete are %+v, want the one of the Host that is left", left)
 	}
 }
 

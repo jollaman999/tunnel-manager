@@ -136,6 +136,31 @@ type HostServicePort struct {
 	CreatedAt time.Time `json:"created_at"`
 }
 
+// LocalForward is one local forward carried by a Host: this machine opens
+// LocalPort and every connection to it is carried over the SSH connection of
+// the Host to TargetIP:TargetPort, as seen from the Host. It runs the other way
+// from a ServicePort, so it is a table of its own rather than a direction on
+// that one, where the local port and the service address would mean different
+// things from row to row.
+//
+// LocalPort is unique over the table because every row opens its port on this
+// same machine, and two rows asking for one port leave one of them unable to
+// start.
+type LocalForward struct {
+	ID     uint `gorm:"primaryKey;autoIncrement" json:"id"`
+	HostID uint `gorm:"index;not null" json:"host_id"`
+	// BindScope is where on this machine LocalPort is opened, with the words
+	// and the constraint HostServicePort.BindScope carries, and an empty value
+	// is the wildcard for the same reason.
+	BindScope   string    `gorm:"check:chk_local_forwards_bind_scope,bind_scope IN ('','loopback','wildcard')" json:"bind_scope"`
+	LocalPort   int       `gorm:"uniqueIndex:idx_local_forwards_local_port;not null" json:"local_port"`
+	TargetIP    string    `gorm:"not null" json:"target_ip"`
+	TargetPort  int       `gorm:"not null" json:"target_port"`
+	Description string    `json:"description"`
+	CreatedAt   time.Time `json:"created_at"`
+	UpdatedAt   time.Time `json:"updated_at"`
+}
+
 type Tunnel struct {
 	HostID          uint      `gorm:"primaryKey;not null" json:"host_id"`
 	SPID            uint      `gorm:"primaryKey;not null" json:"sp_id"`
@@ -317,6 +342,17 @@ type CreateServicePortRequest struct {
 	// would not: it would name an interface of one of them, and the rest would
 	// be asked to open a port on an address they do not have.
 	BindScope string `json:"bind_scope" validate:"omitempty,oneof=loopback wildcard"`
+}
+
+// LocalForwardRequest creates or changes a local forward of a Host. The Host
+// is named by the path rather than by the body, and an empty BindScope is the
+// wildcard, as it is on LocalForward.
+type LocalForwardRequest struct {
+	BindScope   string `json:"bind_scope" validate:"omitempty,oneof=loopback wildcard"`
+	LocalPort   int    `json:"local_port" validate:"required,min=1,max=65535"`
+	TargetIP    string `json:"target_ip" validate:"required,ip"`
+	TargetPort  int    `json:"target_port" validate:"required,min=1,max=65535"`
+	Description string `json:"description"`
 }
 
 type Response struct {
