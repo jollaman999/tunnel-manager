@@ -379,6 +379,7 @@
   "log.account.setup_no_account_on_context.text": "lượt thiết lập chạy tới nơi mà trên context không có tài khoản nào",
   "log.account.store_failed.text": "không lưu được tài khoản vừa đổi",
   "log.api_server.port_close_failed.text": "không đóng được cổng API",
+  "log.api_server.port_taken_fallback.text": "cổng API đã lưu đang bị một chương trình khác chiếm, nên lần khởi động này lắng nghe trên một cổng do hệ thống chọn. Thiết lập đã lưu được giữ nguyên, và lần khởi động sau sẽ thử lại cổng đó",
   "log.api_server.redirect_server_stopped.text": "máy chủ chuyển hướng các yêu cầu không mã hóa đã dừng",
   "log.api_server.redirect_shutdown_failed.text": "không tắt êm được máy chủ chuyển hướng",
   "log.api_server.serving_https.text": "đang phục vụ API và giao diện web qua HTTPS. Yêu cầu nào tới cùng cổng đó mà không mã hóa thì được trả lời bằng một lệnh chuyển hướng sang https",

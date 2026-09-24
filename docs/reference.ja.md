@@ -1075,6 +1075,14 @@ curl -s -b cookies.txt "$BASE/api/settings"
 ことはありません。どちらも保存した時点で反映されるからです。保存されているものすべてで
 動作しているインストールは `[]` を受け取ります。
 
+**保存されている `api_port` を別のプログラムが使っていても、起動は止まりません。** 代わりに
+システムが選んだポート、ローカルフォワードが開かないポートで待ち受け、そのことを
+`api_server.port_taken_fallback` のログに `stored_port` と `port` 付きで残します。そのポートは
+保存しません。次の起動はまた保存されているポートから試し、それまで `pending_restart` には
+`api.port` が、使っているポートを `running` として載ります。Docker がポートを番号で公開して
+いたり、ファイアウォールが番号で開けていたりする環境では、代わりに開いたポートに外から届かない
+ことがあるので、保存されているポートを空けて再起動してください。
+
 ### サービスを再起動する
 
 設定画面には **Restart** ボタンがあり、スクリプトからなら `POST /api/restart` が同じことを
@@ -1142,6 +1150,11 @@ curl -s -b cookies.txt -X POST "$BASE/api/restart" \
 fatal  failed to read the settings  {"error": "the stored settings are refused: invalid API port: 0.
        Start with -reset-settings to put every setting back to its default"}
 ```
+
+保存されている API ポートを別のプログラムが使っている場合はここに当たりません。プロセスは別の
+ポートで起動し、そのポートをログに出します。[設定](#設定)を参照してください。権限なしで 1024
+未満のポートを開こうとした場合など、ポートを開けないそれ以外の理由では、これまでどおり起動が
+終わります。
 
 ## アップデート
 

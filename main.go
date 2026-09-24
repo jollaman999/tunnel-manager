@@ -1663,6 +1663,62 @@ func serve() {
 	harden(e, certHolder.Current)
 
 	certificateHandler := api.NewCertificateHandler(db, cipher, logger, certHolder)
+
+	// The port is taken here, above the Settings handler, because a stored
+	// port another program holds is traded for one the system picks, and the
+	// handler has to be told the port this process is on. A failure goes
+	// through serverErr below and not out of the process from here.
+	//
+	// The ports the local forwards open are left for them. They are read only
+	// when the stored port turned out to be taken, and a read that fails lets
+	// no other port through, so the start fails as it would have without one.
+	address := fmt.Sprintf(":%d", set.APIPort)
+
+	var (
+		forwardPorts    map[int]bool
+		forwardsReadErr error
+	)
+
+	listener, apiPort, listenErr := listenAPI("", set.APIPort, func(port int) bool {
+		if forwardsReadErr != nil {
+			return true
+		}
+
+		if forwardPorts == nil {
+			var ports []int
+
+			forwardsReadErr = db.Model(&models.LocalForward{}).Pluck("local_port", &ports).Error
+			if forwardsReadErr != nil {
+				return true
+			}
+
+			forwardPorts = make(map[int]bool, len(ports))
+			for _, p := range ports {
+				forwardPorts[p] = true
+			}
+		}
+
+		return forwardPorts[port]
+	})
+	if listenErr != nil && forwardsReadErr != nil {
+		listenErr = fmt.Errorf("%w; no other port was tried, since the local forwards could not be read: %v",
+			listenErr, forwardsReadErr)
+	}
+
+	if listenErr == nil && apiPort != set.APIPort {
+		logger.Warn("the stored API port is taken by another program, so this start listens on a port the "+
+			"system picked instead. The stored setting is left as it is, and the next start tries it again",
+			logid.ApiServerPortTakenFallback.Field(),
+			zap.Int("stored_port", set.APIPort),
+			zap.Int("port", apiPort))
+	}
+
+	// The Settings handler holds what this process runs on against what is
+	// stored, so it is handed the port that was opened rather than the one
+	// that was read.
+	running := *set
+	running.APIPort = apiPort
+
 	// The level handle goes to the handler that stores the settings, so that a
 	// stored logging.level reaches the running loggers as it is saved. It is
 	// the one setting this process can take on without being started again.
@@ -1671,7 +1727,7 @@ func serve() {
 	// against what is stored and name the settings a restart is still owed for.
 	// Dropped here, the only place that knew would be the answer to the save
 	// that stored them, which is gone as soon as the screen is left.
-	settingsHandler := api.NewSettingsHandler(db, logger, logLevel, gormLevel, *set, installDir)
+	settingsHandler := api.NewSettingsHandler(db, logger, logLevel, gormLevel, running, installDir)
 	// The log screen is handed the path this process resolved, the same one the
 	// logger above writes through. Worked out on the screen instead it would be
 	// a second place that knows what a relative logging.file.path is read
@@ -1838,8 +1894,6 @@ func serve() {
 	// logger.Fatal would leave both behind.
 	serverErr := make(chan error, 1)
 
-	address := fmt.Sprintf(":%d", set.APIPort)
-
 	// While HTTPS is on there is still one port, and two servers behind it.
 	// portSplit accepts on the port and sorts the connections by their first
 	// byte: the ones that opened a TLS handshake go to echo, and everything
@@ -1882,16 +1936,15 @@ func serve() {
 				zap.Time("not_after", certInfo.NotAfter))
 		}
 
-		// The port is taken here rather than inside the server, so that a port
-		// which is already in use is reported through the channel the startup
-		// below watches. That is where it was reported from before, and it is
-		// what leaves the tunnels to be taken down in order.
-		listener, listenErr := net.Listen("tcp", address)
+		// The port was taken above rather than inside the server, so that a
+		// port that could not be opened is reported through the channel the
+		// startup below watches. That is where it was reported from before,
+		// and it is what leaves the tunnels to be taken down in order.
 		if listenErr != nil {
 			serverErr <- fmt.Errorf("failed to listen on %s: %w", address, listenErr)
 		} else {
 			portSplit = tlsserve.NewSplitter(listener, logger)
-			redirectServer = tlsserve.NewRedirectServer(set.APIPort, certHolder, logger)
+			redirectServer = tlsserve.NewRedirectServer(apiPort, certHolder, logger)
 
 			// echo is handed a listener that is already wrapped in TLS, which
 			// is what it does for itself in StartTLS. It keeps its own server
@@ -1923,14 +1976,13 @@ func serve() {
 				"on the same port is answered with a redirect to https",
 				logid.ApiServerServingHttps.Field(),
 				zap.String("address", listener.Addr().String()),
-				zap.Int("port", set.APIPort))
+				zap.Int("port", apiPort))
 		}
 	} else {
-		// The port is taken here rather than inside the server for the same
-		// reason as above, and so that the line below can name the address the
-		// listener bound instead of the one that was asked for. echo serves on
-		// a listener that is already open when it is handed one.
-		listener, listenErr := net.Listen("tcp", address)
+		// The port was taken above for the same reason, and so that the line
+		// below can name the address the listener bound instead of the one
+		// that was asked for. echo serves on a listener that is already open
+		// when it is handed one.
 		if listenErr != nil {
 			serverErr <- fmt.Errorf("failed to listen on %s: %w", address, listenErr)
 		} else {
@@ -1947,7 +1999,7 @@ func serve() {
 				"the screens send travels as it is, the password of the account among it",
 				logid.ApiServerServingPlain.Field(),
 				zap.String("address", listener.Addr().String()),
-				zap.Int("port", set.APIPort))
+				zap.Int("port", apiPort))
 		}
 	}
 

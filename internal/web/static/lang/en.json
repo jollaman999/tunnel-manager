@@ -379,6 +379,7 @@
   "log.account.setup_no_account_on_context.text": "the setup was reached with no account on the context",
   "log.account.store_failed.text": "failed to store the changed account",
   "log.api_server.port_close_failed.text": "failed to close the API port",
+  "log.api_server.port_taken_fallback.text": "the stored API port is taken by another program, so this start listens on a port the system picked instead. The stored setting is left as it is, and the next start tries it again",
   "log.api_server.redirect_server_stopped.text": "the server that redirects plaintext requests stopped",
   "log.api_server.redirect_shutdown_failed.text": "failed to shut down the redirect server gracefully",
   "log.api_server.serving_https.text": "serving the API and the web UI over HTTPS. A request that arrives in the clear on the same port is answered with a redirect to https",

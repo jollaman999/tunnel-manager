@@ -949,6 +949,12 @@ curl -s -b cookies.txt "$BASE/api/settings"
 一样，而重启会自动把它清空，因为进程恢复后运行的就是保存的值。日志级别和语言从不出现
 在里面，因为两者保存的那一刻就已经生效了。已保存的设置全部生效的安装，得到的是 `[]`。
 
+**保存的 `api_port` 被其他程序占用时，启动不会停下。** 进程改在系统选定的一个端口上监听，
+这个端口不会是任何本地转发要开的端口，并在日志 `api_server.port_taken_fallback` 里用
+`stored_port` 和 `port` 记下来。这个端口不会被保存：下次启动仍先尝试保存的端口，在那之前
+`pending_restart` 会列出 `api.port`，`running` 是实际在用的端口。如果 Docker 按端口号发布了
+端口，或者防火墙按端口号放行，改用的端口从外面可能访问不到，这时请腾出保存的端口再重启。
+
 ### 重启服务
 
 Settings 页面上有一个 **Restart** 按钮，从脚本上做同一件事是 `POST /api/restart`。要让一项
@@ -1006,6 +1012,9 @@ curl -s -b cookies.txt -X POST "$BASE/api/restart" \
 fatal  failed to read the settings  {"error": "the stored settings are refused: invalid API port: 0.
        Start with -reset-settings to put every setting back to its default"}
 ```
+
+保存的 API 端口被其他程序占用不属于这种情况：进程会在另一个端口上启动，并在日志里写出这个端口，
+见[设置](#设置)。其他打不开端口的原因，比如没有权限却要开 1024 以下的端口，仍然会让启动结束。
 
 ## 更新
 

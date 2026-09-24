@@ -379,6 +379,7 @@
   "log.account.setup_no_account_on_context.text": "コンテキストにアカウントがないまま、初期設定に入りました",
   "log.account.store_failed.text": "変更したアカウントを保存できませんでした",
   "log.api_server.port_close_failed.text": "API ポートを閉じられませんでした",
+  "log.api_server.port_taken_fallback.text": "保存されている API ポートを別のプログラムが使っているので、今回の起動ではシステムが選んだ別のポートで待ち受けます。保存されている設定はそのままで、次の起動ではまたそのポートから試します",
   "log.api_server.redirect_server_stopped.text": "平文のリクエストをリダイレクトするサーバーが停止しました",
   "log.api_server.redirect_shutdown_failed.text": "リダイレクト用のサーバーを正常に終了できませんでした",
   "log.api_server.serving_https.text": "API と Web UI を HTTPS で提供します。同じポートに平文で届いたリクエストには、https へのリダイレクトを返します",

@@ -1042,6 +1042,13 @@ curl -s -b cookies.txt "$BASE/api/settings"
 없이 비워집니다. 다시 시작된 프로세스가 저장된 설정으로 실행되기 때문입니다. 로그 레벨과 언어는
 저장하는 즉시 반영되므로 여기에 들어가지 않습니다. 저장된 값 그대로 실행 중이면 `[]` 입니다.
 
+**저장된 `api_port` 를 다른 프로그램이 잡고 있어도 기동은 멈추지 않습니다.** 대신 시스템이
+고른 포트, 로컬 포워드가 쓰지 않는 포트에서 받고, 그 사실을 `api_server.port_taken_fallback`
+로그에 `stored_port` 와 `port` 로 남깁니다. 그 포트는 저장하지 않습니다. 다음 기동은 다시 저장된
+포트부터 시도하고, 그때까지 `pending_restart` 에 `api.port` 가 실제로 쓰는 포트를 `running` 으로
+해서 나옵니다. Docker 가 포트를 번호로 게시하거나 방화벽이 번호로 열어 둔 곳에서는 대신 연
+포트가 밖에서 닿지 않을 수 있으니, 저장된 포트를 비우고 재기동하세요.
+
 ### 서비스 재기동
 
 Settings 화면에 **Restart** 버튼이 있고, 스크립트에서는 `POST /api/restart` 가 같은 일을
@@ -1106,6 +1113,10 @@ curl -s -b cookies.txt -X POST "$BASE/api/restart" \
 fatal  failed to read the settings  {"error": "the stored settings are refused: invalid API port: 0.
        Start with -reset-settings to put every setting back to its default"}
 ```
+
+저장된 API 포트를 다른 프로그램이 잡고 있는 것은 여기에 해당하지 않습니다. 프로세스는 다른
+포트로 뜨고 그 포트를 로그에 남깁니다. [설정](#설정) 참조. 권한 없이 1024 아래 포트를 여는
+것처럼 포트를 못 여는 다른 이유는 지금처럼 기동을 끝냅니다.
 
 ## 업데이트
 

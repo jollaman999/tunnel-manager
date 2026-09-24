@@ -379,6 +379,7 @@
   "log.account.setup_no_account_on_context.text": "die Einrichtung wurde ohne Konto im Context erreicht",
   "log.account.store_failed.text": "das geänderte Konto konnte nicht gespeichert werden",
   "log.api_server.port_close_failed.text": "der API-Port konnte nicht geschlossen werden",
+  "log.api_server.port_taken_fallback.text": "der gespeicherte API-Port ist von einem anderen Programm belegt, daher lauscht dieser Start auf einem Port, den das System gewählt hat. Die gespeicherte Einstellung bleibt, wie sie ist, und der nächste Start versucht es wieder mit ihr",
   "log.api_server.redirect_server_stopped.text": "der Server, der unverschlüsselte Anfragen umleitet, wurde beendet",
   "log.api_server.redirect_shutdown_failed.text": "der Umleitungsserver konnte nicht sauber heruntergefahren werden",
   "log.api_server.serving_https.text": "die API und die Weboberfläche werden über HTTPS ausgeliefert. Eine Anfrage, die unverschlüsselt auf demselben Port ankommt, wird mit einer Umleitung auf https beantwortet",

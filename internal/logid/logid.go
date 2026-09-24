@@ -239,6 +239,7 @@ const (
 	ApiServerShutdownFailed         ID = "api_server.shutdown_failed"
 	ApiServerRedirectShutdownFailed ID = "api_server.redirect_shutdown_failed"
 	ApiServerPortCloseFailed        ID = "api_server.port_close_failed"
+	ApiServerPortTakenFallback      ID = "api_server.port_taken_fallback"
 )
 
 // shutdown: what the process reports as it goes down.

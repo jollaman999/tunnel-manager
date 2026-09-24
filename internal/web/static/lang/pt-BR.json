@@ -379,6 +379,7 @@
   "log.account.setup_no_account_on_context.text": "a configuração foi acionada sem conta no contexto",
   "log.account.store_failed.text": "falha ao salvar a conta alterada",
   "log.api_server.port_close_failed.text": "falha ao fechar a porta da API",
+  "log.api_server.port_taken_fallback.text": "a porta da API salva está ocupada por outro programa, então esta inicialização escuta numa porta escolhida pelo sistema. A configuração salva fica como está, e a próxima inicialização tenta usá-la de novo",
   "log.api_server.redirect_server_stopped.text": "o servidor que redireciona as requisições em texto puro parou",
   "log.api_server.redirect_shutdown_failed.text": "falha ao desligar ordenadamente o servidor de redirecionamento",
   "log.api_server.serving_https.text": "servindo a API e a interface web por HTTPS. Uma requisição que chega sem criptografia na mesma porta recebe um redirecionamento para https",

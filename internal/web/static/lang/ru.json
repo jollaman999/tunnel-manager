@@ -379,6 +379,7 @@
   "log.account.setup_no_account_on_context.text": "настройка дошла до обработки, а учётной записи в контексте нет",
   "log.account.store_failed.text": "не удалось сохранить изменённую учётную запись",
   "log.api_server.port_close_failed.text": "не удалось закрыть порт API",
+  "log.api_server.port_taken_fallback.text": "сохранённый порт API занят другой программой, поэтому этот запуск слушает порт, выбранный системой. Сохранённая настройка остаётся как есть, и следующий запуск снова попробует её",
   "log.api_server.redirect_server_stopped.text": "сервер, перенаправляющий незашифрованные запросы, остановлен",
   "log.api_server.redirect_shutdown_failed.text": "не удалось корректно остановить сервер перенаправления",
   "log.api_server.serving_https.text": "API и веб-интерфейс отдаются по HTTPS. Запрос, пришедший на тот же порт открытым текстом, получает перенаправление на https",

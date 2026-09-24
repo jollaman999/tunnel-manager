@@ -1184,6 +1184,14 @@ is stored. Neither the log level nor the language is ever in it, because both
 are in place the moment they are saved. An installation that is running on
 everything it has stored gets `[]`.
 
+**A stored `api_port` that another program holds does not stop the start.** The
+process listens on a port the system picks instead, one no local forward opens,
+and logs it under `api_server.port_taken_fallback` with `stored_port` and `port`.
+That port is not stored: the next start tries the stored one again, and until
+then `pending_restart` lists `api.port` with the port in use as `running`. Where
+Docker publishes the port or a firewall opens it by number, the port picked
+instead may not be reachable from outside, so free the stored port and restart.
+
 ### Restarting the service
 
 The Settings screen has a **Restart** button, and `POST /api/restart` is the same
@@ -1257,6 +1265,11 @@ A stored set that does not pass the rules above says so and names this flag:
 fatal  failed to read the settings  {"error": "the stored settings are refused: invalid API port: 0.
        Start with -reset-settings to put every setting back to its default"}
 ```
+
+A stored API port that another program holds does not keep the process from
+starting: it starts on another port and names it in the log, see
+[Settings](#settings). Any other failure to open the port, one below 1024
+without the privilege for it for instance, still ends the start.
 
 ## Updates
 
