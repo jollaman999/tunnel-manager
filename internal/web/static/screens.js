@@ -7477,8 +7477,9 @@ async function moveToTheNewAddress(answer, address) {
   }
 
   // The stored port can be held by another program when the new image comes
-  // up, and the service then listens on a port the system picks. The port this
-  // page is on is the one address that can be asked: it is this page's own
+  // up, and the service then tries the port it ran on before, which is the port
+  // this page is on, before one the system picks. That port is the one address
+  // that can be asked: it is this page's own
   // origin, so the answer means something. Asked after the grace above, it is
   // the new image that answers and not the one that was going down. Where it
   // does not answer, the page goes to the stored address as it always did,

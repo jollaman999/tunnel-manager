@@ -1708,8 +1708,8 @@ func serve() {
 	}
 
 	if listenErr == nil && apiPort != set.APIPort {
-		logger.Warn("the stored API port is taken by another program, so this start listens on a port the "+
-			"system picked instead. The stored setting is left as it is, and the next start tries it again",
+		logger.Warn("the stored API port is taken by another program, so this start listens on another port "+
+			"instead. The stored setting is left as it is, and the next start tries it again",
 			logid.ApiServerPortTakenFallback.Field(),
 			zap.Int("stored_port", set.APIPort),
 			zap.Int("port", apiPort),
