@@ -2,6 +2,8 @@
 
 [English](../README.md) · [日本語](README.ja.md) · [中文](README.zh.md)
 
+![Tunnel Manager: add a service port and a Host, approve the host key, reach the service through the tunnel, and add a local forward](demo.gif)
+
 **Tunnel Manager 는 서비스에 접속할 수 없는 장비에서 그 서비스를 쓸 수 있게 합니다.** SSH 로 그
 장비들에 접속해 포트를 하나씩 열게 하고, 그 포트로 들어온 것을 SSH 연결을 통해 서비스까지
 전달합니다. 그다음에는 터널의 연결을 유지합니다. 끊어진 터널은 다시 연결하고, 터널마다의

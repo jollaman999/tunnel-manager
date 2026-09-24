@@ -2,6 +2,8 @@
 
 [한국어](docs/README.ko.md) · [日本語](docs/README.ja.md) · [中文](docs/README.zh.md)
 
+![Tunnel Manager: add a service port and a Host, approve the host key, reach the service through the tunnel, and add a local forward](docs/demo.gif)
+
 **Tunnel Manager publishes a service on machines that have no route to it.** It
 connects to those machines over SSH, has each of them open a port, and carries
 whatever arrives on that port back through the SSH connection to the service.

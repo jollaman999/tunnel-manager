@@ -2,6 +2,8 @@
 
 [English](../README.md) · [한국어](README.ko.md) · [日本語](README.ja.md)
 
+![Tunnel Manager: add a service port and a Host, approve the host key, reach the service through the tunnel, and add a local forward](demo.gif)
+
 **Tunnel Manager 把一个服务发布到本来没有路由能到达它的机器上。** 它通过 SSH 连接这些机器，
 让每台机器各打开一个本地端口，再把到达本地端口的流量通过 SSH 连接转发回服务。之后它持续维护
 这些隧道：断开的会重新建立，浏览器里的页面显示每条隧道正在做什么。
