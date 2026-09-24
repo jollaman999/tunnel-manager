@@ -14,6 +14,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"syscall"
 	"testing"
 	"time"
@@ -151,6 +152,15 @@ func startClosingListener(t *testing.T) string {
 func startSilentListener(t *testing.T) string {
 	t.Helper()
 
+	addr, _ := startCountingSilentListener(t)
+	return addr
+}
+
+// startCountingSilentListener is startSilentListener that also counts the
+// connections it accepted.
+func startCountingSilentListener(t *testing.T) (string, *atomic.Int64) {
+	t.Helper()
+
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatalf("failed to listen: %v", err)
@@ -165,12 +175,14 @@ func startSilentListener(t *testing.T) string {
 		}
 	})
 
+	var accepted atomic.Int64
 	go func() {
 		for {
 			conn, err := ln.Accept()
 			if err != nil {
 				return
 			}
+			accepted.Add(1)
 			select {
 			case conns <- conn:
 			default:
@@ -179,7 +191,7 @@ func startSilentListener(t *testing.T) string {
 		}
 	}()
 
-	return ln.Addr().String()
+	return ln.Addr().String(), &accepted
 }
 
 // startRejectingSSHServer speaks SSH but denies every authentication attempt.
@@ -412,7 +424,8 @@ func TestIsAuthFailureIgnoresOtherErrors(t *testing.T) {
 
 func TestReconnectDoesNotEstablishConnection(t *testing.T) {
 	m := newSSHTestManager(t, 1)
-	tun, tunnel := newSSHTestTunnel(t, startSilentListener(t))
+	addr, accepted := startCountingSilentListener(t)
+	tun, tunnel := newSSHTestTunnel(t, addr)
 
 	client, closeClient := newLoopbackSSHClient(t)
 	defer closeClient()
@@ -430,7 +443,12 @@ func TestReconnectDoesNotEstablishConnection(t *testing.T) {
 	select {
 	case <-returned:
 	case <-time.After(3 * time.Second):
-		t.Fatal("reconnect did not return, it is still establishing a connection itself")
+		t.Fatal("reconnect did not return")
+	}
+
+	time.Sleep(tun.Config.Timeout + 500*time.Millisecond)
+	if n := accepted.Load(); n != 0 {
+		t.Fatalf("the SSH server accepted %d connections during reconnect, want none", n)
 	}
 
 	tun.clientMu.RLock()
