@@ -64,10 +64,11 @@ func keyFileSecurityDescriptor() (*windows.SECURITY_DESCRIPTOR, error) {
 	return sd, nil
 }
 
-// createKeyFile creates the key file with keyFileSecurityDescriptor already on
-// it, so there is no moment in which the key is on disk under the DACL of its
-// directory. CREATE_NEW refuses a file that is already there, as O_EXCL does.
-func createKeyFile(path string) (*os.File, error) {
+// CreatePrivateFile creates a file for a secret, the key file or any other,
+// with keyFileSecurityDescriptor already on it, so there is no moment in which
+// the secret is on disk under the DACL of its directory. CREATE_NEW refuses a
+// file that is already there, as O_EXCL does.
+func CreatePrivateFile(path string) (*os.File, error) {
 	sd, err := keyFileSecurityDescriptor()
 	if err != nil {
 		return nil, err

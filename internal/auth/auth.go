@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 
+	"github.com/jollaman999/tunnel-manager/internal/crypto"
 	"github.com/jollaman999/tunnel-manager/internal/models"
 	"golang.org/x/crypto/bcrypt"
 	"gorm.io/gorm"
@@ -83,6 +84,11 @@ func CheckPassword(hash, password string) bool {
 // symlink is one whose target gets truncated and written to. A create that
 // fails because something is at the path writes nothing at all.
 //
+// crypto.CreatePrivateFile does the create. On Windows the mode reaches only the
+// read-only attribute, so the file is created with the DACL the key file gets,
+// which lets only its owner, SYSTEM and Administrators read it, instead of the
+// DACL of its directory.
+//
 // A file that is already there is removed and the create is tried once more.
 // This is reached only while no account row exists, so such a file is a
 // leftover of an earlier startup and the password in it opens nothing, while
@@ -92,16 +98,14 @@ func CheckPassword(hash, password string) bool {
 // removal and the second create, that create fails and the startup stops,
 // which is the outcome the password is not handed out in.
 func writeInitialPasswordFile(path, password string) error {
-	const createFlags = os.O_WRONLY | os.O_CREATE | os.O_EXCL
-
-	f, err := os.OpenFile(path, createFlags, initialPasswordFileMode)
+	f, err := crypto.CreatePrivateFile(path)
 	if errors.Is(err, os.ErrExist) {
 		err = os.Remove(path)
 		if err != nil {
 			return fmt.Errorf("failed to remove the initial password file %s that was already there: %w", path, err)
 		}
 
-		f, err = os.OpenFile(path, createFlags, initialPasswordFileMode)
+		f, err = crypto.CreatePrivateFile(path)
 	}
 	if err != nil {
 		return fmt.Errorf("failed to create the initial password file %s: %w", path, err)

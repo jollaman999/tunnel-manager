@@ -9,9 +9,10 @@ import (
 	"go.uber.org/zap"
 )
 
-// createKeyFile creates the key file with keyFileMode. O_EXCL keeps a key file
-// that appeared in the meantime from being overwritten.
-func createKeyFile(path string) (*os.File, error) {
+// CreatePrivateFile creates a file for a secret with keyFileMode. O_EXCL keeps
+// a file that appeared in the meantime from being overwritten. The mode is
+// masked by umask, so the caller sets it again with Chmod.
+func CreatePrivateFile(path string) (*os.File, error) {
 	return os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, keyFileMode)
 }
 

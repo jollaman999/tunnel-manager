@@ -172,7 +172,7 @@ func createKey(path string) ([]byte, error) {
 		return nil, fmt.Errorf("failed to generate a key: %w", err)
 	}
 
-	f, err := createKeyFile(path)
+	f, err := CreatePrivateFile(path)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create the key file %s: %w", path, err)
 	}
