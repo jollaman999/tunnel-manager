@@ -7436,8 +7436,38 @@ async function moveToTheNewAddress(answer, address) {
     return;
   }
 
+  // The stored port can be held by another program when the new image comes
+  // up, and the service then listens on a port the system picks. The port this
+  // page is on is the one address that can be asked: it is this page's own
+  // origin, so the answer means something. Asked after the grace above, it is
+  // the new image that answers and not the one that was going down. Where it
+  // does not answer, the page goes to the stored address as it always did,
+  // since that one cannot be asked from here.
+  if (leavesThisPort(address) && await serviceAnswers()) {
+    if (currentScreen !== "settings") {
+      return;
+    }
+
+    setToast(function () {
+      return t("restart.back.notice");
+    });
+
+    return drawSettings();
+  }
+
+  if (currentScreen !== "settings") {
+    return;
+  }
+
   drawRestarting(answer, "", address, 0);
   window.location.assign(address);
+}
+
+// leavesThisPort says whether the address the service comes back at is on
+// another port than this page. A move of the scheme alone keeps the port, and
+// an answer on it is then from a server this page cannot read.
+function leavesThisPort(address) {
+  return new URL(address).port !== window.location.port;
 }
 
 // drawRestarting is the screen while the service is away. It says what was
