@@ -96,6 +96,8 @@ const passwordWrongCodes = [
 // with a panel that moves one of the two, out of the data the refusal carries.
 const settingsAPIPortTakenCode = "settings.api_port.local_forward";
 const importAPIPortTakenCode = "import.settings.api_port.local_forward";
+const settingsAPIPortSocksCode = "settings.api_port.socks";
+const importAPIPortSocksCode = "import.settings.api_port.socks";
 
 // csrfCookieName and csrfHeaderName are the two ends of the CSRF check. The
 // server hands the token of the session out in a cookie it leaves readable from

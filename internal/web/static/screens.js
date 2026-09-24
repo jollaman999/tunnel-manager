@@ -2442,9 +2442,18 @@ async function drawHosts() {
     const table = buildTable(
       [t("hosts.id.column"), t("hosts.ip.column"), t("hosts.port.column"),
         t("hosts.user.column"), t("hosts.description.column"),
-        t("hosts.enabled.column"), t("hosts.updated.column"), ""],
+        t("hosts.enabled.column"), t("hosts.socks.column"), t("hosts.updated.column"), ""],
       hosts.map(function (host) {
-        return { cells: hostRow(host), pick: picks.box(host.id) };
+        const row = { cells: hostRow(host), pick: picks.box(host.id) };
+        const failure = host.socks_enabled && typeof host.socks_last_error === "string"
+          ? host.socks_last_error : "";
+
+        if (failure !== "") {
+          row.under = element("span", failure);
+          row.under.className = "last-error";
+        }
+
+        return row;
       }),
       [0, 2],
       picks.head
@@ -2670,9 +2679,25 @@ function hostRow(host) {
     host.user,
     host.description,
     host.enabled ? t("common.yes.text") : t("common.no.text"),
+    socksCell(host),
     timeCell(host.updated_at),
     buttons
   ];
+}
+
+function socksCell(host) {
+  if (!host.socks_enabled || host.socks_status === "off") {
+    return "-";
+  }
+
+  const cell = document.createElement("span");
+
+  cell.className = "socks-cell";
+  cell.dataset.socks = String(host.id);
+  cell.appendChild(document.createTextNode(String(host.socks_port) + " "));
+  cell.appendChild(statusBadge(host.socks_status));
+
+  return cell;
 }
 
 // deletePickedBar is the row over a list that carries the press acting on what
@@ -3124,7 +3149,7 @@ function hostCreateForm() {
       // what they are changed to afterwards is the panel behind the Service
       // ports button.
       bindScopeField(undefined, { field: "assign_all_service_ports", ticked: true })
-    ],
+    ].concat(socksFields({})),
     onSubmit: createHost
   });
 }
@@ -3153,7 +3178,7 @@ function hostEditForm(host) {
       // button, a row at a time or over everything that is ticked.
       { name: "description", label: t("hosts.description.label"), value: host.description },
       { name: "enabled", label: t("hosts.enabled.label"), type: "checkbox", value: host.enabled }
-    ],
+    ].concat(socksFields(host)),
     onSubmit: function (values) {
       return updateHost(host, values);
     },
@@ -3163,6 +3188,41 @@ function hostEditForm(host) {
       return drawHosts();
     }
   });
+}
+
+const socksDefaultPort = 1080;
+
+function socksFields(host) {
+  const shown = { field: "socks_enabled", ticked: true };
+  const stored = typeof host.socks_port === "number" && host.socks_port > 0
+    ? host.socks_port
+    : socksDefaultPort;
+
+  return [
+    {
+      name: "socks_enabled",
+      label: t("hosts.socks-enabled.label"),
+      type: "checkbox",
+      value: host.socks_enabled === true,
+      note: t("hosts.socks-enabled.hint")
+    },
+    Object.assign(portField("socks_port", t("hosts.socks-port.label"), stored),
+      { shownWhen: shown }),
+    {
+      name: "socks_bind_scope",
+      label: t("local-forwards.scope.label"),
+      value: bindScopeStored(host.socks_bind_scope),
+      options: localForwardScopeOptions(),
+      shownWhen: shown
+    },
+    {
+      name: "socks_allowed_sources",
+      label: t("hosts.socks-sources.label"),
+      value: typeof host.socks_allowed_sources === "string" ? host.socks_allowed_sources : "",
+      note: t("hosts.socks-sources.hint"),
+      shownWhen: shown
+    }
+  ];
 }
 
 async function createHost(values) {
@@ -3179,6 +3239,13 @@ async function createHost(values) {
   // decides nothing is better left out than sent from a row nobody saw.
   if (values.assign_all_service_ports) {
     body.bind_scope = values.bind_scope;
+  }
+
+  if (values.socks_enabled) {
+    body.socks_enabled = true;
+    body.socks_port = asNumber(values.socks_port);
+    body.socks_bind_scope = values.socks_bind_scope;
+    body.socks_allowed_sources = values.socks_allowed_sources.trim();
   }
 
   body.password = values.password;
@@ -3228,6 +3295,13 @@ async function updateHost(host, values) {
   if (privateKey !== "") {
     body.private_key = privateKey;
     body.key_passphrase = values.key_passphrase;
+  }
+
+  body.socks_enabled = values.socks_enabled;
+  if (values.socks_enabled) {
+    body.socks_port = asNumber(values.socks_port);
+    body.socks_bind_scope = values.socks_bind_scope;
+    body.socks_allowed_sources = values.socks_allowed_sources.trim();
   }
 
   await apiCall("PUT", "/api/host/" + host.id, body);
@@ -6014,7 +6088,8 @@ async function sendSettings(body) {
   try {
     data = await apiCall("PUT", "/api/settings", body);
   } catch (error) {
-    if (error.code !== settingsAPIPortTakenCode || error.data === null) {
+    if ((error.code !== settingsAPIPortTakenCode && error.code !== settingsAPIPortSocksCode) ||
+      error.data === null) {
       throw error;
     }
 
@@ -6045,6 +6120,7 @@ async function sendSettings(body) {
 // the file, which this screen does not change.
 async function apiPortTakenPanel(taken, offerAPI) {
   const forward = taken.local_forward;
+  const socks = taken.socks_host === null || taken.socks_host === undefined ? null : taken.socks_host;
   const suggested = typeof taken.suggested_port === "number" && taken.suggested_port > 0
     ? String(taken.suggested_port) : "";
 
@@ -6094,7 +6170,11 @@ async function apiPortTakenPanel(taken, offerAPI) {
     choice("api", t("settings.api-port-taken-api.option"));
   }
 
-  choice("forward", t("settings.api-port-taken-forward.option"));
+  if (socks === null) {
+    choice("forward", t("settings.api-port-taken-forward.option"));
+  } else {
+    choice("socks", t("settings.api-port-taken-socks.option"));
+  }
 
   // With one way out there is nothing to pick between, so the radio is not
   // drawn and the box stands under its sentence.
@@ -6106,13 +6186,20 @@ async function apiPortTakenPanel(taken, offerAPI) {
 
   await openModal({
     name: "api-port-taken",
-    title: t("settings.api-port-taken.title"),
+    title: socks === null
+      ? t("settings.api-port-taken.title")
+      : t("settings.api-port-taken-socks.title"),
     body: [
-      element("p", t("settings.api-port-taken.text", {
-        port: forward.local_port,
-        host: forward.host_ip === "" ? String(forward.host_id) : forward.host_ip,
-        target: forward.target_ip + ":" + forward.target_port
-      })),
+      socks === null
+        ? element("p", t("settings.api-port-taken.text", {
+          port: forward.local_port,
+          host: forward.host_ip === "" ? String(forward.host_id) : forward.host_ip,
+          target: forward.target_ip + ":" + forward.target_port
+        }))
+        : element("p", t("settings.api-port-taken-socks.text", {
+          port: socks.socks_port,
+          host: socks.host_ip === "" ? String(socks.host_id) : socks.host_ip
+        })),
       problem
     ].concat(choices.map(function (one) {
       return one.row;
@@ -6146,7 +6233,11 @@ async function apiPortTakenPanel(taken, offerAPI) {
           node.disabled = true;
 
           try {
-            await moveLocalForward(forward.id, port);
+            if (socks === null) {
+              await moveLocalForward(forward.id, port);
+            } else {
+              await apiCall("PUT", "/api/host/" + socks.host_id, { socks_port: port });
+            }
           } catch (error) {
             if (error instanceof Redirected) {
               throw error;
@@ -7133,6 +7224,10 @@ function transferItemKind(kind) {
     return t("transfer.kind-setting.text");
   }
 
+  if (kind === "socks") {
+    return t("transfer.kind-socks.text");
+  }
+
   return kind === null || kind === undefined ? "" : String(kind);
 }
 
@@ -7173,7 +7268,8 @@ async function importSettings(values) {
     // A port of the file that a local forward opens here is offered the one
     // way out an import has, moving the forward, and the same file is sent
     // again with the password still held in values and nowhere else.
-    if (error.code === importAPIPortTakenCode && error.data !== null) {
+    if ((error.code === importAPIPortTakenCode || error.code === importAPIPortSocksCode) &&
+      error.data !== null) {
       const picked = await apiPortTakenPanel(error.data, false);
       if (picked !== null) {
         return importSettings(values);
