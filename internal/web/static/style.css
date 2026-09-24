@@ -274,8 +274,17 @@ h1 {
   font-size: 1.25rem;
 }
 
-#app {
+/* The card is wide enough for the Host list to show its row buttons on one
+   line, which is wider than a paragraph reads well at. Running text keeps the
+   measure the card had before; the boxes a notice or a summary is drawn in are
+   left the width of the card, so they do not stop short of its edge. */
+#app p:not(.notice):not(.summary),
+#app li {
   max-width: 60rem;
+}
+
+#app {
+  max-width: 80rem;
   margin: 0 auto;
   padding: 1.25rem;
   background: var(--glass-sheen), var(--glass);
@@ -1361,6 +1370,35 @@ td .buttons {
 
 .table-scroll:not(.rows-folded) td.actions > .row-menu {
   display: none;
+}
+
+/* A folded list can still be wider than its box on a narrow screen, and the
+   menu is the last cell, so the cell is kept at the end of the box while the
+   rest scrolls under it. It is painted with the row's own colours, since
+   whatever scrolls beneath would otherwise show through. */
+.table-scroll.rows-folded > table > tbody > tr > td.actions:last-child,
+.table-scroll.rows-folded > table:has(> tbody > tr > td.actions:last-child) > thead > tr > th:last-child {
+  position: sticky;
+  inset-inline-end: 0;
+  z-index: 1;
+  box-shadow: inset 1px 0 0 var(--border-soft), -6px 0 8px -6px var(--shadow);
+}
+
+[dir="rtl"] .table-scroll.rows-folded > table > tbody > tr > td.actions:last-child,
+[dir="rtl"] .table-scroll.rows-folded > table:has(> tbody > tr > td.actions:last-child) > thead > tr > th:last-child {
+  box-shadow: inset -1px 0 0 var(--border-soft), 6px 0 8px -6px var(--shadow);
+}
+
+.table-scroll.rows-folded > table > tbody > tr > td.actions:last-child {
+  background: var(--bg-surface);
+}
+
+.table-scroll.rows-folded > table > tbody > tr:nth-child(even) > td.actions:last-child {
+  background: linear-gradient(var(--row-band), var(--row-band)), var(--bg-surface);
+}
+
+.table-scroll.rows-folded > table > tbody > tr:hover > td.actions:last-child {
+  background: linear-gradient(var(--row-hover), var(--row-hover)), var(--bg-surface);
 }
 
 .row-menu {
