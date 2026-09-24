@@ -1368,7 +1368,9 @@ td .buttons {
    a word broken in half there reads as two. The reason is a sentence and keeps
    wrapping. */
 form[data-form="import-tunnels"] td:nth-child(1),
-form[data-form="import-tunnels"] td:nth-child(3) {
+form[data-form="import-tunnels"] td:nth-child(3),
+form[data-form="import-settings"] td:nth-child(1),
+form[data-form="import-settings"] td:nth-child(3) {
   white-space: nowrap;
 }
 
