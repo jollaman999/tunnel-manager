@@ -550,7 +550,7 @@ func Reset(db *gorm.DB) (before *Settings, after *Settings, err error) {
 func WarnForwardsOnAPIPort(db *gorm.DB, logger *zap.Logger, apiPort int) {
 	var forwards []models.LocalForward
 
-	err := db.Where("local_port = ?", apiPort).Order("id").Find(&forwards).Error
+	err := db.Where("local_port = ?", apiPort).Order("host_id, number").Find(&forwards).Error
 	if err != nil {
 		logger.Warn("failed to fetch local forwards",
 			logid.LocalForwardListFetchFailed.Field(),
@@ -563,7 +563,7 @@ func WarnForwardsOnAPIPort(db *gorm.DB, logger *zap.Logger, apiPort int) {
 		logger.Warn("a local forward opens the port the API was put back to, "+
 			"so the next start may listen on another port",
 			logid.SettingsDefaultPortHeldByForward.Field(),
-			zap.Uint("local_forward_id", forward.ID),
+			zap.Uint("local_forward_id", forward.Number),
 			zap.Uint("host_id", forward.HostID),
 			zap.Int("local_port", forward.LocalPort))
 	}

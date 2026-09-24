@@ -112,9 +112,11 @@ type Manager struct {
 	// reconcileWake carries the request for a reconcile pass. It holds one
 	// wake-up, so a caller never waits for the loop to pick the previous one up.
 	reconcileWake chan struct{}
-	// localForwards holds the running local forwards by the ID of their row.
-	// It has a lock of its own, since nothing ever needs it together with the
-	// tunnels.
+	// localForwards holds the running local forwards by the local port each of
+	// them opens, which is one row and no other: the port carries a unique
+	// index over the whole table, because two rows asking for one port on this
+	// machine leave one of them unable to start. It has a lock of its own,
+	// since nothing ever needs it together with the tunnels.
 	localForwards map[uint]*localTunnel
 	localMu       sync.RWMutex
 	// socksProxies holds the running SOCKS5 proxies by the ID of their Host,

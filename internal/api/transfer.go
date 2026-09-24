@@ -2039,8 +2039,17 @@ func (h *TransferHandler) importLocalForwards(tx *gorm.DB, written []hostContent
 				bindScope = models.BindScopeWildcard
 			}
 
+			number, err := nextLocalForwardNumber(tx, hostIDs[i])
+			if err != nil {
+				h.hosts.logger.Error("failed to look for a local forward while importing",
+					logid.TransferLocalForwardLookupFailed.Field(),
+					zap.Error(err))
+				return nil, refuse(http.StatusInternalServerError, errImportLocalForwardsReadFailed)
+			}
+
 			err = tx.Create(&models.LocalForward{
 				HostID:      hostIDs[i],
+				Number:      number,
 				BindScope:   bindScope,
 				LocalPort:   lf.LocalPort,
 				TargetIP:    lf.TargetIP,

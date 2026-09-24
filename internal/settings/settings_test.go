@@ -662,8 +662,8 @@ func TestResetNamesTheForwardOnTheDefaultAPIPort(t *testing.T) {
 	defaultPort := Defaults().APIPort
 
 	logs := resetWithForwards(t, []models.LocalForward{
-		{HostID: 3, LocalPort: 15432, TargetIP: "127.0.0.1", TargetPort: 5432},
-		{HostID: 7, LocalPort: defaultPort, TargetIP: "127.0.0.1", TargetPort: 80},
+		{HostID: 3, Number: 1, LocalPort: 15432, TargetIP: "127.0.0.1", TargetPort: 5432},
+		{HostID: 7, Number: 1, LocalPort: defaultPort, TargetIP: "127.0.0.1", TargetPort: 80},
 	})
 
 	entries := logs.All()
@@ -683,8 +683,8 @@ func TestResetNamesTheForwardOnTheDefaultAPIPort(t *testing.T) {
 	if fields[logid.FieldKey] != string(logid.SettingsDefaultPortHeldByForward) {
 		t.Errorf("the line carries log_id %v, want %s", fields[logid.FieldKey], logid.SettingsDefaultPortHeldByForward)
 	}
-	if fields["local_forward_id"] != uint64(2) {
-		t.Errorf("local_forward_id is %v, want 2", fields["local_forward_id"])
+	if fields["local_forward_id"] != uint64(1) {
+		t.Errorf("local_forward_id is %v, want 1", fields["local_forward_id"])
 	}
 	if fields["host_id"] != uint64(7) {
 		t.Errorf("host_id is %v, want 7", fields["host_id"])

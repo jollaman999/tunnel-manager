@@ -115,8 +115,8 @@ func statusLocalForwardRefs(db *gorm.DB) ([]statusRef, error) {
 	var refs []statusRef
 
 	err := db.Model(&models.LocalForward{}).
-		Select("host_id, id AS ref").
-		Order("host_id, id").
+		Select("host_id, number AS ref").
+		Order("host_id, number").
 		Scan(&refs).Error
 	if err != nil {
 		return nil, err
@@ -245,7 +245,7 @@ func localForwardStatusRow(lf models.LocalForward, host *models.Host,
 	view := localForwardViewOf(lf, host != nil && host.Enabled, states)
 
 	return statusPageRow{
-		ref: statusRef{HostID: lf.HostID, Kind: statusKindLocalForward, Ref: lf.ID},
+		ref: statusRef{HostID: lf.HostID, Kind: statusKindLocalForward, Ref: lf.Number},
 		row: statusRow{
 			Tunnel: models.Tunnel{
 				HostID:          lf.HostID,

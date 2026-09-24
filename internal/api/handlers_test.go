@@ -3788,9 +3788,9 @@ func TestDeleteHostTakesItsLocalForwardsWithIt(t *testing.T) {
 	db := newRowsDB(t, hosts, nil, nil)
 
 	for _, lf := range []models.LocalForward{
-		{HostID: 1, LocalPort: 15432, TargetIP: "192.0.2.1", TargetPort: 5432},
-		{HostID: 1, LocalPort: 15433, TargetIP: "192.0.2.1", TargetPort: 5433},
-		{HostID: 2, LocalPort: 15434, TargetIP: "192.0.2.2", TargetPort: 5432},
+		{HostID: 1, Number: 1, LocalPort: 15432, TargetIP: "192.0.2.1", TargetPort: 5432},
+		{HostID: 1, Number: 2, LocalPort: 15433, TargetIP: "192.0.2.1", TargetPort: 5433},
+		{HostID: 2, Number: 1, LocalPort: 15434, TargetIP: "192.0.2.2", TargetPort: 5432},
 	} {
 		err := db.Create(&lf).Error
 		if err != nil {

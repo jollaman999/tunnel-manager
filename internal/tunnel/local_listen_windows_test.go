@@ -82,7 +82,7 @@ func TestALocalPortHeldAnyWayLeavesTheForwardInError(t *testing.T) {
 			f := newLocalForwardFixture(t, models.BindScopeWildcard, localPort, targetIP, targetPort)
 			f.reconcile(t)
 
-			state := waitLocalStatus(t, f.m, 7, "the local forward to report the port in use", func(state LocalForwardState) bool {
+			state := waitLocalStatus(t, f.m, f.key(), "the local forward to report the port in use", func(state LocalForwardState) bool {
 				return state.Status == localStatusError
 			})
 

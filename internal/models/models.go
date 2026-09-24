@@ -170,9 +170,17 @@ type HostServicePort struct {
 // LocalPort is unique over the table because every row opens its port on this
 // same machine, and two rows asking for one port leave one of them unable to
 // start.
+//
+// A row is identified by its Host and its Number together. The number is what
+// the screen draws, what a log line carries and what a path names, and it is
+// the key rather than a column beside a table-wide identifier so that there is
+// only one of it: a row read off the screen as the second forward of Host 3 is
+// the row a log line calls the second forward of Host 3.
 type LocalForward struct {
-	ID     uint `gorm:"primaryKey;autoIncrement" json:"id"`
-	HostID uint `gorm:"index;not null" json:"host_id"`
+	HostID uint `gorm:"primaryKey;not null" json:"host_id"`
+	// Number is which forward of its Host this is, counted from 1. Numbers are
+	// handed out per Host, so two Hosts each have a first forward.
+	Number uint `gorm:"primaryKey;not null" json:"number"`
 	// BindScope is where on this machine LocalPort is opened, with the words
 	// and the constraint HostServicePort.BindScope carries, and an empty value
 	// is the wildcard for the same reason.

@@ -94,7 +94,7 @@ func newLocalForwardDB(t *testing.T, hosts []models.Host, forwards []models.Loca
 
 func storedLocalForward(id, hostID uint, localPort int) models.LocalForward {
 	return models.LocalForward{
-		ID:         id,
+		Number:     id,
 		HostID:     hostID,
 		BindScope:  models.BindScopeLoopback,
 		LocalPort:  localPort,
@@ -198,7 +198,7 @@ func storedLocalForwards(t *testing.T, db *gorm.DB) []models.LocalForward {
 
 	var rows []models.LocalForward
 
-	err := db.Order("id").Find(&rows).Error
+	err := db.Order("host_id, number").Find(&rows).Error
 	if err != nil {
 		t.Fatalf("failed to read the local forwards: %v", err)
 	}
@@ -227,7 +227,7 @@ func TestCreateHostLocalForwardStoresTheRow(t *testing.T) {
 	}
 
 	got := readLocalForwardAnswer(t, rec)
-	if got.ID == 0 || got.HostID != 1 || got.LocalPort != 15432 || got.TargetIP != "127.0.0.1" ||
+	if got.Number == 0 || got.HostID != 1 || got.LocalPort != 15432 || got.TargetIP != "127.0.0.1" ||
 		got.TargetPort != 5432 || got.Description != "db" {
 		t.Errorf("answer = %+v, want the row that was sent under Host 1", got)
 	}
@@ -265,8 +265,8 @@ func TestListHostLocalForwardsCarriesTheStatus(t *testing.T) {
 		})
 
 	manager := &wakeRecorder{tx: &txConnPool{}, localStates: map[uint]tunnel.LocalForwardState{
-		1: {Status: "connected", RetryCount: 2, LastConnectedAt: connectedAt},
-		3: {Status: "connected"},
+		15001: {Status: "connected", RetryCount: 2, LastConnectedAt: connectedAt},
+		15003: {Status: "connected"},
 	}}
 	h := NewHandler(db, manager, zap.NewNop(), newTestCipher(t))
 
@@ -288,14 +288,14 @@ func TestListHostLocalForwardsCarriesTheStatus(t *testing.T) {
 	}
 
 	first := answer.Data.Items[0]
-	if first.ID != 1 || first.Status != "connected" || first.RetryCount != 2 || !first.LastConnectedAt.Equal(connectedAt) {
+	if first.Number != 1 || first.Status != "connected" || first.RetryCount != 2 || !first.LastConnectedAt.Equal(connectedAt) {
 		t.Errorf("row 1 = %+v, want the state the manager reports", first)
 	}
 	if first.BindScope != models.BindScopeLoopback {
 		t.Errorf("row 1 bind_scope = %q, want %q", first.BindScope, models.BindScopeLoopback)
 	}
 
-	if answer.Data.Items[1].ID != 2 || answer.Data.Items[1].Status != localForwardStatusStopped {
+	if answer.Data.Items[1].Number != 2 || answer.Data.Items[1].Status != localForwardStatusStopped {
 		t.Errorf("row 2 = %+v, want status %q", answer.Data.Items[1], localForwardStatusStopped)
 	}
 
@@ -380,7 +380,7 @@ func TestListHostLocalForwardsIsPaged(t *testing.T) {
 
 		ids := make([]uint, 0, len(answer.Data.Items))
 		for _, item := range answer.Data.Items {
-			ids = append(ids, item.ID)
+			ids = append(ids, item.Number)
 		}
 
 		if answer.Data.Total != 12 || answer.Data.Page != tc.page || answer.Data.Size != tc.size ||
@@ -507,8 +507,8 @@ func TestTheStatusOfALocalForwardSaysWhatIsOff(t *testing.T) {
 	off.Enabled = false
 
 	states := map[uint]tunnel.LocalForwardState{
-		1: {Status: "connected"},
-		2: {Status: "connected"},
+		15001: {Status: "connected"},
+		15002: {Status: "connected"},
 	}
 
 	for _, tc := range []struct {
@@ -524,7 +524,7 @@ func TestTheStatusOfALocalForwardSaysWhatIsOff(t *testing.T) {
 		got := localForwardViewOf(tc.lf, tc.hostEnabled, states)
 		if got.Status != tc.want {
 			t.Errorf("row %d with the Host enabled=%v: status = %q, want %q",
-				tc.lf.ID, tc.hostEnabled, got.Status, tc.want)
+				tc.lf.Number, tc.hostEnabled, got.Status, tc.want)
 		}
 	}
 }
@@ -554,7 +554,7 @@ func TestUpdateLocalForwardChangesTheRow(t *testing.T) {
 	}
 
 	rows := storedLocalForwards(t, db)
-	want := models.LocalForward{ID: 1, HostID: 1, BindScope: models.BindScopeLoopback, LocalPort: 15009,
+	want := models.LocalForward{Number: 1, HostID: 1, BindScope: models.BindScopeLoopback, LocalPort: 15009,
 		TargetIP: "192.0.2.10", TargetPort: 8080, Description: "web"}
 	if len(rows) != 1 || rows[0].BindScope != want.BindScope || rows[0].LocalPort != want.LocalPort ||
 		rows[0].TargetIP != want.TargetIP || rows[0].TargetPort != want.TargetPort ||
@@ -587,7 +587,7 @@ func TestDeleteLocalForwardRemovesTheRow(t *testing.T) {
 	}
 
 	rows := storedLocalForwards(t, db)
-	if len(rows) != 1 || rows[0].ID != 2 {
+	if len(rows) != 1 || rows[0].Number != 2 {
 		t.Errorf("stored = %+v, want row 2 alone", rows)
 	}
 
@@ -602,7 +602,7 @@ func TestGetLocalForwardAnswersTheRow(t *testing.T) {
 	db := newLocalForwardDB(t, []models.Host{statusHost(1, true)},
 		[]models.LocalForward{storedLocalForward(1, 1, 15001)})
 	manager := &wakeRecorder{tx: &txConnPool{}, localStates: map[uint]tunnel.LocalForwardState{
-		1: {Status: "error", LastError: "connection refused"},
+		15001: {Status: "error", LastError: "connection refused"},
 	}}
 	h := NewHandler(db, manager, zap.NewNop(), newTestCipher(t))
 
@@ -617,7 +617,7 @@ func TestGetLocalForwardAnswersTheRow(t *testing.T) {
 	}
 
 	got := readLocalForwardAnswer(t, rec)
-	if got.ID != 1 || got.LocalPort != 15001 || got.Status != "error" || got.LastError != "connection refused" {
+	if got.Number != 1 || got.LocalPort != 15001 || got.Status != "error" || got.LastError != "connection refused" {
 		t.Errorf("answer = %+v, want row 1 with the state the manager reports", got)
 	}
 }

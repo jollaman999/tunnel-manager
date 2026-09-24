@@ -1746,7 +1746,7 @@ func (h *Handler) GetStatus(c echo.Context) error {
 
 	var forwards []models.LocalForward
 	if split.forwardCount > 0 {
-		err = h.db.Order("host_id, id").
+		err = h.db.Order("host_id, number").
 			Limit(split.forwardCount).Offset(split.forwardOffset).Find(&forwards).Error
 		if err != nil {
 			h.logger.Error("failed to fetch local forwards", logid.LocalForwardListFetchFailed.Field(), zap.Error(err))

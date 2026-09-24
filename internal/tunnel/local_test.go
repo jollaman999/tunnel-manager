@@ -294,7 +294,7 @@ func newLocalForwardFixture(t *testing.T, scope string, localPort int, targetIP 
 		HostKey: MarshalHostKey(server.key), Enabled: true,
 	}}
 	f.forwards = []models.LocalForward{{
-		ID: 7, HostID: 1, BindScope: scope, LocalPort: localPort, TargetIP: targetIP, TargetPort: targetPort,
+		Number: 7, HostID: 1, BindScope: scope, LocalPort: localPort, TargetIP: targetIP, TargetPort: targetPort,
 		Enabled: true,
 	}}
 
@@ -307,6 +307,15 @@ func newLocalForwardFixture(t *testing.T, scope string, localPort int, targetIP 
 	f.m = m
 
 	return f
+}
+
+// key is what the manager holds the forward of this fixture under: the local
+// port it opens.
+func (f *localForwardFixture) key() uint {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+
+	return uint(f.forwards[0].LocalPort)
 }
 
 func (f *localForwardFixture) change(edit func(hosts []models.Host, forwards *[]models.LocalForward)) {
@@ -417,7 +426,7 @@ func TestALocalForwardCarriesAConnectionThroughTheHost(t *testing.T) {
 				t.Fatalf("the first pass reported started=%d failed=%d, want 1/0", result.Started, result.Failed)
 			}
 
-			state := waitLocalStatus(t, f.m, 7, "the local forward to connect", isConnected)
+			state := waitLocalStatus(t, f.m, f.key(), "the local forward to connect", isConnected)
 			if state.LastConnectedAt.IsZero() || state.RetryCount != 0 || state.LastError != "" {
 				t.Fatalf("a connected forward reports %+v", state)
 			}
@@ -469,7 +478,7 @@ func TestReconcileFollowsTheLocalForwardRows(t *testing.T) {
 	f := newLocalForwardFixture(t, models.BindScopeLoopback, localPort, targetIP, targetPort)
 
 	f.reconcile(t)
-	waitLocalStatus(t, f.m, 7, "the local forward to connect", isConnected)
+	waitLocalStatus(t, f.m, f.key(), "the local forward to connect", isConnected)
 
 	if result := f.reconcile(t); result != (ReconcileResult{}) {
 		t.Fatalf("a pass over nothing that changed reported %+v", result)
@@ -483,7 +492,7 @@ func TestReconcileFollowsTheLocalForwardRows(t *testing.T) {
 	if result.Stopped != 1 {
 		t.Fatalf("disabling the Host reported %+v, want one stopped", result)
 	}
-	if _, ok := f.m.LocalForwardStatus(7); ok {
+	if _, ok := f.m.LocalForwardStatus(f.key()); ok {
 		t.Fatal("the local forward of a disabled Host still reports a status")
 	}
 	if !portIsFree(localPort) {
@@ -498,10 +507,10 @@ func TestReconcileFollowsTheLocalForwardRows(t *testing.T) {
 	if result.Started != 1 {
 		t.Fatalf("enabling the Host again reported %+v, want one started", result)
 	}
-	waitLocalStatus(t, f.m, 7, "the local forward to connect again", isConnected)
+	waitLocalStatus(t, f.m, f.key(), "the local forward to connect again", isConnected)
 
 	f.m.localMu.RLock()
-	before := f.m.localForwards[7]
+	before := f.m.localForwards[f.key()]
 	f.m.localMu.RUnlock()
 
 	f.change(func(_ []models.Host, forwards *[]models.LocalForward) {
@@ -514,14 +523,14 @@ func TestReconcileFollowsTheLocalForwardRows(t *testing.T) {
 	}
 
 	f.m.localMu.RLock()
-	after := f.m.localForwards[7]
+	after := f.m.localForwards[f.key()]
 	f.m.localMu.RUnlock()
 
 	if after == nil || after == before {
 		t.Fatal("the forward kept running on the target it was built with")
 	}
 
-	waitLocalStatus(t, f.m, 7, "the rebuilt local forward to connect", isConnected)
+	waitLocalStatus(t, f.m, f.key(), "the rebuilt local forward to connect", isConnected)
 
 	if got := exchange(t, local, "ping"); got != "second:ping" {
 		t.Fatalf("the answer after the target changed was %q, want %q", got, "second:ping")
@@ -569,7 +578,7 @@ func TestASwitchedOffLocalForwardOpensNothing(t *testing.T) {
 	if result := f.reconcile(t); result != (ReconcileResult{}) {
 		t.Fatalf("a pass over a switched off forward reported %+v, want nothing", result)
 	}
-	if _, ok := f.m.LocalForwardStatus(7); ok {
+	if _, ok := f.m.LocalForwardStatus(f.key()); ok {
 		t.Fatal("a switched off local forward reports a status")
 	}
 	if !portIsFree(localPort) {
@@ -588,7 +597,7 @@ func TestASwitchedOffLocalForwardOpensNothing(t *testing.T) {
 	if result.Started != 1 {
 		t.Fatalf("switching the forward on reported %+v, want one started", result)
 	}
-	waitLocalStatus(t, f.m, 7, "the local forward to connect", isConnected)
+	waitLocalStatus(t, f.m, f.key(), "the local forward to connect", isConnected)
 
 	if got := exchange(t, local, "ping"); got != "echo:ping" {
 		t.Fatalf("the answer through the switched on forward was %q, want %q", got, "echo:ping")
@@ -602,7 +611,7 @@ func TestASwitchedOffLocalForwardOpensNothing(t *testing.T) {
 	if result.Stopped != 1 {
 		t.Fatalf("switching the forward off reported %+v, want one stopped", result)
 	}
-	if _, ok := f.m.LocalForwardStatus(7); ok {
+	if _, ok := f.m.LocalForwardStatus(f.key()); ok {
 		t.Fatal("the local forward still reports a status after it was switched off")
 	}
 	if !portIsFree(localPort) {
@@ -630,7 +639,7 @@ func TestALocalPortInUseLeavesTheForwardInError(t *testing.T) {
 	f := newLocalForwardFixture(t, models.BindScopeWildcard, localPort, targetIP, targetPort)
 	f.reconcile(t)
 
-	state := waitLocalStatus(t, f.m, 7, "the local forward to report the port in use", func(state LocalForwardState) bool {
+	state := waitLocalStatus(t, f.m, f.key(), "the local forward to report the port in use", func(state LocalForwardState) bool {
 		return state.Status == localStatusError
 	})
 
@@ -655,7 +664,7 @@ func TestALocalForwardRefusedOnItsHostKeyStopsTrying(t *testing.T) {
 
 	f.reconcile(t)
 
-	waitLocalStatus(t, f.m, 7, "the local forward to report the host key", func(state LocalForwardState) bool {
+	waitLocalStatus(t, f.m, f.key(), "the local forward to report the host key", func(state LocalForwardState) bool {
 		return state.Status == StatusHostKeyUnapproved
 	})
 
@@ -663,7 +672,7 @@ func TestALocalForwardRefusedOnItsHostKeyStopsTrying(t *testing.T) {
 	// reached the server again by now.
 	time.Sleep(1500 * time.Millisecond)
 
-	state, _ := f.m.LocalForwardStatus(7)
+	state, _ := f.m.LocalForwardStatus(f.key())
 	if state.Status != StatusHostKeyUnapproved || state.RetryCount != 0 {
 		t.Fatalf("the refused forward went on to %+v", state)
 	}
@@ -680,11 +689,11 @@ func TestALocalForwardReconnectsAfterTheHostDropsIt(t *testing.T) {
 	f := newLocalForwardFixture(t, models.BindScopeLoopback, localPort, targetIP, targetPort)
 	f.reconcile(t)
 
-	first := waitLocalStatus(t, f.m, 7, "the local forward to connect", isConnected)
+	first := waitLocalStatus(t, f.m, f.key(), "the local forward to connect", isConnected)
 
 	f.server.drop()
 
-	waitLocalStatus(t, f.m, 7, "the local forward to connect again", func(state LocalForwardState) bool {
+	waitLocalStatus(t, f.m, f.key(), "the local forward to connect again", func(state LocalForwardState) bool {
 		return state.Status == localStatusConnected && state.LastConnectedAt.After(first.LastConnectedAt)
 	})
 

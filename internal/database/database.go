@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"strings"
 	"sync/atomic"
 	"time"
 
@@ -468,6 +469,11 @@ func fillBindScopes(db *gorm.DB) error {
 	return nil
 }
 
+// localForwardsTable is the table the local forwards are stored in. It is
+// spelled out because the rebuild below names it in SQL of its own, where
+// there is no model for gorm to take the name off.
+const localForwardsTable = "local_forwards"
+
 // localForwardEnabledColumn is the column that says whether a local forward
 // runs. Whether it is already there is how the startup that adds it is told
 // from the ones after.
@@ -488,6 +494,178 @@ func fillLocalForwardsEnabled(db *gorm.DB) error {
 	}
 
 	return nil
+}
+
+// localForwardNumberColumn is the column that says which forward of its Host a
+// row is. Whether it is already there is how a database whose local forwards
+// are still keyed by one table-wide id is told from one that has been moved
+// over.
+//
+// localForwardsBeforeNumbers is where those rows wait while the table is
+// rebuilt around them. It is made and dropped inside one transaction, so
+// nothing outside numberLocalForwardsByHost ever sees it.
+const (
+	localForwardNumberColumn   = "number"
+	localForwardsBeforeNumbers = "local_forwards_before_numbers"
+)
+
+// numberLocalForwardsByHost rebuilds the local forwards on the key they carry
+// now, the Host and the number together, and hands every stored row its
+// number: 1 upwards per Host, in the order of the id they had. That order is
+// the order they were made in and the order the list has always been drawn in,
+// so the number a forward comes out with is the place it was already shown in.
+//
+// The table is rebuilt rather than altered because SQLite cannot change the
+// primary key of a table, and AutoMigrate cannot ask it to: against a table
+// still carrying id it would try to add number to rows that exist as a column
+// that may not be null, which SQLite refuses outright, and the startup would
+// stop there. So this runs before AutoMigrate and creates the new table with
+// AutoMigrate itself, which keeps the shape in the model rather than in DDL
+// written out a second time here. The pass below then finds the table already
+// as the model asks for it and does nothing to it.
+//
+// The whole of it is one transaction. A rebuild that fails halfway would
+// otherwise leave an installation with its forwards in a table it no longer
+// opens, so either the rows come out numbered or the table is the one that
+// went in. The row count is compared before the old table is dropped for the
+// same reason: a copy that lost rows ends the transaction rather than the
+// rows.
+//
+// It is called on the startup that finds the old shape and on no other, and a
+// database that is already keyed by the pair is not brought here at all, so
+// running the program twice over one file numbers it once.
+func numberLocalForwardsByHost(db *gorm.DB) error {
+	return db.Transaction(func(tx *gorm.DB) error {
+		var before int64
+		err := tx.Table(localForwardsTable).Count(&before).Error
+		if err != nil {
+			return fmt.Errorf("failed to count the local forwards to number: %w", err)
+		}
+
+		err = tx.Migrator().RenameTable(localForwardsTable, localForwardsBeforeNumbers)
+		if err != nil {
+			return fmt.Errorf("failed to set the local forwards aside: %w", err)
+		}
+
+		// The indexes came along with the table under their own names, and an
+		// index name is held once for the whole database, so the ones the
+		// rebuilt table is given would collide with them. They are dropped
+		// rather than renamed: the table they are on is dropped a few lines
+		// below.
+		var indexes []string
+		err = tx.Raw("SELECT name FROM sqlite_master WHERE type = 'index' AND tbl_name = ? AND sql IS NOT NULL",
+			localForwardsBeforeNumbers).Scan(&indexes).Error
+		if err != nil {
+			return fmt.Errorf("failed to read the indexes of the local forwards: %w", err)
+		}
+
+		for _, name := range indexes {
+			err = tx.Exec(fmt.Sprintf("DROP INDEX %s", quoteIdentifier(name))).Error
+			if err != nil {
+				return fmt.Errorf("failed to drop an index of the local forwards: %w", err)
+			}
+		}
+
+		err = tx.AutoMigrate(&models.LocalForward{})
+		if err != nil {
+			return fmt.Errorf("failed to build the local forwards on the host and the number: %w", err)
+		}
+
+		// Every column the rows were stored in that the rebuilt table still
+		// has is carried over as it stands, so a value is never read into this
+		// process and written back. The columns are asked for rather than
+		// listed because what an installation holds depends on the release it
+		// is coming from: one from before a column was added does not have it,
+		// and a column filled in after this by the passes that follow
+		// AutoMigrate is not one to copy.
+		columns, err := sharedColumns(tx, localForwardsBeforeNumbers, localForwardsTable)
+		if err != nil {
+			return err
+		}
+
+		if len(columns) == 0 {
+			return fmt.Errorf("the stored local forwards have no column in common with the table they move to")
+		}
+
+		quoted := make([]string, 0, len(columns))
+		for _, name := range columns {
+			quoted = append(quoted, quoteIdentifier(name))
+		}
+
+		copied := strings.Join(quoted, ", ")
+		err = tx.Exec(fmt.Sprintf(
+			"INSERT INTO %s (%s, %s) SELECT %s, ROW_NUMBER() OVER (PARTITION BY host_id ORDER BY id) FROM %s",
+			quoteIdentifier(localForwardsTable), copied, quoteIdentifier(localForwardNumberColumn),
+			copied, quoteIdentifier(localForwardsBeforeNumbers))).Error
+		if err != nil {
+			return fmt.Errorf("failed to number the local forwards by host: %w", err)
+		}
+
+		var after int64
+		err = tx.Table(localForwardsTable).Count(&after).Error
+		if err != nil {
+			return fmt.Errorf("failed to count the numbered local forwards: %w", err)
+		}
+
+		if after != before {
+			return fmt.Errorf("numbering the local forwards by host moved %d of %d rows", after, before)
+		}
+
+		err = tx.Migrator().DropTable(localForwardsBeforeNumbers)
+		if err != nil {
+			return fmt.Errorf("failed to drop the local forwards that were set aside: %w", err)
+		}
+
+		return nil
+	})
+}
+
+// sharedColumns is the columns two tables both have, in the order the first one
+// holds them.
+func sharedColumns(tx *gorm.DB, table string, other string) ([]string, error) {
+	held, err := columnsOf(tx, table)
+	if err != nil {
+		return nil, err
+	}
+
+	against, err := columnsOf(tx, other)
+	if err != nil {
+		return nil, err
+	}
+
+	has := make(map[string]bool, len(against))
+	for _, name := range against {
+		has[name] = true
+	}
+
+	shared := make([]string, 0, len(held))
+	for _, name := range held {
+		if has[name] {
+			shared = append(shared, name)
+		}
+	}
+
+	return shared, nil
+}
+
+// columnsOf is the columns of one table, in the order it holds them.
+func columnsOf(tx *gorm.DB, table string) ([]string, error) {
+	var names []string
+
+	err := tx.Raw("SELECT name FROM pragma_table_info(?)", table).Scan(&names).Error
+	if err != nil {
+		return nil, fmt.Errorf("failed to read the columns of %s: %w", table, err)
+	}
+
+	return names, nil
+}
+
+// quoteIdentifier writes a table or column name the way SQL reads one whatever
+// it is spelled with. The names reaching it are the ones this package and the
+// model wrote, and the doubling is what keeps that true of a name read back out
+// of the database.
+func quoteIdentifier(name string) string {
+	return `"` + strings.ReplaceAll(name, `"`, `""`) + `"`
 }
 
 // NewDatabase opens the database file and hands back the handle its logger
@@ -598,6 +776,21 @@ func NewDatabase(path string, logger *zap.Logger, logLevel string) (*gorm.DB, *L
 	// switch on.
 	addsLocalForwardEnabled := db.Migrator().HasTable(&models.LocalForward{}) &&
 		!db.Migrator().HasColumn(&models.LocalForward{}, localForwardEnabledColumn)
+
+	// Whether the local forwards are still keyed by one table-wide id is asked
+	// here for the same reason, and unlike the answers above it is acted on
+	// before AutoMigrate instead of after. AutoMigrate has no way of changing a
+	// primary key, so the rows are moved onto the new one first and the pass
+	// below finds the table already as the model asks for it. Why it cannot be
+	// left to AutoMigrate, and why the move is one transaction, is at
+	// numberLocalForwardsByHost.
+	if db.Migrator().HasTable(&models.LocalForward{}) &&
+		!db.Migrator().HasColumn(&models.LocalForward{}, localForwardNumberColumn) {
+		err = numberLocalForwardsByHost(db)
+		if err != nil {
+			return nil, nil, err
+		}
+	}
 
 	err = db.AutoMigrate(
 		&models.Host{},

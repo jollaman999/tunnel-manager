@@ -1744,8 +1744,8 @@ func TestTheUpgradeSwitchesOnTheLocalForwardsThatWereRunning(t *testing.T) {
 	})
 
 	for _, lf := range []models.LocalForward{
-		{HostID: 1, BindScope: models.BindScopeLoopback, LocalPort: 15003, TargetIP: "127.0.0.1", TargetPort: 5432},
-		{HostID: 1, BindScope: models.BindScopeLoopback, LocalPort: 15004, TargetIP: "127.0.0.1", TargetPort: 5432,
+		{HostID: 1, Number: 3, BindScope: models.BindScopeLoopback, LocalPort: 15003, TargetIP: "127.0.0.1", TargetPort: 5432},
+		{HostID: 1, Number: 4, BindScope: models.BindScopeLoopback, LocalPort: 15004, TargetIP: "127.0.0.1", TargetPort: 5432,
 			Enabled: true},
 	} {
 		err = second.Create(&lf).Error

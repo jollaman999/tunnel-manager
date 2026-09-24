@@ -16,7 +16,7 @@ import (
 // local port is unique over the table.
 func statusLocalForward(id, hostID uint, localPort int, scope string, enabled bool) models.LocalForward {
 	return models.LocalForward{
-		ID:         id,
+		Number:     id,
 		HostID:     hostID,
 		BindScope:  scope,
 		LocalPort:  localPort,

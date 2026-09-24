@@ -2333,11 +2333,12 @@ func TestTheAssignmentsOfASkippedHostAreLeftAlone(t *testing.T) {
 }
 
 // TestTheLocalForwardContentCarriesEveryFieldOfALocalForward does for a local
-// forward what the tests above do for a Host and a service port. The Host id is
-// left out with the id: the Host is the one the forward is written under in
-// the file.
+// forward what the tests above do for a Host and a service port. The Host and
+// the number, which are the key, are left out: the Host is the one the forward
+// is written under in the file, and the number is handed out again by the
+// installation that reads it.
 func TestTheLocalForwardContentCarriesEveryFieldOfALocalForward(t *testing.T) {
-	left := map[string]bool{"ID": true, "HostID": true, "CreatedAt": true, "UpdatedAt": true}
+	left := map[string]bool{"Number": true, "HostID": true, "CreatedAt": true, "UpdatedAt": true}
 
 	stored := reflect.TypeOf(models.LocalForward{})
 	carried := reflect.TypeOf(localForwardContent{})
@@ -2380,8 +2381,14 @@ func (i *transferInstall) forward(t *testing.T, hostIP string, lf localForwardCo
 		t.Fatalf("the Host %s is not registered here: %v", hostIP, err)
 	}
 
+	number, err := nextLocalForwardNumber(i.db, host.ID)
+	if err != nil {
+		t.Fatalf("failed to read the numbers of the local forwards of %s: %v", hostIP, err)
+	}
+
 	err = i.db.Create(&models.LocalForward{
 		HostID:      host.ID,
+		Number:      number,
 		BindScope:   lf.BindScope,
 		LocalPort:   lf.LocalPort,
 		TargetIP:    lf.TargetIP,
@@ -3085,7 +3092,7 @@ func TestImportedSettingsWithAnAPIPortALocalForwardOpensAreNotStored(t *testing.
 		t.Errorf("error_code = %q, want %q", answer.Code, errImportSettingsAPIPortForward)
 	}
 
-	want := apiPortHolder{ID: forward.ID, HostID: host.ID, HostIP: "192.0.2.10", LocalPort: 15432,
+	want := apiPortHolder{ID: forward.Number, HostID: host.ID, HostIP: "192.0.2.10", LocalPort: 15432,
 		TargetIP: "127.0.0.1", TargetPort: 5432}
 	if answer.Data.LocalForward != want {
 		t.Errorf("local_forward = %+v, want %+v", answer.Data.LocalForward, want)

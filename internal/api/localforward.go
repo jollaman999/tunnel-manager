@@ -52,7 +52,7 @@ func localForwardViewOf(lf models.LocalForward, hostEnabled bool, states map[uin
 
 	view := localForwardView{LocalForward: lf}
 
-	state, running := states[lf.ID]
+	state, running := states[uint(lf.LocalPort)]
 	switch {
 	case !hostEnabled:
 		view.Status = localForwardStatusDisabled
@@ -95,10 +95,11 @@ func isAPIPort(port int, storedPort int, runningPort int) bool {
 
 // localPortRefused checks the local port of a forward against the three things
 // on this machine it must not meet: the port of this server, stored or running,
-// the port of another forward and the port of a SOCKS5 proxy. id is the row
-// being changed, or zero for a new one. A non-nil refusal is the answer; a non-nil error is a failed read,
+// the port of another forward and the port of a SOCKS5 proxy. hostID and
+// number are the row being changed, or both zero for a new one, which is a row
+// no stored forward can be. A non-nil refusal is the answer; a non-nil error is a failed read,
 // which the caller answers with the failure of its own write.
-func localPortRefused(tx *gorm.DB, id uint, localPort int, apiPort int, runningPort int) (*refusal, error) {
+func localPortRefused(tx *gorm.DB, hostID uint, number uint, localPort int, apiPort int, runningPort int) (*refusal, error) {
 	if isAPIPort(localPort, apiPort, runningPort) {
 		return refuse(http.StatusConflict, errLocalForwardPortIsAPIPort,
 			errorArgs{"local_port": strconv.Itoa(localPort)}), nil
@@ -106,7 +107,9 @@ func localPortRefused(tx *gorm.DB, id uint, localPort int, apiPort int, runningP
 
 	var taken int64
 
-	err := tx.Model(&models.LocalForward{}).Where("local_port = ? AND id <> ?", localPort, id).Count(&taken).Error
+	err := tx.Model(&models.LocalForward{}).
+		Where("local_port = ? AND NOT (host_id = ? AND number = ?)", localPort, hostID, number).
+		Count(&taken).Error
 	if err != nil {
 		return nil, err
 	}
@@ -127,6 +130,22 @@ func localPortRefused(tx *gorm.DB, id uint, localPort int, apiPort int, runningP
 	}
 
 	return nil, nil
+}
+
+// nextLocalForwardNumber is the number the next forward of this Host is made
+// with: the one after the highest it carries. A number that has been handed out
+// is never handed out again, so that a number in a log line or in a path is not
+// read back against a row that was made after it.
+func nextLocalForwardNumber(tx *gorm.DB, hostID uint) (uint, error) {
+	var highest uint
+
+	err := tx.Model(&models.LocalForward{}).Where("host_id = ?", hostID).
+		Select("COALESCE(MAX(number), 0)").Scan(&highest).Error
+	if err != nil {
+		return 0, err
+	}
+
+	return highest + 1, nil
 }
 
 // apiPortHolder is the local forward that opens the port a change of the
@@ -204,7 +223,7 @@ func apiPortRefused(tx *gorm.DB, codes apiPortCodes, apiPort int, storedPort int
 		"target":   net.JoinHostPort(holder.TargetIP, strconv.Itoa(holder.TargetPort)),
 	}).carrying(apiPortTaken{
 		LocalForward: apiPortHolder{
-			ID:         holder.ID,
+			ID:         holder.Number,
 			HostID:     holder.HostID,
 			HostIP:     hostIP,
 			LocalPort:  holder.LocalPort,
@@ -329,7 +348,7 @@ func (h *Handler) ListHostLocalForwards(c echo.Context) error {
 	page = page.fitTo(total)
 
 	var rows []models.LocalForward
-	err = h.db.Where("host_id = ?", host.ID).Order("id").Limit(page.size).Offset(page.offset()).Find(&rows).Error
+	err = h.db.Where("host_id = ?", host.ID).Order("number").Limit(page.size).Offset(page.offset()).Find(&rows).Error
 	if err != nil {
 		h.logger.Error("failed to fetch local forwards", logid.LocalForwardListFetchFailed.Field(), zap.Error(err))
 		return failure(c, http.StatusInternalServerError, errLocalForwardListFailed)
@@ -409,7 +428,7 @@ func (h *Handler) CreateHostLocalForward(c echo.Context) error {
 		return failure(c, http.StatusInternalServerError, errHostFetchFailed)
 	}
 
-	refused, err := localPortRefused(tx, 0, req.LocalPort, apiPort, h.runningAPIPort)
+	refused, err := localPortRefused(tx, 0, 0, req.LocalPort, apiPort, h.runningAPIPort)
 	if err != nil {
 		tx.Rollback()
 		h.logger.Error("failed to fetch local forwards", logid.LocalForwardListFetchFailed.Field(),
@@ -428,8 +447,17 @@ func (h *Handler) CreateHostLocalForward(c echo.Context) error {
 		bindScope = models.BindScopeWildcard
 	}
 
+	number, err := nextLocalForwardNumber(tx, host.ID)
+	if err != nil {
+		tx.Rollback()
+		h.logger.Error("failed to fetch local forwards", logid.LocalForwardListFetchFailed.Field(),
+			zap.Error(err), zap.Uint("host_id", host.ID))
+		return failure(c, http.StatusInternalServerError, errLocalForwardCreateFailed)
+	}
+
 	lf := models.LocalForward{
 		HostID:      host.ID,
+		Number:      number,
 		BindScope:   bindScope,
 		LocalPort:   req.LocalPort,
 		TargetIP:    req.TargetIP,
@@ -474,7 +502,7 @@ func (h *Handler) GetLocalForward(c echo.Context) error {
 	}
 
 	var lf models.LocalForward
-	err = h.db.First(&lf, id).Error
+	err = h.db.Where("number = ?", id).First(&lf).Error
 	if err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return failure(c, http.StatusNotFound, errLocalForwardNotFound)
@@ -545,7 +573,7 @@ func (h *Handler) UpdateLocalForward(c echo.Context) error {
 
 	// Read inside the transaction for the reason UpdateHost is.
 	var lf models.LocalForward
-	err = tx.First(&lf, id).Error
+	err = tx.Where("number = ?", id).First(&lf).Error
 	if err != nil {
 		tx.Rollback()
 		if errors.Is(err, gorm.ErrRecordNotFound) {
@@ -555,7 +583,7 @@ func (h *Handler) UpdateLocalForward(c echo.Context) error {
 		return failure(c, http.StatusInternalServerError, errLocalForwardFetchFailed)
 	}
 
-	refused, err := localPortRefused(tx, lf.ID, req.LocalPort, apiPort, h.runningAPIPort)
+	refused, err := localPortRefused(tx, lf.HostID, lf.Number, req.LocalPort, apiPort, h.runningAPIPort)
 	if err != nil {
 		tx.Rollback()
 		h.logger.Error("failed to fetch local forwards", logid.LocalForwardListFetchFailed.Field(),
@@ -591,7 +619,7 @@ func (h *Handler) UpdateLocalForward(c echo.Context) error {
 	if err != nil {
 		tx.Rollback()
 		h.logger.Error("failed to update local forward", logid.LocalForwardUpdateFailed.Field(),
-			zap.Error(err), zap.Uint("local_forward_id", lf.ID))
+			zap.Error(err), zap.Uint("local_forward_id", lf.Number))
 		return failure(c, http.StatusInternalServerError, errLocalForwardUpdateFailed)
 	}
 
@@ -631,7 +659,7 @@ func (h *Handler) DeleteLocalForward(c echo.Context) error {
 	}
 
 	var lf models.LocalForward
-	err = tx.First(&lf, id).Error
+	err = tx.Where("number = ?", id).First(&lf).Error
 	if err != nil {
 		tx.Rollback()
 		if errors.Is(err, gorm.ErrRecordNotFound) {
@@ -645,7 +673,7 @@ func (h *Handler) DeleteLocalForward(c echo.Context) error {
 	if err != nil {
 		tx.Rollback()
 		h.logger.Error("failed to delete local forward", logid.LocalForwardDeleteFailed.Field(),
-			zap.Error(err), zap.Uint("local_forward_id", lf.ID))
+			zap.Error(err), zap.Uint("local_forward_id", lf.Number))
 		return failure(c, http.StatusInternalServerError, errLocalForwardDeleteFailed)
 	}
 
