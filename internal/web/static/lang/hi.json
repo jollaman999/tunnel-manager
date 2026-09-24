@@ -490,7 +490,7 @@
   "log.transfer.host_lookup_failed.text": "इंपोर्ट करते समय Host ढूँढा नहीं जा सका",
   "log.transfer.host_password_encrypt_failed.text": "इंपोर्ट किए गए Host का पासवर्ड एन्क्रिप्ट नहीं किया जा सका",
   "log.transfer.host_private_key_encrypt_failed.text": "इंपोर्ट किए गए Host की निजी कुंजी एन्क्रिप्ट नहीं की जा सकी",
-  "log.transfer.host_read_back_failed.text": "Host के असाइनमेंट इंपोर्ट करते समय उस Host को वापस पढ़ा नहीं जा सका",
+  "log.transfer.host_read_back_failed.text": "इंपोर्ट करते समय Host को वापस पढ़ा नहीं जा सका",
   "log.transfer.host_replace_failed.text": "इंपोर्ट करते समय Host बदला नहीं जा सका",
   "log.transfer.host_secret_does_not_open.text": "Host का सेव किया हुआ कोई गुप्त मान इस इंस्टॉलेशन की एन्क्रिप्शन कुंजी से नहीं खुलता, इसलिए कोई एक्सपोर्ट नहीं बना",
   "log.transfer.hosts_read_failed.text": "एक्सपोर्ट के लिए Host पढ़े नहीं जा सके",

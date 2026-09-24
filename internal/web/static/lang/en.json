@@ -490,7 +490,7 @@
   "log.transfer.host_lookup_failed.text": "failed to look for a Host while importing",
   "log.transfer.host_password_encrypt_failed.text": "failed to encrypt the password of an imported Host",
   "log.transfer.host_private_key_encrypt_failed.text": "failed to encrypt the private key of an imported Host",
-  "log.transfer.host_read_back_failed.text": "failed to read back a Host while importing its assignments",
+  "log.transfer.host_read_back_failed.text": "failed to read back a Host while importing",
   "log.transfer.host_replace_failed.text": "failed to replace a Host while importing",
   "log.transfer.host_secret_does_not_open.text": "a stored secret of a Host does not open with the encryption key of this installation, so no export was made",
   "log.transfer.hosts_read_failed.text": "failed to read the Hosts for an export",

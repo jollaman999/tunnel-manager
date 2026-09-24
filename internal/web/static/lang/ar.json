@@ -490,7 +490,7 @@
   "log.transfer.host_lookup_failed.text": "تعذّر البحث عن Host أثناء الاستيراد",
   "log.transfer.host_password_encrypt_failed.text": "تعذّر تشفير كلمة مرور Host مستورد",
   "log.transfer.host_private_key_encrypt_failed.text": "تعذّر تشفير المفتاح الخاص لـ Host مستورد",
-  "log.transfer.host_read_back_failed.text": "تعذّرت إعادة قراءة Host أثناء استيراد إسناداته",
+  "log.transfer.host_read_back_failed.text": "تعذّرت إعادة قراءة Host أثناء الاستيراد",
   "log.transfer.host_replace_failed.text": "تعذّر استبدال Host أثناء الاستيراد",
   "log.transfer.host_secret_does_not_open.text": "سر محفوظ لـ Host لا يمكن فك تشفيره بمفتاح تشفير هذا التثبيت، فلم يُصدَّر شيء",
   "log.transfer.hosts_read_failed.text": "تعذّرت قراءة الـ Hosts للتصدير",

@@ -490,7 +490,7 @@
   "log.transfer.host_lookup_failed.text": "no se pudo buscar un Host al importar",
   "log.transfer.host_password_encrypt_failed.text": "no se pudo cifrar la contraseña de un Host importado",
   "log.transfer.host_private_key_encrypt_failed.text": "no se pudo cifrar la clave privada de un Host importado",
-  "log.transfer.host_read_back_failed.text": "no se pudo volver a leer un Host al importar sus asignaciones",
+  "log.transfer.host_read_back_failed.text": "no se pudo volver a leer un Host al importar",
   "log.transfer.host_replace_failed.text": "no se pudo sustituir un Host al importar",
   "log.transfer.host_secret_does_not_open.text": "un secreto guardado de un Host no se descifra con la clave de cifrado de esta instalación, así que no se exportó nada",
   "log.transfer.hosts_read_failed.text": "no se pudieron leer los Hosts para una exportación",

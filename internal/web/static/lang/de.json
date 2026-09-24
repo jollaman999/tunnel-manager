@@ -490,7 +490,7 @@
   "log.transfer.host_lookup_failed.text": "beim Import konnte nicht nach einem Host gesucht werden",
   "log.transfer.host_password_encrypt_failed.text": "das Passwort eines importierten Hosts konnte nicht verschlüsselt werden",
   "log.transfer.host_private_key_encrypt_failed.text": "der private Schlüssel eines importierten Hosts konnte nicht verschlüsselt werden",
-  "log.transfer.host_read_back_failed.text": "beim Import der Zuordnungen konnte ein Host nicht zurückgelesen werden",
+  "log.transfer.host_read_back_failed.text": "beim Import konnte ein Host nicht zurückgelesen werden",
   "log.transfer.host_replace_failed.text": "beim Import konnte ein Host nicht ersetzt werden",
   "log.transfer.host_secret_does_not_open.text": "ein gespeichertes Geheimnis eines Hosts lässt sich mit dem Verschlüsselungsschlüssel dieser Installation nicht öffnen, daher wurde kein Export erstellt",
   "log.transfer.hosts_read_failed.text": "die Hosts für einen Export konnten nicht gelesen werden",

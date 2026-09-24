@@ -490,7 +490,7 @@
   "log.transfer.host_lookup_failed.text": "가져오는 중에 Host 를 조회하지 못했습니다",
   "log.transfer.host_password_encrypt_failed.text": "가져온 Host 의 비밀번호를 암호화하지 못했습니다",
   "log.transfer.host_private_key_encrypt_failed.text": "가져온 Host 의 개인키를 암호화하지 못했습니다",
-  "log.transfer.host_read_back_failed.text": "할당을 가져오려고 Host 를 다시 읽다가 실패했습니다",
+  "log.transfer.host_read_back_failed.text": "가져오는 중에 Host 를 다시 읽지 못했습니다",
   "log.transfer.host_replace_failed.text": "가져오는 중에 Host 를 바꾸지 못했습니다",
   "log.transfer.host_secret_does_not_open.text": "Host 에 저장된 비밀이 이 설치본의 암호화 키로 열리지 않아서 내보내지 않았습니다",
   "log.transfer.hosts_read_failed.text": "내보내기에 쓸 Host 를 읽지 못했습니다",

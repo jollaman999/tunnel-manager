@@ -490,7 +490,7 @@
   "log.transfer.host_lookup_failed.text": "не удалось найти Host при импорте",
   "log.transfer.host_password_encrypt_failed.text": "не удалось зашифровать пароль импортированного Host",
   "log.transfer.host_private_key_encrypt_failed.text": "не удалось зашифровать закрытый ключ импортированного Host",
-  "log.transfer.host_read_back_failed.text": "не удалось перечитать Host при импорте его привязок",
+  "log.transfer.host_read_back_failed.text": "не удалось перечитать Host при импорте",
   "log.transfer.host_replace_failed.text": "не удалось заменить Host при импорте",
   "log.transfer.host_secret_does_not_open.text": "сохранённый секрет Host не открывается ключом шифрования этой установки, поэтому экспорт не выполнен",
   "log.transfer.hosts_read_failed.text": "не удалось прочитать Host для экспорта",

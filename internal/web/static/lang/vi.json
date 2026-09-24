@@ -490,7 +490,7 @@
   "log.transfer.host_lookup_failed.text": "không tra được một Host trong lúc nhập",
   "log.transfer.host_password_encrypt_failed.text": "không mã hóa được mật khẩu của một Host vừa nhập",
   "log.transfer.host_private_key_encrypt_failed.text": "không mã hóa được khóa riêng của một Host vừa nhập",
-  "log.transfer.host_read_back_failed.text": "không đọc lại được một Host trong lúc nhập các phép gán của nó",
+  "log.transfer.host_read_back_failed.text": "không đọc lại được một Host trong lúc nhập",
   "log.transfer.host_replace_failed.text": "không thay được một Host trong lúc nhập",
   "log.transfer.host_secret_does_not_open.text": "một bí mật đã lưu của một Host không mở được bằng khóa mã hóa của bản cài này, nên không xuất được gì",
   "log.transfer.hosts_read_failed.text": "không đọc được danh sách Host để xuất",

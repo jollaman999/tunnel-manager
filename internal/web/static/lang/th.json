@@ -490,7 +490,7 @@
   "log.transfer.host_lookup_failed.text": "ค้นหา Host ระหว่างนำเข้าไม่สำเร็จ",
   "log.transfer.host_password_encrypt_failed.text": "เข้ารหัสรหัสผ่านของ Host ที่นำเข้ามาไม่สำเร็จ",
   "log.transfer.host_private_key_encrypt_failed.text": "เข้ารหัสคีย์ส่วนตัวของ Host ที่นำเข้ามาไม่สำเร็จ",
-  "log.transfer.host_read_back_failed.text": "อ่าน Host กลับมาระหว่างนำเข้าการผูกของมันไม่สำเร็จ",
+  "log.transfer.host_read_back_failed.text": "อ่าน Host กลับมาระหว่างนำเข้าไม่สำเร็จ",
   "log.transfer.host_replace_failed.text": "แทนที่ Host ระหว่างนำเข้าไม่สำเร็จ",
   "log.transfer.host_secret_does_not_open.text": "ความลับที่เก็บไว้ของ Host ตัวหนึ่งถอดรหัสด้วยคีย์เข้ารหัสของการติดตั้งนี้ไม่ได้ จึงไม่ได้ส่งออก",
   "log.transfer.hosts_read_failed.text": "อ่านรายการ Host เพื่อส่งออกไม่สำเร็จ",

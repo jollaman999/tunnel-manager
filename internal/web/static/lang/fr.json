@@ -490,7 +490,7 @@
   "log.transfer.host_lookup_failed.text": "échec de la recherche d'un Host pendant l'import",
   "log.transfer.host_password_encrypt_failed.text": "échec du chiffrement du mot de passe d'un Host importé",
   "log.transfer.host_private_key_encrypt_failed.text": "échec du chiffrement de la clé privée d'un Host importé",
-  "log.transfer.host_read_back_failed.text": "échec de la relecture d'un Host pendant l'import de ses attributions",
+  "log.transfer.host_read_back_failed.text": "échec de la relecture d'un Host pendant l'import",
   "log.transfer.host_replace_failed.text": "échec du remplacement d'un Host pendant l'import",
   "log.transfer.host_secret_does_not_open.text": "un secret enregistré d'un Host ne se déchiffre pas avec la clé de chiffrement de cette installation, aucun export n'a donc été fait",
   "log.transfer.hosts_read_failed.text": "échec de la lecture des Hosts pour un export",

@@ -490,7 +490,7 @@
   "log.transfer.host_lookup_failed.text": "インポート中に、Host を探せませんでした",
   "log.transfer.host_password_encrypt_failed.text": "インポートした Host のパスワードを暗号化できませんでした",
   "log.transfer.host_private_key_encrypt_failed.text": "インポートした Host の秘密鍵を暗号化できませんでした",
-  "log.transfer.host_read_back_failed.text": "割り当てのインポート中に、Host を読み直せませんでした",
+  "log.transfer.host_read_back_failed.text": "インポート中に、Host を読み直せませんでした",
   "log.transfer.host_replace_failed.text": "インポート中に、Host を置き換えられませんでした",
   "log.transfer.host_secret_does_not_open.text": "Host に保存されている秘密情報が、このインストールの暗号化キーで復号できないので、エクスポートは作りませんでした",
   "log.transfer.hosts_read_failed.text": "エクスポートのために Host を読めませんでした",

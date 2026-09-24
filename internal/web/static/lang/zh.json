@@ -490,7 +490,7 @@
   "log.transfer.host_lookup_failed.text": "导入时查找 Host 失败",
   "log.transfer.host_password_encrypt_failed.text": "加密导入的 Host 的密码失败",
   "log.transfer.host_private_key_encrypt_failed.text": "加密导入的 Host 的私钥失败",
-  "log.transfer.host_read_back_failed.text": "导入分配关系时回读 Host 失败",
+  "log.transfer.host_read_back_failed.text": "导入时回读 Host 失败",
   "log.transfer.host_replace_failed.text": "导入时替换 Host 失败",
   "log.transfer.host_secret_does_not_open.text": "某台 Host 保存的密文无法用本安装的加密密钥解密，所以未导出",
   "log.transfer.hosts_read_failed.text": "为导出读取 Host 失败",
