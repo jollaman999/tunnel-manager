@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -33,12 +34,30 @@ func newDB(t *testing.T) *gorm.DB {
 		t.Fatalf("failed to open the database: %v", err)
 	}
 
+	t.Cleanup(func() {
+		sqlDB, err := db.DB()
+		if err == nil {
+			_ = sqlDB.Close()
+		}
+	})
+
 	err = db.AutoMigrate(&Settings{})
 	if err != nil {
 		t.Fatalf("failed to migrate the database: %v", err)
 	}
 
 	return db
+}
+
+// platformAbsolutePath spells the Unix path p as an absolute path of the
+// platform the test runs on. filepath decides what is absolute by the rules of
+// that platform, and on Windows a path without a drive is not.
+func platformAbsolutePath(p string) string {
+	if runtime.GOOS == "windows" {
+		return `C:` + filepath.FromSlash(p)
+	}
+
+	return p
 }
 
 // TestDefaultsAreTheValuesTheConfigurationFileRanOn holds every default against
@@ -273,8 +292,8 @@ func TestValidateRejects(t *testing.T) {
 		// absolute one used to win over that directory, which made either
 		// setting a way to have this process create and append to any file on
 		// the machine and to read its tail back on the Logs screen.
-		{"absolute key file", func(s *Settings) { s.SecurityKeyFile = "/etc/cron.d/x" }, "encryption key file"},
-		{"absolute log file", func(s *Settings) { s.LoggingFilePath = "/etc/cron.d/x" }, "log file"},
+		{"absolute key file", func(s *Settings) { s.SecurityKeyFile = platformAbsolutePath("/etc/cron.d/x") }, "encryption key file"},
+		{"absolute log file", func(s *Settings) { s.LoggingFilePath = platformAbsolutePath("/etc/cron.d/x") }, "log file"},
 		{"key file that climbs out", func(s *Settings) { s.SecurityKeyFile = "../../etc/cron.d/x" },
 			"encryption key file"},
 		{"log file that climbs out", func(s *Settings) { s.LoggingFilePath = "../../etc/cron.d/x" },
@@ -807,9 +826,12 @@ func TestRepairPathsPutsAStoredAbsolutePathBackToItsDefault(t *testing.T) {
 		t.Fatalf("Load: %v", err)
 	}
 
+	keyFile := platformAbsolutePath("/etc/tunnel-manager/x.key")
+	logFile := platformAbsolutePath("/etc/cron.d/x")
+
 	storeByHand(t, db, map[string]interface{}{
-		"security_key_file": "/etc/tunnel-manager/x.key",
-		"logging_file_path": "/etc/cron.d/x",
+		"security_key_file": keyFile,
+		"logging_file_path": logFile,
 	})
 
 	changes, err := RepairPaths(db)
@@ -828,15 +850,15 @@ func TestRepairPathsPutsAStoredAbsolutePathBackToItsDefault(t *testing.T) {
 
 	defaults := Defaults()
 
-	if change := got["security.key_file"]; change.From != "/etc/tunnel-manager/x.key" ||
+	if change := got["security.key_file"]; change.From != keyFile ||
 		change.To != defaults.SecurityKeyFile {
-		t.Errorf("security.key_file was reported as %q -> %q, want /etc/tunnel-manager/x.key -> %q",
-			change.From, change.To, defaults.SecurityKeyFile)
+		t.Errorf("security.key_file was reported as %q -> %q, want %s -> %q",
+			change.From, change.To, keyFile, defaults.SecurityKeyFile)
 	}
-	if change := got["logging.file.path"]; change.From != "/etc/cron.d/x" ||
+	if change := got["logging.file.path"]; change.From != logFile ||
 		change.To != defaults.LoggingFilePath {
-		t.Errorf("logging.file.path was reported as %q -> %q, want /etc/cron.d/x -> %q",
-			change.From, change.To, defaults.LoggingFilePath)
+		t.Errorf("logging.file.path was reported as %q -> %q, want %s -> %q",
+			change.From, change.To, logFile, defaults.LoggingFilePath)
 	}
 
 	// The read that follows in the startup is the point of the repair: it is

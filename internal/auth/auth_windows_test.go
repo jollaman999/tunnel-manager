@@ -84,6 +84,48 @@ func requireOwnerSystemAdminsOnly(t *testing.T, path string) {
 	}
 }
 
+// requirePrivateFile is requireOwnerSystemAdminsOnly: on Windows the DACL is
+// what keeps others out of the file, and the mode reads 0666 whatever it says.
+func requirePrivateFile(t *testing.T, path string) {
+	t.Helper()
+
+	requireOwnerSystemAdminsOnly(t, path)
+}
+
+// readOnlyDir returns a directory whose DACL lets the user of this process,
+// SYSTEM and Administrators read it and nobody write to it.
+func readOnlyDir(t *testing.T) string {
+	t.Helper()
+
+	user, err := windows.GetCurrentProcessToken().GetTokenUser()
+	if err != nil {
+		t.Fatalf("failed to read the user of this process: %v", err)
+	}
+
+	sd, err := windows.SecurityDescriptorFromString(
+		"D:P(A;OICI;FRFX;;;" + user.User.Sid.String() + ")(A;OICI;FRFX;;;SY)(A;OICI;FRFX;;;BA)")
+	if err != nil {
+		t.Fatalf("failed to build a read-only security descriptor: %v", err)
+	}
+
+	dir := filepath.Join(t.TempDir(), "read-only")
+
+	name, err := windows.UTF16PtrFromString(dir)
+	if err != nil {
+		t.Fatalf("failed to spell %s for Windows: %v", dir, err)
+	}
+
+	sa := windows.SecurityAttributes{SecurityDescriptor: sd}
+	sa.Length = uint32(unsafe.Sizeof(sa))
+
+	err = windows.CreateDirectory(name, &sa)
+	if err != nil {
+		t.Fatalf("failed to prepare the directory: %v", err)
+	}
+
+	return dir
+}
+
 func TestWriteInitialPasswordFileIsForOwnerSystemAndAdminsOnly(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "initial-password")
 

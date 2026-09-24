@@ -237,7 +237,7 @@ func TestInstallFresh(t *testing.T) {
 		t.Fatalf("failed to stat what was installed: %v", err)
 	}
 
-	if info.Mode().Perm() != executableMode {
+	if runtime.GOOS != "windows" && info.Mode().Perm() != executableMode {
 		t.Errorf("the installed executable is %v, want %v", info.Mode().Perm(), executableMode)
 	}
 
@@ -735,8 +735,8 @@ func TestPlanWithDatabase(t *testing.T) {
 				t.Errorf("the database is %q, want %q", got.DatabaseFile, c.database)
 			}
 
-			if got.DataDir != c.dataDir {
-				t.Errorf("the data directory is %q, want %q", got.DataDir, c.dataDir)
+			if got.DataDir != filepath.FromSlash(c.dataDir) {
+				t.Errorf("the data directory is %q, want %q", got.DataDir, filepath.FromSlash(c.dataDir))
 			}
 
 			// The directory an uninstall would work out of the very same path,

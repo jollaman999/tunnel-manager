@@ -1722,12 +1722,8 @@ func TestSetupSucceedsWithNoInitialPasswordFile(t *testing.T) {
 // TestSetupSucceedsWhenTheFileCannotBeRemoved pins down the answer the operator
 // gets when only the deletion fails. The account has been set up by then, so an
 // error would send them back to a login the initial password no longer opens.
-// The directory is made unwritable to get the deletion to fail.
+// keepFromRemoval is what gets the deletion to fail.
 func TestSetupSucceedsWhenTheFileCannotBeRemoved(t *testing.T) {
-	if os.Geteuid() == 0 {
-		t.Skip("root removes files from a directory it has no write permission on")
-	}
-
 	dir := filepath.Join(t.TempDir(), "locked")
 
 	err := os.Mkdir(dir, 0700)
@@ -1738,15 +1734,7 @@ func TestSetupSucceedsWhenTheFileCannotBeRemoved(t *testing.T) {
 	f := newSetupFixtureAt(t, true, filepath.Join(dir, "initial-password"))
 	writeInitialPassword(t, f.passwordFile)
 
-	err = os.Chmod(dir, 0500)
-	if err != nil {
-		t.Fatalf("failed to take the write permission off the directory: %v", err)
-	}
-
-	// The cleanup of t.TempDir has to be able to remove the file again.
-	t.Cleanup(func() {
-		_ = os.Chmod(dir, 0700)
-	})
+	keepFromRemoval(t, f.passwordFile)
 
 	cookies := loginBeforeTheSetup(t, f)
 

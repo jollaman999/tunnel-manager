@@ -57,13 +57,33 @@ func newLoggingSettings(path string) *settings.Settings {
 
 // newLogger builds the logger initLogger describes, which is what main does
 // with the core it returns.
-func newLogger(s *settings.Settings) (*zap.Logger, error) {
-	core, _, _, err := initLogger(s, "")
+func newLogger(t *testing.T, s *settings.Settings) (*zap.Logger, error) {
+	t.Helper()
+
+	core, _, _, err := initLoggerForTest(t, s, "")
 	if err != nil {
 		return nil, err
 	}
 
 	return zap.New(core), nil
+}
+
+// initLoggerForTest is initLogger with the log file closed when the test ends,
+// ahead of the removal of the temporary directory it is in: Windows does not
+// remove a file that is still open. Emptying the log is what closes the writer
+// that holds it, and nothing reads the file once the test is over.
+func initLoggerForTest(t *testing.T, s *settings.Settings, installDir string) (zapcore.Core, zap.AtomicLevel,
+	func() error, error) {
+	t.Helper()
+
+	core, level, empty, err := initLogger(s, installDir)
+	if empty != nil {
+		t.Cleanup(func() {
+			_ = empty()
+		})
+	}
+
+	return core, level, empty, err
 }
 
 // openPathsOfThisProcess returns the file every descriptor of this process
@@ -122,6 +142,7 @@ func TestDefaultDatabasePathIsUnderTheUserConfigDir(t *testing.T) {
 func TestDefaultDatabasePathRefusesToGuessWithoutAHome(t *testing.T) {
 	t.Setenv("XDG_CONFIG_HOME", "")
 	t.Setenv("HOME", "")
+	t.Setenv("AppData", "")
 
 	path, err := defaultDatabasePath()
 	if err == nil {
@@ -215,6 +236,17 @@ func TestPrepareLogFileReportsALogFileThatCannotBeOpened(t *testing.T) {
 	if !strings.Contains(err.Error(), "failed to create log file") {
 		t.Fatalf("the failure does not name the log file: %v", err)
 	}
+}
+
+// platformAbsolutePath spells the Unix path p as an absolute path of the
+// platform the test runs on. filepath decides what is absolute by the rules of
+// that platform, and on Windows a path without a drive is not.
+func platformAbsolutePath(p string) string {
+	if runtime.GOOS == "windows" {
+		return `C:` + filepath.FromSlash(p)
+	}
+
+	return p
 }
 
 // skipWithoutFileModes leaves a test that reads permission bits where there are
@@ -324,7 +356,7 @@ func TestTheRotatedLogsAreClosedAsWell(t *testing.T) {
 	// The logger writes to the console as well as to the file, so the lines
 	// this has to write to reach a rotation are kept out of the test output.
 	withStdoutCaptured(t, func() {
-		core, _, _, err := initLogger(set, "")
+		core, _, _, err := initLoggerForTest(t, set, "")
 		if err != nil {
 			t.Errorf("failed to build the logger: %v", err)
 
@@ -437,7 +469,7 @@ func TestInitLoggerFallsBackToStdoutWhenTheLogFileCannotBeOpened(t *testing.T) {
 	var logger *zap.Logger
 
 	output := withStdoutCaptured(t, func() {
-		logger, err = newLogger(set)
+		logger, err = newLogger(t, set)
 		if err != nil || logger == nil {
 			return
 		}
@@ -462,7 +494,7 @@ func TestInitLoggerFallsBackToStdoutWhenTheLogFileCannotBeOpened(t *testing.T) {
 func TestInitLoggerWritesToTheLogFileWhenItCanBeOpened(t *testing.T) {
 	logFile := filepath.Join(t.TempDir(), "logs", "tunnel-manager.log")
 
-	logger, err := newLogger(newLoggingSettings(logFile))
+	logger, err := newLogger(t, newLoggingSettings(logFile))
 	if err != nil {
 		t.Fatalf("failed to build the logger: %v", err)
 	}
@@ -494,7 +526,7 @@ func TestInitLoggerWritesNothingBelowTheConfiguredLevel(t *testing.T) {
 	set := newLoggingSettings(logFile)
 	set.LoggingLevel = "warn"
 
-	logger, err := newLogger(set)
+	logger, err := newLogger(t, set)
 	if err != nil {
 		t.Fatalf("failed to build the logger: %v", err)
 	}
@@ -519,7 +551,7 @@ func TestInitLoggerRefusesALevelItCannotRead(t *testing.T) {
 	set := newLoggingSettings(filepath.Join(t.TempDir(), "logs", "tunnel-manager.log"))
 	set.LoggingLevel = "chatty"
 
-	core, _, _, err := initLogger(set, "")
+	core, _, _, err := initLoggerForTest(t, set, "")
 	if err == nil {
 		t.Fatal("a log level that cannot be read was accepted")
 	}
@@ -563,7 +595,7 @@ func TestTheLoggersHandedOutBeforeTheSwapFollowIt(t *testing.T) {
 
 		logger.Info("a line from before the swap")
 
-		core, _, _, err := initLogger(newLoggingSettings(logFile), "")
+		core, _, _, err := initLoggerForTest(t, newLoggingSettings(logFile), "")
 		if err != nil {
 			buildErr = err
 			return
@@ -605,7 +637,7 @@ func TestTheLoggersHandedOutBeforeTheSwapFollowIt(t *testing.T) {
 func TestTheLevelHandleChangesWhatIsWrittenWithoutARestart(t *testing.T) {
 	logFile := filepath.Join(t.TempDir(), "logs", "tunnel-manager.log")
 
-	core, level, _, err := initLogger(newLoggingSettings(logFile), "")
+	core, level, _, err := initLoggerForTest(t, newLoggingSettings(logFile), "")
 	if err != nil {
 		t.Fatalf("failed to build the core: %v", err)
 	}
@@ -950,7 +982,8 @@ func TestARelativePathIsReadAgainstTheDatabaseDirectory(t *testing.T) {
 		{"the default log path", "logs/tunnel-manager.log", filepath.Join(installDir, "logs", "tunnel-manager.log")},
 		{"the default key path", "keys/tunnel-manager.key", filepath.Join(installDir, "keys", "tunnel-manager.key")},
 		{"a bare file name", "x.log", filepath.Join(installDir, "x.log")},
-		{"an absolute path is left alone", "/var/log/tunnel-manager/x.log", "/var/log/tunnel-manager/x.log"},
+		{"an absolute path is left alone", platformAbsolutePath("/var/log/tunnel-manager/x.log"),
+			platformAbsolutePath("/var/log/tunnel-manager/x.log")},
 		{"an empty path stays empty", "", ""},
 	}
 
@@ -972,7 +1005,7 @@ func TestTheLogFileIsWrittenBesideTheDatabase(t *testing.T) {
 
 	set := newLoggingSettings("logs/tunnel-manager.log")
 
-	core, _, _, err := initLogger(set, installDir)
+	core, _, _, err := initLoggerForTest(t, set, installDir)
 	if err != nil {
 		t.Fatalf("failed to build the logger: %v", err)
 	}
@@ -1004,6 +1037,13 @@ func newSettingsDB(t *testing.T) *gorm.DB {
 		t.Fatalf("failed to open the database: %v", err)
 	}
 
+	t.Cleanup(func() {
+		sqlDB, err := db.DB()
+		if err == nil {
+			_ = sqlDB.Close()
+		}
+	})
+
 	err = db.AutoMigrate(&settings.Settings{})
 	if err != nil {
 		t.Fatalf("failed to migrate the database: %v", err)
@@ -1028,7 +1068,7 @@ func TestTheStartupPutsAStoredPathOutsideTheInstallationBackToItsDefault(t *test
 	}
 
 	err = db.Model(&settings.Settings{}).Where("id = ?", 1).
-		Updates(map[string]interface{}{"logging_file_path": "/etc/cron.d/x"}).Error
+		Updates(map[string]interface{}{"logging_file_path": platformAbsolutePath("/etc/cron.d/x")}).Error
 	if err != nil {
 		t.Fatalf("storing an absolute log path by hand: %v", err)
 	}
@@ -1050,8 +1090,8 @@ func TestTheStartupPutsAStoredPathOutsideTheInstallationBackToItsDefault(t *test
 		}
 		replaced = true
 
-		if fields["from"] != "/etc/cron.d/x" {
-			t.Errorf("the line says the path came from %v, want /etc/cron.d/x", fields["from"])
+		if fields["from"] != platformAbsolutePath("/etc/cron.d/x") {
+			t.Errorf("the line says the path came from %v, want %s", fields["from"], platformAbsolutePath("/etc/cron.d/x"))
 		}
 		if fields["to"] != settings.Defaults().LoggingFilePath {
 			t.Errorf("the line says the path went to %v, want %q",
@@ -1741,6 +1781,10 @@ func TestEmptyingTheLogLeavesTheWriterWritingToTheFile(t *testing.T) {
 		MaxSize:    1,
 		MaxBackups: 3,
 	}
+
+	t.Cleanup(func() {
+		_ = writer.Close()
+	})
 
 	_, err := writer.Write([]byte("a line from before the emptying\n"))
 	if err != nil {

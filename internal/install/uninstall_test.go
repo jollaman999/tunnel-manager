@@ -6,6 +6,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -540,6 +541,8 @@ func TestUninstallPurgeOfADirectoryThatIsRefusedTouchesNothing(t *testing.T) {
 // broken check removes those directories on the machine the tests run on, and
 // the round trip of this package is run as root.
 func TestCheckPurgeTarget(t *testing.T) {
+	onWindows := runtime.GOOS == "windows"
+
 	cases := []struct {
 		name     string
 		dataDir  string
@@ -550,16 +553,25 @@ func TestCheckPurgeTarget(t *testing.T) {
 			name:     "the default linux data directory",
 			dataDir:  "/var/lib/tunnel-manager",
 			database: "/var/lib/tunnel-manager/tunnel-manager.db",
+			refuse:   onWindows,
 		},
 		{
 			name:     "a data directory of its own elsewhere",
 			dataDir:  "/opt/tm/data",
 			database: "/opt/tm/data/tm.db",
+			refuse:   onWindows,
 		},
 		{
 			name:     "the default macos data directory",
 			dataDir:  "/Library/Application Support/tunnel-manager",
 			database: "/Library/Application Support/tunnel-manager/tunnel-manager.db",
+			refuse:   onWindows,
+		},
+		{
+			name:     "the default windows data directory",
+			dataDir:  `C:\ProgramData\tunnel-manager`,
+			database: `C:\ProgramData\tunnel-manager\tunnel-manager.db`,
+			refuse:   !onWindows,
 		},
 		{
 			name:     "a directory the database is not in",
@@ -728,8 +740,8 @@ func TestWhatToRemove(t *testing.T) {
 				t.Errorf("the database is %q, want %q", removed.DatabaseFile, c.database)
 			}
 
-			if removed.DataDir != c.dataDir {
-				t.Errorf("the data directory is %q, want %q", removed.DataDir, c.dataDir)
+			if removed.DataDir != filepath.FromSlash(c.dataDir) {
+				t.Errorf("the data directory is %q, want %q", removed.DataDir, filepath.FromSlash(c.dataDir))
 			}
 
 			if removed.Source == "" {

@@ -35,6 +35,13 @@ func newSettingsDB(t *testing.T) *gorm.DB {
 		t.Fatalf("failed to open the database: %v", err)
 	}
 
+	t.Cleanup(func() {
+		sqlDB, err := db.DB()
+		if err == nil {
+			_ = sqlDB.Close()
+		}
+	})
+
 	// The local forwards are there because a save that changes the port reads
 	// them.
 	err = db.AutoMigrate(&settings.Settings{}, &models.Host{}, &models.LocalForward{})

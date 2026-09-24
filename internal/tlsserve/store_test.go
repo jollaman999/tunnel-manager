@@ -37,6 +37,13 @@ func newDB(t *testing.T) *gorm.DB {
 		t.Fatalf("failed to open the database: %v", err)
 	}
 
+	t.Cleanup(func() {
+		sqlDB, err := db.DB()
+		if err == nil {
+			_ = sqlDB.Close()
+		}
+	})
+
 	err = db.AutoMigrate(&Certificate{})
 	if err != nil {
 		t.Fatalf("failed to migrate the database: %v", err)

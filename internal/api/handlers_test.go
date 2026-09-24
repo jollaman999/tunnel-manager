@@ -935,9 +935,21 @@ func newRowsDB(t *testing.T, hosts []models.Host, sps []models.ServicePort, tunn
 		t.Fatalf("failed to open the database: %v", err)
 	}
 
+	t.Cleanup(func() {
+		sqlDB, err := db.DB()
+		if err == nil {
+			_ = sqlDB.Close()
+		}
+	})
+
 	err = db.AutoMigrate(&models.Host{}, &models.ServicePort{}, &models.Tunnel{}, &models.HostServicePort{}, &models.LocalForward{})
 	if err != nil {
 		t.Fatalf("failed to migrate the database: %v", err)
+	}
+
+	tx := db.Begin()
+	if tx.Error != nil {
+		t.Fatalf("failed to begin storing the rows: %v", tx.Error)
 	}
 
 	for _, host := range hosts {
@@ -948,26 +960,26 @@ func newRowsDB(t *testing.T, hosts []models.Host, sps []models.ServicePort, tunn
 		// would keep a disabled Host disabled here if a default came back.
 		enabled := host.Enabled
 
-		err = db.Create(&host).Error
+		err = tx.Create(&host).Error
 		if err != nil {
 			t.Fatalf("failed to store a Host: %v", err)
 		}
 
-		err = db.Model(&models.Host{}).Where("id = ?", host.ID).Update("enabled", enabled).Error
+		err = tx.Model(&models.Host{}).Where("id = ?", host.ID).Update("enabled", enabled).Error
 		if err != nil {
 			t.Fatalf("failed to store whether a Host is enabled: %v", err)
 		}
 	}
 
 	for _, sp := range sps {
-		err = db.Create(&sp).Error
+		err = tx.Create(&sp).Error
 		if err != nil {
 			t.Fatalf("failed to store a service port: %v", err)
 		}
 	}
 
 	for _, row := range tunnels {
-		err = db.Create(&row).Error
+		err = tx.Create(&row).Error
 		if err != nil {
 			t.Fatalf("failed to store a tunnel: %v", err)
 		}
@@ -979,11 +991,16 @@ func newRowsDB(t *testing.T, hosts []models.Host, sps []models.ServicePort, tunn
 	// database would want none.
 	for _, host := range hosts {
 		for _, sp := range sps {
-			err = db.Create(&models.HostServicePort{HostID: host.ID, SPID: sp.ID}).Error
+			err = tx.Create(&models.HostServicePort{HostID: host.ID, SPID: sp.ID}).Error
 			if err != nil {
 				t.Fatalf("failed to store an assignment: %v", err)
 			}
 		}
+	}
+
+	err = tx.Commit().Error
+	if err != nil {
+		t.Fatalf("failed to commit the rows: %v", err)
 	}
 
 	return db
@@ -2608,6 +2625,13 @@ func newHostFixture(t *testing.T) *hostFixture {
 	if err != nil {
 		t.Fatalf("failed to open the database: %v", err)
 	}
+
+	t.Cleanup(func() {
+		sqlDB, err := db.DB()
+		if err == nil {
+			_ = sqlDB.Close()
+		}
+	})
 
 	// The service ports and the assignments are built as well, because
 	// registering a Host assigns it the service ports that are stored and so

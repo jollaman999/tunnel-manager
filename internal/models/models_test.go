@@ -35,6 +35,20 @@ func newDryRunDB(t *testing.T) *gorm.DB {
 	return db
 }
 
+// closeWhenDone closes the database when the test ends, ahead of the removal of
+// the temporary directory it is in: Windows does not remove a file that is
+// still open.
+func closeWhenDone(t *testing.T, db *gorm.DB) {
+	t.Helper()
+
+	t.Cleanup(func() {
+		sqlDB, err := db.DB()
+		if err == nil {
+			_ = sqlDB.Close()
+		}
+	})
+}
+
 // TestUserTableNameIsQuotedInSQL pins that "user", which is also the name of an
 // SQL function, reaches the database as an identifier.
 func TestUserTableNameIsQuotedInSQL(t *testing.T) {
@@ -182,6 +196,8 @@ func TestTunnelMigrationKeepsTheRowsThatWereThere(t *testing.T) {
 		t.Fatalf("failed to open the database: %v", err)
 	}
 
+	closeWhenDone(t, db)
+
 	err = db.AutoMigrate(&oldTunnel{})
 	if err != nil {
 		t.Fatalf("failed to build the table as it was: %v", err)
@@ -274,6 +290,8 @@ func newAssignmentTable(t *testing.T) *gorm.DB {
 		t.Fatalf("failed to open the database: %v", err)
 	}
 
+	closeWhenDone(t, db)
+
 	err = db.AutoMigrate(&HostServicePort{})
 	if err != nil {
 		t.Fatalf("failed to build the table: %v", err)
@@ -309,6 +327,8 @@ func TestAnAssignmentIsOpenToEverythingUntilItIsToldOtherwise(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to open the database: %v", err)
 	}
+
+	closeWhenDone(t, db)
 
 	err = db.AutoMigrate(&oldHostServicePort{})
 	if err != nil {
@@ -468,6 +488,8 @@ func TestHostServicePortHoldsOnePairOnce(t *testing.T) {
 		t.Fatalf("failed to open the database: %v", err)
 	}
 
+	closeWhenDone(t, db)
+
 	err = db.AutoMigrate(&HostServicePort{})
 	if err != nil {
 		t.Fatalf("failed to build the table: %v", err)
@@ -571,6 +593,8 @@ func newLocalForwardTable(t *testing.T) *gorm.DB {
 	if err != nil {
 		t.Fatalf("failed to open the database: %v", err)
 	}
+
+	closeWhenDone(t, db)
 
 	err = db.AutoMigrate(&LocalForward{})
 	if err != nil {

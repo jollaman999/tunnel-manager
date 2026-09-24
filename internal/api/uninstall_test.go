@@ -173,6 +173,13 @@ func newUninstallDB(t *testing.T, path string) *gorm.DB {
 		t.Fatalf("failed to open the database: %v", err)
 	}
 
+	t.Cleanup(func() {
+		sqlDB, err := db.DB()
+		if err == nil {
+			_ = sqlDB.Close()
+		}
+	})
+
 	err = db.AutoMigrate(&models.User{})
 	if err != nil {
 		t.Fatalf("failed to migrate the database: %v", err)

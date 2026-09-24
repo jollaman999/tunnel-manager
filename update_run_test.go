@@ -76,6 +76,13 @@ func TestInstallCommandWritesItsReportSomewhereReadable(t *testing.T) {
 		t.Fatalf("building the command failed: %v", err)
 	}
 
+	t.Cleanup(func() {
+		opened, ok := command.Stdout.(*os.File)
+		if ok {
+			_ = opened.Close()
+		}
+	})
+
 	if apart {
 		t.Fatal("the install was handed to systemd, want a plain child where there is no systemd-run")
 	}
@@ -86,12 +93,10 @@ func TestInstallCommandWritesItsReportSomewhereReadable(t *testing.T) {
 
 	report := installReportPath(database, false)
 
-	info, err := os.Stat(report)
+	_, err = os.Stat(report)
 	if err != nil {
 		t.Fatalf("the report file %s was not made: %v", report, err)
 	}
 
-	if info.Mode().Perm() != installReportMode {
-		t.Errorf("the report file is %v, want %v", info.Mode().Perm(), os.FileMode(installReportMode))
-	}
+	requireReportKeptToTheOwner(t, report)
 }

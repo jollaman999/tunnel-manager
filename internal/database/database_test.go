@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -2032,7 +2033,7 @@ func TestTightenPermissionsReportsEveryPathItCouldNotSet(t *testing.T) {
 	}
 
 	for _, named := range []string{dir, path} {
-		if !strings.Contains(err.Error(), named) {
+		if !strings.Contains(err.Error(), strconv.Quote(named)) {
 			t.Errorf("the report does not name %s: %v", named, err)
 		}
 	}

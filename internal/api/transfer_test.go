@@ -6,6 +6,7 @@ import (
 	"net/http/httptest"
 	"path/filepath"
 	"reflect"
+	"runtime"
 	"strconv"
 	"strings"
 	"sync"
@@ -94,6 +95,13 @@ func newTransferInstall(t *testing.T) *transferInstall {
 		t.Fatalf("failed to open the database: %v", err)
 	}
 
+	t.Cleanup(func() {
+		sqlDB, err := db.DB()
+		if err == nil {
+			_ = sqlDB.Close()
+		}
+	})
+
 	err = db.AutoMigrate(&models.Host{}, &models.ServicePort{}, &models.HostServicePort{},
 		&models.LocalForward{}, &settings.Settings{})
 	if err != nil {
@@ -112,6 +120,17 @@ func newTransferInstall(t *testing.T) *transferInstall {
 		manager: manager,
 		logs:    logs,
 	}
+}
+
+// platformAbsolutePath spells the Unix path p as an absolute path of the
+// platform the test runs on. filepath decides what is absolute by the rules of
+// that platform, and on Windows a path without a drive is not.
+func platformAbsolutePath(p string) string {
+	if runtime.GOOS == "windows" {
+		return `C:` + filepath.FromSlash(p)
+	}
+
+	return p
 }
 
 // count is how many rows of a model are stored. An import that was refused and
@@ -1284,8 +1303,10 @@ func TestAPathOutsideTheInstallationIsStoredAsTheDefault(t *testing.T) {
 	// The file is built rather than exported. An installation running on these
 	// paths is one from before the rule, and this one cannot be made to store
 	// them any more.
+	outside := platformAbsolutePath("/var/lib/tunnel-manager/tunnel-manager.key")
+
 	content := settingsOf(stored)
-	content.SecurityKeyFile = "/var/lib/tunnel-manager/tunnel-manager.key"
+	content.SecurityKeyFile = outside
 	content.LoggingFilePath = "../../etc/cron.d/tunnel-manager"
 	content.MonitoringIntervalSec = 47
 
@@ -1348,7 +1369,7 @@ func TestAPathOutsideTheInstallationIsStoredAsTheDefault(t *testing.T) {
 	}
 
 	for name, carried := range map[string]string{
-		"security.key_file": "/var/lib/tunnel-manager/tunnel-manager.key",
+		"security.key_file": outside,
 		"logging.file.path": "../../etc/cron.d/tunnel-manager",
 	} {
 		item, found := got[name]
@@ -3196,8 +3217,10 @@ func TestADroppedPathNamesItsReason(t *testing.T) {
 		t.Fatalf("failed to read the settings: %v", err)
 	}
 
+	outside := platformAbsolutePath("/var/lib/tunnel-manager/tunnel-manager.key")
+
 	content := settingsOf(stored)
-	content.SecurityKeyFile = "/var/lib/tunnel-manager/tunnel-manager.key"
+	content.SecurityKeyFile = outside
 	content.LoggingFilePath = ""
 
 	file, err := source.handler.seal(transferKindSettings, content, testExportPassword, time.Now())
@@ -3220,11 +3243,11 @@ func TestADroppedPathNamesItsReason(t *testing.T) {
 	checkNamedItems(t, decodeTransfer(t, rec).Data, []namedItem{
 		{
 			kind: "setting", name: "security.key_file", action: transferSkipped,
-			reason: "the file carries /var/lib/tunnel-manager/tunnel-manager.key, which does not name " +
+			reason: "the file carries " + outside + ", which does not name " +
 				"a file under the directory the database file is in, so " + defaults.SecurityKeyFile +
 				" was stored instead",
 			reasonCode: textImportReasonPathOutside,
-			reasonValues: textArgs{"carried": "/var/lib/tunnel-manager/tunnel-manager.key",
+			reasonValues: textArgs{"carried": outside,
 				"stored": defaults.SecurityKeyFile},
 		},
 		{

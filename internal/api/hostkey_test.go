@@ -82,6 +82,13 @@ func newHostKeyDB(t *testing.T, host models.Host) *gorm.DB {
 		t.Fatalf("failed to open the database: %v", err)
 	}
 
+	t.Cleanup(func() {
+		sqlDB, err := db.DB()
+		if err == nil {
+			_ = sqlDB.Close()
+		}
+	})
+
 	sqlDB, err := db.DB()
 	if err != nil {
 		t.Fatalf("failed to reach the connection pool: %v", err)
