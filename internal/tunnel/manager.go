@@ -112,6 +112,11 @@ type Manager struct {
 	// reconcileWake carries the request for a reconcile pass. It holds one
 	// wake-up, so a caller never waits for the loop to pick the previous one up.
 	reconcileWake chan struct{}
+	// localForwards holds the running local forwards by the ID of their row.
+	// It has a lock of its own, since nothing ever needs it together with the
+	// tunnels.
+	localForwards map[uint]*localTunnel
+	localMu       sync.RWMutex
 }
 
 func NewManager(db *gorm.DB, logger *zap.Logger, cipher *crypto.Cipher, monitoringIntervalSec int) (*Manager, error) {
@@ -122,6 +127,7 @@ func NewManager(db *gorm.DB, logger *zap.Logger, cipher *crypto.Cipher, monitori
 		cipher:                cipher,
 		monitoringIntervalSec: monitoringIntervalSec,
 		reconcileWake:         make(chan struct{}, 1),
+		localForwards:         make(map[uint]*localTunnel),
 	}, nil
 }
 
@@ -739,10 +745,13 @@ func (m *Manager) RestoreAllTunnels() error {
 	return nil
 }
 
-// StopAllTunnels stops every running tunnel. It is a reconcile pass with an
-// empty desired state, and it reads no rows: what is running is in m.tunnels,
-// and a database that is away on shutdown must not leave a tunnel up.
+// StopAllTunnels stops every running tunnel and local forward. It is a
+// reconcile pass with an empty desired state, and it reads no rows: what is
+// running is in m.tunnels and m.localForwards, and a database that is away on
+// shutdown must not leave a tunnel up.
 func (m *Manager) StopAllTunnels() {
+	defer m.stopAllLocalForwards()
+
 	for _, key := range m.runningTunnelKeys() {
 		hostID, spID, ok := parseTunnelKey(key)
 		if !ok {

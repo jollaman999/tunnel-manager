@@ -99,6 +99,13 @@ const (
 	TunnelManagerCreateFailed         ID = "tunnel.manager_create_failed"
 	TunnelRestoreStarting             ID = "tunnel.restore_starting"
 	TunnelReconcileStopTimedOut       ID = "tunnel.reconcile_stop_timed_out"
+	// The local forwards. What they share with the tunnels, the SSH connection
+	// and the copy, is logged under the IDs above.
+	TunnelLocalForwardConnected             ID = "tunnel.local_forward_connected"
+	TunnelLocalForwardConnectFailedRetrying ID = "tunnel.local_forward_connect_failed_retrying"
+	TunnelLocalForwardConnectFailedGivingUp ID = "tunnel.local_forward_connect_failed_giving_up"
+	TunnelLocalForwardListenFailed          ID = "tunnel.local_forward_listen_failed"
+	TunnelLocalForwardTargetDialFailed      ID = "tunnel.local_forward_target_dial_failed"
 )
 
 // database: opening the database and what the queries report.

@@ -259,10 +259,24 @@ func (m *Manager) restartTunnel(want desiredTunnel) error {
 // the connection settings it should have, and stopped and started again when it
 // is not, because those settings are only read when the tunnel is built. A
 // database that cannot be read ends the pass before anything is changed.
+//
+// The local forwards are brought in line the same way after the tunnels, and
+// counted in the same result. Their rows are read before anything is changed,
+// with the rest of the desired state.
 func (m *Manager) Reconcile() (ReconcileResult, error) {
 	var result ReconcileResult
 
-	desired, err := m.desiredTunnels()
+	hostByID, err := m.hostsByID()
+	if err != nil {
+		return result, err
+	}
+
+	desired, err := m.desiredTunnelsOf(hostByID)
+	if err != nil {
+		return result, err
+	}
+
+	desiredLocal, err := m.desiredLocalForwardsOf(hostByID)
 	if err != nil {
 		return result, err
 	}
@@ -347,6 +361,8 @@ func (m *Manager) Reconcile() (ReconcileResult, error) {
 
 		result.Stopped++
 	}
+
+	m.reconcileLocalForwards(desiredLocal, &result)
 
 	return result, nil
 }
