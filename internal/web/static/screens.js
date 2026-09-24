@@ -291,6 +291,11 @@ let transferProblem = { tunnels: "", settings: "" };
 // or why.
 let transferResult = null;
 
+// settingsImportResult is what the last import of the settings of the manager
+// did not take from the file, for the reason transferResult is kept. It is null
+// when that import took all of it, and the card then says nothing more.
+let settingsImportResult = null;
+
 // restartInFlight says whether a restart was asked for and the page is still
 // waiting for the service to answer again. The button is disabled while it is
 // on, because a second press asks a server that is on its way down and puts the
@@ -5291,6 +5296,7 @@ function enterSettings() {
   transferDraft = { tunnels: "", settings: "" };
   transferProblem = { tunnels: "", settings: "" };
   transferResult = null;
+  settingsImportResult = null;
 
   return drawSettings();
 }
@@ -6897,6 +6903,10 @@ function importSettingsForm() {
     intro.push(statusLine(transferProblem.settings, "warning"));
   }
 
+  if (settingsImportResult !== null) {
+    intro.push(transferItemsTable(settingsImportResult));
+  }
+
   return buildForm({
     name: "import-settings",
     legend: t("transfer.import-settings.title"),
@@ -7171,6 +7181,7 @@ async function importSettings(values) {
     }
 
     transferProblem.settings = error.message;
+    settingsImportResult = null;
     setFailure(sayOf(error));
 
     return drawSettings();
@@ -7178,6 +7189,8 @@ async function importSettings(values) {
 
   transferDraft.settings = "";
   transferProblem.settings = "";
+  settingsImportResult = answer !== null && answer !== undefined &&
+    Array.isArray(answer.items) && answer.items.length > 0 ? answer : null;
 
   setToast(function () {
     return settingsImportOutcome(answer);
