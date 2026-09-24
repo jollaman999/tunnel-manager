@@ -48,6 +48,11 @@ type LocalForwardState struct {
 	LastError       string    `json:"last_error"`
 	RetryCount      int       `json:"retry_count"`
 	LastConnectedAt time.Time `json:"last_connected_at"`
+	// ForwardReach is what the reachability probe measured of the target over
+	// the connection that stands, in the words a tunnel writes to
+	// models.Tunnel.ForwardReach. It is "unknown" from the moment a connection
+	// stands until the probe of that connection answers.
+	ForwardReach string `json:"forward_reach"`
 }
 
 // localTunnel carries one local forward: an SSH connection to the Host, and
@@ -257,7 +262,20 @@ func (f *localTunnel) establish() error {
 		state.RetryCount = 0
 		state.LastError = ""
 		state.LastConnectedAt = time.Now()
+		// What the last connection measured says nothing about this one, which
+		// may go to a Host that was reconfigured or to a target that came back
+		// in between, so the reading goes back to unknown until the probe below
+		// answers for the connection that stands. A tunnel row is emptied the
+		// same way on connecting (ssh.go, Start).
+		state.ForwardReach = forwardReachUnknown
 	})
+
+	// Measured here and not on every pass, for the reason the tunnels measure
+	// it once a connection stands: what decides it is the target and the way
+	// to it from the Host, neither of which changes under a connection that
+	// stands, while a probe per status read would be one connection to the
+	// target per forward per reader.
+	go f.recordForwardReach(client)
 
 	// refused is the half of the pair that did not open, and is nil when both
 	// did, in which case zap leaves the field out.
@@ -368,6 +386,77 @@ func (f *localTunnel) forward(localConn net.Conn, client *ssh.Client, idleTimeou
 	}()
 
 	joinConns(localConn, remoteConn, idleTimeout, f.logger)
+}
+
+// probeLocalForwardReach reports whether the target answers a connection
+// opened from the Host, in the words models.Tunnel.ForwardReach carries.
+//
+// A silence is written down as the target being unreachable, where a tunnel
+// writes one down as unknown. The difference is what does the dialling. A
+// tunnel probes the forwarded port from this process, which is not the machine
+// the port was opened on and cannot try every address it may have been opened
+// at, so nothing coming back may mean only that the probe was in no position
+// to see it. This probe asks the Host to dial the target, which is the very
+// thing every connection to the local port asks of it, over the connection
+// those connections are carried on: what the probe is told is what a client of
+// this forward would be told a moment later, so there is nothing here that a
+// silence could mean instead.
+//
+// The connection is closed as soon as it stands, for the reason the tunnel
+// probe closes its own: the dial is the whole measurement and a probe left
+// open is a channel held for the life of the connection.
+func probeLocalForwardReach(client *ssh.Client, target string, timeout time.Duration) string {
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	defer cancel()
+
+	conn, err := client.DialContext(ctx, "tcp", target)
+	if err != nil {
+		return forwardUnreachable
+	}
+	_ = conn.Close()
+
+	return forwardReachable
+}
+
+// recordForwardReach measures the target and writes the reading to the state
+// of the forward.
+//
+// It runs beside the accept loop rather than in it, for the reason the tunnel
+// runs its own probe apart: the dial waits out its whole bound against a
+// target that answers nothing, and the loop it would hold is the one carrying
+// the traffic of the forward.
+//
+// A reading taken on a connection that is no longer the current one is
+// dropped. The forward reconnected while the probe was waiting, a probe of its
+// own is running for the connection that replaced it, and writing here would
+// put the reading of a connection that is gone on the forward that is up.
+func (f *localTunnel) recordForwardReach(measured *ssh.Client) {
+	reach := probeLocalForwardReach(measured, f.target, forwardProbeTimeout)
+
+	f.clientMu.RLock()
+	current := f.client
+	f.clientMu.RUnlock()
+
+	if current != measured {
+		return
+	}
+
+	f.setState(func(state *LocalForwardState) {
+		state.ForwardReach = reach
+	})
+
+	if reach != forwardUnreachable {
+		return
+	}
+
+	// Logged under the id the same failure carries when a client runs into it,
+	// because it is that failure: the Host could not reach the target. What is
+	// different is only that nobody was waiting on this one.
+	f.logger.Warn("the target of the local forward did not answer a connection dialled from the Host, so "+
+		"the forward is connected but carries nothing. Check that the target is listening and that the "+
+		"Host is allowed to reach it, and that the SSH server allows this connection to open one "+
+		"(AllowTcpForwarding and PermitOpen in sshd_config for OpenSSH)",
+		append([]zap.Field{logid.TunnelLocalForwardTargetDialFailed.Field()}, f.fields()...)...)
 }
 
 // monitor checks the SSH connection every interval the way

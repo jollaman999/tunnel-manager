@@ -468,6 +468,62 @@ func TestALocalForwardCarriesAConnectionThroughTheHost(t *testing.T) {
 	}
 }
 
+// TestALocalForwardMeasuresWhetherTheTargetAnswers pins the probe: once the
+// forward is connected it asks the Host to dial the target once, and what came
+// back is on the state in the words a tunnel row carries.
+//
+// A silence is a measurement here, where on a tunnel it is not. The probe asks
+// the Host for the very thing a client of the local port asks it for, over the
+// connection that client would be carried on, so a target that answers nothing
+// is a target this forward cannot carry anything to.
+func TestALocalForwardMeasuresWhetherTheTargetAnswers(t *testing.T) {
+	answering, answeringPort := startEchoService(t, "echo:")
+
+	// A port on the loopback with nothing listening on it. It was free a
+	// moment ago and nothing here opens it, so the Host is dialling an address
+	// that refuses.
+	silentPort := freeDualStackPort(t)
+
+	tests := []struct {
+		name       string
+		targetIP   string
+		targetPort int
+		want       string
+	}{
+		{"a target that answers", answering, answeringPort, forwardReachable},
+		{"a target that is not there", "127.0.0.1", silentPort, forwardUnreachable},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			f := newLocalForwardFixture(t, models.BindScopeLoopback, freeDualStackPort(t), tc.targetIP, tc.targetPort)
+
+			f.reconcile(t)
+
+			state := waitLocalStatus(t, f.m, f.key(), "the local forward to measure the target",
+				func(state LocalForwardState) bool {
+					return isConnected(state) && state.ForwardReach != forwardReachUnknown
+				})
+
+			if state.ForwardReach != tc.want {
+				t.Fatalf("the forward reports forward_reach %q, want %q; the whole state is %+v",
+					state.ForwardReach, tc.want, state)
+			}
+
+			// Nothing has connected to the local port in this test, so what
+			// the Host was asked to dial is the probe and nothing else. That
+			// is the measurement being what it says it is: the target as the
+			// Host sees it, not as this machine does.
+			want := net.JoinHostPort(tc.targetIP, strconv.Itoa(tc.targetPort))
+			dialed := f.server.targets()
+
+			if len(dialed) != 1 || dialed[0] != want {
+				t.Fatalf("the Host was asked to dial %v, want the one target %q", dialed, want)
+			}
+		})
+	}
+}
+
 // TestReconcileFollowsTheLocalForwardRows holds the pass to the rows: a Host
 // that is disabled takes its forwards down and frees their ports, enabling it
 // brings them back, a changed target rebuilds the forward on the new one, and

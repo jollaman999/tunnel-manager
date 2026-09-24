@@ -1605,16 +1605,25 @@ func idList(ids []uint) string {
 //
 // The counts are over every row and not over the page. They are what the
 // status screen says the installation is doing, and counted over a page they
-// would follow the page size around: total_tunnels would read as the size of
-// the page, and a page without a connected tunnel on it would say that nothing
-// is connected while the tunnels carry traffic.
+// would follow the page size around: total_rows would read as the size of the
+// page, and a page without a connected tunnel on it would say that nothing is
+// connected while the tunnels carry traffic.
 //
-// The three tunnel counts keep counting the service port tunnels alone. The
-// local forwards are counted beside them under names of their own, because a
-// count whose name stayed while what it counts grew is one that every reader
-// of this answer goes on reading the old way and gets wrong without noticing.
-// What paging is done against is neither of those: it is total_rows, the two
-// added together, since the page is a cut through both tables.
+// There are four of them and each counts both sorts of forward together, a
+// local forward being a tunnel to whoever reads this answer. desired_tunnels
+// is what should be running; connected_tunnels, reconnecting_tunnels and
+// error_tunnels are how many rows carry each of those statuses. The last two
+// are apart because what they leave an operator to do differs: a row that is
+// reconnecting is on its way back on its own, and one in error is waiting for
+// somebody, and a single number over the two says nothing about which.
+//
+// The four do not add up to desired_tunnels, and are not meant to. A row that
+// is still starting or that is held up at a host key is in none of the three,
+// and a row that runs while nothing wants it is in one of them and not in
+// desired_tunnels.
+//
+// What paging is done against is none of the four: it is total_rows, the rows
+// of both tables, since the page is a cut through the two of them.
 //
 // The page is ordered by Host, then by sort, then by the id the row carries
 // within its sort. Host first is what keeps the rows of one Host together: an
@@ -1624,8 +1633,8 @@ func idList(ids []uint) string {
 // that is not stated does to LIMIT and OFFSET.
 //
 // @Summary      The counts of the installation and one page of the status rows
-// @Description  tunnels carries both sorts of forward: kind is service_port or local_forward, and sp_id is null on a local forward, which is carried by no service port. On a local forward row, local is the address opened on this machine and remote the target reached from the Host, which is the mirror of what they hold on a service port row.
-// @Description  The counts are over every row and not over the page: they say what the installation is doing, not what is on the page being looked at. The three tunnel counts are over the service port tunnels alone; the local forwards are counted under names of their own. total_rows is the two together, which is what the pages are cut from.
+// @Description  tunnels carries both sorts of forward: kind is service_port or local_forward, and sp_id is null on a local forward, which is carried by no service port. On a local forward row, local is the address opened on this machine and remote the target reached from the Host, which is the mirror of what they hold on a service port row. forward_reach is on both sorts: on a service port row it says whether the port opened on the Host answered a connection from here, and on a local forward row whether the target answered one dialled from the Host.
+// @Description  The counts are over every row and not over the page: they say what the installation is doing, not what is on the page being looked at. There are four, and each counts the service port tunnels and the local forwards together: desired_tunnels is what should be running, and connected_tunnels, reconnecting_tunnels and error_tunnels are how many rows are in each of those statuses. A row that is starting or held up at a host key is in none of the three. total_rows is the rows of both sorts, which is what the pages are cut from.
 // @Tags         status
 // @Produce  json
 // @Param   page  query  int  false  "The page, counted from 1. Below 1 is read as 1, and a page past the last one is answered with the last page"
@@ -1666,10 +1675,9 @@ func (h *Handler) GetStatus(c echo.Context) error {
 		return failure(c, http.StatusInternalServerError, errStatusDesiredCountFailed)
 	}
 
-	var connectedTunnels int64
-	err = h.db.Model(&models.Tunnel{}).Where("status = ?", "connected").Count(&connectedTunnels).Error
+	tunnelCounts, err := tunnelStatusCounts(h.db)
 	if err != nil {
-		h.logger.Error("failed to count the connected tunnels",
+		h.logger.Error("failed to count the tunnels by status",
 			logid.StatusConnectedTunnelsCountFailed.Field(),
 			zap.Error(err))
 		return failure(c, http.StatusInternalServerError, errStatusFetchFailed)
@@ -1777,21 +1785,25 @@ func (h *Handler) GetStatus(c echo.Context) error {
 
 	rows := mergeStatusRows(tunnelRows, forwardRows)
 
+	// The counts of the two sorts are added together here, at the one place
+	// they leave for the screen. Each sort is counted where its status lives -
+	// the tunnels in a column, the local forwards in what the manager holds -
+	// and neither can be counted the way the other is.
+	counts := tunnelCounts.plus(localForwardStatusCounts(states))
+
 	return c.JSON(http.StatusOK, models.Response{
 		Success: true,
 		Data: map[string]interface{}{
-			"desired_tunnels":          desiredTunnels,
-			"total_tunnels":            totalTunnels,
-			"connected_tunnels":        connectedTunnels,
-			"desired_local_forwards":   desiredLocalForwards,
-			"total_local_forwards":     totalLocalForwards,
-			"connected_local_forwards": connectedLocalForwardCount(states),
-			"total_rows":               totalTunnels + totalLocalForwards,
-			"host_keys_unapproved":     hostKeysUnapproved,
-			"host_keys_mismatched":     hostKeysMismatched,
-			"tunnels":                  rows,
-			"page":                     page.number,
-			"size":                     page.size,
+			"desired_tunnels":      desiredTunnels + desiredLocalForwards,
+			"connected_tunnels":    counts.connected,
+			"reconnecting_tunnels": counts.reconnecting,
+			"error_tunnels":        counts.errored,
+			"total_rows":           totalTunnels + totalLocalForwards,
+			"host_keys_unapproved": hostKeysUnapproved,
+			"host_keys_mismatched": hostKeysMismatched,
+			"tunnels":              rows,
+			"page":                 page.number,
+			"size":                 page.size,
 		},
 	})
 }

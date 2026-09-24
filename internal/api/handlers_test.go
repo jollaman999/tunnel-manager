@@ -1132,7 +1132,7 @@ func TestGetStatusReportsTheTunnelsThatShouldBeRunning(t *testing.T) {
 				want int
 			}{
 				{"desired_tunnels", tt.wantDesired},
-				{"total_tunnels", tt.wantTotal},
+				{"total_rows", tt.wantTotal},
 				{"connected_tunnels", tt.wantConnected},
 			}
 			for _, field := range fields {
@@ -3175,7 +3175,7 @@ var listEndpoints = []listEndpoint{
 		target:   "/api/status",
 		call:     (*Handler).GetStatus,
 		itemsKey: "tunnels",
-		totalKey: "total_tunnels",
+		totalKey: "total_rows",
 		idKey:    "host_id",
 	},
 }
@@ -3554,7 +3554,7 @@ func TestGetStatusCountsEveryTunnelAndNotThePage(t *testing.T) {
 		key  string
 		want int
 	}{
-		{"total_tunnels", rows},
+		{"total_rows", rows},
 		{"connected_tunnels", connected},
 		{"desired_tunnels", rows},
 	}

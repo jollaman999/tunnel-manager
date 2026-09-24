@@ -40,16 +40,42 @@ func storeLocalForwards(t *testing.T, db *gorm.DB, rows []models.LocalForward) {
 	}
 }
 
+// runningLocalForwards is a manager that reports the local forwards a test has
+// running. Everything else it answers is the real manager over the rows: the
+// counts of what should be running are read from the tables, and only what the
+// running forwards say is laid over, which is the one thing about a local
+// forward that lives nowhere but in memory.
+type runningLocalForwards struct {
+	*tunnel.Manager
+	states map[tunnel.LocalForwardKey]tunnel.LocalForwardState
+}
+
+func (m runningLocalForwards) LocalForwardStatuses() map[tunnel.LocalForwardKey]tunnel.LocalForwardState {
+	return m.states
+}
+
 // statusRowsOf runs GetStatus over db and hands back the rows of the page as
 // they were written, so that a field which is null in the answer can be told
-// from one that carries a zero.
+// from one that carries a zero. Nothing runs over db, which is a manager whose
+// local forwards all report nothing.
 func statusRowsOf(t *testing.T, db *gorm.DB, target string) ([]map[string]interface{}, map[string]interface{}) {
 	t.Helper()
 
-	manager, err := tunnel.NewManager(db, zap.NewNop(), newTestCipher(t), 1)
+	return statusRowsWithStates(t, db, target, nil)
+}
+
+// statusRowsWithStates is statusRowsOf with the local forwards states says are
+// running.
+func statusRowsWithStates(t *testing.T, db *gorm.DB, target string,
+	states map[tunnel.LocalForwardKey]tunnel.LocalForwardState) ([]map[string]interface{}, map[string]interface{}) {
+	t.Helper()
+
+	base, err := tunnel.NewManager(db, zap.NewNop(), newTestCipher(t), 1)
 	if err != nil {
 		t.Fatalf("failed to create manager: %v", err)
 	}
+
+	manager := runningLocalForwards{Manager: base, states: states}
 
 	c, rec := getRequest(t, target, "", "")
 	h := NewHandler(db, manager, zap.NewNop(), newTestCipher(t))
@@ -216,12 +242,15 @@ func TestGetStatusCarriesBothSortsOfForward(t *testing.T) {
 	}
 
 	counts := map[string]int{
-		"total_tunnels":            2,
-		"total_local_forwards":     1,
-		"total_rows":               3,
-		"desired_tunnels":          2,
-		"desired_local_forwards":   1,
-		"connected_local_forwards": 0,
+		// Two tunnels and one local forward, and every count is over the two
+		// sorts together.
+		"total_rows":      3,
+		"desired_tunnels": 3,
+		// One of the two tunnel rows says connected and the other says error,
+		// and nothing runs over this database, so the forward is in neither.
+		"connected_tunnels":    1,
+		"reconnecting_tunnels": 0,
+		"error_tunnels":        1,
 	}
 	for key, want := range counts {
 		got := statusCount(t, data, key)
@@ -420,46 +449,58 @@ func TestGetStatusPagesTheTwoSortsAsOneList(t *testing.T) {
 	}
 }
 
-// TestGetStatusCountsTheSortsApart pins that adding local forwards leaves the
-// three tunnel counts where they were. A client reading total_tunnels has been
-// reading the service port tunnels since there were any, and a count that
-// quietly grew would be wrong everywhere it is read without a word.
-func TestGetStatusCountsTheSortsApart(t *testing.T) {
+// TestGetStatusCountsBothSortsTogether pins the four counts to what they now
+// count: the service port tunnels and the local forwards added together, each
+// sort counted where its status lives.
+//
+// They used to be six, the three tunnel counts beside three of the forwards,
+// and a reader had to add two numbers to learn how much of the installation
+// was up. A local forward is a tunnel to whoever reads this answer, so the
+// counts are over both sorts and the reader has the number.
+func TestGetStatusCountsBothSortsTogether(t *testing.T) {
 	hosts := []models.Host{statusHost(1, true), statusHost(2, true)}
 	sps := []models.ServicePort{statusServicePort(1), statusServicePort(2)}
 	tunnels := []models.Tunnel{
 		statusTunnel(1, 1, "connected"),
 		statusTunnel(1, 2, "error"),
 		statusTunnel(2, 1, "connected"),
-		statusTunnel(2, 2, "connected"),
+		statusTunnel(2, 2, "reconnecting"),
+	}
+
+	// What the forwards report. The one that is off runs nothing and says
+	// nothing, and the one that is still starting is in none of the three
+	// statuses that are counted.
+	states := map[tunnel.LocalForwardKey]tunnel.LocalForwardState{
+		{HostID: 1, Number: 1}: {Status: "connected"},
+		{HostID: 2, Number: 3}: {Status: "error"},
+		{HostID: 2, Number: 4}: {Status: "starting"},
 	}
 
 	without := newRowsDB(t, hosts, sps, tunnels)
-	_, before := statusRowsOf(t, without, "/api/status")
+	_, before := statusRowsWithStates(t, without, "/api/status", nil)
 
 	with := newRowsDB(t, hosts, sps, tunnels)
 	storeLocalForwards(t, with, []models.LocalForward{
 		statusLocalForward(1, 1, 19000, models.BindScopeWildcard, true),
 		statusLocalForward(2, 1, 19001, models.BindScopeWildcard, false),
 		statusLocalForward(3, 2, 19002, models.BindScopeWildcard, true),
+		statusLocalForward(4, 2, 19003, models.BindScopeWildcard, true),
 	})
 
-	_, after := statusRowsOf(t, with, "/api/status")
-
-	for _, key := range []string{"desired_tunnels", "total_tunnels", "connected_tunnels"} {
-		if statusCount(t, before, key) != statusCount(t, after, key) {
-			t.Errorf("%s = %d with the local forwards and %d without them; it counts the tunnels",
-				key, statusCount(t, after, key), statusCount(t, before, key))
-		}
-	}
+	_, after := statusRowsWithStates(t, with, "/api/status", states)
 
 	counts := map[string]int{
-		"total_tunnels": 4,
-		// Two of the three forwards are on, and both of their Hosts are.
-		"desired_local_forwards":   2,
-		"total_local_forwards":     3,
-		"connected_local_forwards": 0,
-		"total_rows":               7,
+		// Four tunnels, and three of the four forwards are on under a Host
+		// that is on.
+		"desired_tunnels": 7,
+		// Two tunnels and one forward.
+		"connected_tunnels": 3,
+		// One tunnel and no forward.
+		"reconnecting_tunnels": 1,
+		// One tunnel and one forward.
+		"error_tunnels": 2,
+		// Every row of both tables, the ones that run nothing among them.
+		"total_rows": 8,
 	}
 	for key, want := range counts {
 		if statusCount(t, after, key) != want {
@@ -467,20 +508,122 @@ func TestGetStatusCountsTheSortsApart(t *testing.T) {
 		}
 	}
 
-	// Without a local forward stored, the counts are there and empty rather
-	// than left out: a screen reading a field that is not there gets nothing
-	// and draws it as a zero anyway, and the two cases would not be told apart.
-	empty := map[string]int{
-		"desired_local_forwards":   0,
-		"total_local_forwards":     0,
-		"connected_local_forwards": 0,
-		"total_rows":               4,
+	// The forward that is starting is in none of the three, which is what
+	// leaves the three short of what should be running.
+	if counts["connected_tunnels"]+counts["reconnecting_tunnels"]+counts["error_tunnels"] >= counts["desired_tunnels"] {
+		t.Error("the three statuses add up to what should be running; a row that is starting is counted in one of them")
 	}
-	for key, want := range empty {
+
+	// Without a local forward stored the counts are the tunnels alone, and
+	// they are there and empty rather than left out: a screen reading a field
+	// that is not there gets nothing and draws it as a zero anyway, and the
+	// two cases would not be told apart.
+	alone := map[string]int{
+		"desired_tunnels":      4,
+		"connected_tunnels":    2,
+		"reconnecting_tunnels": 1,
+		"error_tunnels":        1,
+		"total_rows":           4,
+	}
+	for key, want := range alone {
 		if statusCount(t, before, key) != want {
 			t.Errorf("with no local forward stored %s = %d, want %d",
 				key, statusCount(t, before, key), want)
 		}
+	}
+}
+
+// TestGetStatusCountsTheSortsUnderNoNamesOfTheirOwn pins that the four counts
+// of the sorts apart are gone from the answer.
+//
+// They are not left in beside the four that replaced them. A count that says
+// the service port tunnels alone, standing next to one of the same name that
+// says both sorts, is read as the other by everyone who knew the old answer,
+// and the screen would draw the same installation two ways.
+func TestGetStatusCountsTheSortsUnderNoNamesOfTheirOwn(t *testing.T) {
+	db := newRowsDB(t,
+		[]models.Host{statusHost(1, true)},
+		[]models.ServicePort{statusServicePort(1)},
+		[]models.Tunnel{statusTunnel(1, 1, "connected")})
+
+	storeLocalForwards(t, db, []models.LocalForward{
+		statusLocalForward(1, 1, 19000, models.BindScopeWildcard, true),
+	})
+
+	_, data := statusRowsWithStates(t, db, "/api/status",
+		map[tunnel.LocalForwardKey]tunnel.LocalForwardState{
+			{HostID: 1, Number: 1}: {Status: "connected"},
+		})
+
+	for _, key := range []string{
+		"total_tunnels", "total_local_forwards", "connected_local_forwards", "desired_local_forwards",
+	} {
+		if _, carried := data[key]; carried {
+			t.Errorf("the answer still carries %s = %v", key, data[key])
+		}
+	}
+
+	// The count the pages are cut from is the one that stays. Without it the
+	// screen has no last page to walk to.
+	if statusCount(t, data, "total_rows") != 2 {
+		t.Errorf("total_rows = %d, want 2", statusCount(t, data, "total_rows"))
+	}
+}
+
+// TestGetStatusCarriesWhatALocalForwardMeasured pins that the reading of the
+// probe reaches the row, and that a row nothing is running for carries none.
+func TestGetStatusCarriesWhatALocalForwardMeasured(t *testing.T) {
+	tests := []struct {
+		name   string
+		states map[tunnel.LocalForwardKey]tunnel.LocalForwardState
+		want   string
+	}{
+		{
+			name: "a target that answered",
+			states: map[tunnel.LocalForwardKey]tunnel.LocalForwardState{
+				{HostID: 1, Number: 1}: {Status: "connected", ForwardReach: "reachable"},
+			},
+			want: "reachable",
+		},
+		{
+			name: "a target that did not",
+			states: map[tunnel.LocalForwardKey]tunnel.LocalForwardState{
+				{HostID: 1, Number: 1}: {Status: "connected", ForwardReach: "unreachable"},
+			},
+			want: "unreachable",
+		},
+		{
+			name: "a connection whose probe has not answered yet",
+			states: map[tunnel.LocalForwardKey]tunnel.LocalForwardState{
+				{HostID: 1, Number: 1}: {Status: "connected", ForwardReach: "unknown"},
+			},
+			want: "unknown",
+		},
+		{
+			name:   "a forward that is not running",
+			states: nil,
+			want:   "",
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			db := newRowsDB(t, []models.Host{statusHost(1, true)}, nil, nil)
+
+			storeLocalForwards(t, db, []models.LocalForward{
+				statusLocalForward(1, 1, 19000, models.BindScopeWildcard, true),
+			})
+
+			rows, _ := statusRowsWithStates(t, db, "/api/status", tc.states)
+
+			if len(rows) != 1 {
+				t.Fatalf("the page carries %d rows, want 1: %v", len(rows), rows)
+			}
+			if rows[0]["forward_reach"] != tc.want {
+				t.Errorf("the local forward row carries forward_reach %v, want %q",
+					rows[0]["forward_reach"], tc.want)
+			}
+		})
 	}
 }
 
@@ -628,22 +771,27 @@ func TestSplitStatusPageCutsBothRuns(t *testing.T) {
 	}
 }
 
-// TestConnectedLocalForwardCountCountsWhatIsUp pins that the count is of the
-// forwards reporting connected and not of everything that is running.
-func TestConnectedLocalForwardCountCountsWhatIsUp(t *testing.T) {
+// TestLocalForwardStatusCountsCountEachStatus pins that the forwards are
+// counted by what they report, each into its own number, and that a status
+// which is none of the three is counted nowhere.
+func TestLocalForwardStatusCountsCountEachStatus(t *testing.T) {
 	states := map[tunnel.LocalForwardKey]tunnel.LocalForwardState{
 		{HostID: 1, Number: 1}: {Status: "connected"},
 		{HostID: 1, Number: 2}: {Status: "reconnecting"},
 		{HostID: 2, Number: 1}: {Status: "connected"},
 		{HostID: 2, Number: 2}: {Status: "error"},
+		{HostID: 2, Number: 3}: {Status: "starting"},
 	}
 
-	got := connectedLocalForwardCount(states)
-	if got != 2 {
-		t.Errorf("connectedLocalForwardCount = %d, want 2", got)
+	got := localForwardStatusCounts(states)
+	want := statusCounts{connected: 2, reconnecting: 1, errored: 1}
+
+	if got != want {
+		t.Errorf("localForwardStatusCounts = %+v, want %+v", got, want)
 	}
 
-	if connectedLocalForwardCount(nil) != 0 {
-		t.Errorf("with nothing running the count is %d, want 0", connectedLocalForwardCount(nil))
+	if localForwardStatusCounts(nil) != (statusCounts{}) {
+		t.Errorf("with nothing running the counts are %+v, want every one of them empty",
+			localForwardStatusCounts(nil))
 	}
 }

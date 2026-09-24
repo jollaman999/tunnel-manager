@@ -17,18 +17,29 @@ const (
 	statusKindLocalForward = "local_forward"
 )
 
-// statusConnected is the status a row of either sort carries while it is up:
-// the word written on a tunnel row and the word a running local forward
-// reports.
-const statusConnected = "connected"
+// The three statuses the counts of the status answer are taken over. Each is a
+// word a row of either sort carries: what is written on a tunnel row and what a
+// running local forward reports are the same words, which is what lets the two
+// sorts be counted together.
+//
+// The statuses that are none of these - a row still starting, and the two host
+// key refusals - are counted under none of the three. They are left out rather
+// than swept into the error count, because what an operator does about them is
+// to approve or to look at a key, which is what the two counts of Hosts waiting
+// in this same answer are for.
+const (
+	statusConnected    = "connected"
+	statusReconnecting = "reconnecting"
+	statusError        = "error"
+)
 
 // statusRow is one row of the status table, either sort. The tunnel row is
 // embedded so that a service port row carries exactly the fields it always
 // carried, down to a column added to models.Tunnel later, and a local forward
 // fills the few of them that mean something for it: status, last_error,
-// retry_count and last_connected_at from what the forward reports, and server,
-// local and remote from where it listens and what it reaches. The rest stay at
-// their zero values, forward_reach among them, because nothing measures those
+// retry_count, last_connected_at and forward_reach from what the forward
+// reports, and server, local and remote from where it listens and what it
+// reaches. The rest stay at their zero values, because nothing measures those
 // for a local forward.
 //
 // local and remote are the mirror of what they hold on a tunnel row. On a
@@ -251,6 +262,17 @@ func localForwardStatusRow(lf models.LocalForward, host *models.Host,
 	view := localForwardViewOf(lf, host != nil && host.Enabled, states)
 	number := lf.Number
 
+	// The reading of the probe is carried beside the rest of what the forward
+	// reports, and only where the row reports anything at all: a row whose
+	// status came from localForwardViewOf rather than from a running forward
+	// is one that nothing has measured, and the last reading of a forward that
+	// has since been switched off would read as a measurement of now.
+	reach := ""
+	if state, running := states[tunnel.LocalForwardKey{HostID: lf.HostID, Number: lf.Number}]; running &&
+		view.Status == state.Status {
+		reach = state.ForwardReach
+	}
+
 	return statusPageRow{
 		ref: statusRef{HostID: lf.HostID, Kind: statusKindLocalForward, Ref: lf.Number},
 		row: statusRow{
@@ -263,6 +285,7 @@ func localForwardStatusRow(lf models.LocalForward, host *models.Host,
 				Server:          server,
 				Local:           listenV4,
 				Remote:          target,
+				ForwardReach:    reach,
 			},
 			Kind:   statusKindLocalForward,
 			Number: &number,
@@ -299,19 +322,78 @@ func mergeStatusRows(tunnels, forwards []statusPageRow) []statusRow {
 	return rows
 }
 
-// connectedLocalForwardCount is how many local forwards report that they are
-// connected. It is counted from what the running forwards say rather than from
+// statusCounts is how many rows are in each of the three statuses the status
+// answer counts. The two sorts of forward are added into the one set of
+// numbers: a local forward is a tunnel to whoever reads this answer, so what
+// the counts say is how much of the installation is up, is coming back and is
+// waiting for somebody, whichever sort each row is.
+type statusCounts struct {
+	connected    int
+	reconnecting int
+	errored      int
+}
+
+// add adds one row in the given status. A status that is none of the three is
+// counted nowhere, for the reason given where the three are named.
+func (c *statusCounts) add(status string, rows int) {
+	switch status {
+	case statusConnected:
+		c.connected += rows
+	case statusReconnecting:
+		c.reconnecting += rows
+	case statusError:
+		c.errored += rows
+	}
+}
+
+// tunnelStatusCounts counts the tunnel rows by the status written on them.
+//
+// The three are counted in the one read rather than one COUNT per status: the
+// pool holds a single connection (internal/database, SetMaxOpenConns(1)), so a
+// query saved is a turn of that connection saved, and three reads could also
+// straddle a row being written and answer with counts that never held at once.
+func tunnelStatusCounts(db *gorm.DB) (statusCounts, error) {
+	var rows []struct {
+		Status string
+		Rows   int
+	}
+
+	err := db.Model(&models.Tunnel{}).
+		Select("status, count(*) AS rows").
+		Group("status").
+		Scan(&rows).Error
+	if err != nil {
+		return statusCounts{}, err
+	}
+
+	var counts statusCounts
+	for _, row := range rows {
+		counts.add(row.Status, row.Rows)
+	}
+
+	return counts, nil
+}
+
+// localForwardStatusCounts counts the local forwards by the status they
+// report. It is counted from what the running forwards say rather than from
 // the rows, because that is where the status of a local forward lives: there
 // is no column to count, and the rows of forwards that are switched off or
 // carried by a disabled Host report nothing at all.
-func connectedLocalForwardCount(states map[tunnel.LocalForwardKey]tunnel.LocalForwardState) int {
-	connected := 0
+func localForwardStatusCounts(states map[tunnel.LocalForwardKey]tunnel.LocalForwardState) statusCounts {
+	var counts statusCounts
 
 	for _, state := range states {
-		if state.Status == statusConnected {
-			connected++
-		}
+		counts.add(state.Status, 1)
 	}
 
-	return connected
+	return counts
+}
+
+// plus adds the counts of the other sort to these.
+func (c statusCounts) plus(other statusCounts) statusCounts {
+	return statusCounts{
+		connected:    c.connected + other.connected,
+		reconnecting: c.reconnecting + other.reconnecting,
+		errored:      c.errored + other.errored,
+	}
 }
