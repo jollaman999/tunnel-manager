@@ -2057,7 +2057,7 @@
                         "in": "body",
                         "required": true,
                         "schema": {
-                            "$ref": "#/definitions/settings.Settings"
+                            "$ref": "#/definitions/api.updateSettingsRequest"
                         }
                     }
                 ],
@@ -3635,6 +3635,59 @@
             "properties": {
                 "password": {
                     "type": "string"
+                }
+            }
+        },
+        "api.updateSettingsRequest": {
+            "type": "object",
+            "properties": {
+                "api_https_enabled": {
+                    "type": "boolean"
+                },
+                "api_port": {
+                    "type": "integer"
+                },
+                "logging_file_compress": {
+                    "type": "boolean"
+                },
+                "logging_file_max_age": {
+                    "type": "integer"
+                },
+                "logging_file_max_backups": {
+                    "type": "integer"
+                },
+                "logging_file_max_size": {
+                    "type": "integer"
+                },
+                "logging_file_path": {
+                    "type": "string"
+                },
+                "logging_format": {
+                    "type": "string"
+                },
+                "logging_level": {
+                    "type": "string"
+                },
+                "monitoring_interval_sec": {
+                    "type": "integer"
+                },
+                "reconcile_interval_sec": {
+                    "type": "integer"
+                },
+                "security_key_file": {
+                    "type": "string"
+                },
+                "ui_default_language": {
+                    "type": "string"
+                },
+                "update_auto_install": {
+                    "type": "boolean"
+                },
+                "update_check_enabled": {
+                    "type": "boolean"
+                },
+                "update_check_interval_hours": {
+                    "type": "integer"
                 }
             }
         },

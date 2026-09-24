@@ -268,7 +268,7 @@ func (r *updateSettingsRequest) apply(s *settings.Settings) {
 // @Accept   json
 // @Produce  json
 // @Security  CSRFToken
-// @Param   body  body  settings.Settings  true  "The settings as they should stand"
+// @Param   body  body  api.updateSettingsRequest  true  "The settings as they should stand"
 // @Success  200  {object}  models.Response{data=api.settingsSaved}
 // @Failure  400  {object}  api.errorBody  "A setting broke one of the rules. Nothing was stored"
 // @Failure  409  {object}  api.errorBody{data=api.apiPortTaken}  "api_port is the local port of a local forward. Nothing was stored"
