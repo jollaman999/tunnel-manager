@@ -2425,6 +2425,7 @@ async function drawHosts() {
       [0, 2],
       picks.head
     );
+    table.dataset.list = "hosts";
 
     // The press that acts on the ticks goes under the controls that turn the
     // page and over the rows it acts on, which are the rows of this page: a

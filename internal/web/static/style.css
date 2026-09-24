@@ -1353,6 +1353,17 @@ td .buttons {
   white-space: nowrap;
 }
 
+/* A Host row carries five buttons, more than one line holds beside the other
+   columns at a common width, so there they may wrap. The cell gives up the
+   narrowest width it takes elsewhere, or they would stack one per line. */
+.table-scroll[data-list="hosts"] td .buttons {
+  flex-wrap: wrap;
+}
+
+.table-scroll[data-list="hosts"] td.actions {
+  width: auto;
+}
+
 /* The buttons take no more width than they need, which leaves the rest of the
    row to the columns that carry values. */
 td.actions {
