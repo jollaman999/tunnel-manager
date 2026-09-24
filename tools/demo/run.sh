@@ -25,6 +25,7 @@ HOST_IP=127.0.0.2
 HOST_SSH_PORT=2222
 HOST_OPEN_PORT=8080
 FORWARD_ADDR=127.0.0.1:18080
+SOCKS_ADDR=127.0.0.1:1080
 MAX_GIF_BYTES=$((5 * 1024 * 1024))
 
 WORK="$(mktemp -d "${DEMO_WORK_PARENT:-${TMPDIR:-/tmp}}/tunnel-manager-demo.XXXXXX")"
@@ -74,7 +75,7 @@ wait_for() {
 	return 1
 }
 
-for addr in "$UI_ADDR" "$SERVICE_ADDR" "$HOST_IP:$HOST_SSH_PORT" "$HOST_IP:$HOST_OPEN_PORT" "$FORWARD_ADDR"; do
+for addr in "$UI_ADDR" "$SERVICE_ADDR" "$HOST_IP:$HOST_SSH_PORT" "$HOST_IP:$HOST_OPEN_PORT" "$FORWARD_ADDR" "$SOCKS_ADDR"; do
 	if ! port_free "$addr"; then
 		echo "$addr is already in use. Stop what listens there and run this again." >&2
 		exit 1
@@ -127,7 +128,8 @@ log "recording"
 	-host-ip "$HOST_IP" \
 	-host-port "$HOST_SSH_PORT" \
 	-service-url "http://$HOST_IP:$HOST_OPEN_PORT/" \
-	-forward-port "${FORWARD_ADDR##*:}"
+	-forward-port "${FORWARD_ADDR##*:}" \
+	-socks-port "${SOCKS_ADDR##*:}"
 
 log "making the GIF"
 mkdir -p "$(dirname "$OUT")"

@@ -2,7 +2,7 @@
 
 [English](../README.md) · [한국어](README.ko.md) · [中文](README.zh.md)
 
-![Tunnel Manager: add a service port and a Host, approve the host key, reach the service through the tunnel, and add a local forward](demo.gif)
+![Tunnel Manager: add a service port and a Host, approve the host key, reach the service through the tunnel, add a local forward, and turn on a SOCKS5 proxy](demo.gif)
 
 **Tunnel Manager は、サービスへの経路がないマシンからそのサービスを使えるようにします。**
 そうしたマシンに SSH で接続し、それぞれにポートを 1 つ開かせて、そのポートへの接続を

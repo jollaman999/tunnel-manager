@@ -23,14 +23,15 @@ What it does, in order:
 5. Drives the UI in headless Chrome (`recorder/`): the first sign in and the
    setup of the account `admin`, a service port, the Host, the approval of its
    host key, the tunnel coming up, the service opened through the port the Host
-   opened, and a local forward on `127.0.0.1:18080` that reaches the web server
-   inside the Host.
+   opened, a local forward on `127.0.0.1:18080` that reaches the web server
+   inside the Host, and the SOCKS5 proxy of the Host on `127.0.0.1:1080`, which
+   a second Chrome opens that same web server through.
 6. Turns the frames into a GIF 960 pixels wide with ffmpeg, with fewer colors
    when it comes out larger than 5 MB.
 
 It needs Go, Docker, ffmpeg and Google Chrome, and these addresses free:
 `127.0.0.1:8888` (tunnel-manager), `127.0.0.1:8000`, `127.0.0.2:2222`,
-`127.0.0.2:8080` and `127.0.0.1:18080`. The script says which one is taken if one is.
+`127.0.0.2:8080`, `127.0.0.1:18080` and `127.0.0.1:1080`. The script says which one is taken if one is.
 
 | Variable | What it changes |
 |----------|-----------------|

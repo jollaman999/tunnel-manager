@@ -36,6 +36,8 @@ type config struct {
 	forwardPort     string
 	targetIP        string
 	targetPort      string
+	socksPort       string
+	socksURL        string
 	width           int
 	height          int
 }
@@ -60,6 +62,8 @@ func main() {
 	flag.StringVar(&cfg.forwardPort, "forward-port", "18080", "port the local forward opens on this machine")
 	flag.StringVar(&cfg.targetIP, "target-ip", "127.0.0.1", "address the local forward reaches from the Host")
 	flag.StringVar(&cfg.targetPort, "target-port", "80", "port the local forward reaches from the Host")
+	flag.StringVar(&cfg.socksPort, "socks-port", "1080", "port the SOCKS5 proxy of the Host listens on here")
+	flag.StringVar(&cfg.socksURL, "socks-url", "http://127.0.0.1/", "address opened through the SOCKS5 proxy, as the Host reaches it")
 	flag.IntVar(&cfg.width, "width", 1280, "viewport width")
 	flag.IntVar(&cfg.height, "height", 800, "viewport height")
 	flag.Parse()
@@ -100,7 +104,7 @@ func record(cfg config) error {
 	ctx, cancelTimeout := context.WithTimeout(ctx, 6*time.Minute)
 	defer cancelTimeout()
 
-	r := &recorder{ctx: ctx, dir: cfg.frames}
+	r := &recorder{ctx: ctx, dir: cfg.frames, options: options, width: cfg.width, height: cfg.height}
 
 	if err := chromedp.Run(ctx, chromedp.EmulateViewport(int64(cfg.width), int64(cfg.height))); err != nil {
 		return fmt.Errorf("starting Chrome: %w", err)
@@ -116,6 +120,7 @@ func record(cfg config) error {
 		{"status", sceneStatus},
 		{"service", sceneService},
 		{"local forward", sceneLocalForward},
+		{"socks5", sceneSOCKS},
 	}
 
 	for _, scene := range scenes {
@@ -441,16 +446,156 @@ func sceneLocalForward(r *recorder, cfg config, _ string) error {
 	return r.shot(3500 * time.Millisecond)
 }
 
+func sceneSOCKS(r *recorder, cfg config, _ string) error {
+	if err := r.navigate(cfg.base + "/ui/hosts"); err != nil {
+		return err
+	}
+
+	if err := r.run(chromedp.WaitVisible(`[data-action^="host-edit-"]`, chromedp.ByQuery)); err != nil {
+		return err
+	}
+
+	if err := r.scrollTo(`table`); err != nil {
+		return err
+	}
+
+	if err := r.caption("7. Turn on a SOCKS5 proxy and browse the network behind the Host"); err != nil {
+		return err
+	}
+
+	r.pause(time.Second)
+
+	if err := r.click(`[data-action^="host-edit-"]`, `#host-edit-socks_enabled`); err != nil {
+		return err
+	}
+
+	if err := r.click(`#host-edit-socks_enabled`, `#host-edit-socks_port`); err != nil {
+		return err
+	}
+
+	if err := r.point(`#host-edit-socks_port`); err != nil {
+		return err
+	}
+
+	if err := r.shot(1500 * time.Millisecond); err != nil {
+		return err
+	}
+
+	if err := r.click(`[data-action="host-edit-submit"]`, `[data-socks]`); err != nil {
+		return err
+	}
+
+	connected := `[data-socks] .badge[data-status="connected"]`
+
+	for tries := 0; ; tries++ {
+		if err := r.scrollTo(`table`); err != nil {
+			return err
+		}
+
+		var found bool
+
+		if err := r.run(chromedp.Evaluate(fmt.Sprintf("document.querySelector(%q) !== null", connected), &found)); err != nil {
+			return err
+		}
+
+		if found {
+			break
+		}
+
+		if tries == 30 {
+			return fmt.Errorf("the SOCKS5 proxy did not connect")
+		}
+
+		if err := r.shot(time.Second); err != nil {
+			return err
+		}
+
+		time.Sleep(time.Second)
+
+		if err := r.run(chromedp.Click(`nav a[data-screen="hosts"]`, chromedp.ByQuery),
+			chromedp.WaitVisible(`[data-socks]`, chromedp.ByQuery)); err != nil {
+			return err
+		}
+	}
+
+	if err := r.point(connected); err != nil {
+		return err
+	}
+
+	if err := r.shot(2500 * time.Millisecond); err != nil {
+		return err
+	}
+
+	return r.throughProxy(cfg)
+}
+
+// throughProxy opens cfg.socksURL in a second Chrome that sends everything,
+// loopback addresses included, through the SOCKS5 proxy, and takes its frames
+// into the same recording.
+func (r *recorder) throughProxy(cfg config) error {
+	options := append([]chromedp.ExecAllocatorOption{}, r.options...)
+	options = append(options,
+		chromedp.ProxyServer("socks5://127.0.0.1:"+cfg.socksPort),
+		chromedp.Flag("proxy-bypass-list", "<-loopback>"),
+	)
+
+	allocCtx, cancelAlloc := chromedp.NewExecAllocator(context.Background(), options...)
+	defer cancelAlloc()
+
+	ctx, cancelCtx := chromedp.NewContext(allocCtx)
+	defer cancelCtx()
+
+	ctx, cancelTimeout := context.WithTimeout(ctx, 2*time.Minute)
+	defer cancelTimeout()
+
+	outer := r.ctx
+	r.ctx = ctx
+
+	defer func() {
+		r.ctx = outer
+	}()
+
+	if err := r.run(chromedp.EmulateViewport(int64(r.width), int64(r.height))); err != nil {
+		return fmt.Errorf("starting the Chrome behind the proxy: %w", err)
+	}
+
+	if err := r.navigate(cfg.socksURL); err != nil {
+		return err
+	}
+
+	var heading string
+
+	if err := r.run(
+		chromedp.WaitVisible(`h1`, chromedp.ByQuery),
+		chromedp.Text(`h1`, &heading, chromedp.ByQuery),
+	); err != nil {
+		return err
+	}
+
+	if !strings.Contains(heading, "Hello from inside the Host") {
+		return fmt.Errorf("the page at %s through the proxy says %q and not the web server inside the Host", cfg.socksURL, heading)
+	}
+
+	if err := r.caption("7. A browser set to the SOCKS5 proxy opens the address as the Host sees it"); err != nil {
+		return err
+	}
+
+	return r.shot(3500 * time.Millisecond)
+}
+
 type frame struct {
 	file string
 	hold time.Duration
 }
 
 type recorder struct {
-	ctx    context.Context
-	dir    string
-	frames []frame
-	last   []byte
+	ctx     context.Context
+	dir     string
+	frames  []frame
+	last    []byte
+	options []chromedp.ExecAllocatorOption
+	width   int
+	height  int
 }
 
 func (r *recorder) run(actions ...chromedp.Action) error {
