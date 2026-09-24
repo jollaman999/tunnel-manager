@@ -264,7 +264,7 @@ Host 쪽 리스너가 정말 요청한 자리에 열리는지는 Host 의 SSH �
 ```mermaid
 flowchart LR
     client([이 장비에 접속할 수 있는 클라이언트])
-    subgraph here [tunnel-manager 가 실행되는 장비]
+    subgraph here [이 장비]
         port[["local_port<br/>tunnel-manager 가 여는 포트"]]
         tm[tunnel-manager]
     end
@@ -370,7 +370,7 @@ Hosts 화면에서 그 Host 행의 **Local forwards** 버튼이나 API 로 추�
 ```mermaid
 flowchart LR
     browser([프록시를 쓰도록 설정한 브라우저])
-    subgraph here [tunnel-manager 가 실행되는 장비]
+    subgraph here [이 장비]
         port[["socks_port<br/>tunnel-manager 가 여는 포트"]]
         tm[tunnel-manager]
     end

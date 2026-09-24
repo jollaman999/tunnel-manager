@@ -299,7 +299,7 @@ Host reaches. It is what `ssh -L` does, kept up the way a tunnel is.
 ```mermaid
 flowchart LR
     client([A client that reaches this machine])
-    subgraph here [The machine tunnel-manager runs on]
+    subgraph here [This machine]
         port[["local_port<br/>opened by tunnel-manager"]]
         tm[tunnel-manager]
     end
@@ -423,7 +423,7 @@ network of the Host knows works as well.
 ```mermaid
 flowchart LR
     browser([A browser set to use the proxy])
-    subgraph here [The machine tunnel-manager runs on]
+    subgraph here [This machine]
         port[["socks_port<br/>opened by tunnel-manager"]]
         tm[tunnel-manager]
     end

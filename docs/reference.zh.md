@@ -244,7 +244,7 @@ Host 上的监听到底会不会开在所请求的地方，由 Host 上的 SSH �
 ```mermaid
 flowchart LR
     client(["能访问到本机的客户端"])
-    subgraph here ["tunnel-manager 所在的机器"]
+    subgraph here ["本机"]
         port[["local_port<br/>由 tunnel-manager 打开"]]
         tm["tunnel-manager"]
     end
@@ -339,7 +339,7 @@ Host 就能到达 Host 眼中的 `target_ip:target_port`，因为 SSH 登录已�
 ```mermaid
 flowchart LR
     browser(["设成使用这个代理的浏览器"])
-    subgraph here ["tunnel-manager 所在的机器"]
+    subgraph here ["本机"]
         port[["socks_port<br/>由 tunnel-manager 打开"]]
         tm["tunnel-manager"]
     end

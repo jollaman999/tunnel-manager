@@ -278,7 +278,7 @@ Host 側の待ち受けが本当に要求したところに開くかどうかは
 ```mermaid
 flowchart LR
     client(["このマシンに接続できるクライアント"])
-    subgraph here ["tunnel-manager が動作するマシン"]
+    subgraph here ["このマシン"]
         port[["local_port<br/>tunnel-manager が開くポート"]]
         tm["tunnel-manager"]
     end
@@ -388,7 +388,7 @@ API ポートを別のポートへ移すパネルを出します。1024 未満�
 ```mermaid
 flowchart LR
     browser(["プロキシを使うよう設定したブラウザ"])
-    subgraph here ["tunnel-manager が動作するマシン"]
+    subgraph here ["このマシン"]
         port[["socks_port<br/>tunnel-manager が開くポート"]]
         tm["tunnel-manager"]
     end
