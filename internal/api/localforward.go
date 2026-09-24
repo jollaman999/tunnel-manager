@@ -89,10 +89,10 @@ func isAPIPort(port int, storedPort int, runningPort int) bool {
 	return port == storedPort || (runningPort != 0 && port == runningPort)
 }
 
-// localPortRefused checks the local port of a forward against the two things
+// localPortRefused checks the local port of a forward against the three things
 // on this machine it must not meet: the port of this server, stored or running,
-// and the port of another forward. id is the row being changed, or zero for a
-// new one. A non-nil refusal is the answer; a non-nil error is a failed read,
+// the port of another forward and the port of a SOCKS5 proxy. id is the row
+// being changed, or zero for a new one. A non-nil refusal is the answer; a non-nil error is a failed read,
 // which the caller answers with the failure of its own write.
 func localPortRefused(tx *gorm.DB, id uint, localPort int, apiPort int, runningPort int) (*refusal, error) {
 	if isAPIPort(localPort, apiPort, runningPort) {
@@ -112,6 +112,16 @@ func localPortRefused(tx *gorm.DB, id uint, localPort int, apiPort int, runningP
 			errorArgs{"local_port": strconv.Itoa(localPort)}), nil
 	}
 
+	proxy, err := socksHolder(tx, localPort, 0)
+	if err != nil {
+		return nil, err
+	}
+
+	if proxy != nil {
+		return refuse(http.StatusConflict, errLocalForwardPortSocks,
+			errorArgs{"local_port": strconv.Itoa(localPort), "host": proxy.IP}), nil
+	}
+
 	return nil, nil
 }
 
@@ -126,24 +136,44 @@ type apiPortHolder struct {
 	TargetPort int    `json:"target_port"`
 }
 
-// apiPortTaken is the data of that refusal: the forward in the way, and a port
+// apiPortSocksHolder is the Host whose SOCKS5 proxy opens that port.
+type apiPortSocksHolder struct {
+	HostID    uint   `json:"host_id"`
+	HostIP    string `json:"host_ip"`
+	SocksPort int    `json:"socks_port"`
+}
+
+// apiPortTaken is the data of that refusal: what is in the way, and a port
 // either of the two could move to. SuggestedPort is 0 when no port is free.
+//
+// What is in the way is a local forward or the SOCKS5 proxy of a Host. The
+// first is in LocalForward, as it always was. The second is in SocksHost, and
+// LocalForward is then left at its zero value, so that a client reading the
+// shape from before the proxies still finds the object it reads.
 type apiPortTaken struct {
-	LocalForward  apiPortHolder `json:"local_forward"`
-	SuggestedPort int           `json:"suggested_port"`
+	LocalForward  apiPortHolder       `json:"local_forward"`
+	SocksHost     *apiPortSocksHolder `json:"socks_host,omitempty"`
+	SuggestedPort int                 `json:"suggested_port"`
+}
+
+// apiPortCodes are the refusals a caller of apiPortRefused answers under: one
+// for a local forward in the way and one for a SOCKS5 proxy.
+type apiPortCodes struct {
+	forward errorCode
+	socks   errorCode
 }
 
 // apiPortRefused checks a port asked for as api_port against the local ports
-// of the forwards. code is the refusal the caller answers under, storedPort is
-// the api_port stored now and runningPort the port this process listens on,
-// which the suggested port stays clear of as well. Like localPortRefused, a
-// non-nil error is a failed read.
-func apiPortRefused(tx *gorm.DB, code errorCode, apiPort int, storedPort int, runningPort int) (*refusal, error) {
+// of the forwards and the ports of the SOCKS5 proxies. codes are the refusals
+// the caller answers under, storedPort is the api_port stored now and
+// runningPort the port this process listens on, which the suggested port stays
+// clear of as well. Like localPortRefused, a non-nil error is a failed read.
+func apiPortRefused(tx *gorm.DB, codes apiPortCodes, apiPort int, storedPort int, runningPort int) (*refusal, error) {
 	var holder models.LocalForward
 
 	err := tx.Where("local_port = ?", apiPort).First(&holder).Error
 	if errors.Is(err, gorm.ErrRecordNotFound) {
-		return nil, nil
+		return apiPortSocksRefused(tx, codes.socks, apiPort, storedPort, runningPort)
 	}
 	if err != nil {
 		return nil, err
@@ -164,7 +194,7 @@ func apiPortRefused(tx *gorm.DB, code errorCode, apiPort int, storedPort int, ru
 		return nil, err
 	}
 
-	return refuse(http.StatusConflict, code, errorArgs{
+	return refuse(http.StatusConflict, codes.forward, errorArgs{
 		"api_port": strconv.Itoa(apiPort),
 		"host":     host,
 		"target":   net.JoinHostPort(holder.TargetIP, strconv.Itoa(holder.TargetPort)),
@@ -181,10 +211,36 @@ func apiPortRefused(tx *gorm.DB, code errorCode, apiPort int, storedPort int, ru
 	}), nil
 }
 
-// freeLocalPort is the first port after taken that no local forward opens and
-// that is none of taken, storedPort and runningPort. It goes up to 65535 and
-// goes on from 1024, below which a port is one the operator picks on purpose;
-// 0 is none.
+// apiPortSocksRefused is the half of apiPortRefused that looks at the SOCKS5
+// proxies.
+func apiPortSocksRefused(tx *gorm.DB, code errorCode, apiPort int, storedPort int, runningPort int) (*refusal, error) {
+	holder, err := socksHolder(tx, apiPort, 0)
+	if err != nil || holder == nil {
+		return nil, err
+	}
+
+	suggested, err := freeLocalPort(tx, apiPort, storedPort, runningPort)
+	if err != nil {
+		return nil, err
+	}
+
+	return refuse(http.StatusConflict, code, errorArgs{
+		"api_port": strconv.Itoa(apiPort),
+		"host":     holder.IP,
+	}).carrying(apiPortTaken{
+		SocksHost: &apiPortSocksHolder{
+			HostID:    holder.ID,
+			HostIP:    holder.IP,
+			SocksPort: holder.SocksPort,
+		},
+		SuggestedPort: suggested,
+	}), nil
+}
+
+// freeLocalPort is the first port after taken that no local forward and no
+// SOCKS5 proxy opens and that is none of taken, storedPort and runningPort. It
+// goes up to 65535 and goes on from 1024, below which a port is one the
+// operator picks on purpose; 0 is none.
 func freeLocalPort(tx *gorm.DB, taken int, storedPort int, runningPort int) (int, error) {
 	var ports []int
 
@@ -192,6 +248,13 @@ func freeLocalPort(tx *gorm.DB, taken int, storedPort int, runningPort int) (int
 	if err != nil {
 		return 0, err
 	}
+
+	proxies, err := heldSocksPorts(tx)
+	if err != nil {
+		return 0, err
+	}
+
+	ports = append(ports, proxies...)
 
 	held := map[int]bool{taken: true, storedPort: true, runningPort: true}
 	for _, port := range ports {
@@ -276,7 +339,7 @@ func (h *Handler) ListHostLocalForwards(c echo.Context) error {
 // @Success  201  {object}  models.Response{data=api.localForwardView}
 // @Failure  400  {object}  api.errorBody  "The body is refused"
 // @Failure  404  {object}  api.errorBody  "No such Host"
-// @Failure  409  {object}  api.errorBody  "local_port is taken by another local forward or is the port of this server"
+// @Failure  409  {object}  api.errorBody  "local_port is taken by another local forward or a SOCKS5 proxy, or is the port of this server"
 // @Router       /host/{id}/local-forward [post]
 func (h *Handler) CreateHostLocalForward(c echo.Context) error {
 	id, err := strconv.ParseUint(c.Param("id"), 10, 32)
@@ -419,7 +482,7 @@ func (h *Handler) GetLocalForward(c echo.Context) error {
 // @Success  200  {object}  models.Response{data=api.localForwardView}
 // @Failure  400  {object}  api.errorBody  "The body is refused"
 // @Failure  404  {object}  api.errorBody  "No such local forward"
-// @Failure  409  {object}  api.errorBody  "local_port is taken by another local forward or is the port of this server"
+// @Failure  409  {object}  api.errorBody  "local_port is taken by another local forward or a SOCKS5 proxy, or is the port of this server"
 // @Router       /local-forward/{id} [put]
 func (h *Handler) UpdateLocalForward(c echo.Context) error {
 	id, err := strconv.ParseUint(c.Param("id"), 10, 32)

@@ -1671,9 +1671,10 @@ func serve() {
 	// handler has to be told the port this process is on. A failure goes
 	// through serverErr below and not out of the process from here.
 	//
-	// The ports the local forwards open are left for them. They are read only
-	// when the stored port turned out to be taken, and a read that fails lets
-	// no other port through, so the start fails as it would have without one.
+	// The ports the local forwards and the SOCKS5 proxies open are left for
+	// them. They are read only when the stored port turned out to be taken,
+	// and a read that fails lets no other port through, so the start fails as
+	// it would have without one.
 	address := fmt.Sprintf(":%d", set.APIPort)
 
 	var (
@@ -1689,24 +1690,17 @@ func serve() {
 		}
 
 		if forwardPorts == nil {
-			var ports []int
-
-			forwardsReadErr = db.Model(&models.LocalForward{}).Pluck("local_port", &ports).Error
+			forwardPorts, forwardsReadErr = heldLocalPorts(db)
 			if forwardsReadErr != nil {
 				return true
-			}
-
-			forwardPorts = make(map[int]bool, len(ports))
-			for _, p := range ports {
-				forwardPorts[p] = true
 			}
 		}
 
 		return forwardPorts[port]
 	})
 	if listenErr != nil && forwardsReadErr != nil {
-		listenErr = fmt.Errorf("%w; no other port was tried, since the local forwards could not be read: %v",
-			listenErr, forwardsReadErr)
+		listenErr = fmt.Errorf("%w; no other port was tried, since the local forwards and the SOCKS5 "+
+			"proxies could not be read: %v", listenErr, forwardsReadErr)
 	}
 
 	if listenErr == nil && apiPort != set.APIPort {
@@ -2137,4 +2131,33 @@ func finishRestart(logger *zap.Logger, apiPort int) {
 	// what a supervisor reads to decide whether to start it again.
 	_ = logger.Sync()
 	os.Exit(1)
+}
+
+// heldLocalPorts is every port on this machine that a local forward or a
+// SOCKS5 proxy opens, which the port the API falls back to stays clear of. A
+// proxy counts while it is switched on with a port, whether its Host is
+// enabled or not, the way a local forward of a disabled Host counts: enabling
+// the Host is what opens it.
+func heldLocalPorts(db *gorm.DB) (map[int]bool, error) {
+	var ports []int
+
+	err := db.Model(&models.LocalForward{}).Pluck("local_port", &ports).Error
+	if err != nil {
+		return nil, err
+	}
+
+	var proxies []int
+
+	err = db.Model(&models.Host{}).Where("socks_enabled = ? AND socks_port > 0", true).
+		Pluck("socks_port", &proxies).Error
+	if err != nil {
+		return nil, err
+	}
+
+	held := make(map[int]bool, len(ports)+len(proxies))
+	for _, p := range append(ports, proxies...) {
+		held[p] = true
+	}
+
+	return held, nil
 }

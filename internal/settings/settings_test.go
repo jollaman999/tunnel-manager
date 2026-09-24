@@ -581,11 +581,26 @@ func TestResetReportsEverythingWhenNothingWasStored(t *testing.T) {
 func resetWithForwards(t *testing.T, forwards []models.LocalForward) *observer.ObservedLogs {
 	t.Helper()
 
+	return resetWithPorts(t, forwards, nil)
+}
+
+// resetWithPorts is resetWithForwards with Hosts stored as well, for their
+// SOCKS5 proxies.
+func resetWithPorts(t *testing.T, forwards []models.LocalForward, hosts []models.Host) *observer.ObservedLogs {
+	t.Helper()
+
 	db := newDB(t)
 
-	err := db.AutoMigrate(&models.LocalForward{})
+	err := db.AutoMigrate(&models.LocalForward{}, &models.Host{})
 	if err != nil {
-		t.Fatalf("failed to migrate the local forwards: %v", err)
+		t.Fatalf("failed to migrate the local forwards and the Hosts: %v", err)
+	}
+
+	for i := range hosts {
+		err = db.Create(&hosts[i]).Error
+		if err != nil {
+			t.Fatalf("storing Host %+v: %v", hosts[i], err)
+		}
 	}
 
 	stored, err := Load(db)
@@ -669,6 +684,40 @@ func TestResetSaysNothingWhenNoForwardIsOnTheDefaultAPIPort(t *testing.T) {
 
 	if entries := logs.All(); len(entries) != 0 {
 		t.Fatalf("logged %d lines, want none: %+v", len(entries), entries)
+	}
+}
+
+// TestResetNamesTheSocksProxyOnTheDefaultAPIPort covers the SOCKS5 proxy of a
+// Host given the default API port the way the test above covers a forward. A
+// proxy that is switched off opens nothing and is not named.
+func TestResetNamesTheSocksProxyOnTheDefaultAPIPort(t *testing.T) {
+	defaultPort := Defaults().APIPort
+
+	logs := resetWithPorts(t, nil, []models.Host{
+		{ID: 4, IP: "192.0.2.4", Port: 22, User: "root", SocksEnabled: true, SocksPort: defaultPort},
+		{ID: 5, IP: "192.0.2.5", Port: 22, User: "root", SocksEnabled: false, SocksPort: defaultPort},
+		{ID: 6, IP: "192.0.2.6", Port: 22, User: "root", SocksEnabled: true, SocksPort: 1080},
+	})
+
+	entries := logs.All()
+	if len(entries) != 1 {
+		t.Fatalf("logged %d lines, want 1: %+v", len(entries), entries)
+	}
+
+	entry := entries[0]
+	if entry.Level != zapcore.WarnLevel {
+		t.Errorf("the line was logged at %s, want warn", entry.Level)
+	}
+
+	fields := entry.ContextMap()
+	if fields[logid.FieldKey] != string(logid.SettingsDefaultPortHeldBySocks) {
+		t.Errorf("the line carries log_id %v, want %s", fields[logid.FieldKey], logid.SettingsDefaultPortHeldBySocks)
+	}
+	if fields["host_id"] != uint64(4) {
+		t.Errorf("host_id is %v, want 4", fields["host_id"])
+	}
+	if fields["socks_port"] != int64(defaultPort) {
+		t.Errorf("socks_port is %v, want %d", fields["socks_port"], defaultPort)
 	}
 }
 

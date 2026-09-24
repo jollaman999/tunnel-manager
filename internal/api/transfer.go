@@ -180,6 +180,51 @@ type hostContent struct {
 	// about the local forwards made here, so an overwrite does not clear them.
 	// The export therefore never writes nil.
 	LocalForwards []localForwardContent `json:"local_forwards"`
+	// SocksEnabled, SocksPort, SocksBindScope and SocksAllowedSources are the
+	// SOCKS5 proxy of the Host. Each is a pointer, so that a field the file
+	// does not carry is told from one it carries as false, zero or empty:
+	//
+	//	no field, or null  the file says nothing of it; it is left as it is
+	//	a value            the Host is stored with that value
+	//
+	// A file from before the proxies were stored carries none of them, and an
+	// overwrite leaves the proxy of the Host as it is, the way it leaves the
+	// local forwards. A Host such a file adds has none. The export writes all
+	// four every time.
+	SocksEnabled        *bool   `json:"socks_enabled"`
+	SocksPort           *int    `json:"socks_port"`
+	SocksBindScope      *string `json:"socks_bind_scope"`
+	SocksAllowedSources *string `json:"socks_allowed_sources"`
+}
+
+// socksOf lays the SOCKS5 fields a file carries for a Host over the ones the
+// Host is stored with, and leaves a field the file does not carry as stored.
+// An empty scope is stored as the word it stands for.
+func (host hostContent) socksOf(stored models.Host) models.Host {
+	if host.SocksEnabled != nil {
+		stored.SocksEnabled = *host.SocksEnabled
+	}
+	if host.SocksPort != nil {
+		stored.SocksPort = *host.SocksPort
+	}
+	if host.SocksBindScope != nil {
+		stored.SocksBindScope = *host.SocksBindScope
+		if stored.SocksBindScope == "" {
+			stored.SocksBindScope = models.BindScopeWildcard
+		}
+	}
+	if host.SocksAllowedSources != nil {
+		stored.SocksAllowedSources = *host.SocksAllowedSources
+	}
+
+	return stored
+}
+
+// opensSocks reports whether the file switches the SOCKS5 proxy of this Host
+// on with a port, which is when the port is held to what this installation
+// opens.
+func (host hostContent) opensSocks() bool {
+	return host.SocksEnabled != nil && *host.SocksEnabled && host.SocksPort != nil && *host.SocksPort > 0
 }
 
 // localForwardContent is one local forward as it is carried in a file, on the
@@ -376,6 +421,7 @@ const (
 	textImportNameServicePort  textCode = "import.name.service_port"
 	textImportNameAssignment   textCode = "import.name.assignment"
 	textImportNameLocalForward textCode = "import.name.local_forward"
+	textImportNameSocks        textCode = "import.name.socks"
 
 	textImportReasonHostRegistered      textCode = "import.reason.host_registered"
 	textImportReasonServiceAddressTaken textCode = "import.reason.service_address_taken"
@@ -397,6 +443,7 @@ var transferTexts = map[textCode]string{
 	textImportNameServicePort:  "{service_address} on {local_port}",
 	textImportNameAssignment:   "{host} carries {local_port}",
 	textImportNameLocalForward: "{host} opens {local_port} to {target}",
+	textImportNameSocks:        "{host} opens the SOCKS5 proxy on {socks_port}",
 
 	textImportReasonHostRegistered:      "a Host with this IP is registered here already",
 	textImportReasonServiceAddressTaken: "a service port for {service_address} is registered here already",
@@ -819,6 +866,11 @@ func (h *TransferHandler) unsealHost(host models.Host) (hostContent, error) {
 		return hostContent{}, err
 	}
 
+	socksBindScope := host.SocksBindScope
+	if socksBindScope == "" {
+		socksBindScope = models.BindScopeWildcard
+	}
+
 	return hostContent{
 		IP:            host.IP,
 		Port:          host.Port,
@@ -829,6 +881,11 @@ func (h *TransferHandler) unsealHost(host models.Host) (hostContent, error) {
 		HostKey:       host.HostKey,
 		Description:   host.Description,
 		Enabled:       host.Enabled,
+
+		SocksEnabled:        &host.SocksEnabled,
+		SocksPort:           &host.SocksPort,
+		SocksBindScope:      &socksBindScope,
+		SocksAllowedSources: &host.SocksAllowedSources,
 	}, nil
 }
 
@@ -931,7 +988,7 @@ func localForwardsByHost(db *gorm.DB) (map[uint][]localForwardContent, error) {
 // @Summary      Every Host and every service port, encrypted into one file
 // @Description  A POST and not a GET because the password that seals the file is in the body.
 // @Description  Inside the file the SSH password, the private key and the key passphrase of every Host are in the clear, so treat it as the credentials of every Host it names.
-// @Description  Each Host carries its local forwards in the file, and local_forwards in the answer counts them.
+// @Description  Each Host carries its local forwards in the file, and local_forwards in the answer counts them. Each Host carries its SOCKS5 proxy in socks_enabled, socks_port, socks_bind_scope and socks_allowed_sources.
 // @Tags         export and import
 // @Accept   json
 // @Produce  json
@@ -1086,6 +1143,7 @@ func (h *TransferHandler) ExportTunnels(c echo.Context) error {
 // @Description  Adds what is not registered here and skips what is, naming in the answer what it skipped and why. Send the same file again with overwrite true to replace those rows instead.
 // @Description  The whole import is one transaction: a file that is refused half way through leaves the database exactly as it was.
 // @Description  A Host the import writes is left carrying the local forwards the file names for it, and keeps its own when the file has no local_forwards for it. The import is refused when the file opens one local port twice, or opens the port this server is stored to listen on or a local port a local forward of another Host holds here.
+// @Description  A Host the import writes takes the SOCKS5 fields the file carries, and keeps its own for a field the file does not carry. The import is refused when the file opens one port with two SOCKS5 proxies or with a SOCKS5 proxy and a local forward, or a SOCKS5 proxy it switches on opens the port this server listens on or a port the SOCKS5 proxy or a local forward of another Host opens here. Each SOCKS5 proxy it switches on is an item of kind socks.
 // @Tags         export and import
 // @Accept   json
 // @Produce  json
@@ -1093,6 +1151,7 @@ func (h *TransferHandler) ExportTunnels(c echo.Context) error {
 // @Param   body  body  api.importRequest  true  "The password, the file and whether to overwrite"
 // @Success  200  {object}  models.Response{data=api.importedTunnels}
 // @Failure  400  {object}  api.errorBody  "The password is wrong, the file is damaged, it is not a file this program wrote, or it holds the other kind"
+// @Failure  409  {object}  api.errorBody  "A local forward or a SOCKS5 proxy of the file opens a port this installation opens already. Nothing was stored"
 // @Router       /import/tunnels [post]
 func (h *TransferHandler) ImportTunnels(c echo.Context) error {
 	var req importRequest
@@ -1119,12 +1178,17 @@ func (h *TransferHandler) ImportTunnels(c echo.Context) error {
 		return refused.answer(c)
 	}
 
+	refused = checkSocksPorts(content)
+	if refused != nil {
+		return refused.answer(c)
+	}
+
 	// Read before the transaction for the reason storedAPIPort gives, and only
-	// for a file that carries a local forward, so that a file without one
-	// reads nothing it has no use for.
+	// for a file that carries a local forward or opens a SOCKS5 proxy, so that
+	// a file without either reads nothing it has no use for.
 	apiPort := 0
 
-	if carriesLocalForwards(content) {
+	if carriesLocalForwards(content) || opensSocks(content) {
 		apiPort, err = h.hosts.storedAPIPort()
 		if err != nil {
 			h.hosts.logger.Error("failed to read the settings", logid.SettingsReadFailed.Field(), zap.Error(err))
@@ -1146,6 +1210,7 @@ func (h *TransferHandler) ImportTunnels(c echo.Context) error {
 	// A Host that was skipped is one that was registered here before this file
 	// arrived, and what it carries was not asked to be replaced either.
 	written := make([]hostContent, 0, len(content.Hosts))
+	writtenAs := make(map[string]string, len(content.Hosts))
 
 	for _, host := range content.Hosts {
 		item, refused := h.importHost(c, tx, host, req.Overwrite)
@@ -1156,6 +1221,7 @@ func (h *TransferHandler) ImportTunnels(c echo.Context) error {
 
 		if item.Action != transferSkipped {
 			written = append(written, host)
+			writtenAs[host.IP] = item.Action
 		}
 
 		items = append(items, *item)
@@ -1191,6 +1257,17 @@ func (h *TransferHandler) ImportTunnels(c echo.Context) error {
 	}
 
 	more, refused := h.importLocalForwards(tx, written, apiPort)
+	if refused != nil {
+		tx.Rollback()
+		return refused.answer(c)
+	}
+
+	items = append(items, more...)
+
+	// The SOCKS5 proxies are held to the rest of this installation last, once
+	// every Host and every local forward of the file is in place, so that a
+	// port the file moves from one of them to another is free by then.
+	more, refused = h.importSocks(tx, written, writtenAs, apiPort)
 	if refused != nil {
 		tx.Rollback()
 		return refused.answer(c)
@@ -1249,17 +1326,31 @@ func (h *TransferHandler) importHost(c echo.Context, tx *gorm.DB, host hostConte
 	// The rules of a create are run on what the file carries, so that a file
 	// that was written by hand cannot put into the database what the screens
 	// refuse: a port out of range, or something that is not an address.
+	socks := host.socksOf(models.Host{})
+
 	err := c.Validate(&models.CreateHostRequest{
-		IP:            host.IP,
-		Port:          host.Port,
-		User:          host.User,
-		Password:      host.Password,
-		PrivateKey:    host.PrivateKey,
-		KeyPassphrase: host.KeyPassphrase,
-		Description:   host.Description,
+		IP:                  host.IP,
+		Port:                host.Port,
+		User:                host.User,
+		Password:            host.Password,
+		PrivateKey:          host.PrivateKey,
+		KeyPassphrase:       host.KeyPassphrase,
+		Description:         host.Description,
+		SocksPort:           socks.SocksPort,
+		SocksBindScope:      socks.SocksBindScope,
+		SocksAllowedSources: socks.SocksAllowedSources,
 	})
 	if err != nil {
 		return nil, refuse(http.StatusBadRequest, errImportHostRefused, errorArgs{"host": name, "reason": err.Error()})
+	}
+
+	// The rules a create holds the proxy to past the validator. The reason is
+	// the English sentence of the refusal the Hosts screen would have given,
+	// which names the Host the way every other refusal of a Host does.
+	refusedSocks := checkSocks(&socks)
+	if refusedSocks != nil {
+		reason, _ := renderErrorMessage(errorMessages[refusedSocks.code], refusedSocks.args)
+		return nil, refuse(http.StatusBadRequest, errImportHostRefused, errorArgs{"host": name, "reason": reason})
 	}
 
 	// The scopes the file names are held to the two words as well. The column
@@ -1343,6 +1434,7 @@ func (h *TransferHandler) importHost(c echo.Context, tx *gorm.DB, host hostConte
 		stored.PendingHostKey = ""
 		stored.Description = host.Description
 		stored.Enabled = host.Enabled
+		stored = host.socksOf(stored)
 
 		err = tx.Save(&stored).Error
 		if err != nil {
@@ -1366,6 +1458,7 @@ func (h *TransferHandler) importHost(c echo.Context, tx *gorm.DB, host hostConte
 		Description:   host.Description,
 		Enabled:       host.Enabled,
 	}
+	created = host.socksOf(created)
 
 	// The number is chosen the way the Hosts screen chooses it. An import that
 	// left it to the column would step over a number the screen would have
@@ -1711,6 +1804,111 @@ func checkLocalForwards(c echo.Context, content tunnelsContent) *refusal {
 	return nil
 }
 
+// opensSocks reports whether any Host of a file switches its SOCKS5 proxy on.
+func opensSocks(content tunnelsContent) bool {
+	for _, host := range content.Hosts {
+		if host.opensSocks() {
+			return true
+		}
+	}
+
+	return false
+}
+
+// checkSocksPorts refuses a file that opens one port with two SOCKS5 proxies,
+// or with a SOCKS5 proxy and a local forward. It runs before anything is
+// written for the reason checkLocalForwards does, after it, so that two local
+// forwards meeting each other are answered as they always were.
+func checkSocksPorts(content tunnelsContent) *refusal {
+	openedBy := make(map[int]bool)
+
+	for _, host := range content.Hosts {
+		for _, lf := range host.LocalForwards {
+			openedBy[lf.LocalPort] = true
+		}
+	}
+
+	for _, host := range content.Hosts {
+		if !host.opensSocks() {
+			continue
+		}
+
+		if openedBy[*host.SocksPort] {
+			return refuse(http.StatusBadRequest, errImportSocksDuplicate,
+				errorArgs{"port": strconv.Itoa(*host.SocksPort)})
+		}
+
+		openedBy[*host.SocksPort] = true
+	}
+
+	return nil
+}
+
+// importSocks holds the SOCKS5 proxy of each Host this import wrote, where the
+// file switches it on, to what else this installation opens: the port of this
+// server, the proxy of another Host and a local forward. The proxy itself was
+// stored with the Host by importHost; what is refused here takes it back out
+// with the rest of the import. Each proxy that passes is an item of its own,
+// added or replaced as its Host was, since the Host row is what it is kept on.
+func (h *TransferHandler) importSocks(tx *gorm.DB, written []hostContent, writtenAs map[string]string,
+	apiPort int) ([]transferItem, *refusal) {
+	items := make([]transferItem, 0)
+
+	for _, host := range written {
+		if !host.opensSocks() {
+			continue
+		}
+
+		socksPort := strconv.Itoa(*host.SocksPort)
+
+		if isAPIPort(*host.SocksPort, apiPort, h.hosts.runningAPIPort) {
+			return nil, refuse(http.StatusConflict, errImportSocksAPIPort,
+				errorArgs{"host": host.IP, "socks_port": socksPort})
+		}
+
+		var stored models.Host
+
+		err := tx.Where("ip = ?", host.IP).First(&stored).Error
+		if err != nil {
+			h.hosts.logger.Error("failed to read back a Host while importing its SOCKS5 proxy",
+				logid.TransferHostReadBackFailed.Field(),
+				zap.Error(err))
+			return nil, refuse(http.StatusInternalServerError, errImportAssignmentsHostRead, errorArgs{"host": host.IP})
+		}
+
+		other, err := socksHolder(tx, *host.SocksPort, stored.ID)
+		if err != nil {
+			h.hosts.logger.Error("failed to look for a Host while importing",
+				logid.TransferHostLookupFailed.Field(),
+				zap.Error(err))
+			return nil, refuse(http.StatusInternalServerError, errImportHostsReadFailed)
+		}
+
+		if other != nil {
+			return nil, refuse(http.StatusConflict, errImportSocksPortTaken,
+				errorArgs{"host": host.IP, "socks_port": socksPort, "owner": other.IP})
+		}
+
+		forward, owner, err := localForwardHolder(tx, *host.SocksPort)
+		if err != nil {
+			h.hosts.logger.Error("failed to look for a local forward while importing",
+				logid.TransferLocalForwardLookupFailed.Field(),
+				zap.Error(err))
+			return nil, refuse(http.StatusInternalServerError, errImportLocalForwardsReadFailed)
+		}
+
+		if forward != nil {
+			return nil, refuse(http.StatusConflict, errImportSocksLocalForward,
+				errorArgs{"host": host.IP, "socks_port": socksPort, "owner": owner})
+		}
+
+		named := transferText{textImportNameSocks, textArgs{"host": host.IP, "socks_port": socksPort}}
+		items = append(items, transferItem{Kind: "socks", Action: writtenAs[host.IP]}.namedBy(named))
+	}
+
+	return items, nil
+}
+
 // importLocalForwards makes each Host this import wrote carry the local
 // forwards the file names for it and nothing besides, as importAssignments does
 // for the service ports. A Host that was skipped keeps what it carries, and so
@@ -1804,6 +2002,21 @@ func (h *TransferHandler) importLocalForwards(tx *gorm.DB, written []hostContent
 					logid.TransferLocalForwardLookupFailed.Field(),
 					zap.Error(err))
 				return nil, refuse(http.StatusInternalServerError, errImportLocalForwardsReadFailed)
+			}
+
+			// The SOCKS5 proxies are read as the Hosts of this import left
+			// them, which is what they will open once it is committed.
+			proxy, err := socksHolder(tx, lf.LocalPort, 0)
+			if err != nil {
+				h.hosts.logger.Error("failed to look for a Host while importing",
+					logid.TransferHostLookupFailed.Field(),
+					zap.Error(err))
+				return nil, refuse(http.StatusInternalServerError, errImportHostsReadFailed)
+			}
+
+			if proxy != nil {
+				return nil, refuse(http.StatusConflict, errImportLocalForwardSocks,
+					errorArgs{"host": host.IP, "local_port": localPort, "owner": proxy.IP})
 			}
 
 			// An empty scope is stored as the word it stands for, the way a
@@ -1917,6 +2130,7 @@ func (h *TransferHandler) ExportSettings(c echo.Context) error {
 // @Summary      Store the settings an exported settings file holds
 // @Description  It stores them and puts none of them onto the running process, api_port and api_https_enabled included. GET /api/settings reports the difference in pending_restart until the next startup.
 // @Description  A new api_port that a local forward opens as its local port is refused with 409 and nothing is stored; data then carries that local forward and suggested_port, as PUT /settings does.
+// @Description  A new api_port that the SOCKS5 proxy of a Host opens is refused the same way under its own error_code, with that Host in socks_host.
 // @Tags         export and import
 // @Accept   json
 // @Produce  json
@@ -1924,7 +2138,7 @@ func (h *TransferHandler) ExportSettings(c echo.Context) error {
 // @Param   body  body  api.importRequest  true  "The password and the file"
 // @Success  200  {object}  models.Response{data=api.importedSettings}
 // @Failure  400  {object}  api.errorBody  "The file does not open, or its settings do not pass the rules of the Settings screen"
-// @Failure  409  {object}  api.errorBody{data=api.apiPortTaken}  "The api_port of the file is the local port of a local forward. Nothing was stored"
+// @Failure  409  {object}  api.errorBody{data=api.apiPortTaken}  "The api_port of the file is the local port of a local forward or the port of a SOCKS5 proxy. Nothing was stored"
 // @Router       /import/settings [post]
 func (h *TransferHandler) ImportSettings(c echo.Context) error {
 	var req importRequest
@@ -1989,7 +2203,7 @@ func (h *TransferHandler) ImportSettings(c echo.Context) error {
 	// Held to the local forwards the way a save on the Settings screen is, and
 	// only when the port changes, for the same reason.
 	if updated.APIPort != before.APIPort {
-		refused, err := apiPortRefused(tx, errImportSettingsAPIPortForward, updated.APIPort, before.APIPort,
+		refused, err := apiPortRefused(tx, apiPortCodes{errImportSettingsAPIPortForward, errImportSettingsAPIPortSocks}, updated.APIPort, before.APIPort,
 			h.hosts.runningAPIPort)
 		if err != nil {
 			tx.Rollback()

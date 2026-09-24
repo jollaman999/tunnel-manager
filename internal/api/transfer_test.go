@@ -65,6 +65,10 @@ func (m *transferWakes) LocalForwardStatuses() map[uint]tunnel.LocalForwardState
 	return nil
 }
 
+func (m *transferWakes) SocksStatuses() map[uint]tunnel.SocksState {
+	return nil
+}
+
 // transferInstall is one tunnel-manager: a database file of its own, the
 // encryption key its secrets are sealed with, and the handlers served over it.
 //

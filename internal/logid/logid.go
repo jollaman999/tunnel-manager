@@ -106,6 +106,16 @@ const (
 	TunnelLocalForwardConnectFailedGivingUp ID = "tunnel.local_forward_connect_failed_giving_up"
 	TunnelLocalForwardListenFailed          ID = "tunnel.local_forward_listen_failed"
 	TunnelLocalForwardTargetDialFailed      ID = "tunnel.local_forward_target_dial_failed"
+	// The SOCKS5 proxies of the Hosts. What they share with the local
+	// forwards, the SSH connection, the listeners and the copy, is logged
+	// under the IDs above.
+	TunnelSocksConnected             ID = "tunnel.socks_connected"
+	TunnelSocksConnectFailedRetrying ID = "tunnel.socks_connect_failed_retrying"
+	TunnelSocksConnectFailedGivingUp ID = "tunnel.socks_connect_failed_giving_up"
+	TunnelSocksListenFailed          ID = "tunnel.socks_listen_failed"
+	TunnelSocksHandshakeFailed       ID = "tunnel.socks_handshake_failed"
+	TunnelSocksTargetDialFailed      ID = "tunnel.socks_target_dial_failed"
+	TunnelSocksSourceRefused         ID = "tunnel.socks_source_refused"
 )
 
 // database: opening the database and what the queries report.
@@ -216,6 +226,7 @@ const (
 	SettingsStoreFailed              ID = "settings.store_failed"
 	SettingsLogLevelUnknown          ID = "settings.log_level_unknown"
 	SettingsDefaultPortHeldByForward ID = "settings.default_port_held_by_forward"
+	SettingsDefaultPortHeldBySocks   ID = "settings.default_port_held_by_socks"
 )
 
 // certificate: the TLS certificate this installation is served under.

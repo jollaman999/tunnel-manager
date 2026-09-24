@@ -315,7 +315,7 @@
                         "CSRFToken": []
                     }
                 ],
-                "description": "A POST and not a GET because the password that seals the file is in the body.\nInside the file the SSH password, the private key and the key passphrase of every Host are in the clear, so treat it as the credentials of every Host it names.\nEach Host carries its local forwards in the file, and local_forwards in the answer counts them.",
+                "description": "A POST and not a GET because the password that seals the file is in the body.\nInside the file the SSH password, the private key and the key passphrase of every Host are in the clear, so treat it as the credentials of every Host it names.\nEach Host carries its local forwards in the file, and local_forwards in the answer counts them. Each Host carries its SOCKS5 proxy in socks_enabled, socks_port, socks_bind_scope and socks_allowed_sources.",
                 "consumes": [
                     "application/json"
                 ],
@@ -443,7 +443,7 @@
                         "CSRFToken": []
                     }
                 ],
-                "description": "enabled is optional and a Host that does not say is enabled.\nbind_scope is what every assignment this registration makes is opened to: loopback, wildcard, or left out for the wildcard. It is read only when the assignments are made.",
+                "description": "enabled is optional and a Host that does not say is enabled.\nbind_scope is what every assignment this registration makes is opened to: loopback, wildcard, or left out for the wildcard. It is read only when the assignments are made.\nsocks_enabled switches on the SOCKS5 proxy of the Host, which needs socks_port. socks_bind_scope is loopback, wildcard, or left out for the wildcard. socks_allowed_sources is the addresses and CIDR blocks a client may connect from, separated by commas or spaces; empty lets every address in.",
                 "consumes": [
                     "application/json"
                 ],
@@ -485,7 +485,13 @@
                         }
                     },
                     "400": {
-                        "description": "The body is refused, or the private key cannot be read",
+                        "description": "The body is refused, the private key cannot be read, or the SOCKS5 proxy is switched on without a port or with allowed sources that do not read",
+                        "schema": {
+                            "$ref": "#/definitions/api.errorBody"
+                        }
+                    },
+                    "409": {
+                        "description": "socks_port is the port of this server, of the SOCKS5 proxy of another Host or of a local forward",
                         "schema": {
                             "$ref": "#/definitions/api.errorBody"
                         }
@@ -679,7 +685,7 @@
                         "CSRFToken": []
                     }
                 ],
-                "description": "Every field is optional; enabled false stops its tunnels.",
+                "description": "Every field is optional; enabled false stops its tunnels.\nA SOCKS5 field left out keeps what is stored. socks_allowed_sources sent empty lets every address in; socks_bind_scope left empty keeps the stored scope.",
                 "consumes": [
                     "application/json"
                 ],
@@ -735,6 +741,12 @@
                     },
                     "404": {
                         "description": "No such Host",
+                        "schema": {
+                            "$ref": "#/definitions/api.errorBody"
+                        }
+                    },
+                    "409": {
+                        "description": "The SOCKS5 proxy is switched on or moved to the port of this server, of the SOCKS5 proxy of another Host or of a local forward",
                         "schema": {
                             "$ref": "#/definitions/api.errorBody"
                         }
@@ -983,7 +995,7 @@
                         }
                     },
                     "409": {
-                        "description": "local_port is taken by another local forward or is the port of this server",
+                        "description": "local_port is taken by another local forward or a SOCKS5 proxy, or is the port of this server",
                         "schema": {
                             "$ref": "#/definitions/api.errorBody"
                         }
@@ -1153,7 +1165,7 @@
                         "CSRFToken": []
                     }
                 ],
-                "description": "It stores them and puts none of them onto the running process, api_port and api_https_enabled included. GET /api/settings reports the difference in pending_restart until the next startup.\nA new api_port that a local forward opens as its local port is refused with 409 and nothing is stored; data then carries that local forward and suggested_port, as PUT /settings does.",
+                "description": "It stores them and puts none of them onto the running process, api_port and api_https_enabled included. GET /api/settings reports the difference in pending_restart until the next startup.\nA new api_port that a local forward opens as its local port is refused with 409 and nothing is stored; data then carries that local forward and suggested_port, as PUT /settings does.\nA new api_port that the SOCKS5 proxy of a Host opens is refused the same way under its own error_code, with that Host in socks_host.",
                 "consumes": [
                     "application/json"
                 ],
@@ -1201,7 +1213,7 @@
                         }
                     },
                     "409": {
-                        "description": "The api_port of the file is the local port of a local forward. Nothing was stored",
+                        "description": "The api_port of the file is the local port of a local forward or the port of a SOCKS5 proxy. Nothing was stored",
                         "schema": {
                             "allOf": [
                                 {
@@ -1228,7 +1240,7 @@
                         "CSRFToken": []
                     }
                 ],
-                "description": "Adds what is not registered here and skips what is, naming in the answer what it skipped and why. Send the same file again with overwrite true to replace those rows instead.\nThe whole import is one transaction: a file that is refused half way through leaves the database exactly as it was.\nA Host the import writes is left carrying the local forwards the file names for it, and keeps its own when the file has no local_forwards for it. The import is refused when the file opens one local port twice, or opens the port this server is stored to listen on or a local port a local forward of another Host holds here.",
+                "description": "Adds what is not registered here and skips what is, naming in the answer what it skipped and why. Send the same file again with overwrite true to replace those rows instead.\nThe whole import is one transaction: a file that is refused half way through leaves the database exactly as it was.\nA Host the import writes is left carrying the local forwards the file names for it, and keeps its own when the file has no local_forwards for it. The import is refused when the file opens one local port twice, or opens the port this server is stored to listen on or a local port a local forward of another Host holds here.\nA Host the import writes takes the SOCKS5 fields the file carries, and keeps its own for a field the file does not carry. The import is refused when the file opens one port with two SOCKS5 proxies or with a SOCKS5 proxy and a local forward, or a SOCKS5 proxy it switches on opens the port this server listens on or a port the SOCKS5 proxy or a local forward of another Host opens here. Each SOCKS5 proxy it switches on is an item of kind socks.",
                 "consumes": [
                     "application/json"
                 ],
@@ -1271,6 +1283,12 @@
                     },
                     "400": {
                         "description": "The password is wrong, the file is damaged, it is not a file this program wrote, or it holds the other kind",
+                        "schema": {
+                            "$ref": "#/definitions/api.errorBody"
+                        }
+                    },
+                    "409": {
+                        "description": "A local forward or a SOCKS5 proxy of the file opens a port this installation opens already. Nothing was stored",
                         "schema": {
                             "$ref": "#/definitions/api.errorBody"
                         }
@@ -1390,7 +1408,7 @@
                         }
                     },
                     "409": {
-                        "description": "local_port is taken by another local forward or is the port of this server",
+                        "description": "local_port is taken by another local forward or a SOCKS5 proxy, or is the port of this server",
                         "schema": {
                             "$ref": "#/definitions/api.errorBody"
                         }
@@ -2039,7 +2057,7 @@
                         "CSRFToken": []
                     }
                 ],
-                "description": "Answers with what changed and whether a restart is needed. logging.level is the one setting this process takes on without being started again.\nA new api_port that a local forward opens as its local port is refused with 409; data then carries that local forward and suggested_port, a port neither a local forward nor the stored or asked for api_port holds, or 0 when there is none.",
+                "description": "Answers with what changed and whether a restart is needed. logging.level is the one setting this process takes on without being started again.\nA new api_port that a local forward opens as its local port is refused with 409; data then carries that local forward and suggested_port, a port neither a local forward, a SOCKS5 proxy nor the stored or asked for api_port holds, or 0 when there is none.\nA new api_port that the SOCKS5 proxy of a Host opens is refused with 409 under its own error_code; data then carries that Host in socks_host, local_forward left empty, and suggested_port.",
                 "consumes": [
                     "application/json"
                 ],
@@ -2087,7 +2105,7 @@
                         }
                     },
                     "409": {
-                        "description": "api_port is the local port of a local forward. Nothing was stored",
+                        "description": "api_port is the local port of a local forward or the port of a SOCKS5 proxy. Nothing was stored",
                         "schema": {
                             "allOf": [
                                 {
@@ -2523,11 +2541,28 @@
                 }
             }
         },
+        "api.apiPortSocksHolder": {
+            "type": "object",
+            "properties": {
+                "host_id": {
+                    "type": "integer"
+                },
+                "host_ip": {
+                    "type": "string"
+                },
+                "socks_port": {
+                    "type": "integer"
+                }
+            }
+        },
         "api.apiPortTaken": {
             "type": "object",
             "properties": {
                 "local_forward": {
                     "$ref": "#/definitions/api.apiPortHolder"
+                },
+                "socks_host": {
+                    "$ref": "#/definitions/api.apiPortSocksHolder"
                 },
                 "suggested_port": {
                     "type": "integer"
@@ -2684,6 +2719,11 @@
                 "host.host_key.nothing_to_approve",
                 "host.host_key.fingerprint_changed",
                 "host.host_key.password_wrong",
+                "host.socks_port.required",
+                "host.socks_allowed_sources.invalid",
+                "host.socks_port.api_port",
+                "host.socks_port.taken",
+                "host.socks_port.local_forward",
                 "service_port.id.invalid",
                 "service_port.not_found",
                 "service_port.fetch_failed",
@@ -2702,6 +2742,7 @@
                 "local_forward.delete_failed",
                 "local_forward.local_port.taken",
                 "local_forward.local_port.api_port",
+                "local_forward.local_port.socks",
                 "assignment.add_and_remove",
                 "assignment.service_port.not_found",
                 "assignment.update_failed",
@@ -2712,6 +2753,7 @@
                 "settings.refused",
                 "settings.ui_language.unsupported",
                 "settings.api_port.local_forward",
+                "settings.api_port.socks",
                 "certificate.https_off",
                 "certificate.served.read_failed",
                 "certificate.renew_failed",
@@ -2771,6 +2813,7 @@
                 "import.settings.unreadable",
                 "import.settings.refused",
                 "import.settings.api_port.local_forward",
+                "import.settings.api_port.socks",
                 "import.local_forward.refused",
                 "import.local_forward.duplicate",
                 "import.local_forward.local_port.api_port",
@@ -2778,6 +2821,11 @@
                 "import.local_forwards.read_failed",
                 "import.local_forwards.clear_failed",
                 "import.local_forwards.store_failed",
+                "import.local_forward.local_port.socks",
+                "import.socks.duplicate",
+                "import.socks.socks_port.api_port",
+                "import.socks.socks_port.taken",
+                "import.socks.socks_port.local_forward",
                 "uninstall.password.wrong"
             ],
             "x-enum-varnames": [
@@ -2828,6 +2876,11 @@
                 "errHostKeyNothingToApprove",
                 "errHostKeyFingerprintChanged",
                 "errHostKeyPasswordWrong",
+                "errHostSocksPortRequired",
+                "errHostSocksSourcesInvalid",
+                "errHostSocksPortIsAPIPort",
+                "errHostSocksPortTaken",
+                "errHostSocksPortLocalForward",
                 "errServicePortIDInvalid",
                 "errServicePortNotFound",
                 "errServicePortFetchFailed",
@@ -2846,6 +2899,7 @@
                 "errLocalForwardDeleteFailed",
                 "errLocalForwardPortTaken",
                 "errLocalForwardPortIsAPIPort",
+                "errLocalForwardPortSocks",
                 "errAssignmentAddAndRemove",
                 "errAssignmentServicePortsMissing",
                 "errAssignmentUpdateFailed",
@@ -2856,6 +2910,7 @@
                 "errSettingsRefused",
                 "errSettingsLanguageUnsupported",
                 "errSettingsAPIPortLocalForward",
+                "errSettingsAPIPortSocks",
                 "errCertificateHTTPSOff",
                 "errCertificateServedUnread",
                 "errCertificateRenewFailed",
@@ -2915,6 +2970,7 @@
                 "errImportSettingsUnreadable",
                 "errImportSettingsRefused",
                 "errImportSettingsAPIPortForward",
+                "errImportSettingsAPIPortSocks",
                 "errImportLocalForwardRefused",
                 "errImportLocalForwardDuplicate",
                 "errImportLocalForwardAPIPort",
@@ -2922,6 +2978,11 @@
                 "errImportLocalForwardsReadFailed",
                 "errImportLocalForwardsClearFailed",
                 "errImportLocalForwardsStoreFailed",
+                "errImportLocalForwardSocks",
+                "errImportSocksDuplicate",
+                "errImportSocksAPIPort",
+                "errImportSocksPortTaken",
+                "errImportSocksLocalForward",
                 "errUninstallPasswordWrong"
             ]
         },
@@ -3173,6 +3234,26 @@
                 },
                 "port": {
                     "type": "integer"
+                },
+                "socks_allowed_sources": {
+                    "type": "string"
+                },
+                "socks_bind_scope": {
+                    "type": "string"
+                },
+                "socks_enabled": {
+                    "description": "The SOCKS5 proxy of the Host as it is stored. SocksBindScope goes out as\na word every time, for the reason localForwardViewOf gives.",
+                    "type": "boolean"
+                },
+                "socks_last_error": {
+                    "type": "string"
+                },
+                "socks_port": {
+                    "type": "integer"
+                },
+                "socks_status": {
+                    "description": "SocksStatus is \"off\" while the proxy is not asked for, \"disabled\" while\nit is and the Host is disabled, \"stopped\" while it is asked for and none\nruns, and what the running proxy reports otherwise. SocksLastError is\nwhat the running proxy reports, and empty while none runs.",
+                    "type": "string"
                 },
                 "updated_at": {
                     "type": "string"
@@ -3765,6 +3846,25 @@
                 "private_key": {
                     "type": "string"
                 },
+                "socks_allowed_sources": {
+                    "type": "string"
+                },
+                "socks_bind_scope": {
+                    "type": "string",
+                    "enum": [
+                        "loopback",
+                        "wildcard"
+                    ]
+                },
+                "socks_enabled": {
+                    "description": "SocksEnabled, SocksPort, SocksBindScope and SocksAllowedSources are the\nSOCKS5 proxy of the Host, as Host holds them. A request that switches\nthe proxy on names its port; a request that leaves SocksEnabled out\nregisters a Host without one. An empty SocksBindScope is the wildcard.",
+                    "type": "boolean"
+                },
+                "socks_port": {
+                    "type": "integer",
+                    "maximum": 65535,
+                    "minimum": 1
+                },
                 "user": {
                     "type": "string"
                 }
@@ -3904,6 +4004,25 @@
                 },
                 "private_key": {
                     "type": "string"
+                },
+                "socks_allowed_sources": {
+                    "type": "string"
+                },
+                "socks_bind_scope": {
+                    "type": "string",
+                    "enum": [
+                        "loopback",
+                        "wildcard"
+                    ]
+                },
+                "socks_enabled": {
+                    "description": "SocksEnabled, SocksPort and SocksAllowedSources are pointers, so that a\nrequest that leaves one out keeps what is stored and one that sends\nfalse, or an empty list, says so: an empty list of allowed sources lets\nevery address in, and is a value a request has to be able to ask for.\nSocksBindScope left empty keeps the scope that is stored, the way IP and\nUser do; the wildcard is asked for by its word.",
+                    "type": "boolean"
+                },
+                "socks_port": {
+                    "type": "integer",
+                    "maximum": 65535,
+                    "minimum": 1
                 },
                 "user": {
                     "type": "string"

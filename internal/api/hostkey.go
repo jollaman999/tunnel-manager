@@ -45,17 +45,38 @@ type hostView struct {
 	// nothing waiting. The two are next to each other because the question the
 	// operator answers is a comparison of them: a Host that carries both was
 	// presented a key other than the one it is trusted on.
-	HostKeyFingerprint        string    `json:"host_key_fingerprint"`
-	PendingHostKeyFingerprint string    `json:"pending_host_key_fingerprint"`
-	Description               string    `json:"description"`
-	Enabled                   bool      `json:"enabled"`
-	CreatedAt                 time.Time `json:"created_at"`
-	UpdatedAt                 time.Time `json:"updated_at"`
+	HostKeyFingerprint        string `json:"host_key_fingerprint"`
+	PendingHostKeyFingerprint string `json:"pending_host_key_fingerprint"`
+	Description               string `json:"description"`
+	Enabled                   bool   `json:"enabled"`
+	// The SOCKS5 proxy of the Host as it is stored. SocksBindScope goes out as
+	// a word every time, for the reason localForwardViewOf gives.
+	SocksEnabled        bool   `json:"socks_enabled"`
+	SocksPort           int    `json:"socks_port"`
+	SocksBindScope      string `json:"socks_bind_scope"`
+	SocksAllowedSources string `json:"socks_allowed_sources"`
+	// SocksStatus is "off" while the proxy is not asked for, "disabled" while
+	// it is and the Host is disabled, "stopped" while it is asked for and none
+	// runs, and what the running proxy reports otherwise. SocksLastError is
+	// what the running proxy reports, and empty while none runs.
+	SocksStatus    string    `json:"socks_status"`
+	SocksLastError string    `json:"socks_last_error"`
+	CreatedAt      time.Time `json:"created_at"`
+	UpdatedAt      time.Time `json:"updated_at"`
 }
 
-// hostViewOf turns a row into what goes out.
-func hostViewOf(host models.Host) hostView {
-	return hostView{
+// The statuses the SOCKS5 proxy of a Host carries when none runs for it. The
+// last two are the ones a local forward carries, for the reasons given there.
+const (
+	socksStatusOff      = "off"
+	socksStatusDisabled = localForwardStatusDisabled
+	socksStatusStopped  = localForwardStatusStopped
+)
+
+// hostViewOf turns a row into what goes out. socks is what the running SOCKS5
+// proxies report, keyed by Host, as tunnelManager.SocksStatuses answers it.
+func hostViewOf(host models.Host, socks map[uint]tunnel.SocksState) hostView {
+	view := hostView{
 		ID:                        host.ID,
 		IP:                        host.IP,
 		Port:                      host.Port,
@@ -64,18 +85,41 @@ func hostViewOf(host models.Host) hostView {
 		PendingHostKeyFingerprint: tunnel.HostKeyFingerprint(host.PendingHostKey),
 		Description:               host.Description,
 		Enabled:                   host.Enabled,
+		SocksEnabled:              host.SocksEnabled,
+		SocksPort:                 host.SocksPort,
+		SocksBindScope:            host.SocksBindScope,
+		SocksAllowedSources:       host.SocksAllowedSources,
 		CreatedAt:                 host.CreatedAt,
 		UpdatedAt:                 host.UpdatedAt,
 	}
+
+	if view.SocksBindScope == "" {
+		view.SocksBindScope = models.BindScopeWildcard
+	}
+
+	state, running := socks[host.ID]
+	switch {
+	case !host.SocksEnabled || host.SocksPort <= 0:
+		view.SocksStatus = socksStatusOff
+	case !host.Enabled:
+		view.SocksStatus = socksStatusDisabled
+	case !running:
+		view.SocksStatus = socksStatusStopped
+	default:
+		view.SocksStatus = state.Status
+		view.SocksLastError = state.LastError
+	}
+
+	return view
 }
 
 // hostViewsOf does the same for a page of them. A page that holds no row is an
 // empty slice and not nil, for the reason ListHosts states: a client draws a
 // list out of it, and null is not a list.
-func hostViewsOf(hosts []models.Host) []hostView {
+func hostViewsOf(hosts []models.Host, socks map[uint]tunnel.SocksState) []hostView {
 	views := make([]hostView, 0, len(hosts))
 	for _, host := range hosts {
-		views = append(views, hostViewOf(host))
+		views = append(views, hostViewOf(host, socks))
 	}
 
 	return views
@@ -431,7 +475,7 @@ func (h *Handler) ApproveHostKey(c echo.Context) error {
 
 	return c.JSON(http.StatusOK, models.Response{
 		Success: true,
-		Data:    hostViewOf(host),
+		Data:    hostViewOf(host, h.manager.SocksStatuses()),
 	})
 }
 

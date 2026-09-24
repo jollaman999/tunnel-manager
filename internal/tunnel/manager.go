@@ -117,6 +117,10 @@ type Manager struct {
 	// tunnels.
 	localForwards map[uint]*localTunnel
 	localMu       sync.RWMutex
+	// socksProxies holds the running SOCKS5 proxies by the ID of their Host,
+	// under a lock of its own for the same reason.
+	socksProxies map[uint]*socksTunnel
+	socksMu      sync.RWMutex
 }
 
 func NewManager(db *gorm.DB, logger *zap.Logger, cipher *crypto.Cipher, monitoringIntervalSec int) (*Manager, error) {
@@ -128,6 +132,7 @@ func NewManager(db *gorm.DB, logger *zap.Logger, cipher *crypto.Cipher, monitori
 		monitoringIntervalSec: monitoringIntervalSec,
 		reconcileWake:         make(chan struct{}, 1),
 		localForwards:         make(map[uint]*localTunnel),
+		socksProxies:          make(map[uint]*socksTunnel),
 	}, nil
 }
 
@@ -745,11 +750,12 @@ func (m *Manager) RestoreAllTunnels() error {
 	return nil
 }
 
-// StopAllTunnels stops every running tunnel and local forward. It is a
-// reconcile pass with an empty desired state, and it reads no rows: what is
-// running is in m.tunnels and m.localForwards, and a database that is away on
-// shutdown must not leave a tunnel up.
+// StopAllTunnels stops every running tunnel, local forward and SOCKS5 proxy.
+// It is a reconcile pass with an empty desired state, and it reads no rows:
+// what is running is in m.tunnels, m.localForwards and m.socksProxies, and a
+// database that is away on shutdown must not leave a tunnel up.
 func (m *Manager) StopAllTunnels() {
+	defer m.stopAllSocks()
 	defer m.stopAllLocalForwards()
 
 	for _, key := range m.runningTunnelKeys() {

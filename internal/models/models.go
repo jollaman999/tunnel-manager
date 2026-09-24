@@ -51,12 +51,36 @@ type Host struct {
 	// Neither carries "not null". The columns are added to installations
 	// whose rows were written before they existed, and AutoMigrate fills
 	// those with NULL, the way it did for Tunnel.ServerBanner below.
-	HostKey        string    `json:"host_key"`
-	PendingHostKey string    `json:"pending_host_key"`
-	Description    string    `json:"description"`
-	Enabled        bool      `json:"enabled"`
-	CreatedAt      time.Time `json:"created_at"`
-	UpdatedAt      time.Time `json:"updated_at"`
+	HostKey        string `json:"host_key"`
+	PendingHostKey string `json:"pending_host_key"`
+	Description    string `json:"description"`
+	Enabled        bool   `json:"enabled"`
+	// SocksEnabled, SocksPort, SocksBindScope and SocksAllowedSources are the
+	// SOCKS5 proxy this Host carries: a port opened on this machine whose
+	// clients name a target on every connection, and the Host dials it. It
+	// runs while the Host is enabled, SocksEnabled is set and SocksPort is
+	// above zero.
+	//
+	// None of them carries "not null" or a default. The columns are added to
+	// installations whose rows were written before they existed, and
+	// AutoMigrate fills those with NULL, which reads back as the zero value:
+	// no proxy. SocksEnabled has no default for the reason Enabled has none.
+	//
+	// SocksBindScope takes the words and the constraint of
+	// HostServicePort.BindScope, and an empty value is the wildcard for the
+	// same reason.
+	//
+	// SocksAllowedSources is the list of addresses and CIDR blocks a client of
+	// the proxy may connect from, separated by commas or spaces. An empty
+	// value lets every address in. The proxy asks for no password, so on the
+	// wildcard this list is what keeps it from being open to anyone who can
+	// reach the port.
+	SocksEnabled        bool      `json:"socks_enabled"`
+	SocksPort           int       `json:"socks_port"`
+	SocksBindScope      string    `gorm:"check:chk_hosts_socks_bind_scope,socks_bind_scope IN ('','loopback','wildcard')" json:"socks_bind_scope"`
+	SocksAllowedSources string    `json:"socks_allowed_sources"`
+	CreatedAt           time.Time `json:"created_at"`
+	UpdatedAt           time.Time `json:"updated_at"`
 }
 
 type ServicePort struct {
@@ -307,6 +331,14 @@ type CreateHostRequest struct {
 	// HostServicePort above, so the rule takes a request that leaves the field
 	// out and refuses a word that is neither of the two.
 	BindScope string `json:"bind_scope" validate:"omitempty,oneof=loopback wildcard"`
+	// SocksEnabled, SocksPort, SocksBindScope and SocksAllowedSources are the
+	// SOCKS5 proxy of the Host, as Host holds them. A request that switches
+	// the proxy on names its port; a request that leaves SocksEnabled out
+	// registers a Host without one. An empty SocksBindScope is the wildcard.
+	SocksEnabled        bool   `json:"socks_enabled"`
+	SocksPort           int    `json:"socks_port" validate:"omitempty,min=1,max=65535"`
+	SocksBindScope      string `json:"socks_bind_scope" validate:"omitempty,oneof=loopback wildcard"`
+	SocksAllowedSources string `json:"socks_allowed_sources"`
 }
 
 // UpdateHostRequest changes a Host. A field the request leaves out is left as
@@ -321,6 +353,16 @@ type UpdateHostRequest struct {
 	KeyPassphrase string `json:"key_passphrase" validate:"omitempty"`
 	Description   string `json:"description"`
 	Enabled       *bool  `json:"enabled"`
+	// SocksEnabled, SocksPort and SocksAllowedSources are pointers, so that a
+	// request that leaves one out keeps what is stored and one that sends
+	// false, or an empty list, says so: an empty list of allowed sources lets
+	// every address in, and is a value a request has to be able to ask for.
+	// SocksBindScope left empty keeps the scope that is stored, the way IP and
+	// User do; the wildcard is asked for by its word.
+	SocksEnabled        *bool   `json:"socks_enabled"`
+	SocksPort           *int    `json:"socks_port" validate:"omitempty,min=1,max=65535"`
+	SocksBindScope      string  `json:"socks_bind_scope" validate:"omitempty,oneof=loopback wildcard"`
+	SocksAllowedSources *string `json:"socks_allowed_sources"`
 }
 
 type CreateServicePortRequest struct {

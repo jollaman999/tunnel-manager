@@ -3,10 +3,16 @@ package main
 import (
 	"net"
 	"os"
+	"path/filepath"
 	"runtime"
 	"strconv"
 	"strings"
 	"testing"
+
+	"github.com/glebarez/sqlite"
+	"github.com/jollaman999/tunnel-manager/internal/models"
+	"gorm.io/gorm"
+	gormlogger "gorm.io/gorm/logger"
 )
 
 // freeLoopbackPort returns a port nothing listens on at the moment it returns.
@@ -297,5 +303,78 @@ func TestRestartEnvironHandsOverOnlyThePortInUse(t *testing.T) {
 		if strings.HasPrefix(kv, previousAPIPortEnv+"=") {
 			t.Fatalf("a port of 0 handed over %s", kv)
 		}
+	}
+}
+
+// TestTheFallbackPortStaysClearOfTheSocksProxies covers what the port the API
+// falls back to is kept off: every local port of a local forward, and the port
+// of every SOCKS5 proxy that is switched on, whether its Host is enabled or
+// not. A proxy that is switched off opens nothing and holds nothing.
+func TestTheFallbackPortStaysClearOfTheSocksProxies(t *testing.T) {
+	db, err := gorm.Open(sqlite.Open(filepath.Join(t.TempDir(), "tunnel-manager.db")), &gorm.Config{
+		Logger: gormlogger.Discard,
+	})
+	if err != nil {
+		t.Fatalf("failed to open the database: %v", err)
+	}
+
+	err = db.AutoMigrate(&models.Host{}, &models.LocalForward{})
+	if err != nil {
+		t.Fatalf("failed to migrate the database: %v", err)
+	}
+
+	rows := []interface{}{
+		&models.Host{ID: 1, IP: "192.0.2.1", Port: 22, User: "root", Enabled: true,
+			SocksEnabled: true, SocksPort: 1080},
+		&models.Host{ID: 2, IP: "192.0.2.2", Port: 22, User: "root", Enabled: false,
+			SocksEnabled: true, SocksPort: 1081},
+		&models.Host{ID: 3, IP: "192.0.2.3", Port: 22, User: "root", Enabled: true,
+			SocksEnabled: false, SocksPort: 1082},
+		&models.LocalForward{HostID: 1, LocalPort: 15432, TargetIP: "127.0.0.1", TargetPort: 5432},
+	}
+
+	for _, row := range rows {
+		err = db.Create(row).Error
+		if err != nil {
+			t.Fatalf("failed to store %+v: %v", row, err)
+		}
+	}
+
+	held, err := heldLocalPorts(db)
+	if err != nil {
+		t.Fatalf("heldLocalPorts: %v", err)
+	}
+
+	for port, want := range map[int]bool{1080: true, 1081: true, 1082: false, 15432: true, 8443: false} {
+		if held[port] != want {
+			t.Errorf("port %d is held = %v, want %v", port, held[port], want)
+		}
+	}
+
+	// The same function is what the startup hands listenAPI as avoid, so a
+	// proxy on the port the system would pick is passed over there as well.
+	stored := holdLoopbackPort(t)
+	socks := freeLoopbackPort(t)
+
+	err = db.Model(&models.Host{}).Where("id = ?", 1).Update("socks_port", socks).Error
+	if err != nil {
+		t.Fatalf("failed to move the proxy: %v", err)
+	}
+
+	held, err = heldLocalPorts(db)
+	if err != nil {
+		t.Fatalf("heldLocalPorts: %v", err)
+	}
+
+	listener, port, err := listenAPI("127.0.0.1", stored, socks, func(port int) bool {
+		return held[port]
+	})
+	if err != nil {
+		t.Fatalf("listenAPI: %v", err)
+	}
+	defer listener.Close()
+
+	if port == socks {
+		t.Fatalf("the API fell back to %d, the port of a SOCKS5 proxy", port)
 	}
 }

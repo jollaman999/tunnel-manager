@@ -122,6 +122,11 @@ const (
 	errHostKeyNothingToApprove     errorCode = "host.host_key.nothing_to_approve"
 	errHostKeyFingerprintChanged   errorCode = "host.host_key.fingerprint_changed"
 	errHostKeyPasswordWrong        errorCode = "host.host_key.password_wrong"
+	errHostSocksPortRequired       errorCode = "host.socks_port.required"
+	errHostSocksSourcesInvalid     errorCode = "host.socks_allowed_sources.invalid"
+	errHostSocksPortIsAPIPort      errorCode = "host.socks_port.api_port"
+	errHostSocksPortTaken          errorCode = "host.socks_port.taken"
+	errHostSocksPortLocalForward   errorCode = "host.socks_port.local_forward"
 
 	errServicePortIDInvalid        errorCode = "service_port.id.invalid"
 	errServicePortNotFound         errorCode = "service_port.not_found"
@@ -142,6 +147,7 @@ const (
 	errLocalForwardDeleteFailed  errorCode = "local_forward.delete_failed"
 	errLocalForwardPortTaken     errorCode = "local_forward.local_port.taken"
 	errLocalForwardPortIsAPIPort errorCode = "local_forward.local_port.api_port"
+	errLocalForwardPortSocks     errorCode = "local_forward.local_port.socks"
 
 	errAssignmentAddAndRemove        errorCode = "assignment.add_and_remove"
 	errAssignmentServicePortsMissing errorCode = "assignment.service_port.not_found"
@@ -155,6 +161,7 @@ const (
 	errSettingsRefused             errorCode = "settings.refused"
 	errSettingsLanguageUnsupported errorCode = "settings.ui_language.unsupported"
 	errSettingsAPIPortLocalForward errorCode = "settings.api_port.local_forward"
+	errSettingsAPIPortSocks        errorCode = "settings.api_port.socks"
 
 	errCertificateHTTPSOff       errorCode = "certificate.https_off"
 	errCertificateServedUnread   errorCode = "certificate.served.read_failed"
@@ -221,6 +228,7 @@ const (
 	errImportSettingsUnreadable     errorCode = "import.settings.unreadable"
 	errImportSettingsRefused        errorCode = "import.settings.refused"
 	errImportSettingsAPIPortForward errorCode = "import.settings.api_port.local_forward"
+	errImportSettingsAPIPortSocks   errorCode = "import.settings.api_port.socks"
 
 	errImportLocalForwardRefused      errorCode = "import.local_forward.refused"
 	errImportLocalForwardDuplicate    errorCode = "import.local_forward.duplicate"
@@ -229,6 +237,12 @@ const (
 	errImportLocalForwardsReadFailed  errorCode = "import.local_forwards.read_failed"
 	errImportLocalForwardsClearFailed errorCode = "import.local_forwards.clear_failed"
 	errImportLocalForwardsStoreFailed errorCode = "import.local_forwards.store_failed"
+	errImportLocalForwardSocks        errorCode = "import.local_forward.local_port.socks"
+
+	errImportSocksDuplicate    errorCode = "import.socks.duplicate"
+	errImportSocksAPIPort      errorCode = "import.socks.socks_port.api_port"
+	errImportSocksPortTaken    errorCode = "import.socks.socks_port.taken"
+	errImportSocksLocalForward errorCode = "import.socks.socks_port.local_forward"
 
 	errUninstallPasswordWrong errorCode = "uninstall.password.wrong"
 )
@@ -334,6 +348,15 @@ var errorMessages = map[errorCode]string{
 	errHostKeyFingerprintChanged: "The host key was not approved: the fingerprint sent is not the one waiting to be approved, which is {waiting}. The SSH server presented another key after the one on the screen was read. Compare the fingerprint above against the server itself before approving it",
 	errHostKeyPasswordWrong:      "The host key was not approved: the password does not open this account",
 
+	// The SOCKS5 proxy of a Host. The three refusals over its port are
+	// conflicts for the reason the ones over the local port of a local forward
+	// are, and each names what opens the port already.
+	errHostSocksPortRequired:     "The SOCKS5 proxy is switched on without a port. Give socks_port a port from 1 to 65535",
+	errHostSocksSourcesInvalid:   "The allowed sources of the SOCKS5 proxy are refused: {reason}",
+	errHostSocksPortIsAPIPort:    "The SOCKS5 port {socks_port} is the port this server listens on",
+	errHostSocksPortTaken:        "The SOCKS5 port {socks_port} is already opened by the SOCKS5 proxy of the Host {host}",
+	errHostSocksPortLocalForward: "The SOCKS5 port {socks_port} is already opened by a local forward of the Host {host}",
+
 	// The service ports.
 	errServicePortIDInvalid:        "Invalid service port ID: {reason}",
 	errServicePortNotFound:         "Service port not found",
@@ -358,6 +381,7 @@ var errorMessages = map[errorCode]string{
 	errLocalForwardDeleteFailed:  "Failed to delete local forward",
 	errLocalForwardPortTaken:     "The local port {local_port} is already opened by another local forward",
 	errLocalForwardPortIsAPIPort: "The local port {local_port} is the port this server listens on",
+	errLocalForwardPortSocks:     "The local port {local_port} is already opened by the SOCKS5 proxy of the Host {host}",
 
 	// Which service ports a Host carries.
 	errAssignmentAddAndRemove:        "The change names the same service port to add and to remove: {ids}",
@@ -380,6 +404,9 @@ var errorMessages = map[errorCode]string{
 	// answer carries the forward and a free port in data, which is what the
 	// screen offers to move one of the two to.
 	errSettingsAPIPortLocalForward: "The settings are refused: the port {api_port} is opened by the local forward of the Host {host} to {target}. Move the local forward to another port, or choose another port for this server",
+	// The same port opened by the SOCKS5 proxy of a Host. data carries the
+	// proxy in socks_host beside the suggested port.
+	errSettingsAPIPortSocks: "The settings are refused: the port {api_port} is opened by the SOCKS5 proxy of the Host {host}. Move the SOCKS5 proxy to another port, or choose another port for this server",
 
 	// The TLS certificate this installation serves with.
 	errCertificateHTTPSOff:       "No certificate is in use, because HTTPS is turned off. Turn on \"Serve over HTTPS\" and start tunnel-manager again",
@@ -455,6 +482,7 @@ var errorMessages = map[errorCode]string{
 	errImportSettingsUnreadable:     "The file says it holds the settings of the manager, but the settings in it cannot be read",
 	errImportSettingsRefused:        "Nothing was imported. The settings in the file are refused: {reason}",
 	errImportSettingsAPIPortForward: "Nothing was imported. The file sets the port of this server to {api_port}, which the local forward of the Host {host} to {target} opens here. Move the local forward to another port and import again",
+	errImportSettingsAPIPortSocks:   "Nothing was imported. The file sets the port of this server to {api_port}, which the SOCKS5 proxy of the Host {host} opens here. Move the SOCKS5 proxy to another port and import again",
 
 	errImportLocalForwardRefused:      "Nothing was imported. The local forward on the local port {local_port} of the Host {host} in the file was refused: {reason}",
 	errImportLocalForwardDuplicate:    "Nothing was imported. The file opens the local port {local_port} with more than one local forward",
@@ -463,6 +491,15 @@ var errorMessages = map[errorCode]string{
 	errImportLocalForwardsReadFailed:  "Nothing was imported: failed to read the local forwards",
 	errImportLocalForwardsClearFailed: "Nothing was imported: failed to replace the local forwards of the Host {host}",
 	errImportLocalForwardsStoreFailed: "Nothing was imported: failed to store the local forwards of the Host {host}",
+	errImportLocalForwardSocks:        "Nothing was imported. The local forward of the Host {host} in the file opens the local port {local_port}, which the SOCKS5 proxy of the Host {owner} opens here already. Change one of the two and import again",
+
+	// The SOCKS5 proxies the file names. The fields of one are held to the
+	// rules of a create under errImportHostRefused, since they are fields of
+	// the Host.
+	errImportSocksDuplicate:    "Nothing was imported. The file opens the port {port} more than once among the SOCKS5 proxies and the local forwards of its Hosts",
+	errImportSocksAPIPort:      "Nothing was imported. The SOCKS5 proxy of the Host {host} in the file opens the port {socks_port}, which is the port this server listens on",
+	errImportSocksPortTaken:    "Nothing was imported. The SOCKS5 proxy of the Host {host} in the file opens the port {socks_port}, which the SOCKS5 proxy of the Host {owner} opens here already. Change one of the two and import again",
+	errImportSocksLocalForward: "Nothing was imported. The SOCKS5 proxy of the Host {host} in the file opens the port {socks_port}, which a local forward of the Host {owner} opens here already. Change one of the two and import again",
 
 	// Removing the installation.
 	errUninstallPasswordWrong: "The password does not open this account",

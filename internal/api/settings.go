@@ -263,7 +263,8 @@ func (r *updateSettingsRequest) apply(s *settings.Settings) {
 //
 // @Summary      Store the settings in the body over the stored ones
 // @Description  Answers with what changed and whether a restart is needed. logging.level is the one setting this process takes on without being started again.
-// @Description  A new api_port that a local forward opens as its local port is refused with 409; data then carries that local forward and suggested_port, a port neither a local forward nor the stored or asked for api_port holds, or 0 when there is none.
+// @Description  A new api_port that a local forward opens as its local port is refused with 409; data then carries that local forward and suggested_port, a port neither a local forward, a SOCKS5 proxy nor the stored or asked for api_port holds, or 0 when there is none.
+// @Description  A new api_port that the SOCKS5 proxy of a Host opens is refused with 409 under its own error_code; data then carries that Host in socks_host, local_forward left empty, and suggested_port.
 // @Tags         settings
 // @Accept   json
 // @Produce  json
@@ -271,7 +272,7 @@ func (r *updateSettingsRequest) apply(s *settings.Settings) {
 // @Param   body  body  api.updateSettingsRequest  true  "The settings as they should stand"
 // @Success  200  {object}  models.Response{data=api.settingsSaved}
 // @Failure  400  {object}  api.errorBody  "A setting broke one of the rules. Nothing was stored"
-// @Failure  409  {object}  api.errorBody{data=api.apiPortTaken}  "api_port is the local port of a local forward. Nothing was stored"
+// @Failure  409  {object}  api.errorBody{data=api.apiPortTaken}  "api_port is the local port of a local forward or the port of a SOCKS5 proxy. Nothing was stored"
 // @Router       /settings [put]
 func (h *SettingsHandler) UpdateSettings(c echo.Context) error {
 	stored, err := settings.Load(h.db)
@@ -330,7 +331,7 @@ func (h *SettingsHandler) UpdateSettings(c echo.Context) error {
 	// Only a port that changes is held to the local forwards, so a save of
 	// another setting is not refused over a port that is already stored.
 	if updated.APIPort != before.APIPort {
-		refused, err := apiPortRefused(tx, errSettingsAPIPortLocalForward, updated.APIPort, before.APIPort,
+		refused, err := apiPortRefused(tx, apiPortCodes{errSettingsAPIPortLocalForward, errSettingsAPIPortSocks}, updated.APIPort, before.APIPort,
 			h.startup.APIPort)
 		if err != nil {
 			tx.Rollback()

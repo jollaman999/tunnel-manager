@@ -34,6 +34,9 @@ type tunnelManager interface {
 	// about itself, keyed by row. It is kept in memory by the manager rather
 	// than in a table, so it is asked for here and not read from the rows.
 	LocalForwardStatuses() map[uint]tunnel.LocalForwardState
+	// SocksStatuses reports what every running SOCKS5 proxy says about
+	// itself, keyed by Host, for the reason LocalForwardStatuses is asked for.
+	SocksStatuses() map[uint]tunnel.SocksState
 }
 
 type Handler struct {
@@ -315,13 +318,15 @@ func nextHostID(tx *gorm.DB) (uint, error) {
 // @Summary      Register a Host
 // @Description  enabled is optional and a Host that does not say is enabled.
 // @Description  bind_scope is what every assignment this registration makes is opened to: loopback, wildcard, or left out for the wildcard. It is read only when the assignments are made.
+// @Description  socks_enabled switches on the SOCKS5 proxy of the Host, which needs socks_port. socks_bind_scope is loopback, wildcard, or left out for the wildcard. socks_allowed_sources is the addresses and CIDR blocks a client may connect from, separated by commas or spaces; empty lets every address in.
 // @Tags         hosts
 // @Accept   json
 // @Produce  json
 // @Security  CSRFToken
 // @Param   body  body  models.CreateHostRequest  true  "The Host to register"
 // @Success  200  {object}  models.Response{data=api.hostView}
-// @Failure  400  {object}  api.errorBody  "The body is refused, or the private key cannot be read"
+// @Failure  400  {object}  api.errorBody  "The body is refused, the private key cannot be read, or the SOCKS5 proxy is switched on without a port or with allowed sources that do not read"
+// @Failure  409  {object}  api.errorBody  "socks_port is the port of this server, of the SOCKS5 proxy of another Host or of a local forward"
 // @Router       /host [post]
 func (h *Handler) CreateHost(c echo.Context) error {
 	var req models.CreateHostRequest
@@ -358,6 +363,37 @@ func (h *Handler) CreateHost(c echo.Context) error {
 		return h.keyRefused(c, err, errHostCreateKeyRefused)
 	}
 
+	// An empty scope is stored as the word it stands for, the way the local
+	// forwards store theirs.
+	socksBindScope := req.SocksBindScope
+	if socksBindScope == "" {
+		socksBindScope = models.BindScopeWildcard
+	}
+
+	socks := models.Host{
+		SocksEnabled:        req.SocksEnabled,
+		SocksPort:           req.SocksPort,
+		SocksBindScope:      socksBindScope,
+		SocksAllowedSources: req.SocksAllowedSources,
+	}
+
+	refused := checkSocks(&socks)
+	if refused != nil {
+		return refused.answer(c)
+	}
+
+	// Read before the transaction for the reason storedAPIPort gives, and only
+	// for a Host whose proxy is switched on, since nothing else is held to it.
+	apiPort := 0
+
+	if socks.SocksEnabled {
+		apiPort, err = h.storedAPIPort()
+		if err != nil {
+			h.logger.Error("failed to read the settings", logid.SettingsReadFailed.Field(), zap.Error(err))
+			return failure(c, http.StatusInternalServerError, errSettingsReadFailed)
+		}
+	}
+
 	tx := h.db.Begin()
 	err = tx.Error
 	if err != nil {
@@ -384,6 +420,11 @@ func (h *Handler) CreateHost(c echo.Context) error {
 		KeyPassphrase: keyPassphrase,
 		Description:   req.Description,
 		Enabled:       enabled,
+
+		SocksEnabled:        socks.SocksEnabled,
+		SocksPort:           socks.SocksPort,
+		SocksBindScope:      socks.SocksBindScope,
+		SocksAllowedSources: socks.SocksAllowedSources,
 	}
 
 	// The number is chosen here rather than left to the column, so that one a
@@ -394,6 +435,20 @@ func (h *Handler) CreateHost(c echo.Context) error {
 		h.logger.Error("failed to work out the number for a new Host",
 			logid.HostNextNumberReadFailed.Field(), zap.Error(err))
 		return failure(c, http.StatusInternalServerError, errHostCreateFailed)
+	}
+
+	if host.SocksEnabled {
+		refused, err = socksPortRefused(tx, host.ID, host.SocksPort, apiPort, h.runningAPIPort)
+		if err != nil {
+			tx.Rollback()
+			h.logger.Error("failed to fetch Hosts", logid.HostListFetchFailed.Field(),
+				zap.Error(err), zap.Int("socks_port", host.SocksPort))
+			return failure(c, http.StatusInternalServerError, errHostCreateFailed)
+		}
+		if refused != nil {
+			tx.Rollback()
+			return refused.answer(c)
+		}
 	}
 
 	err = tx.Create(host).Error
@@ -449,7 +504,7 @@ func (h *Handler) CreateHost(c echo.Context) error {
 
 	return c.JSON(http.StatusCreated, models.Response{
 		Success: true,
-		Data:    hostViewOf(*host),
+		Data:    hostViewOf(*host, h.manager.SocksStatuses()),
 	})
 }
 
@@ -496,7 +551,7 @@ func (h *Handler) ListHosts(c echo.Context) error {
 	return c.JSON(http.StatusOK, models.Response{
 		Success: true,
 		Data: listPageOf{
-			Items: hostViewsOf(hosts),
+			Items: hostViewsOf(hosts, h.manager.SocksStatuses()),
 			Total: total,
 			Page:  page.number,
 			Size:  page.size,
@@ -535,12 +590,13 @@ func (h *Handler) GetHost(c echo.Context) error {
 
 	return c.JSON(http.StatusOK, models.Response{
 		Success: true,
-		Data:    hostViewOf(host),
+		Data:    hostViewOf(host, h.manager.SocksStatuses()),
 	})
 }
 
 // @Summary      Update a Host
 // @Description  Every field is optional; enabled false stops its tunnels.
+// @Description  A SOCKS5 field left out keeps what is stored. socks_allowed_sources sent empty lets every address in; socks_bind_scope left empty keeps the stored scope.
 // @Tags         hosts
 // @Accept   json
 // @Produce  json
@@ -550,6 +606,7 @@ func (h *Handler) GetHost(c echo.Context) error {
 // @Success  200  {object}  models.Response{data=api.hostView}
 // @Failure  400  {object}  api.errorBody  "The body is refused"
 // @Failure  404  {object}  api.errorBody  "No such Host"
+// @Failure  409  {object}  api.errorBody  "The SOCKS5 proxy is switched on or moved to the port of this server, of the SOCKS5 proxy of another Host or of a local forward"
 // @Router       /host/{id} [put]
 func (h *Handler) UpdateHost(c echo.Context) error {
 	id, err := strconv.ParseUint(c.Param("id"), 10, 32)
@@ -566,6 +623,18 @@ func (h *Handler) UpdateHost(c echo.Context) error {
 	err = c.Validate(&req)
 	if err != nil {
 		return failure(c, http.StatusBadRequest, errRequestValidationFailed, errorArgs{"reason": err.Error()})
+	}
+
+	// Read before the transaction for the reason storedAPIPort gives, and only
+	// for a request that may open a SOCKS5 proxy on another port.
+	apiPort := 0
+
+	if req.SocksEnabled != nil || req.SocksPort != nil {
+		apiPort, err = h.storedAPIPort()
+		if err != nil {
+			h.logger.Error("failed to read the settings", logid.SettingsReadFailed.Field(), zap.Error(err))
+			return failure(c, http.StatusInternalServerError, errSettingsReadFailed)
+		}
 	}
 
 	tx := h.db.Begin()
@@ -639,6 +708,45 @@ func (h *Handler) UpdateHost(c echo.Context) error {
 		host.Enabled = *req.Enabled
 	}
 
+	socksBefore := host.SocksEnabled && host.SocksPort > 0
+	portBefore := host.SocksPort
+
+	if req.SocksEnabled != nil {
+		host.SocksEnabled = *req.SocksEnabled
+	}
+	if req.SocksPort != nil {
+		host.SocksPort = *req.SocksPort
+	}
+	if req.SocksBindScope != "" {
+		host.SocksBindScope = req.SocksBindScope
+	}
+	if req.SocksAllowedSources != nil {
+		host.SocksAllowedSources = *req.SocksAllowedSources
+	}
+
+	refused := checkSocks(&host)
+	if refused != nil {
+		tx.Rollback()
+		return refused.answer(c)
+	}
+
+	// The port is held to the rest of the machine only when this change is
+	// what opens it, so that a change of another field is not refused over a
+	// port that is stored already.
+	if host.SocksEnabled && (!socksBefore || host.SocksPort != portBefore) {
+		refused, err = socksPortRefused(tx, host.ID, host.SocksPort, apiPort, h.runningAPIPort)
+		if err != nil {
+			tx.Rollback()
+			h.logger.Error("failed to fetch Hosts", logid.HostListFetchFailed.Field(),
+				zap.Error(err), zap.Int("socks_port", host.SocksPort))
+			return failure(c, http.StatusInternalServerError, errHostUpdateFailed)
+		}
+		if refused != nil {
+			tx.Rollback()
+			return refused.answer(c)
+		}
+	}
+
 	err = tx.Save(&host).Error
 	if err != nil {
 		tx.Rollback()
@@ -656,7 +764,7 @@ func (h *Handler) UpdateHost(c echo.Context) error {
 
 	return c.JSON(http.StatusOK, models.Response{
 		Success: true,
-		Data:    hostViewOf(host),
+		Data:    hostViewOf(host, h.manager.SocksStatuses()),
 	})
 }
 
@@ -1642,7 +1750,7 @@ func (h *Handler) GetHostStatus(c echo.Context) error {
 	return c.JSON(http.StatusOK, models.Response{
 		Success: true,
 		Data: map[string]interface{}{
-			"host":              hostViewOf(host),
+			"host":              hostViewOf(host, h.manager.SocksStatuses()),
 			"total_tunnels":     len(*tunnels),
 			"connected_tunnels": connectedTunnels,
 			"tunnels":           tunnels,

@@ -187,6 +187,8 @@ type wakeRecorder struct {
 	// localStates is what LocalForwardStatuses answers, the forwards the test
 	// has running. A nil map is a manager with none.
 	localStates map[uint]tunnel.LocalForwardState
+	// socksStates is what SocksStatuses answers, the same way.
+	socksStates map[uint]tunnel.SocksState
 
 	mu                 sync.Mutex
 	wakes              int
@@ -228,6 +230,10 @@ func (r *wakeRecorder) GetHostTunnels(hostID uint) (*[]models.Tunnel, error) {
 
 func (r *wakeRecorder) LocalForwardStatuses() map[uint]tunnel.LocalForwardState {
 	return r.localStates
+}
+
+func (r *wakeRecorder) SocksStatuses() map[uint]tunnel.SocksState {
+	return r.socksStates
 }
 
 // newWriteStubDB returns a gorm DB that answers the reads of the write handlers
@@ -1152,6 +1158,10 @@ func (m *countFailingManager) GetHostTunnels(hostID uint) (*[]models.Tunnel, err
 }
 
 func (m *countFailingManager) LocalForwardStatuses() map[uint]tunnel.LocalForwardState {
+	return nil
+}
+
+func (m *countFailingManager) SocksStatuses() map[uint]tunnel.SocksState {
 	return nil
 }
 

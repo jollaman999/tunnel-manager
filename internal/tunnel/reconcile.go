@@ -262,7 +262,8 @@ func (m *Manager) restartTunnel(want desiredTunnel) error {
 //
 // The local forwards are brought in line the same way after the tunnels, and
 // counted in the same result. Their rows are read before anything is changed,
-// with the rest of the desired state.
+// with the rest of the desired state. The SOCKS5 proxies follow last; they are
+// read off the Hosts, which the pass has already.
 func (m *Manager) Reconcile() (ReconcileResult, error) {
 	var result ReconcileResult
 
@@ -363,6 +364,7 @@ func (m *Manager) Reconcile() (ReconcileResult, error) {
 	}
 
 	m.reconcileLocalForwards(desiredLocal, &result)
+	m.reconcileSocks(desiredSocksOf(hostByID), &result)
 
 	return result, nil
 }

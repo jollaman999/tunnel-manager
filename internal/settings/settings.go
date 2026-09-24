@@ -536,8 +536,8 @@ func Reset(db *gorm.DB) (before *Settings, after *Settings, err error) {
 	return before, &defaults, nil
 }
 
-// WarnForwardsOnAPIPort names every local forward that opens the port the API
-// is set to be served on. Reset calls for it: it puts the API port back to its
+// WarnForwardsOnAPIPort names every local forward and every SOCKS5 proxy that
+// opens the port the API is set to be served on. Reset calls for it: it puts the API port back to its
 // default, and a forward may have been given that port while the API was on
 // another one. The reset is not refused over it, because it is the way out of a
 // process that will not start, and the next start is not stopped by it either:
@@ -566,6 +566,27 @@ func WarnForwardsOnAPIPort(db *gorm.DB, logger *zap.Logger, apiPort int) {
 			zap.Uint("local_forward_id", forward.ID),
 			zap.Uint("host_id", forward.HostID),
 			zap.Int("local_port", forward.LocalPort))
+	}
+
+	// A proxy is named while it is switched on, whether its Host is enabled or
+	// not, since enabling the Host is what opens it.
+	var hosts []models.Host
+
+	err = db.Where("socks_enabled = ? AND socks_port = ?", true, apiPort).Order("id").Find(&hosts).Error
+	if err != nil {
+		logger.Warn("failed to fetch Hosts",
+			logid.HostListFetchFailed.Field(),
+			zap.Error(err))
+
+		return
+	}
+
+	for _, host := range hosts {
+		logger.Warn("the SOCKS5 proxy of a Host opens the port the API was put back to, "+
+			"so the next start may listen on another port",
+			logid.SettingsDefaultPortHeldBySocks.Field(),
+			zap.Uint("host_id", host.ID),
+			zap.Int("socks_port", host.SocksPort))
 	}
 }
 

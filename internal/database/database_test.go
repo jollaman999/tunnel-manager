@@ -1075,6 +1075,9 @@ func TestNewDatabaseKeepsTheHostsThatAreAlreadyStored(t *testing.T) {
 	if host.PrivateKey != "" || host.KeyPassphrase != "" {
 		t.Fatal("the migration put something in the key columns of a Host that carries none")
 	}
+	if host.SocksEnabled || host.SocksPort != 0 || host.SocksBindScope != "" || host.SocksAllowedSources != "" {
+		t.Fatalf("the migration gave a Host of the version before a SOCKS5 proxy: %+v", host)
+	}
 
 	// The new columns are there to be written, and the password may now be
 	// left out: that is the Host registered with a key alone.
@@ -1100,6 +1103,16 @@ func TestNewDatabaseKeepsTheHostsThatAreAlreadyStored(t *testing.T) {
 	}
 	if withKey.Password != "" {
 		t.Fatalf("the password of a Host that carries none came back as %q", withKey.Password)
+	}
+
+	// The SOCKS5 scope is held to the two words on a table that was migrated
+	// rather than created, the way the assignment scope is.
+	err = db.Create(&models.Host{
+		IP: "192.0.2.12", Port: 22, User: "operator", Enabled: true,
+		SocksEnabled: true, SocksPort: 1080, SocksBindScope: "elsewhere",
+	}).Error
+	if err == nil || !strings.Contains(err.Error(), "chk_hosts_socks_bind_scope") {
+		t.Fatalf("a Host with a SOCKS5 scope that is neither word was not refused by its constraint: %v", err)
 	}
 }
 
