@@ -24,8 +24,9 @@ What it does, in order:
    setup of the account `admin`, a service port, the Host, the approval of its
    host key, the tunnel coming up, the service opened through the port the Host
    opened, a local forward on `127.0.0.1:18080` that reaches the web server
-   inside the Host, and the SOCKS5 proxy of the Host on `127.0.0.1:1080`, which
-   a second Chrome opens that same web server through.
+   inside the Host, the status screen with the tunnel and the forward in one
+   table, and the SOCKS5 proxy of the Host on `127.0.0.1:1080`, which a second
+   Chrome opens that same web server through.
 6. Turns the frames into a GIF 960 pixels wide with ffmpeg, with fewer colors
    when it comes out larger than 5 MB.
 

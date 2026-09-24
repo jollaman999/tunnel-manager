@@ -120,6 +120,7 @@ func record(cfg config) error {
 		{"status", sceneStatus},
 		{"service", sceneService},
 		{"local forward", sceneLocalForward},
+		{"status again", sceneStatusBoth},
 		{"socks5", sceneSOCKS},
 	}
 
@@ -456,6 +457,36 @@ func sceneLocalForward(r *recorder, cfg config, _ string) error {
 	return r.shot(3500 * time.Millisecond)
 }
 
+// sceneStatusBoth goes back to the status screen, where the local forward that
+// was just made stands in the same table as the tunnel.
+func sceneStatusBoth(r *recorder, cfg config, _ string) error {
+	if err := r.navigate(cfg.base + "/ui/status"); err != nil {
+		return err
+	}
+
+	if err := r.run(chromedp.WaitVisible(`[data-count="forwards-connected"]`, chromedp.ByQuery)); err != nil {
+		return err
+	}
+
+	if err := r.caption("8. The status screen holds the tunnel and the local forward in one table"); err != nil {
+		return err
+	}
+
+	// Both sorts of row carry the same badge, so what is waited for is the
+	// second one rather than a badge of its own.
+	both := `document.querySelectorAll('table tbody .badge[data-status="connected"]').length >= 2`
+
+	if err := r.waitTrueWhileShooting(both, "both rows to be connected", 60*time.Second); err != nil {
+		return err
+	}
+
+	if err := r.scrollTo(`table`); err != nil {
+		return err
+	}
+
+	return r.shot(3500 * time.Millisecond)
+}
+
 func sceneSOCKS(r *recorder, cfg config, _ string) error {
 	if err := r.navigate(cfg.base + "/ui/hosts"); err != nil {
 		return err
@@ -469,7 +500,7 @@ func sceneSOCKS(r *recorder, cfg config, _ string) error {
 		return err
 	}
 
-	if err := r.caption("8. Turn on a SOCKS5 proxy and browse the network behind the Host"); err != nil {
+	if err := r.caption("9. Turn on a SOCKS5 proxy and browse the network behind the Host"); err != nil {
 		return err
 	}
 
@@ -586,7 +617,7 @@ func (r *recorder) throughProxy(cfg config) error {
 		return fmt.Errorf("the page at %s through the proxy says %q and not the web server inside the Host", cfg.socksURL, heading)
 	}
 
-	if err := r.caption("9. A browser set to the SOCKS5 proxy opens the address as the Host sees it"); err != nil {
+	if err := r.caption("10. A browser set to the SOCKS5 proxy opens the address as the Host sees it"); err != nil {
 		return err
 	}
 
@@ -819,12 +850,18 @@ func (r *recorder) click(sel, then string) error {
 
 // waitWhileShooting takes a frame a second until sel is on the page.
 func (r *recorder) waitWhileShooting(sel string, limit time.Duration) error {
+	return r.waitTrueWhileShooting(fmt.Sprintf("document.querySelector(%q) !== null", sel), sel, limit)
+}
+
+// waitTrueWhileShooting takes a frame a second until expr is true on the page.
+// what names what was waited for when it never is.
+func (r *recorder) waitTrueWhileShooting(expr, what string, limit time.Duration) error {
 	deadline := time.Now().Add(limit)
 
 	for time.Now().Before(deadline) {
 		var found bool
 
-		if err := r.run(chromedp.Evaluate(fmt.Sprintf("document.querySelector(%q) !== null", sel), &found)); err != nil {
+		if err := r.run(chromedp.Evaluate(expr, &found)); err != nil {
 			return err
 		}
 
@@ -839,7 +876,7 @@ func (r *recorder) waitWhileShooting(sel string, limit time.Duration) error {
 		time.Sleep(time.Second)
 	}
 
-	return fmt.Errorf("%s did not show up within %s", sel, limit)
+	return fmt.Errorf("%s did not show up within %s", what, limit)
 }
 
 func (r *recorder) waitGone(sel string, limit time.Duration) error {
