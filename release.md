@@ -1,3 +1,17 @@
+# v3.12.1
+
+## Add/fix features:
+
+- **A local forward can be switched off.** One that is switched off opens nothing and makes no SSH connection, while it keeps its local port, so no other forward, proxy or setting can take the port while it is off. Its state reads off, apart from disabled, which is still what a forward on a disabled Host reads.
+- **The local forwards of a Host are listed the way the other lists are.** The panel has checkboxes, pages, buttons for the checked rows (Enable, Disable and Delete, folded into one menu where they do not fit), and Edit, Enable or Disable and Delete on each row. Add sits at the top right of the list, and Add and Edit open the form in a second window over the panel: a save closes it and says so on the window, and a refusal is shown as before while the form stays open with what was typed.
+- **The list of a Host's local forwards takes page and size.** `GET /api/host/:id/local-forward` answers the shape the other lists do, the rows under items with total, page and size, where it answered a bare array before. A script that read the array reads items now.
+- **The Korean screens call the machine tunnel-manager runs on the system.** The local forward and SOCKS5 wording added in v3.12.0 used a different word for it than every other Korean screen does.
+
+## Notes:
+
+- The database gains enabled on the local forwards. The first start switches on every local forward stored before, so nothing that was running stops.
+- The upgrade note of v3.7.0 still holds: every Host stops until its key is approved, a stored path outside the data directory is put back to its default, and the data directory becomes 0700.
+
 # v3.12.0
 
 ## Add/fix features:
