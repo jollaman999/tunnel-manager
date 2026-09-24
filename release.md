@@ -1,3 +1,17 @@
+# v3.13.2
+
+## Add/fix features:
+
+- **The Manual no longer says the Status screen leaves local forwards out.** It said local forwards were not counted there, which stopped being so in v3.13.0 when they were put in the same table as the tunnels, and again in v3.13.1 when the counts were made to cover both. It now says where they stand and what the Port reached column of a forward is a reading of.
+- **The Manual names the columns the Status screen actually has.** It walked through the three addresses of a tunnel as Server, Local and Remote, and the last two were renamed Opened and Reaches in v3.13.0 because the table holds forwards that run the other way. It gives the names in use and says why they are not Local and Remote.
+- **The Manual says a local forward is measured too.** The passage on Port reached described the connection made to the Host and nothing else, so a reading on a forward row had nothing behind it. It says that a forward is measured at the same moments and the other way about, the target being dialled from the Host.
+
+All three are wording on the Manual screen, in every language. Nothing else changed.
+
+## Notes:
+
+- The upgrade note of v3.7.0 still holds: every Host stops until its key is approved, a stored path outside the data directory is put back to its default, and the data directory becomes 0700.
+
 # v3.13.1
 
 ## Add/fix features:
