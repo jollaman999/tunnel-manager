@@ -18,6 +18,8 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+
+	"github.com/jollaman999/tunnel-manager/internal/crypto"
 )
 
 // The names this installation is made of, on every platform.
@@ -456,7 +458,7 @@ func install(svc service, plan Plan, executable string, source string, out io.Wr
 		stopped = true
 	}
 
-	err = os.MkdirAll(plan.DataDir, dataDirMode)
+	err = crypto.MkdirAllPrivate(plan.DataDir, dataDirMode)
 	if err != nil {
 		return failed(fmt.Errorf("failed to make the data directory %s: %w", plan.DataDir, err))
 	}
