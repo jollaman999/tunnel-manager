@@ -175,32 +175,6 @@ func (f *localTunnel) stopped() bool {
 	}
 }
 
-// openLocalListeners opens the local port on both addresses of the pair and
-// reports which of them it did.
-//
-// Each address is opened with the network of its own family. On Linux a plain
-// "tcp" listener on [::] also takes the IPv4 wildcard, so asking for 0.0.0.0
-// and [::] that way fails the second with "address already in use". tcp6 sets
-// IPV6_V6ONLY and leaves IPv4 to the tcp4 listener, which makes the pair two
-// listeners that do not overlap, and lets a machine without IPv6 open the IPv4
-// half alone.
-func openLocalListeners(pair localPair) (*openForwards, error) {
-	listenerV4, errV4 := net.ListenTCP("tcp4", pair.v4)
-	listenerV6, errV6 := net.ListenTCP("tcp6", pair.v6)
-
-	switch {
-	case errV4 != nil && errV6 != nil:
-		return nil, fmt.Errorf("neither address of the bind scope could be opened on this machine (%s: %v; %s: %v)",
-			pair.v4, errV4, pair.v6, errV6)
-	case errV6 != nil:
-		return &openForwards{v4: listenerV4, reach: openReachV4, refused: errV6}, nil
-	case errV4 != nil:
-		return &openForwards{v6: listenerV6, reach: openReachV6, refused: errV4}, nil
-	}
-
-	return &openForwards{v4: listenerV4, v6: listenerV6, reach: openReachBoth}, nil
-}
-
 // errLocalForwardStopped is what establish returns when Stop ended it, which
 // is not a failure and is not retried.
 var errLocalForwardStopped = errors.New("local forward stopped")
