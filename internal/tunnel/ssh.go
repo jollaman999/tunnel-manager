@@ -557,6 +557,15 @@ func (t *SSHTunnel) forward(localConn net.Conn, idleTimeout time.Duration) {
 		_ = remoteConn.Close()
 	}()
 
+	joinConns(localConn, remoteConn, idleTimeout, t.logger)
+}
+
+// joinConns carries bytes between the two connections until both directions
+// have ended, the way forward describes, and is shared with the local forwards,
+// which join the same two kinds of connection the other way round. It closes
+// both where nothing more can be carried, and leaves closing them on the way out
+// to the caller.
+func joinConns(localConn, remoteConn net.Conn, idleTimeout time.Duration, logger *zap.Logger) {
 	// closeBoth ends the connection in both directions. It is called where
 	// nothing can be carried any further, and it is also what releases a copy
 	// that is blocked in a read.
@@ -576,7 +585,7 @@ func (t *SSHTunnel) forward(localConn net.Conn, idleTimeout time.Duration) {
 		_, err := io.Copy(dst, &countingReader{src: src, moved: &moved})
 		if err != nil && !errors.Is(err, io.EOF) {
 			if !isSelfClosed(err) {
-				t.logger.Debug("copy error", logid.TunnelForwardCopyFailed.Field(), zap.Error(err))
+				logger.Debug("copy error", logid.TunnelForwardCopyFailed.Field(), zap.Error(err))
 			}
 
 			// The stream broke. What is left of it cannot be delivered, and
@@ -637,14 +646,18 @@ func (t *SSHTunnel) forward(localConn net.Conn, idleTimeout time.Duration) {
 // handshake, and wrap the result. NewClientConn closes the connection itself
 // when the handshake fails, so a failure here leaves nothing open.
 func (t *SSHTunnel) dialSSH() (*ssh.Client, net.Conn, error) {
-	addr := t.Server.String()
+	return dialSSHClient(t.Server.String(), t.Config)
+}
 
-	conn, err := net.DialTimeout("tcp", addr, t.Config.Timeout)
+// dialSSHClient is dialSSH for any server and configuration, so the local
+// forwards connect the same way the tunnels do.
+func dialSSHClient(addr string, config *ssh.ClientConfig) (*ssh.Client, net.Conn, error) {
+	conn, err := net.DialTimeout("tcp", addr, config.Timeout)
 	if err != nil {
 		return nil, nil, err
 	}
 
-	c, chans, reqs, err := ssh.NewClientConn(conn, addr, t.Config)
+	c, chans, reqs, err := ssh.NewClientConn(conn, addr, config)
 	if err != nil {
 		return nil, nil, err
 	}

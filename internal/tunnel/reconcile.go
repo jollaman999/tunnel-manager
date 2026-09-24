@@ -139,14 +139,35 @@ func parseTunnelKey(key string) (uint, uint, bool) {
 // deleted either, because this is the read side of the loop and a delete here
 // would race the handler that is removing the rows.
 func (m *Manager) desiredTunnels() (map[string]desiredTunnel, error) {
+	hostByID, err := m.hostsByID()
+	if err != nil {
+		return nil, err
+	}
+
+	return m.desiredTunnelsOf(hostByID)
+}
+
+// hostsByID reads every Host, keyed by its ID. A pass reads it once and builds
+// both the tunnels and the local forwards that should run from it.
+func (m *Manager) hostsByID() (map[uint]*models.Host, error) {
 	var hosts []models.Host
 	err := m.db.Find(&hosts).Error
 	if err != nil {
 		return nil, fmt.Errorf("failed to fetch hosts: %w", err)
 	}
 
+	hostByID := make(map[uint]*models.Host, len(hosts))
+	for i := range hosts {
+		hostByID[hosts[i].ID] = &hosts[i]
+	}
+
+	return hostByID, nil
+}
+
+// desiredTunnelsOf is desiredTunnels over Hosts that were read already.
+func (m *Manager) desiredTunnelsOf(hostByID map[uint]*models.Host) (map[string]desiredTunnel, error) {
 	var servicePorts []models.ServicePort
-	err = m.db.Find(&servicePorts).Error
+	err := m.db.Find(&servicePorts).Error
 	if err != nil {
 		return nil, fmt.Errorf("failed to fetch service ports: %w", err)
 	}
@@ -155,11 +176,6 @@ func (m *Manager) desiredTunnels() (map[string]desiredTunnel, error) {
 	err = m.db.Find(&assignments).Error
 	if err != nil {
 		return nil, fmt.Errorf("failed to fetch service port assignments: %w", err)
-	}
-
-	hostByID := make(map[uint]*models.Host, len(hosts))
-	for i := range hosts {
-		hostByID[hosts[i].ID] = &hosts[i]
 	}
 
 	spByID := make(map[uint]*models.ServicePort, len(servicePorts))
