@@ -1054,8 +1054,6 @@ td.num {
   font-variant-numeric: tabular-nums;
 }
 
-/* A timestamp and a row of buttons are each one thing. Left to wrap they break
-   at the space inside them, which reads as two values stacked in one cell. */
 /* A line that belongs under a row rather than in it. It carries the whole
    width of the table, which is the point: what goes there is a sentence. */
 tbody tr.under > td {
@@ -1348,6 +1346,8 @@ tbody tr.under > td {
   white-space: nowrap;
 }
 
+/* A timestamp and a row of buttons are each one thing. Left to wrap they break
+   at the space inside them, which reads as two values stacked in one cell. */
 td .buttons {
   flex-wrap: nowrap;
   white-space: nowrap;
