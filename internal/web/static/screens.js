@@ -543,24 +543,29 @@ async function drawStatus() {
   // are what says what the installation is doing, and a count that followed the
   // page would read as a tunnel count that fell to ten.
   //
-  // There are two sets of three because the table below holds two sorts of row
-  // and the two are not added up anywhere. A single set over both would say
-  // that nine of eleven are connected without saying which sort the two that
-  // are not belong to, and the sorts fail for different reasons and are fixed
-  // in different places. Each label names its sort for the same reason: three
-  // numbers headed Desired, Rows and Connected over a table of both sorts read
-  // as being about all of it, which is what they are no longer about.
+  // There are four, and each counts the two sorts of row together, a local
+  // forward being a tunnel to whoever is reading the screen. No label names a
+  // sort for that reason: a number headed with the name of one sort, over a
+  // table holding both, is read as being about half of what it counts.
+  //
+  // Reconnecting and Errors are apart because what they leave the reader to do
+  // differs. A row that is reconnecting is on its way back on its own and one
+  // in error is waiting for somebody, and a single number over the two says
+  // nothing about which of them the screen is asking for.
+  //
+  // How many rows there are is not among them, though the answer carries it.
+  // The table under here is what says how many rows there are, and the run of
+  // page controls says it in words at the foot of it; a box over the table
+  // holding the same number is the screen counting its own rows back at the
+  // reader. What the answer still carries it for is those controls, which is
+  // what the pages are cut from.
   const counts = document.createElement("div");
   counts.className = "counts";
   counts.appendChild(countBox(t("status.desired.label"), data.desired_tunnels, "desired"));
-  counts.appendChild(countBox(t("status.rows.label"), data.total_tunnels, "total"));
   counts.appendChild(countBox(t("status.connected.label"), data.connected_tunnels, "connected"));
-  counts.appendChild(countBox(t("status.forwards-desired.label"),
-    data.desired_local_forwards, "forwards-desired"));
-  counts.appendChild(countBox(t("status.forwards-rows.label"),
-    data.total_local_forwards, "forwards-total"));
-  counts.appendChild(countBox(t("status.forwards-connected.label"),
-    data.connected_local_forwards, "forwards-connected"));
+  counts.appendChild(countBox(t("status.reconnecting.label"),
+    data.reconnecting_tunnels, "reconnecting"));
+  counts.appendChild(countBox(t("status.errors.label"), data.error_tunnels, "errors"));
 
   const nodes = [counts];
 
@@ -574,19 +579,23 @@ async function drawStatus() {
     nodes.push(asked);
   }
 
-  // The three counts differ for two different reasons, and the difference is
-  // the whole point of showing all three. A tunnel with no row has not been
-  // started at all, while a row that is not connected was started and failed.
-  const missing = data.desired_tunnels - data.total_tunnels;
-  if (missing > 0) {
-    nodes.push(statusLine(
-      t(plural(missing, "status.missing-one.notice", "status.missing-many.notice"),
-        { count: missing }),
-      "warning"
-    ));
-  }
+  // There is one sentence about the counts and it is the subtraction none of
+  // the boxes holds: how much of what should be running is not carrying
+  // traffic. Reconnecting and Errors are each a box already, and a line for
+  // either of them would be that box read out; what neither of them holds is
+  // the rows that are in no counted state at all - one still starting, one held
+  // up at a host key - and those are short the same as the rest.
+  //
+  // The line that used to be here about tunnels that had no row yet is gone
+  // with the count it was worked out from: the answer no longer says how many
+  // rows there are, and the subtraction cannot be done. Nothing is lost by it
+  // on this screen. The rows run ahead of what is wanted rather than behind it
+  // - a Host that is switched off keeps its local forwards in the table, as
+  // rows that are off and that nothing wants - so the number that line was
+  // drawn on came out at nought or below.
+  const desired = countOf(data, "desired_tunnels");
+  const down = desired - countOf(data, "connected_tunnels");
 
-  const down = data.total_tunnels - data.connected_tunnels;
   if (down > 0) {
     nodes.push(statusLine(
       t(plural(down, "status.down-one.notice", "status.down-many.notice"), { count: down }),
@@ -594,33 +603,15 @@ async function drawStatus() {
     ));
   }
 
-  // A local forward is not asked the first of those two questions. Its row is
-  // the one that was configured and is there whether or not anything runs, so
-  // there is no row that has yet to be written for a line to be about; what a
-  // forward can be short of is the running, and that is what this says.
-  const forwardsDown = data.desired_local_forwards - data.connected_local_forwards;
-  if (forwardsDown > 0) {
-    nodes.push(statusLine(
-      t(plural(forwardsDown, "status.forwards-down-one.notice",
-        "status.forwards-down-many.notice"), { count: forwardsDown }),
-      "warning"
-    ));
-  }
-
   // Nothing at all is not the same as everything connected. An installation
-  // with no Host or no service port has no tunnel for the line to be about,
-  // and the empty list under it is what says so.
+  // with no Host, no service port and no local forward has nothing for the line
+  // to be about, and the empty table under it is what says so.
   //
-  // The count of what should be running is the only one worth asking. The two
-  // lines above have already left, so the rows are as many as should be running
-  // and the connected ones are as many as there are rows: where that number is
-  // nought, all three are.
-  //
-  // A local forward that is down keeps the line off the screen even though the
-  // line speaks of tunnels alone. It is drawn in the colour of everything being
-  // well, and that colour over a warning about a forward under it is the screen
-  // saying two things at once.
-  if (data.desired_tunnels > 0 && missing === 0 && down === 0 && !(forwardsDown > 0)) {
+  // Fewer than nought short is still not short. A row can be connected while
+  // nothing wants it - one switched off that the reconcile loop has not reached
+  // yet - and that makes the connected count the larger of the two without
+  // anything being missing.
+  if (desired > 0 && down <= 0) {
     nodes.push(statusLine(t("status.all-connected.notice"), "ok"));
   }
 
@@ -642,11 +633,21 @@ async function drawStatus() {
         tunnel.server,
         openedCell(tunnel),
         tunnel.remote,
-        // Nothing measures the reach of a local forward, so the cell is left
-        // empty. reachBadge draws an unmeasured reading as "unknown", which is
-        // what a tunnel nothing has asked about yet says; on a forward that
-        // would be the screen promising a reading that is never taken.
-        forward ? "" : reachBadge(tunnel.forward_reach),
+        // Both sorts are measured now and both are drawn the same way. What
+        // the reading is of differs with the sort - a service port row asks
+        // whether the port opened on the Host answered a connection from here,
+        // a local forward row whether the target answered one dialled from the
+        // Host - and the Opened column beside it is what says which way round
+        // the row runs.
+        //
+        // A row that is reconnecting carries the reading the connection that
+        // dropped left, on either sort, and it is shown rather than hidden. The
+        // cell would otherwise mean two things in the one column: unmeasured on
+        // a service port row and measured-but-withheld on a forward, with
+        // nothing in either cell to tell them apart. What dates the reading is
+        // the Status cell next to it, which is the pairing a service port row
+        // has always been read with.
+        reachBadge(tunnel.forward_reach),
         tunnel.retry_count,
         timeCell(tunnel.last_connected_at)
       ];
@@ -900,6 +901,16 @@ function probedAddress(server, local) {
 // the order of what the server called itself.
 function reachAdvice(tunnel) {
   if (tunnel.status !== "connected" || tunnel.forward_reach !== "unreachable") {
+    return null;
+  }
+
+  // Not under a local forward, whose reading this says nothing true about.
+  // Every line below is about a port the SSH server was asked to open on the
+  // Host, and a local forward asks for no such port: its port is opened here,
+  // and what did not answer is the target the Host dialled. Telling that
+  // operator to look at GatewayPorts is sending them to change a setting that
+  // has nothing to do with what they are looking at.
+  if (isLocalForward(tunnel)) {
     return null;
   }
 
@@ -2204,7 +2215,7 @@ async function approveHostKey(host, waiting, password, button, close, problem) {
   }
 }
 
-// countBox is one of the three numbers at the top of the status screen.
+// countBox is one of the four numbers at the top of the status screen.
 function countBox(label, value, name) {
   const box = document.createElement("div");
 

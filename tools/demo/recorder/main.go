@@ -464,7 +464,9 @@ func sceneStatusBoth(r *recorder, cfg config, _ string) error {
 		return err
 	}
 
-	if err := r.run(chromedp.WaitVisible(`[data-count="forwards-connected"]`, chromedp.ByQuery)); err != nil {
+	// The last of the four count boxes, so that seeing it means the row of
+	// them has been drawn rather than only begun.
+	if err := r.run(chromedp.WaitVisible(`[data-count="errors"]`, chromedp.ByQuery)); err != nil {
 		return err
 	}
 
