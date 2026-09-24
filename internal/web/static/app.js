@@ -1443,7 +1443,6 @@ function buildTable(headers, rows, numericColumns, pickHeader) {
   table.appendChild(head);
 
   const body = document.createElement("tbody");
-  let acting = false;
 
   for (const row of rows) {
     // A row may carry something that belongs under it rather than in it. It is
@@ -1487,7 +1486,6 @@ function buildTable(headers, rows, numericColumns, pickHeader) {
         // column on some screens and there is none at all on others.
         if (cell.classList.contains("buttons")) {
           td.className = "actions";
-          acting = true;
         }
       } else {
         td.textContent = cell === null || cell === undefined ? "" : String(cell);
@@ -1520,166 +1518,192 @@ function buildTable(headers, rows, numericColumns, pickHeader) {
   scroller.className = "table-scroll";
   scroller.appendChild(table);
 
-  if (acting && rowFit !== null) {
-    const gauge = document.createElement("div");
-
-    gauge.className = "table-gauge";
-    gauge.setAttribute("aria-hidden", "true");
-    scroller.appendChild(gauge);
-    rowFit.observe(gauge);
-  }
-
   return scroller;
 }
 
-// rowMenu is the open menu of a row's buttons, or null.
-let rowMenu = null;
+// actionMenu is the open menu of folded buttons, or null.
+let actionMenu = null;
 
-// rowFit decides again whether a table's buttons fit when its width changes.
-const rowFit = typeof ResizeObserver === "function"
+// barFit decides again whether the buttons of a row over a list fit on one line
+// when its width changes. A row taken off the page is let go of here, and the
+// menu it opened with it.
+const barFit = typeof ResizeObserver === "function"
   ? new ResizeObserver(function (entries) {
     for (const entry of entries) {
-      const gauge = entry.target;
-      const scroller = gauge.parentNode;
+      const bar = entry.target;
 
-      if (!gauge.isConnected) {
-        rowFit.unobserve(gauge);
+      if (!bar.isConnected) {
+        barFit.unobserve(bar);
 
-        if (rowMenu !== null && rowMenu.scroller === scroller) {
-          closeRowMenu(false);
+        if (actionMenu !== null && actionMenu.owner === bar) {
+          closeActionMenu(false);
         }
 
         continue;
       }
 
-      fitRowActions(scroller);
+      fitBarActions(bar);
     }
   })
   : null;
 
-// fitRowActions folds the buttons of a table into menus, or lays them out
-// again, by whether the table fits its scroller with them laid out.
-function fitRowActions(scroller) {
-  const folded = scroller.classList.contains("rows-folded");
-
-  if (folded) {
-    scroller.classList.remove("rows-folded");
+// foldingBar lets the buttons of a row over a list fold into one menu button
+// where they do not fit on one line. The row wraps them instead where the
+// browser cannot say when its width changes.
+//
+// Buttons put into the row after this are folded with the others, and the
+// menu button is dead while every one of them is: they are dead while nothing
+// is ticked, and a live button opening a list of dead ones says less than that.
+function foldingBar(bar) {
+  if (barFit === null || typeof MutationObserver !== "function") {
+    return bar;
   }
 
-  const fits = scroller.scrollWidth <= scroller.clientWidth;
+  const trigger = document.createElement("button");
 
-  if (fits) {
-    if (folded) {
-      unfoldRowActions(scroller);
-    }
+  trigger.type = "button";
+  trigger.className = "bar-menu";
+  trigger.textContent = t("list.picked-actions.button");
+  trigger.setAttribute("aria-haspopup", "menu");
+  trigger.setAttribute("aria-expanded", "false");
 
-    return;
-  }
-
-  if (folded) {
-    scroller.classList.add("rows-folded");
-
-    return;
-  }
-
-  foldRowActions(scroller);
-}
-
-// rowActionCells is the cell of buttons of every row of a table.
-function rowActionCells(scroller) {
-  return scroller.querySelectorAll(":scope > table > tbody > tr > td.actions");
-}
-
-// foldRowActions puts a menu button in every cell of buttons and hides the
-// buttons.
-function foldRowActions(scroller) {
-  scroller.classList.add("rows-folded");
-
-  rowActionCells(scroller).forEach(function (cell, index) {
-    const buttons = cell.querySelector(":scope > .buttons");
-
-    if (buttons === null || cell.querySelector(":scope > .row-menu") !== null) {
-      return;
-    }
-
-    cell.appendChild(rowMenuButton(scroller, cell, buttons, index));
-  });
-}
-
-// unfoldRowActions takes the menu buttons away and shows the buttons again.
-function unfoldRowActions(scroller) {
-  if (rowMenu !== null && rowMenu.scroller === scroller) {
-    closeRowMenu(false);
-  }
-
-  scroller.classList.remove("rows-folded");
-
-  for (const cell of rowActionCells(scroller)) {
-    const trigger = cell.querySelector(":scope > .row-menu");
-
-    if (trigger === null) {
-      continue;
-    }
-
-    const focused = document.activeElement === trigger;
-
-    cell.removeChild(trigger);
-
-    const first = cell.querySelector(":scope > .buttons > button");
-
-    if (focused && first !== null) {
-      first.focus({ preventScroll: true });
-    }
-  }
-}
-
-// rowMenuButton is the button a row's buttons are folded into.
-function rowMenuButton(scroller, cell, buttons, index) {
-  const node = document.createElement("button");
-  const first = cell.parentNode.querySelector(":scope > td:not(.pick)");
-  const name = first === null || first === cell || first.textContent.trim() === ""
-    ? String(index + 1)
-    : first.textContent.trim();
-
-  node.type = "button";
-  node.className = "row-menu";
-  node.textContent = t("list.row-actions.button");
-  node.title = t("list.row-actions.aria", { row: name });
-  node.setAttribute("aria-haspopup", "menu");
-  node.setAttribute("aria-expanded", "false");
-  node.setAttribute("aria-label", node.title);
-
-  node.addEventListener("click", function () {
-    if (rowMenu !== null && rowMenu.trigger === node) {
-      closeRowMenu(false);
+  trigger.addEventListener("click", function () {
+    if (actionMenu !== null && actionMenu.trigger === trigger) {
+      closeActionMenu(false);
 
       return;
     }
 
-    openRowMenu(scroller, node, buttons, 0);
+    openActionMenu(bar, trigger, barActions(bar), 0);
   });
 
-  node.addEventListener("keydown", function (event) {
+  trigger.addEventListener("keydown", function (event) {
     if (event.key === "ArrowDown" || event.key === "ArrowUp") {
       event.preventDefault();
 
-      openRowMenu(scroller, node, buttons, event.key === "ArrowDown" ? 0 : -1);
+      openActionMenu(bar, trigger, barActions(bar), event.key === "ArrowDown" ? 0 : -1);
     }
   });
 
-  return node;
+  bar.classList.add("folding");
+  bar.appendChild(trigger);
+  settleBarMenu(bar);
+
+  new MutationObserver(function (changes) {
+    const added = changes.some(function (change) {
+      return change.type === "childList";
+    });
+
+    settleBarMenu(bar);
+
+    if (added && bar.isConnected) {
+      fitBarActions(bar);
+    }
+  }).observe(bar, { childList: true, subtree: true, attributes: true, attributeFilter: ["disabled"] });
+
+  barFit.observe(bar);
+
+  return bar;
 }
 
-// openRowMenu puts the buttons of a row up as a list beside its menu button.
-function openRowMenu(scroller, trigger, buttons, at) {
-  closeRowMenu(false);
+// barActions is the buttons of a row over a list other than its menu button.
+function barActions(bar) {
+  return Array.prototype.slice.call(bar.querySelectorAll(":scope > button:not(.bar-menu)"));
+}
+
+// barMenuButton is the menu button of a row over a list, or null.
+function barMenuButton(bar) {
+  return bar.querySelector(":scope > .bar-menu");
+}
+
+// settleBarMenu makes the menu button dead when every button it holds is.
+function settleBarMenu(bar) {
+  const trigger = barMenuButton(bar);
+
+  if (trigger === null) {
+    return;
+  }
+
+  const dead = barActions(bar).every(function (button) {
+    return button.disabled;
+  });
+
+  if (trigger.disabled !== dead) {
+    trigger.disabled = dead;
+  }
+
+  if (dead && actionMenu !== null && actionMenu.trigger === trigger) {
+    closeActionMenu(false);
+  }
+}
+
+// fitBarActions folds the buttons of a row into its menu button, or lays them
+// out again. It is decided by the buttons laid out, whichever way the row is
+// now, so a width that fits the menu button and not the buttons does not fold
+// and unfold it by turns.
+function fitBarActions(bar) {
+  const trigger = barMenuButton(bar);
+  const buttons = barActions(bar);
+
+  if (trigger === null || buttons.length === 0) {
+    return;
+  }
+
+  const folded = bar.classList.contains("folded");
+
+  if (folded) {
+    bar.classList.remove("folded");
+  }
+
+  const fits = bar.scrollWidth <= bar.clientWidth;
+
+  if (fits === !folded) {
+    if (folded) {
+      bar.classList.add("folded");
+    }
+
+    return;
+  }
+
+  if (fits) {
+    const focused = document.activeElement === trigger;
+
+    if (actionMenu !== null && actionMenu.owner === bar) {
+      closeActionMenu(false);
+    }
+
+    const first = buttons.find(function (button) {
+      return !button.disabled;
+    });
+
+    if (focused && first !== undefined) {
+      first.focus({ preventScroll: true });
+    }
+
+    return;
+  }
+
+  const focused = buttons.indexOf(document.activeElement) !== -1;
+
+  bar.classList.add("folded");
+
+  if (focused) {
+    trigger.focus({ preventScroll: true });
+  }
+}
+
+// openActionMenu puts buttons up as a list beside the menu button they are
+// folded into. An entry presses the button it stands for, so what a button
+// does is not written twice. The ones that cannot be taken back go last, away
+// from where the hand lands first.
+function openActionMenu(owner, trigger, originals, at) {
+  closeActionMenu(false);
 
   const menu = document.createElement("div");
 
-  menu.className = "row-menu-list";
+  menu.className = "action-menu-list";
   menu.setAttribute("role", "menu");
 
-  const originals = Array.prototype.slice.call(buttons.querySelectorAll(":scope > button"));
   const ordered = originals.filter(function (original) {
     return !original.classList.contains("danger");
   }).concat(originals.filter(function (original) {
@@ -1701,7 +1725,7 @@ function openRowMenu(scroller, trigger, buttons, at) {
     }
 
     item.addEventListener("click", function () {
-      closeRowMenu(true);
+      closeActionMenu(true);
       original.click();
     });
 
@@ -1709,17 +1733,17 @@ function openRowMenu(scroller, trigger, buttons, at) {
   }
 
   document.body.appendChild(menu);
-  placeRowMenu(menu, trigger);
+  placeActionMenu(menu, trigger);
 
   trigger.setAttribute("aria-expanded", "true");
-  rowMenu = { menu: menu, trigger: trigger, scroller: scroller };
+  actionMenu = { menu: menu, trigger: trigger, owner: owner };
 
-  window.addEventListener("keydown", onRowMenuKey, true);
-  document.addEventListener("pointerdown", onRowMenuPress, true);
-  document.addEventListener("scroll", onRowMenuScroll, true);
-  window.addEventListener("resize", onRowMenuResize);
+  window.addEventListener("keydown", onActionMenuKey, true);
+  document.addEventListener("pointerdown", onActionMenuPress, true);
+  document.addEventListener("scroll", onActionMenuScroll, true);
+  window.addEventListener("resize", onActionMenuResize);
 
-  const items = rowMenuItems(menu);
+  const items = actionMenuItems(menu);
 
   if (items.length > 0) {
     items[at < 0 ? items.length - 1 : 0].focus({ preventScroll: true });
@@ -1729,8 +1753,9 @@ function openRowMenu(scroller, trigger, buttons, at) {
   }
 }
 
-// placeRowMenu sets the list beside its menu button, inside the window.
-function placeRowMenu(menu, trigger) {
+// placeActionMenu sets the list under its menu button, lined up with the start
+// of it, inside the window.
+function placeActionMenu(menu, trigger) {
   const edge = 8;
   const box = trigger.getBoundingClientRect();
   const width = menu.offsetWidth;
@@ -1739,7 +1764,7 @@ function placeRowMenu(menu, trigger) {
   const down = window.innerHeight;
   const rtl = document.documentElement.getAttribute("dir") === "rtl";
 
-  let left = rtl ? box.left : box.right - width;
+  let left = rtl ? box.right - width : box.left;
   let top = box.bottom + 4;
 
   if (top + height > down - edge && box.top - 4 - height >= edge) {
@@ -1753,28 +1778,28 @@ function placeRowMenu(menu, trigger) {
   menu.style.top = top + "px";
 }
 
-// rowMenuItems is the entries of the list the keyboard can land on.
-function rowMenuItems(menu) {
+// actionMenuItems is the entries of the list the keyboard can land on.
+function actionMenuItems(menu) {
   return Array.prototype.filter.call(menu.querySelectorAll("button"), function (item) {
     return !item.disabled;
   });
 }
 
-// closeRowMenu takes the open list away. refocus puts the keyboard back on its
-// menu button.
-function closeRowMenu(refocus) {
-  if (rowMenu === null) {
+// closeActionMenu takes the open list away. refocus puts the keyboard back on
+// its menu button.
+function closeActionMenu(refocus) {
+  if (actionMenu === null) {
     return;
   }
 
-  const open = rowMenu;
+  const open = actionMenu;
 
-  rowMenu = null;
+  actionMenu = null;
 
-  window.removeEventListener("keydown", onRowMenuKey, true);
-  document.removeEventListener("pointerdown", onRowMenuPress, true);
-  document.removeEventListener("scroll", onRowMenuScroll, true);
-  window.removeEventListener("resize", onRowMenuResize);
+  window.removeEventListener("keydown", onActionMenuKey, true);
+  document.removeEventListener("pointerdown", onActionMenuPress, true);
+  document.removeEventListener("scroll", onActionMenuScroll, true);
+  window.removeEventListener("resize", onActionMenuResize);
 
   if (open.menu.parentNode !== null) {
     open.menu.parentNode.removeChild(open.menu);
@@ -1787,19 +1812,19 @@ function closeRowMenu(refocus) {
   }
 }
 
-// onRowMenuKey answers the keys of an open list.
-function onRowMenuKey(event) {
-  if (rowMenu === null) {
+// onActionMenuKey answers the keys of an open list.
+function onActionMenuKey(event) {
+  if (actionMenu === null) {
     return;
   }
 
-  const menu = rowMenu.menu;
+  const menu = actionMenu.menu;
 
   if (event.key === "Escape") {
     event.preventDefault();
     event.stopPropagation();
 
-    closeRowMenu(true);
+    closeActionMenu(true);
 
     return;
   }
@@ -1809,12 +1834,12 @@ function onRowMenuKey(event) {
   }
 
   if (event.key === "Tab") {
-    closeRowMenu(true);
+    closeActionMenu(true);
 
     return;
   }
 
-  const items = rowMenuItems(menu);
+  const items = actionMenuItems(menu);
 
   if (items.length === 0) {
     return;
@@ -1840,29 +1865,29 @@ function onRowMenuKey(event) {
   }
 }
 
-// onRowMenuPress closes the list on a press outside it.
-function onRowMenuPress(event) {
-  if (rowMenu === null) {
+// onActionMenuPress closes the list on a press outside it.
+function onActionMenuPress(event) {
+  if (actionMenu === null) {
     return;
   }
 
-  if (rowMenu.menu.contains(event.target) || rowMenu.trigger.contains(event.target)) {
+  if (actionMenu.menu.contains(event.target) || actionMenu.trigger.contains(event.target)) {
     return;
   }
 
-  closeRowMenu(false);
+  closeActionMenu(false);
 }
 
-// onRowMenuScroll closes the list when anything under it scrolls.
-function onRowMenuScroll(event) {
-  if (rowMenu !== null && !rowMenu.menu.contains(event.target)) {
-    closeRowMenu(false);
+// onActionMenuScroll closes the list when anything under it scrolls.
+function onActionMenuScroll(event) {
+  if (actionMenu !== null && !actionMenu.menu.contains(event.target)) {
+    closeActionMenu(false);
   }
 }
 
-// onRowMenuResize closes the list when the window changes size.
-function onRowMenuResize() {
-  closeRowMenu(false);
+// onActionMenuResize closes the list when the window changes size.
+function onActionMenuResize() {
+  closeActionMenu(false);
 }
 
 // bulletList is a list of sentences. It is a list and not one paragraph with

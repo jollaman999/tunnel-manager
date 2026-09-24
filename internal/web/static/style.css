@@ -1349,110 +1349,6 @@ td .buttons {
   white-space: nowrap;
 }
 
-/* A table whose buttons do not fit on one line shows one menu button a row in
-   their place. */
-.table-scroll.rows-folded td.actions > .buttons {
-  display: none;
-}
-
-.table-scroll:not(.rows-folded) td.actions > .row-menu {
-  display: none;
-}
-
-/* A folded list can still be wider than its box on a narrow screen, and the
-   menu is the last cell, so the cell is kept at the end of the box while the
-   rest scrolls under it. It is painted with the row's own colours, since
-   whatever scrolls beneath would otherwise show through. */
-.table-scroll.rows-folded > table > tbody > tr > td.actions:last-child,
-.table-scroll.rows-folded > table:has(> tbody > tr > td.actions:last-child) > thead > tr > th:last-child {
-  position: sticky;
-  inset-inline-end: 0;
-  z-index: 1;
-  box-shadow: inset 1px 0 0 var(--border-soft), -6px 0 8px -6px var(--shadow);
-}
-
-[dir="rtl"] .table-scroll.rows-folded > table > tbody > tr > td.actions:last-child,
-[dir="rtl"] .table-scroll.rows-folded > table:has(> tbody > tr > td.actions:last-child) > thead > tr > th:last-child {
-  box-shadow: inset -1px 0 0 var(--border-soft), 6px 0 8px -6px var(--shadow);
-}
-
-.table-scroll.rows-folded > table > tbody > tr > td.actions:last-child {
-  background: var(--bg-surface);
-}
-
-.table-scroll.rows-folded > table > tbody > tr:nth-child(even) > td.actions:last-child {
-  background: linear-gradient(var(--row-band), var(--row-band)), var(--bg-surface);
-}
-
-.table-scroll.rows-folded > table > tbody > tr:hover > td.actions:last-child {
-  background: linear-gradient(var(--row-hover), var(--row-hover)), var(--bg-surface);
-}
-
-.row-menu {
-  white-space: nowrap;
-}
-
-.row-menu::after {
-  content: "\25be";
-  margin-inline-start: 0.35em;
-}
-
-.row-menu[aria-expanded="true"] {
-  background: var(--control-active);
-}
-
-/* The list a menu button opens, over the page and over a panel. */
-.row-menu-list {
-  position: fixed;
-  z-index: 15;
-  display: flex;
-  flex-direction: column;
-  min-width: 10rem;
-  max-width: calc(100vw - 1rem);
-  max-height: calc(100vh - 1rem);
-  overflow-y: auto;
-  box-sizing: border-box;
-  padding: 0.3rem;
-  background: var(--bg-surface);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-control);
-  box-shadow: 0 8px 24px var(--shadow);
-}
-
-.row-menu-list > button {
-  padding: 0.45rem 0.75rem;
-  text-align: start;
-  white-space: nowrap;
-  color: var(--text);
-  background: transparent;
-  border: 0;
-  border-radius: calc(var(--radius-control) - 0.3rem);
-}
-
-.row-menu-list > button:hover,
-.row-menu-list > button:focus-visible {
-  background: var(--row-hover);
-}
-
-.row-menu-list > button:focus-visible {
-  outline-offset: -2px;
-}
-
-.row-menu-list > button.danger {
-  color: var(--danger);
-}
-
-.row-menu-list > button.danger:hover,
-.row-menu-list > button.danger:focus-visible {
-  color: var(--danger);
-  background: var(--danger-bg);
-}
-
-.row-menu-list > button:disabled {
-  color: var(--text-disabled);
-  background: transparent;
-}
-
 /* What an import did is told in a word or two for the kind and the action, and
    a word broken in half there reads as two. The reason is a sentence and keeps
    wrapping. */
@@ -1641,6 +1537,89 @@ td.pick input[type="checkbox"] {
   color: var(--text-disabled);
   background: var(--bg-sunken);
   border-color: var(--border);
+}
+
+/* Where the script can tell when the row changes width, the presses stay on
+   one line and fold into one menu button where that line does not hold them,
+   so the table does not move down under a second line of presses. */
+.list-actions.folding {
+  flex-wrap: nowrap;
+}
+
+.list-actions.folding > button {
+  flex-shrink: 0;
+  white-space: nowrap;
+}
+
+.list-actions.folded > button:not(.bar-menu),
+.list-actions:not(.folded) > .bar-menu {
+  display: none;
+}
+
+.bar-menu {
+  white-space: nowrap;
+}
+
+.bar-menu::after {
+  content: "\25be";
+  margin-inline-start: 0.35em;
+}
+
+.bar-menu[aria-expanded="true"] {
+  background: var(--control-active);
+}
+
+
+/* The list a menu button opens, over the page and over a panel. */
+.action-menu-list {
+  position: fixed;
+  z-index: 15;
+  display: flex;
+  flex-direction: column;
+  min-width: 10rem;
+  max-width: calc(100vw - 1rem);
+  max-height: calc(100vh - 1rem);
+  overflow-y: auto;
+  box-sizing: border-box;
+  padding: 0.3rem;
+  background: var(--bg-surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-control);
+  box-shadow: 0 8px 24px var(--shadow);
+}
+
+.action-menu-list > button {
+  padding: 0.45rem 0.75rem;
+  text-align: start;
+  white-space: nowrap;
+  color: var(--text);
+  background: transparent;
+  border: 0;
+  border-radius: calc(var(--radius-control) - 0.3rem);
+}
+
+.action-menu-list > button:hover,
+.action-menu-list > button:focus-visible {
+  background: var(--row-hover);
+}
+
+.action-menu-list > button:focus-visible {
+  outline-offset: -2px;
+}
+
+.action-menu-list > button.danger {
+  color: var(--danger);
+}
+
+.action-menu-list > button.danger:hover,
+.action-menu-list > button.danger:focus-visible {
+  color: var(--danger);
+  background: var(--danger-bg);
+}
+
+.action-menu-list > button:disabled {
+  color: var(--text-disabled);
+  background: transparent;
 }
 
 /* The rows named in the confirmation of a batch delete, one to a line. They

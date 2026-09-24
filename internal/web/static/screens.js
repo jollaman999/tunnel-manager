@@ -2717,6 +2717,9 @@ function socksCell(host) {
 // second press over the ticks puts it into the row beside this one. Both lists
 // have one and neither is the other's: the service port list assigns what is
 // ticked to Hosts, and the Host list turns what is ticked on and off.
+//
+// Where the presses do not fit on one line they fold into one menu button,
+// the ones put in after this included, rather than wrap onto a second line.
 function deletePickedBar(spec) {
   const row = document.createElement("div");
 
@@ -2727,7 +2730,7 @@ function deletePickedBar(spec) {
       return deletePicked(spec);
     }, "danger")));
 
-  return row;
+  return foldingBar(row);
 }
 
 // ticksWakeThePress is the rule every press over the ticks of a list is under:
