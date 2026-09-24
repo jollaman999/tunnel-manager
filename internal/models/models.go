@@ -176,13 +176,17 @@ type LocalForward struct {
 	// BindScope is where on this machine LocalPort is opened, with the words
 	// and the constraint HostServicePort.BindScope carries, and an empty value
 	// is the wildcard for the same reason.
-	BindScope   string    `gorm:"check:chk_local_forwards_bind_scope,bind_scope IN ('','loopback','wildcard')" json:"bind_scope"`
-	LocalPort   int       `gorm:"uniqueIndex:idx_local_forwards_local_port;not null" json:"local_port"`
-	TargetIP    string    `gorm:"not null" json:"target_ip"`
-	TargetPort  int       `gorm:"not null" json:"target_port"`
-	Description string    `json:"description"`
-	CreatedAt   time.Time `json:"created_at"`
-	UpdatedAt   time.Time `json:"updated_at"`
+	BindScope   string `gorm:"check:chk_local_forwards_bind_scope,bind_scope IN ('','loopback','wildcard')" json:"bind_scope"`
+	LocalPort   int    `gorm:"uniqueIndex:idx_local_forwards_local_port;not null" json:"local_port"`
+	TargetIP    string `gorm:"not null" json:"target_ip"`
+	TargetPort  int    `gorm:"not null" json:"target_port"`
+	Description string `json:"description"`
+	// Enabled is whether this forward runs. One that is off opens no port and
+	// makes no SSH connection, and still holds LocalPort. It carries no
+	// database default for the reason Host.Enabled carries none.
+	Enabled   bool      `json:"enabled"`
+	CreatedAt time.Time `json:"created_at"`
+	UpdatedAt time.Time `json:"updated_at"`
 }
 
 type Tunnel struct {
@@ -395,6 +399,10 @@ type LocalForwardRequest struct {
 	TargetIP    string `json:"target_ip" validate:"required,ip"`
 	TargetPort  int    `json:"target_port" validate:"required,min=1,max=65535"`
 	Description string `json:"description"`
+	// Enabled is a pointer for the reason CreateHostRequest.Enabled is. A
+	// creation that leaves it out makes a forward that runs, and a change that
+	// leaves it out keeps what is stored.
+	Enabled *bool `json:"enabled"`
 }
 
 type Response struct {

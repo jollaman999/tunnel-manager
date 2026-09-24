@@ -320,6 +320,7 @@ const (
 // local_forward: the local forwards the screens add, change and remove.
 const (
 	LocalForwardCreateFailed    ID = "local_forward.create_failed"
+	LocalForwardCountFailed     ID = "local_forward.count_failed"
 	LocalForwardListFetchFailed ID = "local_forward.list_fetch_failed"
 	LocalForwardFetchFailed     ID = "local_forward.fetch_failed"
 	LocalForwardUpdateFailed    ID = "local_forward.update_failed"

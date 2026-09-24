@@ -1616,6 +1616,156 @@ func TestAnUpgradeFromBeforeTheHostBindAddressCarriesNothing(t *testing.T) {
 	}
 }
 
+// newDatabaseFromBeforeLocalForwardsCouldBeOff builds the database of an
+// installation running the release whose local forwards had no enabled
+// column, holding forwards on these local ports. It is written out in SQL for
+// the reason newDatabaseFromTheHostBindAddress is: the model carries the
+// column now.
+func newDatabaseFromBeforeLocalForwardsCouldBeOff(t *testing.T, localPorts []int) string {
+	t.Helper()
+
+	path := filepath.Join(t.TempDir(), "state", "tunnel-manager.db")
+
+	err := os.MkdirAll(filepath.Dir(path), 0755)
+	if err != nil {
+		t.Fatalf("failed to create the directory of the database: %v", err)
+	}
+
+	old, err := gorm.Open(sqlite.Open(path), &gorm.Config{Logger: gormlogger.Discard})
+	if err != nil {
+		t.Fatalf("failed to open the database: %v", err)
+	}
+
+	statements := []string{
+		"CREATE TABLE `local_forwards` (`id` integer PRIMARY KEY AUTOINCREMENT," +
+			"`host_id` integer NOT NULL,`bind_scope` text,`local_port` integer NOT NULL," +
+			"`target_ip` text NOT NULL,`target_port` integer NOT NULL,`description` text," +
+			"`created_at` datetime,`updated_at` datetime," +
+			"CONSTRAINT `chk_local_forwards_bind_scope` CHECK (bind_scope IN ('','loopback','wildcard')))",
+		"CREATE INDEX `idx_local_forwards_host_id` ON `local_forwards`(`host_id`)",
+		"CREATE UNIQUE INDEX `idx_local_forwards_local_port` ON `local_forwards`(`local_port`)",
+	}
+
+	for _, sql := range statements {
+		err = old.Exec(sql).Error
+		if err != nil {
+			t.Fatalf("failed to build the tables as they were: %v", err)
+		}
+	}
+
+	for _, port := range localPorts {
+		err = old.Exec("INSERT INTO `local_forwards` (`host_id`,`bind_scope`,`local_port`,`target_ip`,"+
+			"`target_port`,`created_at`,`updated_at`) VALUES (1,'loopback',?,'127.0.0.1',5432,"+
+			"'2026-09-01 00:00:00','2026-09-01 00:00:00')", port).Error
+		if err != nil {
+			t.Fatalf("failed to store the local forward on %d: %v", port, err)
+		}
+	}
+
+	sqlDB, err := old.DB()
+	if err != nil {
+		t.Fatalf("failed to reach the connection pool: %v", err)
+	}
+	err = sqlDB.Close()
+	if err != nil {
+		t.Fatalf("failed to close the old handle: %v", err)
+	}
+
+	return path
+}
+
+// enabledByLocalPort reads whether each local forward runs, keyed by its local
+// port, with SQL so that a NULL is seen as one rather than read as false.
+func enabledByLocalPort(t *testing.T, db *gorm.DB) map[int]string {
+	t.Helper()
+
+	var rows []struct {
+		LocalPort int
+		Enabled   string
+	}
+
+	err := db.Raw("SELECT local_port, COALESCE(CAST(enabled AS TEXT),'NULL') AS enabled " +
+		"FROM local_forwards").Scan(&rows).Error
+	if err != nil {
+		t.Fatalf("failed to read the local forwards: %v", err)
+	}
+
+	got := make(map[int]string, len(rows))
+	for _, row := range rows {
+		got[row.LocalPort] = row.Enabled
+	}
+
+	return got
+}
+
+// TestTheUpgradeSwitchesOnTheLocalForwardsThatWereRunning is the upgrade that
+// adds the enabled column. Every forward stored before it was running, and
+// the NULL AutoMigrate leaves reads back as false. A startup after that one
+// leaves a forward that was switched off as it is, and a row written from then
+// on holds what it was written with, false included.
+func TestTheUpgradeSwitchesOnTheLocalForwardsThatWereRunning(t *testing.T) {
+	path := newDatabaseFromBeforeLocalForwardsCouldBeOff(t, []int{15001, 15002})
+
+	core, _ := observer.New(zapcore.DebugLevel)
+
+	db, _, err := NewDatabase(path, zap.New(core), "error")
+	if err != nil {
+		t.Fatalf("the migration failed: %v", err)
+	}
+
+	got := enabledByLocalPort(t, db)
+	if len(got) != 2 || got[15001] != "1" || got[15002] != "1" {
+		t.Fatalf("after the upgrade the local forwards hold %v, want both 1", got)
+	}
+
+	err = db.Model(&models.LocalForward{}).Where("local_port = ?", 15001).Update("enabled", false).Error
+	if err != nil {
+		t.Fatalf("failed to switch a local forward off: %v", err)
+	}
+
+	sqlDB, err := db.DB()
+	if err != nil {
+		t.Fatalf("failed to reach the connection pool: %v", err)
+	}
+	err = sqlDB.Close()
+	if err != nil {
+		t.Fatalf("failed to close the handle: %v", err)
+	}
+
+	second, _, err := NewDatabase(path, zap.New(core), "error")
+	if err != nil {
+		t.Fatalf("the second startup failed: %v", err)
+	}
+	t.Cleanup(func() {
+		sqlDB, err := second.DB()
+		if err == nil {
+			_ = sqlDB.Close()
+		}
+	})
+
+	for _, lf := range []models.LocalForward{
+		{HostID: 1, BindScope: models.BindScopeLoopback, LocalPort: 15003, TargetIP: "127.0.0.1", TargetPort: 5432},
+		{HostID: 1, BindScope: models.BindScopeLoopback, LocalPort: 15004, TargetIP: "127.0.0.1", TargetPort: 5432,
+			Enabled: true},
+	} {
+		err = second.Create(&lf).Error
+		if err != nil {
+			t.Fatalf("failed to store a local forward: %v", err)
+		}
+	}
+
+	got = enabledByLocalPort(t, second)
+	want := map[int]string{15001: "0", 15002: "1", 15003: "0", 15004: "1"}
+	if len(got) != len(want) {
+		t.Fatalf("after the second startup the local forwards hold %v, want %v", got, want)
+	}
+	for port, enabled := range want {
+		if got[port] != enabled {
+			t.Fatalf("after the second startup the local forwards hold %v, want %v", got, want)
+		}
+	}
+}
+
 // theHashOfTheTest stands in for what the account table holds. It is written
 // out rather than produced with bcrypt so that the test names the very string
 // it then looks for, and so that the check does not depend on the hashing

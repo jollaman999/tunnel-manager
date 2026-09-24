@@ -295,6 +295,7 @@ func newLocalForwardFixture(t *testing.T, scope string, localPort int, targetIP 
 	}}
 	f.forwards = []models.LocalForward{{
 		ID: 7, HostID: 1, BindScope: scope, LocalPort: localPort, TargetIP: targetIP, TargetPort: targetPort,
+		Enabled: true,
 	}}
 
 	m, err := NewManager(newLocalForwardStubDB(t, &f.mu, &f.hosts, &f.forwards), zap.NewNop(), newTestCipher(t), 1)
@@ -539,6 +540,73 @@ func TestReconcileFollowsTheLocalForwardRows(t *testing.T) {
 	}
 	if !portIsFree(localPort) {
 		t.Fatal("the local port is still held after its row was deleted")
+	}
+}
+
+// accepted counts the connections the server has taken since it started or
+// since drop, which is how a test sees that nothing dialled the Host.
+func (s *directSSHServer) accepted() int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	return len(s.conns)
+}
+
+// TestASwitchedOffLocalForwardOpensNothing holds the pass to the enabled flag
+// of the row: a forward that is off opens no port and makes no SSH connection,
+// switching it on starts it, and switching it off again stops it and frees the
+// port.
+func TestASwitchedOffLocalForwardOpensNothing(t *testing.T) {
+	targetIP, targetPort := startEchoService(t, "echo:")
+	localPort := freeDualStackPort(t)
+	local := net.JoinHostPort("127.0.0.1", strconv.Itoa(localPort))
+
+	f := newLocalForwardFixture(t, models.BindScopeLoopback, localPort, targetIP, targetPort)
+	f.change(func(_ []models.Host, forwards *[]models.LocalForward) {
+		(*forwards)[0].Enabled = false
+	})
+
+	if result := f.reconcile(t); result != (ReconcileResult{}) {
+		t.Fatalf("a pass over a switched off forward reported %+v, want nothing", result)
+	}
+	if _, ok := f.m.LocalForwardStatus(7); ok {
+		t.Fatal("a switched off local forward reports a status")
+	}
+	if !portIsFree(localPort) {
+		t.Fatal("a switched off local forward holds its local port")
+	}
+
+	if got := f.server.accepted(); got != 0 {
+		t.Fatalf("the Host took %d connections for a switched off forward, want 0", got)
+	}
+
+	f.change(func(_ []models.Host, forwards *[]models.LocalForward) {
+		(*forwards)[0].Enabled = true
+	})
+
+	result := f.reconcile(t)
+	if result.Started != 1 {
+		t.Fatalf("switching the forward on reported %+v, want one started", result)
+	}
+	waitLocalStatus(t, f.m, 7, "the local forward to connect", isConnected)
+
+	if got := exchange(t, local, "ping"); got != "echo:ping" {
+		t.Fatalf("the answer through the switched on forward was %q, want %q", got, "echo:ping")
+	}
+
+	f.change(func(_ []models.Host, forwards *[]models.LocalForward) {
+		(*forwards)[0].Enabled = false
+	})
+
+	result = f.reconcile(t)
+	if result.Stopped != 1 {
+		t.Fatalf("switching the forward off reported %+v, want one stopped", result)
+	}
+	if _, ok := f.m.LocalForwardStatus(7); ok {
+		t.Fatal("the local forward still reports a status after it was switched off")
+	}
+	if !portIsFree(localPort) {
+		t.Fatal("the local port is still held after the forward was switched off")
 	}
 }
 

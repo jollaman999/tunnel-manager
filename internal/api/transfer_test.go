@@ -2383,10 +2383,31 @@ func (i *transferInstall) forward(t *testing.T, hostIP string, lf localForwardCo
 		TargetIP:    lf.TargetIP,
 		TargetPort:  lf.TargetPort,
 		Description: lf.Description,
+		Enabled:     lf.enabled(),
 	}).Error
 	if err != nil {
 		t.Fatalf("failed to store the local forward: %v", err)
 	}
+}
+
+// forwardsEnabled is whether each stored local forward is switched on, keyed
+// by its local port.
+func (i *transferInstall) forwardsEnabled(t *testing.T) map[int]bool {
+	t.Helper()
+
+	var rows []models.LocalForward
+
+	err := i.db.Find(&rows).Error
+	if err != nil {
+		t.Fatalf("failed to read the local forwards: %v", err)
+	}
+
+	enabled := make(map[int]bool, len(rows))
+	for _, row := range rows {
+		enabled[row.LocalPort] = row.Enabled
+	}
+
+	return enabled
 }
 
 // forwards is every local forward stored, named by what means the same on both
@@ -2501,6 +2522,81 @@ func TestTheLocalForwardsOfAHostCrossToAnotherInstallation(t *testing.T) {
 
 	if target.manager.count() != 1 {
 		t.Errorf("the import asked for %d reconcile passes, want 1", target.manager.count())
+	}
+}
+
+// TestWhetherALocalForwardIsOnCrossesWithIt is the enabled flag on the round
+// trip: a forward that is off arrives off and one that is on arrives on, and a
+// file from before the flag, which carries none, arrives with every forward
+// on, since every forward of such a file was running.
+func TestWhetherALocalForwardIsOnCrossesWithIt(t *testing.T) {
+	source := newTransferInstall(t)
+
+	off := false
+
+	source.registerHost(t, passwordHost("192.0.2.10"))
+	source.forward(t, "192.0.2.10", localForwardContent{LocalPort: 15432, TargetIP: "127.0.0.1", TargetPort: 5432,
+		Enabled: &off})
+	source.forward(t, "192.0.2.10", localForwardContent{LocalPort: 15433, TargetIP: "127.0.0.1", TargetPort: 5433})
+
+	file := source.exportTunnels(t, testExportPassword)
+
+	opened, err := crypto.DecryptWithPassword(file, testExportPassword)
+	if err != nil {
+		t.Fatalf("the file does not open: %v", err)
+	}
+
+	if !strings.Contains(opened, `"local_port":15432,"target_ip":"127.0.0.1","target_port":5432,"description":"","enabled":false`) {
+		t.Errorf("the file does not say the forward on 15432 is off: %s", opened)
+	}
+
+	target := newTransferInstall(t)
+
+	rec := target.importTunnels(t, file, testExportPassword, false)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("the import answered %d: %s", rec.Code, rec.Body.String())
+	}
+
+	want := map[int]bool{15432: false, 15433: true}
+	if got := target.forwardsEnabled(t); !reflect.DeepEqual(got, want) {
+		t.Fatalf("the installation that took the file in holds %v, want %v", got, want)
+	}
+
+	older := rewriteHosts(t, file, testExportPassword, func(host map[string]interface{}) {
+		forwards, ok := host["local_forwards"].([]interface{})
+		if !ok {
+			t.Fatalf("the Host carries no list of local forwards")
+		}
+
+		for _, entry := range forwards {
+			forward, ok := entry.(map[string]interface{})
+			if !ok {
+				t.Fatalf("a local forward in the file is not an object")
+			}
+
+			delete(forward, "enabled")
+		}
+	})
+
+	opened, err = crypto.DecryptWithPassword(older, testExportPassword)
+	if err != nil {
+		t.Fatalf("the file does not open: %v", err)
+	}
+
+	if strings.Contains(opened, `"enabled":false`) {
+		t.Fatalf("the file still says a forward is off: %s", opened)
+	}
+
+	fromOlder := newTransferInstall(t)
+
+	rec = fromOlder.importTunnels(t, older, testExportPassword, false)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("the import of the older file answered %d: %s", rec.Code, rec.Body.String())
+	}
+
+	want = map[int]bool{15432: true, 15433: true}
+	if got := fromOlder.forwardsEnabled(t); !reflect.DeepEqual(got, want) {
+		t.Fatalf("the installation that took the older file in holds %v, want %v", got, want)
 	}
 }
 

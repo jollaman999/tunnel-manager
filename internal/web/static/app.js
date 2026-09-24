@@ -2449,13 +2449,21 @@ function buildForm(spec) {
 // the periodic refresh of the status screen included, so a panel put inside it
 // would be taken down by a tick of a screen the operator is not even looking
 // at any more.
+//
+// opened, where a caller passes one, is handed the close once the panel is up.
+// A panel whose own form finishes with it has no button along the bottom to be
+// handed the close by.
 function openModal(spec) {
   return new Promise(function (resolve) {
     // What had the keyboard before the panel went up. It is where the focus
     // goes back to when the panel leaves, so the operator carries on from the
     // button they pressed instead of from the top of the page.
+    //
+    // A panel opened from another is noted against the one under it, which is
+    // what stands where #app does for the list that panel draws.
     const opener = document.activeElement;
-    const openerPlace = focusOf(document.getElementById("app"));
+    const under = modalStack.length === 0 ? null : modalStack[modalStack.length - 1].panel;
+    const openerPlace = focusOf(under === null ? document.getElementById("app") : under);
 
     const backdrop = document.createElement("div");
     backdrop.className = "modal-backdrop";
@@ -2565,6 +2573,8 @@ function openModal(spec) {
         const app = document.getElementById("app");
 
         putBackFocus(app, app.querySelector("h1"), openerPlace);
+      } else if (under !== null && modalStack[modalStack.length - 1].panel === under) {
+        putBackFocus(under, under.querySelector("h2"), openerPlace);
       }
 
       resolve(value === undefined ? null : value);
@@ -2628,6 +2638,10 @@ function openModal(spec) {
     const reachable = modalFocusables(panel);
 
     (reachable.length === 0 ? panel : reachable[0]).focus({ preventScroll: true });
+
+    if (spec.opened !== undefined) {
+      spec.opened(close);
+    }
   });
 }
 

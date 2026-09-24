@@ -468,6 +468,28 @@ func fillBindScopes(db *gorm.DB) error {
 	return nil
 }
 
+// localForwardEnabledColumn is the column that says whether a local forward
+// runs. Whether it is already there is how the startup that adds it is told
+// from the ones after.
+const localForwardEnabledColumn = "enabled"
+
+// fillLocalForwardsEnabled switches on every local forward stored before the
+// column existed. Each of them was running, and AutoMigrate leaves NULL in the
+// column it adds, which reads back as false and would take them all down on
+// the upgrade.
+//
+// It runs on the startup that adds the column and on no other, so that a
+// forward switched off since is not switched back on by a restart.
+func fillLocalForwardsEnabled(db *gorm.DB) error {
+	err := db.Model(&models.LocalForward{}).Where("1 = 1").
+		Update(localForwardEnabledColumn, true).Error
+	if err != nil {
+		return fmt.Errorf("failed to switch on the local forwards stored before they could be switched off: %w", err)
+	}
+
+	return nil
+}
+
 // NewDatabase opens the database file and hands back the handle its logger
 // follows along with it. The caller holds that handle so that the level can be
 // put right once the stored settings are read, which is after this returns:
@@ -571,6 +593,12 @@ func NewDatabase(path string, logger *zap.Logger, logLevel string) (*gorm.DB, *L
 	carriesHostBindAddress := db.Migrator().HasColumn(&models.Host{}, hostBindAddressColumn) &&
 		!db.Migrator().HasColumn(&models.HostServicePort{}, bindScopeColumn)
 
+	// Asked here for the same reason: after AutoMigrate the column is there
+	// whatever the file held. A table that is not there yet holds no rows to
+	// switch on.
+	addsLocalForwardEnabled := db.Migrator().HasTable(&models.LocalForward{}) &&
+		!db.Migrator().HasColumn(&models.LocalForward{}, localForwardEnabledColumn)
+
 	err = db.AutoMigrate(
 		&models.Host{},
 		&models.ServicePort{},
@@ -613,6 +641,13 @@ func NewDatabase(path string, logger *zap.Logger, logLevel string) (*gorm.DB, *L
 	// Hosts were.
 	if carriesHostBindAddress {
 		err = fillBindScopes(db)
+		if err != nil {
+			return nil, nil, err
+		}
+	}
+
+	if addsLocalForwardEnabled {
+		err = fillLocalForwardsEnabled(db)
 		if err != nil {
 			return nil, nil, err
 		}

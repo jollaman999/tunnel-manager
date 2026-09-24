@@ -568,8 +568,9 @@ func (m *Manager) runningLocalForwardFingerprints() map[uint]connFingerprint {
 }
 
 // LocalForwardStatus returns what the local forward of the row id reports.
-// The second value is false when no forward runs for it, which is a row whose
-// Host is disabled or one the reconcile pass has not reached yet.
+// The second value is false when no forward runs for it, which is a row that
+// is switched off, one whose Host is disabled or one the reconcile pass has not
+// reached yet.
 func (m *Manager) LocalForwardStatus(id uint) (LocalForwardState, bool) {
 	m.localMu.RLock()
 	f, exists := m.localForwards[id]
@@ -608,9 +609,9 @@ type desiredLocalForward struct {
 }
 
 // desiredLocalForwardsOf reads the local forwards that should be running:
-// every row whose Host is there and enabled. A row naming a Host that is not
-// there is passed over for the reasons desiredTunnels passes over an
-// assignment.
+// every row that is enabled and whose Host is there and enabled. A row naming a
+// Host that is not there is passed over for the reasons desiredTunnels passes
+// over an assignment.
 func (m *Manager) desiredLocalForwardsOf(hostByID map[uint]*models.Host) (map[uint]desiredLocalForward, error) {
 	var rows []models.LocalForward
 	err := m.db.Find(&rows).Error
@@ -620,6 +621,10 @@ func (m *Manager) desiredLocalForwardsOf(hostByID map[uint]*models.Host) (map[ui
 
 	desired := make(map[uint]desiredLocalForward, len(rows))
 	for i := range rows {
+		if !rows[i].Enabled {
+			continue
+		}
+
 		host, ok := hostByID[rows[i].HostID]
 		if !ok || !host.Enabled {
 			continue

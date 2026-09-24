@@ -1521,6 +1521,27 @@ td.pick input[type="checkbox"] {
   font-size: 12px;
 }
 
+/* The row over a list in a panel: the controls that turn the page, and the
+   press that adds to the list at the far end of it. The controls wrap inside
+   their own box, so the press stays at the top of the row. */
+.list-head {
+  display: flex;
+  gap: 0.6rem 1rem;
+  align-items: flex-start;
+  margin-bottom: 0.75rem;
+}
+
+.list-head > .page-controls {
+  flex: 1 1 auto;
+  min-width: 0;
+  margin-bottom: 0;
+}
+
+.list-head > .list-add {
+  flex-shrink: 0;
+  margin-inline-start: auto;
+}
+
 /* The presses that act on what is ticked, on the row between the controls that
    turn the page and the table itself. They sit with the rows they act on and
    not with the page controls: the ticks are the rows of this page, and a press
@@ -2146,9 +2167,8 @@ body.modal-open {
   box-shadow: 0 8px 24px var(--shadow);
 }
 
-/* The local forwards are a table of six columns with a form under it, which
-   the width of a panel that asks one question squeezes into a column of single
-   words. */
+/* The local forwards are a table of seven columns, which the width of a panel
+   that asks one question squeezes into a column of single words. */
 .modal-panel[data-modal-panel="local-forwards"] {
   max-width: 56rem;
 }

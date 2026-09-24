@@ -132,10 +132,14 @@ const listPages = {
   "service-ports": { number: 1, size: listSizes[0] }
 };
 
-// listPicks is what has been ticked on the two lists that can be ticked. It is
+// listPicks is what has been ticked on the lists that can be ticked. It is
 // held out here for the reason listPages is: the screens are drawn again from
 // scratch every five seconds, and ticks kept inside the draw would be gone by
 // the time the operator reached the press they were ticked for.
+//
+// The local forwards of a Host are in a panel and not on a screen, and their
+// entry is emptied each time the panel opens: the ticks of the last one were
+// for the rows of another Host.
 //
 // The rule for reading it: the keys of listPicks.hosts are the Hosts ticked on
 // the Host list and the keys of listPicks["service-ports"] are the service
@@ -156,7 +160,8 @@ const listPages = {
 //     somebody else, is gone from the next answer and goes from here with it.
 const listPicks = {
   hosts: {},
-  "service-ports": {}
+  "service-ports": {},
+  "local-forwards": {}
 };
 
 // pickedIDs is what a press that acts on the ticks reads: the identifiers
@@ -681,7 +686,8 @@ function statusBadge(status) {
     reconnecting: "status.state-reconnecting.text",
     error: "status.state-error.text",
     stopped: "status.state-stopped.text",
-    disabled: "status.state-disabled.text"
+    disabled: "status.state-disabled.text",
+    off: "status.state-off.text"
   };
   const text = status === null || status === undefined ? "" : String(status);
 
@@ -3873,16 +3879,22 @@ function showPanelProblem(problem, message) {
 const localForwardBusy = ["starting", "reconnecting"];
 
 // openHostLocalForwards puts up the panel that lists the local forwards of a
-// Host, and adds, changes and deletes them.
+// Host a page at a time, and adds, changes, switches and deletes them.
 //
 // A local forward runs the other way from a service port: this machine opens
 // the port, and what connects to it is carried over the SSH connection of the
 // Host to an address the Host reaches. It has a panel of its own for that
 // reason, since a local port and an address mean a different machine on each.
 //
-// The list is not paged. The server hands back every forward of the Host at
-// once, and a Host carries few of them.
+// The list is drawn the way the service port list is, ticks and the presses
+// over them included. The add and the edit forms go in a second panel over
+// this one, so the page of the list stays where it was while one is up.
 async function openHostLocalForwards(host) {
+  // A page of its own, for the reason the host key panel has one.
+  const page = { number: 1, size: listSizes[0] };
+
+  listPicks["local-forwards"] = {};
+
   const list = document.createElement("div");
 
   list.className = "assign-list";
@@ -3896,65 +3908,159 @@ async function openHostLocalForwards(host) {
   problem.dataset.problem = "local-forwards";
   problem.hidden = true;
 
-  const said = element("p", "");
-
-  said.className = "notice info";
-  said.dataset.said = "local-forwards";
-  said.hidden = true;
-
-  // The form under the list is the add form until the Edit of a row is
-  // pressed, and goes back to it after a save or a cancel. It is one form
-  // swapped in place, the way the service port screen swaps its own.
-  const holder = document.createElement("div");
-
   let shown = [];
-  let editing = null;
+  let total = 0;
   let open = true;
   let timer = null;
 
-  function drawForm() {
-    holder.textContent = "";
-    holder.appendChild(editing === null
-      ? localForwardForm(null, add)
-      : localForwardForm(editing, change, function () {
-        editing = null;
-        drawForm();
-      }));
+  // What the last flip over the ticks could not change. It stays under the
+  // presses through the reads that follow and goes with the next press or a
+  // turn of the page, which is when the rows it names may no longer be here.
+  let refusals = [];
+
+  // The page the list on the screen was read from. A read that fails puts the
+  // numbers back to it, as the host key panel does.
+  let drawn = { number: page.number, size: page.size };
+
+  // describe is how a row is named outside the table: in the confirmation of a
+  // batch delete and in the list of what a flip left as it was.
+  function describe(item) {
+    return t("local-forwards.picked-row.text",
+      { port: item.local_port, target: item.target_ip + ":" + item.target_port });
+  }
+
+  function heading() {
+    const panel = document.querySelector("[data-modal-panel=\"local-forwards\"]");
+
+    return panel === null ? null : panel.querySelector("h2");
   }
 
   function drawList() {
+    // The press that set a draw off is usually inside the list it replaces, so
+    // the keyboard is noted and put back the way paint does it for a screen.
+    const focused = focusOf(list);
+
     list.textContent = "";
+
+    keepPicksOnPage("local-forwards", shown);
+
+    // The Add is at the far end of the row that turns the page, over the list
+    // it adds to, and is there on an empty list too.
+    const head = document.createElement("div");
+
+    head.className = "list-head";
+
+    const controls = pageControls("local-forwards", page, total, turnPage);
+    if (controls !== null) {
+      head.appendChild(controls);
+    }
+
+    head.appendChild(actionButton(t("common.add.button"), "local-forward-add", function () {
+      return openForm(null);
+    }, "primary list-add"));
+
+    list.appendChild(head);
 
     if (shown.length === 0) {
       list.appendChild(statusLine(t("local-forwards.none.empty"), "empty"));
+      putBackFocus(list, heading(), focused);
 
       return;
     }
 
-    list.appendChild(buildTable(
+    const picks = listPickColumn("local-forwards", shown, function (id) {
+      const item = shown.find(function (one) {
+        return one.id === id;
+      });
+
+      return t("local-forwards.pick-row.aria", { port: item.local_port });
+    });
+
+    const table = buildTable(
       [t("local-forwards.local-port.column"), t("local-forwards.scope.column"),
         t("local-forwards.target.column"), t("local-forwards.description.column"),
         t("local-forwards.status.column"), ""],
       shown.map(function (item) {
-        return localForwardRow(item, edit, remove);
+        const row = localForwardRow(item, openForm, flipOne, remove);
+
+        row.pick = picks.box(item.id);
+
+        return row;
       }),
-      [0]
-    ));
+      [0],
+      picks.head
+    );
+
+    const bar = deletePickedBar({
+      name: "local-forwards",
+      items: shown,
+      table: table,
+      label: t("local-forwards.delete-picked.button"),
+      title: t("local-forwards.delete-picked.title"),
+      text: t("local-forwards.delete-picked.text"),
+      describe: describe,
+      path: function (item) {
+        return "/api/local-forward/" + item.id;
+      },
+      said: function (count) {
+        return t(plural(count, "local-forwards.deleted-picked-one.notice",
+          "local-forwards.deleted-picked-many.notice"), { count: count });
+      },
+      partly: function (deleted, failed) {
+        return t("local-forwards.deleted-picked-some.notice", { deleted: deleted, failed: failed });
+      },
+      draw: function () {
+        return reread(false);
+      }
+    });
+
+    // In front of the delete, for the reason the Host list puts its own two
+    // there: these can be taken back and the delete cannot.
+    const flips = document.createDocumentFragment();
+
+    flips.appendChild(ticksWakeThePress("local-forwards", table,
+      actionButton(t("local-forwards.enable-picked.button"), "local-forwards-enable-picked",
+        function () {
+          return flipPicked(true);
+        })));
+    flips.appendChild(ticksWakeThePress("local-forwards", table,
+      actionButton(t("local-forwards.disable-picked.button"), "local-forwards-disable-picked",
+        function () {
+          return flipPicked(false);
+        })));
+
+    bar.insertBefore(flips, bar.firstChild);
+
+    list.appendChild(bar);
+
+    if (refusals.length > 0) {
+      const refused = document.createElement("div");
+
+      refused.className = "picked-list";
+      refused.dataset.list = "local-forwards-flip-picked";
+
+      for (const refusal of refusals) {
+        refused.appendChild(pickedDeleteRow({ describe: describe }, refusal.item, refusal.reason));
+      }
+
+      list.appendChild(refused);
+    }
+
+    list.appendChild(table);
+
+    putBackFocus(list, heading(), focused);
   }
 
   async function readList() {
-    const answer = await apiCall("GET", "/api/host/" + host.id + "/local-forward");
+    const answer = await apiCall("GET",
+      "/api/host/" + host.id + "/local-forward?" + pageQuery(page));
 
-    shown = Array.isArray(answer) ? answer : [];
+    takeListPage(page, answer);
 
-    // A row deleted from somewhere else while it was being edited leaves a
-    // form that would save to nothing, so the add form is put back.
-    if (editing !== null && !shown.some(function (item) {
-      return item.id === editing.id;
-    })) {
-      editing = null;
-      drawForm();
-    }
+    shown = answer === null || answer.items === null || answer.items === undefined
+      ? []
+      : answer.items;
+    total = answer === null || typeof answer.total !== "number" ? shown.length : answer.total;
 
     drawList();
   }
@@ -3997,84 +4103,218 @@ async function openHostLocalForwards(host) {
         throw error;
       }
 
+      page.number = drawn.number;
+      page.size = drawn.size;
+
       showPanelProblem(problem, error.message);
 
       return;
     }
+
+    drawn = { number: page.number, size: page.size };
 
     settle(soon);
   }
 
-  // write sends one change and says in the panel how it went. A refusal leaves
-  // the form as it was, with what was typed still in it.
-  async function write(method, path, body, done) {
+  function turnPage() {
+    refusals = [];
     problem.hidden = true;
+
+    return reread(false);
+  }
+
+  // refuse says why a press was refused the way a screen says it, on the
+  // window and on a line that stays. The line is the one in the panel the
+  // press was made in, since the one above the screen is behind the backdrop.
+  function refuse(error, line) {
+    if (error instanceof Redirected) {
+      throw error;
+    }
+
+    const say = sayOf(error);
+
+    showPanelProblem(line, say());
+    showToast(say, "error");
+  }
+
+  // openForm puts the add form, or the edit form of item, in a panel over
+  // this one. A refusal leaves it up with what was typed still in it.
+  function openForm(item) {
+    const said = element("p", "");
+
+    said.className = "notice error";
+    said.dataset.problem = "local-forward-form";
+    said.hidden = true;
+
+    let close = null;
+
+    const form = localForwardForm(item, function (values) {
+      return save(item, values, said, close);
+    }, function () {
+      close(null);
+    });
+
+    return openModal({
+      name: item === null ? "local-forward-add" : "local-forward-edit",
+      title: t("local-forwards.panel.title", { id: host.id, ip: host.ip }),
+      body: [said, form],
+      opened: function (shut) {
+        close = shut;
+      }
+    });
+  }
+
+  async function save(item, values, said, close) {
+    const body = localForwardBody(values);
+
     said.hidden = true;
 
     try {
-      await apiCall(method, path, body);
-    } catch (error) {
-      if (error instanceof Redirected) {
-        throw error;
+      if (item === null) {
+        await apiCall("POST", "/api/host/" + host.id + "/local-forward", body);
+      } else {
+        await apiCall("PUT", "/api/local-forward/" + item.id, body);
       }
-
-      showPanelProblem(problem, error.message);
+    } catch (error) {
+      refuse(error, said);
 
       return;
     }
 
-    sayInPanel(said, done());
+    close("saved");
+
+    setToast(function () {
+      return t(item === null ? "local-forwards.added.notice" : "local-forwards.updated.notice",
+        { port: body.local_port });
+    });
+
+    // The list is in the order of ids and a new row has the highest, so it is
+    // on the last page.
+    if (item === null) {
+      page.number = lastPageOf(total + 1, page.size);
+    }
 
     return reread(true);
   }
 
-  function add(values) {
-    const body = localForwardBody(values);
+  async function flipOne(item) {
+    const on = !item.enabled;
 
-    return write("POST", "/api/host/" + host.id + "/local-forward", body, function () {
-      drawForm();
+    problem.hidden = true;
 
-      return t("local-forwards.added.notice", { port: body.local_port });
+    try {
+      await apiCall("PUT", "/api/local-forward/" + item.id, localForwardFlipBody(item, on));
+    } catch (error) {
+      refuse(error, problem);
+
+      return;
+    }
+
+    setToast(function () {
+      return t(on ? "local-forwards.now-enabled.notice" : "local-forwards.now-disabled.notice",
+        { port: item.local_port });
     });
+
+    return reread(true);
   }
 
-  function change(values) {
-    const body = localForwardBody(values);
-
-    return write("PUT", "/api/local-forward/" + editing.id, body, function () {
-      editing = null;
-      drawForm();
-
-      return t("local-forwards.updated.notice", { port: body.local_port });
+  // flipPicked is flipPickedHosts over the ticked rows of this page, counted
+  // and reported the same way.
+  async function flipPicked(on) {
+    const wanted = pickedIDs("local-forwards");
+    const chosen = shown.filter(function (item) {
+      return wanted.indexOf(item.id) !== -1;
     });
+
+    if (chosen.length === 0) {
+      return;
+    }
+
+    problem.hidden = true;
+    refusals = [];
+
+    let flipped = 0;
+    let already = 0;
+
+    for (const item of chosen) {
+      if (item.enabled === on) {
+        already += 1;
+
+        continue;
+      }
+
+      try {
+        await apiCall("PUT", "/api/local-forward/" + item.id, localForwardFlipBody(item, on));
+      } catch (error) {
+        if (error instanceof Redirected) {
+          throw error;
+        }
+
+        refusals.push({ item: item, reason: error.message });
+
+        continue;
+      }
+
+      flipped += 1;
+    }
+
+    if (refusals.length > 0) {
+      const counts = { flipped: flipped, already: already, refused: refusals.length };
+      const say = function () {
+        return t(on ? "local-forwards.enabled-picked-some.notice"
+          : "local-forwards.disabled-picked-some.notice", counts);
+      };
+
+      showPanelProblem(problem, say());
+      showToast(say, "error");
+    } else if (already > 0) {
+      setToast(function () {
+        return t(on ? "local-forwards.enabled-picked-same.notice"
+          : "local-forwards.disabled-picked-same.notice", { flipped: flipped, already: already });
+      });
+    } else {
+      setToast(function () {
+        return t(on
+          ? plural(flipped, "local-forwards.enabled-picked-one.notice",
+            "local-forwards.enabled-picked-many.notice")
+          : plural(flipped, "local-forwards.disabled-picked-one.notice",
+            "local-forwards.disabled-picked-many.notice"),
+        { count: flipped });
+      });
+    }
+
+    return reread(true);
   }
 
-  function edit(item) {
-    editing = item;
-    drawForm();
-    holder.scrollIntoView({ block: "nearest" });
-  }
-
-  function remove(item) {
+  async function remove(item) {
     if (!window.confirm(t("local-forwards.delete.confirm", { port: item.local_port }))) {
       return;
     }
 
-    return write("DELETE", "/api/local-forward/" + item.id, undefined, function () {
-      if (editing !== null && editing.id === item.id) {
-        editing = null;
-        drawForm();
-      }
+    problem.hidden = true;
 
+    try {
+      await apiCall("DELETE", "/api/local-forward/" + item.id);
+    } catch (error) {
+      refuse(error, problem);
+
+      return;
+    }
+
+    delete listPicks["local-forwards"][String(item.id)];
+
+    setToast(function () {
       return t("local-forwards.deleted.notice", { port: item.local_port });
     });
+
+    return reread(false);
   }
 
   // The list is read before the panel goes up, so that a refusal is answered
   // with the line above the screen rather than with an empty panel.
   await readList();
 
-  drawForm();
+  drawn = { number: page.number, size: page.size };
 
   const panel = openModal({
     name: "local-forwards",
@@ -4082,9 +4322,7 @@ async function openHostLocalForwards(host) {
     body: [
       element("p", t("local-forwards.panel.text")),
       problem,
-      said,
-      list,
-      holder
+      list
     ],
     buttons: [
       { label: t("common.close.button"), name: "close" }
@@ -4102,13 +4340,20 @@ async function openHostLocalForwards(host) {
 // localForwardRow is the cells of one local forward in that panel. The last
 // error goes under the row, as it does on the status screen, because a
 // sentence in a column of a table this narrow is a column of single words.
-function localForwardRow(item, edit, remove) {
+function localForwardRow(item, edit, flip, remove) {
   const buttons = document.createElement("div");
 
   buttons.className = "buttons";
   buttons.appendChild(actionButton(t("common.edit.button"), "local-forward-edit-" + item.id, function () {
     return edit(item);
   }));
+  buttons.appendChild(actionButton(
+    item.enabled ? t("local-forwards.disable.button") : t("local-forwards.enable.button"),
+    "local-forward-toggle-" + item.id,
+    function () {
+      return flip(item);
+    }
+  ));
   buttons.appendChild(actionButton(t("common.delete.button"), "local-forward-delete-" + item.id, function () {
     return remove(item);
   }, "danger"));
@@ -4117,25 +4362,24 @@ function localForwardRow(item, edit, remove) {
     ? ""
     : String(item.description);
 
-  const cells = [
-    item.local_port,
-    localForwardScopeText(item.bind_scope),
-    item.target_ip + ":" + item.target_port,
-    description,
-    statusBadge(item.status),
-    buttons
-  ];
+  const row = {
+    cells: [
+      item.local_port,
+      localForwardScopeText(item.bind_scope),
+      item.target_ip + ":" + item.target_port,
+      description,
+      statusBadge(item.status),
+      buttons
+    ]
+  };
 
   const failure = typeof item.last_error === "string" ? item.last_error : "";
-  if (failure === "") {
-    return cells;
+  if (failure !== "") {
+    row.under = element("span", failure);
+    row.under.className = "last-error";
   }
 
-  const line = element("span", failure);
-
-  line.className = "last-error";
-
-  return { cells: cells, under: line };
+  return row;
 }
 
 // localForwardScopeOptions are the two scopes a local forward can be opened
@@ -4208,6 +4452,17 @@ function localForwardBody(values) {
     target_port: asNumber(values.target_port),
     description: values.description
   };
+}
+
+// localForwardFlipBody is a stored local forward switched on or off. The update
+// takes the whole record, so the row goes back as it was read with enabled
+// beside it, and the edit form leaves enabled out so as to keep it.
+function localForwardFlipBody(item, on) {
+  const body = localForwardBody(item);
+
+  body.enabled = on;
+
+  return body;
 }
 
 // assignPickedToHosts is the second press over the ticks of the service port

@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -99,7 +100,36 @@ func storedLocalForward(id, hostID uint, localPort int) models.LocalForward {
 		LocalPort:  localPort,
 		TargetIP:   "127.0.0.1",
 		TargetPort: 5432,
+		Enabled:    true,
 	}
+}
+
+// localForwardPage is a success carrying one page of the list.
+type localForwardPage struct {
+	Success bool `json:"success"`
+	Data    struct {
+		Items []localForwardView `json:"items"`
+		Total int64              `json:"total"`
+		Page  int                `json:"page"`
+		Size  int                `json:"size"`
+	} `json:"data"`
+}
+
+func readLocalForwardPage(t *testing.T, rec *httptest.ResponseRecorder) localForwardPage {
+	t.Helper()
+
+	var answer localForwardPage
+
+	err := json.Unmarshal(rec.Body.Bytes(), &answer)
+	if err != nil {
+		t.Fatalf("failed to read the answer: %v, body: %s", err, rec.Body.String())
+	}
+
+	if !answer.Success {
+		t.Fatalf("success = false, body: %s", rec.Body.String())
+	}
+
+	return answer
 }
 
 // localForwardRequest builds a request with a JSON body and one path
@@ -250,21 +280,14 @@ func TestListHostLocalForwardsCarriesTheStatus(t *testing.T) {
 		t.Fatalf("status = %d, want %d, body: %s", rec.Code, http.StatusOK, rec.Body.String())
 	}
 
-	var answer struct {
-		Success bool               `json:"success"`
-		Data    []localForwardView `json:"data"`
+	answer := readLocalForwardPage(t, rec)
+
+	if len(answer.Data.Items) != 2 || answer.Data.Total != 2 {
+		t.Fatalf("the answer carries %d rows of %d, want the 2 of Host 1, body: %s",
+			len(answer.Data.Items), answer.Data.Total, rec.Body.String())
 	}
 
-	err = json.Unmarshal(rec.Body.Bytes(), &answer)
-	if err != nil {
-		t.Fatalf("failed to read the answer: %v, body: %s", err, rec.Body.String())
-	}
-
-	if len(answer.Data) != 2 {
-		t.Fatalf("the answer carries %d rows, want the 2 of Host 1, body: %s", len(answer.Data), rec.Body.String())
-	}
-
-	first := answer.Data[0]
+	first := answer.Data.Items[0]
 	if first.ID != 1 || first.Status != "connected" || first.RetryCount != 2 || !first.LastConnectedAt.Equal(connectedAt) {
 		t.Errorf("row 1 = %+v, want the state the manager reports", first)
 	}
@@ -272,8 +295,8 @@ func TestListHostLocalForwardsCarriesTheStatus(t *testing.T) {
 		t.Errorf("row 1 bind_scope = %q, want %q", first.BindScope, models.BindScopeLoopback)
 	}
 
-	if answer.Data[1].ID != 2 || answer.Data[1].Status != localForwardStatusStopped {
-		t.Errorf("row 2 = %+v, want status %q", answer.Data[1], localForwardStatusStopped)
+	if answer.Data.Items[1].ID != 2 || answer.Data.Items[1].Status != localForwardStatusStopped {
+		t.Errorf("row 2 = %+v, want status %q", answer.Data.Items[1], localForwardStatusStopped)
 	}
 
 	// The fields are there by name on the wire, which is what a screen reads.
@@ -290,21 +313,16 @@ func TestListHostLocalForwardsCarriesTheStatus(t *testing.T) {
 		t.Fatalf("ListHostLocalForwards returned error: %v", err)
 	}
 
-	answer.Data = nil
+	answer = readLocalForwardPage(t, rec)
 
-	err = json.Unmarshal(rec.Body.Bytes(), &answer)
-	if err != nil {
-		t.Fatalf("failed to read the answer: %v, body: %s", err, rec.Body.String())
-	}
-
-	if len(answer.Data) != 1 || answer.Data[0].Status != localForwardStatusDisabled {
+	if len(answer.Data.Items) != 1 || answer.Data.Items[0].Status != localForwardStatusDisabled {
 		t.Errorf("the rows of the disabled Host = %+v, want one with status %q",
-			answer.Data, localForwardStatusDisabled)
+			answer.Data.Items, localForwardStatusDisabled)
 	}
 }
 
 // TestListHostLocalForwardsAnswersEmptyAsAnArray pins that a Host with no
-// forwards is answered with an empty array and not a null.
+// forwards is answered with an empty array of items and not a null.
 func TestListHostLocalForwardsAnswersEmptyAsAnArray(t *testing.T) {
 	db := newLocalForwardDB(t, []models.Host{statusHost(1, true)}, nil)
 	h := NewHandler(db, &wakeRecorder{tx: &txConnPool{}}, zap.NewNop(), newTestCipher(t))
@@ -316,8 +334,198 @@ func TestListHostLocalForwardsAnswersEmptyAsAnArray(t *testing.T) {
 		t.Fatalf("ListHostLocalForwards returned error: %v", err)
 	}
 
-	if !strings.Contains(rec.Body.String(), `"data":[]`) {
-		t.Errorf("body = %s, want an empty array under data", rec.Body.String())
+	if !strings.Contains(rec.Body.String(), `"items":[]`) {
+		t.Errorf("body = %s, want an empty array under items", rec.Body.String())
+	}
+}
+
+// TestListHostLocalForwardsIsPaged pins the paging of the list: the page and
+// the size are read the way every other list reads them, the rows are those of
+// the Host of the path alone, in the order of their id, and a page past the
+// last one is answered with the last page.
+func TestListHostLocalForwardsIsPaged(t *testing.T) {
+	forwards := make([]models.LocalForward, 0, 13)
+	for i := uint(1); i <= 12; i++ {
+		forwards = append(forwards, storedLocalForward(i, 1, 15000+int(i)))
+	}
+	forwards = append(forwards, storedLocalForward(13, 2, 16000))
+
+	db := newLocalForwardDB(t, []models.Host{statusHost(1, true), statusHost(2, true)}, forwards)
+	h := NewHandler(db, &wakeRecorder{tx: &txConnPool{}}, zap.NewNop(), newTestCipher(t))
+
+	cases := []struct {
+		query string
+		page  int
+		size  int
+		ids   []uint
+	}{
+		{query: "", page: 1, size: 10, ids: []uint{1, 2, 3, 4, 5, 6, 7, 8, 9, 10}},
+		{query: "?page=2", page: 2, size: 10, ids: []uint{11, 12}},
+		{query: "?page=9&size=10", page: 2, size: 10, ids: []uint{11, 12}},
+		{query: "?page=1&size=20", page: 1, size: 20, ids: []uint{1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12}},
+	}
+
+	for _, tc := range cases {
+		c, rec := localForwardRequest(t, http.MethodGet, "/api/host/1/local-forward"+tc.query, "", "1")
+
+		err := h.ListHostLocalForwards(c)
+		if err != nil {
+			t.Fatalf("%q: ListHostLocalForwards returned error: %v", tc.query, err)
+		}
+		if rec.Code != http.StatusOK {
+			t.Fatalf("%q: status = %d, want %d, body: %s", tc.query, rec.Code, http.StatusOK, rec.Body.String())
+		}
+
+		answer := readLocalForwardPage(t, rec)
+
+		ids := make([]uint, 0, len(answer.Data.Items))
+		for _, item := range answer.Data.Items {
+			ids = append(ids, item.ID)
+		}
+
+		if answer.Data.Total != 12 || answer.Data.Page != tc.page || answer.Data.Size != tc.size ||
+			!reflect.DeepEqual(ids, tc.ids) {
+			t.Errorf("%q: total=%d page=%d size=%d ids=%v, want total=12 page=%d size=%d ids=%v",
+				tc.query, answer.Data.Total, answer.Data.Page, answer.Data.Size, ids, tc.page, tc.size, tc.ids)
+		}
+	}
+
+	for _, query := range []string{"?page=x", "?size=7"} {
+		c, rec := localForwardRequest(t, http.MethodGet, "/api/host/1/local-forward"+query, "", "1")
+
+		err := h.ListHostLocalForwards(c)
+		if err != nil {
+			t.Fatalf("%q: ListHostLocalForwards returned error: %v", query, err)
+		}
+		if rec.Code != http.StatusBadRequest {
+			t.Errorf("%q: status = %d, want %d, body: %s", query, rec.Code, http.StatusBadRequest, rec.Body.String())
+		}
+	}
+}
+
+// TestALocalForwardIsSwitchedOnUnlessAskedOtherwise pins the enabled flag of a
+// creation: left out it is on, and false is stored as false and answered as
+// "off" with nothing running for it.
+func TestALocalForwardIsSwitchedOnUnlessAskedOtherwise(t *testing.T) {
+	db := newLocalForwardDB(t, []models.Host{statusHost(1, true)}, nil)
+	h := NewHandler(db, &wakeRecorder{tx: &txConnPool{}}, zap.NewNop(), newTestCipher(t))
+
+	off := false
+
+	for _, tc := range []struct {
+		localPort int
+		enabled   *bool
+		want      bool
+		status    string
+	}{
+		{localPort: 15001, enabled: nil, want: true, status: localForwardStatusStopped},
+		{localPort: 15002, enabled: &off, want: false, status: localForwardStatusOff},
+	} {
+		body, err := json.Marshal(models.LocalForwardRequest{LocalPort: tc.localPort, TargetIP: "127.0.0.1",
+			TargetPort: 5432, Enabled: tc.enabled})
+		if err != nil {
+			t.Fatalf("failed to write the request: %v", err)
+		}
+
+		c, rec := localForwardRequest(t, http.MethodPost, "/api/host/1/local-forward", string(body), "1")
+
+		err = h.CreateHostLocalForward(c)
+		if err != nil {
+			t.Fatalf("CreateHostLocalForward returned error: %v", err)
+		}
+		if rec.Code != http.StatusCreated {
+			t.Fatalf("status = %d, want %d, body: %s", rec.Code, http.StatusCreated, rec.Body.String())
+		}
+
+		got := readLocalForwardAnswer(t, rec)
+		if got.Enabled != tc.want || got.Status != tc.status {
+			t.Errorf("port %d: enabled=%v status=%q, want %v %q", tc.localPort, got.Enabled, got.Status,
+				tc.want, tc.status)
+		}
+	}
+
+	rows := storedLocalForwards(t, db)
+	if len(rows) != 2 || !rows[0].Enabled || rows[1].Enabled {
+		t.Errorf("stored = %+v, want the first on and the second off", rows)
+	}
+}
+
+// TestAnUpdateKeepsWhetherALocalForwardIsOnUnlessItSays pins the enabled flag
+// of a change: left out it keeps what is stored, and said it is stored.
+func TestAnUpdateKeepsWhetherALocalForwardIsOnUnlessItSays(t *testing.T) {
+	stored := storedLocalForward(1, 1, 15001)
+	stored.Enabled = false
+
+	db := newLocalForwardDB(t, []models.Host{statusHost(1, true)}, []models.LocalForward{stored})
+	h := NewHandler(db, &wakeRecorder{tx: &txConnPool{}}, zap.NewNop(), newTestCipher(t))
+
+	on := true
+	off := false
+
+	for _, tc := range []struct {
+		enabled *bool
+		want    bool
+		status  string
+	}{
+		{enabled: nil, want: false, status: localForwardStatusOff},
+		{enabled: &on, want: true, status: localForwardStatusStopped},
+		{enabled: nil, want: true, status: localForwardStatusStopped},
+		{enabled: &off, want: false, status: localForwardStatusOff},
+	} {
+		body, err := json.Marshal(models.LocalForwardRequest{BindScope: models.BindScopeLoopback, LocalPort: 15001,
+			TargetIP: "127.0.0.1", TargetPort: 5432, Enabled: tc.enabled})
+		if err != nil {
+			t.Fatalf("failed to write the request: %v", err)
+		}
+
+		c, rec := localForwardRequest(t, http.MethodPut, "/api/local-forward/1", string(body), "1")
+
+		err = h.UpdateLocalForward(c)
+		if err != nil {
+			t.Fatalf("UpdateLocalForward returned error: %v", err)
+		}
+		if rec.Code != http.StatusOK {
+			t.Fatalf("status = %d, want %d, body: %s", rec.Code, http.StatusOK, rec.Body.String())
+		}
+
+		got := readLocalForwardAnswer(t, rec)
+		rows := storedLocalForwards(t, db)
+
+		if got.Enabled != tc.want || got.Status != tc.status || len(rows) != 1 || rows[0].Enabled != tc.want {
+			t.Errorf("enabled sent %v: answered %v %q, stored %+v, want %v %q",
+				tc.enabled, got.Enabled, got.Status, rows, tc.want, tc.status)
+		}
+	}
+}
+
+// TestTheStatusOfALocalForwardSaysWhatIsOff pins the order the three statuses
+// that run nothing are given in: a disabled Host is named before a forward
+// that is off, and a forward that is off is "off" whatever the manager says.
+func TestTheStatusOfALocalForwardSaysWhatIsOff(t *testing.T) {
+	on := storedLocalForward(1, 1, 15001)
+	off := storedLocalForward(2, 1, 15002)
+	off.Enabled = false
+
+	states := map[uint]tunnel.LocalForwardState{
+		1: {Status: "connected"},
+		2: {Status: "connected"},
+	}
+
+	for _, tc := range []struct {
+		lf          models.LocalForward
+		hostEnabled bool
+		want        string
+	}{
+		{lf: on, hostEnabled: true, want: "connected"},
+		{lf: off, hostEnabled: true, want: localForwardStatusOff},
+		{lf: on, hostEnabled: false, want: localForwardStatusDisabled},
+		{lf: off, hostEnabled: false, want: localForwardStatusDisabled},
+	} {
+		got := localForwardViewOf(tc.lf, tc.hostEnabled, states)
+		if got.Status != tc.want {
+			t.Errorf("row %d with the Host enabled=%v: status = %q, want %q",
+				tc.lf.ID, tc.hostEnabled, got.Status, tc.want)
+		}
 	}
 }
 

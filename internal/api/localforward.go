@@ -16,13 +16,15 @@ import (
 	"gorm.io/gorm"
 )
 
-// The two statuses a row carries when no forward runs for it. The manager
-// reports nothing for such a row, and the two reasons are kept apart because
-// they leave the operator with different work: a disabled Host is switched
-// on, and a forward that is not running under an enabled Host is either
-// waiting for the next reconcile pass or failed to start, which the log says.
+// The three statuses a row carries when no forward runs for it. The manager
+// reports nothing for such a row, and the reasons are kept apart because they
+// leave the operator with different work: a disabled Host is switched on, a
+// forward that is off is switched on on its own row, and a forward that is on
+// and not running under an enabled Host is either waiting for the next
+// reconcile pass or failed to start, which the log says.
 const (
 	localForwardStatusDisabled = "disabled"
+	localForwardStatusOff      = "off"
 	localForwardStatusStopped  = "stopped"
 )
 
@@ -33,7 +35,7 @@ const (
 type localForwardView struct {
 	models.LocalForward
 	// Status is what tunnel.LocalForwardState reports while a forward runs,
-	// and "disabled" or "stopped" while none does.
+	// and "disabled", "off" or "stopped" while none does.
 	Status          string    `json:"status"`
 	LastError       string    `json:"last_error"`
 	RetryCount      int       `json:"retry_count"`
@@ -54,6 +56,8 @@ func localForwardViewOf(lf models.LocalForward, hostEnabled bool, states map[uin
 	switch {
 	case !hostEnabled:
 		view.Status = localForwardStatusDisabled
+	case !lf.Enabled:
+		view.Status = localForwardStatusOff
 	case !running:
 		view.Status = localForwardStatusStopped
 	default:
@@ -276,23 +280,31 @@ func freeLocalPort(tx *gorm.DB, taken int, storedPort int, runningPort int) (int
 	return 0, nil
 }
 
-// ListHostLocalForwards answers every local forward of one Host. It is not
-// paged: the rows of one Host are few, and the panel that draws them shows
-// them together.
+// ListHostLocalForwards answers one page of the local forwards of one Host,
+// ordered by id for the reason ListHosts is, in the shape every other list is
+// answered in.
 //
-// @Summary      The local forwards of a Host, with what each one reports
-// @Description  status is what the running forward reports (starting, connected, reconnecting, error, host_key_unapproved, host_key_mismatch), "disabled" when the Host is disabled, and "stopped" when the Host is enabled and no forward runs yet or it failed to start.
+// @Summary      One page of the local forwards of a Host, oldest first, with what each one reports
+// @Description  status is what the running forward reports (starting, connected, reconnecting, error, host_key_unapproved, host_key_mismatch), "disabled" when the Host is disabled, "off" when the Host is enabled and the forward is switched off, and "stopped" when both are on and no forward runs yet or it failed to start.
 // @Description  bind_scope is always loopback or wildcard.
 // @Tags         local forwards
 // @Produce  json
-// @Param   id  path  int  true  "The id of the Host"
-// @Success  200  {object}  models.Response{data=[]api.localForwardView}
+// @Param   id    path   int  true   "The id of the Host"
+// @Param   page  query  int  false  "The page, counted from 1. Below 1 is read as 1, and a page past the last one is answered with the last page"
+// @Param   size  query  int  false  "How many rows a page holds"  Enums(10, 20, 30, 50, 100)
+// @Success  200  {object}  models.Response{data=api.listPageOf{items=[]api.localForwardView}}
+// @Failure  400  {object}  api.errorBody  "page is not a number, or size is not one of the sizes taken"
 // @Failure  404  {object}  api.errorBody  "No such Host"
 // @Router       /host/{id}/local-forward [get]
 func (h *Handler) ListHostLocalForwards(c echo.Context) error {
 	id, err := strconv.ParseUint(c.Param("id"), 10, 32)
 	if err != nil {
 		return failure(c, http.StatusBadRequest, errHostIDInvalid, errorArgs{"reason": err.Error()})
+	}
+
+	page, refused := readListPage(c)
+	if refused != nil {
+		return badListPage(c, refused)
 	}
 
 	// The Host is read first for the reason ListHostServicePorts reads it: a
@@ -307,8 +319,17 @@ func (h *Handler) ListHostLocalForwards(c echo.Context) error {
 		return failure(c, http.StatusInternalServerError, errHostFetchFailed)
 	}
 
+	var total int64
+	err = h.db.Model(&models.LocalForward{}).Where("host_id = ?", host.ID).Count(&total).Error
+	if err != nil {
+		h.logger.Error("failed to count the local forwards", logid.LocalForwardCountFailed.Field(), zap.Error(err))
+		return failure(c, http.StatusInternalServerError, errLocalForwardListFailed)
+	}
+
+	page = page.fitTo(total)
+
 	var rows []models.LocalForward
-	err = h.db.Where("host_id = ?", host.ID).Order("id").Find(&rows).Error
+	err = h.db.Where("host_id = ?", host.ID).Order("id").Limit(page.size).Offset(page.offset()).Find(&rows).Error
 	if err != nil {
 		h.logger.Error("failed to fetch local forwards", logid.LocalForwardListFetchFailed.Field(), zap.Error(err))
 		return failure(c, http.StatusInternalServerError, errLocalForwardListFailed)
@@ -323,13 +344,19 @@ func (h *Handler) ListHostLocalForwards(c echo.Context) error {
 
 	return c.JSON(http.StatusOK, models.Response{
 		Success: true,
-		Data:    views,
+		Data: listPageOf{
+			Items: views,
+			Total: total,
+			Page:  page.number,
+			Size:  page.size,
+		},
 	})
 }
 
 // @Summary      Add a local forward to a Host
 // @Description  This machine opens local_port and carries every connection to it over the SSH connection of the Host to target_ip:target_port, as seen from the Host.
 // @Description  bind_scope is where local_port is opened on this machine: loopback, wildcard, or left out for the wildcard.
+// @Description  enabled is whether the forward runs. Left out, it is true. A forward that is off opens no port and makes no SSH connection, and still holds local_port.
 // @Tags         local forwards
 // @Accept   json
 // @Produce  json
@@ -408,6 +435,7 @@ func (h *Handler) CreateHostLocalForward(c echo.Context) error {
 		TargetIP:    req.TargetIP,
 		TargetPort:  req.TargetPort,
 		Description: req.Description,
+		Enabled:     req.Enabled == nil || *req.Enabled,
 	}
 
 	err = tx.Create(&lf).Error
@@ -473,6 +501,7 @@ func (h *Handler) GetLocalForward(c echo.Context) error {
 
 // @Summary      Update a local forward
 // @Description  local_port, target_ip and target_port are all required. The Host it is carried by is not changed.
+// @Description  enabled switches the forward on or off. Left out, it keeps what is stored.
 // @Tags         local forwards
 // @Accept   json
 // @Produce  json
@@ -554,6 +583,9 @@ func (h *Handler) UpdateLocalForward(c echo.Context) error {
 	lf.TargetIP = req.TargetIP
 	lf.TargetPort = req.TargetPort
 	lf.Description = req.Description
+	if req.Enabled != nil {
+		lf.Enabled = *req.Enabled
+	}
 
 	err = tx.Save(&lf).Error
 	if err != nil {

@@ -236,6 +236,16 @@ type localForwardContent struct {
 	TargetIP    string `json:"target_ip"`
 	TargetPort  int    `json:"target_port"`
 	Description string `json:"description"`
+	// Enabled is a pointer so that a file from before a forward could be
+	// switched off, which carries no field, is told from one that carries
+	// false. Every forward of such a file was running, so it is stored as on.
+	// The export writes it every time.
+	Enabled *bool `json:"enabled"`
+}
+
+// enabled is whether the forward is stored as switched on.
+func (lf localForwardContent) enabled() bool {
+	return lf.Enabled == nil || *lf.Enabled
 }
 
 // servicePortContent is one service port as it is carried in a file. It holds
@@ -970,12 +980,15 @@ func localForwardsByHost(db *gorm.DB) (map[uint][]localForwardContent, error) {
 	byHost := make(map[uint][]localForwardContent)
 
 	for _, lf := range rows {
+		enabled := lf.Enabled
+
 		byHost[lf.HostID] = append(byHost[lf.HostID], localForwardContent{
 			BindScope:   lf.BindScope,
 			LocalPort:   lf.LocalPort,
 			TargetIP:    lf.TargetIP,
 			TargetPort:  lf.TargetPort,
 			Description: lf.Description,
+			Enabled:     &enabled,
 		})
 	}
 
@@ -2033,6 +2046,7 @@ func (h *TransferHandler) importLocalForwards(tx *gorm.DB, written []hostContent
 				TargetIP:    lf.TargetIP,
 				TargetPort:  lf.TargetPort,
 				Description: lf.Description,
+				Enabled:     lf.enabled(),
 			}).Error
 			if err != nil {
 				h.hosts.logger.Error("failed to store a local forward while importing",

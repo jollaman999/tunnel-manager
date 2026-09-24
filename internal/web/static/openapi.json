@@ -881,14 +881,14 @@
         },
         "/host/{id}/local-forward": {
             "get": {
-                "description": "status is what the running forward reports (starting, connected, reconnecting, error, host_key_unapproved, host_key_mismatch), \"disabled\" when the Host is disabled, and \"stopped\" when the Host is enabled and no forward runs yet or it failed to start.\nbind_scope is always loopback or wildcard.",
+                "description": "status is what the running forward reports (starting, connected, reconnecting, error, host_key_unapproved, host_key_mismatch), \"disabled\" when the Host is disabled, \"off\" when the Host is enabled and the forward is switched off, and \"stopped\" when both are on and no forward runs yet or it failed to start.\nbind_scope is always loopback or wildcard.",
                 "produces": [
                     "application/json"
                 ],
                 "tags": [
                     "local forwards"
                 ],
-                "summary": "The local forwards of a Host, with what each one reports",
+                "summary": "One page of the local forwards of a Host, oldest first, with what each one reports",
                 "parameters": [
                     {
                         "type": "integer",
@@ -896,6 +896,25 @@
                         "name": "id",
                         "in": "path",
                         "required": true
+                    },
+                    {
+                        "type": "integer",
+                        "description": "The page, counted from 1. Below 1 is read as 1, and a page past the last one is answered with the last page",
+                        "name": "page",
+                        "in": "query"
+                    },
+                    {
+                        "enum": [
+                            10,
+                            20,
+                            30,
+                            50,
+                            100
+                        ],
+                        "type": "integer",
+                        "description": "How many rows a page holds",
+                        "name": "size",
+                        "in": "query"
                     }
                 ],
                 "responses": {
@@ -910,14 +929,32 @@
                                     "type": "object",
                                     "properties": {
                                         "data": {
-                                            "type": "array",
-                                            "items": {
-                                                "$ref": "#/definitions/api.localForwardView"
-                                            }
+                                            "allOf": [
+                                                {
+                                                    "$ref": "#/definitions/api.listPageOf"
+                                                },
+                                                {
+                                                    "type": "object",
+                                                    "properties": {
+                                                        "items": {
+                                                            "type": "array",
+                                                            "items": {
+                                                                "$ref": "#/definitions/api.localForwardView"
+                                                            }
+                                                        }
+                                                    }
+                                                }
+                                            ]
                                         }
                                     }
                                 }
                             ]
+                        }
+                    },
+                    "400": {
+                        "description": "page is not a number, or size is not one of the sizes taken",
+                        "schema": {
+                            "$ref": "#/definitions/api.errorBody"
                         }
                     },
                     "404": {
@@ -934,7 +971,7 @@
                         "CSRFToken": []
                     }
                 ],
-                "description": "This machine opens local_port and carries every connection to it over the SSH connection of the Host to target_ip:target_port, as seen from the Host.\nbind_scope is where local_port is opened on this machine: loopback, wildcard, or left out for the wildcard.",
+                "description": "This machine opens local_port and carries every connection to it over the SSH connection of the Host to target_ip:target_port, as seen from the Host.\nbind_scope is where local_port is opened on this machine: loopback, wildcard, or left out for the wildcard.\nenabled is whether the forward runs. Left out, it is true. A forward that is off opens no port and makes no SSH connection, and still holds local_port.",
                 "consumes": [
                     "application/json"
                 ],
@@ -1347,7 +1384,7 @@
                         "CSRFToken": []
                     }
                 ],
-                "description": "local_port, target_ip and target_port are all required. The Host it is carried by is not changed.",
+                "description": "local_port, target_ip and target_port are all required. The Host it is carried by is not changed.\nenabled switches the forward on or off. Left out, it keeps what is stored.",
                 "consumes": [
                     "application/json"
                 ],
@@ -3348,6 +3385,10 @@
                 "description": {
                     "type": "string"
                 },
+                "enabled": {
+                    "description": "Enabled is whether this forward runs. One that is off opens no port and\nmakes no SSH connection, and still holds LocalPort. It carries no\ndatabase default for the reason Host.Enabled carries none.",
+                    "type": "boolean"
+                },
                 "host_id": {
                     "type": "integer"
                 },
@@ -3367,7 +3408,7 @@
                     "type": "integer"
                 },
                 "status": {
-                    "description": "Status is what tunnel.LocalForwardState reports while a forward runs,\nand \"disabled\" or \"stopped\" while none does.",
+                    "description": "Status is what tunnel.LocalForwardState reports while a forward runs,\nand \"disabled\", \"off\" or \"stopped\" while none does.",
                     "type": "string"
                 },
                 "target_ip": {
@@ -3925,6 +3966,10 @@
                 },
                 "description": {
                     "type": "string"
+                },
+                "enabled": {
+                    "description": "Enabled is a pointer for the reason CreateHostRequest.Enabled is. A\ncreation that leaves it out makes a forward that runs, and a change that\nleaves it out keeps what is stored.",
+                    "type": "boolean"
                 },
                 "local_port": {
                     "type": "integer",

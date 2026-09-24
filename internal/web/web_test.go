@@ -1363,8 +1363,10 @@ func TestTheFieldsTheScreensSendAreOnesTheRequestsCarry(t *testing.T) {
 		// the one struct.
 		{"servicePortBody", models.CreateServicePortRequest{}},
 		{"createServicePort", models.CreateServicePortRequest{}},
-		// The add and the edit of a local forward are bound into one request.
+		// The add and the edit of a local forward are bound into one request,
+		// and so is the switch of one on or off.
 		{"localForwardBody", models.LocalForwardRequest{}},
+		{"localForwardFlipBody", models.LocalForwardRequest{}},
 	} {
 		carried := jsonFields(t, held.into)
 		sent := bodyFields(t, script, held.name)
