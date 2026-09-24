@@ -64,8 +64,8 @@ func main() {
 	flag.StringVar(&cfg.targetPort, "target-port", "80", "port the local forward reaches from the Host")
 	flag.StringVar(&cfg.socksPort, "socks-port", "1080", "port the SOCKS5 proxy of the Host listens on here")
 	flag.StringVar(&cfg.socksURL, "socks-url", "http://127.0.0.1/", "address opened through the SOCKS5 proxy, as the Host reaches it")
-	flag.IntVar(&cfg.width, "width", 1280, "viewport width")
-	flag.IntVar(&cfg.height, "height", 800, "viewport height")
+	flag.IntVar(&cfg.width, "width", 1440, "viewport width")
+	flag.IntVar(&cfg.height, "height", 900, "viewport height")
 	flag.Parse()
 
 	if cfg.passwordFile == "" {
