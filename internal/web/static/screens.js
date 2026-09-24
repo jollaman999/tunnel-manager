@@ -7091,7 +7091,7 @@ function transferItemsTable(result) {
       return [
         transferItemKind(item.kind),
         serverText(item.name, item.name_code, item.name_values),
-        item.action,
+        transferItemAction(item.action),
         serverText(reason, item.reason_code, item.reason_values)
       ];
     })));
@@ -7115,7 +7115,34 @@ function transferItemKind(kind) {
     return t("transfer.kind-local-forward.text");
   }
 
+  if (kind === "assignment") {
+    return t("transfer.kind-assignment.text");
+  }
+
+  if (kind === "setting") {
+    return t("transfer.kind-setting.text");
+  }
+
   return kind === null || kind === undefined ? "" : String(kind);
+}
+
+// transferItemAction names what the import did with a row. An action this
+// version does not know is shown as the server wrote it, for the reason
+// transferItemKind gives.
+function transferItemAction(action) {
+  if (action === "added") {
+    return t("transfer.action-added.text");
+  }
+
+  if (action === "replaced") {
+    return t("transfer.action-replaced.text");
+  }
+
+  if (action === "skipped") {
+    return t("transfer.action-skipped.text");
+  }
+
+  return action === null || action === undefined ? "" : String(action);
 }
 
 async function importSettings(values) {
