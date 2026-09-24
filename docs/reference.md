@@ -16,13 +16,14 @@ on the Host and not on the machine Tunnel Manager runs on. A client that
 connects to `local_port` **on the Host** is carried through the SSH connection to
 Tunnel Manager, which then connects to `service_ip:service_port` and copies the
 bytes in both directions. That is how a service only Tunnel Manager can reach is
-made reachable from the Host. A [local forward](#local-forwards) is the one
-thing that runs the other way: the port is opened on this machine and the
-connection is made from the Host.
+made reachable from the Host. A [local forward](#local-forwards) and the
+[SOCKS5 proxy of a Host](#a-socks5-proxy-on-a-host) are the two things that run
+the other way: the port is opened on this machine and the connection is made
+from the Host.
 
 | What you register | Fields | What it is |
 |-------------------|--------|------------|
-| Host | `ip`, `port`, `user`, `private_key`, `key_passphrase`, `password`, `description`, `enabled` | An SSH server Tunnel Manager logs in to. It logs in with a private key, with a password, or with both; at least one of the two is required. The key, its passphrase and the password are all stored encrypted. |
+| Host | `ip`, `port`, `user`, `private_key`, `key_passphrase`, `password`, `description`, `enabled`, `socks_enabled`, `socks_port`, `socks_bind_scope`, `socks_allowed_sources` | An SSH server Tunnel Manager logs in to. It logs in with a private key, with a password, or with both; at least one of the two is required. The key, its passphrase and the password are all stored encrypted. The `socks_` fields are the [SOCKS5 proxy](#a-socks5-proxy-on-a-host) it may carry. |
 | Service port | `service_ip`, `service_port`, `local_port` | The service to publish, and the port opened on every Host that carries it. |
 | Assignment | `host_id`, `sp_id`, `bind_scope` | One Host paired with one service port: this Host is to carry it. It is what a tunnel is built from, and it is made for you as a Host or a service port is registered. `bind_scope` is how far its forwarded port is asked to reach on the Host, `loopback` or `wildcard`, and the wildcard where it is not given. |
 | Local forward | `local_port`, `bind_scope`, `target_ip`, `target_port`, `description` | A port opened on this machine, whose connections are carried through the SSH connection of one Host to `target_ip:target_port` as the Host sees it. It belongs to that Host alone. |
@@ -349,18 +350,21 @@ of them opening is enough**: a machine without IPv6 opens the IPv4 half alone.
 Where neither opens, a port another program holds for instance, the forward
 reports `error` and tries again.
 
-**`local_port` is unique across every local forward**, whichever Host carries
-them, because every one of them opens its port on this same machine. A second
-forward on a port that is taken is refused with `409`, and so is a forward on
+**`local_port` is unique across every local forward and every SOCKS5 proxy**,
+whichever Host carries them, because every one of them opens its port on this
+same machine. A second forward on a port that another forward or the
+[SOCKS5 proxy](#a-socks5-proxy-on-a-host) of a Host takes is refused with
+`409`, and so is a forward on
 the port this server is stored to listen on (`api_port`) or on the port it
 listens on now, when a start moved to another one. The same check is made
 the other way when `api_port` changes, by a save on the Settings screen or by a
-settings import: a port a forward opens is refused with `409` and nothing is
-stored. The refusal carries that forward and `suggested_port`, the first port
-above it that no forward, the stored `api_port`, the port listened on now and
-the asked for one hold, and
-the Settings screen answers it with a panel that moves the forward to another
-port, or on a save the API port instead. A port below 1024 is opened by this process itself, so it is held to
+settings import: a port a forward or a SOCKS5 proxy opens is refused with `409`
+and nothing is stored. The refusal carries that forward, or that Host in
+`socks_host`, and `suggested_port`, the first port above it that no forward, no
+SOCKS5 proxy, the stored `api_port`, the port listened on now and the asked for
+one hold, and
+the Settings screen answers it with a panel that moves the forward or the proxy
+to another port, or on a save the API port instead. A port below 1024 is opened by this process itself, so it is held to
 the rule in [Running as a non-root user](#running-as-a-non-root-user).
 
 **A local forward runs while its Host is enabled** and on no other Host. The
@@ -403,6 +407,150 @@ the Status screen does not count local forwards.
 
 **An export carries the local forwards of each Host**, in `local_forwards` on
 that Host. See [Export and import](#export-and-import).
+
+### A SOCKS5 proxy on a Host
+
+**A Host can carry a SOCKS5 proxy.** It is what `ssh -D` does, kept up the way
+a local forward is: **this machine** opens `socks_port`, a browser set to use
+it asks for a site with a SOCKS5 `CONNECT`, and the connection to that site is
+made from the Host over its SSH connection. The browser names the target on
+every connection, so one port reaches whatever the Host reaches. A name is
+passed to the Host as it was sent and is resolved there, so a name only the
+network of the Host knows works as well.
+
+```mermaid
+flowchart LR
+    browser([A browser set to use the proxy])
+    subgraph here [The machine tunnel-manager runs on]
+        port[["socks_port<br/>opened by tunnel-manager"]]
+        tm[tunnel-manager]
+    end
+    subgraph host [Host - an SSH server you register]
+        sshd[SSH server]
+    end
+    target[("The site the browser asked for<br/>a name is resolved by the Host")]
+
+    tm ==>|"1. connects over SSH, then opens socks_port"| sshd
+    browser -->|"2. SOCKS5 CONNECT to a name or an address"| port
+    port -->|"3. through the SSH connection"| sshd
+    sshd -->|"4. resolves the name and connects"| target
+```
+
+**It is switched on in the add and edit forms of a Host** on the Hosts screen,
+with the **Turn on a SOCKS5 proxy** tick. The port, where it is opened and the
+**Allowed client addresses** box appear once the tick is on, and the port starts
+at 1080. Through the API the same four fields are sent on the Host, see
+[Hosts](#hosts).
+
+| Field | What it is |
+|-------|------------|
+| `socks_enabled` | Whether the Host carries a proxy. Off unless it is sent |
+| `socks_port` | The port opened on this machine, 1 to 65535. Required while the proxy is on |
+| `socks_bind_scope` | Which addresses of this machine it is opened on: `wildcard` (`0.0.0.0` and `::`) or `loopback` (`127.0.0.1` and `::1`). Left out, it is the wildcard |
+| `socks_allowed_sources` | The addresses a client may connect from. Empty lets every address in |
+
+**The default is the wildcard, and the proxy asks for no password.** A proxy
+kept to `loopback` is of no use to a browser on another machine, which is what
+it is usually for, so it is opened on every interface unless you choose
+otherwise. That makes it an open door into the network of the Host for anybody
+who reaches this machine on `socks_port`. **Fill in the allowed client
+addresses** for a proxy on the wildcard. Chrome and Firefox have no place to give
+a SOCKS5 proxy a password, so the source address of the client is what the proxy is
+limited by instead of a login, and a firewall in front of the port is the other
+half of it.
+
+`socks_allowed_sources` takes IPv4 and IPv6 addresses and CIDR blocks,
+separated by commas or spaces, as `203.0.113.0/24, 198.51.100.7`. An address
+stands for itself alone. An IPv4 address written in its IPv6 form,
+`::ffff:192.0.2.1`, is the same as `192.0.2.1`. A value that does not read, or
+an address with a zone such as `%eth0`, is refused with `400` and nothing is
+stored.
+
+**A client from an address that is not on the list is closed at once**, before
+a byte is read from it and without a SOCKS answer. The refusals are logged as
+`tunnel.socks_source_refused` at most once a minute for each proxy, with the
+number refused since the line before, so a port that is scanned does not fill
+the log.
+
+What the proxy speaks is the `CONNECT` of SOCKS5 without authentication, to an
+IPv4 address, an IPv6 address or a name.
+
+| A client that asks for | Gets |
+|------------------------|------|
+| `CONNECT` | The connection, or a SOCKS failure reply when the Host cannot make it |
+| `BIND`, `UDP ASSOCIATE` | The reply "command not supported" |
+| A username and a password, and no way without | The answer that no method is acceptable, then the connection is closed |
+| SOCKS4 or SOCKS4a | The connection is closed without an answer |
+
+A target the Host cannot reach is answered with a SOCKS failure reply, picked
+from what the SSH server said: the connection was refused, the network or the
+host cannot be reached, the SSH server does not allow it, or a general failure
+for anything else.
+The connection from the Host is given 10 seconds, and so is a client to send
+its request. These failures are what a browser meets in the ordinary course of
+things, so they are logged at the `debug` level only.
+
+**`socks_port` is unique on this machine.** A port that the proxy of another
+Host opens, that a local forward of any Host opens, that this server is stored
+to listen on (`api_port`) or that it listens on now is refused with `409`, when
+the proxy is switched on or moved to another port. A proxy that is on holds its
+port whether its Host is enabled or not, since enabling the Host is what opens
+it. The same holds the other way: a local forward and a new `api_port` are
+refused a port a proxy holds, see [Local forwards](#local-forwards). A port
+below 1024 is held to the rule in
+[Running as a non-root user](#running-as-a-non-root-user).
+
+**The proxy runs while its Host is enabled** and the proxy is on with a port. It
+is one SSH connection of its own, apart from the tunnels and the local forwards
+of the same Host, and it is started, rebuilt and stopped by the reconcile loop
+the way a local forward is. A change to the port, the scope or the allowed
+addresses of the proxy, or to the address, the credentials or the trusted host
+key of the Host, stops it and starts it again, and the connections through it
+end with it.
+
+**`socks_port` is open only while the SSH connection stands**, as `local_port`
+is: it is opened once the connection is made and closed when it drops, and the
+connection is made again after the monitoring interval. A refused login and a
+refused host key stop it until something it is built from changes, see
+[Host keys](#host-keys).
+
+The status is answered on the Host, in `socks_status`, with `socks_last_error`
+beside it, and the Hosts screen shows it in the **SOCKS5 proxy** column as the
+port and a badge. A Host without a proxy shows `-` there, and an error is shown
+on a line under the row.
+
+| `socks_status` | What it means |
+|----------------|---------------|
+| `off` | The proxy is not switched on. Nothing is opened |
+| `disabled` | The proxy is on and the Host is disabled. Nothing is opened |
+| `stopped` | The Host is enabled and no proxy runs: the reconcile loop has not reached it yet, or it failed to start it, which the log says |
+| `starting`, `connected`, `reconnecting`, `error`, `host_key_unapproved`, `host_key_mismatch` | What the running proxy reports, with the meanings they have for a local forward, see [Local forwards](#local-forwards) |
+
+`connected` says the SSH connection stands and `socks_port` is open, not that a
+site answers. The status is kept in memory, is not in `GET /api/status` and is
+not counted on the Status screen. The SSH server on the Host has to allow
+forwarding in this direction, as for a local forward.
+
+**To use it, point the browser at this machine.** With the proxy on
+`192.0.2.20:1080`:
+
+- Firefox: **Settings**, **Network Settings**, **Manual proxy configuration**.
+  Put `192.0.2.20` and `1080` in **SOCKS Host** and **Port**, pick
+  **SOCKS v5**, and tick **Proxy DNS when using SOCKS v5**, so that names are
+  resolved by the Host and not by the machine the browser runs on.
+- Chrome, started with the proxy on its command line:
+
+  ```bash
+  google-chrome --proxy-server="socks5://192.0.2.20:1080"
+  ```
+
+  Chrome does not send a loopback address such as `127.0.0.1` to a proxy. To
+  reach a page the Host serves on its own loopback address, add
+  `--proxy-bypass-list="<-loopback>"`.
+
+**An export carries the proxy of each Host**, in the four fields above on that
+Host. A file that does not carry them leaves the proxy of the Host as it is.
+See [Export and import](#export-and-import).
 
 ## Install and run
 
@@ -965,7 +1113,7 @@ no directory travels next to it and no path has to be configured.
 | Screen | Path | What it shows and does |
 |--------|------|------------------------|
 | Status | `/ui/status` | The three counts (desired, rows, connected), a sentence about the difference between them, and one line per tunnel: Host, service port, status, server, local, remote, port reached, retries, last connected. A tunnel with something wrong carries what went wrong on a line under it, across the whole table, and a tunnel whose forwarded port was not reached carries there what to change on the SSH server it named and what else to check. A tunnel that is up carries under it what is known about the addresses of its forward, kept in three: what was asked for, what the SSH server answered, and what a connection from here confirmed. It never says a port is open. The tunnel rows come a page at a time, ten to a page to begin with, with the size and the page chosen above the table; the three counts stay counts of every tunnel and not of the page. It asks again every 5 seconds and comes back on the page being read. |
-| Hosts | `/ui/hosts` | One row per Host with ID, IP, port, user, description, enabled and updated. The rows come a page at a time, ten to a page to begin with, with the size (10, 20, 30, 50 or 100) and the page chosen above the table. The choice is remembered for this screen on its own, and a list short enough to fit a page of the smallest size carries no controls at all. Add a Host, edit one, enable or disable one, delete one. The add and edit forms have a box to paste a private key into, an area to drop the key file onto, and a box for the passphrase of a key that has one, and the add form has an **Assign all service ports** tick, on by default, that says what the Host starts out carrying, with a **Reach on the Host** list beside it that every assignment that tick makes starts on. **Service ports** in a row opens a panel of every service port with a tick against the ones this Host carries, and a reach beside each row: pick a reach above and apply it to everything ticked, or set one row on its own, and a row that was not ticked is left alone. Only what was changed is sent when it is saved, so a tick made there leaves the pages that were not read alone. **Local forwards** in a row opens a panel of the local forwards of that Host with the status of each, where they are added, changed and deleted; see [Local forwards](#local-forwards). |
+| Hosts | `/ui/hosts` | One row per Host with ID, IP, port, user, description, enabled, SOCKS5 proxy and updated. The rows come a page at a time, ten to a page to begin with, with the size (10, 20, 30, 50 or 100) and the page chosen above the table. The choice is remembered for this screen on its own, and a list short enough to fit a page of the smallest size carries no controls at all. Add a Host, edit one, enable or disable one, delete one. The add and edit forms have a box to paste a private key into, an area to drop the key file onto, and a box for the passphrase of a key that has one, and the add form has an **Assign all service ports** tick, on by default, that says what the Host starts out carrying, with a **Reach on the Host** list beside it that every assignment that tick makes starts on. **Service ports** in a row opens a panel of every service port with a tick against the ones this Host carries, and a reach beside each row: pick a reach above and apply it to everything ticked, or set one row on its own, and a row that was not ticked is left alone. Only what was changed is sent when it is saved, so a tick made there leaves the pages that were not read alone. **Local forwards** in a row opens a panel of the local forwards of that Host with the status of each, where they are added, changed and deleted; see [Local forwards](#local-forwards). The add and edit forms also switch on the SOCKS5 proxy of the Host, and its column shows the port and the status; see [A SOCKS5 proxy on a Host](#a-socks5-proxy-on-a-host). |
 | Service Ports | `/ui/service-ports` | One row per service port with ID, service IP, service port, local port, description and updated. The rows come a page at a time the same way the Hosts do, with a size and a page of their own. Add, edit and delete. The add form has an **Assign to all hosts** tick, on by default, that says which Hosts carry it from the start, with a **Reach on the Host** list beside it that the assignments that tick makes start on; which Hosts carry it after that, and what each of those assignments reaches, is changed from the Hosts screen. |
 | Logs | `/ui/logs` | The end of the log file, newest last, with a level filter and a count to show. It asks again every 5 seconds. It reads the file the process is writing now; rotated files are not shown. The lines are shown in the language of the screen while the file stays English; see [The language of the screens](#the-language-of-the-screens). |
 | Settings | `/ui/settings` | What is stored but not being run on yet, with a Restart in that card that puts it into place, every stored setting and what a save changed, among them the language this installation shows a browser that has picked none, the certificate being served with a button to renew it and boxes to register one of your own, the username and the password of this account, an export of the tunnel configuration and of the settings of this manager into one encrypted file each and an import that takes such a file back, a Restart that takes the service down and brings it back, and the Uninstall at the bottom. See [Settings](#settings). |
@@ -1123,7 +1271,7 @@ A save is refused before it is stored when a value would not hold:
 
 | Setting | Rule |
 |---------|------|
-| `api_port` | 1 to 65535. A new port a local forward opens is refused with `409`, see [Local forwards](#local-forwards) |
+| `api_port` | 1 to 65535. A new port a local forward or a SOCKS5 proxy opens is refused with `409`, see [Local forwards](#local-forwards) |
 | `monitoring_interval_sec`, `reconcile_interval_sec` | Above zero |
 | `security_key_file`, `logging_file_path` | Not empty, and a path under the directory the database file is in: an absolute path and one that climbs out with `..` are refused. See [Where the files go](#where-the-files-go) |
 | `logging_level` | `debug`, `info`, `warn`, `error`, `dpanic`, `panic` or `fatal` |
@@ -1187,7 +1335,8 @@ are in place the moment they are saved. An installation that is running on
 everything it has stored gets `[]`.
 
 **A stored `api_port` that another program holds does not stop the start.** The
-process listens on a port the system picks instead, one no local forward opens,
+process listens on a port the system picks instead, one no local forward and no
+SOCKS5 proxy opens,
 and logs it under `api_server.port_taken_fallback` with `reason`, `stored_port`
 and `port`. A port another program holds on any address, `0.0.0.0` alone
 included, counts as held, and `reason` is `in_use`.
@@ -1262,8 +1411,9 @@ server that will not start. `-reset-settings` is the way out.
 
 It puts every setting back to its default, prints what it changed and exits. The
 next start runs on the defaults, and the Settings screen is reachable again. A
-local forward that opens the default API port is named in a warning
-(`settings.default_port_held_by_forward`), since the next start may listen on
+local forward or a SOCKS5 proxy that opens the default API port is named in a
+warning (`settings.default_port_held_by_forward` or
+`settings.default_port_held_by_socks`), since the next start may listen on
 another port.
 
 **Only the settings go back.** The registered hosts, the service ports, the
@@ -1704,6 +1854,9 @@ The body of a create and of an update takes these fields.
 | `bind_scope` | Optional. `loopback` or `wildcard`, and left out or sent empty it is the wildcard | Not read. A Host holds no scope; the scope of one assignment is changed through `PUT /api/host/:id/service-port` |
 | `description`, `enabled` | Optional | Optional |
 | `assign_all_service_ports` | Optional. Left out, and the Host is given every service port that is stored. Send it as false to register a Host that carries none | Not read. What a Host carries is changed through `PUT /api/host/:id/service-port` |
+| `socks_enabled`, `socks_port` | Optional. `socks_port` is required when `socks_enabled` is true | Optional; what is left out stays as it is |
+| `socks_bind_scope` | Optional. `loopback` or `wildcard`, and left out or sent empty it is the wildcard | Optional; left out or sent empty, the stored scope stays |
+| `socks_allowed_sources` | Optional. Empty lets every address in | Optional; left out, the stored list stays, and sent as `""` it lets every address in |
 
 A create that carries neither a key nor a password is refused, and so is a key
 that cannot be used. The refusal says which of them it is: that the value is not
@@ -1724,7 +1877,8 @@ refused with `400`, and left out it is the wildcard, which is what every forward
 asked for before any of this existed.
 
 The Host itself holds no scope, so `PUT /api/host/:id` does not take the field
-and no answer carries it. What one assignment is opened to afterwards is read
+and no answer carries it. `socks_bind_scope` is a different thing: it is where
+the SOCKS5 proxy of the Host is opened on this machine. What one assignment is opened to afterwards is read
 and changed through
 [the service ports a Host carries](#the-service-ports-a-host-carries), and what
 the two scopes mean is in [Assignments](#assignments).
@@ -1742,6 +1896,23 @@ curl -s -b cookies.txt -X POST "$BASE/api/host" \
   -H 'Content-Type: application/json' \
   -H "X-CSRF-Token: $CSRF" \
   --data-binary @-
+```
+
+**The SOCKS5 fields are what the proxy of the Host is built from**, see
+[A SOCKS5 proxy on a Host](#a-socks5-proxy-on-a-host). A proxy switched on
+without a port, or with allowed addresses that do not read, is refused with
+`400`. One switched on or moved to a port that the proxy of another Host, a
+local forward or this server holds is refused with `409`. Nothing is stored in
+either case. Every answer that carries a Host carries the four fields as they
+are stored, `socks_bind_scope` as a word every time, and `socks_status` and
+`socks_last_error`.
+
+```bash
+# Switch on the SOCKS5 proxy of Host 3 on port 1080, for two sources only.
+curl -s -b cookies.txt -X PUT "$BASE/api/host/3" \
+  -H 'Content-Type: application/json' \
+  -H "X-CSRF-Token: $CSRF" \
+  -d '{"socks_enabled":true,"socks_port":1080,"socks_allowed_sources":"203.0.113.0/24, 198.51.100.7"}'
 ```
 
 ### The service ports a Host carries
@@ -2152,6 +2323,17 @@ twice, when a forward in it does not pass the rules of a create, when it opens
 the port this server is stored to listen on, or when it opens a port that a local
 forward the import leaves in place holds here; the Host of that forward is named
 in the refusal.
+
+**The SOCKS5 proxy of each Host travels with it**, in `socks_enabled`,
+`socks_port`, `socks_bind_scope` and `socks_allowed_sources` on the Host. The
+export always writes the four. A field the file does not carry leaves what the
+Host has as it is, so a file written before the proxy existed switches no proxy
+off, and a Host that was skipped keeps its proxy whatever the file says. Every
+proxy the import switches on is listed in the answer under the kind `socks`.
+**The import is refused, and nothing is written**, when the file opens one port
+twice among its proxies and local forwards, or when a proxy it switches on opens
+the port this server listens on or a port the proxy or a local forward of
+another Host opens here.
 
 **The key each Host is trusted on travels with it**, in `host_key`, so moving a
 configuration does not throw the trust away and the installation that takes the

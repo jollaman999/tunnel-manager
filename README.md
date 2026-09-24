@@ -54,6 +54,9 @@ in the row of that Host.
   connection drops.
 - Opens local forwards as well: a port on this machine that reaches, through a
   Host, an address only that Host can reach. They are kept up the same way.
+- Turns a Host into a SOCKS5 proxy, the way `ssh -D` does: a browser pointed at
+  a port on this machine reaches whatever that Host reaches, limited to the
+  client addresses you allow.
 - Connects to the forwarded port itself once the tunnel is up and says whether
   it answered, since which address the SSH server binds it to is that server's
   decision.
@@ -145,7 +148,7 @@ well, and what `-purge` removes cannot be brought back.
 
 | Section | What is in it |
 |---------|---------------|
-| [How it works](docs/reference.md#how-it-works) | The reconcile loop, the assignments, one tunnel end to end, local forwards |
+| [How it works](docs/reference.md#how-it-works) | The reconcile loop, the assignments, one tunnel end to end, local forwards, the SOCKS5 proxy of a Host |
 | [Install and run](docs/reference.md#install-and-run) | The flags, where the files go, Docker Compose, systemd, from source |
 | [Installing as a service](docs/reference.md#installing-as-a-service) | The four flags, what an install does over one that is already there, what a removal reads the paths from |
 | [HTTPS and the certificate](docs/reference.md#https-and-the-certificate) | The browser warning, registering a certificate of your own, renewing, turning HTTPS off |
