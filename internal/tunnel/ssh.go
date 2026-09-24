@@ -831,16 +831,21 @@ func (t *SSHTunnel) openForwards(client *ssh.Client) (*openForwards, error) {
 
 // openForwards is what came of asking for the two addresses of a bind scope.
 type openForwards struct {
-	// v4 and v6 are the forwards that opened, and either is nil when the SSH
-	// server refused that address. They are never both nil: a connection on
-	// which neither opened is a failure and never reaches here.
+	// v4 and v6 are the forwards that opened. For a remote forward either is
+	// nil when the SSH server refused that address. For a local forward or a
+	// SOCKS5 proxy either is nil when this machine could not open it, except
+	// on Windows, where the wildcard scope is opened as one dual-stack socket
+	// on [::] held in v6: v4 is then nil although IPv4 is reached, and reach
+	// is openReachBoth (local_listen_windows.go). They are never both nil: a
+	// connection on which neither opened is a failure and never reaches here.
 	v4 net.Listener
 	v6 net.Listener
 	// reach is what models.Tunnel.OpenReach is left at, one of openReachBoth,
 	// openReachV4 and openReachV6.
 	reach string
-	// refused is what the SSH server said about the address it would not open,
-	// and is nil when it opened both. It is kept for the line that is logged
+	// refused is why the address that did not open was not opened, as the SSH
+	// server said it for a remote forward and as this machine said it for a
+	// local one, and is nil when both opened. It is kept for the line that is logged
 	// about it rather than for the row, because a tunnel that carries traffic
 	// over one family is connected and not in error.
 	refused error
