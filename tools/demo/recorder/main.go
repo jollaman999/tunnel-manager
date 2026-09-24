@@ -449,7 +449,7 @@ func sceneLocalForward(r *recorder, cfg config, _ string) error {
 		return fmt.Errorf("the page at %s says %q and not the web server inside the Host", address, heading)
 	}
 
-	if err := r.caption("6. This machine opens the port and reaches the web server inside the Host"); err != nil {
+	if err := r.caption("7. This machine opens the port and reaches the web server inside the Host"); err != nil {
 		return err
 	}
 
@@ -469,7 +469,7 @@ func sceneSOCKS(r *recorder, cfg config, _ string) error {
 		return err
 	}
 
-	if err := r.caption("7. Turn on a SOCKS5 proxy and browse the network behind the Host"); err != nil {
+	if err := r.caption("8. Turn on a SOCKS5 proxy and browse the network behind the Host"); err != nil {
 		return err
 	}
 
@@ -586,7 +586,7 @@ func (r *recorder) throughProxy(cfg config) error {
 		return fmt.Errorf("the page at %s through the proxy says %q and not the web server inside the Host", cfg.socksURL, heading)
 	}
 
-	if err := r.caption("7. A browser set to the SOCKS5 proxy opens the address as the Host sees it"); err != nil {
+	if err := r.caption("9. A browser set to the SOCKS5 proxy opens the address as the Host sees it"); err != nil {
 		return err
 	}
 
