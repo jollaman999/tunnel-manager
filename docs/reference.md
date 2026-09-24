@@ -322,6 +322,17 @@ button in the row of that Host on the Hosts screen, or through the API, see
 [The local forwards of a Host](#the-local-forwards-of-a-host). Deleting the Host
 deletes its local forwards in the same transaction.
 
+**Every forward carries a number, and the numbers are handed out per Host.** It
+is `number` in every answer, it counts from 1, and the first forward of one Host
+and the first forward of another are both number 1, so a forward is named by the
+Host and the number together: `/api/host/1/local-forward/1` and
+`/api/host/2/local-forward/1` are two different forwards. A forward that is
+added is given **the lowest number that Host is not already using**, so the gap a
+delete leaves is what the next one added is given and the numbers of a Host run
+1, 2, 3 with nothing missing. What that costs is that a number written down
+somewhere else, in a log line or in a note, names the row that holds it now
+rather than the row it was written about.
+
 | Field | What it is |
 |-------|------------|
 | `local_port` | The port opened on this machine, 1 to 65535 |
@@ -422,6 +433,15 @@ local forwards beside the tunnels and counts them under names of their own; see
 Every forward stored before it was running, so the startup that adds the column
 switches all of them on, and no other startup does: a forward switched off since
 stays off across a restart.
+
+**The startup after the upgrade that added the numbers gives one to every
+stored forward.** Each Host is numbered from 1, in the order its forwards were
+made in, which is the order the list was already drawn in, so a forward comes
+out at the place it was already shown at and nothing about it changes but the
+way it is named. The whole of it is one transaction: either every forward is
+numbered or the rows are left exactly as they were and the startup stops and
+says why. It runs on the startup that finds the old shape and on no other, so
+starting the new version twice over one installation numbers it once.
 
 **An export carries the local forwards of each Host**, in `local_forwards` on
 that Host. See [Export and import](#export-and-import).
@@ -2155,12 +2175,19 @@ one line over the table while anything is waiting, drawn from the two counts in
 |--------|------|--------------|
 | `GET` | `/api/host/:id/local-forward` | One page of the local forwards of this Host with what each reports, oldest first. Takes `page` and `size`, see [Paging](#paging) |
 | `POST` | `/api/host/:id/local-forward` | Adds a local forward to this Host |
-| `GET` | `/api/local-forward/:id` | Reads one local forward |
-| `PUT` | `/api/local-forward/:id` | Updates a local forward, and switches it on or off with `enabled`. The Host it belongs to is not changed |
-| `DELETE` | `/api/local-forward/:id` | Deletes a local forward |
+| `GET` | `/api/host/:id/local-forward/:number` | Reads one local forward of this Host |
+| `PUT` | `/api/host/:id/local-forward/:number` | Updates a local forward, and switches it on or off with `enabled`. The Host it belongs to is not changed, and neither is its number |
+| `DELETE` | `/api/host/:id/local-forward/:number` | Deletes a local forward |
 
-What a local forward is and what its status means are in
+**A forward is named by the Host and its number together.** `:number` is the
+`number` of the row and not an id of its own: numbers are handed out per Host,
+so `/api/host/1/local-forward/1` and `/api/host/2/local-forward/1` are two
+different forwards and a number on its own names none. What a local forward is,
+how the numbers are given out and what its status means are in
 [Local forwards](#local-forwards).
+
+**These three paths used to be `/api/local-forward/:id`**, with one id across
+every Host, and a client on the old paths is answered `404` by the router.
 
 ```bash
 curl -s -b cookies.txt -X POST "$BASE/api/host/1/local-forward" \
@@ -2174,7 +2201,7 @@ curl -s -b cookies.txt -X POST "$BASE/api/host/1/local-forward" \
   "success": true,
   "data": {
     "items": [
-      { "id": 1, "host_id": 1, "bind_scope": "loopback", "local_port": 15432,
+      { "host_id": 1, "number": 1, "bind_scope": "loopback", "local_port": 15432,
         "target_ip": "198.51.100.30", "target_port": 5432, "description": "database",
         "enabled": true,
         "status": "connected", "last_error": "", "retry_count": 0,
@@ -2205,9 +2232,9 @@ one field an update can leave out and keep: left out, the forward stays on or
 off as it is, while a create that leaves it out makes a forward that runs.
 
 ```bash
-# Switch local forward 1 off. The update takes the whole of the fields, so the
-# ones it keeps are sent again.
-curl -s -b cookies.txt -X PUT "$BASE/api/local-forward/1" \
+# Switch forward 1 of Host 1 off. The update takes the whole of the fields, so
+# the ones it keeps are sent again.
+curl -s -b cookies.txt -X PUT "$BASE/api/host/1/local-forward/1" \
   -H 'Content-Type: application/json' \
   -H "X-CSRF-Token: $CSRF" \
   -d '{"local_port":15432,"bind_scope":"loopback","target_ip":"198.51.100.30","target_port":5432,"description":"database","enabled":false}'
@@ -2222,7 +2249,7 @@ list again to see what it did.
 | A port outside 1 to 65535, a `target_ip` that is not an IP address, or a `bind_scope` that is neither `loopback` nor `wildcard` | `400`. Nothing is written |
 | A `local_port` another local forward opens | `409`, naming the port |
 | A `local_port` that is the port this server is stored to listen on | `409`, naming the port |
-| A Host id or a local forward id that is not stored | `404` |
+| A Host id that is not stored, or a number that Host carries no forward on | `404` |
 
 ### Service ports
 
@@ -2512,6 +2539,7 @@ curl -s -b cookies.txt https://127.0.0.1:8888/api/status
         "host_id": 1,
         "kind": "local_forward",
         "sp_id": null,
+        "number": 1,
         "status": "starting",
         "last_error": "",
         "retry_count": 0,
@@ -2533,8 +2561,8 @@ curl -s -b cookies.txt https://127.0.0.1:8888/api/status
 `tunnels` carries **both sorts of forward**: the service port tunnels and the
 local forwards, in one list. `kind` says which sort a row is, `service_port` or
 `local_forward`, and the rows are ordered by Host, then by sort, then by the
-service port or the local forward id within it, so the rows of one Host stay
-together. `page` and `size` say which page of which size it is, and the pages
+service port of a tunnel or the number of a local forward within it, so the rows
+of one Host stay together. `page` and `size` say which page of which size it is, and the pages
 are cut from `total_rows`, the two sorts added together. See [Paging](#paging).
 
 **`local` and `remote` are mirrored between the two sorts, so read them with
@@ -2549,7 +2577,13 @@ on either.
 
 **A local forward fills the fields that mean something for it and leaves the
 rest empty.** No service port carries it, so `sp_id` is `null` rather than a
-number, and nothing here measures its forwarded port from the far end, so
+number, and `number` in its place says which forward of its Host the row is,
+which is what names it in
+[The local forwards of a Host](#the-local-forwards-of-a-host). A tunnel row
+carries no `number` at all: the field is left out of it rather than sent as
+zero, so `host_id` with `number` names a local forward row and `host_id` with
+`sp_id` names a tunnel. Nothing here measures the forwarded port of a local
+forward from the far end, so
 `forward_reach`, `server_banner`, `error_kind`, `open_reach` and
 `listen_addresses` stay empty on it. What those say about a tunnel is below.
 

@@ -1040,6 +1040,198 @@
                 }
             }
         },
+        "/host/{id}/local-forward/{number}": {
+            "get": {
+                "description": "A forward is named by the Host that carries it and its number on that Host. Numbers are handed out per Host, so the number alone names a forward on every Host and never one by itself.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "local forwards"
+                ],
+                "summary": "Read one local forward of a Host",
+                "parameters": [
+                    {
+                        "type": "integer",
+                        "description": "The id of the Host",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "integer",
+                        "description": "The number of the local forward on that Host",
+                        "name": "number",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/models.Response"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "data": {
+                                            "$ref": "#/definitions/api.localForwardView"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "404": {
+                        "description": "The Host carries no forward with that number",
+                        "schema": {
+                            "$ref": "#/definitions/api.errorBody"
+                        }
+                    }
+                }
+            },
+            "put": {
+                "security": [
+                    {
+                        "CSRFToken": []
+                    }
+                ],
+                "description": "local_port, target_ip and target_port are all required. The Host it is carried by is not changed, and neither is its number.\nenabled switches the forward on or off. Left out, it keeps what is stored.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "local forwards"
+                ],
+                "summary": "Update a local forward of a Host",
+                "parameters": [
+                    {
+                        "type": "integer",
+                        "description": "The id of the Host",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "integer",
+                        "description": "The number of the local forward on that Host",
+                        "name": "number",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "The local forward as it should stand",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/models.LocalForwardRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/models.Response"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "data": {
+                                            "$ref": "#/definitions/api.localForwardView"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "400": {
+                        "description": "The body is refused",
+                        "schema": {
+                            "$ref": "#/definitions/api.errorBody"
+                        }
+                    },
+                    "404": {
+                        "description": "The Host carries no forward with that number",
+                        "schema": {
+                            "$ref": "#/definitions/api.errorBody"
+                        }
+                    },
+                    "409": {
+                        "description": "local_port is taken by another local forward or a SOCKS5 proxy, or is the port of this server",
+                        "schema": {
+                            "$ref": "#/definitions/api.errorBody"
+                        }
+                    }
+                }
+            },
+            "delete": {
+                "security": [
+                    {
+                        "CSRFToken": []
+                    }
+                ],
+                "description": "The number the forward carried is not handed out again, so a number in a log line is never read back against a row made after it.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "local forwards"
+                ],
+                "summary": "Delete a local forward of a Host",
+                "parameters": [
+                    {
+                        "type": "integer",
+                        "description": "The id of the Host",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "integer",
+                        "description": "The number of the local forward on that Host",
+                        "name": "number",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/models.Response"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "data": {
+                                            "type": "string"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "404": {
+                        "description": "The Host carries no forward with that number",
+                        "schema": {
+                            "$ref": "#/definitions/api.errorBody"
+                        }
+                    }
+                }
+            }
+        },
         "/host/{id}/service-port": {
             "get": {
                 "description": "The page is taken over the service ports and not over the assignments, so a row sits on the same page of this list and of GET /api/service-port whether the Host carries it or not.\nbind_scope is what the assignment of this Host is opened to, and is empty on a row the Host does not carry.",
@@ -1326,175 +1518,6 @@
                     },
                     "409": {
                         "description": "A local forward or a SOCKS5 proxy of the file opens a port this installation opens already. Nothing was stored",
-                        "schema": {
-                            "$ref": "#/definitions/api.errorBody"
-                        }
-                    }
-                }
-            }
-        },
-        "/local-forward/{id}": {
-            "get": {
-                "produces": [
-                    "application/json"
-                ],
-                "tags": [
-                    "local forwards"
-                ],
-                "summary": "Read one local forward",
-                "parameters": [
-                    {
-                        "type": "integer",
-                        "description": "The id of the local forward",
-                        "name": "id",
-                        "in": "path",
-                        "required": true
-                    }
-                ],
-                "responses": {
-                    "200": {
-                        "description": "OK",
-                        "schema": {
-                            "allOf": [
-                                {
-                                    "$ref": "#/definitions/models.Response"
-                                },
-                                {
-                                    "type": "object",
-                                    "properties": {
-                                        "data": {
-                                            "$ref": "#/definitions/api.localForwardView"
-                                        }
-                                    }
-                                }
-                            ]
-                        }
-                    },
-                    "404": {
-                        "description": "No such local forward",
-                        "schema": {
-                            "$ref": "#/definitions/api.errorBody"
-                        }
-                    }
-                }
-            },
-            "put": {
-                "security": [
-                    {
-                        "CSRFToken": []
-                    }
-                ],
-                "description": "local_port, target_ip and target_port are all required. The Host it is carried by is not changed.\nenabled switches the forward on or off. Left out, it keeps what is stored.",
-                "consumes": [
-                    "application/json"
-                ],
-                "produces": [
-                    "application/json"
-                ],
-                "tags": [
-                    "local forwards"
-                ],
-                "summary": "Update a local forward",
-                "parameters": [
-                    {
-                        "type": "integer",
-                        "description": "The id of the local forward",
-                        "name": "id",
-                        "in": "path",
-                        "required": true
-                    },
-                    {
-                        "description": "The local forward as it should stand",
-                        "name": "body",
-                        "in": "body",
-                        "required": true,
-                        "schema": {
-                            "$ref": "#/definitions/models.LocalForwardRequest"
-                        }
-                    }
-                ],
-                "responses": {
-                    "200": {
-                        "description": "OK",
-                        "schema": {
-                            "allOf": [
-                                {
-                                    "$ref": "#/definitions/models.Response"
-                                },
-                                {
-                                    "type": "object",
-                                    "properties": {
-                                        "data": {
-                                            "$ref": "#/definitions/api.localForwardView"
-                                        }
-                                    }
-                                }
-                            ]
-                        }
-                    },
-                    "400": {
-                        "description": "The body is refused",
-                        "schema": {
-                            "$ref": "#/definitions/api.errorBody"
-                        }
-                    },
-                    "404": {
-                        "description": "No such local forward",
-                        "schema": {
-                            "$ref": "#/definitions/api.errorBody"
-                        }
-                    },
-                    "409": {
-                        "description": "local_port is taken by another local forward or a SOCKS5 proxy, or is the port of this server",
-                        "schema": {
-                            "$ref": "#/definitions/api.errorBody"
-                        }
-                    }
-                }
-            },
-            "delete": {
-                "security": [
-                    {
-                        "CSRFToken": []
-                    }
-                ],
-                "produces": [
-                    "application/json"
-                ],
-                "tags": [
-                    "local forwards"
-                ],
-                "summary": "Delete a local forward",
-                "parameters": [
-                    {
-                        "type": "integer",
-                        "description": "The id of the local forward",
-                        "name": "id",
-                        "in": "path",
-                        "required": true
-                    }
-                ],
-                "responses": {
-                    "200": {
-                        "description": "OK",
-                        "schema": {
-                            "allOf": [
-                                {
-                                    "$ref": "#/definitions/models.Response"
-                                },
-                                {
-                                    "type": "object",
-                                    "properties": {
-                                        "data": {
-                                            "type": "string"
-                                        }
-                                    }
-                                }
-                            ]
-                        }
-                    },
-                    "404": {
-                        "description": "No such local forward",
                         "schema": {
                             "$ref": "#/definitions/api.errorBody"
                         }
@@ -2564,10 +2587,11 @@
                 "host_ip": {
                     "type": "string"
                 },
-                "id": {
+                "local_port": {
                     "type": "integer"
                 },
-                "local_port": {
+                "number": {
+                    "description": "Number is which forward of its Host this is. It is the number and not a\ntable-wide id because that is what the row is keyed by, and it is read\nbeside HostID: a number on its own names a row on every Host.",
                     "type": "integer"
                 },
                 "target_ip": {
@@ -2770,7 +2794,7 @@
                 "service_port.delete_failed",
                 "service_port.create.hosts_read_failed",
                 "service_port.create.hosts_store_failed",
-                "local_forward.id.invalid",
+                "local_forward.number.invalid",
                 "local_forward.not_found",
                 "local_forward.fetch_failed",
                 "local_forward.list_failed",
@@ -2927,7 +2951,7 @@
                 "errServicePortDeleteFailed",
                 "errServicePortCreateHostsRead",
                 "errServicePortCreateHostsStore",
-                "errLocalForwardIDInvalid",
+                "errLocalForwardNumberInvalid",
                 "errLocalForwardNotFound",
                 "errLocalForwardFetchFailed",
                 "errLocalForwardListFailed",
@@ -3392,9 +3416,6 @@
                 "host_id": {
                     "type": "integer"
                 },
-                "id": {
-                    "type": "integer"
-                },
                 "last_connected_at": {
                     "type": "string"
                 },
@@ -3402,6 +3423,10 @@
                     "type": "string"
                 },
                 "local_port": {
+                    "type": "integer"
+                },
+                "number": {
+                    "description": "Number is which forward of its Host this is, counted from 1. Numbers are\nhanded out per Host, so two Hosts each have a first forward.",
                     "type": "integer"
                 },
                 "retry_count": {

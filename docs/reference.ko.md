@@ -286,6 +286,14 @@ Hosts 화면에서 그 Host 행의 **Local forwards** 버튼이나 API 로 추�
 [Host 의 로컬 포워딩](#host-의-로컬-포워딩)을 보십시오. Host 를 지우면 그 로컬 포워딩도 같은
 트랜잭션에서 지워집니다.
 
+**로컬 포워딩마다 번호가 붙고, 번호는 Host 별로 매겨집니다.** 응답의 `number` 가 그것이고 1 부터
+셉니다. 어느 Host 의 첫 로컬 포워딩도, 다른 Host 의 첫 로컬 포워딩도 똑같이 1 번이므로, 하나를
+가리키려면 Host 와 번호가 같이 있어야 합니다. `/api/host/1/local-forward/1` 과
+`/api/host/2/local-forward/1` 은 서로 다른 로컬 포워딩입니다. 새로 추가하면 **그 Host 가 아직 쓰지 않는 가장
+작은 번호**를 받습니다. 지워서 생긴 빈자리를 다음에 추가하는 것이 받으므로, 한 Host 의 번호는
+빠진 자리 없이 1, 2, 3 으로 이어집니다. 대신 로그나 메모에 적어 둔 번호는 그때 그 행이 아니라
+지금 그 번호를 가진 행을 가리킵니다.
+
 | 항목 | 무엇인가 |
 |------|----------|
 | `local_port` | 이 장비에 여는 포트. 1 ~ 65535 |
@@ -368,6 +376,12 @@ Hosts 화면에서 그 Host 행의 **Local forwards** 버튼이나 API 로 추�
 **`enabled` 가 생긴 업그레이드는 로컬 포워딩을 전부 켜진 채로 둡니다.** 그 전에 저장된
 로컬 포워딩은 모두 돌고 있었으므로, 그 열을 추가하는 기동이 전부를 켜고 다른 기동은 그러지
 않습니다. 그 뒤에 끈 로컬 포워딩은 재시작해도 꺼진 채로 있습니다.
+
+**번호가 생긴 업그레이드는 기동할 때 저장된 로컬 포워딩에 번호를 매깁니다.** Host 마다 1 부터,
+만들어진 순서대로 매깁니다. 목록을 그려 온 순서가 그 순서였으므로, 로컬 포워딩은 이미 보이던
+자리에 그대로 나오고 부르는 방법 말고는 달라지는 것이 없습니다. 전체가 한 트랜잭션입니다. 전부
+번호를 받거나, 아니면 저장된 행이 그대로 남은 채 기동이 멈추고 이유를 알려줍니다. 옛 모양을
+발견한 기동만 이 일을 하므로, 새 버전을 한 설치본에 두 번 띄워도 번호는 한 번만 매겨집니다.
 
 **내보내기 파일에는 Host 마다 그 로컬 포워딩이 실립니다.** Host 의 `local_forwards` 가
 그것입니다. [내보내기와 가져오기](#내보내기와-가져오기)를 보십시오.
@@ -1901,11 +1915,18 @@ Host 는 **1000개**까지입니다. 요청의 모든 Host 를 트랜잭션 하�
 |--------|------|---------|
 | `GET` | `/api/host/:id/local-forward` | 이 Host 의 로컬 포워딩 한 페이지를 상태와 함께 등록된 순서로 조회. `page` 와 `size` 를 받음, [페이징](#페이징) 참고 |
 | `POST` | `/api/host/:id/local-forward` | 이 Host 에 로컬 포워딩 추가 |
-| `GET` | `/api/local-forward/:id` | 로컬 포워딩 하나 조회 |
-| `PUT` | `/api/local-forward/:id` | 로컬 포워딩 수정. `enabled` 로 켜고 끔. 딸린 Host 는 바뀌지 않음 |
-| `DELETE` | `/api/local-forward/:id` | 로컬 포워딩 삭제 |
+| `GET` | `/api/host/:id/local-forward/:number` | 이 Host 의 로컬 포워딩 하나 조회 |
+| `PUT` | `/api/host/:id/local-forward/:number` | 로컬 포워딩 수정. `enabled` 로 켜고 끔. 딸린 Host 도 번호도 바뀌지 않음 |
+| `DELETE` | `/api/host/:id/local-forward/:number` | 로컬 포워딩 삭제 |
 
-로컬 포워딩이 무엇이고 상태가 무슨 뜻인지는 [로컬 포워딩](#로컬-포워딩)에 있습니다.
+**로컬 포워딩 하나는 Host 와 번호를 같이 적어야 가리켜집니다.** `:number` 는 그 행의 `number`
+이지 따로 있는 id 가 아닙니다. 번호는 Host 별로 매겨지므로 `/api/host/1/local-forward/1` 과
+`/api/host/2/local-forward/1` 은 서로 다른 로컬 포워딩이고, 번호만으로는 아무것도 가리키지
+못합니다. 로컬 포워딩이 무엇이고 번호를 어떻게 매기며 상태가 무슨 뜻인지는
+[로컬 포워딩](#로컬-포워딩)에 있습니다.
+
+**이 세 경로는 전에 `/api/local-forward/:id` 였습니다.** 그때는 id 가 Host 와 무관하게 하나였고,
+옛 경로로 부르면 라우터가 `404` 로 답합니다.
 
 ```bash
 curl -s -b cookies.txt -X POST "$BASE/api/host/1/local-forward" \
@@ -1919,7 +1940,7 @@ curl -s -b cookies.txt -X POST "$BASE/api/host/1/local-forward" \
   "success": true,
   "data": {
     "items": [
-      { "id": 1, "host_id": 1, "bind_scope": "loopback", "local_port": 15432,
+      { "host_id": 1, "number": 1, "bind_scope": "loopback", "local_port": 15432,
         "target_ip": "198.51.100.30", "target_port": 5432, "description": "database",
         "enabled": true,
         "status": "connected", "last_error": "", "retry_count": 0,
@@ -1947,8 +1968,8 @@ curl -s -b cookies.txt -X POST "$BASE/api/host/1/local-forward" \
 항목입니다. 빼면 켜져 있든 꺼져 있든 그대로 두고, 생성에서 빼면 도는 로컬 포워딩이 됩니다.
 
 ```bash
-# 로컬 포워딩 1 을 끕니다. 수정은 항목 전부를 받으므로 유지할 값도 다시 보냅니다.
-curl -s -b cookies.txt -X PUT "$BASE/api/local-forward/1" \
+# Host 1 의 1 번 로컬 포워딩을 끕니다. 수정은 항목 전부를 받으므로 유지할 값도 다시 보냅니다.
+curl -s -b cookies.txt -X PUT "$BASE/api/host/1/local-forward/1" \
   -H 'Content-Type: application/json' \
   -H "X-CSRF-Token: $CSRF" \
   -d '{"local_port":15432,"bind_scope":"loopback","target_ip":"198.51.100.30","target_port":5432,"description":"database","enabled":false}'
@@ -1962,7 +1983,7 @@ curl -s -b cookies.txt -X PUT "$BASE/api/local-forward/1" \
 | 1 ~ 65535 밖의 포트, IP 주소가 아닌 `target_ip`, `loopback` 도 `wildcard` 도 아닌 `bind_scope` | `400`. 아무것도 쓰지 않습니다 |
 | 다른 로컬 포워딩이 여는 `local_port` | `409`, 그 포트를 알려줍니다 |
 | 이 서버가 듣도록 저장된 포트와 같은 `local_port` | `409`, 그 포트를 알려줍니다 |
-| 저장돼 있지 않은 Host id 나 로컬 포워딩 id | `404` |
+| 저장돼 있지 않은 Host id, 또는 그 Host 에 없는 번호 | `404` |
 
 ### 서비스 포트 관리
 
@@ -2213,6 +2234,7 @@ curl -s -b cookies.txt https://127.0.0.1:8888/api/status
         "host_id": 1,
         "kind": "local_forward",
         "sp_id": null,
+        "number": 1,
         "status": "starting",
         "last_error": "",
         "retry_count": 0,
@@ -2233,8 +2255,8 @@ curl -s -b cookies.txt https://127.0.0.1:8888/api/status
 
 `tunnels` 에는 **두 종류가 함께** 실립니다. 서비스 포트 터널과 로컬 포워딩이 한 목록에
 들어가고, 어느 쪽인지는 `kind` 가 `service_port` 또는 `local_forward` 로 말합니다. 정렬은
-Host, 그 다음 종류, 그 다음 그 종류 안의 서비스 포트나 로컬 포워딩 id 순이라 한 Host 의 행은
-한자리에 모입니다. `page` 와 `size` 가 어느 페이지를 어느 크기로 준 것인지 나타내고, 페이지를
+Host, 그 다음 종류, 그 다음 터널이면 서비스 포트, 로컬 포워딩이면 그 번호 순이라 한 Host 의
+행은 한자리에 모입니다. `page` 와 `size` 가 어느 페이지를 어느 크기로 준 것인지 나타내고, 페이지를
 자르는 기준은 두 종류를 더한 `total_rows` 입니다. [페이징](#페이징)을 보십시오.
 
 **`local` 과 `remote` 는 두 종류 사이에서 뜻이 뒤집히므로 `kind` 를 같이 놓고 읽어야
@@ -2245,8 +2267,11 @@ Host, 그 다음 종류, 그 다음 그 종류 안의 서비스 포트나 로컬
 없습니다. `server` 는 그 아래의 SSH 연결이라 두 종류에서 뜻이 같습니다.
 
 **로컬 포워딩 행은 뜻이 있는 칸만 채우고 나머지는 비웁니다.** 로컬 포워딩을 나르는 서비스
-포트는 없으므로 `sp_id` 는 숫자가 아니라 `null` 이고, 포워딩된 포트를 반대쪽에서 재 보는 것도
-없으므로 `forward_reach`, `server_banner`, `error_kind`, `open_reach`,
+포트는 없으므로 `sp_id` 는 숫자가 아니라 `null` 이고, 그 자리를 대신하는 `number` 가 그 Host 의
+몇 번째 로컬 포워딩인지를 말합니다. [Host 의 로컬 포워딩](#host-의-로컬-포워딩)에서 하나를
+가리킬 때 쓰는 그 번호입니다. 터널 행에는 `number` 가 아예 실리지 않습니다. 0 으로 보내지 않고
+칸 자체를 빼므로, `host_id` 와 `number` 가 있으면 로컬 포워딩 행이고 `host_id` 와 `sp_id` 가
+있으면 터널 행입니다. 로컬 포워딩은 포워딩된 포트를 반대쪽에서 재 보는 것도 없으므로 `forward_reach`, `server_banner`, `error_kind`, `open_reach`,
 `listen_addresses` 는 빈 값으로 둡니다. 이것들이 터널에서 무슨 뜻인지는 아래에 있습니다.
 
 숫자는 페이지가 아니라 전체 행을 셉니다. 행이 25개인 설치본은 10개짜리 페이지를 줘도 25를

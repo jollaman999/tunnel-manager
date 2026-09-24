@@ -264,6 +264,13 @@ flowchart LR
 **Local forwards** 按钮里做，也可以通过 API，见[一台 Host 的本地转发](#一台-host-的本地转发)。
 删除 Host 时，它的本地转发在同一个事务里一起删除。
 
+**每个本地转发都带一个编号，编号按 Host 各自发放。** 它就是响应里的 `number`，从 1 数起。一台
+Host 的第一个本地转发和另一台 Host 的第一个本地转发同样是 1 号，所以要指到某一个，Host 和编号
+缺一不可：`/api/host/1/local-forward/1` 和 `/api/host/2/local-forward/1` 是两个不同的本地转发。
+新添加的会拿到**这台 Host 还没用到的最小编号**，删掉留下的空缺由下一个添加的补上，所以一台
+Host 的编号是没有缺口的 1、2、3。代价是写在日志或记录里的编号指的是如今占着它的那一行，而不是
+当初写下时的那一行。
+
 | 字段 | 是什么 |
 |------|--------|
 | `local_port` | 在本机打开的端口，1 到 65535 |
@@ -335,6 +342,12 @@ Host 就能到达 Host 眼中的 `target_ip:target_port`，因为 SSH 登录已�
 
 **加入 `enabled` 的那次升级让所有本地转发保持开启。** 在它之前保存的本地转发都在运行，所以加上
 这一列的那次启动会把它们全部开启，其他启动不会这样做：之后关闭的本地转发，重启后仍然是关闭的。
+
+**加入编号的那次升级会在启动时给已保存的本地转发发放编号。** 按 Host 各自从 1 开始，依创建的
+先后发放。列表本来就是照这个顺序画的，所以本地转发仍然出现在它原本所在的位置，除了指到它的方式
+之外没有任何东西改变。整件事是一个事务：要么每个本地转发都拿到编号，要么已保存的行原样留着、
+启动停下来并说明原因。只有发现旧形状的那次启动会做这件事，所以把新版本对着同一个安装启动两次，
+编号也只发放一次。
 
 **导出的文件里带着每台 Host 的本地转发**，写在那台 Host 的 `local_forwards` 里，见
 [导出与导入](#导出与导入)。
@@ -1741,11 +1754,17 @@ false，并带上这次拒绝：`error`、`error_code`，句子里有值的还�
 |------|------|------|
 | `GET` | `/api/host/:id/local-forward` | 这台 Host 的本地转发及其状态的一页，旧的在前。收 `page` 和 `size`，见[分页](#分页) |
 | `POST` | `/api/host/:id/local-forward` | 给这台 Host 添加一个本地转发 |
-| `GET` | `/api/local-forward/:id` | 读取一个本地转发 |
-| `PUT` | `/api/local-forward/:id` | 修改一个本地转发，用 `enabled` 开启或关闭。它所属的 Host 不变 |
-| `DELETE` | `/api/local-forward/:id` | 删除一个本地转发 |
+| `GET` | `/api/host/:id/local-forward/:number` | 读取这台 Host 的一个本地转发 |
+| `PUT` | `/api/host/:id/local-forward/:number` | 修改一个本地转发，用 `enabled` 开启或关闭。它所属的 Host 不变，编号也不变 |
+| `DELETE` | `/api/host/:id/local-forward/:number` | 删除一个本地转发 |
 
-本地转发是什么、状态是什么意思，见[本地转发](#本地转发)。
+**一个本地转发要用 Host 加编号一起指。** `:number` 是那一行的 `number`，不是另外一个 id。编号
+按 Host 各自发放，所以 `/api/host/1/local-forward/1` 和 `/api/host/2/local-forward/1` 是两个不同
+的本地转发，只给编号指不到任何一个。本地转发是什么、编号怎么发放、状态是什么意思，见
+[本地转发](#本地转发)。
+
+**这三个路径以前是 `/api/local-forward/:id`**，那时 id 跨所有 Host 只有一个；调用旧路径时，路由
+会答 `404`。
 
 ```bash
 curl -s -b cookies.txt -X POST "$BASE/api/host/1/local-forward" \
@@ -1759,7 +1778,7 @@ curl -s -b cookies.txt -X POST "$BASE/api/host/1/local-forward" \
   "success": true,
   "data": {
     "items": [
-      { "id": 1, "host_id": 1, "bind_scope": "loopback", "local_port": 15432,
+      { "host_id": 1, "number": 1, "bind_scope": "loopback", "local_port": 15432,
         "target_ip": "198.51.100.30", "target_port": 5432, "description": "database",
         "enabled": true,
         "status": "connected", "last_error": "", "retry_count": 0,
@@ -1785,8 +1804,8 @@ curl -s -b cookies.txt -X POST "$BASE/api/host/1/local-forward" \
 `enabled` 是修改时不带也能保持的唯一字段：不带时，开启还是关闭都照旧；创建时不带，就是运行的本地转发。
 
 ```bash
-# 关闭本地转发 1。修改要收全部字段，所以要保持的值也再发一次。
-curl -s -b cookies.txt -X PUT "$BASE/api/local-forward/1" \
+# 关闭 Host 1 的 1 号本地转发。修改要收全部字段，所以要保持的值也再发一次。
+curl -s -b cookies.txt -X PUT "$BASE/api/host/1/local-forward/1" \
   -H 'Content-Type: application/json' \
   -H "X-CSRF-Token: $CSRF" \
   -d '{"local_port":15432,"bind_scope":"loopback","target_ip":"198.51.100.30","target_port":5432,"description":"database","enabled":false}'
@@ -1800,7 +1819,7 @@ curl -s -b cookies.txt -X PUT "$BASE/api/local-forward/1" \
 | 1 到 65535 之外的端口、不是 IP 地址的 `target_ip`、既不是 `loopback` 也不是 `wildcard` 的 `bind_scope` | `400`，什么都不写 |
 | 另一个本地转发已在用的 `local_port` | `409`，指出这个端口 |
 | 与本服务器保存下来要监听的端口相同的 `local_port` | `409`，指出这个端口 |
-| 没有保存过的 Host id 或本地转发 id | `404` |
+| 没有保存过的 Host id，或者这台 Host 上没有的编号 | `404` |
 
 ### 服务端口
 
@@ -2033,6 +2052,7 @@ curl -s -b cookies.txt https://127.0.0.1:8888/api/status
         "host_id": 1,
         "kind": "local_forward",
         "sp_id": null,
+        "number": 1,
         "status": "starting",
         "last_error": "",
         "retry_count": 0,
@@ -2052,8 +2072,8 @@ curl -s -b cookies.txt https://127.0.0.1:8888/api/status
 ```
 
 `tunnels` 里**两种转发放在一起**：服务端口的隧道和本地转发同在一个列表里，是哪一种由 `kind`
-说，`service_port` 或者 `local_forward`。排序是先按 Host，再按种类，再按这一种里的服务端口或
-本地转发 id，所以同一台 Host 的行会聚在一处。`page` 和 `size` 说明这是多大的第几页，而页是从
+说，`service_port` 或者 `local_forward`。排序是先按 Host，再按种类，再按隧道的服务端口或本地
+转发的编号，所以同一台 Host 的行会聚在一处。`page` 和 `size` 说明这是多大的第几页，而页是从
 `total_rows` 上切下来的，那是两种加起来的数。见[分页](#分页)。
 
 **`local` 和 `remote` 在两种行之间是反过来的，读的时候要对着 `kind` 看。** 在服务端口的行上，
@@ -2063,7 +2083,10 @@ curl -s -b cookies.txt https://127.0.0.1:8888/api/status
 别的东西说得出这一行讲的是哪一台机器。`server` 是底下那条 SSH 连接，两种行上的意思相同。
 
 **本地转发的行只填对它有意义的字段，其余留空。** 没有服务端口承载它，所以 `sp_id` 不是数字而
-是 `null`；也没有谁从对面去量它的转发端口，所以 `forward_reach`、`server_banner`、
+是 `null`；顶替它位置的 `number` 说这一行是这台 Host 的第几个本地转发，也就是
+[一台 Host 的本地转发](#一台-host-的本地转发)里用来指到某一个的那个编号。隧道的行上根本没有
+`number`：它不是发成 0，而是整个字段都不发，所以有 `host_id` 和 `number` 的是本地转发的行，有
+`host_id` 和 `sp_id` 的是隧道的行。本地转发也没有谁从对面去量它的转发端口，所以 `forward_reach`、`server_banner`、
 `error_kind`、`open_reach` 和 `listen_addresses` 在它上面都是空的。这些字段对隧道意味着什么，
 写在下面。
 

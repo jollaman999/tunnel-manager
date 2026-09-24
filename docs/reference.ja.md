@@ -299,6 +299,14 @@ flowchart LR
 ある **Local forwards** ボタンか API から行います。[Host のローカルフォワード](#host-のローカルフォワード)を参照して
 ください。Host を削除すると、そのローカルフォワードも同じトランザクションで削除されます。
 
+**ローカルフォワードには番号が付き、番号は Host ごとに振られます。** 応答の `number` がそれで、
+1 から数えます。ある Host の最初のローカルフォワードも、別の Host の最初のローカルフォワードも
+どちらも 1 番なので、1 つを指すには Host と番号の両方が要ります。`/api/host/1/local-forward/1`
+と `/api/host/2/local-forward/1` は別のローカルフォワードです。追加すると、**その Host がまだ使って
+いないいちばん小さい番号**が与えられます。削除でできた空きは次に追加したものが受け取るので、
+1 台の Host の番号は欠けのない 1, 2, 3 の並びになります。その代わり、ログやメモに書き留めた番号
+は、書かれた当時の行ではなく、今その番号を持つ行を指します。
+
 | 項目 | 何か |
 |------|------|
 | `local_port` | このマシンに開くポート。1 から 65535 |
@@ -384,6 +392,13 @@ SOCKS5 プロキシ、`api_port` がそのポートを使おうとすれば同�
 **`enabled` を加えたアップグレードは、ローカルフォワードをすべてオンのままにします。** それより
 前に保存されたローカルフォワードはどれも動いていたので、その列を加える起動がすべてをオンにし、
 ほかの起動はそうしません。そのあとでオフにしたローカルフォワードは、再起動してもオフのままです。
+
+**番号を加えたアップグレードは、起動時に保存されているローカルフォワードへ番号を振ります。**
+Host ごとに 1 から、作られた順に振ります。一覧はもともとその順で描かれていたので、ローカル
+フォワードはすでに見えていた位置にそのまま出てきて、指し方のほかに変わるものはありません。
+全体が 1 つのトランザクションです。すべてに番号が付くか、さもなければ保存された行がそのまま
+残って起動が止まり、理由を伝えます。古い姿を見つけた起動だけがこれを行うので、新しいバージョン
+を 1 つのインストールに二度立ち上げても、番号が振られるのは一度です。
 
 **エクスポートのファイルには、Host ごとにそのローカルフォワードが載ります。** Host の
 `local_forwards` がそれです。[エクスポートとインポート](#エクスポートとインポート)を参照して
@@ -1955,12 +1970,18 @@ Host は **1000 台** までです。要求のすべての Host を 1 つのト�
 |----------|------|------------|
 | `GET` | `/api/host/:id/local-forward` | この Host のローカルフォワードの 1 ページを、状態付きで古い順に返します。`page` と `size` を受け取ります。[ページング](#ページング)を参照してください |
 | `POST` | `/api/host/:id/local-forward` | この Host にローカルフォワードを追加します |
-| `GET` | `/api/local-forward/:id` | ローカルフォワードを 1 つ読みます |
-| `PUT` | `/api/local-forward/:id` | ローカルフォワードを更新し、`enabled` でオンとオフを切り替えます。属する Host は変わりません |
-| `DELETE` | `/api/local-forward/:id` | ローカルフォワードを削除します |
+| `GET` | `/api/host/:id/local-forward/:number` | この Host のローカルフォワードを 1 つ読みます |
+| `PUT` | `/api/host/:id/local-forward/:number` | ローカルフォワードを更新し、`enabled` でオンとオフを切り替えます。属する Host も番号も変わりません |
+| `DELETE` | `/api/host/:id/local-forward/:number` | ローカルフォワードを削除します |
 
-ローカルフォワードとは何か、状態が何を意味するかは [ローカルフォワード](#ローカルフォワード)
-にあります。
+**ローカルフォワードは、Host と番号を合わせて指します。** `:number` はその行の `number` で
+あって、別にある id ではありません。番号は Host ごとに振られるので
+`/api/host/1/local-forward/1` と `/api/host/2/local-forward/1` は別のローカルフォワードであり、
+番号だけでは何も指せません。ローカルフォワードとは何か、番号がどう振られるか、状態が何を意味
+するかは [ローカルフォワード](#ローカルフォワード)にあります。
+
+**この 3 つのパスは、以前は `/api/local-forward/:id` でした。** そのころ id は Host をまたいで
+1 つでした。古いパスを呼ぶと、ルーターが `404` を返します。
 
 ```bash
 curl -s -b cookies.txt -X POST "$BASE/api/host/1/local-forward" \
@@ -1974,7 +1995,7 @@ curl -s -b cookies.txt -X POST "$BASE/api/host/1/local-forward" \
   "success": true,
   "data": {
     "items": [
-      { "id": 1, "host_id": 1, "bind_scope": "loopback", "local_port": 15432,
+      { "host_id": 1, "number": 1, "bind_scope": "loopback", "local_port": 15432,
         "target_ip": "198.51.100.30", "target_port": 5432, "description": "database",
         "enabled": true,
         "status": "connected", "last_error": "", "retry_count": 0,
@@ -2003,8 +2024,9 @@ curl -s -b cookies.txt -X POST "$BASE/api/host/1/local-forward" \
 フォワードになります。
 
 ```bash
-# ローカルフォワード 1 をオフにします。更新はすべての項目を受け取るので、残す値も送り直します。
-curl -s -b cookies.txt -X PUT "$BASE/api/local-forward/1" \
+# Host 1 の 1 番のローカルフォワードをオフにします。更新はすべての項目を受け取るので、残す値も
+# 送り直します。
+curl -s -b cookies.txt -X PUT "$BASE/api/host/1/local-forward/1" \
   -H 'Content-Type: application/json' \
   -H "X-CSRF-Token: $CSRF" \
   -d '{"local_port":15432,"bind_scope":"loopback","target_ip":"198.51.100.30","target_port":5432,"description":"database","enabled":false}'
@@ -2018,7 +2040,7 @@ curl -s -b cookies.txt -X PUT "$BASE/api/local-forward/1" \
 | 1 から 65535 の外のポート、IP アドレスでない `target_ip`、`loopback` でも `wildcard` でもない `bind_scope` | `400`。何も書き込みません |
 | 別のローカルフォワードが開いている `local_port` | `409`。そのポートを示します |
 | このサーバーが待ち受けるよう保存されているポートと同じ `local_port` | `409`。そのポートを示します |
-| 保存されていない Host の id やローカルフォワードの id | `404` |
+| 保存されていない Host の id、またはその Host にない番号 | `404` |
 
 ### サービスポート
 
@@ -2278,6 +2300,7 @@ curl -s -b cookies.txt https://127.0.0.1:8888/api/status
         "host_id": 1,
         "kind": "local_forward",
         "sp_id": null,
+        "number": 1,
         "status": "starting",
         "last_error": "",
         "retry_count": 0,
@@ -2298,7 +2321,7 @@ curl -s -b cookies.txt https://127.0.0.1:8888/api/status
 
 `tunnels` には **2 つの種類が一緒に** 載ります。サービスポートのトンネルとローカルフォワードが
 1 つの一覧に入り、どちらなのかは `kind` が `service_port` か `local_forward` かで示します。
-並び順は Host、次に種類、次にその種類の中のサービスポートまたはローカルフォワードの id なので、
+並び順は Host、次に種類、次にトンネルならサービスポート、ローカルフォワードならその番号なので、
 1 台の Host の行は 1 か所にまとまります。`page` と `size` が、どのサイズのどのページなのかを
 示し、ページを切り出す元になるのは 2 つの種類を足した `total_rows` です。
 [ページング](#ページング)を参照してください。
@@ -2311,8 +2334,11 @@ curl -s -b cookies.txt https://127.0.0.1:8888/api/status
 `kind` のほかにありません。`server` はその下にある SSH 接続で、どちらの種類でも同じ意味です。
 
 **ローカルフォワードの行は、意味のあるフィールドだけを埋めて残りは空のままにします。** それを
-運ぶサービスポートはないので `sp_id` は数ではなく `null` になり、転送ポートを向こう側から測る
-ものもないので、`forward_reach`, `server_banner`, `error_kind`, `open_reach`,
+運ぶサービスポートはないので `sp_id` は数ではなく `null` になり、その代わりに `number` が、その
+Host の何番目のローカルフォワードかを示します。[Host のローカルフォワード](#host-のローカルフォワード)
+で 1 つを指すときに使う、あの番号です。トンネルの行に `number` は載りません。0 として送るのでは
+なくフィールドごと省くので、`host_id` と `number` があればローカルフォワードの行、`host_id` と
+`sp_id` があればトンネルの行です。ローカルフォワードは転送ポートを向こう側から測るものもないので、`forward_reach`, `server_banner`, `error_kind`, `open_reach`,
 `listen_addresses` は空のままです。それらがトンネルについて何を言うのかは下にあります。
 
 数はページではなく全行にわたるものです。行が 25 あるインストールは、1 ページ 10 行でも 25 と
