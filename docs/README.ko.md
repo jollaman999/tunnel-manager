@@ -1,4 +1,4 @@
-# Tunnel Manager
+# <img src="../internal/web/static/icons/icon-192.png" alt="" width="36" align="absmiddle" /> Tunnel Manager
 
 [English](../README.md) · [日本語](README.ja.md) · [中文](README.zh.md)
 
