@@ -368,6 +368,7 @@
   "list.pick-all.aria": "Sélectionner toutes les lignes de cette page",
   "list.previous.button": "Précédent",
   "list.row-actions.aria": "Actions de la ligne {row}",
+  "list.row-actions.button": "Actions",
   "list.where.text": "Page {page} sur {last}, lignes {from} à {to} sur {total}",
   "local-forwards.add.title": "Ajouter un transfert local",
   "local-forwards.added.notice": "Transfert local du port local {port} ajouté.",

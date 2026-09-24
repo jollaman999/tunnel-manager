@@ -368,6 +368,7 @@
   "list.pick-all.aria": "Seleccionar todas las filas de esta página",
   "list.previous.button": "Anterior",
   "list.row-actions.aria": "Acciones de la fila {row}",
+  "list.row-actions.button": "Acciones",
   "list.where.text": "Página {page} de {last}, filas {from} a {to} de {total}",
   "local-forwards.add.title": "Añadir un reenvío local",
   "local-forwards.added.notice": "Se añadió el reenvío local del puerto local {port}.",

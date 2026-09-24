@@ -368,6 +368,7 @@
   "list.pick-all.aria": "اختيار كل صفوف هذه الصفحة",
   "list.previous.button": "السابق",
   "list.row-actions.aria": "إجراءات الصف {row}",
+  "list.row-actions.button": "إجراءات",
   "list.where.text": "الصفحة {page} من {last}، الصفوف من {from} إلى {to} من أصل {total}",
   "local-forwards.add.title": "إضافة توجيه محلي",
   "local-forwards.added.notice": "أُضيف التوجيه المحلي على المنفذ المحلي {port}.",

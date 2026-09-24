@@ -368,6 +368,7 @@
   "list.pick-all.aria": "इस पृष्ठ की सभी पंक्तियाँ चुनें",
   "list.previous.button": "पीछे",
   "list.row-actions.aria": "पंक्ति {row} की क्रियाएँ",
+  "list.row-actions.button": "क्रियाएँ",
   "list.where.text": "{last} में से पन्ना {page}, {total} में से पंक्ति {from} से {to} तक",
   "local-forwards.add.title": "लोकल फ़ॉरवर्ड जोड़ें",
   "local-forwards.added.notice": "लोकल पोर्ट {port} का लोकल फ़ॉरवर्ड जोड़ दिया गया।",

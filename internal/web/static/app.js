@@ -1643,10 +1643,11 @@ function rowMenuButton(scroller, cell, buttons, index) {
 
   node.type = "button";
   node.className = "row-menu";
-  node.textContent = "\u22ef";
+  node.textContent = t("list.row-actions.button");
+  node.title = t("list.row-actions.aria", { row: name });
   node.setAttribute("aria-haspopup", "menu");
   node.setAttribute("aria-expanded", "false");
-  node.setAttribute("aria-label", t("list.row-actions.aria", { row: name }));
+  node.setAttribute("aria-label", node.title);
 
   node.addEventListener("click", function () {
     if (rowMenu !== null && rowMenu.trigger === node) {

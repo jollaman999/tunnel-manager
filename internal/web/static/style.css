@@ -1389,8 +1389,12 @@ td .buttons {
 }
 
 .row-menu {
-  padding: 0.35rem 0.7rem;
-  line-height: 1;
+  white-space: nowrap;
+}
+
+.row-menu::after {
+  content: "\25be";
+  margin-inline-start: 0.35em;
 }
 
 .row-menu[aria-expanded="true"] {
