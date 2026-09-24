@@ -39,11 +39,19 @@ one assignment is what one tunnel is built from.
 | Host | An SSH server to connect to: address, port, user, and a private key or a password |
 | Service port | The service to publish, at any address this machine can reach, and the port to open on the Hosts that carry it |
 | Assignment | Which Host carries which service port. One assignment whose Host is enabled is one tunnel |
+| Local forward | A port opened on this machine, carried through one Host to an address that Host reaches |
+
+The last row is optional and runs the other way, the way `ssh -L` does: this
+machine opens the port and the connection is made from the Host. A local forward
+belongs to the Host it is made on and is added from the **Local forwards** button
+in the row of that Host.
 
 ## What it does
 
 - Builds a tunnel for every assignment, watches it, and builds it again when the
   connection drops.
+- Opens local forwards as well: a port on this machine that reaches, through a
+  Host, an address only that Host can reach. They are kept up the same way.
 - Connects to the forwarded port itself once the tunnel is up and says whether
   it answered, since which address the SSH server binds it to is that server's
   decision.
@@ -135,7 +143,7 @@ well, and what `-purge` removes cannot be brought back.
 
 | Section | What is in it |
 |---------|---------------|
-| [How it works](docs/reference.md#how-it-works) | The reconcile loop, the assignments, one tunnel end to end |
+| [How it works](docs/reference.md#how-it-works) | The reconcile loop, the assignments, one tunnel end to end, local forwards |
 | [Install and run](docs/reference.md#install-and-run) | The flags, where the files go, Docker Compose, systemd, from source |
 | [Installing as a service](docs/reference.md#installing-as-a-service) | The four flags, what an install does over one that is already there, what a removal reads the paths from |
 | [HTTPS and the certificate](docs/reference.md#https-and-the-certificate) | The browser warning, registering a certificate of your own, renewing, turning HTTPS off |

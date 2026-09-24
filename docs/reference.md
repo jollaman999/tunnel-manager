@@ -16,13 +16,16 @@ on the Host and not on the machine Tunnel Manager runs on. A client that
 connects to `local_port` **on the Host** is carried through the SSH connection to
 Tunnel Manager, which then connects to `service_ip:service_port` and copies the
 bytes in both directions. That is how a service only Tunnel Manager can reach is
-made reachable from the Host.
+made reachable from the Host. A [local forward](#local-forwards) is the one
+thing that runs the other way: the port is opened on this machine and the
+connection is made from the Host.
 
 | What you register | Fields | What it is |
 |-------------------|--------|------------|
 | Host | `ip`, `port`, `user`, `private_key`, `key_passphrase`, `password`, `description`, `enabled` | An SSH server Tunnel Manager logs in to. It logs in with a private key, with a password, or with both; at least one of the two is required. The key, its passphrase and the password are all stored encrypted. |
 | Service port | `service_ip`, `service_port`, `local_port` | The service to publish, and the port opened on every Host that carries it. |
 | Assignment | `host_id`, `sp_id`, `bind_scope` | One Host paired with one service port: this Host is to carry it. It is what a tunnel is built from, and it is made for you as a Host or a service port is registered. `bind_scope` is how far its forwarded port is asked to reach on the Host, `loopback` or `wildcard`, and the wildcard where it is not given. |
+| Local forward | `local_port`, `bind_scope`, `target_ip`, `target_port`, `description` | A port opened on this machine, whose connections are carried through the SSH connection of one Host to `target_ip:target_port` as the Host sees it. It belongs to that Host alone. |
 
 Both `ip` and `service_ip` take an IPv4 or an IPv6 address. An IPv6 address is
 written plainly, as `2001:db8::1`, and the brackets a dialer needs are put on
@@ -283,6 +286,117 @@ The monitoring interval and the reconcile interval are two different jobs. The
 monitor asks a tunnel that is already up whether it is still alive and reconnects
 it when it is not. The reconcile loop asks whether the right set of tunnels
 exists at all.
+
+### Local forwards
+
+**A local forward runs the other way from a tunnel.** A tunnel has the Host open
+a port and carries what arrives there to a service this machine reaches. A local
+forward has **this machine** open `local_port`, and carries every connection to
+it over the SSH connection of a Host to `target_ip:target_port`, an address the
+Host reaches. It is what `ssh -L` does, kept up the way a tunnel is.
+
+```mermaid
+flowchart LR
+    client([A client that reaches this machine])
+    subgraph here [The machine tunnel-manager runs on]
+        port[["local_port<br/>opened by tunnel-manager"]]
+        tm[tunnel-manager]
+    end
+    subgraph host [Host - an SSH server you register]
+        sshd[SSH server]
+    end
+    target[("target_ip:target_port<br/>any address the Host can reach")]
+
+    tm ==>|"1. connects over SSH, then opens local_port"| sshd
+    client -->|"2. connects to local_port"| port
+    port -->|"3. through the SSH connection"| sshd
+    sshd -->|"4. connects to the target"| target
+```
+
+**A local forward belongs to one Host.** It is a row of its own, carried by the
+Host it was made on and by no other, and there is no assignment for it: a
+service port is shared by the Hosts that carry it, a local forward is not. It is
+added, changed and deleted from the **Local forwards** button in the row of that
+Host on the Hosts screen, or through the API, see
+[The local forwards of a Host](#the-local-forwards-of-a-host). Deleting the Host
+deletes its local forwards in the same transaction.
+
+| Field | What it is |
+|-------|------------|
+| `local_port` | The port opened on this machine, 1 to 65535 |
+| `bind_scope` | Which addresses of this machine it is opened on, see below |
+| `target_ip` | Where a connection goes from the Host. An IPv4 or an IPv6 address, not a name |
+| `target_port` | The port of the target, 1 to 65535 |
+| `description` | Free text |
+
+**`bind_scope` here is about this machine, not the Host.** It takes the same two
+words an assignment does and names the same pairs of addresses.
+
+| `bind_scope` | Where `local_port` is opened on this machine |
+|--------------|----------------------------------------------|
+| `wildcard`, and the empty value | `0.0.0.0` and `::`. This is the default |
+| `loopback` | `127.0.0.1` and `::1` |
+
+**The wildcard makes this machine a door into the network of the Host.** Anybody
+who can reach this machine on `local_port` reaches `target_ip:target_port` as the
+Host sees it without logging in to the Host, because the SSH login is the one
+tunnel-manager made. Choose `loopback` unless something other than this
+machine is meant to use the forward, and put a firewall in front of the port if
+something is.
+
+Both addresses of the pair are tried, each in its own address family, and **one
+of them opening is enough**: a machine without IPv6 opens the IPv4 half alone.
+Where neither opens, a port another program holds for instance, the forward
+reports `error` and tries again.
+
+**`local_port` is unique across every local forward**, whichever Host carries
+them, because every one of them opens its port on this same machine. A second
+forward on a port that is taken is refused with `409`, and so is a forward on
+the port this server is stored to listen on (`api_port`). That check is made when
+a forward is written; changing `api_port` later is not checked against the
+forwards. A port below 1024 is opened by this process itself, so it is held to
+the rule in [Running as a non-root user](#running-as-a-non-root-user).
+
+**A local forward runs while its Host is enabled** and on no other Host. The
+reconcile loop starts, rebuilds and stops local forwards the way it does tunnels:
+one row is one SSH connection of its own, and a forward whose Host, credentials,
+trusted host key, port, scope or target changed is stopped and started again. A
+change to the description alone rebuilds nothing.
+
+**`local_port` is open only while the SSH connection stands.** It is opened after
+the connection is made and closed whenever the connection drops, so a client
+that connects while there is no Host to carry it is refused outright rather than
+accepted and dropped. The connection is checked every monitoring interval, the
+way a tunnel is, and a forward whose connection dropped is connected again after
+that same interval.
+
+**A refused login and a refused host key stop it.** Trying again with the same
+password or key would only fail the same way, so the forward waits until
+something it is built from changes: new credentials on the Host, or the key
+approved, see [Host keys](#host-keys).
+
+`connected` says the SSH connection stands and `local_port` is open. It does not
+say the target answers: every client connection is dialled from the Host on its
+own, a target that cannot be reached closes that one connection, and the reason
+goes to the log. The SSH server on the Host also has to allow forwarding in this
+direction; OpenSSH refuses it where `AllowTcpForwarding` is `no` or `remote`.
+
+| `status` | What it means |
+|----------|---------------|
+| `disabled` | The Host is disabled. Nothing is opened |
+| `stopped` | The Host is enabled and no forward runs: the reconcile loop has not reached the row yet, or it failed to start it, which the log says |
+| `starting` | The first connection is being made |
+| `connected` | The SSH connection stands and `local_port` is open |
+| `reconnecting` | The connection dropped or an attempt failed, and it is being made again. `retry_count` counts these |
+| `error` | The last attempt failed, and `last_error` says why. After a refused login it stays here until the Host is changed; otherwise it is tried again after the monitoring interval |
+| `host_key_unapproved`, `host_key_mismatch` | The host key was refused, as on a tunnel. It stays here until the key is approved |
+
+**The status is kept in memory**, by the process that runs the forward, and is
+answered only by the local forward calls. It is not in `GET /api/status`, and
+the Status screen does not count local forwards.
+
+**An export carries the local forwards of each Host**, in `local_forwards` on
+that Host. See [Export and import](#export-and-import).
 
 ## Install and run
 
@@ -845,7 +959,7 @@ no directory travels next to it and no path has to be configured.
 | Screen | Path | What it shows and does |
 |--------|------|------------------------|
 | Status | `/ui/status` | The three counts (desired, rows, connected), a sentence about the difference between them, and one line per tunnel: Host, service port, status, server, local, remote, port reached, retries, last connected. A tunnel with something wrong carries what went wrong on a line under it, across the whole table, and a tunnel whose forwarded port was not reached carries there what to change on the SSH server it named and what else to check. A tunnel that is up carries under it what is known about the addresses of its forward, kept in three: what was asked for, what the SSH server answered, and what a connection from here confirmed. It never says a port is open. The tunnel rows come a page at a time, ten to a page to begin with, with the size and the page chosen above the table; the three counts stay counts of every tunnel and not of the page. It asks again every 5 seconds and comes back on the page being read. |
-| Hosts | `/ui/hosts` | One row per Host with ID, IP, port, user, description, enabled and updated. The rows come a page at a time, ten to a page to begin with, with the size (10, 20, 30, 50 or 100) and the page chosen above the table. The choice is remembered for this screen on its own, and a list short enough to fit a page of the smallest size carries no controls at all. Add a Host, edit one, enable or disable one, delete one. The add and edit forms have a box to paste a private key into, an area to drop the key file onto, and a box for the passphrase of a key that has one, and the add form has an **Assign all service ports** tick, on by default, that says what the Host starts out carrying, with a **Reach on the Host** list beside it that every assignment that tick makes starts on. **Service ports** in a row opens a panel of every service port with a tick against the ones this Host carries, and a reach beside each row: pick a reach above and apply it to everything ticked, or set one row on its own, and a row that was not ticked is left alone. Only what was changed is sent when it is saved, so a tick made there leaves the pages that were not read alone. |
+| Hosts | `/ui/hosts` | One row per Host with ID, IP, port, user, description, enabled and updated. The rows come a page at a time, ten to a page to begin with, with the size (10, 20, 30, 50 or 100) and the page chosen above the table. The choice is remembered for this screen on its own, and a list short enough to fit a page of the smallest size carries no controls at all. Add a Host, edit one, enable or disable one, delete one. The add and edit forms have a box to paste a private key into, an area to drop the key file onto, and a box for the passphrase of a key that has one, and the add form has an **Assign all service ports** tick, on by default, that says what the Host starts out carrying, with a **Reach on the Host** list beside it that every assignment that tick makes starts on. **Service ports** in a row opens a panel of every service port with a tick against the ones this Host carries, and a reach beside each row: pick a reach above and apply it to everything ticked, or set one row on its own, and a row that was not ticked is left alone. Only what was changed is sent when it is saved, so a tick made there leaves the pages that were not read alone. **Local forwards** in a row opens a panel of the local forwards of that Host with the status of each, where they are added, changed and deleted; see [Local forwards](#local-forwards). |
 | Service Ports | `/ui/service-ports` | One row per service port with ID, service IP, service port, local port, description and updated. The rows come a page at a time the same way the Hosts do, with a size and a page of their own. Add, edit and delete. The add form has an **Assign to all hosts** tick, on by default, that says which Hosts carry it from the start, with a **Reach on the Host** list beside it that the assignments that tick makes start on; which Hosts carry it after that, and what each of those assignments reaches, is changed from the Hosts screen. |
 | Logs | `/ui/logs` | The end of the log file, newest last, with a level filter and a count to show. It asks again every 5 seconds. It reads the file the process is writing now; rotated files are not shown. The lines are shown in the language of the screen while the file stays English; see [The language of the screens](#the-language-of-the-screens). |
 | Settings | `/ui/settings` | What is stored but not being run on yet, with a Restart in that card that puts it into place, every stored setting and what a save changed, among them the language this installation shows a browser that has picked none, the certificate being served with a button to renew it and boxes to register one of your own, the username and the password of this account, an export of the tunnel configuration and of the settings of this manager into one encrypted file each and an import that takes such a file back, a Restart that takes the service down and brings it back, and the Uninstall at the bottom. See [Settings](#settings). |
@@ -1544,9 +1658,11 @@ curl -s -b cookies.txt "$BASE/api/status?page=99999&size=10"
 | `GET` | `/api/host` | One page of the Hosts, oldest first. Takes `page` and `size`, see [Paging](#paging) |
 | `GET` | `/api/host/:id` | Reads one Host |
 | `PUT` | `/api/host/:id` | Updates a Host. Every field is optional; `enabled` false stops its tunnels |
-| `DELETE` | `/api/host/:id` | Deletes a Host, and the assignments naming it |
+| `DELETE` | `/api/host/:id` | Deletes a Host, the assignments naming it and its local forwards |
 | `GET` | `/api/host/:id/service-port` | One page of the service ports with the assignments of this Host laid over them, see [The service ports a Host carries](#the-service-ports-a-host-carries) |
 | `PUT` | `/api/host/:id/service-port` | Adds and removes assignments of this Host |
+| `GET` | `/api/host/:id/local-forward` | The local forwards of this Host with their status, see [The local forwards of a Host](#the-local-forwards-of-a-host) |
+| `POST` | `/api/host/:id/local-forward` | Adds a local forward to this Host |
 
 The body of a create and of an update takes these fields.
 
@@ -1808,6 +1924,59 @@ again within the moment rather than at the next pass. The Status screen carries
 one line over the table while anything is waiting, drawn from the two counts in
 `GET /api/status`, and the press on it opens this list.
 
+### The local forwards of a Host
+
+| Method | Path | What it does |
+|--------|------|--------------|
+| `GET` | `/api/host/:id/local-forward` | Every local forward of this Host with what it reports, ordered by id. Not paged |
+| `POST` | `/api/host/:id/local-forward` | Adds a local forward to this Host |
+| `GET` | `/api/local-forward/:id` | Reads one local forward |
+| `PUT` | `/api/local-forward/:id` | Updates a local forward. The Host it belongs to is not changed |
+| `DELETE` | `/api/local-forward/:id` | Deletes a local forward |
+
+What a local forward is and what its status means are in
+[Local forwards](#local-forwards).
+
+```bash
+curl -s -b cookies.txt -X POST "$BASE/api/host/1/local-forward" \
+  -H 'Content-Type: application/json' \
+  -H "X-CSRF-Token: $CSRF" \
+  -d '{"local_port":15432,"bind_scope":"loopback","target_ip":"198.51.100.30","target_port":5432,"description":"database"}'
+```
+
+```json
+{
+  "success": true,
+  "data": [
+    { "id": 1, "host_id": 1, "bind_scope": "loopback", "local_port": 15432,
+      "target_ip": "198.51.100.30", "target_port": 5432, "description": "database",
+      "status": "connected", "last_error": "", "retry_count": 0,
+      "last_connected_at": "<when the connection was made>",
+      "created_at": "<...>", "updated_at": "<...>" }
+  ]
+}
+```
+
+That is what `GET /api/host/1/local-forward` answers afterwards. A create, a
+read and an update answer with one such object. `bind_scope` in an answer is
+always `loopback` or `wildcard`, never empty.
+
+The body of a create and of an update takes the same fields, and an update
+takes the whole of them: `local_port`, `target_ip` and `target_port` are
+required on both, and **an update that leaves `bind_scope` out puts the forward
+on the wildcard**, so send the scope it is on to keep it there.
+
+The answer to a write is made before the reconcile loop has reached the row, so
+the status in it can be from before the forward was started or rebuilt. Read the
+list again to see what it did.
+
+| What was sent | What happens |
+|---------------|--------------|
+| A port outside 1 to 65535, a `target_ip` that is not an IP address, or a `bind_scope` that is neither `loopback` nor `wildcard` | `400`. Nothing is written |
+| A `local_port` another local forward opens | `409`, naming the port |
+| A `local_port` that is the port this server is stored to listen on | `409`, naming the port |
+| A Host id or a local forward id that is not stored | `404` |
+
 ### Service ports
 
 | Method | Path | What it does |
@@ -1888,7 +2057,7 @@ shown as it was written.
 
 | Method | Path | What it does |
 |--------|------|--------------|
-| `POST` | `/api/export/tunnels` | Takes `password`, answers with every Host and every service port encrypted into one file |
+| `POST` | `/api/export/tunnels` | Takes `password`, answers with every Host, its local forwards included, and every service port encrypted into one file |
 | `POST` | `/api/import/tunnels` | Takes `password`, `file` and `overwrite`, and writes what the file holds |
 | `POST` | `/api/export/settings` | Takes `password`, answers with the stored settings encrypted into one file |
 | `POST` | `/api/import/settings` | Takes `password` and `file`, and stores the settings the file holds |
@@ -1934,6 +2103,26 @@ address there makes every assignment of that Host `loopback` while every other
 answer makes them the wildcard, by the same rule the upgrade uses. It is read
 and never written, so an import cannot quietly undo a narrowing somebody made,
 and a file this version writes carries no `bind_address` at all.
+
+**The local forwards of each Host travel with it**, in `local_forwards` on the
+Host, and `local_forwards` in the answer of the export counts them. Like
+`assigned_local_ports`, the list is what the Host carries after the import, and
+a missing field and an empty list are two different answers.
+
+| `local_forwards` on a Host in the file | What an import that writes that Host does |
+|----------------------------------------|-------------------------------------------|
+| Missing, or `null` | Leaves the local forwards of that Host as they are. A file written before local forwards existed says nothing about them |
+| `[]` | Deletes every local forward of that Host |
+| A list | Replaces the local forwards of that Host with the list |
+
+A Host that was skipped keeps its local forwards whatever the file says. The
+export always writes the list, `[]` for a Host with none. Every local forward
+the import writes is listed in the answer as `added` or `replaced`. **The import
+is refused, and nothing is written**, when the file opens one `local_port`
+twice, when a forward in it does not pass the rules of a create, when it opens
+the port this server is stored to listen on, or when it opens a port that a local
+forward the import leaves in place holds here; the Host of that forward is named
+in the refusal.
 
 **The key each Host is trusted on travels with it**, in `host_key`, so moving a
 configuration does not throw the trust away and the installation that takes the
@@ -2217,7 +2406,8 @@ raises what it can.
   it logs `max ulimit is low` and goes on. Raise the hard limit in advance if you
   run many tunnels.
 - The API port below 1024 cannot be bound by a non-root process. Use 1024 or
-  above, or give the executable `CAP_NET_BIND_SERVICE`.
+  above, or give the executable `CAP_NET_BIND_SERVICE`. The same holds for the
+  `local_port` of a local forward, which this process opens itself.
 - The process has to be allowed to **write to the directory the database file is
   in**. The initial password file goes there on the first startup, and a
   directory it cannot write to stops the startup, since an account whose password
