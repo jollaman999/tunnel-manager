@@ -134,9 +134,9 @@ func LoadOrCreateKey(path string) ([]byte, error) {
 		return nil, fmt.Errorf("the key file path %s is a directory", path)
 	}
 
-	perm := info.Mode().Perm()
-	if perm&0077 != 0 {
-		return nil, fmt.Errorf("the key file %s is readable by the group or by others (permission %#o), run 'chmod 600 %s'", path, perm, path)
+	err = checkKeyFilePermission(path, info)
+	if err != nil {
+		return nil, err
 	}
 
 	key, err := os.ReadFile(path)

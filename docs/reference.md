@@ -2410,7 +2410,8 @@ it is.
 > with the database file, or the two will not match.
 
 If the key file can be read by the group or by others, the startup refuses to go
-on. Narrow it with `chmod 600` and start again.
+on. Narrow it with `chmod 600` and start again. On Windows the key file is not
+checked by its file permission.
 
 If the key opens none of the stored passwords and at least one of them is marked
 as having been encrypted, the startup stops rather than serving an API that looks
