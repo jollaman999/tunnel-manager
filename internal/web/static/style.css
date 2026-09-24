@@ -1364,6 +1364,14 @@ td .buttons {
   width: auto;
 }
 
+/* What an import did is told in a word or two for the kind and the action, and
+   a word broken in half there reads as two. The reason is a sentence and keeps
+   wrapping. */
+form[data-form="import-tunnels"] td:nth-child(1),
+form[data-form="import-tunnels"] td:nth-child(3) {
+  white-space: nowrap;
+}
+
 /* The buttons take no more width than they need, which leaves the rest of the
    row to the columns that carry values. */
 td.actions {
