@@ -691,12 +691,12 @@ func inlineScriptHashes(html []byte) []string {
 // the UI loads was read off the files it is made of: style.css is the one
 // stylesheet and holds no url() and no @import, screens.js and app.js are
 // fetched from this origin, the catalogs and /api/** are fetched with
-// window.fetch from this origin, and there is no image, font, frame, worker or
+// window.fetch from this origin, and the only images are the page icons under
+// /ui/icons/ and the one at /favicon.ico; there is no font, frame, worker or
 // plugin anywhere in them.
 //
-// img-src is listed even though no page names an image, because a browser asks
-// for /favicon.ico on its own and a refused one is an error in the console of
-// every operator who opens the screens.
+// img-src is listed for those icons, which the pages name in their links and a
+// browser also asks for at /favicon.ico on its own.
 //
 // frame-ancestors says what X-Frame-Options says. Both are sent: the header is
 // what an older browser reads and the directive is what a current one reads,

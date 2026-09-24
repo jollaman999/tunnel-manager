@@ -99,7 +99,9 @@ func TestEmbeddedFilesArePresent(t *testing.T) {
 	}
 }
 
-// TestRootRedirectsToTheUI covers the one path that is not under /ui/.
+// TestRootRedirectsToTheUI covers the one path that sends a client to /ui/.
+// The only other path outside /ui/ is the icon, which TestTheRootIconIsTheUIIcon
+// covers.
 func TestRootRedirectsToTheUI(t *testing.T) {
 	rec := get(newServer(), "/")
 
@@ -109,6 +111,50 @@ func TestRootRedirectsToTheUI(t *testing.T) {
 
 	if location := rec.Header().Get(echo.HeaderLocation); location != uiPrefix {
 		t.Fatalf("GET / Location = %q, want %q", location, uiPrefix)
+	}
+}
+
+// TestTheRootIconIsTheUIIcon covers the one file served outside /ui/. A
+// browser, a bookmark and an API client look for /favicon.ico at the root
+// without reading any link, so it has to be there, and it has to be the same
+// bytes as the icon the page links to rather than a second copy to keep in step.
+func TestTheRootIconIsTheUIIcon(t *testing.T) {
+	e := newServer()
+
+	rec := get(e, rootIconPath)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("GET %s = %d, want %d", rootIconPath, rec.Code, http.StatusOK)
+	}
+
+	if contentType := rec.Header().Get(echo.HeaderContentType); contentType != "image/x-icon" {
+		t.Fatalf("GET %s Content-Type = %q, want %q", rootIconPath, contentType, "image/x-icon")
+	}
+
+	linked := get(e, "/ui/icons/favicon.ico")
+	if linked.Code != http.StatusOK {
+		t.Fatalf("GET /ui/icons/favicon.ico = %d, want %d", linked.Code, http.StatusOK)
+	}
+
+	if rec.Body.Len() == 0 || !bytes.Equal(rec.Body.Bytes(), linked.Body.Bytes()) {
+		t.Fatalf("GET %s served %d bytes that are not the %d of /ui/icons/favicon.ico",
+			rootIconPath, rec.Body.Len(), linked.Body.Len())
+	}
+
+	if got, want := rec.Header().Get("ETag"), linked.Header().Get("ETag"); got != want {
+		t.Fatalf("GET %s ETag = %q, /ui/icons/favicon.ico carries %q", rootIconPath, got, want)
+	}
+}
+
+// TestTheRootServesNothingElse keeps the icon from being the start of a second
+// UI directory at the root. Every other path there is left to echo, which
+// answers it as not found.
+func TestTheRootServesNothingElse(t *testing.T) {
+	e := newServer()
+
+	for _, target := range []string{"/robots.txt", "/foo", "/favicon.png", "/icons/favicon.ico", "/index.html"} {
+		if rec := get(e, target); rec.Code != http.StatusNotFound {
+			t.Fatalf("GET %s = %d, want %d", target, rec.Code, http.StatusNotFound)
+		}
 	}
 }
 
@@ -364,8 +410,10 @@ func TestTheAPIStaysBehindTheSession(t *testing.T) {
 		return c.NoContent(http.StatusOK)
 	})
 
-	if rec := get(e, uiPrefix); rec.Code != http.StatusOK {
-		t.Fatalf("GET %s = %d, want %d", uiPrefix, rec.Code, http.StatusOK)
+	for _, target := range []string{uiPrefix, rootIconPath} {
+		if rec := get(e, target); rec.Code != http.StatusOK {
+			t.Fatalf("GET %s = %d, want %d", target, rec.Code, http.StatusOK)
+		}
 	}
 
 	rec := get(e, "/api/host")
@@ -435,7 +483,7 @@ func TestTheStaticFilesCarryNoSecret(t *testing.T) {
 func TestAssetsCarryATagAndAskToBeChecked(t *testing.T) {
 	e := newServer()
 
-	for _, name := range []string{"/ui/app.js", "/ui/screens.js", "/ui/style.css", "/ui/"} {
+	for _, name := range []string{"/ui/app.js", "/ui/screens.js", "/ui/style.css", "/ui/", rootIconPath} {
 		t.Run(name, func(t *testing.T) {
 			rec := get(e, name)
 			if rec.Code != http.StatusOK {

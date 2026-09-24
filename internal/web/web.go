@@ -35,6 +35,16 @@ const staticRoot = "static"
 // than the site root, so that a UI file can never take a path away from /api.
 const uiPrefix = "/ui/"
 
+// rootIconPath is the one file served outside uiPrefix. A browser asks for
+// /favicon.ico on its own, and so do a bookmark, a tab restored without the
+// page and an API client showing the server in a list, none of which has read
+// the link the page puts in its head. It is the same file as the one under
+// /ui/icons/, named once here rather than let the UI directory reach the root.
+const (
+	rootIconPath  = "/favicon.ico"
+	rootIconAsset = "icons/favicon.ico"
+)
+
 // indexFile is the page the UI is; a request that names no file and a request
 // for a path the page routes itself are both answered with it.
 const indexFile = "index.html"
@@ -68,6 +78,7 @@ const versionPath = uiPrefix + "version.json"
 func RegisterRoutes(e *echo.Echo, version string) {
 	e.GET("/", redirectToUI)
 	e.GET(strings.TrimSuffix(uiPrefix, "/"), redirectToUI)
+	e.GET(rootIconPath, serveRootIcon)
 
 	// The version route is added before the wildcard so that echo matches it
 	// first. A request for it would otherwise be looked up as a file and
@@ -85,6 +96,17 @@ func RegisterRoutes(e *echo.Echo, version string) {
 // something else to serve.
 func redirectToUI(c echo.Context) error {
 	return c.Redirect(http.StatusFound, uiPrefix)
+}
+
+// serveRootIcon answers rootIconPath with the icon under /ui/icons/, through
+// the same headers every other built-in file goes out with.
+func serveRootIcon(c echo.Context) error {
+	body, err := fs.ReadFile(staticFS, path.Join(staticRoot, rootIconAsset))
+	if err != nil {
+		return err
+	}
+
+	return serveBody(c, contentTypeOf(rootIconAsset, body), body)
 }
 
 // serveAsset answers everything under /ui/.
