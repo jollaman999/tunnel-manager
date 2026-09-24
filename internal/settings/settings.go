@@ -563,7 +563,7 @@ func WarnForwardsOnAPIPort(db *gorm.DB, logger *zap.Logger, apiPort int) {
 		logger.Warn("a local forward opens the port the API was put back to, "+
 			"so the next start may listen on another port",
 			logid.SettingsDefaultPortHeldByForward.Field(),
-			zap.Uint("local_forward_id", forward.Number),
+			zap.Uint("local_forward_number", forward.Number),
 			zap.Uint("host_id", forward.HostID),
 			zap.Int("local_port", forward.LocalPort))
 	}

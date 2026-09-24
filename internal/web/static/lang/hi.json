@@ -512,7 +512,7 @@
   "log.service_port.list_fetch_failed.text": "सर्विस पोर्ट की सूची लाई नहीं जा सकी",
   "log.service_port.update_failed.text": "सर्विस पोर्ट बदला नहीं जा सका",
   "log.settings.already_at_default.text": "हर सेटिंग पहले से ही अपने डिफ़ॉल्ट पर थी, इसलिए कुछ नहीं बदला",
-  "log.settings.default_port_held_by_forward.text": "एक लोकल फ़ॉरवर्ड उसी पोर्ट को खोलता है जिस पर API पोर्ट वापस किया गया, इसलिए अगली शुरुआत किसी दूसरे पोर्ट पर सुन सकती है (local_forward_id={local_forward_id}, host_id={host_id}, local_port={local_port})",
+  "log.settings.default_port_held_by_forward.text": "एक लोकल फ़ॉरवर्ड उसी पोर्ट को खोलता है जिस पर API पोर्ट वापस किया गया, इसलिए अगली शुरुआत किसी दूसरे पोर्ट पर सुन सकती है (local_forward_number={local_forward_number}, host_id={host_id}, local_port={local_port})",
   "log.settings.default_port_held_by_socks.text": "किसी Host का SOCKS5 प्रॉक्सी उसी पोर्ट को खोलता है जिस पर API पोर्ट वापस किया गया, इसलिए अगली शुरुआत किसी दूसरे पोर्ट पर सुन सकती है (host_id={host_id}, socks_port={socks_port})",
   "log.settings.log_level_unknown.text": "सेव किया हुआ लॉग लेवल ऐसा है जिसे लॉगर पहचानता नहीं",
   "log.settings.missing_setting_stored.text": "जो सेटिंग डेटाबेस में अभी तक नहीं थी उसे सेव कर दिया",

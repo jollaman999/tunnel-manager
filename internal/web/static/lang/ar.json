@@ -512,7 +512,7 @@
   "log.service_port.list_fetch_failed.text": "تعذّر جلب منافذ الخدمة",
   "log.service_port.update_failed.text": "تعذّر تحديث منفذ خدمة",
   "log.settings.already_at_default.text": "كل إعداد كان على قيمته الافتراضية أصلًا، فلم يتغير شيء",
-  "log.settings.default_port_held_by_forward.text": "يفتح توجيه محلي المنفذ الذي أُعيد إليه منفذ الـ API، لذا قد يستمع التشغيل التالي على منفذ آخر (local_forward_id={local_forward_id}, host_id={host_id}, local_port={local_port})",
+  "log.settings.default_port_held_by_forward.text": "يفتح توجيه محلي المنفذ الذي أُعيد إليه منفذ الـ API، لذا قد يستمع التشغيل التالي على منفذ آخر (local_forward_number={local_forward_number}, host_id={host_id}, local_port={local_port})",
   "log.settings.default_port_held_by_socks.text": "يفتح وكيل SOCKS5 لأحد أجهزة الـ Host المنفذ الذي أُعيد إليه منفذ الـ API، لذا قد يستمع التشغيل التالي على منفذ آخر (host_id={host_id}, socks_port={socks_port})",
   "log.settings.log_level_unknown.text": "مستوى السجل المحفوظ ليس مما يعرفه المسجِّل",
   "log.settings.missing_setting_stored.text": "حُفظ إعداد لم يكن موجودًا في قاعدة البيانات بعد",

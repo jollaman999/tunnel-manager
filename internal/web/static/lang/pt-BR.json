@@ -512,7 +512,7 @@
   "log.service_port.list_fetch_failed.text": "falha ao buscar as portas de serviço",
   "log.service_port.update_failed.text": "falha ao atualizar a porta de serviço",
   "log.settings.already_at_default.text": "toda configuração já estava no valor padrão, então nada foi alterado",
-  "log.settings.default_port_held_by_forward.text": "um encaminhamento local abre a porta para a qual a porta da API foi restaurada, então a próxima inicialização pode escutar em outra porta (local_forward_id={local_forward_id}, host_id={host_id}, local_port={local_port})",
+  "log.settings.default_port_held_by_forward.text": "um encaminhamento local abre a porta para a qual a porta da API foi restaurada, então a próxima inicialização pode escutar em outra porta (local_forward_number={local_forward_number}, host_id={host_id}, local_port={local_port})",
   "log.settings.default_port_held_by_socks.text": "o proxy SOCKS5 de um Host abre a porta para a qual a porta da API foi restaurada, então a próxima inicialização pode escutar em outra porta (host_id={host_id}, socks_port={socks_port})",
   "log.settings.log_level_unknown.text": "o nível de log armazenado não é um que o logger conheça",
   "log.settings.missing_setting_stored.text": "salvou uma configuração que o banco de dados ainda não tinha",

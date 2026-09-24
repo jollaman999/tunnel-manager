@@ -662,7 +662,7 @@ func (h *Handler) UpdateLocalForward(c echo.Context) error {
 	if err != nil {
 		tx.Rollback()
 		h.logger.Error("failed to update local forward", logid.LocalForwardUpdateFailed.Field(),
-			zap.Error(err), zap.Uint("local_forward_id", lf.Number))
+			zap.Error(err), zap.Uint("local_forward_number", lf.Number))
 		return failure(c, http.StatusInternalServerError, errLocalForwardUpdateFailed)
 	}
 
@@ -718,7 +718,7 @@ func (h *Handler) DeleteLocalForward(c echo.Context) error {
 	if err != nil {
 		tx.Rollback()
 		h.logger.Error("failed to delete local forward", logid.LocalForwardDeleteFailed.Field(),
-			zap.Error(err), zap.Uint("local_forward_id", lf.Number))
+			zap.Error(err), zap.Uint("local_forward_number", lf.Number))
 		return failure(c, http.StatusInternalServerError, errLocalForwardDeleteFailed)
 	}
 

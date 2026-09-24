@@ -166,7 +166,7 @@ func newLocalTunnel(lf *models.LocalForward, host *models.Host, config *ssh.Clie
 // fields are what every line about this forward carries.
 func (f *localTunnel) fields(extra ...zap.Field) []zap.Field {
 	return append([]zap.Field{
-		zap.Uint("local_forward_id", f.id),
+		zap.Uint("local_forward_number", f.id),
 		zap.Uint("host_id", f.hostID),
 		zap.String("local", f.listen.String()),
 		zap.String("server", f.server.String()),
@@ -691,7 +691,7 @@ func (m *Manager) reconcileLocalForwards(desired map[LocalForwardKey]desiredLoca
 				m.logger.Error("failed to start tunnel",
 					logid.TunnelStartFailed.Field(),
 					zap.Error(err),
-					zap.Uint("local_forward_id", want.lf.Number),
+					zap.Uint("local_forward_number", want.lf.Number),
 					zap.String("host_ip", want.host.IP),
 					zap.Int("local_port", want.lf.LocalPort))
 				result.Failed++
@@ -723,7 +723,7 @@ func (m *Manager) reconcileLocalForwards(desired map[LocalForwardKey]desiredLoca
 			m.logger.Error("failed to restart a tunnel whose connection settings changed",
 				logid.TunnelRestartFailed.Field(),
 				zap.Error(err),
-				zap.Uint("local_forward_id", want.lf.Number),
+				zap.Uint("local_forward_number", want.lf.Number),
 				zap.Uint("host_id", want.host.ID))
 			result.Failed++
 			continue

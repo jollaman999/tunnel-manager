@@ -683,8 +683,8 @@ func TestResetNamesTheForwardOnTheDefaultAPIPort(t *testing.T) {
 	if fields[logid.FieldKey] != string(logid.SettingsDefaultPortHeldByForward) {
 		t.Errorf("the line carries log_id %v, want %s", fields[logid.FieldKey], logid.SettingsDefaultPortHeldByForward)
 	}
-	if fields["local_forward_id"] != uint64(1) {
-		t.Errorf("local_forward_id is %v, want 1", fields["local_forward_id"])
+	if fields["local_forward_number"] != uint64(1) {
+		t.Errorf("local_forward_number is %v, want 1", fields["local_forward_number"])
 	}
 	if fields["host_id"] != uint64(7) {
 		t.Errorf("host_id is %v, want 7", fields["host_id"])

@@ -512,7 +512,7 @@
   "log.service_port.list_fetch_failed.text": "не удалось получить сервисные порты",
   "log.service_port.update_failed.text": "не удалось изменить сервисный порт",
   "log.settings.already_at_default.text": "все настройки и так были по умолчанию, поэтому ничего не изменено",
-  "log.settings.default_port_held_by_forward.text": "локальная переадресация открывает порт, на который был возвращён порт API, поэтому при следующем запуске сервер может слушать другой порт (local_forward_id={local_forward_id}, host_id={host_id}, local_port={local_port})",
+  "log.settings.default_port_held_by_forward.text": "локальная переадресация открывает порт, на который был возвращён порт API, поэтому при следующем запуске сервер может слушать другой порт (local_forward_number={local_forward_number}, host_id={host_id}, local_port={local_port})",
   "log.settings.default_port_held_by_socks.text": "SOCKS5-прокси одного из Host открывает порт, на который был возвращён порт API, поэтому при следующем запуске сервер может слушать другой порт (host_id={host_id}, socks_port={socks_port})",
   "log.settings.log_level_unknown.text": "сохранённый уровень журнала логгеру неизвестен",
   "log.settings.missing_setting_stored.text": "сохранена настройка, которой в базе данных ещё не было",
