@@ -1831,6 +1831,7 @@ func (h *TransferHandler) ExportSettings(c echo.Context) error {
 //
 // @Summary      Store the settings an exported settings file holds
 // @Description  It stores them and puts none of them onto the running process, api_port and api_https_enabled included. GET /api/settings reports the difference in pending_restart until the next startup.
+// @Description  A new api_port that a local forward opens as its local port is refused with 409 and nothing is stored; data then carries that local forward and suggested_port, as PUT /settings does.
 // @Tags         export and import
 // @Accept   json
 // @Produce  json
@@ -1838,6 +1839,7 @@ func (h *TransferHandler) ExportSettings(c echo.Context) error {
 // @Param   body  body  api.importRequest  true  "The password and the file"
 // @Success  200  {object}  models.Response{data=api.importedSettings}
 // @Failure  400  {object}  api.errorBody  "The file does not open, or its settings do not pass the rules of the Settings screen"
+// @Failure  409  {object}  api.errorBody{data=api.apiPortTaken}  "The api_port of the file is the local port of a local forward. Nothing was stored"
 // @Router       /import/settings [post]
 func (h *TransferHandler) ImportSettings(c echo.Context) error {
 	var req importRequest
@@ -1889,12 +1891,48 @@ func (h *TransferHandler) ImportSettings(c echo.Context) error {
 		return failure(c, http.StatusBadRequest, errImportSettingsRefused, errorArgs{"reason": err.Error()})
 	}
 
-	err = settings.Save(h.hosts.db, &updated)
+	// The settings were read above, before the transaction, for the reason
+	// storedAPIPort gives: the pool holds one connection.
+	tx := h.hosts.db.Begin()
+
+	err = tx.Error
 	if err != nil {
+		h.hosts.logger.Error("failed to start the transaction", logid.DatabaseTransactionStartFailed.Field(), zap.Error(err))
+		return failure(c, http.StatusInternalServerError, errTransactionBeginFailed)
+	}
+
+	// Held to the local forwards the way a save on the Settings screen is, and
+	// only when the port changes, for the same reason.
+	if updated.APIPort != before.APIPort {
+		refused, err := apiPortRefused(tx, errImportSettingsAPIPortForward, updated.APIPort, before.APIPort)
+		if err != nil {
+			tx.Rollback()
+			h.hosts.logger.Error("failed to look for a local forward while importing",
+				logid.TransferLocalForwardLookupFailed.Field(),
+				zap.Error(err))
+			return failure(c, http.StatusInternalServerError, errImportLocalForwardsReadFailed)
+		}
+		if refused != nil {
+			tx.Rollback()
+			return refused.answer(c)
+		}
+	}
+
+	err = settings.Save(tx, &updated)
+	if err != nil {
+		tx.Rollback()
 		h.hosts.logger.Error("failed to store the imported settings",
 			logid.TransferSettingsStoreFailed.Field(),
 			zap.Error(err))
 		return failure(c, http.StatusInternalServerError, errSettingsStoreFailed)
+	}
+
+	err = tx.Commit().Error
+	if err != nil {
+		h.hosts.logger.Error("failed to commit the transaction",
+			logid.DatabaseTransactionCommitFailed.Field(),
+			zap.Error(err))
+		return failure(c, http.StatusInternalServerError, errTransactionCommitFailed)
 	}
 
 	diff := settings.Diff(&before, &updated)

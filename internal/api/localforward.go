@@ -2,6 +2,7 @@ package api
 
 import (
 	"errors"
+	"net"
 	"net/http"
 	"strconv"
 	"time"
@@ -105,6 +106,102 @@ func localPortRefused(tx *gorm.DB, id uint, localPort int, apiPort int) (*refusa
 	}
 
 	return nil, nil
+}
+
+// apiPortHolder is the local forward that opens the port a change of the
+// settings asked to store as api_port, as the refusal of that change carries it.
+type apiPortHolder struct {
+	ID         uint   `json:"id"`
+	HostID     uint   `json:"host_id"`
+	HostIP     string `json:"host_ip"`
+	LocalPort  int    `json:"local_port"`
+	TargetIP   string `json:"target_ip"`
+	TargetPort int    `json:"target_port"`
+}
+
+// apiPortTaken is the data of that refusal: the forward in the way, and a port
+// either of the two could move to. SuggestedPort is 0 when no port is free.
+type apiPortTaken struct {
+	LocalForward  apiPortHolder `json:"local_forward"`
+	SuggestedPort int           `json:"suggested_port"`
+}
+
+// apiPortRefused checks a port asked for as api_port against the local ports
+// of the forwards. code is the refusal the caller answers under, and
+// storedPort is the api_port stored now, which the suggested port stays clear
+// of as well. Like localPortRefused, a non-nil error is a failed read.
+func apiPortRefused(tx *gorm.DB, code errorCode, apiPort int, storedPort int) (*refusal, error) {
+	var holder models.LocalForward
+
+	err := tx.Where("local_port = ?", apiPort).First(&holder).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+
+	// A row whose Host is gone is named by the number, as an import names it.
+	hostIP := ""
+	host := strconv.FormatUint(uint64(holder.HostID), 10)
+
+	var owner models.Host
+	if tx.First(&owner, holder.HostID).Error == nil {
+		hostIP = owner.IP
+		host = owner.IP
+	}
+
+	suggested, err := freeLocalPort(tx, apiPort, storedPort)
+	if err != nil {
+		return nil, err
+	}
+
+	return refuse(http.StatusConflict, code, errorArgs{
+		"api_port": strconv.Itoa(apiPort),
+		"host":     host,
+		"target":   net.JoinHostPort(holder.TargetIP, strconv.Itoa(holder.TargetPort)),
+	}).carrying(apiPortTaken{
+		LocalForward: apiPortHolder{
+			ID:         holder.ID,
+			HostID:     holder.HostID,
+			HostIP:     hostIP,
+			LocalPort:  holder.LocalPort,
+			TargetIP:   holder.TargetIP,
+			TargetPort: holder.TargetPort,
+		},
+		SuggestedPort: suggested,
+	}), nil
+}
+
+// freeLocalPort is the first port after taken that no local forward opens and
+// that is neither taken nor storedPort. It goes up to 65535 and goes on from
+// 1024, below which a port is one the operator picks on purpose; 0 is none.
+func freeLocalPort(tx *gorm.DB, taken int, storedPort int) (int, error) {
+	var ports []int
+
+	err := tx.Model(&models.LocalForward{}).Pluck("local_port", &ports).Error
+	if err != nil {
+		return 0, err
+	}
+
+	held := map[int]bool{taken: true, storedPort: true}
+	for _, port := range ports {
+		held[port] = true
+	}
+
+	port := taken
+	for range 65535 {
+		port++
+		if port > 65535 {
+			port = 1024
+		}
+
+		if !held[port] {
+			return port, nil
+		}
+	}
+
+	return 0, nil
 }
 
 // ListHostLocalForwards answers every local forward of one Host. It is not

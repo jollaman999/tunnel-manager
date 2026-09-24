@@ -2694,3 +2694,95 @@ func TestAHostCarriedAsForwardingNothingForwardsNothing(t *testing.T) {
 		t.Fatalf("after the overwrite the Host still forwards %v", target.forwards(t))
 	}
 }
+
+// TestImportedSettingsWithAnAPIPortALocalForwardOpensAreNotStored holds an
+// import to the rule a save is held to: a port a local forward opens here is
+// refused with the forward and a free port, and nothing of the file is
+// stored. The pool holds one connection, as the server's does.
+func TestImportedSettingsWithAnAPIPortALocalForwardOpensAreNotStored(t *testing.T) {
+	source := newTransferInstall(t)
+	target := newTransferInstall(t)
+
+	sqlDB, err := target.db.DB()
+	if err != nil {
+		t.Fatalf("failed to reach the connection pool: %v", err)
+	}
+
+	sqlDB.SetMaxOpenConns(1)
+
+	host := models.Host{IP: "192.0.2.10", Port: 22, User: "root"}
+
+	err = target.db.Create(&host).Error
+	if err != nil {
+		t.Fatalf("failed to store a Host: %v", err)
+	}
+
+	forward := models.LocalForward{HostID: host.ID, BindScope: models.BindScopeLoopback, LocalPort: 15432,
+		TargetIP: "127.0.0.1", TargetPort: 5432}
+
+	err = target.db.Create(&forward).Error
+	if err != nil {
+		t.Fatalf("failed to store a local forward: %v", err)
+	}
+
+	stored, err := settings.Load(source.db)
+	if err != nil {
+		t.Fatalf("failed to read the settings: %v", err)
+	}
+
+	stored.APIPort = 15432
+	stored.MonitoringIntervalSec = 47
+
+	err = settings.Save(source.db, stored)
+	if err != nil {
+		t.Fatalf("failed to store the settings: %v", err)
+	}
+
+	file := source.exportSettings(t, testExportPassword)
+
+	request, err := json.Marshal(importRequest{Password: testExportPassword, File: file})
+	if err != nil {
+		t.Fatalf("failed to write the import request: %v", err)
+	}
+
+	rec := target.call(t, target.handler.ImportSettings, string(request))
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("the import answered %d, want %d: %s", rec.Code, http.StatusConflict, rec.Body.String())
+	}
+
+	answer := readAPIPortTaken(t, rec)
+	if answer.Code != string(errImportSettingsAPIPortForward) {
+		t.Errorf("error_code = %q, want %q", answer.Code, errImportSettingsAPIPortForward)
+	}
+
+	want := apiPortHolder{ID: forward.ID, HostID: host.ID, HostIP: "192.0.2.10", LocalPort: 15432,
+		TargetIP: "127.0.0.1", TargetPort: 5432}
+	if answer.Data.LocalForward != want {
+		t.Errorf("local_forward = %+v, want %+v", answer.Data.LocalForward, want)
+	}
+
+	if answer.Data.SuggestedPort != 15433 {
+		t.Errorf("suggested_port = %d, want 15433", answer.Data.SuggestedPort)
+	}
+
+	after, err := settings.Load(target.db)
+	if err != nil {
+		t.Fatalf("failed to read the settings: %v", err)
+	}
+
+	if after.APIPort != 8888 || after.MonitoringIntervalSec == 47 {
+		t.Errorf("the refused file was stored: api_port %d, monitoring.interval_sec %d",
+			after.APIPort, after.MonitoringIntervalSec)
+	}
+
+	var rows []models.LocalForward
+
+	err = target.db.Find(&rows).Error
+	if err != nil {
+		t.Fatalf("failed to read the local forwards: %v", err)
+	}
+
+	if len(rows) != 1 || rows[0].LocalPort != 15432 {
+		t.Errorf("the local forwards changed: %+v", rows)
+	}
+}

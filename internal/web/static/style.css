@@ -2089,6 +2089,36 @@ body.modal-open {
   justify-content: flex-end;
 }
 
+/* One way out of a port two things want, and the port it moves to: the
+   sentence with its radio, and the box beside it or under it where the row is
+   too narrow for both. */
+.port-choice {
+  display: flex;
+  gap: 0.5rem 0.75rem;
+  align-items: center;
+  flex-wrap: wrap;
+  margin-bottom: 0.6rem;
+}
+
+.port-choice label {
+  display: flex;
+  gap: 0.5rem;
+  align-items: center;
+  flex: 1 1 16rem;
+  cursor: pointer;
+}
+
+.port-choice input[type="text"] {
+  width: 7rem;
+  padding: 0.4rem 0.75rem;
+  font: inherit;
+  color: inherit;
+  background: var(--glass);
+  border: 1px solid var(--glass-edge);
+  border-radius: var(--radius-control);
+  box-shadow: 0 1px 2px var(--glass-cast) inset;
+}
+
 /* The scope that one press sets on everything that is ticked, above the list it
    applies to. It wraps rather than shrinking the list it holds: the two words
    it offers are addresses, and an address cut off in the middle is not one. */

@@ -1153,7 +1153,7 @@
                         "CSRFToken": []
                     }
                 ],
-                "description": "It stores them and puts none of them onto the running process, api_port and api_https_enabled included. GET /api/settings reports the difference in pending_restart until the next startup.",
+                "description": "It stores them and puts none of them onto the running process, api_port and api_https_enabled included. GET /api/settings reports the difference in pending_restart until the next startup.\nA new api_port that a local forward opens as its local port is refused with 409 and nothing is stored; data then carries that local forward and suggested_port, as PUT /settings does.",
                 "consumes": [
                     "application/json"
                 ],
@@ -1198,6 +1198,24 @@
                         "description": "The file does not open, or its settings do not pass the rules of the Settings screen",
                         "schema": {
                             "$ref": "#/definitions/api.errorBody"
+                        }
+                    },
+                    "409": {
+                        "description": "The api_port of the file is the local port of a local forward. Nothing was stored",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/api.errorBody"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "data": {
+                                            "$ref": "#/definitions/api.apiPortTaken"
+                                        }
+                                    }
+                                }
+                            ]
                         }
                     }
                 }
@@ -2021,7 +2039,7 @@
                         "CSRFToken": []
                     }
                 ],
-                "description": "Answers with what changed and whether a restart is needed. logging.level is the one setting this process takes on without being started again.",
+                "description": "Answers with what changed and whether a restart is needed. logging.level is the one setting this process takes on without being started again.\nA new api_port that a local forward opens as its local port is refused with 409; data then carries that local forward and suggested_port, a port neither a local forward nor the stored or asked for api_port holds, or 0 when there is none.",
                 "consumes": [
                     "application/json"
                 ],
@@ -2066,6 +2084,24 @@
                         "description": "A setting broke one of the rules. Nothing was stored",
                         "schema": {
                             "$ref": "#/definitions/api.errorBody"
+                        }
+                    },
+                    "409": {
+                        "description": "api_port is the local port of a local forward. Nothing was stored",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/api.errorBody"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "data": {
+                                            "$ref": "#/definitions/api.apiPortTaken"
+                                        }
+                                    }
+                                }
+                            ]
                         }
                     }
                 }
@@ -2464,6 +2500,40 @@
                 }
             }
         },
+        "api.apiPortHolder": {
+            "type": "object",
+            "properties": {
+                "host_id": {
+                    "type": "integer"
+                },
+                "host_ip": {
+                    "type": "string"
+                },
+                "id": {
+                    "type": "integer"
+                },
+                "local_port": {
+                    "type": "integer"
+                },
+                "target_ip": {
+                    "type": "string"
+                },
+                "target_port": {
+                    "type": "integer"
+                }
+            }
+        },
+        "api.apiPortTaken": {
+            "type": "object",
+            "properties": {
+                "local_forward": {
+                    "$ref": "#/definitions/api.apiPortHolder"
+                },
+                "suggested_port": {
+                    "type": "integer"
+                }
+            }
+        },
         "api.certificateInstall": {
             "type": "object",
             "properties": {
@@ -2641,6 +2711,7 @@
                 "settings.store_failed",
                 "settings.refused",
                 "settings.ui_language.unsupported",
+                "settings.api_port.local_forward",
                 "certificate.https_off",
                 "certificate.served.read_failed",
                 "certificate.renew_failed",
@@ -2699,6 +2770,7 @@
                 "import.assignments.store_failed",
                 "import.settings.unreadable",
                 "import.settings.refused",
+                "import.settings.api_port.local_forward",
                 "import.local_forward.refused",
                 "import.local_forward.duplicate",
                 "import.local_forward.local_port.api_port",
@@ -2783,6 +2855,7 @@
                 "errSettingsStoreFailed",
                 "errSettingsRefused",
                 "errSettingsLanguageUnsupported",
+                "errSettingsAPIPortLocalForward",
                 "errCertificateHTTPSOff",
                 "errCertificateServedUnread",
                 "errCertificateRenewFailed",
@@ -2841,6 +2914,7 @@
                 "errImportAssignmentsStoreFailed",
                 "errImportSettingsUnreadable",
                 "errImportSettingsRefused",
+                "errImportSettingsAPIPortForward",
                 "errImportLocalForwardRefused",
                 "errImportLocalForwardDuplicate",
                 "errImportLocalForwardAPIPort",

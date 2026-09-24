@@ -352,9 +352,13 @@ reports `error` and tries again.
 **`local_port` is unique across every local forward**, whichever Host carries
 them, because every one of them opens its port on this same machine. A second
 forward on a port that is taken is refused with `409`, and so is a forward on
-the port this server is stored to listen on (`api_port`). That check is made when
-a forward is written; changing `api_port` later is not checked against the
-forwards. A port below 1024 is opened by this process itself, so it is held to
+the port this server is stored to listen on (`api_port`). The same check is made
+the other way when `api_port` changes, by a save on the Settings screen or by a
+settings import: a port a forward opens is refused with `409` and nothing is
+stored. The refusal carries that forward and `suggested_port`, the first port
+above it that no forward, the stored `api_port` and the asked for one hold, and
+the Settings screen answers it with a panel that moves the forward to another
+port, or on a save the API port instead. A port below 1024 is opened by this process itself, so it is held to
 the rule in [Running as a non-root user](#running-as-a-non-root-user).
 
 **A local forward runs while its Host is enabled** and on no other Host. The
@@ -1117,7 +1121,7 @@ A save is refused before it is stored when a value would not hold:
 
 | Setting | Rule |
 |---------|------|
-| `api_port` | 1 to 65535 |
+| `api_port` | 1 to 65535. A new port a local forward opens is refused with `409`, see [Local forwards](#local-forwards) |
 | `monitoring_interval_sec`, `reconcile_interval_sec` | Above zero |
 | `security_key_file`, `logging_file_path` | Not empty, and a path under the directory the database file is in: an absolute path and one that climbs out with `..` are refused. See [Where the files go](#where-the-files-go) |
 | `logging_level` | `debug`, `info`, `warn`, `error`, `dpanic`, `panic` or `fatal` |
@@ -2164,7 +2168,8 @@ running process, `api_port` and `api_https_enabled` included. What is stored is
 what the next startup runs on, and `GET /api/settings` reports the difference in
 `pending_restart` until then, so an import cannot move the port out from under
 the request that carries it. A file whose settings do not pass the rules of the
-Settings screen is refused, and nothing is stored.
+Settings screen is refused, and nothing is stored; so is a file whose `api_port`
+is a new port a local forward opens here, with `409` as a save is.
 
 A file that does not open says which of the four it is: the password is wrong,
 it is not a file this program wrote, it is damaged, or it holds the other kind.

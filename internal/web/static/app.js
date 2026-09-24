@@ -91,6 +91,12 @@ const passwordWrongCodes = [
   updatePasswordWrongCode
 ];
 
+// The refusal of an api_port that a local forward opens, from a save on the
+// Settings screen and from an import of settings. The screen answers either
+// with a panel that moves one of the two, out of the data the refusal carries.
+const settingsAPIPortTakenCode = "settings.api_port.local_forward";
+const importAPIPortTakenCode = "import.settings.api_port.local_forward";
+
 // csrfCookieName and csrfHeaderName are the two ends of the CSRF check. The
 // server hands the token of the session out in a cookie it leaves readable from
 // here on purpose, and wants it back in a header, which a page on another
@@ -1034,6 +1040,11 @@ async function apiCall(method, path, body) {
     // done, and that sends the operator to the login rather than showing a line.
     const failure = apiFailure(errorSay(payload, response));
     failure.status = response.status;
+
+    // The name of the refusal and what it carries beside the sentence, for a
+    // screen that offers a way out of it rather than only showing it.
+    failure.code = payload !== null && typeof payload.error_code === "string" ? payload.error_code : "";
+    failure.data = payload !== null && payload.data !== undefined ? payload.data : null;
 
     throw failure;
   }

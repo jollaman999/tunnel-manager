@@ -5975,7 +5975,30 @@ async function saveSettings(values) {
     ui_default_language: values.ui_default_language
   };
 
-  const data = await apiCall("PUT", "/api/settings", body);
+  return sendSettings(body);
+}
+
+// sendSettings stores what the form holds. A port a local forward opens is
+// answered with the panel that moves one of the two, and the body is sent
+// again once it has: with the port picked there for this server, or as it was
+// when the forward is the one that moved.
+async function sendSettings(body) {
+  let data;
+
+  try {
+    data = await apiCall("PUT", "/api/settings", body);
+  } catch (error) {
+    if (error.code !== settingsAPIPortTakenCode || error.data === null) {
+      throw error;
+    }
+
+    const picked = await apiPortTakenPanel(error.data, true);
+    if (picked === null) {
+      return;
+    }
+
+    return sendSettings(picked.api === null ? body : Object.assign({}, body, { api_port: picked.api }));
+  }
 
   saySettingsSaved(data, "settings.saved.notice", "settings.saved-next-start.notice");
 
@@ -5986,6 +6009,148 @@ async function saveSettings(values) {
   await followInstallationLang();
 
   return drawSettings();
+}
+
+// apiPortTakenPanel puts up what a port asked for as api_port and opened by a
+// local forward is answered with. It settles with null for a cancel, with
+// { api: port } where the port of this server is to move, and with
+// { api: null } once the forward has moved to the port that was picked. The
+// port of this server is offered only to a save: an import names its port in
+// the file, which this screen does not change.
+async function apiPortTakenPanel(taken, offerAPI) {
+  const forward = taken.local_forward;
+  const suggested = typeof taken.suggested_port === "number" && taken.suggested_port > 0
+    ? String(taken.suggested_port) : "";
+
+  const problem = element("p", "");
+
+  problem.className = "notice error";
+  problem.dataset.problem = "api-port-taken";
+  problem.hidden = true;
+
+  const choices = [];
+
+  function choice(value, label) {
+    const row = document.createElement("div");
+
+    row.className = "port-choice";
+
+    const pick = document.createElement("label");
+    const radio = document.createElement("input");
+
+    radio.type = "radio";
+    radio.name = "api-port-taken";
+    radio.value = value;
+    radio.dataset.choice = value;
+    radio.checked = choices.length === 0;
+
+    pick.appendChild(radio);
+    pick.appendChild(document.createTextNode(label));
+
+    const port = textControl({ value: suggested, hint: t("form.port-example.hint"),
+      inputMode: "numeric", filter: portCharacters });
+
+    port.dataset.field = value + "_port";
+    port.setAttribute("aria-label", label);
+
+    // Typing a port is picking the way it belongs to.
+    port.addEventListener("focus", function () {
+      radio.checked = true;
+    });
+
+    row.appendChild(pick);
+    row.appendChild(port);
+
+    choices.push({ value: value, radio: radio, port: port, row: row });
+  }
+
+  if (offerAPI) {
+    choice("api", t("settings.api-port-taken-api.option"));
+  }
+
+  choice("forward", t("settings.api-port-taken-forward.option"));
+
+  // With one way out there is nothing to pick between, so the radio is not
+  // drawn and the box stands under its sentence.
+  if (choices.length === 1) {
+    choices[0].radio.hidden = true;
+  }
+
+  let picked = null;
+
+  await openModal({
+    name: "api-port-taken",
+    title: t("settings.api-port-taken.title"),
+    body: [
+      element("p", t("settings.api-port-taken.text", {
+        port: forward.local_port,
+        host: forward.host_ip === "" ? String(forward.host_id) : forward.host_ip,
+        target: forward.target_ip + ":" + forward.target_port
+      })),
+      problem
+    ].concat(choices.map(function (one) {
+      return one.row;
+    })),
+    buttons: [
+      {
+        label: offerAPI ? t("settings.api-port-taken-save.button") : t("settings.api-port-taken-import.button"),
+        name: "apply",
+        press: async function (node, close) {
+          const chosen = choices.find(function (one) {
+            return one.radio.checked;
+          });
+          const said = checkPort(chosen.port.value);
+
+          if (said !== "") {
+            showPanelProblem(problem, said);
+
+            return;
+          }
+
+          const port = asNumber(chosen.port.value);
+
+          if (chosen.value === "api") {
+            picked = { api: port };
+            close("apply");
+
+            return;
+          }
+
+          problem.hidden = true;
+          node.disabled = true;
+
+          try {
+            await moveLocalForward(forward.id, port);
+          } catch (error) {
+            if (error instanceof Redirected) {
+              throw error;
+            }
+
+            node.disabled = false;
+            showPanelProblem(problem, error.message);
+
+            return;
+          }
+
+          picked = { api: null };
+          close("apply");
+        }
+      },
+      { label: t("common.cancel.button"), name: "cancel" }
+    ]
+  });
+
+  return picked;
+}
+
+// moveLocalForward gives a local forward another local port and leaves the
+// rest of it as it is stored. It is read first because the update takes the
+// whole record, and a scope left out of it would be stored as the wildcard.
+async function moveLocalForward(id, port) {
+  const item = await apiCall("GET", "/api/local-forward/" + id);
+
+  return apiCall("PUT", "/api/local-forward/" + id,
+    localForwardBody(Object.assign({}, item, { local_port: String(port) })));
 }
 
 // settingsPending is what is stored with a value this service is not running
@@ -6944,6 +7109,16 @@ async function importSettings(values) {
   } catch (error) {
     if (error instanceof Redirected) {
       throw error;
+    }
+
+    // A port of the file that a local forward opens here is offered the one
+    // way out an import has, moving the forward, and the same file is sent
+    // again with the password still held in values and nowhere else.
+    if (error.code === importAPIPortTakenCode && error.data !== null) {
+      const picked = await apiPortTakenPanel(error.data, false);
+      if (picked !== null) {
+        return importSettings(values);
+      }
     }
 
     transferProblem.settings = error.message;

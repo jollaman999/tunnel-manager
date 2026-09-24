@@ -596,3 +596,40 @@ func TestLocalForwardReadsAnswerNotFound(t *testing.T) {
 			http.StatusNotFound, errLocalForwardNotFound)
 	}
 }
+
+// TestFreeLocalPortSkipsWhatIsHeld pins the port a refusal of api_port
+// suggests: the first one after the port asked for that no forward opens and
+// that is not the stored api_port, going on from 1024 past 65535.
+func TestFreeLocalPortSkipsWhatIsHeld(t *testing.T) {
+	tests := []struct {
+		name   string
+		ports  []int
+		taken  int
+		stored int
+		want   int
+	}{
+		{name: "the next port", ports: []int{15432}, taken: 15432, stored: 8888, want: 15433},
+		{name: "a run of held ports", ports: []int{15432, 15433, 15434}, taken: 15432, stored: 8888, want: 15435},
+		{name: "the stored api_port", ports: []int{15432, 15433}, taken: 15432, stored: 15434, want: 15435},
+		{name: "past the top", ports: []int{65534, 65535}, taken: 65534, stored: 1024, want: 1025},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			forwards := make([]models.LocalForward, 0, len(tt.ports))
+			for i, port := range tt.ports {
+				forwards = append(forwards, storedLocalForward(uint(i+1), 1, port))
+			}
+
+			db := newLocalForwardDB(t, []models.Host{statusHost(1, true)}, forwards)
+
+			got, err := freeLocalPort(db, tt.taken, tt.stored)
+			if err != nil {
+				t.Fatalf("freeLocalPort returned error: %v", err)
+			}
+			if got != tt.want {
+				t.Errorf("freeLocalPort = %d, want %d", got, tt.want)
+			}
+		})
+	}
+}

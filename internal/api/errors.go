@@ -154,6 +154,7 @@ const (
 	errSettingsStoreFailed         errorCode = "settings.store_failed"
 	errSettingsRefused             errorCode = "settings.refused"
 	errSettingsLanguageUnsupported errorCode = "settings.ui_language.unsupported"
+	errSettingsAPIPortLocalForward errorCode = "settings.api_port.local_forward"
 
 	errCertificateHTTPSOff       errorCode = "certificate.https_off"
 	errCertificateServedUnread   errorCode = "certificate.served.read_failed"
@@ -219,6 +220,7 @@ const (
 	errImportAssignmentsStoreFailed errorCode = "import.assignments.store_failed"
 	errImportSettingsUnreadable     errorCode = "import.settings.unreadable"
 	errImportSettingsRefused        errorCode = "import.settings.refused"
+	errImportSettingsAPIPortForward errorCode = "import.settings.api_port.local_forward"
 
 	errImportLocalForwardRefused      errorCode = "import.local_forward.refused"
 	errImportLocalForwardDuplicate    errorCode = "import.local_forward.duplicate"
@@ -374,6 +376,10 @@ var errorMessages = map[errorCode]string{
 	// screen showing it has to list the languages that would be taken, and a
 	// list arriving inside {reason} as English prose is one it cannot use.
 	errSettingsLanguageUnsupported: "The settings are refused: {language} is not a language this installation is drawn in. Use one of {languages}, or leave it empty to show each browser the language it asks for",
+	// The port a local forward opens, asked for as the port of this server. The
+	// answer carries the forward and a free port in data, which is what the
+	// screen offers to move one of the two to.
+	errSettingsAPIPortLocalForward: "The settings are refused: the port {api_port} is opened by the local forward of the Host {host} to {target}. Move the local forward to another port, or choose another port for this server",
 
 	// The TLS certificate this installation serves with.
 	errCertificateHTTPSOff:       "No certificate is in use, because HTTPS is turned off. Turn on \"Serve over HTTPS\" and start tunnel-manager again",
@@ -448,6 +454,7 @@ var errorMessages = map[errorCode]string{
 	errImportAssignmentsStoreFailed: "Nothing was imported: failed to store the service ports the Host {host} carries",
 	errImportSettingsUnreadable:     "The file says it holds the settings of the manager, but the settings in it cannot be read",
 	errImportSettingsRefused:        "Nothing was imported. The settings in the file are refused: {reason}",
+	errImportSettingsAPIPortForward: "Nothing was imported. The file sets the port of this server to {api_port}, which the local forward of the Host {host} to {target} opens here. Move the local forward to another port and import again",
 
 	errImportLocalForwardRefused:      "Nothing was imported. The local forward on the local port {local_port} of the Host {host} in the file was refused: {reason}",
 	errImportLocalForwardDuplicate:    "Nothing was imported. The file opens the local port {local_port} with more than one local forward",
@@ -472,6 +479,13 @@ func failure(c echo.Context, status int, code errorCode, args ...errorArgs) erro
 		values = args[0]
 	}
 
+	return writeFailure(c, status, code, values, nil)
+}
+
+// writeFailure is failure with the data a refusal may carry beside its
+// sentence. data is left out of the body when it is nil, so a refusal without
+// any goes out in the shape it always did.
+func writeFailure(c echo.Context, status int, code errorCode, values errorArgs, data interface{}) error {
 	template, known := errorMessages[code]
 	if !known {
 		// A code with no sentence behind it is a bug in this package, and the
@@ -482,7 +496,7 @@ func failure(c echo.Context, status int, code errorCode, args ...errorArgs) erro
 			"registered for. The answer carries the code as its own text", code)
 
 		return c.JSON(status, errorBody{
-			Response: models.Response{Success: false, Error: string(code)},
+			Response: models.Response{Success: false, Data: data, Error: string(code)},
 			Code:     errorCodeUnspecified,
 			Args:     values,
 		})
@@ -497,7 +511,7 @@ func failure(c echo.Context, status int, code errorCode, args ...errorArgs) erro
 	}
 
 	return c.JSON(status, errorBody{
-		Response: models.Response{Success: false, Error: message},
+		Response: models.Response{Success: false, Data: data, Error: message},
 		Code:     code,
 		Args:     values,
 	})
@@ -511,6 +525,7 @@ type refusal struct {
 	status int
 	code   errorCode
 	args   errorArgs
+	data   interface{}
 }
 
 // refuse builds one. args is variadic for the reason failure's is.
@@ -550,9 +565,18 @@ func (r *refusal) named(codes map[string]textCode, values textArgs) *refusal {
 	return r
 }
 
+// carrying puts data in the answer beside the sentence. It is for a refusal a
+// screen offers a way out of, where what the way out needs is more than the
+// values written into the sentence.
+func (r *refusal) carrying(data interface{}) *refusal {
+	r.data = data
+
+	return r
+}
+
 // answer writes the refusal out.
 func (r *refusal) answer(c echo.Context) error {
-	return failure(c, r.status, r.code, r.args)
+	return writeFailure(c, r.status, r.code, r.args, r.data)
 }
 
 // renderErrorMessage writes the values into the sentence and reports whether

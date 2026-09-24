@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/glebarez/sqlite"
+	"github.com/jollaman999/tunnel-manager/internal/models"
 	"github.com/jollaman999/tunnel-manager/internal/settings"
 	"github.com/labstack/echo/v4"
 	"go.uber.org/zap"
@@ -34,7 +35,9 @@ func newSettingsDB(t *testing.T) *gorm.DB {
 		t.Fatalf("failed to open the database: %v", err)
 	}
 
-	err = db.AutoMigrate(&settings.Settings{})
+	// The local forwards are there because a save that changes the port reads
+	// them.
+	err = db.AutoMigrate(&settings.Settings{}, &models.Host{}, &models.LocalForward{})
 	if err != nil {
 		t.Fatalf("failed to migrate the database: %v", err)
 	}
@@ -921,5 +924,99 @@ func TestSaveWritesNothingTheRequestDoesNotName(t *testing.T) {
 			t.Errorf("the body named %s and it was stored as %v, which is what the body asked for",
 				name, written[name].Interface())
 		}
+	}
+}
+
+// apiPortTakenAnswer is a refusal of a new api_port, with the data it carries.
+type apiPortTakenAnswer struct {
+	Success bool         `json:"success"`
+	Data    apiPortTaken `json:"data"`
+	Code    string       `json:"error_code"`
+	Args    errorArgs    `json:"error_args"`
+}
+
+func readAPIPortTaken(t *testing.T, rec *httptest.ResponseRecorder) apiPortTakenAnswer {
+	t.Helper()
+
+	var answer apiPortTakenAnswer
+
+	err := json.Unmarshal(rec.Body.Bytes(), &answer)
+	if err != nil {
+		t.Fatalf("failed to read the answer: %v, body: %s", err, rec.Body.String())
+	}
+
+	return answer
+}
+
+// TestSaveRefusesAnAPIPortALocalForwardOpens pins the refusal of a port a
+// local forward opens: a 409 that names the forward and a free port, and a
+// save that stored nothing, the other setting of the body included. The pool
+// holds one connection, so a read through h.db inside the transaction would
+// hang here.
+func TestSaveRefusesAnAPIPortALocalForwardOpens(t *testing.T) {
+	db := newLocalForwardDB(t, []models.Host{statusHost(1, true)}, []models.LocalForward{
+		storedLocalForward(1, 1, 15432),
+		storedLocalForward(2, 1, 15433),
+		storedLocalForward(3, 1, 15434),
+	})
+	h, _, _, _ := newSettingsHandler(t, db)
+
+	rec := settingsRequest(t, h, `{"api_port":15432,"monitoring_interval_sec":31}`)
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("status = %d, want %d, body: %s", rec.Code, http.StatusConflict, rec.Body.String())
+	}
+
+	answer := readAPIPortTaken(t, rec)
+	if answer.Success || answer.Code != string(errSettingsAPIPortLocalForward) {
+		t.Errorf("success = %v, error_code = %q, want false and %q", answer.Success, answer.Code,
+			errSettingsAPIPortLocalForward)
+	}
+
+	want := apiPortHolder{ID: 1, HostID: 1, HostIP: "192.0.2.1", LocalPort: 15432, TargetIP: "127.0.0.1", TargetPort: 5432}
+	if answer.Data.LocalForward != want {
+		t.Errorf("local_forward = %+v, want %+v", answer.Data.LocalForward, want)
+	}
+
+	// 15433 and 15434 are opened by the other two forwards.
+	if answer.Data.SuggestedPort != 15435 {
+		t.Errorf("suggested_port = %d, want 15435", answer.Data.SuggestedPort)
+	}
+
+	if answer.Args["api_port"] != "15432" || answer.Args["host"] != "192.0.2.1" ||
+		answer.Args["target"] != "127.0.0.1:5432" {
+		t.Errorf("error_args = %v", answer.Args)
+	}
+
+	after, err := settings.Load(db)
+	if err != nil {
+		t.Fatalf("failed to read the settings: %v", err)
+	}
+
+	if after.APIPort != localForwardAPIPort || after.MonitoringIntervalSec == 31 {
+		t.Errorf("the refused save was stored: api_port %d, monitoring.interval_sec %d",
+			after.APIPort, after.MonitoringIntervalSec)
+	}
+}
+
+// TestSaveTakesAnAPIPortNoLocalForwardOpens is the other side: with forwards
+// stored, a port none of them opens is saved as it always was.
+func TestSaveTakesAnAPIPortNoLocalForwardOpens(t *testing.T) {
+	db := newLocalForwardDB(t, []models.Host{statusHost(1, true)}, []models.LocalForward{
+		storedLocalForward(1, 1, 15432),
+	})
+	h, _, _, _ := newSettingsHandler(t, db)
+
+	rec := settingsRequest(t, h, `{"api_port":15500}`)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d, body: %s", rec.Code, http.StatusOK, rec.Body.String())
+	}
+
+	after, err := settings.Load(db)
+	if err != nil {
+		t.Fatalf("failed to read the settings: %v", err)
+	}
+
+	if after.APIPort != 15500 {
+		t.Errorf("api_port = %d, want 15500", after.APIPort)
 	}
 }

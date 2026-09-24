@@ -263,6 +263,7 @@ func (r *updateSettingsRequest) apply(s *settings.Settings) {
 //
 // @Summary      Store the settings in the body over the stored ones
 // @Description  Answers with what changed and whether a restart is needed. logging.level is the one setting this process takes on without being started again.
+// @Description  A new api_port that a local forward opens as its local port is refused with 409; data then carries that local forward and suggested_port, a port neither a local forward nor the stored or asked for api_port holds, or 0 when there is none.
 // @Tags         settings
 // @Accept   json
 // @Produce  json
@@ -270,6 +271,7 @@ func (r *updateSettingsRequest) apply(s *settings.Settings) {
 // @Param   body  body  settings.Settings  true  "The settings as they should stand"
 // @Success  200  {object}  models.Response{data=api.settingsSaved}
 // @Failure  400  {object}  api.errorBody  "A setting broke one of the rules. Nothing was stored"
+// @Failure  409  {object}  api.errorBody{data=api.apiPortTaken}  "api_port is the local port of a local forward. Nothing was stored"
 // @Router       /settings [put]
 func (h *SettingsHandler) UpdateSettings(c echo.Context) error {
 	stored, err := settings.Load(h.db)
@@ -316,10 +318,42 @@ func (h *SettingsHandler) UpdateSettings(c echo.Context) error {
 		return failure(c, http.StatusBadRequest, errSettingsRefused, errorArgs{"reason": err.Error()})
 	}
 
-	err = settings.Save(h.db, &updated)
+	// The settings were read above, before the transaction, for the reason
+	// storedAPIPort gives: the pool holds one connection.
+	tx := h.db.Begin()
+	err = tx.Error
 	if err != nil {
+		h.logger.Error("failed to start the transaction", logid.DatabaseTransactionStartFailed.Field(), zap.Error(err))
+		return failure(c, http.StatusInternalServerError, errTransactionBeginFailed)
+	}
+
+	// Only a port that changes is held to the local forwards, so a save of
+	// another setting is not refused over a port that is already stored.
+	if updated.APIPort != before.APIPort {
+		refused, err := apiPortRefused(tx, errSettingsAPIPortLocalForward, updated.APIPort, before.APIPort)
+		if err != nil {
+			tx.Rollback()
+			h.logger.Error("failed to fetch local forwards", logid.LocalForwardListFetchFailed.Field(),
+				zap.Error(err), zap.Int("api_port", updated.APIPort))
+			return failure(c, http.StatusInternalServerError, errLocalForwardListFailed)
+		}
+		if refused != nil {
+			tx.Rollback()
+			return refused.answer(c)
+		}
+	}
+
+	err = settings.Save(tx, &updated)
+	if err != nil {
+		tx.Rollback()
 		h.logger.Error("failed to store the settings", logid.SettingsStoreFailed.Field(), zap.Error(err))
 		return failure(c, http.StatusInternalServerError, errSettingsStoreFailed)
+	}
+
+	err = tx.Commit().Error
+	if err != nil {
+		h.logger.Error("failed to commit the transaction", logid.DatabaseTransactionCommitFailed.Field(), zap.Error(err))
+		return failure(c, http.StatusInternalServerError, errTransactionCommitFailed)
 	}
 
 	changes := h.applyChanges(&before, &updated)
