@@ -1,0 +1,45 @@
+version: 2
+
+# A release is left a week before it is proposed here, so that one pulled or
+# found to be compromised in its first days is not merged in them.
+updates:
+  # The workflows name every action by the commit of its release, so that a tag
+  # moved after the fact cannot change what runs here. A pin does not move on
+  # its own, and this is what moves it, along with the version in the comment
+  # beside it.
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    cooldown:
+      default-days: 7
+
+  - package-ecosystem: gomod
+    directory: /
+    schedule:
+      interval: weekly
+    cooldown:
+      default-days: 7
+
+  # The demo is a module of its own with its own Dockerfile, and is not covered
+  # by the entries for the root.
+  - package-ecosystem: gomod
+    directory: /tools/demo
+    schedule:
+      interval: weekly
+    cooldown:
+      default-days: 7
+
+  - package-ecosystem: docker
+    directory: /
+    schedule:
+      interval: weekly
+    cooldown:
+      default-days: 7
+
+  - package-ecosystem: docker
+    directory: /tools/demo
+    schedule:
+      interval: weekly
+    cooldown:
+      default-days: 7
