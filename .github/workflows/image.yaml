@@ -11,11 +11,16 @@ on:
 
 permissions:
   contents: read
-  packages: write
 
 jobs:
   image:
     runs-on: ubuntu-26.04
+    # Pushing to ghcr.io is the one write this workflow makes, and it is given
+    # to the job that pushes rather than to the workflow, so that a job added
+    # here later starts from read-only.
+    permissions:
+      contents: read
+      packages: write
     steps:
     # Nothing here pushes to the repository; the registry login below takes the
     # token on its own. Leaving it in .git/config would only hand it to every
