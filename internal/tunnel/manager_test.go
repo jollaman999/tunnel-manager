@@ -487,8 +487,9 @@ func allAssignments(hosts []models.Host, sps []models.ServicePort) []models.Host
 	for i := range hosts {
 		for j := range sps {
 			assignments = append(assignments, models.HostServicePort{
-				HostID: hosts[i].ID,
-				SPID:   sps[j].ID,
+				HostID:  hosts[i].ID,
+				SPID:    sps[j].ID,
+				Enabled: true,
 			})
 		}
 	}

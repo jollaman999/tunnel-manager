@@ -128,6 +128,11 @@ func parseTunnelKey(key string) (uint, uint, bool) {
 // count as running without being wanted and are stopped. Its assignments stay
 // in the table, so enabling it again brings its tunnels back.
 //
+// An assignment that is switched off is left out the same way, and for the
+// same reason: its tunnel counts as running without being wanted and is
+// stopped, and the row stays, scope and all, so switching it on again brings
+// the tunnel back.
+//
 // The three tables are read once each and paired in memory. This runs on every
 // pass of the reconcile loop, so a statement per assignment would put the
 // number of tunnels of this installation onto the database every few seconds.
@@ -185,6 +190,10 @@ func (m *Manager) desiredTunnelsOf(hostByID map[uint]*models.Host) (map[string]d
 
 	desired := make(map[string]desiredTunnel, len(assignments))
 	for _, assignment := range assignments {
+		if !assignment.Enabled {
+			continue
+		}
+
 		host, ok := hostByID[assignment.HostID]
 		if !ok || !host.Enabled {
 			continue

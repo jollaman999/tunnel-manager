@@ -1764,7 +1764,7 @@ func (i *transferInstall) assign(t *testing.T, hostIP string, localPort int) {
 		t.Fatalf("no service port is on the local port %d here: %v", localPort, err)
 	}
 
-	err = i.db.Create(&models.HostServicePort{HostID: host.ID, SPID: sp.ID}).Error
+	err = i.db.Create(&models.HostServicePort{HostID: host.ID, SPID: sp.ID, Enabled: true}).Error
 	if err != nil {
 		t.Fatalf("failed to store the assignment: %v", err)
 	}
@@ -2090,6 +2090,179 @@ func TestHowFarEachAssignmentReachesCrossesToAnotherInstallation(t *testing.T) {
 	// read back by nothing.
 	if strings.Contains(opened, `"bind_address"`) {
 		t.Errorf("the file carries a bind address of its own on a Host: %s", opened)
+	}
+}
+
+// switchOff pauses one stored assignment of this installation, the way the
+// assignment screen of a Host does.
+func (i *transferInstall) switchOff(t *testing.T, hostIP string, localPort int) {
+	t.Helper()
+
+	var host models.Host
+
+	err := i.db.Where("address = ?", hostIP).First(&host).Error
+	if err != nil {
+		t.Fatalf("the Host %s is not registered here: %v", hostIP, err)
+	}
+
+	var sp models.ServicePort
+
+	err = i.db.Where("local_port = ?", localPort).First(&sp).Error
+	if err != nil {
+		t.Fatalf("no service port is on the local port %d here: %v", localPort, err)
+	}
+
+	result := i.db.Model(&models.HostServicePort{}).
+		Where("host_id = ? AND sp_id = ?", host.ID, sp.ID).Update("enabled", false)
+	if result.Error != nil {
+		t.Fatalf("failed to switch the assignment off: %v", result.Error)
+	}
+
+	if result.RowsAffected != 1 {
+		t.Fatalf("the assignment of %s to %d is not stored here", hostIP, localPort)
+	}
+}
+
+// carriedRunning is every assignment stored with whether it runs, as "<Host
+// IP> carries <local port> on" or "off", named the way carried names them.
+func (i *transferInstall) carriedRunning(t *testing.T) []string {
+	t.Helper()
+
+	var rows []struct {
+		Address   string
+		LocalPort int
+		Enabled   bool
+	}
+
+	err := i.db.Model(&models.HostServicePort{}).
+		Select("hosts.address AS address, service_ports.local_port AS local_port, " +
+			"host_service_ports.enabled AS enabled").
+		Joins("JOIN hosts ON hosts.id = host_service_ports.host_id").
+		Joins("JOIN service_ports ON service_ports.id = host_service_ports.sp_id").
+		Order("hosts.address, service_ports.local_port").
+		Scan(&rows).Error
+	if err != nil {
+		t.Fatalf("failed to read the assignments: %v", err)
+	}
+
+	pairs := make([]string, 0, len(rows))
+	for _, row := range rows {
+		state := "off"
+		if row.Enabled {
+			state = "on"
+		}
+
+		pairs = append(pairs, row.Address+" carries "+strconv.Itoa(row.LocalPort)+" "+state)
+	}
+
+	return pairs
+}
+
+// TestWhetherEachAssignmentRunsCrossesToAnotherInstallation is the export and
+// the import of a paused assignment. Dropped on the way, it would come up
+// running at the installation that took the file in, which is a tunnel
+// somebody stopped being started by an import.
+func TestWhetherEachAssignmentRunsCrossesToAnotherInstallation(t *testing.T) {
+	source := partlyAssigned(t)
+	target := newTransferInstall(t)
+
+	source.switchOff(t, "192.0.2.10", 18081)
+
+	want := []string{
+		"192.0.2.10 carries 18080 on",
+		"192.0.2.10 carries 18081 off",
+		"192.0.2.11 carries 18081 on",
+		"192.0.2.11 carries 18082 on",
+	}
+
+	if !reflect.DeepEqual(source.carriedRunning(t), want) {
+		t.Fatalf("the installation that is exported holds %v, want %v", source.carriedRunning(t), want)
+	}
+
+	file := source.exportTunnels(t, testExportPassword)
+
+	rec := target.importTunnels(t, file, testExportPassword, false)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("the import answered %d: %s", rec.Code, rec.Body.String())
+	}
+
+	if !reflect.DeepEqual(target.carriedRunning(t), want) {
+		t.Fatalf("the installation that took the file in holds %v, want %v", target.carriedRunning(t), want)
+	}
+
+	opened, err := crypto.DecryptWithPassword(file, testExportPassword)
+	if err != nil {
+		t.Fatalf("the file does not open: %v", err)
+	}
+
+	// The one that is off is named by its local port, as the assignments
+	// themselves are. The ones that run need no entry, which is why the
+	// second Host has none: no entry is running at both ends.
+	if !strings.Contains(opened, `"assigned_enabled":{"18081":false}`) {
+		t.Errorf("the file does not say that the paused assignment is off: %s", opened)
+	}
+
+	if strings.Count(opened, `"assigned_enabled"`) != 1 {
+		t.Errorf("the file says whether an assignment runs for a Host whose assignments all run: %s", opened)
+	}
+}
+
+// TestAFileFromBeforeAssignmentsCouldBeSwitchedOffRunsEveryOne is the import of
+// a file that does not say whether its assignments run, which is every file
+// exported before they could be switched off. Each of them was running, and
+// read as off they would all come up stopped.
+func TestAFileFromBeforeAssignmentsCouldBeSwitchedOffRunsEveryOne(t *testing.T) {
+	for _, tt := range []struct {
+		name   string
+		strip  []string
+		expect []string
+	}{
+		{
+			name:  "the assignments named without whether they run",
+			strip: []string{"assigned_enabled"},
+			expect: []string{
+				"192.0.2.10 carries 18080 on",
+				"192.0.2.10 carries 18081 on",
+				"192.0.2.11 carries 18081 on",
+				"192.0.2.11 carries 18082 on",
+			},
+		},
+		{
+			name:  "the assignments not named at all",
+			strip: []string{"assigned_enabled", "assigned_local_ports"},
+			expect: []string{
+				"192.0.2.10 carries 18080 on",
+				"192.0.2.10 carries 18081 on",
+				"192.0.2.10 carries 18082 on",
+				"192.0.2.11 carries 18080 on",
+				"192.0.2.11 carries 18081 on",
+				"192.0.2.11 carries 18082 on",
+			},
+		},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			source := partlyAssigned(t)
+			target := newTransferInstall(t)
+
+			source.switchOff(t, "192.0.2.10", 18081)
+
+			older := rewriteHosts(t, source.exportTunnels(t, testExportPassword), testExportPassword,
+				func(host map[string]interface{}) {
+					for _, field := range tt.strip {
+						delete(host, field)
+					}
+				})
+
+			rec := target.importTunnels(t, older, testExportPassword, false)
+			if rec.Code != http.StatusOK {
+				t.Fatalf("the import answered %d: %s", rec.Code, rec.Body.String())
+			}
+
+			if !reflect.DeepEqual(target.carriedRunning(t), tt.expect) {
+				t.Fatalf("the file left the installation holding %v, want %v",
+					target.carriedRunning(t), tt.expect)
+			}
+		})
 	}
 }
 

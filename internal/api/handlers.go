@@ -491,7 +491,8 @@ func (h *Handler) CreateHost(c echo.Context) error {
 		// and a batch written without it would be a Host on the wildcard that
 		// nobody asked to put there.
 		for _, spID := range spIDs {
-			err = tx.Create(&models.HostServicePort{HostID: host.ID, SPID: spID, BindScope: req.BindScope}).Error
+			err = tx.Create(&models.HostServicePort{HostID: host.ID, SPID: spID, BindScope: req.BindScope,
+				Enabled: true}).Error
 			if err != nil {
 				tx.Rollback()
 				h.logger.Error("failed to assign a service port to a new Host",
@@ -930,7 +931,8 @@ func (h *Handler) CreateServicePort(c echo.Context) error {
 		// on every Host, which is what lets one answer stand for assignments
 		// spread over all of them.
 		for _, hostID := range hostIDs {
-			err = tx.Create(&models.HostServicePort{HostID: hostID, SPID: sp.ID, BindScope: req.BindScope}).Error
+			err = tx.Create(&models.HostServicePort{HostID: hostID, SPID: sp.ID, BindScope: req.BindScope,
+				Enabled: true}).Error
 			if err != nil {
 				tx.Rollback()
 				h.logger.Error("failed to assign a new service port to a Host",
@@ -1201,6 +1203,10 @@ type hostServicePortItem struct {
 	// value is the wildcard wherever it is stored, which is what the row this
 	// screen would make carries until something else is chosen.
 	BindScope string `json:"bind_scope"`
+	// Enabled is whether the tunnel of the assignment runs, and is false on a
+	// row the Host does not carry, for the reason BindScope is empty there.
+	// Assigned is what says whether the row is carried.
+	Enabled bool `json:"enabled"`
 }
 
 // ListHostServicePorts answers one page of the service ports with the
@@ -1213,6 +1219,7 @@ type hostServicePortItem struct {
 // @Summary      One page of the service ports, with assigned saying whether this Host carries each
 // @Description  The page is taken over the service ports and not over the assignments, so a row sits on the same page of this list and of GET /api/service-port whether the Host carries it or not.
 // @Description  bind_scope is what the assignment of this Host is opened to, and is empty on a row the Host does not carry.
+// @Description  enabled is whether the tunnel of the assignment runs, and is false on a row the Host does not carry.
 // @Tags         assignments
 // @Produce  json
 // @Param   page  query  int  false  "The page, counted from 1. Below 1 is read as 1, and a page past the last one is answered with the last page"
@@ -1300,6 +1307,7 @@ func (h *Handler) ListHostServicePorts(c echo.Context) error {
 			ServicePort: sp,
 			Assigned:    carried,
 			BindScope:   row.BindScope,
+			Enabled:     row.Enabled,
 		})
 	}
 
@@ -1347,6 +1355,22 @@ type hostServicePortChange struct {
 	// Remove takes no row that is not there. What the answer reports is rows
 	// and not identifiers.
 	Rescope []uint `json:"rescope"`
+	// Enabled is whether the assignments this change writes run, and what the
+	// ones named in Switch are switched to. It is a pointer for the reason
+	// CreateHostRequest.Enabled is: a change that leaves it out writes its
+	// assignments switched on and switches nothing, so a client written before
+	// the field existed writes what it always wrote.
+	Enabled *bool `json:"enabled"`
+	// Switch names the assignments to switch to Enabled, which is how one is
+	// paused or brought back without being taken away and put back. It is a
+	// list of its own for the reason Rescope is: Add leaves an assignment that
+	// is already there as it is, so a box ticked twice does not start a
+	// tunnel somebody paused.
+	//
+	// An identifier here that the Host does not carry switches nothing, and a
+	// change that names some while leaving Enabled out switches nothing
+	// either: a request that does not say which way is not read as one way.
+	Switch []uint `json:"switch"`
 }
 
 // hostServicePortChanged is what the change did: how many assignments it wrote
@@ -1360,10 +1384,14 @@ type hostServicePortChanged struct {
 	// named, counted over the rows for the same reason: an identifier naming a
 	// service port this Host does not carry moves nothing.
 	Rescoped int `json:"rescoped"`
+	// Switched is how many assignments were switched to the Enabled the
+	// change carried, counted over the rows for the same reason.
+	Switched int `json:"switched"`
 }
 
-// UpdateHostServicePorts adds and removes assignments of one Host, and moves
-// the ones it is told to move to the bind scope the change carries.
+// UpdateHostServicePorts adds and removes assignments of one Host, moves the
+// ones it is told to move to the bind scope the change carries, and switches
+// the ones it is told to switch on or off.
 //
 // The whole of the change lands or none of it does. The reconcile loop reads
 // these rows to decide which tunnels to run, so a change that landed in part
@@ -1372,14 +1400,15 @@ type hostServicePortChanged struct {
 //
 // @Summary      Add and remove assignments of this Host
 // @Description  Takes a change and not the whole set: both lists are optional, and a request that changes nothing is answered rather than refused.
-// @Description  added, removed and rescoped count the rows written and not the ids sent.
+// @Description  added, removed, rescoped and switched count the rows written and not the ids sent.
 // @Description  bind_scope is what the added assignments are opened to and what the ones named in rescope are moved to: loopback, wildcard, or left out for the wildcard. An assignment that is already there is left on the scope it holds unless rescope names it.
+// @Description  enabled is whether the added assignments run and what the ones named in switch are switched to. Left out, the added ones run and nothing is switched. An assignment that is switched off stays assigned and runs no tunnel.
 // @Tags         assignments
 // @Accept   json
 // @Produce  json
 // @Security  CSRFToken
 // @Param   id    path  int  true  "The id of the Host"
-// @Param   body  body  api.hostServicePortChange  true  "The service port ids to add, to remove and to move to bind_scope"
+// @Param   body  body  api.hostServicePortChange  true  "The service port ids to add, to remove, to move to bind_scope and to switch to enabled"
 // @Success  200  {object}  models.Response{data=api.hostServicePortChanged}
 // @Failure  400  {object}  api.errorBody  "The same service port is in both lists, an id is not stored, or bind_scope is neither loopback nor wildcard"
 // @Failure  404  {object}  api.errorBody  "No such Host"
@@ -1410,6 +1439,9 @@ func (h *Handler) UpdateHostServicePorts(c echo.Context) error {
 	add := sortedIDs(req.Add)
 	remove := sortedIDs(req.Remove)
 	rescope := sortedIDs(req.Rescope)
+	switched := sortedIDs(req.Switch)
+
+	addEnabled := req.Enabled == nil || *req.Enabled
 
 	// A service port named on both sides is refused rather than settled here.
 	// Which of the two would win is a guess at what the request meant, and what
@@ -1479,7 +1511,8 @@ func (h *Handler) UpdateHostServicePorts(c echo.Context) error {
 		}
 
 		for _, spID := range idsNotIn(add, carried) {
-			err = tx.Create(&models.HostServicePort{HostID: host.ID, SPID: spID, BindScope: req.BindScope}).Error
+			err = tx.Create(&models.HostServicePort{HostID: host.ID, SPID: spID, BindScope: req.BindScope,
+				Enabled: addEnabled}).Error
 			if err != nil {
 				tx.Rollback()
 				h.logger.Error("failed to assign a service port to a Host",
@@ -1518,6 +1551,25 @@ func (h *Handler) UpdateHostServicePorts(c echo.Context) error {
 		rescoped = int(result.RowsAffected)
 	}
 
+	// The assignments named are switched to what the change carries, written
+	// straight to the column for the reason the scope is. It sits beside the
+	// rescope, after the adds and before the removes, for the same reasons.
+	switchedRows := 0
+	if len(switched) > 0 && req.Enabled != nil {
+		result := tx.Model(&models.HostServicePort{}).
+			Where("host_id = ? AND sp_id IN ?", host.ID, switched).
+			Update("enabled", *req.Enabled)
+		if result.Error != nil {
+			tx.Rollback()
+			h.logger.Error("failed to switch the service port assignments of a Host",
+				logid.HostServicePortAssignFailed.Field(),
+				zap.Error(result.Error), zap.Uint64("host_id", id))
+			return failure(c, http.StatusInternalServerError, errAssignmentUpdateFailed)
+		}
+
+		switchedRows = int(result.RowsAffected)
+	}
+
 	// A service port that is not assigned is removed without a row going, and
 	// that is not an error either: the state the request asked for is the state
 	// it is left in.
@@ -1548,13 +1600,16 @@ func (h *Handler) UpdateHostServicePorts(c echo.Context) error {
 	// A scope that was moved wakes it as well. How far a forwarded port reaches
 	// is what the loop asks the far side for, so a row that changed scope is a
 	// tunnel that has to be made again.
-	if added > 0 || removed > 0 || rescoped > 0 {
+	// A row that was switched wakes it too: its tunnel is to be stopped or
+	// started, which is the loop's to do.
+	if added > 0 || removed > 0 || rescoped > 0 || switchedRows > 0 {
 		h.manager.WakeReconcile()
 	}
 
 	return c.JSON(http.StatusOK, models.Response{
 		Success: true,
-		Data:    hostServicePortChanged{Added: added, Removed: removed, Rescoped: rescoped},
+		Data: hostServicePortChanged{Added: added, Removed: removed, Rescoped: rescoped,
+			Switched: switchedRows},
 	})
 }
 

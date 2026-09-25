@@ -1240,7 +1240,7 @@
         },
         "/host/{id}/service-port": {
             "get": {
-                "description": "The page is taken over the service ports and not over the assignments, so a row sits on the same page of this list and of GET /api/service-port whether the Host carries it or not.\nbind_scope is what the assignment of this Host is opened to, and is empty on a row the Host does not carry.",
+                "description": "The page is taken over the service ports and not over the assignments, so a row sits on the same page of this list and of GET /api/service-port whether the Host carries it or not.\nbind_scope is what the assignment of this Host is opened to, and is empty on a row the Host does not carry.\nenabled is whether the tunnel of the assignment runs, and is false on a row the Host does not carry.",
                 "produces": [
                     "application/json"
                 ],
@@ -1330,7 +1330,7 @@
                         "CSRFToken": []
                     }
                 ],
-                "description": "Takes a change and not the whole set: both lists are optional, and a request that changes nothing is answered rather than refused.\nadded, removed and rescoped count the rows written and not the ids sent.\nbind_scope is what the added assignments are opened to and what the ones named in rescope are moved to: loopback, wildcard, or left out for the wildcard. An assignment that is already there is left on the scope it holds unless rescope names it.",
+                "description": "Takes a change and not the whole set: both lists are optional, and a request that changes nothing is answered rather than refused.\nadded, removed, rescoped and switched count the rows written and not the ids sent.\nbind_scope is what the added assignments are opened to and what the ones named in rescope are moved to: loopback, wildcard, or left out for the wildcard. An assignment that is already there is left on the scope it holds unless rescope names it.\nenabled is whether the added assignments run and what the ones named in switch are switched to. Left out, the added ones run and nothing is switched. An assignment that is switched off stays assigned and runs no tunnel.",
                 "consumes": [
                     "application/json"
                 ],
@@ -1350,7 +1350,7 @@
                         "required": true
                     },
                     {
-                        "description": "The service port ids to add, to remove and to move to bind_scope",
+                        "description": "The service port ids to add, to remove, to move to bind_scope and to switch to enabled",
                         "name": "body",
                         "in": "body",
                         "required": true,
@@ -3225,6 +3225,10 @@
                         "wildcard"
                     ]
                 },
+                "enabled": {
+                    "description": "Enabled is whether the assignments this change writes run, and what the\nones named in Switch are switched to. It is a pointer for the reason\nCreateHostRequest.Enabled is: a change that leaves it out writes its\nassignments switched on and switches nothing, so a client written before\nthe field existed writes what it always wrote.",
+                    "type": "boolean"
+                },
                 "remove": {
                     "type": "array",
                     "items": {
@@ -3233,6 +3237,13 @@
                 },
                 "rescope": {
                     "description": "Rescope names the assignments to move to BindScope, which is how one is\nchanged without being taken away and put back: an identifier on its own\nis the row edited by itself, and several of them are the scope applied\nto everything that was ticked.\n\nIt is a list of its own rather than Add doing the moving, because Add\nleaves an assignment that is already there exactly as it is. Read the\nother way, a client that ticks a box which was ticked already, or one\nwritten before any of this existed, would widen to the wildcard an\nassignment somebody had pinned to loopback, and a reach given away by a\nrequest that did not mention it is the one thing this must not do.\n\nAn identifier here that the Host does not carry moves nothing, the way\nRemove takes no row that is not there. What the answer reports is rows\nand not identifiers.",
+                    "type": "array",
+                    "items": {
+                        "type": "integer"
+                    }
+                },
+                "switch": {
+                    "description": "Switch names the assignments to switch to Enabled, which is how one is\npaused or brought back without being taken away and put back. It is a\nlist of its own for the reason Rescope is: Add leaves an assignment that\nis already there as it is, so a box ticked twice does not start a\ntunnel somebody paused.\n\nAn identifier here that the Host does not carry switches nothing, and a\nchange that names some while leaving Enabled out switches nothing\neither: a request that does not say which way is not read as one way.",
                     "type": "array",
                     "items": {
                         "type": "integer"
@@ -3252,6 +3263,10 @@
                 "rescoped": {
                     "description": "Rescoped is how many assignments were moved to the scope the change\nnamed, counted over the rows for the same reason: an identifier naming a\nservice port this Host does not carry moves nothing.",
                     "type": "integer"
+                },
+                "switched": {
+                    "description": "Switched is how many assignments were switched to the Enabled the\nchange carried, counted over the rows for the same reason.",
+                    "type": "integer"
                 }
             }
         },
@@ -3270,6 +3285,10 @@
                 },
                 "description": {
                     "type": "string"
+                },
+                "enabled": {
+                    "description": "Enabled is whether the tunnel of the assignment runs, and is false on a\nrow the Host does not carry, for the reason BindScope is empty there.\nAssigned is what says whether the row is carried.",
+                    "type": "boolean"
                 },
                 "id": {
                     "type": "integer"

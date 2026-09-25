@@ -475,7 +475,7 @@ func newReconcileStubDB(t *testing.T, hosts []models.Host, sps []models.ServiceP
 	assignments := make([]models.HostServicePort, 0, len(hosts)*len(sps))
 	for _, host := range hosts {
 		for _, sp := range sps {
-			assignments = append(assignments, models.HostServicePort{HostID: host.ID, SPID: sp.ID})
+			assignments = append(assignments, models.HostServicePort{HostID: host.ID, SPID: sp.ID, Enabled: true})
 		}
 	}
 
@@ -1022,7 +1022,7 @@ func newRowsDB(t *testing.T, hosts []models.Host, sps []models.ServicePort, tunn
 	// database would want none.
 	for _, host := range hosts {
 		for _, sp := range sps {
-			err = tx.Create(&models.HostServicePort{HostID: host.ID, SPID: sp.ID}).Error
+			err = tx.Create(&models.HostServicePort{HostID: host.ID, SPID: sp.ID, Enabled: true}).Error
 			if err != nil {
 				t.Fatalf("failed to store an assignment: %v", err)
 			}
@@ -3988,7 +3988,7 @@ func newAssignmentDB(t *testing.T, hosts []models.Host, sps []models.ServicePort
 	}
 
 	for _, pair := range pairs {
-		err = db.Create(&models.HostServicePort{HostID: pair[0], SPID: pair[1]}).Error
+		err = db.Create(&models.HostServicePort{HostID: pair[0], SPID: pair[1], Enabled: true}).Error
 		if err != nil {
 			t.Fatalf("failed to store an assignment: %v", err)
 		}
@@ -4298,6 +4298,179 @@ func TestUpdateHostServicePortsTakesAChangeThatChangesNothing(t *testing.T) {
 				t.Fatalf("the assignments after the change are %v, want the stored one", after)
 			}
 		})
+	}
+}
+
+// storedEnabled returns whether each assignment runs, as "host-serviceport=on"
+// or "=off", in the order of the pairs.
+func storedEnabled(t *testing.T, db *gorm.DB) []string {
+	t.Helper()
+
+	var rows []models.HostServicePort
+
+	err := db.Order("host_id, sp_id").Find(&rows).Error
+	if err != nil {
+		t.Fatalf("failed to read the assignments: %v", err)
+	}
+
+	pairs := make([]string, 0, len(rows))
+	for _, row := range rows {
+		state := "off"
+		if row.Enabled {
+			state = "on"
+		}
+
+		pairs = append(pairs, fmt.Sprintf("%d-%d=%s", row.HostID, row.SPID, state))
+	}
+
+	return pairs
+}
+
+// changeHostServicePorts sends one change to the service ports of Host 1 and
+// answers the counts it came back with.
+func changeHostServicePorts(t *testing.T, h *Handler, body string) map[string]interface{} {
+	t.Helper()
+
+	c, rec := hostServicePortRequest(t, http.MethodPut, "/api/host/1/service-port", "1", body)
+
+	err := h.UpdateHostServicePorts(c)
+	if err != nil {
+		t.Fatalf("UpdateHostServicePorts returned an error: %v", err)
+	}
+	if rec.Code != http.StatusOK {
+		t.Fatalf("%s was answered %d, want %d, body: %s", body, rec.Code, http.StatusOK, rec.Body.String())
+	}
+
+	_, data := decodeResponse(t, rec)
+
+	return data
+}
+
+// TestUpdateHostServicePortsSwitchesAnAssignmentOffAndOn pins what pausing one
+// assignment is: a change that names it and nothing else is a change, it wakes
+// the loop, the row stays assigned, and the list says it is off.
+func TestUpdateHostServicePortsSwitchesAnAssignmentOffAndOn(t *testing.T) {
+	hosts := []models.Host{statusHost(1, true), statusHost(2, true)}
+	sps := []models.ServicePort{statusServicePort(1), statusServicePort(2)}
+
+	db := newAssignmentDB(t, hosts, sps, [2]uint{1, 1}, [2]uint{1, 2}, [2]uint{2, 2})
+
+	manager := &wakeRecorder{tx: &txConnPool{}}
+	h := NewHandler(db, manager, zap.NewNop(), newTestCipher(t))
+
+	data := changeHostServicePorts(t, h, `{"switch":[2],"enabled":false}`)
+	if fmt.Sprint(data["switched"]) != "1" || fmt.Sprint(data["added"]) != "0" || fmt.Sprint(data["removed"]) != "0" {
+		t.Errorf("the answer reports %v, want one switched and nothing else", data)
+	}
+
+	if after := strings.Join(storedEnabled(t, db), ","); after != "1-1=on,1-2=off,2-2=on" {
+		t.Fatalf("the assignments after switching one off are %s, want that one off and the rest as they were", after)
+	}
+
+	wakes, _ := manager.counts()
+	if wakes != 1 {
+		t.Errorf("reconcile wake-ups = %d, want 1: the tunnel of the assignment is to stop", wakes)
+	}
+
+	c, rec := getRequest(t, "/api/host/1/service-port", "id", "1")
+
+	err := h.ListHostServicePorts(c)
+	if err != nil {
+		t.Fatalf("ListHostServicePorts returned an error: %v", err)
+	}
+
+	_, listed := decodeResponse(t, rec)
+
+	rows, ok := listed["items"].([]interface{})
+	if !ok {
+		t.Fatalf("the answer carries no items array, body: %s", rec.Body.String())
+	}
+
+	drawn := make([]string, 0, len(rows))
+	for _, row := range rows {
+		fields, ok := row.(map[string]interface{})
+		if !ok {
+			t.Fatalf("a row of the page is not an object, body: %s", rec.Body.String())
+		}
+
+		enabled, ok := fields["enabled"].(bool)
+		if !ok {
+			t.Fatalf("a row of the page does not say whether it runs, body: %s", rec.Body.String())
+		}
+
+		drawn = append(drawn, fmt.Sprintf("%v:%v:%v", fields["id"], fields["assigned"], enabled))
+	}
+
+	if strings.Join(drawn, ",") != "1:true:true,2:true:false" {
+		t.Fatalf("the page says %s, want the second one assigned and off", strings.Join(drawn, ","))
+	}
+
+	data = changeHostServicePorts(t, h, `{"switch":[2],"enabled":true}`)
+	if fmt.Sprint(data["switched"]) != "1" {
+		t.Errorf("the answer reports %v, want one switched", data)
+	}
+
+	if after := strings.Join(storedEnabled(t, db), ","); after != "1-1=on,1-2=on,2-2=on" {
+		t.Fatalf("the assignments after switching it on again are %s, want every one on", after)
+	}
+
+	wakes, _ = manager.counts()
+	if wakes != 2 {
+		t.Errorf("reconcile wake-ups = %d, want 2", wakes)
+	}
+}
+
+// TestUpdateHostServicePortsKeepsEnabledWhenTheFieldIsLeftOut pins that a
+// change which does not say whether an assignment runs changes nothing about
+// it. A paused assignment stays paused when its box is ticked again, when it
+// is rescoped, and when it is named to be switched with no word on which way.
+// An assignment the change adds runs unless the change says otherwise.
+func TestUpdateHostServicePortsKeepsEnabledWhenTheFieldIsLeftOut(t *testing.T) {
+	hosts := []models.Host{statusHost(1, true)}
+	sps := []models.ServicePort{statusServicePort(1), statusServicePort(2), statusServicePort(3)}
+
+	db := newAssignmentDB(t, hosts, sps, [2]uint{1, 2})
+
+	err := db.Model(&models.HostServicePort{}).Where("host_id = 1 AND sp_id = 2").Update("enabled", false).Error
+	if err != nil {
+		t.Fatalf("failed to switch the assignment off: %v", err)
+	}
+
+	manager := &wakeRecorder{tx: &txConnPool{}}
+	h := NewHandler(db, manager, zap.NewNop(), newTestCipher(t))
+
+	for _, body := range []string{
+		`{"switch":[2]}`,
+		`{"add":[2]}`,
+		`{"add":[2],"enabled":true}`,
+		`{"switch":[3],"enabled":true}`,
+	} {
+		data := changeHostServicePorts(t, h, body)
+		if fmt.Sprint(data["switched"]) != "0" || fmt.Sprint(data["added"]) != "0" {
+			t.Errorf("%s was answered %v, want nothing written", body, data)
+		}
+
+		if after := strings.Join(storedEnabled(t, db), ","); after != "1-2=off" {
+			t.Fatalf("after %s the assignments are %s, want the paused one still off", body, after)
+		}
+	}
+
+	wakes, _ := manager.counts()
+	if wakes != 0 {
+		t.Errorf("reconcile wake-ups = %d, want 0: nothing was written", wakes)
+	}
+
+	changeHostServicePorts(t, h, `{"rescope":[2],"bind_scope":"loopback"}`)
+
+	if after := strings.Join(storedEnabled(t, db), ","); after != "1-2=off" {
+		t.Fatalf("after a rescope the assignments are %s, want the paused one still off", after)
+	}
+
+	changeHostServicePorts(t, h, `{"add":[1]}`)
+	changeHostServicePorts(t, h, `{"add":[3],"enabled":false}`)
+
+	if after := strings.Join(storedEnabled(t, db), ","); after != "1-1=on,1-2=off,1-3=off" {
+		t.Fatalf("after two adds the assignments are %s, want the one added without a word on", after)
 	}
 }
 

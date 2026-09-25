@@ -175,6 +175,17 @@ type hostContent struct {
 	// as a Host that carries everything, which is what transferFormatVersion
 	// would then have to be raised for.
 	AssignedBindScopes map[string]string `json:"assigned_bind_scopes,omitempty"`
+	// AssignedEnabled is whether the tunnel of each of those assignments runs,
+	// keyed the way AssignedBindScopes is. An assignment with no entry runs: a
+	// file from before assignments could be switched off carries no field, and
+	// every assignment in it was running. The export therefore writes an entry
+	// only for an assignment that is switched off, the way it writes a scope
+	// only where there is one other than the wildcard.
+	//
+	// It is a field of its own for the reason AssignedBindScopes is. A reader
+	// of the release before this one passes over it and imports every
+	// assignment switched on, which is what that release can run.
+	AssignedEnabled map[string]bool `json:"assigned_enabled,omitempty"`
 	// LocalForwards are the local forwards this Host carries, in the order of
 	// their local port. nil and an empty list are told apart the way they are
 	// for AssignedLocalPorts:
@@ -958,10 +969,11 @@ func (h *TransferHandler) unsealHost(host models.Host) (hostContent, error) {
 
 // hostAssignments is what one Host carries as a file says it: the local ports
 // of the service ports assigned to it, and how far each of those assignments
-// reaches, keyed by the local port written as text.
+// reaches and whether it runs, keyed by the local port written as text.
 type hostAssignments struct {
 	localPorts []int
 	bindScopes map[string]string
+	enabled    map[string]bool
 }
 
 // assignedByHost reads the assignments and returns that for each Host id. The
@@ -978,7 +990,8 @@ type hostAssignments struct {
 //
 // A scope that is the empty value gets no entry. It is the wildcard, which is
 // what an assignment with nothing said about it is on at the other end too, so
-// the file says only what was chosen.
+// the file says only what was chosen. An assignment that runs gets no entry
+// for whether it runs, for the same reason: running is what no entry means.
 func assignedByHost(db *gorm.DB, sps []models.ServicePort) (map[uint]hostAssignments, error) {
 	var assignments []models.HostServicePort
 
@@ -1009,6 +1022,14 @@ func assignedByHost(db *gorm.DB, sps []models.ServicePort) (map[uint]hostAssignm
 			}
 
 			carried.bindScopes[strconv.Itoa(localPort)] = assignment.BindScope
+		}
+
+		if !assignment.Enabled {
+			if carried.enabled == nil {
+				carried.enabled = make(map[string]bool)
+			}
+
+			carried.enabled[strconv.Itoa(localPort)] = false
 		}
 
 		byHost[assignment.HostID] = carried
@@ -1148,6 +1169,9 @@ func (h *TransferHandler) ExportTunnels(c echo.Context) error {
 		// field stays out of the file altogether, because every assignment
 		// being on the wildcard is what no entry means.
 		opened.AssignedBindScopes = assigned[host.ID].bindScopes
+
+		// Left nil where every assignment runs, for the reason the scopes are.
+		opened.AssignedEnabled = assigned[host.ID].enabled
 
 		// Never nil, for the reason AssignedLocalPorts is never nil.
 		opened.LocalForwards = forwards[host.ID]
@@ -1732,6 +1756,18 @@ func bindScopeOf(host hostContent, localPort int) string {
 	return ""
 }
 
+// enabledOf is whether the assignment of one local port runs, as the file says.
+// An assignment the file says nothing about runs, which is what every
+// assignment of a file from before they could be switched off was doing.
+func enabledOf(host hostContent, localPort int) bool {
+	enabled, named := host.AssignedEnabled[strconv.Itoa(localPort)]
+	if named {
+		return enabled
+	}
+
+	return true
+}
+
 // importAssignments makes one Host of the file carry the service ports the file
 // says it carries, and reports the ones it could not.
 //
@@ -1820,7 +1856,7 @@ func (h *TransferHandler) importAssignments(tx *gorm.DB, host hostContent,
 		// file from before the scopes were stored answers with the bind
 		// address it carries for the whole Host.
 		err = tx.Create(&models.HostServicePort{HostID: stored.ID, SPID: sp.ID,
-			BindScope: bindScopeOf(host, localPort)}).Error
+			BindScope: bindScopeOf(host, localPort), Enabled: enabledOf(host, localPort)}).Error
 		if err != nil {
 			h.hosts.logger.Error("failed to store an assignment while importing",
 				logid.TransferAssignmentStoreFailed.Field(),

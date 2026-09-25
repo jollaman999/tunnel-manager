@@ -803,9 +803,10 @@ func TestReconcileRestartsATunnelWhoseKeyPassphraseChanged(t *testing.T) {
 }
 
 // assignment is one row of the assignment table, written short so that a test
-// can list the pairs it means.
+// can list the pairs it means. It is switched on, which is what every
+// assignment is unless somebody switched it off.
 func assignment(hostID, spID uint) models.HostServicePort {
-	return models.HostServicePort{HostID: hostID, SPID: spID}
+	return models.HostServicePort{HostID: hostID, SPID: spID, Enabled: true}
 }
 
 // desiredKeys is the desired state as the sorted keys it holds, so a failure
@@ -895,6 +896,90 @@ func TestDesiredTunnelsKeepsTheAssignmentsOfADisabledHost(t *testing.T) {
 	got = desiredKeys(t, m)
 	if strings.Join(got, ",") != "1-1,2-1,2-2" {
 		t.Fatalf("a pass wants %v after the Host was enabled again, want its assignments back", got)
+	}
+}
+
+// TestDesiredTunnelsLeavesOutAnAssignmentThatIsOff pins down what switching an
+// assignment off is for: its tunnel is not wanted, the count drops with it,
+// and the row it keeps brings the tunnel back when it is switched on again. The
+// other assignment of the same Host is not touched.
+func TestDesiredTunnelsLeavesOutAnAssignmentThatIsOff(t *testing.T) {
+	hosts := []models.Host{enabledHost(1, true)}
+	sps := []models.ServicePort{testServicePort(1), testServicePort(2)}
+
+	assignments := []models.HostServicePort{assignment(1, 1), assignment(1, 2)}
+	assignments[1].Enabled = false
+
+	m, err := NewManager(newAssignedStubDB(t, hosts, sps, assignments, nil), zap.NewNop(), newTestCipher(t), 1)
+	if err != nil {
+		t.Fatalf("failed to create manager: %v", err)
+	}
+
+	got := desiredKeys(t, m)
+	if strings.Join(got, ",") != "1-1" {
+		t.Fatalf("a pass wants %v while one assignment is off, want the other one alone", got)
+	}
+
+	count, err := m.DesiredTunnelCount()
+	if err != nil {
+		t.Fatalf("DesiredTunnelCount returned an error: %v", err)
+	}
+	if count != 1 {
+		t.Fatalf("the count is %d while one of two assignments is off, want 1", count)
+	}
+
+	assignments[1].Enabled = true
+
+	got = desiredKeys(t, m)
+	if strings.Join(got, ",") != "1-1,1-2" {
+		t.Fatalf("a pass wants %v after the assignment was switched on again, want both", got)
+	}
+}
+
+// TestReconcileStopsTheTunnelOfAnAssignmentThatIsOff is the same seen from a
+// pass: the tunnel that was running for the assignment is stopped, and the
+// count a pass keeps says one fewer.
+func TestReconcileStopsTheTunnelOfAnAssignmentThatIsOff(t *testing.T) {
+	hosts := []models.Host{enabledHost(1, true)}
+	sps := []models.ServicePort{testServicePort(2)}
+
+	assignments := []models.HostServicePort{assignment(1, 2)}
+	assignments[0].Enabled = false
+
+	m, err := NewManager(newAssignedStubDB(t, hosts, sps, assignments, nil), zap.NewNop(), newTestCipher(t), 1)
+	if err != nil {
+		t.Fatalf("failed to create manager: %v", err)
+	}
+
+	tun := registerStoppedTunnel(t, m, 1, 2)
+
+	result, err := m.Reconcile()
+	if err != nil {
+		t.Fatalf("Reconcile returned an error: %v", err)
+	}
+	if result.Stopped != 1 || result.Started != 0 || result.Failed != 0 {
+		t.Fatalf("Reconcile reported started=%d stopped=%d failed=%d for an assignment that is off, want 0/1/0",
+			result.Started, result.Stopped, result.Failed)
+	}
+
+	if len(runningKeys(m)) != 0 {
+		t.Fatal("the tunnel of an assignment that is off is still registered")
+	}
+
+	tun.stopMu.Lock()
+	stopped := tun.isStopped
+	tun.stopMu.Unlock()
+
+	if !stopped {
+		t.Fatal("the tunnel of an assignment that is off was unregistered without being stopped")
+	}
+
+	count, err := m.DesiredTunnelCount()
+	if err != nil {
+		t.Fatalf("DesiredTunnelCount returned an error: %v", err)
+	}
+	if count != 0 {
+		t.Fatalf("the count is %d after a pass over an assignment that is off, want 0", count)
 	}
 }
 

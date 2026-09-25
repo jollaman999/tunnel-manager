@@ -154,9 +154,21 @@ type HostServicePort struct {
 	// in the tag because a struct tag holds text and not an expression, and
 	// the empty value is among them because that is the wildcard.
 	BindScope string `gorm:"check:chk_host_service_ports_bind_scope,bind_scope IN ('','loopback','wildcard')" json:"bind_scope"`
+	// Enabled is whether the tunnel of this assignment runs. One that is off
+	// stays assigned, with its scope, and runs no tunnel, so a service port can
+	// be paused on one Host without being taken away and put back.
+	//
+	// It carries no database default for the reason Host.Enabled carries none:
+	// an assignment written as off would be stored as on. Every writer says
+	// what it is. It carries no "not null" either, because the column is added
+	// to installations whose rows were written before it existed, and
+	// AutoMigrate fills those with NULL. What NULL is taken to mean is at
+	// database.fillAssignmentsEnabled.
+	Enabled bool `json:"enabled"`
 	// CreatedAt records when the assignment was made. There is no UpdatedAt
-	// beside it because an assignment has nothing to change: both of its
-	// columns are the key, so it is written or it is removed.
+	// beside it because an assignment has little to change: both of its key
+	// columns are the pair, and the scope and whether it runs are moved in
+	// place.
 	CreatedAt time.Time `json:"created_at"`
 }
 

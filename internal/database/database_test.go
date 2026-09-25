@@ -1765,6 +1765,158 @@ func TestTheUpgradeSwitchesOnTheLocalForwardsThatWereRunning(t *testing.T) {
 	}
 }
 
+// enabledByAssignment reads whether each assignment runs, keyed by its pair,
+// with SQL so that a NULL is seen as one rather than read as false.
+func enabledByAssignment(t *testing.T, db *gorm.DB) map[string]string {
+	t.Helper()
+
+	var rows []struct {
+		Pair    string
+		Enabled string
+	}
+
+	err := db.Raw("SELECT host_id || ':' || sp_id AS pair, COALESCE(CAST(enabled AS TEXT),'NULL') AS enabled " +
+		"FROM host_service_ports").Scan(&rows).Error
+	if err != nil {
+		t.Fatalf("failed to read the assignments: %v", err)
+	}
+
+	got := make(map[string]string, len(rows))
+	for _, row := range rows {
+		got[row.Pair] = row.Enabled
+	}
+
+	return got
+}
+
+// TestTheUpgradeKeepsEveryAssignmentRunning is the upgrade that adds the
+// column saying whether an assignment runs. Every assignment stored before it
+// was running, and the NULL AutoMigrate leaves reads back as false, which would
+// take every tunnel of the installation down.
+//
+// A startup after that one leaves an assignment that was switched off as it
+// is, and switches on a row that holds NULL again, which is what a release
+// from before the column writes when the installation is taken back to it and
+// brought forward again.
+func TestTheUpgradeKeepsEveryAssignmentRunning(t *testing.T) {
+	path := newDatabaseFromTheHostBindAddress(t,
+		map[uint]string{1: "", 2: ""},
+		[][2]uint{{1, 1}, {1, 2}, {2, 1}},
+	)
+
+	core, _ := observer.New(zapcore.DebugLevel)
+
+	db, _, err := NewDatabase(path, zap.New(core), "error")
+	if err != nil {
+		t.Fatalf("the migration failed: %v", err)
+	}
+
+	got := enabledByAssignment(t, db)
+	want := map[string]string{"1:1": "1", "1:2": "1", "2:1": "1"}
+	if len(got) != len(want) {
+		t.Fatalf("after the upgrade the assignments hold %v, want %v", got, want)
+	}
+	for pair, enabled := range want {
+		if got[pair] != enabled {
+			t.Fatalf("after the upgrade the assignments hold %v, want %v", got, want)
+		}
+	}
+
+	var running []models.HostServicePort
+	err = db.Find(&running).Error
+	if err != nil {
+		t.Fatalf("failed to read the assignments through the model: %v", err)
+	}
+	for _, assignment := range running {
+		if !assignment.Enabled {
+			t.Fatalf("the assignment %d:%d reads back as off after the upgrade", assignment.HostID, assignment.SPID)
+		}
+	}
+
+	err = db.Model(&models.HostServicePort{}).Where("host_id = ? AND sp_id = ?", 1, 1).Update("enabled", false).Error
+	if err != nil {
+		t.Fatalf("failed to switch an assignment off: %v", err)
+	}
+
+	// A row written the way a release from before the column writes one,
+	// with nothing in the column it does not know about.
+	err = db.Exec("INSERT INTO `host_service_ports` (`host_id`,`sp_id`,`created_at`) " +
+		"VALUES (2,2,'2026-09-01 00:00:00')").Error
+	if err != nil {
+		t.Fatalf("failed to store an assignment the old way: %v", err)
+	}
+
+	// And one written by this release as off, which has to stay off.
+	err = db.Create(&models.HostServicePort{HostID: 2, SPID: 3}).Error
+	if err != nil {
+		t.Fatalf("failed to store an assignment that is off: %v", err)
+	}
+
+	sqlDB, err := db.DB()
+	if err != nil {
+		t.Fatalf("failed to reach the connection pool: %v", err)
+	}
+	err = sqlDB.Close()
+	if err != nil {
+		t.Fatalf("failed to close the handle: %v", err)
+	}
+
+	second, _, err := NewDatabase(path, zap.New(core), "error")
+	if err != nil {
+		t.Fatalf("the second startup failed: %v", err)
+	}
+	t.Cleanup(func() {
+		sqlDB, err := second.DB()
+		if err == nil {
+			_ = sqlDB.Close()
+		}
+	})
+
+	got = enabledByAssignment(t, second)
+	want = map[string]string{"1:1": "0", "1:2": "1", "2:1": "1", "2:2": "1", "2:3": "0"}
+	if len(got) != len(want) {
+		t.Fatalf("after the second startup the assignments hold %v, want %v", got, want)
+	}
+	for pair, enabled := range want {
+		if got[pair] != enabled {
+			t.Fatalf("after the second startup the assignments hold %v, want %v", got, want)
+		}
+	}
+}
+
+// TestTheFirstStartupWritesTheAssignmentsSwitchedOn is the fill of the
+// assignment table on the startup that creates it: what it writes is what the
+// installation was running, so every row of it runs.
+func TestTheFirstStartupWritesTheAssignmentsSwitchedOn(t *testing.T) {
+	path := newDatabaseFromBefore(t,
+		[]models.Host{
+			{Address: "192.0.2.10", Port: 22, User: "operator", Enabled: true},
+		},
+		[]models.ServicePort{
+			{ServiceAddress: "198.51.100.20", ServicePort: 8080, LocalPort: 18080},
+			{ServiceAddress: "198.51.100.21", ServicePort: 8081, LocalPort: 18081},
+		},
+	)
+
+	core, _ := observer.New(zapcore.DebugLevel)
+
+	db, _, err := NewDatabase(path, zap.New(core), "error")
+	if err != nil {
+		t.Fatalf("the migration failed: %v", err)
+	}
+	t.Cleanup(func() {
+		sqlDB, err := db.DB()
+		if err == nil {
+			_ = sqlDB.Close()
+		}
+	})
+
+	got := enabledByAssignment(t, db)
+	if len(got) != 2 || got["1:1"] != "1" || got["1:2"] != "1" {
+		t.Fatalf("the assignments the first startup wrote hold %v, want both 1", got)
+	}
+}
+
 // newDatabaseFromTheIPColumns builds the database of an installation running
 // v3.13.6, the last release that stored the addresses under names that said
 // IP, holding two Hosts, a service port and a local forward. The statements

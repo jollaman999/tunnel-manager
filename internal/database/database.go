@@ -399,7 +399,7 @@ func fillHostServicePorts(db *gorm.DB, logger *zap.Logger) error {
 	assignments := make([]models.HostServicePort, 0, len(hostIDs)*len(spIDs))
 	for _, hostID := range hostIDs {
 		for _, spID := range spIDs {
-			assignments = append(assignments, models.HostServicePort{HostID: hostID, SPID: spID})
+			assignments = append(assignments, models.HostServicePort{HostID: hostID, SPID: spID, Enabled: true})
 		}
 	}
 
@@ -475,6 +475,33 @@ func fillBindScopes(db *gorm.DB) error {
 		Update(bindScopeColumn, models.BindScopeLoopback).Error
 	if err != nil {
 		return fmt.Errorf("failed to carry the bind addresses onto the service port assignments: %w", err)
+	}
+
+	return nil
+}
+
+// assignmentEnabledColumn is the column that says whether the tunnel of an
+// assignment runs.
+const assignmentEnabledColumn = "enabled"
+
+// fillAssignmentsEnabled switches on every assignment that holds nothing in
+// the column that says whether it runs. Each of them was running: an
+// assignment written before the column existed is one AutoMigrate filled with
+// NULL, and so is one written since by a release that does not know the
+// column, which is what an installation taken back a release and brought
+// forward again holds. NULL reads back as false, and left as it is it would
+// take those tunnels down on a startup nobody asked for that.
+//
+// It runs on every startup rather than on the one that adds the column, which
+// is where it differs from fillLocalForwardsEnabled. What it reaches is NULL
+// and nothing else, and nothing this release writes is NULL: an assignment
+// switched off holds false, so a restart leaves it off. The rows a downgraded
+// release wrote are what a pass on the upgrade alone would miss.
+func fillAssignmentsEnabled(db *gorm.DB) error {
+	err := db.Model(&models.HostServicePort{}).Where(assignmentEnabledColumn+" IS NULL").
+		Update(assignmentEnabledColumn, true).Error
+	if err != nil {
+		return fmt.Errorf("failed to switch on the service port assignments stored before they could be switched off: %w", err)
 	}
 
 	return nil
@@ -939,6 +966,13 @@ func NewDatabase(path string, logger *zap.Logger, logLevel string) (*gorm.DB, *L
 		if err != nil {
 			return nil, nil, err
 		}
+	}
+
+	// This follows the fill of the assignments as well. Those are written
+	// switched on already, so what it finds is what was stored before.
+	err = fillAssignmentsEnabled(db)
+	if err != nil {
+		return nil, nil, err
 	}
 
 	if addsLocalForwardEnabled {
