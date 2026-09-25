@@ -1570,6 +1570,46 @@ td.pick input[type="checkbox"] {
   outline-offset: 0;
 }
 
+/* The box a list is narrowed by is a text box like the ones in the forms, and
+   is painted as one, so that it reads as somewhere to type rather than as one
+   more list of the row. It is as wide as a form box and no wider, and it gives
+   up width before it pushes the row sideways: on a phone it is the width of the
+   screen, and in the row above the log it wraps onto a line of its own.
+
+   The look the browser gives a search box of its own is taken off, because on
+   some browsers it is a rounded white field that the theme cannot reach. */
+input.list-search {
+  box-sizing: border-box;
+  width: 100%;
+  max-width: 22rem;
+  min-width: 0;
+  margin-bottom: 0.75rem;
+  padding: 0.4rem 0.75rem;
+  font: inherit;
+  color: inherit;
+  background: var(--glass);
+  border: 1px solid var(--glass-edge);
+  border-radius: var(--radius-control);
+  box-shadow: 0 1px 2px var(--glass-cast) inset;
+  appearance: none;
+}
+
+.log-controls input.list-search {
+  flex: 1 1 14rem;
+  margin-bottom: 0;
+}
+
+input.list-search::placeholder {
+  color: var(--text-muted);
+  opacity: 1;
+}
+
+input.list-search:focus {
+  border-color: var(--accent);
+  outline: 2px solid var(--accent-ring);
+  outline-offset: 0;
+}
+
 /* The buttons that turn the page, kept together as one run. The row around
    them wraps, and it may break between the size of a page, this run and the
    line saying where in the list the page is; a break inside the run would put

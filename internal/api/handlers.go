@@ -527,6 +527,7 @@ func (h *Handler) CreateHost(c echo.Context) error {
 // @Produce  json
 // @Param   page  query  int  false  "The page, counted from 1. Below 1 is read as 1, and a page past the last one is answered with the last page"
 // @Param   size  query  int  false  "How many rows a page holds"  Enums(10, 20, 30, 50, 100)
+// @Param   q     query  string  false  "Only the Hosts whose address, user, description or SSH port holds this text, with ASCII letters matched in either case. % and _ are taken as written"
 // @Success  200  {object}  models.Response{data=api.listPageOf{items=[]api.hostView}}
 // @Failure  400  {object}  api.errorBody  "page is not a number, or size is not one of the sizes taken"
 // @Router       /host [get]
@@ -539,8 +540,10 @@ func (h *Handler) ListHosts(c echo.Context) error {
 	// The rows are counted by the database rather than read and measured here.
 	// Reading every row to find out how many there are is the work the paging
 	// is here to avoid.
+	q := readListSearch(c)
+
 	var total int64
-	err := h.db.Model(&models.Host{}).Count(&total).Error
+	err := h.db.Model(&models.Host{}).Scopes(hostsMatching(q)).Count(&total).Error
 	if err != nil {
 		h.logger.Error("failed to count the Hosts", logid.HostCountFailed.Field(), zap.Error(err))
 		return failure(c, http.StatusInternalServerError, errHostListFailed)
@@ -549,7 +552,7 @@ func (h *Handler) ListHosts(c echo.Context) error {
 	page = page.fitTo(total)
 
 	var hosts []models.Host
-	err = h.db.Order("id").Limit(page.size).Offset(page.offset()).Find(&hosts).Error
+	err = h.db.Scopes(hostsMatching(q)).Order("id").Limit(page.size).Offset(page.offset()).Find(&hosts).Error
 	if err != nil {
 		h.logger.Error("failed to fetch Hosts", logid.HostListFetchFailed.Field(), zap.Error(err))
 		return failure(c, http.StatusInternalServerError, errHostListFailed)
@@ -961,6 +964,7 @@ func (h *Handler) CreateServicePort(c echo.Context) error {
 // @Produce  json
 // @Param   page  query  int  false  "The page, counted from 1. Below 1 is read as 1, and a page past the last one is answered with the last page"
 // @Param   size  query  int  false  "How many rows a page holds"  Enums(10, 20, 30, 50, 100)
+// @Param   q     query  string  false  "Only the service ports whose service address, service port, local port or description holds this text, with ASCII letters matched in either case. % and _ are taken as written"
 // @Success  200  {object}  models.Response{data=api.listPageOf{items=[]models.ServicePort}}
 // @Failure  400  {object}  api.errorBody  "page is not a number, or size is not one of the sizes taken"
 // @Router       /service-port [get]
@@ -970,8 +974,10 @@ func (h *Handler) ListServicePorts(c echo.Context) error {
 		return badListPage(c, refused)
 	}
 
+	q := readListSearch(c)
+
 	var total int64
-	err := h.db.Model(&models.ServicePort{}).Count(&total).Error
+	err := h.db.Model(&models.ServicePort{}).Scopes(servicePortsMatching(q)).Count(&total).Error
 	if err != nil {
 		h.logger.Error("failed to count the service ports", logid.ServicePortCountFailed.Field(), zap.Error(err))
 		return failure(c, http.StatusInternalServerError, errServicePortListFailed)
@@ -980,7 +986,7 @@ func (h *Handler) ListServicePorts(c echo.Context) error {
 	page = page.fitTo(total)
 
 	var sps []models.ServicePort
-	err = h.db.Order("id").Limit(page.size).Offset(page.offset()).Find(&sps).Error
+	err = h.db.Scopes(servicePortsMatching(q)).Order("id").Limit(page.size).Offset(page.offset()).Find(&sps).Error
 	if err != nil {
 		h.logger.Error("failed to fetch service ports", logid.ServicePortListFetchFailed.Field(), zap.Error(err))
 		return failure(c, http.StatusInternalServerError, errServicePortListFailed)
@@ -1638,6 +1644,11 @@ func idList(ids []uint) string {
 // What paging is done against is none of the four: it is total_rows, the rows
 // of both tables, since the page is a cut through the two of them.
 //
+// q narrows the rows to the ones whose Host has it in its address or its
+// description, or whose local or remote address has it. It narrows total_rows
+// and the pages with them, and not the four counts: those say what the
+// installation is doing, and a search on the screen does not change that.
+//
 // The page is ordered by Host, then by sort, then by the id the row carries
 // within its sort. Host first is what keeps the rows of one Host together: an
 // order that took the tunnels first and the forwards after would put the two
@@ -1648,10 +1659,12 @@ func idList(ids []uint) string {
 // @Summary      The counts of the installation and one page of the status rows
 // @Description  tunnels carries both sorts of forward: kind is service_port or local_forward, and sp_id is null on a local forward, which is carried by no service port. On a local forward row, local is the address opened on this machine and remote the target reached from the Host, which is the mirror of what they hold on a service port row. forward_reach is on both sorts: on a service port row it says whether the port opened on the Host answered a connection from here, and on a local forward row whether the target answered one dialled from the Host.
 // @Description  The counts are over every row and not over the page: they say what the installation is doing, not what is on the page being looked at. There are four, and each counts the service port tunnels and the local forwards together: desired_tunnels is what should be running as of the last reconcile pass, which a change wakes, and connected_tunnels, reconnecting_tunnels and error_tunnels are how many rows are in each of those statuses. A row that is starting or held up at a host key is in none of the three. total_rows is the rows of both sorts, which is what the pages are cut from.
+// @Description  q narrows the rows and total_rows with them, and leaves the four counts over every row.
 // @Tags         status
 // @Produce  json
 // @Param   page  query  int  false  "The page, counted from 1. Below 1 is read as 1, and a page past the last one is answered with the last page"
 // @Param   size  query  int  false  "How many rows a page holds"  Enums(10, 20, 30, 50, 100)
+// @Param   q     query  string  false  "Only the rows whose Host holds this text in its address or description, or whose local or remote address holds it, with ASCII letters matched in either case. % and _ are taken as written"
 // @Success  200  {object}  models.Response  "counts, and tunnels holding one page of the status rows"
 // @Failure  400  {object}  api.errorBody  "page is not a number, or size is not one of the sizes taken"
 // @Router       /status [get]
@@ -1733,13 +1746,32 @@ func (h *Handler) GetStatus(c echo.Context) error {
 	// its own, so that what the answer says there and the page it hands over
 	// are the one read. Two reads can straddle a row being written, and then
 	// the screen is told a number of rows the page it was given does not fit.
-	tunnelRefs, err := statusTunnelRefs(h.db)
+	//
+	// A search narrows both lists before the page is cut, so that the page and
+	// total_rows are taken over the rows that match. The tunnels are narrowed
+	// in SQL, the same way on this read and on the read of the page. The local
+	// forwards that match are read whole, and the page is cut out of them
+	// below; localForwardsMatching says why.
+	q := readListSearch(c)
+
+	tunnelRefs, err := statusTunnelRefs(h.db.Scopes(tunnelsMatching(q)))
 	if err != nil {
 		h.logger.Error("failed to count the tunnel rows", logid.StatusTunnelRowsCountFailed.Field(), zap.Error(err))
 		return failure(c, http.StatusInternalServerError, errStatusFetchFailed)
 	}
 
-	forwardRefs, err := statusLocalForwardRefs(h.db)
+	var (
+		forwardRefs     []statusRef
+		matchedForwards []models.LocalForward
+	)
+
+	if q == "" {
+		forwardRefs, err = statusLocalForwardRefs(h.db)
+	} else {
+		matchedForwards, err = localForwardsMatching(h.db, q)
+		forwardRefs = localForwardRefsOf(matchedForwards)
+	}
+
 	if err != nil {
 		h.logger.Error("failed to count the local forwards", logid.LocalForwardCountFailed.Field(), zap.Error(err))
 		return failure(c, http.StatusInternalServerError, errStatusFetchFailed)
@@ -1757,7 +1789,7 @@ func (h *Handler) GetStatus(c echo.Context) error {
 	// page comes to. A table with no row on this page is not read at all.
 	var tunnels []models.Tunnel
 	if split.tunnelCount > 0 {
-		err = h.db.Order("host_id, sp_id").
+		err = h.db.Scopes(tunnelsMatching(q)).Order("host_id, sp_id").
 			Limit(split.tunnelCount).Offset(split.tunnelOffset).Find(&tunnels).Error
 		if err != nil {
 			h.logger.Error("failed to fetch the tunnel status", logid.StatusTunnelsFetchFailed.Field(), zap.Error(err))
@@ -1766,7 +1798,9 @@ func (h *Handler) GetStatus(c echo.Context) error {
 	}
 
 	var forwards []models.LocalForward
-	if split.forwardCount > 0 {
+	if split.forwardCount > 0 && q != "" {
+		forwards = matchedForwards[split.forwardOffset : split.forwardOffset+split.forwardCount]
+	} else if split.forwardCount > 0 {
 		err = h.db.Order("host_id, number").
 			Limit(split.forwardCount).Offset(split.forwardOffset).Find(&forwards).Error
 		if err != nil {

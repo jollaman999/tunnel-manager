@@ -417,6 +417,19 @@ let heldScreenTimer = null;
 // the middle of something as a reader with a finger down.
 let pointerDown = false;
 
+// composing is the box a word is being put together in by an input method, or
+// null. That is how Korean and Japanese are typed: the letters stand in the box
+// as a word being built until the method hands the word over. A screen drawn
+// anew under it takes the box away with the word half built, so the reader is
+// as much in the middle of something as one with a finger down.
+//
+// It is the box and not a flag so that it can be let go of when the word is
+// never handed over. compositionend does not always come: the box can leave
+// the page mid-word, the window can lose the keyboard, and some browsers end a
+// composition without saying so. A flag left set would hold the refresh off for
+// as long as the page stayed open; see composingNow for what is trusted.
+let composing = null;
+
 // drawnScreen is the screen the last render drew. It is what tells a refresh of
 // the screen that is up from the first draw of one that has just been moved to,
 // which are the two cases the scroll position is treated differently in.
@@ -618,8 +631,29 @@ function putUpHeldScreen() {
 // a message, and a draw that replaces the screen drops the selection: the words
 // are still there and the highlight is not, so the copy takes nothing. The hold
 // lasts as long as the selection does, which the next click anywhere ends.
+//
+// A word being built in an input method counts, for the reason composing says.
 function pageIsHeld() {
-  return pointerDown || textIsSelected() || Date.now() - scrolledAt < scrollQuietMs;
+  return pointerDown || composingNow() || textIsSelected() || Date.now() - scrolledAt < scrollQuietMs;
+}
+
+// composingNow is whether a word is being built at this moment. It is only
+// while the box it was started in is still on the page and still has the
+// keyboard: a word cannot be going on in a box that is gone or that the reader
+// has left, whatever the events said. A composition that is found to be over
+// this way is let go of here, so it is not asked about again.
+function composingNow() {
+  if (composing === null) {
+    return false;
+  }
+
+  if (composing.isConnected && document.activeElement === composing) {
+    return true;
+  }
+
+  composing = null;
+
+  return false;
 }
 
 // textIsSelected is whether the reader has some of the screen highlighted.
@@ -1000,6 +1034,13 @@ function focusOf(app) {
     };
   }
 
+  // A search box is noted by its name and by where in it the caret was. It is
+  // drawn anew with what was typed in it, and typing goes on where it stopped
+  // only if the caret is put back as well as the keyboard.
+  if (at.dataset.search !== undefined) {
+    return { search: at.dataset.search, start: at.selectionStart, end: at.selectionEnd };
+  }
+
   if (at.dataset.action === undefined) {
     return null;
   }
@@ -1020,7 +1061,8 @@ function focusOf(app) {
 // that is not, and the first live press where that one is dead. In a list row
 // it is the press of the same name, whose words may have changed with what it
 // did, and else the press doing the same to the row now in that place, which
-// is how a row that was deleted is left: the row after it has moved up.
+// is how a row that was deleted is left: the row after it has moved up. A
+// search box is the box of the same name, with the caret where it was.
 function putBackFocus(app, heading, was) {
   if (was === null) {
     return;
@@ -1028,7 +1070,19 @@ function putBackFocus(app, heading, was) {
 
   let target = null;
 
-  if (was.bar !== undefined) {
+  if (was.search !== undefined) {
+    const box = app.querySelector("[data-search=\"" + was.search + "\"]");
+
+    if (box !== null) {
+      box.focus({ preventScroll: true });
+
+      if (was.start !== null && was.end !== null) {
+        box.setSelectionRange(was.start, was.end);
+      }
+
+      return;
+    }
+  } else if (was.bar !== undefined) {
     const bar = app.querySelectorAll(".list-actions")[was.bar];
 
     if (bar !== undefined) {
@@ -4285,6 +4339,25 @@ for (const name of letGoNames) {
   }, { capture: true, passive: true });
 }
 
+window.addEventListener("compositionstart", function (event) {
+  const box = event.target;
+
+  composing = box !== null && box !== undefined &&
+    (box.tagName === "INPUT" || box.tagName === "TEXTAREA") ? box : null;
+}, { capture: true });
+
+window.addEventListener("compositionend", function () {
+  composing = null;
+}, { capture: true });
+
+// The box losing the keyboard ends what was being built in it, whether or not
+// compositionend says so.
+window.addEventListener("focusout", function (event) {
+  if (event.target === composing) {
+    composing = null;
+  }
+}, { capture: true });
+
 // A drag and a wheel, which are movement before anything has scrolled.
 //
 // A scroll event is the result and these are the cause, and the two come apart
@@ -4320,6 +4393,7 @@ if (window.PointerEvent !== undefined) {
 
 window.addEventListener("blur", function () {
   pointerDown = false;
+  composing = null;
 });
 
 // A tab that comes back into view takes a tick of the refresh at once. The

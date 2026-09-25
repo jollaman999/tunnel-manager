@@ -132,6 +132,31 @@ const listPages = {
   "service-ports": { number: 1, size: listSizes[0] }
 };
 
+// listSearches is the text each of the three lists is narrowed by, as it stands
+// in the box over the list. It is held out here for the reason listPages is: a
+// refresh draws the box anew, and a box drawn from inside the draw would come
+// back empty every five seconds with the list still narrowed by what it held.
+//
+// Each list has its own, for the reason each has its own page. What finds a Host
+// by its address says nothing about the service port wanted on the next screen.
+const listSearches = {
+  status: "",
+  hosts: "",
+  "service-ports": ""
+};
+
+// searchDelayMs is how long the typing in a search box has to pause before the
+// list is read again. A word typed a letter at a time is then one read and not
+// one per letter, and what the list shows catches up with the box as soon as
+// the hand stops.
+const searchDelayMs = 300;
+
+// searchTimer is the read a search box is waiting to make, or null. There is
+// one for the whole page: a box is only typed in on the screen that is up, and
+// a wait left over from a screen that has been left is one whose read would be
+// for rows nobody is looking at.
+let searchTimer = null;
+
 // listPicks is what has been ticked on the lists that can be ticked. It is
 // held out here for the reason listPages is: the screens are drawn again from
 // scratch every five seconds, and ticks kept inside the draw would be gone by
@@ -532,7 +557,7 @@ function enterStatus() {
 
 async function drawStatus() {
   const page = listPages.status;
-  const data = await apiCall("GET", "/api/status?" + pageQuery(page));
+  const data = await apiCall("GET", "/api/status?" + pageQuery(page) + searchQuery("status"));
 
   // A refresh that was in flight while the operator left must not draw over
   // the screen they went to.
@@ -620,8 +645,17 @@ async function drawStatus() {
 
   const tunnels = data.tunnels === null || data.tunnels === undefined ? [] : data.tunnels;
 
+  // The box goes under the lines about the counts and over the rows it
+  // narrows. The counts are over every row whatever it holds, so above them it
+  // would read as narrowing them too.
+  if (listSearchShown("status", countOf(data, "total_rows"))) {
+    nodes.push(listSearchBox("status", t("status.search.hint"), t("status.search.aria"), drawStatus));
+  }
+
   if (tunnels.length === 0) {
-    nodes.push(statusLine(t("status.no-tunnels.empty"), "empty"));
+    nodes.push(statusLine(searchText(listSearches.status) === ""
+      ? t("status.no-tunnels.empty")
+      : t("list.no-match.empty"), "empty"));
   } else {
     const rows = tunnels.map(function (tunnel) {
       const forward = isLocalForward(tunnel);
@@ -2285,6 +2319,105 @@ function pageQuery(page) {
   return "page=" + encodeURIComponent(page.number) + "&size=" + encodeURIComponent(page.size);
 }
 
+// searchQuery is what a list is narrowed by, as the part of the query string
+// that asks for it, and nothing where the box is empty: a list read without q
+// is the list as it was before there was a box.
+function searchQuery(name) {
+  const text = searchText(listSearches[name]);
+
+  return text === "" ? "" : "&q=" + encodeURIComponent(text);
+}
+
+// searchText is what a box holds, as what the rows are narrowed by. The spaces
+// around what was typed are taken off. They are not seen in the box, and a list
+// narrowed to the rows holding a trailing space would read as a search that
+// found nothing for no reason the screen shows.
+function searchText(value) {
+  return value.trim();
+}
+
+// searchBox is the box a list is narrowed by. name is what it is found by when
+// the screen is drawn again, value what it holds as it is drawn, and hint and
+// label what it says in the box and to a reader going by name. keep is handed
+// what was typed and draw is what reads the list again.
+//
+// What is typed is kept at once and the read waits for the pause searchDelayMs
+// is. A refresh that lands in between draws the box with what was typed in it,
+// and reads the rows it asks for a little early, which is no harm.
+//
+// Nothing is kept while a word is still being put together in an input method,
+// which is how Korean and Japanese are typed. The letters are not the word yet,
+// and a read taken on them would draw the screen again under the word being
+// built. compositionend is the moment the word is in the box. A wait that comes
+// due while the next word is being built waits again for the same reason.
+function searchBox(name, value, hint, label, keep, draw) {
+  const box = document.createElement("input");
+
+  box.type = "search";
+  box.className = "list-search";
+  box.dataset.search = name;
+  box.value = value;
+  box.placeholder = hint;
+  box.autocomplete = "off";
+  box.setAttribute("aria-label", label);
+
+  const screen = currentScreen;
+
+  const take = function () {
+    keep(box.value);
+
+    if (searchTimer !== null) {
+      window.clearTimeout(searchTimer);
+    }
+
+    searchTimer = window.setTimeout(function wait() {
+      if (composingNow()) {
+        searchTimer = window.setTimeout(wait, searchDelayMs);
+
+        return;
+      }
+
+      searchTimer = null;
+
+      if (currentScreen === screen) {
+        run(draw, true);
+      }
+    }, searchDelayMs);
+  };
+
+  box.addEventListener("input", function (event) {
+    if (event.isComposing) {
+      return;
+    }
+
+    take();
+  });
+  box.addEventListener("compositionend", take);
+
+  return box;
+}
+
+// listSearchBox is the box over one of the three lists. What is typed moves the
+// list to its first page, for the reason a new page size does: the rows move
+// under the numbering, and the page that was being read is no longer a place.
+function listSearchBox(name, hint, label, draw) {
+  const page = listPages[name];
+
+  return searchBox(name, listSearches[name], hint, label, function (value) {
+    listSearches[name] = value;
+    page.number = 1;
+    page.window = null;
+  }, draw);
+}
+
+// listSearchShown is whether a list has its box drawn. A list with nothing in
+// it has nothing to narrow, so there is no box, and the line saying the list is
+// empty is the whole screen. A list narrowed to nothing keeps it: the box is
+// what the narrowing is taken off with.
+function listSearchShown(name, total) {
+  return total > 0 || searchText(listSearches[name]) !== "";
+}
+
 // takeListPage moves the screen onto the page the answer was actually given
 // from, which is not always the page that was asked for. Rows are deleted while
 // a screen is open, and a request for a page that has gone is answered with the
@@ -2546,7 +2679,7 @@ async function drawHosts() {
 
   pickedFlipRefusals = [];
 
-  const answer = await apiCall("GET", "/api/host?" + pageQuery(page));
+  const answer = await apiCall("GET", "/api/host?" + pageQuery(page) + searchQuery("hosts"));
 
   // A read that was in flight while the operator left, or that a panel set off
   // as it was taken down by the move, must not draw over the screen they went
@@ -2583,8 +2716,14 @@ async function drawHosts() {
 
   const nodes = [editing === undefined ? hostCreateForm() : hostEditForm(editing)];
 
+  if (listSearchShown("hosts", total)) {
+    nodes.push(listSearchBox("hosts", t("hosts.search.hint"), t("hosts.search.aria"), drawHosts));
+  }
+
   if (hosts.length === 0) {
-    nodes.push(statusLine(t("hosts.none.empty"), "empty"));
+    nodes.push(statusLine(searchText(listSearches.hosts) === ""
+      ? t("hosts.none.empty")
+      : t("list.no-match.empty"), "empty"));
   } else {
     const controls = pageControls("hosts", page, total, drawHosts);
     if (controls !== null) {
@@ -5177,7 +5316,8 @@ function enterServicePorts() {
 
 async function drawServicePorts() {
   const page = listPages["service-ports"];
-  const answer = await apiCall("GET", "/api/service-port?" + pageQuery(page));
+  const answer = await apiCall("GET", "/api/service-port?" + pageQuery(page) +
+    searchQuery("service-ports"));
 
   // Not over another screen, for the reason drawHosts gives.
   if (currentScreen !== "service-ports") {
@@ -5207,8 +5347,15 @@ async function drawServicePorts() {
     editing === undefined ? servicePortCreateForm() : servicePortEditForm(editing)
   ];
 
+  if (listSearchShown("service-ports", total)) {
+    nodes.push(listSearchBox("service-ports", t("service-ports.search.hint"),
+      t("service-ports.search.aria"), drawServicePorts));
+  }
+
   if (ports.length === 0) {
-    nodes.push(statusLine(t("service-ports.none.empty"), "empty"));
+    nodes.push(statusLine(searchText(listSearches["service-ports"]) === ""
+      ? t("service-ports.none.empty")
+      : t("list.no-match.empty"), "empty"));
   } else {
     const controls = pageControls("service-ports", page, total, drawServicePorts);
     if (controls !== null) {
@@ -5449,6 +5596,19 @@ let logLevelFilter = logLevelAll;
 // leave the timer running.
 let logAutoRefresh = true;
 
+// logSearch is the text the lines are narrowed to, as it stands in the box over
+// them. It is applied here to what came back, the way the level is, and not
+// sent: the server hands over the end of the file, and the lines it has are
+// the lines there are to look through.
+let logSearch = "";
+
+// logRead is what the last read of the log came back with: the answer, or why
+// there was none. It is kept so that the box over the lines narrows the lines
+// already on the screen rather than asking for them again. What is typed there
+// is a question about what came back, and a read per word would also move the
+// lines under the reader while they narrow them.
+let logRead = { answer: null, problem: null };
+
 // enterLogs draws the screen and starts the refresh, on the period the status
 // screen runs at. The timer is stopped by showScreen when the screen is left,
 // so no tick outlives the screen it was started on and a second visit does not
@@ -5493,6 +5653,17 @@ async function drawLogs() {
     return;
   }
 
+  logRead = { answer: answer, problem: problem };
+
+  paintLogs();
+}
+
+// paintLogs draws the screen from the last read, narrowed by the level and by
+// the box. It is what the box calls, so typing there asks the server for
+// nothing; the refresh and the lists above the log read again as they did.
+function paintLogs() {
+  const answer = logRead.answer;
+  const problem = logRead.problem;
   const nodes = [logControls(answer), logScope()];
 
   if (problem !== null) {
@@ -5507,7 +5678,8 @@ async function drawLogs() {
     ? []
     : answer.lines;
 
-  const shown = lines.filter(keepLogLine);
+  const atLevel = lines.filter(keepLogLine);
+  const shown = atLevel.filter(keepLogText);
 
   nodes.push(logSummary(answer, lines.length, shown.length));
 
@@ -5516,13 +5688,16 @@ async function drawLogs() {
   }
 
   if (shown.length === 0) {
-    nodes.push(statusLine(
-      lines.length === 0
-        ? t("logs.empty.empty")
-        : t(plural(lines.length, "logs.none-at-level-one.empty", "logs.none-at-level-many.empty"),
-          { count: lines.length, level: logLevelFilter }),
-      "empty"
-    ));
+    let said = t("logs.no-match.empty");
+
+    if (lines.length === 0) {
+      said = t("logs.empty.empty");
+    } else if (atLevel.length === 0) {
+      said = t(plural(lines.length, "logs.none-at-level-one.empty", "logs.none-at-level-many.empty"),
+        { count: lines.length, level: logLevelFilter });
+    }
+
+    nodes.push(statusLine(said, "empty"));
   } else {
     // The server hands the lines over in the order they are in the file, oldest
     // first, and they are turned around here. The newest line is what the
@@ -5563,6 +5738,30 @@ function keepLogLine(line) {
   }
 
   return rank >= logLevels.indexOf(logLevelFilter);
+}
+
+// keepLogText decides whether one line holds what the box over the log holds,
+// whatever the case of its letters.
+//
+// What is looked through is everything the row shows, and the message as the
+// file has it beside the sentence it is shown as. The screen is read in one
+// language and the file is grepped in another, and a line copied out of either
+// is a line somebody will paste into this box.
+function keepLogText(line) {
+  const text = searchText(logSearch).toLowerCase();
+
+  if (text === "") {
+    return true;
+  }
+
+  const said = [line.time, line.level, line.caller, logLineText(line), line.message, line.raw, line.extra]
+    .filter(function (part) {
+      return typeof part === "string";
+    })
+    .join("\n")
+    .toLowerCase();
+
+  return said.indexOf(text) !== -1;
 }
 
 // logRow is one line of the file as a row of the table.
@@ -5742,6 +5941,11 @@ function logControls(answer) {
   row.appendChild(auto);
 
   row.appendChild(actionButton(t("logs.refresh.button"), "log-refresh", drawLogs));
+
+  row.appendChild(searchBox("logs", logSearch, t("logs.search.hint"), t("logs.search.aria"),
+    function (value) {
+      logSearch = value;
+    }, paintLogs));
 
   // The press that empties the log is offered only where the read came back.
   // A read that did not is a log this server is not writing to a file at all,
