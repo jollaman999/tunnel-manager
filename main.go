@@ -2032,6 +2032,11 @@ func serve() {
 	g.GET("/status", h.GetStatus)
 	g.GET("/status/:hostId", h.GetHostStatus)
 
+	// The metrics are the status again, in the text format Prometheus scrapes.
+	// They sit behind the same session check, and a scraper reaches them with
+	// an API token that carries the read scope.
+	g.GET("/metrics", api.NewMetricsHandler(h, version).GetMetrics)
+
 	g.GET("/settings", settingsHandler.GetSettings)
 	g.PUT("/settings", settingsHandler.UpdateSettings)
 	// The two test presses are POST: each sends a message to somewhere else,

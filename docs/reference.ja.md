@@ -1601,6 +1601,49 @@ curl -s -X POST "$BASE/api/host" \
 | `403 The API token was not made with the ... scope` | その経路に要るスコープがトークンにありません。 |
 | `403 ... cannot be reached with an API token` | どのトークンでも届かない経路です。セッションで呼んでください。 |
 
+### メトリクス
+
+**`GET /api/metrics` は Prometheus のテキスト形式で答えます。** Prometheus や telegraf など、この
+形式を読む収集ツールがそのまま収集できます。ほかの読み取りと同じ呼び出しなので、`read` スコープの
+トークンで届き、ログインしたブラウザでも開けます。
+
+| メトリクス | 意味 |
+|------------|------|
+| `tunnel_manager_info{version}` | バージョン。値は常に `1` |
+| `tunnel_manager_forwards{kind,status}` | 動作中のフォワードを状態ごとに数えた数。`kind` は `service_port`、`local_forward`、`socks`。前の 2 つで `connected`、`reconnecting`、`error` を足すと `GET /api/status` の数と一致します |
+| `tunnel_manager_forwards_desired{kind}` | 最後の調整パスの時点で動作しているべき数。`GET /api/status` の `desired_tunnels` を種類ごとに分けたもの |
+| `tunnel_manager_forward_up{kind,host,local_port,remote}` | 動作中のフォワードが接続していれば `1`、していなければ `0`。動作中のフォワードごとに系列が 1 つ。オフにしたフォワードには系列がありません |
+| `tunnel_manager_forward_retries{kind,host,local_port}` | そのフォワードが最後に接続してから再試行した回数 |
+| `tunnel_manager_host_keys_waiting{reason}` | Host キーの承認を待つ Host の数。`unapproved` か `mismatched` |
+| `tunnel_manager_host_info{host,description}` | Host ごとの説明。値は常に `1`。`host` で結合します |
+
+証明書を別に登録していなければ自己署名証明書なので、設定画面の PEM を収集ツールに渡してください。
+この証明書は `localhost`、マシンのホスト名、各インターフェースのアドレスに向けて発行されるので、
+そのどれかで収集してください。Prometheus の `scrape_config`:
+
+```yaml
+scrape_configs:
+  - job_name: tunnel-manager
+    scheme: https
+    metrics_path: /api/metrics
+    authorization:
+      type: Bearer
+      credentials_file: /etc/prometheus/tunnel-manager.token
+    tls_config:
+      ca_file: /etc/prometheus/tunnel-manager.pem
+    static_configs:
+      - targets: ["tm.example.com:8888"]
+```
+
+telegraf:
+
+```toml
+[[inputs.prometheus]]
+  urls = ["https://192.0.2.10:8888/api/metrics"]
+  bearer_token = "/etc/telegraf/tunnel-manager.token"
+  tls_ca = "/etc/telegraf/tunnel-manager.pem"
+```
+
 ## OpenAPI と Swagger UI
 
 **ブラウザで `https://<このサーバー>:8888/ui/api-docs/` を開いてください。** 下の表にある
@@ -2118,6 +2161,7 @@ curl -s -b cookies.txt -X PUT "$BASE/api/host/1/local-forward/1" \
 |----------|------|------------|
 | `GET` | `/api/status` | インストール全体の数と、状態の行の 1 ページを返します。サービスポートのトンネルとローカルフォワードが、それぞれ `kind` を付けて一緒に載ります。`page` と `size` を受け取ります。[ページング](#ページング)を参照してください |
 | `GET` | `/api/status/:hostId` | その Host と、その Host のトンネルを返します。ページングはしません。Host が持つトンネルは、担当するサービスポートの数だけだからです |
+| `GET` | `/api/metrics` | 同じ状態を Prometheus のテキスト形式で返します。[メトリクス](#メトリクス) を参照 |
 
 ### 設定とアンインストール
 

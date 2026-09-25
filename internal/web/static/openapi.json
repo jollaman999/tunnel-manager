@@ -1723,6 +1723,44 @@
                 }
             }
         },
+        "/metrics": {
+            "get": {
+                "description": "Answers in the Prometheus text exposition format, version 0.0.4, rather than in the JSON every other route answers with, so that Prometheus, telegraf and anything else that scrapes that format can read it as it is. A token needs the read scope.\ntunnel_manager_forwards counts the running forwards by kind and status; its connected, reconnecting and error series over service_port and local_forward add up to the counts GET /status answers with. tunnel_manager_forwards_desired is desired_tunnels of GET /status, by kind. tunnel_manager_forward_up and tunnel_manager_forward_retries have one series per running forward. tunnel_manager_host_info carries the description of each Host, to be joined on host.",
+                "produces": [
+                    "text/plain"
+                ],
+                "tags": [
+                    "status"
+                ],
+                "summary": "The state of the installation in the Prometheus text format",
+                "responses": {
+                    "200": {
+                        "description": "The metrics",
+                        "schema": {
+                            "type": "string"
+                        }
+                    },
+                    "401": {
+                        "description": "Authentication required",
+                        "schema": {
+                            "$ref": "#/definitions/api.errorBody"
+                        }
+                    },
+                    "403": {
+                        "description": "The token does not carry the read scope",
+                        "schema": {
+                            "$ref": "#/definitions/api.errorBody"
+                        }
+                    },
+                    "500": {
+                        "description": "A count or a row could not be read",
+                        "schema": {
+                            "$ref": "#/definitions/api.errorBody"
+                        }
+                    }
+                }
+            }
+        },
         "/restart": {
             "get": {
                 "description": "How long before the service goes and whether it comes back on its own.",

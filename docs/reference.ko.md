@@ -1551,6 +1551,49 @@ curl -s -X POST "$BASE/api/host" \
 | `403 The API token was not made with the ... scope` | 그 경로에 필요한 권한이 토큰에 없습니다. |
 | `403 ... cannot be reached with an API token` | 어떤 토큰으로도 닿지 않는 경로입니다. 세션으로 부르십시오. |
 
+### 메트릭
+
+**`GET /api/metrics` 는 Prometheus 텍스트 형식으로 답합니다.** Prometheus, telegraf 처럼 이
+형식을 읽는 수집기가 그대로 수집할 수 있습니다. 다른 읽기와 같은 호출이라 `read` 권한이 있는
+토큰으로 닿고, 로그인한 브라우저로도 열립니다.
+
+| 메트릭 | 뜻 |
+|--------|-----|
+| `tunnel_manager_info{version}` | 버전. 값은 항상 `1` |
+| `tunnel_manager_forwards{kind,status}` | 실행 중인 포워딩을 상태별로 센 수. `kind` 는 `service_port`, `local_forward`, `socks`. 앞의 둘에서 `connected`, `reconnecting`, `error` 를 더하면 `GET /api/status` 의 숫자와 같습니다 |
+| `tunnel_manager_forwards_desired{kind}` | 마지막 조정 패스 기준으로 실행돼야 하는 수. `GET /api/status` 의 `desired_tunnels` 를 종류별로 나눈 것 |
+| `tunnel_manager_forward_up{kind,host,local_port,remote}` | 실행 중인 포워딩이 연결돼 있으면 `1`, 아니면 `0`. 실행 중인 포워딩마다 시계열 하나. 꺼 둔 포워딩은 시계열이 없습니다 |
+| `tunnel_manager_forward_retries{kind,host,local_port}` | 그 포워딩이 마지막으로 연결된 뒤 재시도한 횟수 |
+| `tunnel_manager_host_keys_waiting{reason}` | Host 키 승인을 기다리는 Host 수. `unapproved` 또는 `mismatched` |
+| `tunnel_manager_host_info{host,description}` | Host 마다 설명. 값은 항상 `1`. `host` 로 조인합니다 |
+
+인증서를 따로 등록하지 않았다면 자체 서명 인증서이므로, 설정 화면의 PEM 을 수집기에
+넘기십시오. 이 인증서는 `localhost`, 이 장비의 호스트명, 인터페이스들의 주소 앞으로 발급되니
+그중 하나로 수집하십시오. Prometheus 의 `scrape_config`:
+
+```yaml
+scrape_configs:
+  - job_name: tunnel-manager
+    scheme: https
+    metrics_path: /api/metrics
+    authorization:
+      type: Bearer
+      credentials_file: /etc/prometheus/tunnel-manager.token
+    tls_config:
+      ca_file: /etc/prometheus/tunnel-manager.pem
+    static_configs:
+      - targets: ["tm.example.com:8888"]
+```
+
+telegraf:
+
+```toml
+[[inputs.prometheus]]
+  urls = ["https://192.0.2.10:8888/api/metrics"]
+  bearer_token = "/etc/telegraf/tunnel-manager.token"
+  tls_ca = "/etc/telegraf/tunnel-manager.pem"
+```
+
 ## OpenAPI 와 Swagger UI
 
 **브라우저로 `https://<이 서버>:8888/ui/api-docs/` 를 엽니다.** 아래 표에 있는 호출이
@@ -2060,6 +2103,7 @@ Host 에 걸리는 일괄을 대표할 수 있는 것은 두 낱말이 어느 �
 |--------|------|---------|
 | `GET` | `/api/status` | 설치본 전체의 숫자와 상태 행 한 페이지. 서비스 포트 터널과 로컬 포워딩이 각자 `kind` 를 달고 함께 실립니다. `page` 와 `size` 를 받음, [페이징](#페이징) 참고 |
 | `GET` | `/api/status/:hostId` | 그 Host 와 그 Host 의 터널. 페이징하지 않음. 한 Host 의 터널은 그 Host 가 담당하는 서비스 포트 수만큼입니다 |
+| `GET` | `/api/metrics` | 같은 상태를 Prometheus 텍스트 형식으로. [메트릭](#메트릭) 참고 |
 
 ### 설정과 제거
 

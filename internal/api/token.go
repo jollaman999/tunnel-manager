@@ -121,6 +121,7 @@ var tokenRouteScopes = map[string]string{
 	"GET /api/service-port/:id":               TokenScopeRead,
 	"GET /api/status":                         TokenScopeRead,
 	"GET /api/status/:hostId":                 TokenScopeRead,
+	"GET /api/metrics":                        TokenScopeRead,
 	"GET /api/settings":                       TokenScopeRead,
 	"GET /api/certificate":                    TokenScopeRead,
 	"GET /api/logs":                           TokenScopeRead,

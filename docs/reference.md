@@ -1776,6 +1776,51 @@ The tokens are made, listed and revoked with `POST`, `GET` and
 | `403 The API token was not made with the ... scope` | The route needs a scope the token does not have. |
 | `403 ... cannot be reached with an API token` | The route is one no token reaches. Use a session. |
 
+### Metrics
+
+**`GET /api/metrics` answers in the Prometheus text format**, so Prometheus,
+telegraf and anything else that reads that format can scrape it as it is. It is
+a read like any other: a token with the `read` scope reaches it, and so does a
+logged-in browser.
+
+| Metric | What it says |
+|--------|--------------|
+| `tunnel_manager_info{version}` | The version, always `1` |
+| `tunnel_manager_forwards{kind,status}` | How many running forwards are in each status. `kind` is `service_port`, `local_forward` or `socks`. Over the first two, `connected`, `reconnecting` and `error` add up to the counts `GET /api/status` answers with |
+| `tunnel_manager_forwards_desired{kind}` | What should be running as of the last reconcile pass: `desired_tunnels` of `GET /api/status`, by kind |
+| `tunnel_manager_forward_up{kind,host,local_port,remote}` | `1` for a running forward that is connected, `0` for one that is not. One series per running forward; one that is switched off has none |
+| `tunnel_manager_forward_retries{kind,host,local_port}` | How many times that forward has retried since it last connected |
+| `tunnel_manager_host_keys_waiting{reason}` | Hosts waiting for a host key approval, `unapproved` or `mismatched` |
+| `tunnel_manager_host_info{host,description}` | The description of each Host, always `1`, to join on `host` |
+
+The certificate is the self-signed one unless you registered your own, so give
+the scraper the PEM from the Settings screen. It is made out to `localhost`, the
+host name of the machine and the addresses of its interfaces, so scrape it by
+one of those. A Prometheus `scrape_config`:
+
+```yaml
+scrape_configs:
+  - job_name: tunnel-manager
+    scheme: https
+    metrics_path: /api/metrics
+    authorization:
+      type: Bearer
+      credentials_file: /etc/prometheus/tunnel-manager.token
+    tls_config:
+      ca_file: /etc/prometheus/tunnel-manager.pem
+    static_configs:
+      - targets: ["tm.example.com:8888"]
+```
+
+And telegraf:
+
+```toml
+[[inputs.prometheus]]
+  urls = ["https://192.0.2.10:8888/api/metrics"]
+  bearer_token = "/etc/telegraf/tunnel-manager.token"
+  tls_ca = "/etc/telegraf/tunnel-manager.pem"
+```
+
 ## OpenAPI and the Swagger UI
 
 **Open `https://<this server>:8888/ui/api-docs/` in a browser.** Every call in
@@ -2331,6 +2376,7 @@ an address they do not have.
 |--------|------|--------------|
 | `GET` | `/api/status` | The counts of the installation and one page of the status rows, the service port tunnels and the local forwards together with `kind` on each. Takes `page` and `size`, see [Paging](#paging) |
 | `GET` | `/api/status/:hostId` | The Host and the tunnels of that Host. Not paged: a Host holds one tunnel per service port it carries |
+| `GET` | `/api/metrics` | The same state in the Prometheus text format. See [Metrics](#metrics) |
 
 ### Settings and uninstall
 

@@ -1414,6 +1414,47 @@ curl -s -X POST "$BASE/api/host" \
 | `403 The API token was not made with the ... scope` | 令牌没有这个路径所需的权限范围。 |
 | `403 ... cannot be reached with an API token` | 这个路径不对任何令牌开放，请使用会话。 |
 
+### 指标
+
+**`GET /api/metrics` 以 Prometheus 文本格式返回。** Prometheus、telegraf 等能读这种格式的采集工具
+可以直接采集。它和其他读取一样：带 `read` 权限范围的令牌可以访问，已登录的浏览器也能打开。
+
+| 指标 | 含义 |
+|------|------|
+| `tunnel_manager_info{version}` | 版本，值恒为 `1` |
+| `tunnel_manager_forwards{kind,status}` | 按状态统计的运行中转发数。`kind` 为 `service_port`、`local_forward` 或 `socks`。前两种里 `connected`、`reconnecting`、`error` 相加，等于 `GET /api/status` 返回的计数 |
+| `tunnel_manager_forwards_desired{kind}` | 截至上一轮调谐应当运行的数量，即按种类拆开的 `GET /api/status` 的 `desired_tunnels` |
+| `tunnel_manager_forward_up{kind,host,local_port,remote}` | 运行中的转发已连接为 `1`，否则为 `0`。每个运行中的转发一条时间序列，已关闭的转发没有 |
+| `tunnel_manager_forward_retries{kind,host,local_port}` | 该转发自上次连上以来的重试次数 |
+| `tunnel_manager_host_keys_waiting{reason}` | 等待批准 Host 密钥的 Host 数，`unapproved` 或 `mismatched` |
+| `tunnel_manager_host_info{host,description}` | 每台 Host 的描述，值恒为 `1`，按 `host` 关联 |
+
+如果没有注册自己的证书，用的就是自签名证书，请把设置页面上的 PEM 交给采集工具。这张证书签给
+`localhost`、本机主机名以及各网卡上的地址，请用其中之一来采集。Prometheus 的 `scrape_config`：
+
+```yaml
+scrape_configs:
+  - job_name: tunnel-manager
+    scheme: https
+    metrics_path: /api/metrics
+    authorization:
+      type: Bearer
+      credentials_file: /etc/prometheus/tunnel-manager.token
+    tls_config:
+      ca_file: /etc/prometheus/tunnel-manager.pem
+    static_configs:
+      - targets: ["tm.example.com:8888"]
+```
+
+telegraf：
+
+```toml
+[[inputs.prometheus]]
+  urls = ["https://192.0.2.10:8888/api/metrics"]
+  bearer_token = "/etc/telegraf/tunnel-manager.token"
+  tls_ca = "/etc/telegraf/tunnel-manager.pem"
+```
+
 ## OpenAPI 与 Swagger UI
 
 **用浏览器打开 `https://<这台服务器>:8888/ui/api-docs/`。** 下面表里的每个调用都在那一页
@@ -1891,6 +1932,7 @@ Host 的分配关系，是因为这两个词在任何一台系统上的意思都
 |------|------|--------|
 | `GET` | `/api/status` | 本安装的几个计数，以及状态行的一页：服务端口的隧道和本地转发一起返回，每一行都带着 `kind`。收 `page` 和 `size`，见[分页](#分页) |
 | `GET` | `/api/status/:hostId` | 这台 Host 和它的隧道。不分页：一台 Host 负责几个服务端口就有几条隧道 |
+| `GET` | `/api/metrics` | 同样的状态，以 Prometheus 文本格式返回。见[指标](#指标) |
 
 ### 设置与卸载
 

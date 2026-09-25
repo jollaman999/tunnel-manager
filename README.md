@@ -93,6 +93,8 @@ in the row of that Host.
 - Carries the whole configuration to another installation as one encrypted file.
 - Lets a script call the API with a token made on the Settings screen, limited
   to the scopes it was made with.
+- Serves the tunnel status as Prometheus metrics, for Prometheus or telegraf to
+  scrape with a read token.
 - Shows the screens in thirteen languages, picked in the corner of the browser
   or set for the installation. The log file stays English.
 - Runs on Linux, macOS and Windows as a single binary, with no C library and no
