@@ -91,6 +91,23 @@ const (
 	errAuthPasswordTooLong         errorCode = "auth.password.too_long"
 	errAuthTooManyAttempts         errorCode = "auth.attempts.too_many"
 	errAuthPasswordTooManyAttempts errorCode = "auth.password_attempts.too_many"
+	errAuthTokenInvalid            errorCode = "auth.token.invalid"
+	errAuthTokenExpired            errorCode = "auth.token.expired"
+	errAuthTokenRouteRefused       errorCode = "auth.token.route_refused"
+	errAuthTokenScopeMissing       errorCode = "auth.token.scope_missing"
+
+	errTokenReadFailed        errorCode = "token.read_failed"
+	errTokenRequestInvalid    errorCode = "token.request.invalid"
+	errTokenNameEmpty         errorCode = "token.name.empty"
+	errTokenNameTooLong       errorCode = "token.name.too_long"
+	errTokenNameTaken         errorCode = "token.name.taken"
+	errTokenScopesEmpty       errorCode = "token.scopes.empty"
+	errTokenScopeUnknown      errorCode = "token.scope.unknown"
+	errTokenExpiryUnsupported errorCode = "token.expiry.unsupported"
+	errTokenCreateFailed      errorCode = "token.create_failed"
+	errTokenIDInvalid         errorCode = "token.id.invalid"
+	errTokenNotFound          errorCode = "token.not_found"
+	errTokenDeleteFailed      errorCode = "token.delete_failed"
 
 	errAccountReadFailed        errorCode = "account.read_failed"
 	errAccountStoreFailed       errorCode = "account.store_failed"
@@ -311,6 +328,31 @@ var errorMessages = map[errorCode]string{
 	// already logged in, and a refusal that told them signing in was blocked
 	// would name something they are not doing.
 	errAuthPasswordTooManyAttempts: "Too many failed password attempts. Password checks are blocked for {retry_after} seconds",
+	// The answers to a request that came with an API token in place of a
+	// session. A token that is not there and one that was revoked are the same
+	// answer, because a revoked token is a row that was deleted and nothing of
+	// it is left to tell the two apart by.
+	errAuthTokenInvalid: "The API token is not one this server made, or it was revoked",
+	errAuthTokenExpired: "The API token ran out at {expires_at}. Make a new one on the Settings screen",
+	// The route is one no scope opens. It says to sign in, because what these
+	// routes change is the credentials themselves, and a token that could
+	// reach them could make itself a session or another token.
+	errAuthTokenRouteRefused: "{method} {path} cannot be reached with an API token. Sign in and use a session for it",
+	errAuthTokenScopeMissing: "The API token was not made with the {scope} scope, which {method} {path} needs",
+
+	// The API tokens themselves, as the Settings screen makes and revokes them.
+	errTokenReadFailed:        "Failed to read the API tokens",
+	errTokenRequestInvalid:    "Invalid request body. Send a JSON object with name, scopes and expires_in_days",
+	errTokenNameEmpty:         "Name the token",
+	errTokenNameTooLong:       "The name of a token must be at most {max} characters long",
+	errTokenNameTaken:         "There is a token named {name} already",
+	errTokenScopesEmpty:       "Give the token at least one scope",
+	errTokenScopeUnknown:      "{scope} is not a scope. Use one of {scopes}",
+	errTokenExpiryUnsupported: "expires_in_days must be one of {days}, and not {value}",
+	errTokenCreateFailed:      "Failed to create the API token",
+	errTokenIDInvalid:         "Invalid token ID: {reason}",
+	errTokenNotFound:          "API token not found",
+	errTokenDeleteFailed:      "Failed to revoke the API token",
 
 	// The one account this API is served behind.
 	errAccountReadFailed:        "Failed to read the account",

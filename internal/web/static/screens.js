@@ -6665,6 +6665,7 @@ async function drawSettings() {
   const set = await apiCall("GET", "/api/settings");
   const certificate = await readCertificate();
   const account = await readAccount();
+  const tokens = await readTokens();
   const restart = await readRestart();
 
   const nodes = [];
@@ -6687,6 +6688,7 @@ async function drawSettings() {
   nodes.push(certificateCard(set, certificate));
   nodes.push(certificateForm());
   nodes.push(accountCard(account));
+  nodes.push(tokensCard(tokens));
   nodes.push(transferCard());
   nodes.push(exportTunnelsForm());
   nodes.push(importTunnelsForm());
@@ -7711,6 +7713,336 @@ function accountOutcome(data) {
   }
 
   return said.join(" ");
+}
+
+// apiTokenPath is where the API tokens are listed, made and revoked. Only a
+// session reaches it; a token sent there is refused.
+const apiTokenPath = "/api/token";
+
+// tokenScopes are the scopes a token can be made with, in the order the server
+// stores them, and whether the box for each is ticked when the panel opens.
+// Only the reads are: everything else a token opens is a change, and a change
+// is something the operator should have to ask for.
+const tokenScopes = [
+  { value: "read", ticked: true },
+  { value: "hosts", ticked: false },
+  { value: "tunnels", ticked: false },
+  { value: "host-keys", ticked: false },
+  { value: "settings", ticked: false },
+  { value: "transfer", ticked: false },
+  { value: "operations", ticked: false }
+];
+
+// tokenExpiryDays are the lifetimes offered, in days, with 0 for a token that
+// never runs out. The default is the one the server gives a request that does
+// not say.
+const tokenExpiryDays = [30, 90, 365, 0];
+const tokenDefaultExpiryDays = 90;
+
+// tokenScopeText is the word the screen says a scope in.
+function tokenScopeText(scope) {
+  switch (scope) {
+    case "read":
+      return t("tokens.scope-read.label");
+    case "hosts":
+      return t("tokens.scope-hosts.label");
+    case "tunnels":
+      return t("tokens.scope-tunnels.label");
+    case "host-keys":
+      return t("tokens.scope-host-keys.label");
+    case "settings":
+      return t("tokens.scope-settings.label");
+    case "transfer":
+      return t("tokens.scope-transfer.label");
+    case "operations":
+      return t("tokens.scope-operations.label");
+  }
+
+  return scope;
+}
+
+// readTokens asks for the tokens. A refusal is turned into something to show,
+// for the reason readAccount does it: the card is one of many on the screen,
+// and none of the others is worth losing over it.
+async function readTokens() {
+  try {
+    return { view: await apiCall("GET", apiTokenPath), problem: "" };
+  } catch (error) {
+    if (error instanceof Redirected) {
+      throw error;
+    }
+
+    return { view: null, problem: error.message };
+  }
+}
+
+// tokensCard lists the API tokens and offers to make one and to revoke each.
+//
+// The token itself is not in the list. The server keeps only its hash, so the
+// one time it can be shown is the answer to the press that makes it, and that
+// is where tokenShownPanel shows it.
+function tokensCard(tokens) {
+  const card = document.createElement("section");
+
+  card.className = "card";
+  card.dataset.card = "settings-tokens";
+  card.appendChild(element("h2", t("tokens.card.title")));
+  card.appendChild(element("p", t("tokens.card.text")));
+
+  if (tokens.view === null) {
+    card.appendChild(statusLine(t("tokens.unknown.notice", { reason: tokens.problem }), "warning"));
+  } else if (tokens.view.length === 0) {
+    card.appendChild(element("p", t("tokens.none.text")));
+  } else {
+    const rows = tokens.view.map(function (token) {
+      const revoke = actionButton(t("tokens.revoke.button"), "token-revoke-" + token.id, function () {
+        return revokeToken(token);
+      }, "danger");
+
+      return [
+        token.name,
+        token.scopes.map(tokenScopeText).join(", "),
+        timeCell(token.created_at),
+        timeCell(token.expires_at),
+        timeCell(token.last_used_at),
+        revoke
+      ];
+    });
+
+    card.appendChild(buildTable([
+      t("tokens.name.label"),
+      t("tokens.scopes.label"),
+      t("tokens.created.column"),
+      t("tokens.expires.column"),
+      t("tokens.last-used.column"),
+      ""
+    ], rows));
+  }
+
+  const buttons = document.createElement("div");
+
+  buttons.className = "buttons";
+  buttons.appendChild(actionButton(t("tokens.create.button"), "token-create", openTokenCreatePanel));
+  card.appendChild(buttons);
+
+  return card;
+}
+
+// openTokenCreatePanel puts up the panel a token is made in: its name, how long
+// it lives, and what it opens.
+async function openTokenCreatePanel() {
+  const problem = element("p", "");
+
+  problem.className = "notice error";
+  problem.dataset.problem = "token-create";
+  problem.hidden = true;
+
+  const nameRow = document.createElement("div");
+  const nameLabel = element("label", t("tokens.name.label"));
+  const name = document.createElement("input");
+
+  nameRow.className = "field";
+  nameLabel.htmlFor = "token-name";
+  name.type = "text";
+  name.id = "token-name";
+  name.dataset.field = "token-name";
+  nameRow.appendChild(nameLabel);
+  nameRow.appendChild(name);
+  nameRow.appendChild(element("small", t("tokens.name.hint")));
+
+  const expiryRow = document.createElement("div");
+  const expiryLabel = element("label", t("tokens.expiry.label"));
+  const expiry = listControl({
+    options: tokenExpiryDays.map(function (days) {
+      return {
+        value: String(days),
+        text: days === 0 ? t("tokens.expiry-never.option") : t("tokens.expiry-days.option", { days: days })
+      };
+    }),
+    value: tokenDefaultExpiryDays
+  });
+
+  // A token that never runs out is warned about beside the list, and only
+  // while it is the one picked, so that the default does not carry a warning
+  // nobody asked for.
+  const forever = statusLine(t("tokens.expiry-never.notice"), "warning");
+
+  expiryRow.className = "field";
+  expiryLabel.htmlFor = "token-expiry";
+  expiry.id = "token-expiry";
+  expiry.dataset.field = "token-expiry";
+  forever.hidden = true;
+  expiry.addEventListener("change", function () {
+    forever.hidden = expiry.value !== "0";
+  });
+  expiryRow.appendChild(expiryLabel);
+  expiryRow.appendChild(expiry);
+  expiryRow.appendChild(forever);
+
+  const scopes = document.createElement("fieldset");
+  const boxes = [];
+
+  scopes.className = "field";
+  scopes.appendChild(element("legend", t("tokens.scopes.label")));
+
+  for (const scope of tokenScopes) {
+    const label = document.createElement("label");
+    const box = document.createElement("input");
+
+    box.type = "checkbox";
+    box.checked = scope.ticked;
+    box.value = scope.value;
+    box.dataset.field = "token-scope-" + scope.value;
+    boxes.push(box);
+
+    label.appendChild(box);
+    label.appendChild(element("span", tokenScopeText(scope.value)));
+    scopes.appendChild(label);
+  }
+
+  scopes.appendChild(element("small", t("tokens.scopes.hint")));
+
+  let created = null;
+
+  await openModal({
+    name: "token-create",
+    title: t("tokens.create.title"),
+    body: [
+      element("p", t("tokens.create.text")),
+      problem,
+      nameRow,
+      expiryRow,
+      scopes
+    ],
+    buttons: [
+      {
+        label: t("tokens.create-confirm.button"),
+        name: "create",
+        press: function (node, close) {
+          return sendTokenCreate(name, expiry, boxes, node, close, problem, function (data) {
+            created = data;
+          });
+        }
+      },
+      { label: t("common.cancel.button"), name: "cancel" }
+    ]
+  });
+
+  if (created === null) {
+    return;
+  }
+
+  await tokenShownPanel(created);
+
+  setToast(function () {
+    return t("tokens.created.notice", { name: created.name });
+  });
+
+  return drawSettings();
+}
+
+// sendTokenCreate is the press at the bottom of that panel. A refusal is shown
+// inside the panel and the panel stays up with what was entered, the way the
+// panel that empties the log does it.
+async function sendTokenCreate(name, expiry, boxes, button, close, problem, done) {
+  const scopes = boxes.filter(function (box) {
+    return box.checked;
+  }).map(function (box) {
+    return box.value;
+  });
+
+  if (name.value.trim() === "") {
+    name.classList.add("bad");
+    showPanelProblem(problem, t("tokens.name.error"));
+
+    return;
+  }
+
+  name.classList.remove("bad");
+
+  if (scopes.length === 0) {
+    showPanelProblem(problem, t("tokens.scopes.error"));
+
+    return;
+  }
+
+  problem.hidden = true;
+  button.disabled = true;
+
+  let data;
+
+  try {
+    data = await apiCall("POST", apiTokenPath, {
+      name: name.value.trim(),
+      scopes: scopes,
+      expires_in_days: Number(expiry.value)
+    });
+  } catch (error) {
+    if (error instanceof Redirected) {
+      throw error;
+    }
+
+    button.disabled = false;
+
+    showPanelProblem(problem, error.message);
+
+    return;
+  }
+
+  done(data);
+  close("create");
+}
+
+// tokenShownPanel shows a token that was just made, once. The server keeps only
+// its hash, so once this panel is closed nothing can show it again: the
+// sentence says so, and the copy button is beside it so that the operator does
+// not have to pick 46 characters out with the mouse.
+async function tokenShownPanel(created) {
+  const value = element("code", created.token);
+
+  value.dataset.shownOnce = "yes";
+  value.dir = "ltr";
+
+  const box = document.createElement("p");
+
+  box.appendChild(copyable(value, created.token, t("tokens.copy.aria")));
+
+  await openModal({
+    name: "token-shown",
+    title: t("tokens.shown.title", { name: created.name }),
+    body: [
+      statusLine(t("tokens.shown-once.notice"), "warning"),
+      box,
+      element("p", t("tokens.shown-use.text"))
+    ],
+    buttons: [
+      { label: t("common.close.button"), name: "close" }
+    ]
+  });
+}
+
+// revokeToken asks before a token is revoked, because a script that holds it
+// stops working at once and the token cannot be brought back: a new one has to
+// be made and handed to the script.
+async function revokeToken(token) {
+  const sure = await askDanger({
+    name: "token-revoke-ask",
+    title: t("tokens.revoke.title"),
+    text: t("tokens.revoke.confirm", { name: token.name }),
+    button: t("tokens.revoke.button")
+  });
+
+  if (!sure) {
+    return;
+  }
+
+  await apiCall("DELETE", apiTokenPath + "/" + token.id);
+
+  setToast(function () {
+    return t("tokens.revoked.notice", { name: token.name });
+  });
+
+  return drawSettings();
 }
 
 // The four cards below carry this configuration to another installation, and

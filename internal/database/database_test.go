@@ -480,7 +480,7 @@ func TestNewDatabaseBuildsTheFileUnderADirectoryThatIsNotThereYet(t *testing.T) 
 		t.Fatalf("the database file at %s is empty", path)
 	}
 
-	want := []string{"host_service_ports", "hosts", "local_forwards", "service_ports", "settings", "tls_certificates", "tunnels", "user"}
+	want := []string{"api_tokens", "host_service_ports", "hosts", "local_forwards", "service_ports", "settings", "tls_certificates", "tunnels", "user"}
 	got := tableNames(t, db)
 
 	if strings.Join(got, ",") != strings.Join(want, ",") {

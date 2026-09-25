@@ -222,6 +222,17 @@ const (
 	AccountCredentialsChanged              ID = "account.credentials_changed"
 )
 
+// token: the API tokens a script sends in place of a session.
+const (
+	TokenReadFailed          ID = "token.read_failed"
+	TokenLastUsedStoreFailed ID = "token.last_used_store_failed"
+	TokenChangeRequested     ID = "token.change_requested"
+	TokenCreated             ID = "token.created"
+	TokenCreateFailed        ID = "token.create_failed"
+	TokenRevoked             ID = "token.revoked"
+	TokenRevokeFailed        ID = "token.revoke_failed"
+)
+
 // settings: the stored settings, read as the process comes up and changed on the Settings screen.
 const (
 	SettingsResetFailed              ID = "settings.reset_failed"

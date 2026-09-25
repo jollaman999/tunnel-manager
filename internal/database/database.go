@@ -928,6 +928,7 @@ func NewDatabase(path string, logger *zap.Logger, logLevel string) (*gorm.DB, *L
 		&models.LocalForward{},
 		&models.Tunnel{},
 		&models.User{},
+		&models.APIToken{},
 		&settings.Settings{},
 		&tlsserve.Certificate{},
 	)

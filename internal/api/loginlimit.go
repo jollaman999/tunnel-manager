@@ -132,8 +132,8 @@ func (k loginKey) limits() (int, time.Duration) {
 // grow the map a name at a time and a counter that counts nothing: a guess
 // against a username that does not exist is not a guess at this account. There
 // is one account row, so there is one account key.
-func loginKeysOf(address string, accountID uint) [2]loginKey {
-	return [2]loginKey{
+func loginKeysOf(address string, accountID uint) []loginKey {
+	return []loginKey{
 		{kind: loginKeyAddress, name: address},
 		{kind: loginKeyAccount, name: strconv.FormatUint(uint64(accountID), 10)},
 	}
@@ -244,7 +244,7 @@ func (l *loginLimiter) failed(address string, accountID uint) {
 }
 
 // recordFailure is failed with the lock already held.
-func (l *loginLimiter) recordFailure(keys [2]loginKey) {
+func (l *loginLimiter) recordFailure(keys []loginKey) {
 	now := l.now()
 
 	for _, key := range keys {
@@ -283,7 +283,7 @@ func (l *loginLimiter) succeeded(address string, accountID uint) {
 }
 
 // forget is succeeded with the lock already held.
-func (l *loginLimiter) forget(keys [2]loginKey) {
+func (l *loginLimiter) forget(keys []loginKey) {
 	for _, key := range keys {
 		delete(l.failures, key)
 	}
@@ -316,11 +316,23 @@ func (l *loginLimiter) forget(keys [2]loginKey) {
 // release so that a path that returns without an outcome gives the
 // reservation back rather than holding the key forever.
 func (l *loginLimiter) begin(address string, accountID uint) (*loginAttempt, time.Duration, bool) {
+	return l.beginKeys(loginKeysOf(address, accountID))
+}
+
+// beginAddress is begin for an attempt that is counted against the address it
+// came from and against no account. It is what an API token is checked under:
+// serveToken in token.go says why the account is left out of it.
+func (l *loginLimiter) beginAddress(address string) (*loginAttempt, time.Duration, bool) {
+	return l.beginKeys([]loginKey{{kind: loginKeyAddress, name: address}})
+}
+
+// beginKeys is begin for the counters named, which is what the two above
+// share.
+func (l *loginLimiter) beginKeys(keys []loginKey) (*loginAttempt, time.Duration, bool) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 
 	now := l.now()
-	keys := loginKeysOf(address, accountID)
 	longest := time.Duration(0)
 	held := false
 
@@ -358,7 +370,7 @@ func (l *loginLimiter) begin(address string, accountID uint) (*loginAttempt, tim
 // loginAttempt is one login that begin let through to the password check.
 type loginAttempt struct {
 	limiter *loginLimiter
-	keys    [2]loginKey
+	keys    []loginKey
 	// ended is set by whichever of failed, succeeded or release comes first,
 	// under the limiter's lock, so that the ones after it do nothing.
 	ended bool

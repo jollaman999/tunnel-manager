@@ -844,6 +844,14 @@ func (h *AuthHandler) RequireSession() echo.MiddlewareFunc {
 				return next(c)
 			}
 
+			// A request that brings an API token is served on the token alone,
+			// whatever cookies it carries as well. The top of token.go says
+			// why the CSRF check does not apply to it.
+			bearer, ok := bearerToken(c)
+			if ok {
+				return h.serveToken(c, next, bearer)
+			}
+
 			token := cookieValue(c, sessionCookieName)
 
 			userID, csrfToken, ok := h.sessions.Lookup(token)

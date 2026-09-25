@@ -1499,6 +1499,58 @@ curl -s -b cookies.txt -X POST "$BASE/api/setup" \
 }
 ```
 
+### API 토큰으로
+
+혼자 도는 스크립트, 감시 점검이나 배포 스크립트는 비밀번호와 쿠키 파일을 들고 있지 않아도 됩니다.
+**설정 화면에서 API 토큰을 만들어 `Authorization: Bearer <token>` 으로 보내십시오.** 토큰을
+보내는 요청에는 세션 쿠키도 `X-CSRF-Token` 도 필요 없습니다. 브라우저는 이 헤더를 스스로 붙이지
+않으므로, 이 헤더가 있는 요청은 토큰을 가진 쪽이 직접 쓴 요청입니다.
+
+토큰은 만들 때 한 번만 보여 줍니다. 이 시스템에 남는 것은 토큰의 SHA-256 뿐이라 잃어버린
+토큰은 다시 볼 수 없습니다. 폐기하고 새로 만드십시오.
+
+토큰은 만들 때 고른 권한의 경로에만 닿습니다.
+
+| 권한 | 여는 것 |
+|------|---------|
+| `read` | 모든 `GET`. 처음부터 골라져 있습니다 |
+| `hosts` | `POST /api/host`, `PUT` 과 `DELETE /api/host/:id` |
+| `tunnels` | `/api/service-port` 의 `POST`, `PUT`, `DELETE`, `PUT /api/host/:id/service-port`, `/api/host/:id/local-forward` 의 `POST`, `PUT`, `DELETE` |
+| `host-keys` | `POST /api/host/:id/host-key`, `POST /api/host-key` |
+| `settings` | `PUT /api/settings`, `POST /api/certificate/renew`, `PUT /api/certificate` |
+| `transfer` | `/api/export/*`, `/api/import/*` |
+| `operations` | `POST /api/restart`, `/api/update/check`, `/api/update/install`, `/api/uninstall`, `/api/logs/clear` |
+
+`PUT /api/account`, `/api/token`, `POST /api/setup`, `POST /api/logout` 은 어떤 권한으로도
+열리지 않습니다. 토큰으로 계정 정보를 바꾸거나, 토큰을 더 만들거나, 세션을 얻을 수 없습니다.
+제거처럼 계정 비밀번호를 다시 묻는 호출은 토큰으로 불러도 비밀번호를 묻습니다.
+
+토큰의 유효기간은 30, 90, 365일 또는 무기한이고 기본은 90일입니다. 계정 비밀번호를 바꿔도
+토큰은 폐기되지 않습니다. 토큰으로 바꾼 것은 토큰 이름으로 로그에 남습니다.
+
+```bash
+TOKEN=tm_...
+
+# 읽기에는 read 권한이 필요합니다.
+curl -s -H "Authorization: Bearer $TOKEN" "$BASE/api/status"
+
+# 변경에는 그 영역의 권한이 필요하고, X-CSRF-Token 은 필요 없습니다.
+curl -s -X POST "$BASE/api/host" \
+  -H "Authorization: Bearer $TOKEN" \
+  -H 'Content-Type: application/json' \
+  -d '{"address":"192.0.2.10","port":22,"user":"ubuntu","password":"<host-password>"}'
+```
+
+토큰은 세션으로 `POST`, `GET`, `DELETE /api/token` 을 불러 만들고, 나열하고, 폐기할 수도
+있습니다.
+
+| 응답 | 뜻 |
+|------|-----|
+| `401 The API token is not one this server made, or it was revoked` | 토큰이 틀렸거나 폐기됐습니다. 틀린 토큰은 로그인 실패처럼 보낸 주소에 쌓이고, 15분 안에 다섯 번이면 그 주소를 5분 동안 막습니다. 막힌 동안 그 주소의 로그인과 틀린 토큰은 `429` 를 받습니다. 맞는 토큰은 세지도 막지도 않습니다. |
+| `401 The API token ran out at ...` | 토큰이 만료됐습니다. 새로 만드십시오. |
+| `403 The API token was not made with the ... scope` | 그 경로에 필요한 권한이 토큰에 없습니다. |
+| `403 ... cannot be reached with an API token` | 어떤 토큰으로도 닿지 않는 경로입니다. 세션으로 부르십시오. |
+
 ## OpenAPI 와 Swagger UI
 
 **브라우저로 `https://<이 서버>:8888/ui/api-docs/` 를 엽니다.** 아래 표에 있는 호출이
@@ -1575,7 +1627,8 @@ openapi-generator-cli generate -i openapi.json -g python -o ./client
 ## API 엔드포인트
 
 `POST /api/login` 을 뺀 `/api` 아래 전부가 세션을 요구합니다. `GET` 이 아닌 것은 전부
-`X-CSRF-Token` 헤더를 요구합니다.
+`X-CSRF-Token` 헤더를 요구합니다. API 토큰을 보내는 요청은 둘 다 필요 없습니다.
+[API 토큰으로](#api-토큰으로) 를 보십시오.
 
 ### 페이징
 

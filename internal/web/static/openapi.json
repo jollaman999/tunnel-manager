@@ -1,7 +1,7 @@
 {
     "swagger": "2.0",
     "info": {
-        "description": "The API the Tunnel Manager screens are built on. Every path\nbelow sits under /api and needs a session, except POST\n/api/login and GET /api/setup.\n\nLogging in sets two cookies. Over HTTPS they are named\n__Host-tm_session and __Host-tm_csrf, and over plain HTTP they\nare tm_session and tm_csrf. A browser sends them back on its\nown, so \"Try it out\" on this page works as soon as you are\nlogged in to the screens in the same browser.\n\nEvery POST, PUT and DELETE also needs the token of the session\nin an X-CSRF-Token header. POST /api/login answers with it in\ndata.csrf_token; paste it into Authorize above and this page\nsends it. A GET needs no token.\n\nEvery answer has the same shape: {\"success\":true,\"data\":...}\nor {\"success\":false,\"error\":\"...\"}. An answer that says no\ncarries error_code, which names the refusal and is what a\nscript should match on, and error_args, the values its English\nsentence was written with.",
+        "description": "The API the Tunnel Manager screens are built on. Every path\nbelow sits under /api and needs a session, except POST\n/api/login and GET /api/setup.\n\nLogging in sets two cookies. Over HTTPS they are named\n__Host-tm_session and __Host-tm_csrf, and over plain HTTP they\nare tm_session and tm_csrf. A browser sends them back on its\nown, so \"Try it out\" on this page works as soon as you are\nlogged in to the screens in the same browser.\n\nEvery POST, PUT and DELETE also needs the token of the session\nin an X-CSRF-Token header. POST /api/login answers with it in\ndata.csrf_token; paste it into Authorize above and this page\nsends it. A GET needs no token.\n\nA script can use an API token instead of a session. Make one\non the Settings screen or with POST /api/token, and send it as\nAuthorization: Bearer \u003ctoken\u003e. A request that does needs no\ncookie and no X-CSRF-Token, and reaches only the routes of the\nscopes the token was made with: read opens every GET, and the\nothers open the changes of one area each. PUT /api/account,\n/api/token, /api/setup and /api/logout are never open to a\ntoken.\n\nEvery answer has the same shape: {\"success\":true,\"data\":...}\nor {\"success\":false,\"error\":\"...\"}. An answer that says no\ncarries error_code, which names the refusal and is what a\nscript should match on, and error_args, the values its English\nsentence was written with.",
         "title": "Tunnel Manager API",
         "contact": {},
         "license": {
@@ -2366,6 +2366,148 @@
                 }
             }
         },
+        "/token": {
+            "get": {
+                "description": "Answers with the name, the scopes and the dates of every token. The token itself is never in it: it is shown once, when the token is made. Only a session reaches this; a token does not.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "account"
+                ],
+                "summary": "List the API tokens",
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/models.Response"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "data": {
+                                            "type": "array",
+                                            "items": {
+                                                "$ref": "#/definitions/api.tokenView"
+                                            }
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "401": {
+                        "description": "Authentication required",
+                        "schema": {
+                            "$ref": "#/definitions/api.errorBody"
+                        }
+                    }
+                }
+            },
+            "post": {
+                "security": [
+                    {
+                        "CSRFToken": []
+                    }
+                ],
+                "description": "Takes name, scopes and expires_in_days, and answers with the token in data.token. Save it: it is not shown again.\nThe scopes are read, hosts, tunnels, host-keys, settings, transfer and operations. expires_in_days is 30, 90 or 365, or 0 for a token that never runs out, and is 90 when it is left out.\nSend the token as Authorization: Bearer \u003ctoken\u003e. A request that does needs no session and no X-CSRF-Token.\nOnly a session reaches this; a token does not.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "account"
+                ],
+                "summary": "Make an API token",
+                "parameters": [
+                    {
+                        "description": "The name, the scopes and how long the token lives",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/api.tokenRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "201": {
+                        "description": "Created",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/models.Response"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "data": {
+                                            "$ref": "#/definitions/api.tokenCreated"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "400": {
+                        "description": "The name, a scope or the lifetime is refused",
+                        "schema": {
+                            "$ref": "#/definitions/api.errorBody"
+                        }
+                    },
+                    "409": {
+                        "description": "There is a token of that name already",
+                        "schema": {
+                            "$ref": "#/definitions/api.errorBody"
+                        }
+                    }
+                }
+            }
+        },
+        "/token/{id}": {
+            "delete": {
+                "security": [
+                    {
+                        "CSRFToken": []
+                    }
+                ],
+                "description": "Only a session reaches this; a token does not.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "account"
+                ],
+                "summary": "Revoke an API token",
+                "parameters": [
+                    {
+                        "type": "integer",
+                        "description": "The id of the token",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/models.Response"
+                        }
+                    },
+                    "404": {
+                        "description": "No such token",
+                        "schema": {
+                            "$ref": "#/definitions/api.errorBody"
+                        }
+                    }
+                }
+            }
+        },
         "/uninstall": {
             "post": {
                 "security": [
@@ -2769,6 +2911,22 @@
                 "auth.password.too_long",
                 "auth.attempts.too_many",
                 "auth.password_attempts.too_many",
+                "auth.token.invalid",
+                "auth.token.expired",
+                "auth.token.route_refused",
+                "auth.token.scope_missing",
+                "token.read_failed",
+                "token.request.invalid",
+                "token.name.empty",
+                "token.name.too_long",
+                "token.name.taken",
+                "token.scopes.empty",
+                "token.scope.unknown",
+                "token.expiry.unsupported",
+                "token.create_failed",
+                "token.id.invalid",
+                "token.not_found",
+                "token.delete_failed",
                 "account.read_failed",
                 "account.store_failed",
                 "account.password.hash_failed",
@@ -2927,6 +3085,22 @@
                 "errAuthPasswordTooLong",
                 "errAuthTooManyAttempts",
                 "errAuthPasswordTooManyAttempts",
+                "errAuthTokenInvalid",
+                "errAuthTokenExpired",
+                "errAuthTokenRouteRefused",
+                "errAuthTokenScopeMissing",
+                "errTokenReadFailed",
+                "errTokenRequestInvalid",
+                "errTokenNameEmpty",
+                "errTokenNameTooLong",
+                "errTokenNameTaken",
+                "errTokenScopesEmpty",
+                "errTokenScopeUnknown",
+                "errTokenExpiryUnsupported",
+                "errTokenCreateFailed",
+                "errTokenIDInvalid",
+                "errTokenNotFound",
+                "errTokenDeleteFailed",
                 "errAccountReadFailed",
                 "errAccountStoreFailed",
                 "errAccountHashFailed",
@@ -3766,6 +3940,78 @@
                 "type": "string"
             }
         },
+        "api.tokenCreated": {
+            "type": "object",
+            "properties": {
+                "created_at": {
+                    "type": "string"
+                },
+                "expires_at": {
+                    "type": "string"
+                },
+                "id": {
+                    "type": "integer"
+                },
+                "last_used_at": {
+                    "type": "string"
+                },
+                "name": {
+                    "type": "string"
+                },
+                "scopes": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "token": {
+                    "type": "string"
+                }
+            }
+        },
+        "api.tokenRequest": {
+            "type": "object",
+            "properties": {
+                "expires_in_days": {
+                    "type": "integer"
+                },
+                "name": {
+                    "type": "string"
+                },
+                "scopes": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                }
+            }
+        },
+        "api.tokenView": {
+            "type": "object",
+            "properties": {
+                "created_at": {
+                    "type": "string"
+                },
+                "expires_at": {
+                    "type": "string"
+                },
+                "id": {
+                    "type": "integer"
+                },
+                "last_used_at": {
+                    "type": "string"
+                },
+                "name": {
+                    "type": "string"
+                },
+                "scopes": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                }
+            }
+        },
         "api.transferItem": {
             "type": "object",
             "properties": {
@@ -4218,6 +4464,12 @@
         }
     },
     "securityDefinitions": {
+        "BearerToken": {
+            "description": "An API token, sent as \"Bearer tm_...\". Made on\nthe Settings screen or with POST /api/token.\nA request that carries one needs no session\nand no X-CSRF-Token.",
+            "type": "apiKey",
+            "name": "Authorization",
+            "in": "header"
+        },
         "CSRFToken": {
             "description": "The token POST /api/login answers with, in\ndata.csrf_token. Required on every POST, PUT\nand DELETE. The session cookie goes with it and\nis sent by the browser on its own.",
             "type": "apiKey",

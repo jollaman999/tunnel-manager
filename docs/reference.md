@@ -1721,6 +1721,61 @@ words.
 }
 ```
 
+### With an API token
+
+A script that runs on its own, a monitoring check or a deployment, does not have
+to keep a password and a cookie jar. **Make an API token on the Settings screen
+and send it as `Authorization: Bearer <token>`.** A request that carries one needs
+no session cookie and no `X-CSRF-Token`: a browser never adds that header by
+itself, so a request that has it was written by something that holds the token.
+
+The token is shown once, when it is made. What the installation keeps is its
+SHA-256, so a lost token cannot be shown again; revoke it and make another.
+
+A token reaches only the routes of the scopes it was made with:
+
+| Scope | What it opens |
+|-------|---------------|
+| `read` | Every `GET`. Ticked by default |
+| `hosts` | `POST /api/host`, `PUT` and `DELETE /api/host/:id` |
+| `tunnels` | The `POST`, `PUT` and `DELETE` of `/api/service-port`, `PUT /api/host/:id/service-port`, and the `POST`, `PUT` and `DELETE` of `/api/host/:id/local-forward` |
+| `host-keys` | `POST /api/host/:id/host-key`, `POST /api/host-key` |
+| `settings` | `PUT /api/settings`, `POST /api/certificate/renew`, `PUT /api/certificate` |
+| `transfer` | `/api/export/*`, `/api/import/*` |
+| `operations` | `POST /api/restart`, `/api/update/check`, `/api/update/install`, `/api/uninstall`, `/api/logs/clear` |
+
+No scope opens `PUT /api/account`, `/api/token`, `POST /api/setup` or
+`POST /api/logout`: a token cannot change the credentials, make another token or
+turn itself into a session. The calls that ask for the account password again,
+the uninstall among them, still ask for it with a token.
+
+A token lives 30, 90 or 365 days, or never runs out; 90 is the default. Changing
+the account password does not revoke the tokens. A change made with a token is
+logged under its name.
+
+```bash
+TOKEN=tm_...
+
+# A read needs the read scope.
+curl -s -H "Authorization: Bearer $TOKEN" "$BASE/api/status"
+
+# A change needs the scope of its area, and no X-CSRF-Token.
+curl -s -X POST "$BASE/api/host" \
+  -H "Authorization: Bearer $TOKEN" \
+  -H 'Content-Type: application/json' \
+  -d '{"address":"192.0.2.10","port":22,"user":"ubuntu","password":"<host-password>"}'
+```
+
+The tokens are made, listed and revoked with `POST`, `GET` and
+`DELETE /api/token` as well, by a session.
+
+| Answer | What it means |
+|--------|---------------|
+| `401 The API token is not one this server made, or it was revoked` | The token is wrong or was revoked. Wrong tokens count against the address they came from, the way failed logins do, and five in a quarter of an hour hold that address for five minutes: its logins and its wrong tokens are answered `429`. A token that is found is never counted and never held, whatever the address has piled up. |
+| `401 The API token ran out at ...` | The token has expired. Make a new one. |
+| `403 The API token was not made with the ... scope` | The route needs a scope the token does not have. |
+| `403 ... cannot be reached with an API token` | The route is one no token reaches. Use a session. |
+
 ## OpenAPI and the Swagger UI
 
 **Open `https://<this server>:8888/ui/api-docs/` in a browser.** Every call in
@@ -1805,7 +1860,8 @@ library it was generated against, or every call after the login is answered
 ## API endpoints
 
 Everything under `/api` requires a session, except `POST /api/login`. Everything
-that is not a `GET` requires the `X-CSRF-Token` header.
+that is not a `GET` requires the `X-CSRF-Token` header. A request with an API
+token needs neither, see [With an API token](#with-an-api-token).
 
 ### Paging
 

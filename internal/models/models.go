@@ -468,3 +468,37 @@ type User struct {
 func (User) TableName() string {
 	return "user"
 }
+
+// APIToken is a credential a script sends instead of the session cookie. It is
+// made on the Settings screen by a session, and it opens only the routes of the
+// scopes it was made with.
+//
+// The token itself is not stored. What is kept is the SHA-256 of it, which is
+// enough because the token is 32 random bytes: there is nothing to guess from
+// a hash of that, so a slow hash like the one the account password is kept
+// under would cost every request a bcrypt compare and protect nothing more.
+type APIToken struct {
+	ID uint `gorm:"primaryKey;autoIncrement" json:"id"`
+	// Name is what the operator calls the token, and what a change made with
+	// it is logged under. It is unique so that a line in the log names one
+	// token and not any of several.
+	Name string `gorm:"uniqueIndex:idx_api_tokens_name;not null" json:"name"`
+	// Hash is the SHA-256 of the token, in lower case hex. It never leaves the
+	// process, the way the hash of the account password does not.
+	Hash string `gorm:"uniqueIndex:idx_api_tokens_hash;not null" json:"-"`
+	// Scopes is the list of scopes the token was made with, joined by commas.
+	Scopes string `gorm:"not null" json:"-"`
+	// ExpiresAt is when the token stops opening anything. NULL is a token that
+	// never runs out.
+	ExpiresAt *time.Time `json:"expires_at"`
+	// LastUsedAt is when a request last came in with the token, to the minute.
+	// NULL is a token that has not been used yet.
+	LastUsedAt *time.Time `json:"last_used_at"`
+	CreatedAt  time.Time  `json:"created_at"`
+}
+
+// TableName names the table the way the plural of the model would, written out
+// so that a rename of the type does not move the rows to a new table.
+func (APIToken) TableName() string {
+	return "api_tokens"
+}

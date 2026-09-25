@@ -1423,6 +1423,15 @@ func endOnServiceStop() {
 // @description  data.csrf_token; paste it into Authorize above and this page
 // @description  sends it. A GET needs no token.
 // @description
+// @description  A script can use an API token instead of a session. Make one
+// @description  on the Settings screen or with POST /api/token, and send it as
+// @description  Authorization: Bearer <token>. A request that does needs no
+// @description  cookie and no X-CSRF-Token, and reaches only the routes of the
+// @description  scopes the token was made with: read opens every GET, and the
+// @description  others open the changes of one area each. PUT /api/account,
+// @description  /api/token, /api/setup and /api/logout are never open to a
+// @description  token.
+// @description
 // @description  Every answer has the same shape: {"success":true,"data":...}
 // @description  or {"success":false,"error":"..."}. An answer that says no
 // @description  carries error_code, which names the refusal and is what a
@@ -1445,6 +1454,14 @@ func endOnServiceStop() {
 // @description                 data.csrf_token. Required on every POST, PUT
 // @description                 and DELETE. The session cookie goes with it and
 // @description                 is sent by the browser on its own.
+//
+// @securityDefinitions.apikey  BearerToken
+// @in                          header
+// @name                        Authorization
+// @description                 An API token, sent as "Bearer tm_...". Made on
+// @description                 the Settings screen or with POST /api/token.
+// @description                 A request that carries one needs no session
+// @description                 and no X-CSRF-Token.
 func main() {
 	if runningAsService() {
 		// Started by a service manager that expects a protocol of it, which is
@@ -1953,6 +1970,13 @@ func serve() {
 
 	g.GET("/account", authHandler.GetAccount)
 	g.PUT("/account", authHandler.ChangeAccount)
+
+	// The API tokens are made, listed and revoked by a session. The session
+	// middleware refuses all three to a token, the way it refuses the change
+	// of the account above: see TokenRouteRule.
+	g.GET("/token", authHandler.ListTokens)
+	g.POST("/token", authHandler.CreateToken)
+	g.DELETE("/token/:id", authHandler.DeleteToken)
 
 	g.POST("/host", h.CreateHost)
 	g.GET("/host", h.ListHosts)

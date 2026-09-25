@@ -1365,6 +1365,55 @@ curl -s -b cookies.txt -X POST "$BASE/api/setup" \
 }
 ```
 
+### 使用 API 令牌
+
+独立运行的脚本，比如监控检查或部署脚本，不必保存密码和 cookie 文件。**在设置页面创建 API
+令牌，用 `Authorization: Bearer <token>` 发送。** 带令牌的请求既不需要会话 cookie，也不需要
+`X-CSRF-Token`：浏览器不会自己加上这个头，所以带这个头的请求是持有令牌的一方自己写的。
+
+令牌只在创建时显示一次。本系统只保存令牌的 SHA-256，丢失的令牌无法再次显示，请吊销后重新创建。
+
+令牌只能访问创建时所选权限范围对应的路径：
+
+| 权限范围 | 开放的内容 |
+|----------|------------|
+| `read` | 所有 `GET`。默认勾选 |
+| `hosts` | `POST /api/host`，`PUT` 和 `DELETE /api/host/:id` |
+| `tunnels` | `/api/service-port` 的 `POST`、`PUT`、`DELETE`，`PUT /api/host/:id/service-port`，`/api/host/:id/local-forward` 的 `POST`、`PUT`、`DELETE` |
+| `host-keys` | `POST /api/host/:id/host-key`，`POST /api/host-key` |
+| `settings` | `PUT /api/settings`，`POST /api/certificate/renew`，`PUT /api/certificate` |
+| `transfer` | `/api/export/*`，`/api/import/*` |
+| `operations` | `POST /api/restart`、`/api/update/check`、`/api/update/install`、`/api/uninstall`、`/api/logs/clear` |
+
+`PUT /api/account`、`/api/token`、`POST /api/setup` 和 `POST /api/logout` 不对任何权限范围开放：
+令牌不能修改账号信息，不能再创建令牌，也不能换成会话。像卸载这样需要再次输入账号密码的调用，
+用令牌调用时仍然要输入密码。
+
+令牌的有效期是 30、90、365 天或永不过期，默认 90 天。修改账号密码不会吊销令牌。用令牌做的修改
+会以令牌名称记入日志。
+
+```bash
+TOKEN=tm_...
+
+# 读取需要 read 权限范围。
+curl -s -H "Authorization: Bearer $TOKEN" "$BASE/api/status"
+
+# 修改需要对应领域的权限范围，不需要 X-CSRF-Token。
+curl -s -X POST "$BASE/api/host" \
+  -H "Authorization: Bearer $TOKEN" \
+  -H 'Content-Type: application/json' \
+  -d '{"address":"192.0.2.10","port":22,"user":"ubuntu","password":"<host-password>"}'
+```
+
+也可以用会话调用 `POST`、`GET`、`DELETE /api/token` 来创建、列出和吊销令牌。
+
+| 响应 | 含义 |
+|------|------|
+| `401 The API token is not one this server made, or it was revoked` | 令牌错误或已被吊销。错误的令牌和登录失败一样按来源地址计数，15 分钟内 5 次会把该地址挡 5 分钟，期间该地址的登录和错误令牌都得到 `429`。正确的令牌既不计数，也不会被挡。 |
+| `401 The API token ran out at ...` | 令牌已过期，请重新创建。 |
+| `403 The API token was not made with the ... scope` | 令牌没有这个路径所需的权限范围。 |
+| `403 ... cannot be reached with an API token` | 这个路径不对任何令牌开放，请使用会话。 |
+
 ## OpenAPI 与 Swagger UI
 
 **用浏览器打开 `https://<这台服务器>:8888/ui/api-docs/`。** 下面表里的每个调用都在那一页
@@ -1434,7 +1483,7 @@ openapi-generator-cli generate -i openapi.json -g python -o ./client
 ## API 接口
 
 `/api` 下面的一切都需要会话，只有 `POST /api/login` 例外。不是 `GET` 的一切都需要
-`X-CSRF-Token` 头。
+`X-CSRF-Token` 头。带 API 令牌的请求两者都不需要，见[使用 API 令牌](#使用-api-令牌)。
 
 ### 分页
 

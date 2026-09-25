@@ -1548,6 +1548,59 @@ curl -s -b cookies.txt -X POST "$BASE/api/setup" \
 }
 ```
 
+### API トークンで
+
+監視のチェックやデプロイのように単独で動くスクリプトは、パスワードとクッキーファイルを持たなくて
+構いません。**設定画面で API トークンを作り、`Authorization: Bearer <token>` で送ってください。**
+トークンを送る要求には、セッションのクッキーも `X-CSRF-Token` も要りません。ブラウザはこの
+ヘッダを自分では付けないので、このヘッダが付いた要求はトークンを持つ側が書いたものです。
+
+トークンは作成時に一度だけ表示されます。このシステムに残るのはトークンの SHA-256 だけなので、
+なくしたトークンは二度と表示できません。失効させて作り直してください。
+
+トークンが届くのは、作成時に選んだスコープの経路だけです。
+
+| スコープ | 開くもの |
+|----------|----------|
+| `read` | すべての `GET`。最初から選ばれています |
+| `hosts` | `POST /api/host`、`PUT` と `DELETE /api/host/:id` |
+| `tunnels` | `/api/service-port` の `POST`、`PUT`、`DELETE`、`PUT /api/host/:id/service-port`、`/api/host/:id/local-forward` の `POST`、`PUT`、`DELETE` |
+| `host-keys` | `POST /api/host/:id/host-key`、`POST /api/host-key` |
+| `settings` | `PUT /api/settings`、`POST /api/certificate/renew`、`PUT /api/certificate` |
+| `transfer` | `/api/export/*`、`/api/import/*` |
+| `operations` | `POST /api/restart`、`/api/update/check`、`/api/update/install`、`/api/uninstall`、`/api/logs/clear` |
+
+`PUT /api/account`、`/api/token`、`POST /api/setup`、`POST /api/logout` はどのスコープでも
+開きません。トークンでアカウント情報を変えることも、トークンを増やすことも、セッションを得る
+こともできません。アンインストールのようにアカウントのパスワードをもう一度求める呼び出しは、
+トークンで呼んでもパスワードを求めます。
+
+トークンの有効期間は 30、90、365 日または無期限で、既定は 90 日です。アカウントのパスワードを
+変えてもトークンは失効しません。トークンで行った変更は、トークンの名前でログに残ります。
+
+```bash
+TOKEN=tm_...
+
+# 読み取りには read スコープが要ります。
+curl -s -H "Authorization: Bearer $TOKEN" "$BASE/api/status"
+
+# 変更にはその分野のスコープが要り、X-CSRF-Token は要りません。
+curl -s -X POST "$BASE/api/host" \
+  -H "Authorization: Bearer $TOKEN" \
+  -H 'Content-Type: application/json' \
+  -d '{"address":"192.0.2.10","port":22,"user":"ubuntu","password":"<host-password>"}'
+```
+
+トークンはセッションで `POST`、`GET`、`DELETE /api/token` を呼んで作成、一覧、失効することも
+できます。
+
+| 応答 | 意味 |
+|------|------|
+| `401 The API token is not one this server made, or it was revoked` | トークンが違うか、失効しています。違うトークンはログインの失敗と同じく送信元のアドレスに数えられ、15 分に 5 回でそのアドレスを 5 分間止めます。止まっている間、そのアドレスのログインと違うトークンには `429` が返ります。正しいトークンは数えられず、止められもしません。 |
+| `401 The API token ran out at ...` | トークンの期限が切れています。作り直してください。 |
+| `403 The API token was not made with the ... scope` | その経路に要るスコープがトークンにありません。 |
+| `403 ... cannot be reached with an API token` | どのトークンでも届かない経路です。セッションで呼んでください。 |
+
 ## OpenAPI と Swagger UI
 
 **ブラウザで `https://<このサーバー>:8888/ui/api-docs/` を開いてください。** 下の表にある
@@ -1626,7 +1679,8 @@ openapi-generator-cli generate -i openapi.json -g python -o ./client
 ## API エンドポイント
 
 `/api` の下はすべてセッションが要ります。`POST /api/login` だけが例外です。`GET` 以外はすべて
-`X-CSRF-Token` ヘッダが要ります。
+`X-CSRF-Token` ヘッダが要ります。API トークンを送る要求はどちらも要りません。
+[API トークンで](#api-トークンで) を見てください。
 
 ### ページング
 
