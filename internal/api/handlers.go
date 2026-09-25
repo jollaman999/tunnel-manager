@@ -404,6 +404,7 @@ func (h *Handler) CreateHost(c echo.Context) error {
 		h.logger.Error("failed to start the transaction", logid.DatabaseTransactionStartFailed.Field(), zap.Error(err))
 		return failure(c, http.StatusInternalServerError, errTransactionBeginFailed)
 	}
+	defer rollbackUnlessDone(tx)
 
 	// A Host that does not say is enabled. Saying nothing is how every Host was
 	// registered before the field could be sent, and a Host registered to be
@@ -647,6 +648,7 @@ func (h *Handler) UpdateHost(c echo.Context) error {
 		h.logger.Error("failed to start the transaction", logid.DatabaseTransactionStartFailed.Field(), zap.Error(err))
 		return failure(c, http.StatusInternalServerError, errTransactionBeginFailed)
 	}
+	defer rollbackUnlessDone(tx)
 
 	// The row is read inside the transaction, because what is written below is
 	// the row that is read here with a few fields replaced. Two requests on the
@@ -792,6 +794,7 @@ func (h *Handler) DeleteHost(c echo.Context) error {
 		h.logger.Error("failed to start the transaction", logid.DatabaseTransactionStartFailed.Field(), zap.Error(err))
 		return failure(c, http.StatusInternalServerError, errTransactionBeginFailed)
 	}
+	defer rollbackUnlessDone(tx)
 
 	// Read inside the transaction as in UpdateHost, so that the answer and the
 	// delete agree: an update of the same Host either lands before the read,
@@ -888,6 +891,7 @@ func (h *Handler) CreateServicePort(c echo.Context) error {
 		h.logger.Error("failed to start the transaction", logid.DatabaseTransactionStartFailed.Field(), zap.Error(err))
 		return failure(c, http.StatusInternalServerError, errTransactionBeginFailed)
 	}
+	defer rollbackUnlessDone(tx)
 
 	err = tx.Create(sp).Error
 	if err != nil {
@@ -1061,6 +1065,7 @@ func (h *Handler) UpdateServicePort(c echo.Context) error {
 		h.logger.Error("failed to start the transaction", logid.DatabaseTransactionStartFailed.Field(), zap.Error(err))
 		return failure(c, http.StatusInternalServerError, errTransactionBeginFailed)
 	}
+	defer rollbackUnlessDone(tx)
 
 	// Read inside the transaction for the reason UpdateHost is: the write below
 	// carries the fields this read brought in.
@@ -1121,6 +1126,7 @@ func (h *Handler) DeleteServicePort(c echo.Context) error {
 		h.logger.Error("failed to start the transaction", logid.DatabaseTransactionStartFailed.Field(), zap.Error(err))
 		return failure(c, http.StatusInternalServerError, errTransactionBeginFailed)
 	}
+	defer rollbackUnlessDone(tx)
 
 	// Read inside the transaction as in DeleteHost, so that an update of the
 	// same service port and this delete do not both act on the row they read.
@@ -1410,6 +1416,7 @@ func (h *Handler) UpdateHostServicePorts(c echo.Context) error {
 		h.logger.Error("failed to start the transaction", logid.DatabaseTransactionStartFailed.Field(), zap.Error(err))
 		return failure(c, http.StatusInternalServerError, errTransactionBeginFailed)
 	}
+	defer rollbackUnlessDone(tx)
 
 	// Read inside the transaction as in UpdateHost: the rows written below name
 	// this Host, and a Host deleted between the read and them would be left

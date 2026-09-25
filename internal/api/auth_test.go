@@ -1116,6 +1116,11 @@ type setupStub struct {
 	commits    int
 	rollbacks  int
 	commitErr  error
+	// done is whether the transaction open now has been committed or rolled
+	// back. As with a *sql.Tx, only the first of those takes effect and a later
+	// one answers sql.ErrTxDone without being counted, so the rollback the
+	// handler defers after Begin does not show up on a finished transaction.
+	done bool
 	// txPool is the connection the transaction is served on. It is set once,
 	// before the first request, and only compared against afterwards.
 	txPool gorm.ConnPool
@@ -1171,9 +1176,22 @@ func (s *setupStub) failCommit(err error) {
 	s.commitErr = err
 }
 
+// begin starts a new transaction.
+func (s *setupStub) begin() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	s.done = false
+}
+
 func (s *setupStub) commit() error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+
+	if s.done {
+		return sql.ErrTxDone
+	}
+	s.done = true
 
 	if s.commitErr != nil {
 		return s.commitErr
@@ -1192,6 +1210,11 @@ func (s *setupStub) commit() error {
 func (s *setupStub) rollback() error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+
+	if s.done {
+		return sql.ErrTxDone
+	}
+	s.done = true
 
 	s.rollbacks++
 	s.pending = nil
@@ -1264,6 +1287,8 @@ func (p *setupRootPool) QueryRowContext(ctx context.Context, query string, args 
 }
 
 func (p *setupRootPool) BeginTx(ctx context.Context, opts *sql.TxOptions) (gorm.ConnPool, error) {
+	p.tx.stub.begin()
+
 	return p.tx, nil
 }
 

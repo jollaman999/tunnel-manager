@@ -1216,6 +1216,7 @@ func (h *TransferHandler) ImportTunnels(c echo.Context) error {
 		h.hosts.logger.Error("failed to start the transaction", logid.DatabaseTransactionStartFailed.Field(), zap.Error(err))
 		return failure(c, http.StatusInternalServerError, errTransactionBeginFailed)
 	}
+	defer rollbackUnlessDone(tx)
 
 	items := make([]transferItem, 0, len(content.Hosts)+len(content.ServicePorts))
 
@@ -2222,6 +2223,7 @@ func (h *TransferHandler) ImportSettings(c echo.Context) error {
 		h.hosts.logger.Error("failed to start the transaction", logid.DatabaseTransactionStartFailed.Field(), zap.Error(err))
 		return failure(c, http.StatusInternalServerError, errTransactionBeginFailed)
 	}
+	defer rollbackUnlessDone(tx)
 
 	// Held to the local forwards the way a save on the Settings screen is, and
 	// only when the port changes, for the same reason.

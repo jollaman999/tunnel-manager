@@ -456,6 +456,7 @@ func (h *Handler) CreateHostLocalForward(c echo.Context) error {
 		h.logger.Error("failed to start the transaction", logid.DatabaseTransactionStartFailed.Field(), zap.Error(err))
 		return failure(c, http.StatusInternalServerError, errTransactionBeginFailed)
 	}
+	defer rollbackUnlessDone(tx)
 
 	var host models.Host
 	err = tx.First(&host, id).Error
@@ -613,6 +614,7 @@ func (h *Handler) UpdateLocalForward(c echo.Context) error {
 		h.logger.Error("failed to start the transaction", logid.DatabaseTransactionStartFailed.Field(), zap.Error(err))
 		return failure(c, http.StatusInternalServerError, errTransactionBeginFailed)
 	}
+	defer rollbackUnlessDone(tx)
 
 	// Read inside the transaction for the reason UpdateHost is.
 	var lf models.LocalForward
@@ -702,6 +704,7 @@ func (h *Handler) DeleteLocalForward(c echo.Context) error {
 		h.logger.Error("failed to start the transaction", logid.DatabaseTransactionStartFailed.Field(), zap.Error(err))
 		return failure(c, http.StatusInternalServerError, errTransactionBeginFailed)
 	}
+	defer rollbackUnlessDone(tx)
 
 	var lf models.LocalForward
 	err = tx.Where("host_id = ? AND number = ?", hostID, number).First(&lf).Error

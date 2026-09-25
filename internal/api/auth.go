@@ -731,6 +731,7 @@ func (h *AuthHandler) Setup(c echo.Context) error {
 		h.logger.Error("failed to start the transaction", logid.DatabaseTransactionStartFailed.Field(), zap.Error(err))
 		return failure(c, http.StatusInternalServerError, errTransactionBeginFailed)
 	}
+	defer rollbackUnlessDone(tx)
 
 	// The row is read inside the transaction and the flag is looked at again
 	// once it is. The middleware checked it too, but two requests can both get

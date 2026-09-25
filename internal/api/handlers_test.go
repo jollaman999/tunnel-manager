@@ -52,10 +52,25 @@ var errQueryFailed = errors.New("query failed")
 // txConnPool stands in for a real transaction. Writes succeed, reads fail, and
 // Commit/Rollback calls are counted. A tunnel that is running writes from a
 // goroutine of its own, so the counters are guarded.
+//
+// As with a *sql.Tx, only the first Commit or Rollback of a transaction takes
+// effect. A later one answers sql.ErrTxDone and is not counted, so the rollback
+// every handler defers after Begin does not show up on a transaction that was
+// already finished. The same pool is handed out on every Begin, which starts
+// the next transaction afresh.
 type txConnPool struct {
 	mu        sync.Mutex
 	commits   int
 	rollbacks int
+	done      bool
+}
+
+// begin starts a new transaction on the pool.
+func (p *txConnPool) begin() {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+
+	p.done = false
 }
 
 // counts reports how often the transaction was committed and rolled back.
@@ -95,6 +110,11 @@ func (p *txConnPool) Commit() error {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 
+	if p.done {
+		return sql.ErrTxDone
+	}
+	p.done = true
+
 	p.commits++
 	return nil
 }
@@ -102,6 +122,11 @@ func (p *txConnPool) Commit() error {
 func (p *txConnPool) Rollback() error {
 	p.mu.Lock()
 	defer p.mu.Unlock()
+
+	if p.done {
+		return sql.ErrTxDone
+	}
+	p.done = true
 
 	p.rollbacks++
 	return nil
@@ -146,6 +171,8 @@ func (p *rootConnPool) QueryRowContext(ctx context.Context, query string, args .
 }
 
 func (p *rootConnPool) BeginTx(ctx context.Context, opts *sql.TxOptions) (gorm.ConnPool, error) {
+	p.tx.begin()
+
 	return p.tx, nil
 }
 
@@ -2019,6 +2046,8 @@ type causeOnlyCommitFailingRoot struct {
 }
 
 func (p *causeOnlyCommitFailingRoot) BeginTx(ctx context.Context, opts *sql.TxOptions) (gorm.ConnPool, error) {
+	p.failing.begin()
+
 	return p.failing, nil
 }
 

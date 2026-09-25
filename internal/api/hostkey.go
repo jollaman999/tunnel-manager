@@ -361,6 +361,7 @@ func (h *Handler) ApproveHostKey(c echo.Context) error {
 		h.logger.Error("failed to start the transaction", logid.DatabaseTransactionStartFailed.Field(), zap.Error(err))
 		return failure(c, http.StatusInternalServerError, errTransactionBeginFailed)
 	}
+	defer rollbackUnlessDone(tx)
 
 	// The row is read inside the transaction the write goes into, so that what
 	// is approved is what was checked. See UpdateHost for what that rests on.
@@ -748,6 +749,7 @@ func (h *Handler) ApproveHostKeys(c echo.Context) error {
 		h.logger.Error("failed to start the transaction", logid.DatabaseTransactionStartFailed.Field(), zap.Error(err))
 		return failure(c, http.StatusInternalServerError, errTransactionBeginFailed)
 	}
+	defer rollbackUnlessDone(tx)
 
 	results := make([]hostKeyApprovalResult, 0, len(req.Hosts))
 

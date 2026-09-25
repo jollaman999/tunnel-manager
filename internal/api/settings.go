@@ -327,6 +327,7 @@ func (h *SettingsHandler) UpdateSettings(c echo.Context) error {
 		h.logger.Error("failed to start the transaction", logid.DatabaseTransactionStartFailed.Field(), zap.Error(err))
 		return failure(c, http.StatusInternalServerError, errTransactionBeginFailed)
 	}
+	defer rollbackUnlessDone(tx)
 
 	// Only a port that changes is held to the local forwards, so a save of
 	// another setting is not refused over a port that is already stored.
