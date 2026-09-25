@@ -1,3 +1,16 @@
+# v3.13.5
+
+## Add/fix features:
+
+- **A redrawn icon shows in the tab after an update.** A browser keeps the icon of a site apart from its cache and does not ask again whether it moved, so the icons of v3.13.3 stayed old in a tab that had seen the earlier ones, reload or not. Each icon the page links to carries a hash of the file in its address now, so an icon that changes is one the browser has not seen and fetches.
+- **The ssh command in the SOCKS5 warning names the port that is typed.** It named 1080 whatever the port was, with a note to put the port in its place. It follows the SOCKS5 port box as it is typed, and sits on a line of its own so that it can be copied whole: written into the sentence it carried invisible marks of direction, and a command copied with them is one ssh refuses.
+- **The allowed client addresses of a SOCKS5 proxy say that a space after a comma is optional.** 203.0.113.0/24,198.51.100.7 and 203.0.113.0/24, 198.51.100.7 are read the same, as are addresses separated by spaces alone.
+- **The animation at the top of the README was recorded again** on this release.
+
+## Notes:
+
+- The notes of v3.13.3 hold for an installation that comes from before it: a data directory from a release before v3.7.0 keeps the mode it has, and the rest of the upgrade note of v3.7.0 still holds.
+
 # v3.13.4
 
 ## Add/fix features:
