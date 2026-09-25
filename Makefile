@@ -1,4 +1,4 @@
-.PHONY: all build release clean openapi swagger-ui docs docs-check
+.PHONY: all build update release clean openapi swagger-ui docs docs-check
 
 APP_NAME := tunnel-manager
 
@@ -9,6 +9,16 @@ build:
 
 run: build
 	sudo ./$(APP_NAME)
+
+# update moves every dependency to its newest release and then drops what
+# nothing imports any more. tools/demo is a module of its own, with its own
+# go.mod, so `go get -u ./...` run here does not reach into it and it is
+# updated separately. The generator and the Swagger UI pinned below are not
+# dependencies of either module and are moved by hand.
+update:
+	go get -u ./...
+	go mod tidy
+	cd tools/demo && go get -u ./... && go mod tidy
 
 # SWAG_VERSION pins the generator. It is written out rather than left at latest
 # so that two people who run the target get the same file: a generator that
