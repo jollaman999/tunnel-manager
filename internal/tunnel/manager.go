@@ -689,11 +689,10 @@ func (m *Manager) StopTunnel(hostID uint, spID uint) error {
 	}
 
 	err := tunnel.Stop(m)
+	delete(m.tunnels, key)
 	if err != nil {
 		return fmt.Errorf("failed to stop tunnel: %w", err)
 	}
-
-	delete(m.tunnels, key)
 
 	return nil
 }

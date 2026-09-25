@@ -554,6 +554,36 @@ func TestStopTunnelReportsMissingTunnel(t *testing.T) {
 	}
 }
 
+func TestStopTunnelUnregistersTheTunnelWhenTheRowCannotBeDeleted(t *testing.T) {
+	hosts := []models.Host{{ID: 1, IP: "127.0.0.1", Port: 1, User: "user", Enabled: true}}
+	sps := []models.ServicePort{{ID: 2, ServiceIP: "127.0.0.1", ServicePort: 8081, LocalPort: 18081}}
+
+	m, err := NewManager(newStubDB(t, hosts, sps, errConnPoolClosed), zap.NewNop(), newTestCipher(t), 1)
+	if err != nil {
+		t.Fatalf("failed to create manager: %v", err)
+	}
+
+	tun := registerStoppedTunnel(t, m, 1, 2)
+
+	err = m.StopTunnel(1, 2)
+	if err == nil {
+		t.Fatal("StopTunnel returned no error when the row could not be deleted")
+	}
+	if !errors.Is(err, errConnPoolClosed) {
+		t.Fatalf("StopTunnel returned an error that does not carry the failed delete: %v", err)
+	}
+
+	select {
+	case <-tun.done:
+	default:
+		t.Fatal("the tunnel was not stopped")
+	}
+
+	if _, exists := runningKeys(m)["1-2"]; exists {
+		t.Fatal("a stopped tunnel is still registered after its row could not be deleted")
+	}
+}
+
 func TestStopAllTunnelsStopsEveryRunningTunnel(t *testing.T) {
 	// The rows say nothing about what is running: one of the tunnels belongs
 	// to a Host that is no longer there, and it still has to be stopped.
