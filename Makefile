@@ -159,6 +159,3 @@ release: clean
 
 clean:
 	rm -f $(APP_NAME) $(APP_NAME)-linux-* $(APP_NAME)-darwin-* $(APP_NAME)-windows-* SHA256SUMS
-
-run-test-server:
-	$(MAKE) -C test-server/httpMultiPort run

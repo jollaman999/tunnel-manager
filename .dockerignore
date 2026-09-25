@@ -16,4 +16,3 @@ tunnel-manager-linux-*
 tunnel-manager-darwin-*
 tunnel-manager-windows-*
 *.tar*
-test-server/httpMultiPort/httpMultiPort
