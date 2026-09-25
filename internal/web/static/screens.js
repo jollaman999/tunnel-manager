@@ -3519,10 +3519,46 @@ async function toggleHost(host) {
   return drawHosts();
 }
 
+// askDanger asks before something that cannot be taken back, in a panel of the
+// page's own rather than the browser's. The browser's question is worded in the
+// language of the browser, with an OK and a Cancel the rest of the screen does
+// not speak; this one is worded in the language the operator picked.
+//
+// It settles with true only for the press of the button that goes ahead. A
+// panel dismissed with Esc, the backdrop or the close, and a panel taken down
+// because the screen changed under it, settle with null, and those are all a
+// no, the way Cancel is.
+async function askDanger(spec) {
+  const outcome = await openModal({
+    name: spec.name,
+    title: spec.title,
+    body: [element("p", spec.text)],
+    buttons: [
+      {
+        label: spec.button,
+        name: "confirm",
+        // Painted as what cannot be taken back, the way the panel that empties
+        // the log is.
+        variant: "danger"
+      },
+      { label: t("common.cancel.button"), name: "cancel" }
+    ]
+  });
+
+  return outcome === "confirm";
+}
+
 async function deleteHost(host) {
   // Deleting a host takes its tunnels down with it, which is not something the
   // operator can take back with another click.
-  if (!window.confirm(t("hosts.delete.confirm", { id: host.id, ip: host.ip }))) {
+  const sure = await askDanger({
+    name: "host-delete-ask",
+    title: t("hosts.delete.title"),
+    text: t("hosts.delete.confirm", { id: host.id, ip: host.ip }),
+    button: t("common.delete.button")
+  });
+
+  if (!sure) {
     return;
   }
 
@@ -4491,7 +4527,14 @@ async function openHostLocalForwards(host) {
   }
 
   async function remove(item) {
-    if (!window.confirm(t("local-forwards.delete.confirm", { port: item.local_port }))) {
+    const sure = await askDanger({
+      name: "local-forward-delete-ask",
+      title: t("local-forwards.delete.title"),
+      text: t("local-forwards.delete.confirm", { port: item.local_port }),
+      button: t("common.delete.button")
+    });
+
+    if (!sure) {
       return;
     }
 
@@ -5339,8 +5382,15 @@ async function updateServicePort(port, values) {
 
 async function deleteServicePort(port) {
   // The tunnels that carry this service port go down with it.
-  if (!window.confirm(t("service-ports.delete.confirm",
-      { id: port.id, ip: port.service_ip, port: port.service_port }))) {
+  const sure = await askDanger({
+    name: "service-port-delete-ask",
+    title: t("service-ports.delete.title"),
+    text: t("service-ports.delete.confirm",
+      { id: port.id, ip: port.service_ip, port: port.service_port }),
+    button: t("common.delete.button")
+  });
+
+  if (!sure) {
     return;
   }
 
@@ -7065,7 +7115,14 @@ function fingerprintValue(value) {
 }
 
 async function renewCertificate() {
-  if (!window.confirm(t("certificate.renew.confirm"))) {
+  const sure = await askDanger({
+    name: "certificate-renew-ask",
+    title: t("certificate.renew-confirm.title"),
+    text: t("certificate.renew.confirm"),
+    button: t("certificate.renew.button")
+  });
+
+  if (!sure) {
     return;
   }
 
@@ -7953,7 +8010,14 @@ async function submitRestart(view, button, newAddress) {
     return;
   }
 
-  if (!window.confirm(restartQuestion(view, newAddress))) {
+  const sure = await askDanger({
+    name: "restart-ask",
+    title: t("restart.card.title"),
+    text: restartQuestion(view, newAddress),
+    button: t("settings.restart.button")
+  });
+
+  if (!sure) {
     return;
   }
 
@@ -8245,7 +8309,14 @@ function settingsDangerZone() {
 async function submitUninstall(values) {
   // The password box is what keeps a passing press from doing this, and the
   // question is what keeps a press that was meant for Save from doing it.
-  if (!window.confirm(t("uninstall.ask.confirm"))) {
+  const sure = await askDanger({
+    name: "uninstall-ask",
+    title: t("uninstall.ask.title"),
+    text: t("uninstall.ask.confirm"),
+    button: t("uninstall.submit.button")
+  });
+
+  if (!sure) {
     return;
   }
 
