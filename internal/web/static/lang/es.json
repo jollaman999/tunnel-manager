@@ -275,6 +275,7 @@
   "error.logs.lines.not_a_number.error": "lines tiene que ser un número entero",
   "error.request.body.invalid.error": "Cuerpo de la petición no válido: {reason}",
   "error.request.validation.failed.error": "La validación falló: {reason}",
+  "error.request.field_renamed.error": "El campo {old} se renombró a {new}. Envíe {new} en su lugar",
   "error.service_port.create.hosts_read_failed.error": "El puerto de servicio no se creó: no se pudieron leer los Hosts",
   "error.service_port.create.hosts_store_failed.error": "El puerto de servicio no se creó: no se pudieron guardar los Hosts que lo tienen asignado",
   "error.service_port.create_failed.error": "No se pudo crear el puerto de servicio",

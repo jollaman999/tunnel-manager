@@ -75,6 +75,7 @@ const errorCodeUnspecified errorCode = "unspecified"
 const (
 	errRequestBodyInvalid      errorCode = "request.body.invalid"
 	errRequestValidationFailed errorCode = "request.validation.failed"
+	errRequestFieldRenamed     errorCode = "request.field_renamed"
 	errTransactionBeginFailed  errorCode = "db.transaction.begin_failed"
 	errTransactionCommitFailed errorCode = "db.transaction.commit_failed"
 	errListPageNotANumber      errorCode = "list.page.not_a_number"
@@ -307,6 +308,7 @@ var errorMessages = map[errorCode]string{
 	// The shape of the request, and the database work every handler does.
 	errRequestBodyInvalid:      "Invalid request body: {reason}",
 	errRequestValidationFailed: "Validation failed: {reason}",
+	errRequestFieldRenamed:     "The field {old} was renamed to {new}. Send {new} instead",
 	errTransactionBeginFailed:  "Failed to start transaction",
 	errTransactionCommitFailed: "Failed to commit transaction",
 	errListPageNotANumber:      "The list was not read: page is not a number: {page}",

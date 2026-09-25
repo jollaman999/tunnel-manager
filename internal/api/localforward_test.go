@@ -801,7 +801,7 @@ func TestLocalForwardWritesAreRefused(t *testing.T) {
 			value:  "1",
 			body:   `{"local_port":15100,"target_ip":"127.0.0.1","target_port":5432}`,
 			status: http.StatusBadRequest,
-			code:   errRequestValidationFailed,
+			code:   errRequestFieldRenamed,
 		},
 		{
 			name:   "create under a Host that is not there",
@@ -1249,4 +1249,76 @@ func TestAllowedSourcesThatAreNotAddressesAreRefused(t *testing.T) {
 	if wakes, _ := manager.counts(); wakes != 0 {
 		t.Errorf("reconcile wake-ups = %d, want 0", wakes)
 	}
+}
+
+// TestLocalForwardRequestsRefuseTheOldFieldName is
+// TestHostAndServicePortRequestsRefuseTheOldFieldNames for the two writes of a
+// local forward, whose target_ip is target_address now.
+func TestLocalForwardRequestsRefuseTheOldFieldName(t *testing.T) {
+	const port = `"local_port":15432,"target_port":5432`
+
+	t.Run("create", func(t *testing.T) {
+		db := newLocalForwardDB(t, []models.Host{statusHost(1, true)}, nil)
+		h := NewHandler(db, &wakeRecorder{tx: &txConnPool{}}, zap.NewNop(), newTestCipher(t))
+
+		create := func(body string) *httptest.ResponseRecorder {
+			c, rec := localForwardRequest(t, http.MethodPost, "/api/host/1/local-forward", body, "1")
+
+			err := h.CreateHostLocalForward(c)
+			if err != nil {
+				t.Fatalf("CreateHostLocalForward returned error: %v", err)
+			}
+
+			return rec
+		}
+
+		readRenamedRefusal(t, create(`{"target_ip":"127.0.0.1",`+port+`}`), "target_ip", "target_address")
+		readRenamedRefusal(t, create(`{"target_ip":"127.0.0.1","target_address":"127.0.0.1",`+port+`}`),
+			"target_ip", "target_address")
+
+		if rows := storedLocalForwards(t, db); len(rows) != 0 {
+			t.Fatalf("stored = %+v although every request was refused", rows)
+		}
+
+		rec := create(`{"target_address":"127.0.0.1",` + port + `}`)
+		if rec.Code != http.StatusCreated {
+			t.Fatalf("status = %d, want %d, body: %s", rec.Code, http.StatusCreated, rec.Body.String())
+		}
+	})
+
+	t.Run("update", func(t *testing.T) {
+		db := newLocalForwardDB(t, []models.Host{statusHost(1, true)},
+			[]models.LocalForward{storedLocalForward(1, 1, 15432)})
+		h := NewHandler(db, &wakeRecorder{tx: &txConnPool{}}, zap.NewNop(), newTestCipher(t))
+
+		update := func(body string) *httptest.ResponseRecorder {
+			c, rec := localForwardRowRequest(t, http.MethodPut, "/api/host/1/local-forward/1", body, "1", "1")
+
+			err := h.UpdateLocalForward(c)
+			if err != nil {
+				t.Fatalf("UpdateLocalForward returned error: %v", err)
+			}
+
+			return rec
+		}
+
+		readRenamedRefusal(t, update(`{"target_ip":"192.0.2.10",`+port+`}`), "target_ip", "target_address")
+		readRenamedRefusal(t, update(`{"target_ip":"192.0.2.10","target_address":"192.0.2.11",`+port+`}`),
+			"target_ip", "target_address")
+
+		rows := storedLocalForwards(t, db)
+		if len(rows) != 1 || rows[0].TargetAddress != "127.0.0.1" {
+			t.Fatalf("stored = %+v after two refused updates, want the target unchanged", rows)
+		}
+
+		rec := update(`{"target_address":"192.0.2.11",` + port + `}`)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("status = %d, want %d, body: %s", rec.Code, http.StatusOK, rec.Body.String())
+		}
+
+		rows = storedLocalForwards(t, db)
+		if len(rows) != 1 || rows[0].TargetAddress != "192.0.2.11" {
+			t.Fatalf("stored = %+v, want the 192.0.2.11 the update sent", rows)
+		}
+	})
 }

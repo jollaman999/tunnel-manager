@@ -491,7 +491,7 @@
                         }
                     },
                     "400": {
-                        "description": "The body is refused, the private key cannot be read, or the SOCKS5 proxy is switched on without a port or with allowed sources that do not read",
+                        "description": "The body is refused, carries the old name ip in place of address, the private key cannot be read, or the SOCKS5 proxy is switched on without a port or with allowed sources that do not read",
                         "schema": {
                             "$ref": "#/definitions/api.errorBody"
                         }
@@ -740,7 +740,7 @@
                         }
                     },
                     "400": {
-                        "description": "The body is refused",
+                        "description": "The body is refused, or carries the old name ip in place of address",
                         "schema": {
                             "$ref": "#/definitions/api.errorBody"
                         }
@@ -1026,7 +1026,7 @@
                         }
                     },
                     "400": {
-                        "description": "The body is refused, or allowed_sources is not a list of addresses and CIDR blocks",
+                        "description": "The body is refused, carries the old name target_ip in place of target_address, or allowed_sources is not a list of addresses and CIDR blocks",
                         "schema": {
                             "$ref": "#/definitions/api.errorBody"
                         }
@@ -1161,7 +1161,7 @@
                         }
                     },
                     "400": {
-                        "description": "The body is refused, or allowed_sources is not a list of addresses and CIDR blocks",
+                        "description": "The body is refused, carries the old name target_ip in place of target_address, or allowed_sources is not a list of addresses and CIDR blocks",
                         "schema": {
                             "$ref": "#/definitions/api.errorBody"
                         }
@@ -1960,7 +1960,7 @@
                         }
                     },
                     "400": {
-                        "description": "The body is refused, or the local port is already taken",
+                        "description": "The body is refused, carries the old name service_ip in place of service_address, or the local port is already taken",
                         "schema": {
                             "$ref": "#/definitions/api.errorBody"
                         }
@@ -2068,7 +2068,7 @@
                         }
                     },
                     "400": {
-                        "description": "The body is refused, or the local port is already taken",
+                        "description": "The body is refused, carries the old name service_ip in place of service_address, or the local port is already taken",
                         "schema": {
                             "$ref": "#/definitions/api.errorBody"
                         }
@@ -3067,6 +3067,7 @@
                 "unspecified",
                 "request.body.invalid",
                 "request.validation.failed",
+                "request.field_renamed",
                 "db.transaction.begin_failed",
                 "db.transaction.commit_failed",
                 "list.page.not_a_number",
@@ -3257,6 +3258,7 @@
                 "errorCodeUnspecified",
                 "errRequestBodyInvalid",
                 "errRequestValidationFailed",
+                "errRequestFieldRenamed",
                 "errTransactionBeginFailed",
                 "errTransactionCommitFailed",
                 "errListPageNotANumber",

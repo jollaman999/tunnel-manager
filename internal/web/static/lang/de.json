@@ -275,6 +275,7 @@
   "error.logs.lines.not_a_number.error": "lines muss eine ganze Zahl sein",
   "error.request.body.invalid.error": "Ungültiger Anfragerumpf: {reason}",
   "error.request.validation.failed.error": "Die Prüfung ist fehlgeschlagen: {reason}",
+  "error.request.field_renamed.error": "Das Feld {old} wurde in {new} umbenannt. Senden Sie stattdessen {new}",
   "error.service_port.create.hosts_read_failed.error": "Der Service-Port wurde nicht angelegt: Die Hosts konnten nicht gelesen werden",
   "error.service_port.create.hosts_store_failed.error": "Der Service-Port wurde nicht angelegt: Die Hosts, denen er zugewiesen ist, konnten nicht gespeichert werden",
   "error.service_port.create_failed.error": "Der Service-Port konnte nicht angelegt werden",

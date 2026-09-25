@@ -275,6 +275,7 @@
   "error.logs.lines.not_a_number.error": "lines doit être un nombre entier",
   "error.request.body.invalid.error": "Corps de requête invalide : {reason}",
   "error.request.validation.failed.error": "La validation a échoué : {reason}",
+  "error.request.field_renamed.error": "Le champ {old} a été renommé en {new}. Envoyez {new} à la place",
   "error.service_port.create.hosts_read_failed.error": "Le port de service n'a pas été créé : la lecture des Hosts a échoué",
   "error.service_port.create.hosts_store_failed.error": "Le port de service n'a pas été créé : l'enregistrement des Hosts auxquels il est attribué a échoué",
   "error.service_port.create_failed.error": "La création du port de service a échoué",

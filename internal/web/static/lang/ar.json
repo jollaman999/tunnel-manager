@@ -275,6 +275,7 @@
   "error.logs.lines.not_a_number.error": "يجب أن تكون قيمة lines عددًا صحيحًا",
   "error.request.body.invalid.error": "جسم الطلب غير صالح: {reason}",
   "error.request.validation.failed.error": "فشل التحقق: {reason}",
+  "error.request.field_renamed.error": "أُعيدت تسمية الحقل {old} إلى {new}. أرسل {new} بدلًا منه",
   "error.service_port.create.hosts_read_failed.error": "لم يُنشأ منفذ الخدمة: تعذّرت قراءة الـ Hosts",
   "error.service_port.create.hosts_store_failed.error": "لم يُنشأ منفذ الخدمة: تعذّر حفظ الـ Hosts المُسند إليها",
   "error.service_port.create_failed.error": "تعذّر إنشاء منفذ الخدمة",

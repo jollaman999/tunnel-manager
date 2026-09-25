@@ -2482,13 +2482,13 @@ func TestTheBindScopeOfANewServicePortIsCarriedOntoItsAssignments(t *testing.T) 
 
 // TestAHostIsNamedByAddressAndNotByTheOldName is the rename on the API. A Host
 // and a service port are registered by a host name as well as by an address,
-// under the new field names, and a request that carries only the old name is
-// one that names no address at all.
+// under the new field names, and a request that carries the old name is told
+// the name to send instead.
 func TestAHostIsNamedByAddressAndNotByTheOldName(t *testing.T) {
 	f := newHostFixture(t)
 
 	rec := f.createHost(t, `{"ip":"192.0.2.10","port":22,"user":"operator","password":"a password"}`)
-	if rec.Code != http.StatusBadRequest || errorCodeOf(t, rec) != errRequestValidationFailed {
+	if rec.Code != http.StatusBadRequest || errorCodeOf(t, rec) != errRequestFieldRenamed {
 		t.Fatalf("a Host named by ip was answered %d: %s", rec.Code, rec.Body.String())
 	}
 	if !strings.Contains(strings.ToLower(rec.Body.String()), "address") {
@@ -2496,7 +2496,7 @@ func TestAHostIsNamedByAddressAndNotByTheOldName(t *testing.T) {
 	}
 
 	rec = f.createServicePort(t, `{"service_ip":"192.0.2.20","service_port":80,"local_port":18080}`)
-	if rec.Code != http.StatusBadRequest || errorCodeOf(t, rec) != errRequestValidationFailed {
+	if rec.Code != http.StatusBadRequest || errorCodeOf(t, rec) != errRequestFieldRenamed {
 		t.Fatalf("a service port named by service_ip was answered %d: %s", rec.Code, rec.Body.String())
 	}
 
@@ -4914,4 +4914,191 @@ func TestARegisteredHostTakesTheNumberThatWasGivenUp(t *testing.T) {
 	if resp.Data.ID != 2 {
 		t.Errorf("the answer says the Host is numbered %d, want 2", resp.Data.ID)
 	}
+}
+
+// readRenamedRefusal reads a refusal and holds it to the one an old field name
+// is answered with: request.field_renamed, naming the name that was sent and
+// the one to send instead.
+func readRenamedRefusal(t *testing.T, rec *httptest.ResponseRecorder, old, current string) {
+	t.Helper()
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want %d, body: %s", rec.Code, http.StatusBadRequest, rec.Body.String())
+	}
+
+	var body errorBody
+
+	err := json.Unmarshal(rec.Body.Bytes(), &body)
+	if err != nil {
+		t.Fatalf("failed to read the answer: %v, body: %s", err, rec.Body.String())
+	}
+
+	if body.Code != errRequestFieldRenamed {
+		t.Fatalf("error_code = %q, want %q, body: %s", body.Code, errRequestFieldRenamed, rec.Body.String())
+	}
+	if body.Args["old"] != old || body.Args["new"] != current {
+		t.Errorf("error_args = %v, want old %q and new %q", body.Args, old, current)
+	}
+	if !strings.Contains(body.Error, current) {
+		t.Errorf("the refusal %q does not name %s", body.Error, current)
+	}
+}
+
+// TestHostAndServicePortRequestsRefuseTheOldFieldNames holds the four writes
+// of a Host and a service port to the names the fields were renamed to. An
+// update that carried the old name used to answer 200 and change nothing, and a
+// create was refused for the new field being missing, which did not say why.
+// A body with both names is refused too: the old one is never read, and a
+// client that still sends it is one to tell.
+func TestHostAndServicePortRequestsRefuseTheOldFieldNames(t *testing.T) {
+	const login = `"port":22,"user":"operator","password":"the password of the test"`
+	const service = `"service_port":9090,"local_port":19090`
+
+	t.Run("create a Host", func(t *testing.T) {
+		f := newHostFixture(t)
+
+		readRenamedRefusal(t, f.createHost(t, `{"ip":"192.0.2.10",`+login+`}`), "ip", "address")
+		readRenamedRefusal(t, f.createHost(t, `{"IP":"192.0.2.10",`+login+`}`), "IP", "address")
+		readRenamedRefusal(t, f.createHost(t, `{"ip":"192.0.2.10","address":"192.0.2.10",`+login+`}`),
+			"ip", "address")
+
+		if f.hostCount(t) != 0 {
+			t.Fatal("a Host was stored although the request was refused")
+		}
+
+		rec := f.createHost(t, `{"address":"192.0.2.10",`+login+`}`)
+		if rec.Code != http.StatusCreated {
+			t.Fatalf("status = %d, want %d, body: %s", rec.Code, http.StatusCreated, rec.Body.String())
+		}
+	})
+
+	t.Run("update a Host", func(t *testing.T) {
+		f := newHostFixture(t)
+
+		rec := f.createHost(t, `{"address":"192.0.2.10",`+login+`}`)
+		if rec.Code != http.StatusCreated {
+			t.Fatalf("the Host was not created: %s", rec.Body.String())
+		}
+
+		readRenamedRefusal(t, f.updateHost(t, "1", `{"ip":"192.0.2.11"}`), "ip", "address")
+		readRenamedRefusal(t, f.updateHost(t, "1", `{"ip":"192.0.2.11","address":"192.0.2.12"}`), "ip", "address")
+
+		if got := f.storedHostRow(t, 1).Address; got != "192.0.2.10" {
+			t.Fatalf("the address is %q after two refused updates, want it unchanged", got)
+		}
+
+		// A body that is not an object is left for Bind, which says what is
+		// wrong with it.
+		rec = f.updateHost(t, "1", `"ip"`)
+		if code := readRefusalCode(t, rec); code != string(errRequestBodyInvalid) {
+			t.Fatalf("error_code = %q, want %q, body: %s", code, errRequestBodyInvalid, rec.Body.String())
+		}
+
+		// The media type is read the way Bind reads it. Parameters after ';'
+		// still make it JSON, and a type that only starts with application/json
+		// is not JSON, so Bind refuses it as unsupported whatever it carries.
+		withType := func(contentType string) *httptest.ResponseRecorder {
+			req := httptest.NewRequest(http.MethodPut, "/api/host/1", strings.NewReader(`{"ip":"192.0.2.11"}`))
+			req.Header.Set(echo.HeaderContentType, contentType)
+			rec := httptest.NewRecorder()
+			c := f.e.NewContext(req, rec)
+			c.SetParamNames("id")
+			c.SetParamValues("1")
+
+			err := f.h.UpdateHost(c)
+			if err != nil {
+				t.Fatalf("UpdateHost returned an error: %v", err)
+			}
+
+			return rec
+		}
+
+		readRenamedRefusal(t, withType("application/json; charset=utf-8"), "ip", "address")
+
+		for _, contentType := range []string{"application/json-patch+json", "application/jsonl"} {
+			rec = withType(contentType)
+			if rec.Code != http.StatusBadRequest {
+				t.Fatalf("%s: status = %d, want %d, body: %s", contentType, rec.Code, http.StatusBadRequest,
+					rec.Body.String())
+			}
+			if code := readRefusalCode(t, rec); code != string(errRequestBodyInvalid) {
+				t.Fatalf("%s: error_code = %q, want %q, body: %s", contentType, code, errRequestBodyInvalid,
+					rec.Body.String())
+			}
+		}
+
+		rec = f.updateHost(t, "1", `{"address":"192.0.2.12"}`)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("status = %d, want %d, body: %s", rec.Code, http.StatusOK, rec.Body.String())
+		}
+
+		if got := f.storedHostRow(t, 1).Address; got != "192.0.2.12" {
+			t.Fatalf("the address is %q, want the 192.0.2.12 the update sent", got)
+		}
+	})
+
+	t.Run("create a service port", func(t *testing.T) {
+		f := newHostFixture(t)
+
+		readRenamedRefusal(t, f.createServicePort(t, `{"service_ip":"198.51.100.20",`+service+`}`),
+			"service_ip", "service_address")
+		readRenamedRefusal(t, f.createServicePort(t,
+			`{"service_ip":"198.51.100.20","service_address":"198.51.100.20",`+service+`}`),
+			"service_ip", "service_address")
+
+		var count int64
+
+		err := f.db.Model(&models.ServicePort{}).Count(&count).Error
+		if err != nil {
+			t.Fatalf("failed to count the service ports: %v", err)
+		}
+		if count != 0 {
+			t.Fatalf("%d service ports were stored although every request was refused", count)
+		}
+
+		rec := f.createServicePort(t, `{"service_address":"198.51.100.20",`+service+`}`)
+		if rec.Code != http.StatusCreated {
+			t.Fatalf("status = %d, want %d, body: %s", rec.Code, http.StatusCreated, rec.Body.String())
+		}
+	})
+
+	t.Run("update a service port", func(t *testing.T) {
+		f := newHostFixture(t)
+
+		rec := f.createServicePort(t, `{"service_address":"198.51.100.20",`+service+`}`)
+		if rec.Code != http.StatusCreated {
+			t.Fatalf("the service port was not created: %s", rec.Body.String())
+		}
+
+		update := func(body string) *httptest.ResponseRecorder {
+			return f.call(t, http.MethodPut, "/api/service-port/1", body, "id", "1", f.h.UpdateServicePort)
+		}
+
+		readRenamedRefusal(t, update(`{"service_ip":"198.51.100.21",`+service+`}`), "service_ip", "service_address")
+		readRenamedRefusal(t, update(`{"service_ip":"198.51.100.21","service_address":"198.51.100.22",`+service+`}`),
+			"service_ip", "service_address")
+
+		var stored models.ServicePort
+
+		err := f.db.First(&stored, 1).Error
+		if err != nil {
+			t.Fatalf("failed to read the service port: %v", err)
+		}
+		if stored.ServiceAddress != "198.51.100.20" {
+			t.Fatalf("the service address is %q after two refused updates, want it unchanged", stored.ServiceAddress)
+		}
+
+		rec = update(`{"service_address":"198.51.100.22",` + service + `}`)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("status = %d, want %d, body: %s", rec.Code, http.StatusOK, rec.Body.String())
+		}
+
+		err = f.db.First(&stored, 1).Error
+		if err != nil {
+			t.Fatalf("failed to read the service port: %v", err)
+		}
+		if stored.ServiceAddress != "198.51.100.22" {
+			t.Fatalf("the service address is %q, want the 198.51.100.22 the update sent", stored.ServiceAddress)
+		}
+	})
 }

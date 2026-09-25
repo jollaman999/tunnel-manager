@@ -275,6 +275,7 @@
   "error.logs.lines.not_a_number.error": "lines phải là một số nguyên",
   "error.request.body.invalid.error": "Nội dung yêu cầu không hợp lệ: {reason}",
   "error.request.validation.failed.error": "Kiểm tra hợp lệ không đạt: {reason}",
+  "error.request.field_renamed.error": "Trường {old} đã được đổi tên thành {new}. Hãy gửi {new} thay thế",
   "error.service_port.create.hosts_read_failed.error": "Không tạo cổng dịch vụ: không đọc được danh sách Host",
   "error.service_port.create.hosts_store_failed.error": "Không tạo cổng dịch vụ: không lưu được các Host được gán cổng này",
   "error.service_port.create_failed.error": "Không tạo được cổng dịch vụ",

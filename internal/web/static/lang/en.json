@@ -275,6 +275,7 @@
   "error.logs.lines.not_a_number.error": "lines has to be a whole number",
   "error.request.body.invalid.error": "Invalid request body: {reason}",
   "error.request.validation.failed.error": "Validation failed: {reason}",
+  "error.request.field_renamed.error": "The field {old} was renamed to {new}. Send {new} instead",
   "error.service_port.create.hosts_read_failed.error": "The service port was not created: failed to read the Hosts",
   "error.service_port.create.hosts_store_failed.error": "The service port was not created: failed to store the Hosts that carry it",
   "error.service_port.create_failed.error": "Failed to create service port",

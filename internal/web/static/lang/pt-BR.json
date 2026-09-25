@@ -275,6 +275,7 @@
   "error.logs.lines.not_a_number.error": "lines deve ser um número inteiro",
   "error.request.body.invalid.error": "Corpo da requisição inválido: {reason}",
   "error.request.validation.failed.error": "A validação falhou: {reason}",
+  "error.request.field_renamed.error": "O campo {old} foi renomeado para {new}. Envie {new} no lugar dele",
   "error.service_port.create.hosts_read_failed.error": "A porta de serviço não foi criada: falha ao ler os Hosts",
   "error.service_port.create.hosts_store_failed.error": "A porta de serviço não foi criada: falha ao salvar os Hosts aos quais ela está atribuída",
   "error.service_port.create_failed.error": "Falha ao criar a porta de serviço",

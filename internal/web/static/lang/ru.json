@@ -275,6 +275,7 @@
   "error.logs.lines.not_a_number.error": "lines должен быть целым числом",
   "error.request.body.invalid.error": "Неверное тело запроса: {reason}",
   "error.request.validation.failed.error": "Проверка не пройдена: {reason}",
+  "error.request.field_renamed.error": "Поле {old} переименовано в {new}. Отправляйте {new}",
   "error.service_port.create.hosts_read_failed.error": "Сервисный порт не создан: не удалось прочитать список Host",
   "error.service_port.create.hosts_store_failed.error": "Сервисный порт не создан: не удалось сохранить Host, к которым он привязан",
   "error.service_port.create_failed.error": "Не удалось создать сервисный порт",

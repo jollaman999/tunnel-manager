@@ -275,6 +275,7 @@
   "error.logs.lines.not_a_number.error": "lines पूरी संख्या होनी चाहिए",
   "error.request.body.invalid.error": "अनुरोध का बॉडी गलत है: {reason}",
   "error.request.validation.failed.error": "जाँच में गड़बड़ी मिली: {reason}",
+  "error.request.field_renamed.error": "फ़ील्ड {old} का नाम बदलकर {new} कर दिया गया है। इसकी जगह {new} भेजें",
   "error.service_port.create.hosts_read_failed.error": "सर्विस पोर्ट नहीं बनाया गया: Host पढ़े नहीं जा सके",
   "error.service_port.create.hosts_store_failed.error": "सर्विस पोर्ट नहीं बनाया गया: जिन Host को यह असाइन है वे सेव नहीं किए जा सके",
   "error.service_port.create_failed.error": "सर्विस पोर्ट बनाया नहीं जा सका",

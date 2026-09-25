@@ -275,6 +275,7 @@
   "error.logs.lines.not_a_number.error": "lines 必须是整数",
   "error.request.body.invalid.error": "请求体无效：{reason}",
   "error.request.validation.failed.error": "校验失败：{reason}",
+  "error.request.field_renamed.error": "字段 {old} 已改名为 {new}。请改用 {new} 发送",
   "error.service_port.create.hosts_read_failed.error": "服务端口未创建：读取 Host 失败",
   "error.service_port.create.hosts_store_failed.error": "服务端口未创建：保存负责它的 Host 失败",
   "error.service_port.create_failed.error": "创建服务端口失败",

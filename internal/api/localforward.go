@@ -442,7 +442,7 @@ func (h *Handler) ListHostLocalForwards(c echo.Context) error {
 // @Param   id    path  int  true  "The id of the Host"
 // @Param   body  body  models.LocalForwardRequest  true  "The local forward to add"
 // @Success  201  {object}  models.Response{data=api.localForwardView}
-// @Failure  400  {object}  api.errorBody  "The body is refused, or allowed_sources is not a list of addresses and CIDR blocks"
+// @Failure  400  {object}  api.errorBody  "The body is refused, carries the old name target_ip in place of target_address, or allowed_sources is not a list of addresses and CIDR blocks"
 // @Failure  404  {object}  api.errorBody  "No such Host"
 // @Failure  409  {object}  api.errorBody  "local_port is taken by another local forward or a SOCKS5 proxy, or is the port of this server"
 // @Router       /host/{id}/local-forward [post]
@@ -450,6 +450,11 @@ func (h *Handler) CreateHostLocalForward(c echo.Context) error {
 	id, err := strconv.ParseUint(c.Param("id"), 10, 32)
 	if err != nil {
 		return failure(c, http.StatusBadRequest, errHostIDInvalid, errorArgs{"reason": err.Error()})
+	}
+
+	refusedField := renamedFieldRefused(c, "target_ip", "target_address")
+	if refusedField != nil {
+		return refusedField.answer(c)
 	}
 
 	var req models.LocalForwardRequest
@@ -609,7 +614,7 @@ func (h *Handler) GetLocalForward(c echo.Context) error {
 // @Param   number  path  int  true  "The number of the local forward on that Host"
 // @Param   body  body  models.LocalForwardRequest  true  "The local forward as it should stand"
 // @Success  200  {object}  models.Response{data=api.localForwardView}
-// @Failure  400  {object}  api.errorBody  "The body is refused, or allowed_sources is not a list of addresses and CIDR blocks"
+// @Failure  400  {object}  api.errorBody  "The body is refused, carries the old name target_ip in place of target_address, or allowed_sources is not a list of addresses and CIDR blocks"
 // @Failure  404  {object}  api.errorBody  "The Host carries no forward with that number"
 // @Failure  409  {object}  api.errorBody  "local_port is taken by another local forward or a SOCKS5 proxy, or is the port of this server"
 // @Router       /host/{id}/local-forward/{number} [put]
@@ -617,6 +622,11 @@ func (h *Handler) UpdateLocalForward(c echo.Context) error {
 	hostID, number, refusedPath := localForwardPath(c)
 	if refusedPath != nil {
 		return refusedPath.answer(c)
+	}
+
+	refusedField := renamedFieldRefused(c, "target_ip", "target_address")
+	if refusedField != nil {
+		return refusedField.answer(c)
 	}
 
 	var req models.LocalForwardRequest

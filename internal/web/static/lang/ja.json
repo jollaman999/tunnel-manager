@@ -275,6 +275,7 @@
   "error.logs.lines.not_a_number.error": "lines は整数にしてください",
   "error.request.body.invalid.error": "リクエストの中身が正しくありません: {reason}",
   "error.request.validation.failed.error": "入力の検査に通りませんでした: {reason}",
+  "error.request.field_renamed.error": "フィールド {old} は {new} に名前が変わりました。{new} で送ってください",
   "error.service_port.create.hosts_read_failed.error": "サービスポートは作られませんでした。Host を読めませんでした",
   "error.service_port.create.hosts_store_failed.error": "サービスポートは作られませんでした。これを担当する Host を保存できませんでした",
   "error.service_port.create_failed.error": "サービスポートを作成できませんでした",

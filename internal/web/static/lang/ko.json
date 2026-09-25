@@ -275,6 +275,7 @@
   "error.logs.lines.not_a_number.error": "lines 는 정수여야 합니다",
   "error.request.body.invalid.error": "요청 본문이 잘못됐습니다: {reason}",
   "error.request.validation.failed.error": "검사를 통과하지 못했습니다: {reason}",
+  "error.request.field_renamed.error": "{old} 필드는 {new}(으)로 이름이 바뀌었습니다. {new}(으)로 보내세요",
   "error.service_port.create.hosts_read_failed.error": "서비스 포트를 만들지 않았습니다. Host 를 읽지 못했습니다",
   "error.service_port.create.hosts_store_failed.error": "서비스 포트를 만들지 않았습니다. 이것을 담당할 Host 를 저장하지 못했습니다",
   "error.service_port.create_failed.error": "서비스 포트를 만들지 못했습니다",

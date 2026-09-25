@@ -1,7 +1,10 @@
 package api
 
 import (
+	"bytes"
+	"encoding/json"
 	"errors"
+	"io"
 	"net/http"
 	"sort"
 	"strconv"
@@ -286,6 +289,59 @@ func wantsAssignments(asked *bool) bool {
 	return *asked
 }
 
+// renamedFieldRefused refuses a JSON body that still carries a field under the
+// name it had before it was renamed. The request struct no longer has a field
+// under the old name, so the decoder drops it without a word: a create is then
+// refused for the new field being missing, which does not say why, and an
+// update answers 200 having changed nothing the client asked it to change.
+//
+// A body that carries both names is refused as well. The old one is there
+// because the client was written against the old API, and the rule stays the
+// one it is: the old name is never read, so a request that sends it is told.
+//
+// The body is read once and put back, so that the Bind after it reads the same
+// bytes. Only a JSON body is looked at, which is the only kind the struct is
+// decoded from by name; one that is not an object is left for Bind to refuse.
+// A body is JSON by the rule Bind reads the media type with: the part before
+// any ';', trimmed, and exactly application/json. A type that only starts with
+// it, such as application/json-patch+json, is one Bind refuses as unsupported,
+// and it is left to do so.
+// Keys are matched without regard to case, because that is how encoding/json
+// matched them to the old field.
+func renamedFieldRefused(c echo.Context, old string, current string) *refusal {
+	request := c.Request()
+	if request.Body == nil || request.ContentLength == 0 {
+		return nil
+	}
+
+	base, _, _ := strings.Cut(request.Header.Get(echo.HeaderContentType), ";")
+	if strings.TrimSpace(base) != echo.MIMEApplicationJSON {
+		return nil
+	}
+
+	body, err := io.ReadAll(request.Body)
+	if err != nil {
+		return refuse(http.StatusBadRequest, errRequestBodyInvalid, errorArgs{"reason": err.Error()})
+	}
+
+	request.Body = io.NopCloser(bytes.NewReader(body))
+
+	var fields map[string]json.RawMessage
+
+	err = json.Unmarshal(body, &fields)
+	if err != nil {
+		return nil
+	}
+
+	for key := range fields {
+		if strings.EqualFold(key, old) {
+			return refuse(http.StatusBadRequest, errRequestFieldRenamed, errorArgs{"old": key, "new": current})
+		}
+	}
+
+	return nil
+}
+
 // nextHostID is the number the next Host is registered under.
 //
 // It is one past the largest in use, which is what the column would hand out if
@@ -331,10 +387,15 @@ func nextHostID(tx *gorm.DB) (uint, error) {
 // @Security  CSRFToken
 // @Param   body  body  models.CreateHostRequest  true  "The Host to register"
 // @Success  200  {object}  models.Response{data=api.hostView}
-// @Failure  400  {object}  api.errorBody  "The body is refused, the private key cannot be read, or the SOCKS5 proxy is switched on without a port or with allowed sources that do not read"
+// @Failure  400  {object}  api.errorBody  "The body is refused, carries the old name ip in place of address, the private key cannot be read, or the SOCKS5 proxy is switched on without a port or with allowed sources that do not read"
 // @Failure  409  {object}  api.errorBody  "socks_port is the port of this server, of the SOCKS5 proxy of another Host or of a local forward"
 // @Router       /host [post]
 func (h *Handler) CreateHost(c echo.Context) error {
+	refusedField := renamedFieldRefused(c, "ip", "address")
+	if refusedField != nil {
+		return refusedField.answer(c)
+	}
+
 	var req models.CreateHostRequest
 	err := c.Bind(&req)
 	if err != nil {
@@ -616,7 +677,7 @@ func (h *Handler) GetHost(c echo.Context) error {
 // @Param   id    path  int  true  "The id of the Host"
 // @Param   body  body  models.UpdateHostRequest  true  "The fields to change"
 // @Success  200  {object}  models.Response{data=api.hostView}
-// @Failure  400  {object}  api.errorBody  "The body is refused"
+// @Failure  400  {object}  api.errorBody  "The body is refused, or carries the old name ip in place of address"
 // @Failure  404  {object}  api.errorBody  "No such Host"
 // @Failure  409  {object}  api.errorBody  "The SOCKS5 proxy is switched on or moved to the port of this server, of the SOCKS5 proxy of another Host or of a local forward"
 // @Router       /host/{id} [put]
@@ -624,6 +685,11 @@ func (h *Handler) UpdateHost(c echo.Context) error {
 	id, err := strconv.ParseUint(c.Param("id"), 10, 32)
 	if err != nil {
 		return failure(c, http.StatusBadRequest, errHostIDInvalid, errorArgs{"reason": err.Error()})
+	}
+
+	refusedField := renamedFieldRefused(c, "ip", "address")
+	if refusedField != nil {
+		return refusedField.answer(c)
 	}
 
 	var req models.UpdateHostRequest
@@ -871,9 +937,14 @@ func (h *Handler) DeleteHost(c echo.Context) error {
 // @Security  CSRFToken
 // @Param   body  body  models.CreateServicePortRequest  true  "The service port to register"
 // @Success  200  {object}  models.Response{data=models.ServicePort}
-// @Failure  400  {object}  api.errorBody  "The body is refused, or the local port is already taken"
+// @Failure  400  {object}  api.errorBody  "The body is refused, carries the old name service_ip in place of service_address, or the local port is already taken"
 // @Router       /service-port [post]
 func (h *Handler) CreateServicePort(c echo.Context) error {
+	refusedField := renamedFieldRefused(c, "service_ip", "service_address")
+	if refusedField != nil {
+		return refusedField.answer(c)
+	}
+
 	var req models.CreateServicePortRequest
 	err := c.Bind(&req)
 	if err != nil {
@@ -1048,13 +1119,18 @@ func (h *Handler) GetServicePort(c echo.Context) error {
 // @Param   id    path  int  true  "The id of the service port"
 // @Param   body  body  models.CreateServicePortRequest  true  "The service port as it should stand"
 // @Success  200  {object}  models.Response{data=models.ServicePort}
-// @Failure  400  {object}  api.errorBody  "The body is refused, or the local port is already taken"
+// @Failure  400  {object}  api.errorBody  "The body is refused, carries the old name service_ip in place of service_address, or the local port is already taken"
 // @Failure  404  {object}  api.errorBody  "No such service port"
 // @Router       /service-port/{id} [put]
 func (h *Handler) UpdateServicePort(c echo.Context) error {
 	id, err := strconv.ParseUint(c.Param("id"), 10, 32)
 	if err != nil {
 		return failure(c, http.StatusBadRequest, errServicePortIDInvalid, errorArgs{"reason": err.Error()})
+	}
+
+	refusedField := renamedFieldRefused(c, "service_ip", "service_address")
+	if refusedField != nil {
+		return refusedField.answer(c)
 	}
 
 	// The body is read before the transaction is opened, because reading it
