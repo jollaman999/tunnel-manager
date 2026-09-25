@@ -327,7 +327,7 @@ func socksAddresses(host *models.Host) (listenV4, listenV6, server string) {
 
 	return net.JoinHostPort(bindV4, port),
 		net.JoinHostPort(bindV6, port),
-		net.JoinHostPort(host.IP, strconv.Itoa(host.Port))
+		net.JoinHostPort(host.Address, strconv.Itoa(host.Port))
 }
 
 // socksFingerprint is localForwardFingerprint for the proxy of a Host, with
@@ -834,7 +834,7 @@ func (m *Manager) reconcileSocks(desired map[uint]*models.Host, result *Reconcil
 					logid.TunnelStartFailed.Field(),
 					zap.Error(err),
 					zap.Uint("host_id", id),
-					zap.String("host_ip", host.IP),
+					zap.String("host_ip", host.Address),
 					zap.Int("socks_port", host.SocksPort))
 				result.Failed++
 				continue

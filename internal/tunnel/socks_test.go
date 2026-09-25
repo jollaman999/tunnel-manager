@@ -44,7 +44,7 @@ func newSocksFixture(t *testing.T, port int, allowed string) *socksFixture {
 
 	f := &socksFixture{server: server}
 	f.hosts = []models.Host{{
-		ID: 3, IP: serverHost, Port: sshPort, User: "tester", Password: "pass", // hook:allow
+		ID: 3, Address: serverHost, Port: sshPort, User: "tester", Password: "pass", // hook:allow
 		HostKey: MarshalHostKey(server.key), Enabled: true,
 		SocksEnabled: true, SocksPort: port, SocksBindScope: models.BindScopeLoopback,
 		SocksAllowedSources: allowed,

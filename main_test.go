@@ -43,9 +43,9 @@ func TestCheckStoredPasswordsReportsAWrongKeyWhenNoPasswordOpens(t *testing.T) {
 	inUse := newTestCipher(t)
 
 	hosts := []models.Host{
-		{ID: 1, IP: "192.0.2.1", Password: encryptedWith(t, stored, "test-password")},
-		{ID: 2, IP: "192.0.2.2", Password: encryptedWith(t, stored, "test-password-2")},
-		{ID: 3, IP: "192.0.2.3", Password: "plain"},
+		{ID: 1, Address: "192.0.2.1", Password: encryptedWith(t, stored, "test-password")},
+		{ID: 2, Address: "192.0.2.2", Password: encryptedWith(t, stored, "test-password-2")},
+		{ID: 3, Address: "192.0.2.3", Password: "plain"},
 	}
 
 	check := checkStoredPasswords(hosts, inUse)
@@ -72,8 +72,8 @@ func TestCheckStoredPasswordsAcceptsTheKeyWhenOnePasswordOpens(t *testing.T) {
 	other := newTestCipher(t)
 
 	hosts := []models.Host{
-		{ID: 1, IP: "192.0.2.1", Password: encryptedWith(t, inUse, "test-password")},
-		{ID: 2, IP: "192.0.2.2", Password: encryptedWith(t, other, "test-password-2")},
+		{ID: 1, Address: "192.0.2.1", Password: encryptedWith(t, inUse, "test-password")},
+		{ID: 2, Address: "192.0.2.2", Password: encryptedWith(t, other, "test-password-2")},
 	}
 
 	check := checkStoredPasswords(hosts, inUse)
@@ -100,8 +100,8 @@ func TestCheckStoredPasswordsHasNothingToCheckWithoutCipherText(t *testing.T) {
 	cases := map[string][]models.Host{
 		"no hosts at all": nil,
 		"every password stored before encryption": {
-			{ID: 1, IP: "192.0.2.1", Password: "test-password"},
-			{ID: 2, IP: "192.0.2.2", Password: "test-password-2"},
+			{ID: 1, Address: "192.0.2.1", Password: "test-password"},
+			{ID: 2, Address: "192.0.2.2", Password: "test-password-2"},
 		},
 	}
 
@@ -130,9 +130,9 @@ func TestCheckStoredPasswordsAcceptsTheKeyWhenNothingCarriesTheMarker(t *testing
 	// enough to hold a nonce and a tag, which is all an unmarked value needs to
 	// look encrypted, so Decrypt reports it as one that does not open.
 	hosts := []models.Host{
-		{ID: 1, IP: "192.0.2.1", Password: "test-password"},
-		{ID: 2, IP: "192.0.2.2", Password: "YWJjZGVmZ2hpamtsbW5vcHFyc3R1dnd4eXoxMjM0"},
-		{ID: 3, IP: "192.0.2.3", Password: "test-password-3"},
+		{ID: 1, Address: "192.0.2.1", Password: "test-password"},
+		{ID: 2, Address: "192.0.2.2", Password: "YWJjZGVmZ2hpamtsbW5vcHFyc3R1dnd4eXoxMjM0"},
+		{ID: 3, Address: "192.0.2.3", Password: "test-password-3"},
 	}
 
 	check := checkStoredPasswords(hosts, inUse)

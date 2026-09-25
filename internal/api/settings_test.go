@@ -979,8 +979,8 @@ func TestSaveRefusesAnAPIPortALocalForwardOpens(t *testing.T) {
 			errSettingsAPIPortLocalForward)
 	}
 
-	want := apiPortHolder{Number: 1, HostID: 1, HostIP: "192.0.2.1", LocalPort: 15432,
-		TargetIP: "127.0.0.1", TargetPort: 5432}
+	want := apiPortHolder{Number: 1, HostID: 1, HostAddress: "192.0.2.1", LocalPort: 15432,
+		TargetAddress: "127.0.0.1", TargetPort: 5432}
 	if answer.Data.LocalForward != want {
 		t.Errorf("local_forward = %+v, want %+v", answer.Data.LocalForward, want)
 	}

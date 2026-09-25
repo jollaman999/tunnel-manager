@@ -100,10 +100,10 @@ func runSearchCases(t *testing.T, db *gorm.DB, list func(*Handler) func(echo.Con
 // taken as written.
 func TestListHostsNarrowsTheRowsToASearch(t *testing.T) {
 	hosts := []models.Host{
-		{ID: 1, IP: "192.0.2.1", Port: 22, User: "root", Description: "Web Server", Enabled: true},
-		{ID: 2, IP: "192.0.2.2", Port: 2222, User: "deploy", Description: "50% of the load", Enabled: true},
-		{ID: 3, IP: "db.example.com", Port: 22, User: "root", Description: "db_1", Enabled: true},
-		{ID: 4, IP: "192.0.2.4", Port: 22, User: "root", Description: "500 of them, dbx1", Enabled: true},
+		{ID: 1, Address: "192.0.2.1", Port: 22, User: "root", Description: "Web Server", Enabled: true},
+		{ID: 2, Address: "192.0.2.2", Port: 2222, User: "deploy", Description: "50% of the load", Enabled: true},
+		{ID: 3, Address: "db.example.com", Port: 22, User: "root", Description: "db_1", Enabled: true},
+		{ID: 4, Address: "192.0.2.4", Port: 22, User: "root", Description: "500 of them, dbx1", Enabled: true},
 	}
 	db := newRowsDB(t, hosts, nil, nil)
 
@@ -140,7 +140,7 @@ func TestListHostsPagesTheRowsThatMatch(t *testing.T) {
 		}
 
 		hosts = append(hosts, models.Host{
-			ID: id, IP: fmt.Sprintf("192.0.2.%d", id), Port: 22, User: "root",
+			ID: id, Address: fmt.Sprintf("192.0.2.%d", id), Port: 22, User: "root",
 			Description: description, Enabled: true,
 		})
 	}
@@ -169,10 +169,10 @@ func TestListHostsPagesTheRowsThatMatch(t *testing.T) {
 // the service ports: what a search finds, and the page cut from what it found.
 func TestListServicePortsNarrowsTheRowsToASearch(t *testing.T) {
 	sps := []models.ServicePort{
-		{ID: 1, ServiceIP: "198.51.100.10", ServicePort: 8080, LocalPort: 18080, Description: "Admin UI"},
-		{ID: 2, ServiceIP: "198.51.100.11", ServicePort: 5432, LocalPort: 15432, Description: "100% of reads"},
-		{ID: 3, ServiceIP: "db.example.com", ServicePort: 3306, LocalPort: 13306, Description: "db_main"},
-		{ID: 4, ServiceIP: "198.51.100.12", ServicePort: 6379, LocalPort: 16379, Description: "1000 of dbxmain"},
+		{ID: 1, ServiceAddress: "198.51.100.10", ServicePort: 8080, LocalPort: 18080, Description: "Admin UI"},
+		{ID: 2, ServiceAddress: "198.51.100.11", ServicePort: 5432, LocalPort: 15432, Description: "100% of reads"},
+		{ID: 3, ServiceAddress: "db.example.com", ServicePort: 3306, LocalPort: 13306, Description: "db_main"},
+		{ID: 4, ServiceAddress: "198.51.100.12", ServicePort: 6379, LocalPort: 16379, Description: "1000 of dbxmain"},
 	}
 	db := newRowsDB(t, nil, sps, nil)
 
@@ -194,7 +194,7 @@ func TestListServicePortsNarrowsTheRowsToASearch(t *testing.T) {
 		}
 
 		many = append(many, models.ServicePort{
-			ID: id, ServiceIP: address, ServicePort: 9000 + int(id), LocalPort: 19000 + int(id),
+			ID: id, ServiceAddress: address, ServicePort: 9000 + int(id), LocalPort: 19000 + int(id),
 		})
 	}
 
@@ -238,7 +238,7 @@ func searchStatusDB(t *testing.T) *gorm.DB {
 		statusLocalForward(3, 2, 19002, models.BindScopeWildcard, true),
 		statusLocalForward(4, 2, 19003, models.BindScopeWildcard, true),
 	}
-	forwards[3].TargetIP = "203.0.113.7"
+	forwards[3].TargetAddress = "203.0.113.7"
 
 	storeLocalForwards(t, db, forwards)
 

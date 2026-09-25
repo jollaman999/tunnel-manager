@@ -775,7 +775,7 @@ func newHostKeysDB(t *testing.T, hosts ...models.Host) *gorm.DB {
 func waitingHost(id uint, trusted, pending string) models.Host {
 	host := hostKeyHost(trusted, pending)
 	host.ID = id
-	host.IP = fmt.Sprintf("192.0.2.%d", id)
+	host.Address = fmt.Sprintf("192.0.2.%d", id)
 
 	return host
 }
@@ -1561,7 +1561,7 @@ func listHostKeysWaiting(t *testing.T, db *gorm.DB, query string) (*httptest.Res
 type listedHostKeys struct {
 	Items []struct {
 		HostID             uint   `json:"host_id"`
-		IP                 string `json:"ip"`
+		Address            string `json:"address"`
 		Mismatch           bool   `json:"mismatch"`
 		Fingerprint        string `json:"fingerprint"`
 		TrustedFingerprint string `json:"trusted_fingerprint"`
@@ -1655,8 +1655,8 @@ func TestTheHostKeysWaitingAreFilteredAndPagedByTheServer(t *testing.T) {
 					item.Fingerprint, waiting[item.HostID])
 			}
 
-			if item.IP != fmt.Sprintf("192.0.2.%d", item.HostID) {
-				t.Errorf("Host %d carries the address %q", item.HostID, item.IP)
+			if item.Address != fmt.Sprintf("192.0.2.%d", item.HostID) {
+				t.Errorf("Host %d carries the address %q", item.HostID, item.Address)
 			}
 
 			wantMismatch := trustedOn[item.HostID] != ""

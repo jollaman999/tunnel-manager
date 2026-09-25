@@ -16,13 +16,13 @@ import (
 // local port is unique over the table.
 func statusLocalForward(id, hostID uint, localPort int, scope string, enabled bool) models.LocalForward {
 	return models.LocalForward{
-		Number:     id,
-		HostID:     hostID,
-		BindScope:  scope,
-		LocalPort:  localPort,
-		TargetIP:   "198.51.100.20",
-		TargetPort: 3306,
-		Enabled:    enabled,
+		Number:        id,
+		HostID:        hostID,
+		BindScope:     scope,
+		LocalPort:     localPort,
+		TargetAddress: "198.51.100.20",
+		TargetPort:    3306,
+		Enabled:       enabled,
 	}
 }
 

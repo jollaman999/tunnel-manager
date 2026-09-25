@@ -58,7 +58,7 @@ func createHostBody(t *testing.T, ip string, socks map[string]interface{}) strin
 	t.Helper()
 
 	body := map[string]interface{}{
-		"ip":                       ip,
+		"address":                  ip,
 		"port":                     22,
 		"user":                     "root",
 		"password":                 socksLogin,
@@ -104,7 +104,7 @@ func storedHostByIP(t *testing.T, db *gorm.DB, ip string) (models.Host, bool) {
 
 	var host models.Host
 
-	err := db.Where("ip = ?", ip).Limit(1).Find(&host).Error
+	err := db.Where("address = ?", ip).Limit(1).Find(&host).Error
 	if err != nil {
 		t.Fatalf("failed to read the Host %s: %v", ip, err)
 	}
@@ -399,7 +399,7 @@ func TestALocalForwardOnTheSocksPortIsRefused(t *testing.T) {
 	h := NewHandler(db, &wakeRecorder{tx: &txConnPool{}}, zap.NewNop(), newTestCipher(t))
 
 	c, rec := localForwardRequest(t, http.MethodPost, "/api/host/1/local-forward",
-		`{"local_port":1080,"target_ip":"127.0.0.1","target_port":5432}`, "1")
+		`{"local_port":1080,"target_address":"127.0.0.1","target_port":5432}`, "1")
 
 	err := h.CreateHostLocalForward(c)
 	if err != nil {
@@ -421,7 +421,7 @@ func TestALocalForwardOnTheSocksPortIsRefused(t *testing.T) {
 	}
 
 	c, rec = localForwardRowRequest(t, http.MethodPut, "/api/host/1/local-forward/1",
-		`{"local_port":1080,"target_ip":"127.0.0.1","target_port":5432}`, "1", "1")
+		`{"local_port":1080,"target_address":"127.0.0.1","target_port":5432}`, "1", "1")
 
 	err = h.UpdateLocalForward(c)
 	if err != nil {
@@ -457,7 +457,7 @@ func TestSaveRefusesAnAPIPortASocksProxyOpens(t *testing.T) {
 		t.Errorf("error_code = %q, want %q", answer.Code, errSettingsAPIPortSocks)
 	}
 
-	want := apiPortSocksHolder{HostID: 1, HostIP: "192.0.2.1", SocksPort: 15432}
+	want := apiPortSocksHolder{HostID: 1, HostAddress: "192.0.2.1", SocksPort: 15432}
 	if answer.Data.SocksHost == nil || *answer.Data.SocksHost != want {
 		t.Errorf("socks_host = %+v, want %+v", answer.Data.SocksHost, want)
 	}
@@ -530,7 +530,7 @@ func withSocks(host hostContent, port int, scope string, sources string) hostCon
 func (i *transferInstall) setSocks(t *testing.T, hostIP string, port int, scope string, sources string) {
 	t.Helper()
 
-	err := i.db.Model(&models.Host{}).Where("ip = ?", hostIP).Updates(map[string]interface{}{
+	err := i.db.Model(&models.Host{}).Where("address = ?", hostIP).Updates(map[string]interface{}{
 		"socks_enabled":         true,
 		"socks_port":            port,
 		"socks_bind_scope":      scope,
@@ -548,14 +548,14 @@ func (i *transferInstall) proxies(t *testing.T) []string {
 
 	var hosts []models.Host
 
-	err := i.db.Order("ip").Find(&hosts).Error
+	err := i.db.Order("address").Find(&hosts).Error
 	if err != nil {
 		t.Fatalf("failed to read the Hosts: %v", err)
 	}
 
 	named := make([]string, 0, len(hosts))
 	for _, host := range hosts {
-		named = append(named, strings.Join([]string{host.IP, map[bool]string{true: "on", false: "off"}[host.SocksEnabled],
+		named = append(named, strings.Join([]string{host.Address, map[bool]string{true: "on", false: "off"}[host.SocksEnabled],
 			strconv.Itoa(host.SocksPort), host.SocksBindScope, host.SocksAllowedSources}, " "))
 	}
 
@@ -659,7 +659,7 @@ func TestASocksProxyTheInstallationCannotOpenIsRefused(t *testing.T) {
 		}, http.StatusConflict, errImportSocksLocalForward},
 		{"a local forward on the port of a proxy here", func() []hostContent {
 			host := passwordHost("192.0.2.10")
-			host.LocalForwards = []localForwardContent{{LocalPort: 1080, TargetIP: "192.0.2.30", TargetPort: 80}}
+			host.LocalForwards = []localForwardContent{{LocalPort: 1080, TargetAddress: "192.0.2.30", TargetPort: 80}}
 			return []hostContent{host}
 		}, http.StatusConflict, errImportLocalForwardSocks},
 		{"two proxies of the file on one port", func() []hostContent {
@@ -671,7 +671,7 @@ func TestASocksProxyTheInstallationCannotOpenIsRefused(t *testing.T) {
 		{"a proxy and a local forward of the file on one port", func() []hostContent {
 			host := withSocks(passwordHost("192.0.2.10"), 1090, "", "")
 			other := passwordHost("192.0.2.11")
-			other.LocalForwards = []localForwardContent{{LocalPort: 1090, TargetIP: "192.0.2.30", TargetPort: 80}}
+			other.LocalForwards = []localForwardContent{{LocalPort: 1090, TargetAddress: "192.0.2.30", TargetPort: 80}}
 			return []hostContent{host, other}
 		}, http.StatusBadRequest, errImportSocksDuplicate},
 		{"allowed sources that are not addresses", func() []hostContent {
@@ -698,7 +698,7 @@ func TestASocksProxyTheInstallationCannotOpenIsRefused(t *testing.T) {
 			target.registerHost(t, passwordHost("192.0.2.12"))
 			target.setSocks(t, "192.0.2.12", 1080, models.BindScopeWildcard, "")
 			target.forward(t, "192.0.2.12", localForwardContent{BindScope: models.BindScopeWildcard,
-				LocalPort: 15432, TargetIP: "192.0.2.40", TargetPort: 5432})
+				LocalPort: 15432, TargetAddress: "192.0.2.40", TargetPort: 5432})
 
 			before := target.proxies(t)
 
@@ -786,7 +786,7 @@ func TestImportedSettingsWithAnAPIPortASocksProxyOpensAreNotStored(t *testing.T)
 	if answer.Code != string(errImportSettingsAPIPortSocks) {
 		t.Errorf("error_code = %q, want %q", answer.Code, errImportSettingsAPIPortSocks)
 	}
-	if answer.Data.SocksHost == nil || answer.Data.SocksHost.HostIP != "192.0.2.10" ||
+	if answer.Data.SocksHost == nil || answer.Data.SocksHost.HostAddress != "192.0.2.10" ||
 		answer.Data.SocksHost.SocksPort != 15432 || answer.Data.SuggestedPort != 15433 {
 		t.Errorf("data = %+v, socks_host = %+v, want the proxy on 15432 and 15433 suggested", answer.Data,
 			answer.Data.SocksHost)

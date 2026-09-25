@@ -662,8 +662,8 @@ func TestResetNamesTheForwardOnTheDefaultAPIPort(t *testing.T) {
 	defaultPort := Defaults().APIPort
 
 	logs := resetWithForwards(t, []models.LocalForward{
-		{HostID: 3, Number: 1, LocalPort: 15432, TargetIP: "127.0.0.1", TargetPort: 5432},
-		{HostID: 7, Number: 1, LocalPort: defaultPort, TargetIP: "127.0.0.1", TargetPort: 80},
+		{HostID: 3, Number: 1, LocalPort: 15432, TargetAddress: "127.0.0.1", TargetPort: 5432},
+		{HostID: 7, Number: 1, LocalPort: defaultPort, TargetAddress: "127.0.0.1", TargetPort: 80},
 	})
 
 	entries := logs.All()
@@ -698,7 +698,7 @@ func TestResetNamesTheForwardOnTheDefaultAPIPort(t *testing.T) {
 // forward on any other port is not a reason for a line.
 func TestResetSaysNothingWhenNoForwardIsOnTheDefaultAPIPort(t *testing.T) {
 	logs := resetWithForwards(t, []models.LocalForward{
-		{HostID: 3, LocalPort: 15432, TargetIP: "127.0.0.1", TargetPort: 5432},
+		{HostID: 3, LocalPort: 15432, TargetAddress: "127.0.0.1", TargetPort: 5432},
 	})
 
 	if entries := logs.All(); len(entries) != 0 {
@@ -713,9 +713,9 @@ func TestResetNamesTheSocksProxyOnTheDefaultAPIPort(t *testing.T) {
 	defaultPort := Defaults().APIPort
 
 	logs := resetWithPorts(t, nil, []models.Host{
-		{ID: 4, IP: "192.0.2.4", Port: 22, User: "root", SocksEnabled: true, SocksPort: defaultPort},
-		{ID: 5, IP: "192.0.2.5", Port: 22, User: "root", SocksEnabled: false, SocksPort: defaultPort},
-		{ID: 6, IP: "192.0.2.6", Port: 22, User: "root", SocksEnabled: true, SocksPort: 1080},
+		{ID: 4, Address: "192.0.2.4", Port: 22, User: "root", SocksEnabled: true, SocksPort: defaultPort},
+		{ID: 5, Address: "192.0.2.5", Port: 22, User: "root", SocksEnabled: false, SocksPort: defaultPort},
+		{ID: 6, Address: "192.0.2.6", Port: 22, User: "root", SocksEnabled: true, SocksPort: 1080},
 	})
 
 	entries := logs.All()

@@ -297,7 +297,7 @@ func (m *Manager) Reconcile() (ReconcileResult, error) {
 				m.logger.Error("failed to start tunnel",
 					logid.TunnelStartFailed.Field(),
 					zap.Error(err),
-					zap.String("host_ip", want.host.IP),
+					zap.String("host_ip", want.host.Address),
 					zap.Int("service_port", want.sp.ServicePort))
 				result.Failed++
 				continue

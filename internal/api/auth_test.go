@@ -50,7 +50,7 @@ func newAccountStubDB(t *testing.T, user models.User) *gorm.DB {
 		case *models.User:
 			*dest = user
 		case *[]models.Host:
-			*dest = []models.Host{{ID: 1, IP: "192.0.2.1", Port: 22, User: "root", Enabled: true}}
+			*dest = []models.Host{{ID: 1, Address: "192.0.2.1", Port: 22, User: "root", Enabled: true}}
 		}
 		tx.RowsAffected = 1
 	})
@@ -1338,7 +1338,7 @@ func newSetupFixtureAt(t *testing.T, setupRequired bool, passwordFile string) *s
 			})
 			*dest = stub.account()
 		case *[]models.Host:
-			*dest = []models.Host{{ID: 1, IP: "192.0.2.1", Port: 22, User: "root", Enabled: true}}
+			*dest = []models.Host{{ID: 1, Address: "192.0.2.1", Port: 22, User: "root", Enabled: true}}
 		}
 		tx.RowsAffected = 1
 	})

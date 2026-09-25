@@ -13,10 +13,10 @@ import (
 // it. Whatever inserts a Host says what Enabled is, and what an absent field
 // means is decided where absence can be told from false.
 type Host struct {
-	ID   uint   `gorm:"primaryKey;autoIncrement" json:"id"`
-	IP   string `gorm:"uniqueIndex:idx_hosts_ip;not null" json:"ip"`
-	Port int    `gorm:"not null" json:"port"`
-	User string `gorm:"not null" json:"user"`
+	ID      uint   `gorm:"primaryKey;autoIncrement" json:"id"`
+	Address string `gorm:"uniqueIndex:idx_hosts_address;not null" json:"address"`
+	Port    int    `gorm:"not null" json:"port"`
+	User    string `gorm:"not null" json:"user"`
 	// Password carries no "not null" because a Host may be registered with a
 	// private key and no password at all. It used to be required, from when a
 	// password was the only way in, and a Host that has only a key would have
@@ -84,13 +84,13 @@ type Host struct {
 }
 
 type ServicePort struct {
-	ID          uint      `gorm:"primaryKey;autoIncrement" json:"id"`
-	ServiceIP   string    `gorm:"uniqueIndex:idx_service_ip_port;not null" json:"service_ip"`
-	ServicePort int       `gorm:"uniqueIndex:idx_service_ip_port;not null" json:"service_port"`
-	LocalPort   int       `gorm:"uniqueIndex:idx_service_local_port;not null" json:"local_port"`
-	Description string    `json:"description"`
-	CreatedAt   time.Time `json:"created_at"`
-	UpdatedAt   time.Time `json:"updated_at"`
+	ID             uint      `gorm:"primaryKey;autoIncrement" json:"id"`
+	ServiceAddress string    `gorm:"uniqueIndex:idx_service_address_port;not null" json:"service_address"`
+	ServicePort    int       `gorm:"uniqueIndex:idx_service_address_port;not null" json:"service_port"`
+	LocalPort      int       `gorm:"uniqueIndex:idx_service_local_port;not null" json:"local_port"`
+	Description    string    `json:"description"`
+	CreatedAt      time.Time `json:"created_at"`
+	UpdatedAt      time.Time `json:"updated_at"`
 }
 
 // BindScopeLoopback and BindScopeWildcard are the two answers an assignment
@@ -162,7 +162,7 @@ type HostServicePort struct {
 
 // LocalForward is one local forward carried by a Host: this machine opens
 // LocalPort and every connection to it is carried over the SSH connection of
-// the Host to TargetIP:TargetPort, as seen from the Host. It runs the other way
+// the Host to TargetAddress:TargetPort, as seen from the Host. It runs the other way
 // from a ServicePort, so it is a table of its own rather than a direction on
 // that one, where the local port and the service address would mean different
 // things from row to row.
@@ -184,11 +184,11 @@ type LocalForward struct {
 	// BindScope is where on this machine LocalPort is opened, with the words
 	// and the constraint HostServicePort.BindScope carries, and an empty value
 	// is the wildcard for the same reason.
-	BindScope   string `gorm:"check:chk_local_forwards_bind_scope,bind_scope IN ('','loopback','wildcard')" json:"bind_scope"`
-	LocalPort   int    `gorm:"uniqueIndex:idx_local_forwards_local_port;not null" json:"local_port"`
-	TargetIP    string `gorm:"not null" json:"target_ip"`
-	TargetPort  int    `gorm:"not null" json:"target_port"`
-	Description string `json:"description"`
+	BindScope     string `gorm:"check:chk_local_forwards_bind_scope,bind_scope IN ('','loopback','wildcard')" json:"bind_scope"`
+	LocalPort     int    `gorm:"uniqueIndex:idx_local_forwards_local_port;not null" json:"local_port"`
+	TargetAddress string `gorm:"not null" json:"target_address"`
+	TargetPort    int    `gorm:"not null" json:"target_port"`
+	Description   string `json:"description"`
 	// Enabled is whether this forward runs. One that is off opens no port and
 	// makes no SSH connection, and still holds LocalPort. It carries no
 	// database default for the reason Host.Enabled carries none.
@@ -308,7 +308,7 @@ type Tunnel struct {
 // and which of them is missing is decided in the handler rather than by a rule
 // on one field, so that the refusal can say what to do about it.
 type CreateHostRequest struct {
-	IP            string `json:"ip" validate:"required,ip"`
+	Address       string `json:"address" validate:"required,hostname_rfc1123|ip"`
 	Port          int    `json:"port" validate:"required,min=1,max=65535"`
 	User          string `json:"user" validate:"required"`
 	Password      string `json:"password" validate:"omitempty"`
@@ -358,7 +358,7 @@ type CreateHostRequest struct {
 // it is, the private key and its passphrase included: an empty box on the
 // screen keeps the key that is stored rather than taking it away.
 type UpdateHostRequest struct {
-	IP            string `json:"ip" validate:"omitempty,ip"`
+	Address       string `json:"address" validate:"omitempty,hostname_rfc1123|ip"`
 	Port          *int   `json:"port" validate:"omitempty,min=1,max=65535"`
 	User          string `json:"user" validate:"omitempty"`
 	Password      string `json:"password" validate:"omitempty"`
@@ -370,7 +370,7 @@ type UpdateHostRequest struct {
 	// request that leaves one out keeps what is stored and one that sends
 	// false, or an empty list, says so: an empty list of allowed sources lets
 	// every address in, and is a value a request has to be able to ask for.
-	// SocksBindScope left empty keeps the scope that is stored, the way IP and
+	// SocksBindScope left empty keeps the scope that is stored, the way Address and
 	// User do; the wildcard is asked for by its word.
 	SocksEnabled        *bool   `json:"socks_enabled"`
 	SocksPort           *int    `json:"socks_port" validate:"omitempty,min=1,max=65535"`
@@ -379,10 +379,10 @@ type UpdateHostRequest struct {
 }
 
 type CreateServicePortRequest struct {
-	ServiceIP   string `json:"service_ip" validate:"required,ip"`
-	ServicePort int    `json:"service_port" validate:"required,min=1,max=65535"`
-	LocalPort   int    `json:"local_port" validate:"required,min=1,max=65535"`
-	Description string `json:"description"`
+	ServiceAddress string `json:"service_address" validate:"required,hostname_rfc1123|ip"`
+	ServicePort    int    `json:"service_port" validate:"required,min=1,max=65535"`
+	LocalPort      int    `json:"local_port" validate:"required,min=1,max=65535"`
+	Description    string `json:"description"`
 	// AssignToAllHosts is whether every stored Host is to carry this service
 	// port from the moment it is registered. It is a pointer, and a request
 	// that leaves it out asks for the assignments, for the reasons given on
@@ -403,11 +403,11 @@ type CreateServicePortRequest struct {
 // is named by the path rather than by the body, and an empty BindScope is the
 // wildcard, as it is on LocalForward.
 type LocalForwardRequest struct {
-	BindScope   string `json:"bind_scope" validate:"omitempty,oneof=loopback wildcard"`
-	LocalPort   int    `json:"local_port" validate:"required,min=1,max=65535"`
-	TargetIP    string `json:"target_ip" validate:"required,ip"`
-	TargetPort  int    `json:"target_port" validate:"required,min=1,max=65535"`
-	Description string `json:"description"`
+	BindScope     string `json:"bind_scope" validate:"omitempty,oneof=loopback wildcard"`
+	LocalPort     int    `json:"local_port" validate:"required,min=1,max=65535"`
+	TargetAddress string `json:"target_address" validate:"required,hostname_rfc1123|ip"`
+	TargetPort    int    `json:"target_port" validate:"required,min=1,max=65535"`
+	Description   string `json:"description"`
 	// Enabled is a pointer for the reason CreateHostRequest.Enabled is. A
 	// creation that leaves it out makes a forward that runs, and a change that
 	// leaves it out keeps what is stored.

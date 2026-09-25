@@ -1801,7 +1801,7 @@ function hostKeyRow(item, picked, refused, sayChosen, approve) {
 
   name.className = "host-key-name";
   name.appendChild(element("span", t("status.host-key.title",
-    { id: item.host_id, ip: item.ip })));
+    { id: item.host_id, ip: item.address })));
   name.appendChild(statusBadge(state));
 
   pick.appendChild(box);
@@ -2007,7 +2007,7 @@ function hostKeyConfirmRow(item) {
 
   name.className = "host-key-name";
   name.appendChild(element("span", t("status.host-key.title",
-    { id: item.host_id, ip: item.ip })));
+    { id: item.host_id, ip: item.address })));
   name.appendChild(statusBadge(state));
 
   row.appendChild(name);
@@ -2100,7 +2100,7 @@ async function openHostKeyPanel(hostID) {
     // it.
     await openModal({
       name: "host-key-gone",
-      title: t("status.host-key.title", { id: host.id, ip: host.ip }),
+      title: t("status.host-key.title", { id: host.id, ip: host.address }),
       body: [element("p", t("status.host-key-gone.text"))],
       buttons: [{ label: t("common.close.button"), name: "close" }]
     });
@@ -2137,7 +2137,7 @@ async function openHostKeyPanel(hostID) {
 
   const outcome = await openModal({
     name: "host-key",
-    title: t("status.host-key.title", { id: host.id, ip: host.ip }),
+    title: t("status.host-key.title", { id: host.id, ip: host.address }),
     body: body,
     buttons: [
       {
@@ -2735,7 +2735,7 @@ async function drawHosts() {
     });
 
     const table = buildTable(
-      [t("hosts.id.column"), t("hosts.ip.column"), t("hosts.port.column"),
+      [t("hosts.id.column"), t("hosts.address.column"), t("hosts.port.column"),
         t("hosts.user.column"), t("hosts.description.column"),
         t("hosts.enabled.column"), t("hosts.socks.column"), t("hosts.updated.column"), ""],
       hosts.map(function (host) {
@@ -2766,7 +2766,7 @@ async function drawHosts() {
       title: t("hosts.delete-picked.title"),
       text: t("hosts.delete-picked.text"),
       describe: function (host) {
-        return t("hosts.picked-row.text", { id: host.id, ip: host.ip });
+        return t("hosts.picked-row.text", { id: host.id, ip: host.address });
       },
       path: function (host) {
         return "/api/host/" + host.id;
@@ -2840,7 +2840,7 @@ function flipRefusalList(refusals) {
     said.className = "picked-said";
 
     row.appendChild(element("span", t("hosts.picked-row.text",
-      { id: refusal.host.id, ip: refusal.host.ip })));
+      { id: refusal.host.id, ip: refusal.host.address })));
     row.appendChild(said);
 
     list.appendChild(row);
@@ -2969,7 +2969,7 @@ function hostRow(host) {
 
   return [
     host.id,
-    host.ip,
+    host.address,
     host.port,
     host.user,
     host.description,
@@ -3247,21 +3247,23 @@ async function sendPickedDeletes(spec, chosen, button, close, problem, keep) {
   showPanelProblem(problem, spec.partly(deleted, failures.length));
 }
 
-// ipField and portField are the two kinds of box that hold something the server
-// has a rule about. They are built here rather than written out at each of the
-// five places they appear, so that the characters a box takes and the check it
-// is put through cannot drift apart between the add form and the edit form.
+// addressField and portField are the two kinds of box that hold something the
+// server has a rule about. They are built here rather than written out at each
+// of the five places they appear, so that the characters a box takes and the
+// check it is put through cannot drift apart between the add form and the edit
+// form.
 //
-// The hint doubles as the example of the form that is wanted. The addresses in
-// it are the ones set aside for documentation, so neither names a real host.
-function ipField(name, label, value) {
+// The hint doubles as the example of the form that is wanted. The name and the
+// addresses in it are the ones set aside for documentation, so none of them
+// names a real host.
+function addressField(name, label, value) {
   return {
     name: name,
     label: label,
     value: value,
-    hint: t("form.ip-example.hint"),
-    filter: ipCharacters,
-    check: checkIP
+    hint: t("form.address-example.hint"),
+    filter: addressCharacters,
+    check: checkAddress
   };
 }
 
@@ -3334,7 +3336,7 @@ function bindScopeStored(value) {
 
 // bindScopeField is the list that picks how far the forwarded ports reach. It
 // is built here rather than written out at each of the places it appears, for
-// the reason ipField is: the two add forms and the assignment panel have to
+// the reason addressField is: the two add forms and the assignment panel have to
 // offer the same two answers under the same words.
 //
 // shownWhen, where a caller passes one, is the tick that decides whether the
@@ -3374,7 +3376,7 @@ function bindScopeAdvice(value) {
 }
 
 // privateKeyField and keyPassphraseField are the key half of how a host is
-// logged in to. They are built here for the same reason the IP and the port
+// logged in to. They are built here for the same reason the address and the port
 // boxes are: the add form and the edit form have to say the same thing about
 // them, and the only difference between the two is what an empty box means.
 //
@@ -3427,7 +3429,7 @@ function hostCreateForm() {
     legend: t("hosts.add.title"),
     submitLabel: t("common.add.button"),
     fields: [
-      ipField("ip", t("hosts.ip.label")),
+      addressField("address", t("hosts.address.label")),
       portField("port", t("hosts.ssh-port.label"), 22),
       { name: "user", label: t("hosts.user.label") },
       privateKeyField(t("hosts.key-add.hint")),
@@ -3468,7 +3470,7 @@ function hostEditForm(host) {
     legend: t("hosts.edit.title", { id: host.id }),
     submitLabel: t("common.save.button"),
     fields: [
-      ipField("ip", t("hosts.ip.label"), host.ip),
+      addressField("address", t("hosts.address.label"), host.address),
       portField("port", t("hosts.ssh-port.label"), host.port),
       { name: "user", label: t("hosts.user.label"), value: host.user },
       privateKeyField(t("hosts.key-edit.hint")),
@@ -3573,7 +3575,7 @@ function socksScopeAdvice(value, other) {
 
 async function createHost(values) {
   const body = {
-    ip: values.ip.trim(),
+    address: values.address.trim(),
     port: asNumber(values.port),
     user: values.user.trim(),
     description: values.description,
@@ -3607,7 +3609,7 @@ async function createHost(values) {
   await apiCall("POST", "/api/host", body);
 
   setToast(function () {
-    return t("hosts.added.notice", { ip: body.ip });
+    return t("hosts.added.notice", { ip: body.address });
   });
 
   return drawHosts();
@@ -3615,7 +3617,7 @@ async function createHost(values) {
 
 async function updateHost(host, values) {
   const body = {
-    ip: values.ip.trim(),
+    address: values.address.trim(),
     user: values.user.trim(),
     description: values.description,
     enabled: values.enabled
@@ -3707,7 +3709,7 @@ async function deleteHost(host) {
   const sure = await askDanger({
     name: "host-delete-ask",
     title: t("hosts.delete.title"),
-    text: t("hosts.delete.confirm", { id: host.id, ip: host.ip }),
+    text: t("hosts.delete.confirm", { id: host.id, ip: host.address }),
     button: t("common.delete.button")
   });
 
@@ -3875,7 +3877,7 @@ async function openHostServicePorts(host) {
 
   const outcome = await openModal({
     name: "host-service-ports",
-    title: t("hosts.assign.title", { id: host.id, ip: host.ip }),
+    title: t("hosts.assign.title", { id: host.id, ip: host.address }),
     body: [
       element("p", t("hosts.assign.text")),
       element("p", t("hosts.assign-scope.text")),
@@ -4076,7 +4078,7 @@ function servicePortAssignRow(item, picks) {
   // in it. It is one cell because it is read as one thing, and nothing in it
   // is broken across lines: the column is as wide as the longest address, and
   // the table is scrolled sideways where the panel is narrower than that.
-  const service = item.service_ip + ":" + item.service_port;
+  const service = item.service_address + ":" + item.service_port;
 
   const description = item.description === undefined || item.description === null
     ? ""
@@ -4313,7 +4315,7 @@ async function openHostLocalForwards(host) {
   // batch delete and in the list of what a flip left as it was.
   function describe(item) {
     return t("local-forwards.picked-row.text",
-      { port: item.local_port, target: item.target_ip + ":" + item.target_port });
+      { port: item.local_port, target: item.target_address + ":" + item.target_port });
   }
 
   function heading() {
@@ -4549,7 +4551,7 @@ async function openHostLocalForwards(host) {
 
     return openModal({
       name: item === null ? "local-forward-add" : "local-forward-edit",
-      title: t("local-forwards.panel.title", { id: host.id, ip: host.ip }),
+      title: t("local-forwards.panel.title", { id: host.id, ip: host.address }),
       body: [said, form],
       opened: function (shut) {
         close = shut;
@@ -4718,7 +4720,7 @@ async function openHostLocalForwards(host) {
 
   const panel = openModal({
     name: "local-forwards",
-    title: t("local-forwards.panel.title", { id: host.id, ip: host.ip }),
+    title: t("local-forwards.panel.title", { id: host.id, ip: host.address }),
     body: [
       element("p", t("local-forwards.panel.text")),
       problem,
@@ -4764,7 +4766,7 @@ function localForwardRow(item, edit, flip, remove) {
     ? ""
     : String(item.description);
 
-  const target = item.target_ip + ":" + item.target_port;
+  const target = item.target_address + ":" + item.target_port;
 
   const row = {
     cells: [
@@ -4816,9 +4818,9 @@ function localForwardForm(item, onSubmit, onCancel) {
 
   localPort.note = t("local-forwards.local-port.hint");
 
-  const targetIP = ipField("target_ip", t("local-forwards.target-ip.label"), stored.target_ip);
+  const targetAddress = addressField("target_address", t("local-forwards.target-address.label"), stored.target_address);
 
-  targetIP.note = t("local-forwards.target-ip.hint");
+  targetAddress.note = t("local-forwards.target-address.hint");
 
   const spec = {
     name: item === null ? "local-forward-create" : "local-forward-edit",
@@ -4835,7 +4837,7 @@ function localForwardForm(item, onSubmit, onCancel) {
         options: localForwardScopeOptions(),
         note: t("local-forwards.scope.hint")
       },
-      targetIP,
+      targetAddress,
       portField("target_port", t("local-forwards.target-port.label"), stored.target_port),
       { name: "description", label: t("local-forwards.description.label"), value: stored.description }
     ],
@@ -4853,7 +4855,7 @@ function localForwardBody(values) {
   return {
     bind_scope: values.bind_scope,
     local_port: asNumber(values.local_port),
-    target_ip: values.target_ip.trim(),
+    target_address: values.target_address.trim(),
     target_port: asNumber(values.target_port),
     description: values.description
   };
@@ -4974,7 +4976,7 @@ async function pickHostsToAssignTo(ports) {
 
   for (const port of ports) {
     carrying.appendChild(pickedAssignRow(port.id, t("service-ports.picked-row.text",
-      { id: port.id, ip: port.service_ip, port: port.service_port }), null));
+      { id: port.id, ip: port.service_address, port: port.service_port }), null));
   }
 
   // How far the assignments this press writes are opened. It is asked for here
@@ -5145,7 +5147,7 @@ function hostPickRow(host, picks, settle) {
   const text = document.createElement("span");
 
   text.className = "assign-text";
-  text.appendChild(element("span", t("hosts.picked-row.text", { id: host.id, ip: host.ip })));
+  text.appendChild(element("span", t("hosts.picked-row.text", { id: host.id, ip: host.address })));
 
   const description = host.description === undefined || host.description === null
     ? ""
@@ -5297,7 +5299,7 @@ async function sendPickedAssignments(ports, picks, scope, button, close, problem
 
   for (const failure of failures) {
     refused.appendChild(pickedAssignRow(failure.host.id,
-      t("hosts.picked-row.text", { id: failure.host.id, ip: failure.host.ip }),
+      t("hosts.picked-row.text", { id: failure.host.id, ip: failure.host.address }),
       failure.reason));
   }
 
@@ -5367,7 +5369,7 @@ async function drawServicePorts() {
     });
 
     const table = buildTable(
-      [t("service-ports.id.column"), t("service-ports.service-ip.column"),
+      [t("service-ports.id.column"), t("service-ports.service-address.column"),
         t("service-ports.service-port.column"), t("service-ports.local-port.column"),
         t("service-ports.description.column"), t("service-ports.updated.column"), ""],
       ports.map(function (port) {
@@ -5386,7 +5388,7 @@ async function drawServicePorts() {
       text: t("service-ports.delete-picked.text"),
       describe: function (port) {
         return t("service-ports.picked-row.text",
-          { id: port.id, ip: port.service_ip, port: port.service_port });
+          { id: port.id, ip: port.service_address, port: port.service_port });
       },
       path: function (port) {
         return "/api/service-port/" + port.id;
@@ -5432,7 +5434,7 @@ function servicePortRow(port) {
 
   return [
     port.id,
-    port.service_ip,
+    port.service_address,
     port.service_port,
     port.local_port,
     port.description,
@@ -5447,7 +5449,7 @@ function servicePortCreateForm() {
     legend: t("service-ports.add.title"),
     submitLabel: t("common.add.button"),
     fields: [
-      ipField("service_ip", t("service-ports.service-ip.label")),
+      addressField("service_address", t("service-ports.service-address.label")),
       portField("service_port", t("service-ports.service-port.label")),
       portField("local_port", t("service-ports.local-port.label"), undefined,
         privilegedPortAdvice),
@@ -5478,7 +5480,7 @@ function servicePortEditForm(port) {
     legend: t("service-ports.edit.title", { id: port.id }),
     submitLabel: t("common.save.button"),
     fields: [
-      ipField("service_ip", t("service-ports.service-ip.label"), port.service_ip),
+      addressField("service_address", t("service-ports.service-address.label"), port.service_address),
       portField("service_port", t("service-ports.service-port.label"), port.service_port),
       portField("local_port", t("service-ports.local-port.label"), port.local_port,
         privilegedPortAdvice),
@@ -5501,7 +5503,7 @@ function servicePortEditForm(port) {
 // back, changed or not.
 function servicePortBody(values) {
   return {
-    service_ip: values.service_ip.trim(),
+    service_address: values.service_address.trim(),
     service_port: asNumber(values.service_port),
     local_port: asNumber(values.local_port),
     description: values.description
@@ -5526,7 +5528,7 @@ async function createServicePort(values) {
 
   setToast(function () {
     return t("service-ports.added.notice",
-      { ip: body.service_ip, port: body.service_port });
+      { ip: body.service_address, port: body.service_port });
   });
 
   return drawServicePorts();
@@ -5549,7 +5551,7 @@ async function deleteServicePort(port) {
     name: "service-port-delete-ask",
     title: t("service-ports.delete.title"),
     text: t("service-ports.delete.confirm",
-      { id: port.id, ip: port.service_ip, port: port.service_port }),
+      { id: port.id, ip: port.service_address, port: port.service_port }),
     button: t("common.delete.button")
   });
 
@@ -6940,12 +6942,12 @@ async function apiPortTakenPanel(taken, offerAPI) {
       socks === null
         ? element("p", t("settings.api-port-taken.text", {
           port: forward.local_port,
-          host: forward.host_ip === "" ? String(forward.host_id) : forward.host_ip,
-          target: forward.target_ip + ":" + forward.target_port
+          host: forward.host_address === "" ? String(forward.host_id) : forward.host_address,
+          target: forward.target_address + ":" + forward.target_port
         }))
         : element("p", t("settings.api-port-taken-socks.text", {
           port: socks.socks_port,
-          host: socks.host_ip === "" ? String(socks.host_id) : socks.host_ip
+          host: socks.host_address === "" ? String(socks.host_id) : socks.host_address
         })),
       problem
     ].concat(choices.map(function (one) {

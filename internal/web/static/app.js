@@ -290,15 +290,16 @@ const maxPort = 65535;
 const minPasswordBytes = 8;
 const maxPasswordBytes = 72;
 
-// portCharacters and ipCharacters are what may not be in those boxes. They are
-// dropped as they arrive, so a value that reaches the checks below is already
-// made of characters that could be part of an answer.
+// portCharacters and addressCharacters are what may not be in those boxes. They
+// are dropped as they arrive, so a value that reaches the checks below is
+// already made of characters that could be part of an answer.
 //
-// An IP box takes more than digits because an IPv6 address is written with hex
-// digits and colons. What it does not take is the rest of the alphabet, so the
-// box still refuses a hostname.
+// An address box takes a host name as well as an IPv4 or an IPv6 address, so it
+// takes the letters, the digits, the hyphen, the dot and the colon. What it does
+// not take is anything else, a space or an underscore among them, which no name
+// the server takes is written with.
 const portCharacters = /[^0-9]/g;
-const ipCharacters = /[^0-9a-fA-F.:]/g;
+const addressCharacters = /[^0-9a-zA-Z.:-]/g;
 
 // currentScreen is what is drawn. An answer that arrives after the operator has
 // moved on is compared against it and dropped, so a slow call cannot draw over
@@ -3168,19 +3169,35 @@ function checkPath(value) {
   return "";
 }
 
-// checkIP says what is wrong with an address, or "" when nothing is.
-function checkIP(value) {
+// checkAddress says what is wrong with a host name or an address, or "" when
+// nothing is. It takes what the server takes, a host name or an IP address, so
+// a value the box lets through is not refused afterwards and a value it refuses
+// would have been refused there as well.
+function checkAddress(value) {
   const trimmed = String(value).trim();
 
   if (trimmed === "") {
-    return t("form.ip-empty.error");
+    return t("form.address-empty.error");
   }
 
-  if (!isIPv4(trimmed) && !isIPv6(trimmed)) {
-    return t("form.ip-shape.error");
+  if (!isHostName(trimmed) && !isIPv4(trimmed) && !isIPv6(trimmed)) {
+    return t("form.address-shape.error");
   }
 
   return "";
+}
+
+// hostNamePattern is the rule the server holds a host name to, the
+// hostname_rfc1123 tag of its validator: labels of letters, digits and hyphens
+// joined by dots, each one starting and ending with a letter or a digit and at
+// most 63 long. A label may start with a digit, which is what RFC 1123 changed
+// from RFC 952, so a name such as 3com.example is taken.
+const hostNamePattern =
+  /^[a-zA-Z0-9]([a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?(\.[a-zA-Z0-9]([a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?)*$/;
+
+// isHostName checks a host name against the rule above.
+function isHostName(value) {
+  return hostNamePattern.test(value);
 }
 
 // isIPv4 checks the dotted form. A part written with a leading zero is refused

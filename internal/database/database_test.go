@@ -649,7 +649,7 @@ type writeSpan struct {
 func runTwoWriteTransactions(t *testing.T, db *gorm.DB, hold time.Duration) ([]writeSpan, []error) {
 	t.Helper()
 
-	err := db.Create(&models.Host{IP: "192.0.2.10", Port: 22, User: "root", Password: "x"}).Error
+	err := db.Create(&models.Host{Address: "192.0.2.10", Port: 22, User: "root", Password: "x"}).Error
 	if err != nil {
 		t.Fatalf("failed to store the Host the writes act on: %v", err)
 	}
@@ -1063,7 +1063,7 @@ func TestNewDatabaseKeepsTheHostsThatAreAlreadyStored(t *testing.T) {
 
 	host := hosts[0]
 
-	if host.IP != "192.0.2.10" || host.User != "operator" || host.Port != 22 {
+	if host.Address != "192.0.2.10" || host.User != "operator" || host.Port != 22 {
 		t.Fatalf("the stored Host came back as %+v", host)
 	}
 	if host.Password != "tmenc:v1:the-sealed-password-of-the-test" {
@@ -1082,7 +1082,7 @@ func TestNewDatabaseKeepsTheHostsThatAreAlreadyStored(t *testing.T) {
 	// The new columns are there to be written, and the password may now be
 	// left out: that is the Host registered with a key alone.
 	err = db.Create(&models.Host{
-		IP:            "192.0.2.11",
+		Address:       "192.0.2.11",
 		Port:          22,
 		User:          "operator",
 		PrivateKey:    "tmenc:v1:the-sealed-key-of-the-test",
@@ -1094,7 +1094,7 @@ func TestNewDatabaseKeepsTheHostsThatAreAlreadyStored(t *testing.T) {
 	}
 
 	var withKey models.Host
-	err = db.Where("ip = ?", "192.0.2.11").First(&withKey).Error
+	err = db.Where("address = ?", "192.0.2.11").First(&withKey).Error
 	if err != nil {
 		t.Fatalf("failed to read the Host back: %v", err)
 	}
@@ -1108,7 +1108,7 @@ func TestNewDatabaseKeepsTheHostsThatAreAlreadyStored(t *testing.T) {
 	// The SOCKS5 scope is held to the two words on a table that was migrated
 	// rather than created, the way the assignment scope is.
 	err = db.Create(&models.Host{
-		IP: "192.0.2.12", Port: 22, User: "operator", Enabled: true,
+		Address: "192.0.2.12", Port: 22, User: "operator", Enabled: true,
 		SocksEnabled: true, SocksPort: 1080, SocksBindScope: "elsewhere",
 	}).Error
 	if err == nil || !strings.Contains(err.Error(), "chk_hosts_socks_bind_scope") {
@@ -1144,7 +1144,7 @@ func newDatabaseFromBefore(t *testing.T, hosts []models.Host, servicePorts []mod
 	for i := range hosts {
 		err = old.Create(&hosts[i]).Error
 		if err != nil {
-			t.Fatalf("failed to store the Host %s: %v", hosts[i].IP, err)
+			t.Fatalf("failed to store the Host %s: %v", hosts[i].Address, err)
 		}
 	}
 
@@ -1211,17 +1211,17 @@ func storedAssignments(t *testing.T, db *gorm.DB) []string {
 func TestTheFirstStartupAssignsEveryServicePortToEveryHost(t *testing.T) {
 	path := newDatabaseFromBefore(t,
 		[]models.Host{
-			{IP: "192.0.2.10", Port: 22, User: "operator", Enabled: true},
+			{Address: "192.0.2.10", Port: 22, User: "operator", Enabled: true},
 			// The second Host is disabled on purpose. Whether a Host runs
 			// tunnels is decided where they are reconciled, and one left
 			// without assignments here would come back from being enabled
 			// with no tunnels at all.
-			{IP: "192.0.2.11", Port: 22, User: "operator", Enabled: false},
+			{Address: "192.0.2.11", Port: 22, User: "operator", Enabled: false},
 		},
 		[]models.ServicePort{
-			{ServiceIP: "198.51.100.20", ServicePort: 8080, LocalPort: 18080},
-			{ServiceIP: "198.51.100.20", ServicePort: 8081, LocalPort: 18081},
-			{ServiceIP: "198.51.100.21", ServicePort: 8080, LocalPort: 18082},
+			{ServiceAddress: "198.51.100.20", ServicePort: 8080, LocalPort: 18080},
+			{ServiceAddress: "198.51.100.20", ServicePort: 8081, LocalPort: 18081},
+			{ServiceAddress: "198.51.100.21", ServicePort: 8080, LocalPort: 18082},
 		},
 	)
 
@@ -1253,13 +1253,13 @@ func TestTheFirstStartupAssignsEveryServicePortToEveryHost(t *testing.T) {
 func TestALaterStartupDoesNotPutBackARemovedAssignment(t *testing.T) {
 	path := newDatabaseFromBefore(t,
 		[]models.Host{
-			{IP: "192.0.2.10", Port: 22, User: "operator", Enabled: true},
-			{IP: "192.0.2.11", Port: 22, User: "operator", Enabled: true},
+			{Address: "192.0.2.10", Port: 22, User: "operator", Enabled: true},
+			{Address: "192.0.2.11", Port: 22, User: "operator", Enabled: true},
 		},
 		[]models.ServicePort{
-			{ServiceIP: "198.51.100.20", ServicePort: 8080, LocalPort: 18080},
-			{ServiceIP: "198.51.100.20", ServicePort: 8081, LocalPort: 18081},
-			{ServiceIP: "198.51.100.21", ServicePort: 8080, LocalPort: 18082},
+			{ServiceAddress: "198.51.100.20", ServicePort: 8080, LocalPort: 18080},
+			{ServiceAddress: "198.51.100.20", ServicePort: 8081, LocalPort: 18081},
+			{ServiceAddress: "198.51.100.21", ServicePort: 8080, LocalPort: 18082},
 		},
 	)
 
@@ -1345,7 +1345,7 @@ func TestTheAssignmentsAreWrittenInBatches(t *testing.T) {
 	var hosts []models.Host
 	for i := 0; i < 20; i++ {
 		hosts = append(hosts, models.Host{
-			IP:      fmt.Sprintf("192.0.2.%d", i+10),
+			Address: fmt.Sprintf("192.0.2.%d", i+10),
 			Port:    22,
 			User:    "operator",
 			Enabled: true,
@@ -1355,9 +1355,9 @@ func TestTheAssignmentsAreWrittenInBatches(t *testing.T) {
 	var servicePorts []models.ServicePort
 	for i := 0; i < 20; i++ {
 		servicePorts = append(servicePorts, models.ServicePort{
-			ServiceIP:   "198.51.100.20",
-			ServicePort: 8080 + i,
-			LocalPort:   18080 + i,
+			ServiceAddress: "198.51.100.20",
+			ServicePort:    8080 + i,
+			LocalPort:      18080 + i,
 		})
 	}
 
@@ -1586,11 +1586,11 @@ func TestTheHostBindAddressIsCarriedOntoEveryAssignmentOfThatHost(t *testing.T) 
 func TestAnUpgradeFromBeforeTheHostBindAddressCarriesNothing(t *testing.T) {
 	path := newDatabaseFromBefore(t,
 		[]models.Host{
-			{IP: "192.0.2.10", Port: 22, User: "operator", Enabled: true},
-			{IP: "192.0.2.11", Port: 22, User: "operator", Enabled: true},
+			{Address: "192.0.2.10", Port: 22, User: "operator", Enabled: true},
+			{Address: "192.0.2.11", Port: 22, User: "operator", Enabled: true},
 		},
 		[]models.ServicePort{
-			{ServiceIP: "198.51.100.20", ServicePort: 8080, LocalPort: 18080},
+			{ServiceAddress: "198.51.100.20", ServicePort: 8080, LocalPort: 18080},
 		},
 	)
 
@@ -1743,8 +1743,8 @@ func TestTheUpgradeSwitchesOnTheLocalForwardsThatWereRunning(t *testing.T) {
 	})
 
 	for _, lf := range []models.LocalForward{
-		{HostID: 1, Number: 3, BindScope: models.BindScopeLoopback, LocalPort: 15003, TargetIP: "127.0.0.1", TargetPort: 5432},
-		{HostID: 1, Number: 4, BindScope: models.BindScopeLoopback, LocalPort: 15004, TargetIP: "127.0.0.1", TargetPort: 5432,
+		{HostID: 1, Number: 3, BindScope: models.BindScopeLoopback, LocalPort: 15003, TargetAddress: "127.0.0.1", TargetPort: 5432},
+		{HostID: 1, Number: 4, BindScope: models.BindScopeLoopback, LocalPort: 15004, TargetAddress: "127.0.0.1", TargetPort: 5432,
 			Enabled: true},
 	} {
 		err = second.Create(&lf).Error
@@ -1762,6 +1762,248 @@ func TestTheUpgradeSwitchesOnTheLocalForwardsThatWereRunning(t *testing.T) {
 		if got[port] != enabled {
 			t.Fatalf("after the second startup the local forwards hold %v, want %v", got, want)
 		}
+	}
+}
+
+// newDatabaseFromTheIPColumns builds the database of an installation running
+// v3.13.6, the last release that stored the addresses under names that said
+// IP, holding two Hosts, a service port and a local forward. The statements
+// are the ones that release wrote, read out of a database it created, and they
+// are written out for the reason newDatabaseFromTheHostBindAddress gives: the
+// model carries the new names now.
+func newDatabaseFromTheIPColumns(t *testing.T) string {
+	t.Helper()
+
+	path := filepath.Join(t.TempDir(), "state", "tunnel-manager.db")
+
+	err := os.MkdirAll(filepath.Dir(path), 0755)
+	if err != nil {
+		t.Fatalf("failed to create the directory of the database: %v", err)
+	}
+
+	old, err := gorm.Open(sqlite.Open(path), &gorm.Config{Logger: gormlogger.Discard})
+	if err != nil {
+		t.Fatalf("failed to open the database: %v", err)
+	}
+
+	statements := []string{
+		"CREATE TABLE `hosts` (`id` integer PRIMARY KEY AUTOINCREMENT,`ip` text NOT NULL," +
+			"`port` integer NOT NULL,`user` text NOT NULL,`password` text,`private_key` text," +
+			"`key_passphrase` text,`host_key` text,`pending_host_key` text,`description` text," +
+			"`enabled` numeric,`socks_enabled` numeric,`socks_port` integer,`socks_bind_scope` text," +
+			"`socks_allowed_sources` text,`created_at` datetime,`updated_at` datetime," +
+			"CONSTRAINT `chk_hosts_socks_bind_scope` CHECK (socks_bind_scope IN ('','loopback','wildcard')))",
+		"CREATE UNIQUE INDEX `idx_hosts_ip` ON `hosts`(`ip`)",
+		"CREATE TABLE `local_forwards` (`host_id` integer NOT NULL,`number` integer NOT NULL," +
+			"`bind_scope` text,`local_port` integer NOT NULL,`target_ip` text NOT NULL," +
+			"`target_port` integer NOT NULL,`description` text,`enabled` numeric," +
+			"`created_at` datetime,`updated_at` datetime,PRIMARY KEY (`host_id`,`number`)," +
+			"CONSTRAINT `chk_local_forwards_bind_scope` CHECK (bind_scope IN ('','loopback','wildcard')))",
+		"CREATE UNIQUE INDEX `idx_local_forwards_local_port` ON `local_forwards`(`local_port`)",
+		"CREATE TABLE `service_ports` (`id` integer PRIMARY KEY AUTOINCREMENT,`service_ip` text NOT NULL," +
+			"`service_port` integer NOT NULL,`local_port` integer NOT NULL,`description` text," +
+			"`created_at` datetime,`updated_at` datetime)",
+		"CREATE UNIQUE INDEX `idx_service_local_port` ON `service_ports`(`local_port`)",
+		"CREATE UNIQUE INDEX `idx_service_ip_port` ON `service_ports`(`service_ip`,`service_port`)",
+		"INSERT INTO `hosts` (`id`,`ip`,`port`,`user`,`password`,`enabled`,`created_at`,`updated_at`) " +
+			"VALUES (1,'192.0.2.10',22,'operator','tmenc:v1:the-sealed-password-of-the-test',true," +
+			"'2026-09-01 00:00:00','2026-09-01 00:00:00')",
+		"INSERT INTO `hosts` (`id`,`ip`,`port`,`user`,`password`,`enabled`,`created_at`,`updated_at`) " +
+			"VALUES (2,'2001:db8::10',2222,'operator','tmenc:v1:the-sealed-password-of-the-test',true," +
+			"'2026-09-01 00:00:00','2026-09-01 00:00:00')",
+		"INSERT INTO `service_ports` (`id`,`service_ip`,`service_port`,`local_port`,`created_at`,`updated_at`) " +
+			"VALUES (1,'198.51.100.20',80,18080,'2026-09-01 00:00:00','2026-09-01 00:00:00')",
+		"INSERT INTO `local_forwards` (`host_id`,`number`,`bind_scope`,`local_port`,`target_ip`," +
+			"`target_port`,`enabled`,`created_at`,`updated_at`) VALUES (1,1,'loopback',15432,'127.0.0.1'," +
+			"5432,true,'2026-09-01 00:00:00','2026-09-01 00:00:00')",
+	}
+
+	for _, sql := range statements {
+		err = old.Exec(sql).Error
+		if err != nil {
+			t.Fatalf("failed to build the tables as they were: %v", err)
+		}
+	}
+
+	sqlDB, err := old.DB()
+	if err != nil {
+		t.Fatalf("failed to reach the connection pool: %v", err)
+	}
+	err = sqlDB.Close()
+	if err != nil {
+		t.Fatalf("failed to close the old handle: %v", err)
+	}
+
+	return path
+}
+
+// addressSchema is what the database says about the three tables that carry an
+// address, one statement a line, so that two startups can be compared by what
+// they left behind.
+func addressSchema(t *testing.T, db *gorm.DB) []string {
+	t.Helper()
+
+	var statements []string
+
+	err := db.Raw("SELECT name || ': ' || sql FROM sqlite_master WHERE sql IS NOT NULL AND " +
+		"tbl_name IN ('hosts','service_ports','local_forwards') ORDER BY name").Scan(&statements).Error
+	if err != nil {
+		t.Fatalf("failed to read the schema: %v", err)
+	}
+
+	return statements
+}
+
+// openForTest runs a startup against path and closes the handle when the test
+// ends.
+func openForTest(t *testing.T, path string) *gorm.DB {
+	t.Helper()
+
+	db, _, err := NewDatabase(path, zap.NewNop(), "error")
+	if err != nil {
+		t.Fatalf("the migration failed: %v", err)
+	}
+	t.Cleanup(func() {
+		sqlDB, err := db.DB()
+		if err == nil {
+			_ = sqlDB.Close()
+		}
+	})
+
+	return db
+}
+
+// TestTheUpgradeMovesTheAddressesOntoTheirNewNames is the upgrade from v3.13.6.
+// Every address comes back under the name the model reads it by, the unique
+// indexes are renamed rather than doubled and still refuse a second Host at
+// the same address, and a second startup leaves the file as the first one did.
+func TestTheUpgradeMovesTheAddressesOntoTheirNewNames(t *testing.T) {
+	path := newDatabaseFromTheIPColumns(t)
+
+	db := openForTest(t, path)
+
+	for _, table := range []string{"hosts", "service_ports", "local_forwards"} {
+		columns, err := columnsOf(db, table)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, name := range columns {
+			if name == "ip" || name == "service_ip" || name == "target_ip" {
+				t.Fatalf("%s still has the column %s: %v", table, name, columns)
+			}
+		}
+	}
+
+	var hosts []models.Host
+	err := db.Order("id").Find(&hosts).Error
+	if err != nil {
+		t.Fatalf("failed to read the Hosts: %v", err)
+	}
+	if len(hosts) != 2 || hosts[0].Address != "192.0.2.10" || hosts[1].Address != "2001:db8::10" {
+		t.Fatalf("the Hosts came back as %+v", hosts)
+	}
+
+	var sp models.ServicePort
+	err = db.First(&sp).Error
+	if err != nil {
+		t.Fatalf("failed to read the service port: %v", err)
+	}
+	if sp.ServiceAddress != "198.51.100.20" || sp.ServicePort != 80 {
+		t.Fatalf("the service port came back as %+v", sp)
+	}
+
+	var lf models.LocalForward
+	err = db.First(&lf).Error
+	if err != nil {
+		t.Fatalf("failed to read the local forward: %v", err)
+	}
+	if lf.TargetAddress != "127.0.0.1" || lf.TargetPort != 5432 {
+		t.Fatalf("the local forward came back as %+v", lf)
+	}
+
+	var indexes []string
+	err = db.Raw("SELECT name FROM sqlite_master WHERE type = 'index' AND sql IS NOT NULL " +
+		"AND tbl_name IN ('hosts','service_ports') ORDER BY name").Scan(&indexes).Error
+	if err != nil {
+		t.Fatalf("failed to read the indexes: %v", err)
+	}
+	want := "idx_hosts_address,idx_service_address_port,idx_service_local_port"
+	if strings.Join(indexes, ",") != want {
+		t.Fatalf("the indexes are %v, want %s", indexes, want)
+	}
+
+	err = db.Create(&models.Host{Address: "192.0.2.10", Port: 2200, User: "other", Enabled: true}).Error
+	if err == nil || !strings.Contains(err.Error(), "UNIQUE") {
+		t.Fatalf("a second Host at the same address was not refused by the index: %v", err)
+	}
+
+	err = db.Create(&models.ServicePort{ServiceAddress: "198.51.100.20", ServicePort: 80, LocalPort: 18081}).Error
+	if err == nil || !strings.Contains(err.Error(), "UNIQUE") {
+		t.Fatalf("a second service port at the same address and port was not refused by the index: %v", err)
+	}
+
+	first := addressSchema(t, db)
+
+	sqlDB, err := db.DB()
+	if err != nil {
+		t.Fatalf("failed to reach the connection pool: %v", err)
+	}
+	err = sqlDB.Close()
+	if err != nil {
+		t.Fatalf("failed to close the first handle: %v", err)
+	}
+
+	second := openForTest(t, path)
+
+	again := addressSchema(t, second)
+	if strings.Join(again, "\n") != strings.Join(first, "\n") {
+		t.Fatalf("the second startup changed the schema:\nfirst:\n%s\nsecond:\n%s",
+			strings.Join(first, "\n"), strings.Join(again, "\n"))
+	}
+
+	var count int64
+	err = second.Model(&models.Host{}).Where("address = ?", "192.0.2.10").Count(&count).Error
+	if err != nil || count != 1 {
+		t.Fatalf("after the second startup the Host is there %d times: %v", count, err)
+	}
+}
+
+// TestRenamingTheAddressesAgainDoesNothing runs the rename over a database that
+// already carries the new names, which is every startup after the upgrade and
+// every fresh install, and finds nothing to do.
+func TestRenamingTheAddressesAgainDoesNothing(t *testing.T) {
+	db, _ := newTestDatabase(t)
+
+	before := addressSchema(t, db)
+
+	err := renameAddressColumns(db)
+	if err != nil {
+		t.Fatalf("the rename failed on a database that needs none: %v", err)
+	}
+
+	after := addressSchema(t, db)
+	if strings.Join(after, "\n") != strings.Join(before, "\n") {
+		t.Fatalf("the rename changed a database that needed none:\nbefore:\n%s\nafter:\n%s",
+			strings.Join(before, "\n"), strings.Join(after, "\n"))
+	}
+}
+
+// TestTheTargetOfAForwardKeyedByIDSurvivesTheNumbering is a database from before
+// the local forwards were numbered per Host. The target is renamed before the
+// table is rebuilt, so the rebuild carries it over rather than leaving it out
+// as a column the two tables do not share.
+func TestTheTargetOfAForwardKeyedByIDSurvivesTheNumbering(t *testing.T) {
+	path := newDatabaseFromBeforeLocalForwardsCouldBeOff(t, []int{15001})
+
+	db := openForTest(t, path)
+
+	var lf models.LocalForward
+	err := db.First(&lf).Error
+	if err != nil {
+		t.Fatalf("failed to read the local forward: %v", err)
+	}
+	if lf.TargetAddress != "127.0.0.1" || lf.TargetPort != 5432 || lf.Number != 1 {
+		t.Fatalf("the local forward came back as %+v", lf)
 	}
 }
 
@@ -1843,7 +2085,7 @@ func TestMaskStatementHidesTheAccountTableAndLeavesTheRest(t *testing.T) {
 		},
 		{
 			name: "a host read back by its user",
-			sql:  "SELECT `id`,`ip`,`user` FROM `hosts` WHERE `user` = 'operator'",
+			sql:  "SELECT `id`,`address`,`user` FROM `hosts` WHERE `user` = 'operator'",
 			want: false,
 		},
 		{

@@ -41,7 +41,7 @@ func hostsMatching(q string) func(*gorm.DB) *gorm.DB {
 			return db
 		}
 
-		return db.Where(`ip LIKE @q ESCAPE '\' OR "user" LIKE @q ESCAPE '\' OR `+
+		return db.Where(`address LIKE @q ESCAPE '\' OR "user" LIKE @q ESCAPE '\' OR `+
 			`description LIKE @q ESCAPE '\' OR CAST(port AS TEXT) LIKE @q ESCAPE '\'`,
 			sql.Named("q", likeContaining(q)))
 	}
@@ -56,7 +56,7 @@ func servicePortsMatching(q string) func(*gorm.DB) *gorm.DB {
 			return db
 		}
 
-		return db.Where(`service_ip LIKE @q ESCAPE '\' OR CAST(service_port AS TEXT) LIKE @q ESCAPE '\' OR `+
+		return db.Where(`service_address LIKE @q ESCAPE '\' OR CAST(service_port AS TEXT) LIKE @q ESCAPE '\' OR `+
 			`CAST(local_port AS TEXT) LIKE @q ESCAPE '\' OR description LIKE @q ESCAPE '\'`,
 			sql.Named("q", likeContaining(q)))
 	}
@@ -66,7 +66,7 @@ func servicePortsMatching(q string) func(*gorm.DB) *gorm.DB {
 // those whose address or description holds @q. It is the one condition over
 // the Hosts both sorts of row are matched on, so that a search for a Host
 // finds its tunnels and its local forwards alike.
-const statusHostsMatchingSQL = `SELECT id FROM hosts WHERE ip LIKE @q ESCAPE '\' OR description LIKE @q ESCAPE '\'`
+const statusHostsMatchingSQL = `SELECT id FROM hosts WHERE address LIKE @q ESCAPE '\' OR description LIKE @q ESCAPE '\'`
 
 // tunnelsMatching narrows a read of the tunnel rows to the ones whose Host
 // matches q, or whose local or remote address holds it. The same narrowing is

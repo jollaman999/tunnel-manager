@@ -185,7 +185,7 @@ func (m *Manager) hostPassword(host *models.Host) (string, error) {
 			"leaving it as it is. Check that the configured key file is the one the password was stored with",
 			logid.TunnelHostPasswordUndecryptable.Field(),
 			zap.Uint("host_id", host.ID),
-			zap.String("host_ip", host.IP),
+			zap.String("host_ip", host.Address),
 			zap.Error(err))
 		return "", fmt.Errorf("failed to decrypt the stored password of the Host (host_id=%d): %w", host.ID, err)
 	}
@@ -205,7 +205,7 @@ func (m *Manager) storeEncryptedPassword(host *models.Host, password string) {
 		m.logger.Warn("failed to encrypt the stored password of the Host",
 			logid.TunnelHostPasswordEncryptFailed.Field(),
 			zap.Uint("host_id", host.ID),
-			zap.String("host_ip", host.IP),
+			zap.String("host_ip", host.Address),
 			zap.Error(err))
 		return
 	}
@@ -215,7 +215,7 @@ func (m *Manager) storeEncryptedPassword(host *models.Host, password string) {
 		m.logger.Warn("failed to store the encrypted password of the Host",
 			logid.TunnelHostPasswordStoreFailed.Field(),
 			zap.Uint("host_id", host.ID),
-			zap.String("host_ip", host.IP),
+			zap.String("host_ip", host.Address),
 			zap.Error(err))
 		return
 	}
@@ -224,7 +224,7 @@ func (m *Manager) storeEncryptedPassword(host *models.Host, password string) {
 	m.logger.Info("replaced the stored password of the Host with an encrypted one",
 		logid.TunnelHostPasswordEncrypted.Field(),
 		zap.Uint("host_id", host.ID),
-		zap.String("host_ip", host.IP))
+		zap.String("host_ip", host.Address))
 }
 
 // hostAuth returns what to offer the Host to authenticate with, along with the
@@ -303,7 +303,7 @@ func (m *Manager) hostAuth(host *models.Host) ([]ssh.AuthMethod, hostCreds, erro
 			"private key cannot be used",
 			logid.TunnelHostKeyUnusablePasswordUsed.Field(),
 			zap.Uint("host_id", host.ID),
-			zap.String("host_ip", host.IP))
+			zap.String("host_ip", host.Address))
 	}
 
 	return methods, creds, nil
@@ -338,7 +338,7 @@ func (m *Manager) hostSigner(host *models.Host) (ssh.Signer, error) {
 		m.logger.Error("the stored private key of the Host cannot be read",
 			logid.TunnelHostKeyUnreadable.Field(),
 			zap.Uint("host_id", host.ID),
-			zap.String("host_ip", host.IP),
+			zap.String("host_ip", host.Address),
 			zap.Error(err))
 
 		return nil, fmt.Errorf("failed to read the stored private key of the Host (host_id=%d): %w", host.ID, err)
@@ -376,7 +376,7 @@ func (m *Manager) hostSealed(host *models.Host, what string, stored string) (str
 		logid.TunnelHostSecretUndecryptable.Field(),
 		zap.String("secret", what),
 		zap.Uint("host_id", host.ID),
-		zap.String("host_ip", host.IP),
+		zap.String("host_ip", host.Address),
 		zap.Error(err))
 
 	return "", fmt.Errorf("failed to decrypt the stored %s of the Host (host_id=%d): %w", what, host.ID, err)
@@ -433,8 +433,8 @@ func tunnelAddresses(host *models.Host, sp *models.ServicePort, bindScope string
 
 	return net.JoinHostPort(bindV4, port),
 		net.JoinHostPort(bindV6, port),
-		net.JoinHostPort(host.IP, strconv.Itoa(host.Port)),
-		net.JoinHostPort(sp.ServiceIP, strconv.Itoa(sp.ServicePort))
+		net.JoinHostPort(host.Address, strconv.Itoa(host.Port)),
+		net.JoinHostPort(sp.ServiceAddress, strconv.Itoa(sp.ServicePort))
 }
 
 // The two statuses a tunnel is left in when the host key check refused the
@@ -562,7 +562,7 @@ func hostKeyRefusal(err error) *HostKeyError {
 // tunnel again, rather than the trust of a connection that already stands
 // changing underneath it.
 func (m *Manager) hostKeyCallback(host *models.Host) ssh.HostKeyCallback {
-	hostID, hostIP, trusted := host.ID, host.IP, host.HostKey
+	hostID, hostIP, trusted := host.ID, host.Address, host.HostKey
 
 	return func(_ string, _ net.Addr, key ssh.PublicKey) error {
 		presented := MarshalHostKey(key)
@@ -607,7 +607,7 @@ func (m *Manager) StartTunnel(host *models.Host, sp *models.ServicePort, bindSco
 		m.logger.Info("skipped starting tunnel for disabled Host",
 			logid.TunnelStartSkippedHostDisabled.Field(),
 			zap.Uint("host_id", host.ID),
-			zap.String("host_ip", host.IP),
+			zap.String("host_ip", host.Address),
 			zap.Int("service_port", sp.ServicePort))
 		return nil
 	}

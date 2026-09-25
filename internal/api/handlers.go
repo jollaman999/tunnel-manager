@@ -321,6 +321,7 @@ func nextHostID(tx *gorm.DB) (uint, error) {
 }
 
 // @Summary      Register a Host
+// @Description  address is a host name or an IP address. A name is resolved each time the Host is connected to.
 // @Description  enabled is optional and a Host that does not say is enabled.
 // @Description  bind_scope is what every assignment this registration makes is opened to: loopback, wildcard, or left out for the wildcard. It is read only when the assignments are made.
 // @Description  socks_enabled switches on the SOCKS5 proxy of the Host, which needs socks_port. socks_bind_scope is loopback, wildcard, or left out for loopback. socks_allowed_sources is the addresses and CIDR blocks a client may connect from, separated by commas or spaces; empty lets every address in.
@@ -419,7 +420,7 @@ func (h *Handler) CreateHost(c echo.Context) error {
 	}
 
 	host := &models.Host{
-		IP:            req.IP,
+		Address:       req.Address,
 		Port:          req.Port,
 		User:          req.User,
 		Password:      password,
@@ -677,8 +678,8 @@ func (h *Handler) UpdateHost(c echo.Context) error {
 		return failure(c, http.StatusInternalServerError, errHostFetchFailed)
 	}
 
-	if req.IP != "" {
-		host.IP = req.IP
+	if req.Address != "" {
+		host.Address = req.Address
 	}
 	if req.Port != nil {
 		host.Port = *req.Port
@@ -884,10 +885,10 @@ func (h *Handler) CreateServicePort(c echo.Context) error {
 	}
 
 	sp := &models.ServicePort{
-		ServiceIP:   req.ServiceIP,
-		ServicePort: req.ServicePort,
-		LocalPort:   req.LocalPort,
-		Description: req.Description,
+		ServiceAddress: req.ServiceAddress,
+		ServicePort:    req.ServicePort,
+		LocalPort:      req.LocalPort,
+		Description:    req.Description,
 	}
 
 	tx := h.db.Begin()
@@ -1037,7 +1038,7 @@ func (h *Handler) GetServicePort(c echo.Context) error {
 }
 
 // @Summary      Update a service port
-// @Description  service_ip, service_port and local_port are all required.
+// @Description  service_address, service_port and local_port are all required. service_address is a host name or an IP address, resolved on this system each time a connection is forwarded.
 // @Tags         service ports
 // @Accept   json
 // @Produce  json
@@ -1088,7 +1089,7 @@ func (h *Handler) UpdateServicePort(c echo.Context) error {
 		return failure(c, http.StatusInternalServerError, errServicePortFetchFailed)
 	}
 
-	sp.ServiceIP = req.ServiceIP
+	sp.ServiceAddress = req.ServiceAddress
 	sp.ServicePort = req.ServicePort
 	sp.LocalPort = req.LocalPort
 	sp.Description = req.Description

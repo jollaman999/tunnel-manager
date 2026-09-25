@@ -94,13 +94,13 @@ func newLocalForwardDB(t *testing.T, hosts []models.Host, forwards []models.Loca
 
 func storedLocalForward(id, hostID uint, localPort int) models.LocalForward {
 	return models.LocalForward{
-		Number:     id,
-		HostID:     hostID,
-		BindScope:  models.BindScopeLoopback,
-		LocalPort:  localPort,
-		TargetIP:   "127.0.0.1",
-		TargetPort: 5432,
-		Enabled:    true,
+		Number:        id,
+		HostID:        hostID,
+		BindScope:     models.BindScopeLoopback,
+		LocalPort:     localPort,
+		TargetAddress: "127.0.0.1",
+		TargetPort:    5432,
+		Enabled:       true,
 	}
 }
 
@@ -231,7 +231,7 @@ func TestCreateHostLocalForwardStoresTheRow(t *testing.T) {
 	h := NewHandler(db, manager, zap.NewNop(), newTestCipher(t))
 
 	c, rec := localForwardRequest(t, http.MethodPost, "/api/host/1/local-forward",
-		`{"local_port":15432,"target_ip":"127.0.0.1","target_port":5432,"description":"db"}`, "1")
+		`{"local_port":15432,"target_address":"127.0.0.1","target_port":5432,"description":"db"}`, "1")
 
 	err := h.CreateHostLocalForward(c)
 	if err != nil {
@@ -242,7 +242,7 @@ func TestCreateHostLocalForwardStoresTheRow(t *testing.T) {
 	}
 
 	got := readLocalForwardAnswer(t, rec)
-	if got.Number == 0 || got.HostID != 1 || got.LocalPort != 15432 || got.TargetIP != "127.0.0.1" ||
+	if got.Number == 0 || got.HostID != 1 || got.LocalPort != 15432 || got.TargetAddress != "127.0.0.1" ||
 		got.TargetPort != 5432 || got.Description != "db" {
 		t.Errorf("answer = %+v, want the row that was sent under Host 1", got)
 	}
@@ -436,7 +436,7 @@ func TestALocalForwardIsSwitchedOnUnlessAskedOtherwise(t *testing.T) {
 		{localPort: 15001, enabled: nil, want: true, status: localForwardStatusStopped},
 		{localPort: 15002, enabled: &off, want: false, status: localForwardStatusOff},
 	} {
-		body, err := json.Marshal(models.LocalForwardRequest{LocalPort: tc.localPort, TargetIP: "127.0.0.1",
+		body, err := json.Marshal(models.LocalForwardRequest{LocalPort: tc.localPort, TargetAddress: "127.0.0.1",
 			TargetPort: 5432, Enabled: tc.enabled})
 		if err != nil {
 			t.Fatalf("failed to write the request: %v", err)
@@ -488,7 +488,7 @@ func TestAnUpdateKeepsWhetherALocalForwardIsOnUnlessItSays(t *testing.T) {
 		{enabled: &off, want: false, status: localForwardStatusOff},
 	} {
 		body, err := json.Marshal(models.LocalForwardRequest{BindScope: models.BindScopeLoopback, LocalPort: 15001,
-			TargetIP: "127.0.0.1", TargetPort: 5432, Enabled: tc.enabled})
+			TargetAddress: "127.0.0.1", TargetPort: 5432, Enabled: tc.enabled})
 		if err != nil {
 			t.Fatalf("failed to write the request: %v", err)
 		}
@@ -554,8 +554,8 @@ func TestUpdateLocalForwardChangesTheRow(t *testing.T) {
 	h := NewHandler(db, manager, zap.NewNop(), newTestCipher(t))
 
 	for _, body := range []string{
-		`{"bind_scope":"wildcard","local_port":15001,"target_ip":"192.0.2.10","target_port":80}`,
-		`{"bind_scope":"loopback","local_port":15009,"target_ip":"192.0.2.10","target_port":8080,"description":"web"}`,
+		`{"bind_scope":"wildcard","local_port":15001,"target_address":"192.0.2.10","target_port":80}`,
+		`{"bind_scope":"loopback","local_port":15009,"target_address":"192.0.2.10","target_port":8080,"description":"web"}`,
 	} {
 		c, rec := localForwardRowRequest(t, http.MethodPut, "/api/host/1/local-forward/1", body, "1", "1")
 
@@ -570,9 +570,9 @@ func TestUpdateLocalForwardChangesTheRow(t *testing.T) {
 
 	rows := storedLocalForwards(t, db)
 	want := models.LocalForward{Number: 1, HostID: 1, BindScope: models.BindScopeLoopback, LocalPort: 15009,
-		TargetIP: "192.0.2.10", TargetPort: 8080, Description: "web"}
+		TargetAddress: "192.0.2.10", TargetPort: 8080, Description: "web"}
 	if len(rows) != 1 || rows[0].BindScope != want.BindScope || rows[0].LocalPort != want.LocalPort ||
-		rows[0].TargetIP != want.TargetIP || rows[0].TargetPort != want.TargetPort ||
+		rows[0].TargetAddress != want.TargetAddress || rows[0].TargetPort != want.TargetPort ||
 		rows[0].Description != want.Description || rows[0].HostID != want.HostID {
 		t.Errorf("stored = %+v, want %+v", rows, want)
 	}
@@ -681,7 +681,7 @@ func TestALocalForwardIsReachedOnlyUnderItsOwnHost(t *testing.T) {
 
 	// The change: it lands on the row of the Host in the path.
 	c, rec := localForwardRowRequest(t, http.MethodPut, "/api/host/2/local-forward/1",
-		`{"bind_scope":"loopback","local_port":15002,"target_ip":"127.0.0.1","target_port":5433}`, "2", "1")
+		`{"bind_scope":"loopback","local_port":15002,"target_address":"127.0.0.1","target_port":5433}`, "2", "1")
 
 	err := h.UpdateLocalForward(c)
 	if err != nil {
@@ -717,7 +717,7 @@ func TestALocalForwardIsReachedOnlyUnderItsOwnHost(t *testing.T) {
 // TestLocalForwardWritesAreRefused pins every refusal a write can meet, and
 // that none of them writes a row or wakes the loop.
 func TestLocalForwardWritesAreRefused(t *testing.T) {
-	const valid = `"target_ip":"127.0.0.1","target_port":5432`
+	const valid = `"target_address":"127.0.0.1","target_port":5432`
 
 	tests := []struct {
 		name   string
@@ -783,15 +783,23 @@ func TestLocalForwardWritesAreRefused(t *testing.T) {
 			name:   "a target port below the range",
 			method: http.MethodPut,
 			value:  "1",
-			body:   `{"local_port":15100,"target_ip":"127.0.0.1","target_port":-1}`,
+			body:   `{"local_port":15100,"target_address":"127.0.0.1","target_port":-1}`,
 			status: http.StatusBadRequest,
 			code:   errRequestValidationFailed,
 		},
 		{
-			name:   "a target that is not an IP",
+			name:   "a target that is neither a host name nor an address",
 			method: http.MethodPost,
 			value:  "1",
-			body:   `{"local_port":15100,"target_ip":"db.example","target_port":5432}`,
+			body:   `{"local_port":15100,"target_address":"bad host!","target_port":5432}`,
+			status: http.StatusBadRequest,
+			code:   errRequestValidationFailed,
+		},
+		{
+			name:   "a target under the name it had before",
+			method: http.MethodPost,
+			value:  "1",
+			body:   `{"local_port":15100,"target_ip":"127.0.0.1","target_port":5432}`,
 			status: http.StatusBadRequest,
 			code:   errRequestValidationFailed,
 		},
@@ -905,7 +913,7 @@ func TestLocalForwardWritesAreRefused(t *testing.T) {
 				t.Fatalf("stored %d rows, want the %d there were", len(rows), len(before))
 			}
 			for i := range before {
-				if rows[i].LocalPort != before[i].LocalPort || rows[i].TargetIP != before[i].TargetIP {
+				if rows[i].LocalPort != before[i].LocalPort || rows[i].TargetAddress != before[i].TargetAddress {
 					t.Errorf("row %d = %+v, want it left as %+v", i, rows[i], before[i])
 				}
 			}
@@ -998,7 +1006,7 @@ const runningAPIPort = 19500
 // port is, with that port in the answer, and that with no running port told
 // the same write goes through as it did before.
 func TestALocalPortOnTheRunningAPIPortIsRefused(t *testing.T) {
-	const body = `{"local_port":19500,"target_ip":"127.0.0.1","target_port":5432}`
+	const body = `{"local_port":19500,"target_address":"127.0.0.1","target_port":5432}`
 
 	tests := []struct {
 		name    string
@@ -1073,7 +1081,7 @@ func TestANumberIsGivenBackAfterTheForwardHoldingItIsDeleted(t *testing.T) {
 	for _, number := range []uint{1, 2, 3} {
 		held = append(held, models.LocalForward{
 			HostID: 1, Number: number, LocalPort: int(15000 + number),
-			TargetIP: "198.51.100.10", TargetPort: 80, Enabled: true,
+			TargetAddress: "198.51.100.10", TargetPort: 80, Enabled: true,
 		})
 	}
 
@@ -1104,7 +1112,7 @@ func TestANumberIsGivenBackAfterTheForwardHoldingItIsDeleted(t *testing.T) {
 
 		err = db.Create(&models.LocalForward{
 			HostID: 1, Number: got, LocalPort: int(16000 + got),
-			TargetIP: "198.51.100.10", TargetPort: 80, Enabled: true,
+			TargetAddress: "198.51.100.10", TargetPort: 80, Enabled: true,
 		}).Error
 		if err != nil {
 			t.Fatalf("failed to store the forward numbered %d: %v", got, err)

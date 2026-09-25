@@ -24,11 +24,11 @@ import (
 // made: port 1 on loopback refuses right away, so a tunnel that is started ends
 // its first attempt without leaving the machine.
 func enabledHost(id uint, enabled bool) models.Host {
-	return models.Host{ID: id, IP: "127.0.0.1", Port: 1, User: "user", Password: "pass", Enabled: enabled}
+	return models.Host{ID: id, Address: "127.0.0.1", Port: 1, User: "user", Password: "pass", Enabled: enabled}
 }
 
 func testServicePort(id uint) models.ServicePort {
-	return models.ServicePort{ID: id, ServiceIP: "127.0.0.1", ServicePort: 1, LocalPort: 18080 + int(id)}
+	return models.ServicePort{ID: id, ServiceAddress: "127.0.0.1", ServicePort: 1, LocalPort: 18080 + int(id)}
 }
 
 // newWritableStubDB returns a stub that answers Host and ServicePort queries and
@@ -422,13 +422,13 @@ func TestReconcileRestartsWhenTheConnectionSettingsChange(t *testing.T) {
 		change func(t *testing.T, c *crypto.Cipher, host *models.Host, sp *models.ServicePort)
 	}{
 		{"the server IP", func(_ *testing.T, _ *crypto.Cipher, host *models.Host, _ *models.ServicePort) {
-			host.IP = "127.0.0.2"
+			host.Address = "127.0.0.2"
 		}},
 		{"the server port", func(_ *testing.T, _ *crypto.Cipher, host *models.Host, _ *models.ServicePort) {
 			host.Port = 2
 		}},
 		{"the remote IP", func(_ *testing.T, _ *crypto.Cipher, _ *models.Host, sp *models.ServicePort) {
-			sp.ServiceIP = "127.0.0.2"
+			sp.ServiceAddress = "127.0.0.2"
 		}},
 		{"the remote port", func(_ *testing.T, _ *crypto.Cipher, _ *models.Host, sp *models.ServicePort) {
 			sp.ServicePort = 2
@@ -834,7 +834,7 @@ func desiredKeys(t *testing.T, m *Manager) []string {
 // four, and which four is the point.
 func TestDesiredTunnelsTakesTheAssignedCombinationsOnly(t *testing.T) {
 	hosts := []models.Host{enabledHost(1, true), enabledHost(2, true)}
-	hosts[1].IP = "127.0.0.2"
+	hosts[1].Address = "127.0.0.2"
 	sps := []models.ServicePort{testServicePort(1), testServicePort(2), testServicePort(3)}
 
 	// The six combinations the table is filled with, less 1-2 and 2-3.
@@ -868,7 +868,7 @@ func TestDesiredTunnelsTakesTheAssignedCombinationsOnly(t *testing.T) {
 // assignments it keeps bring its tunnels back when it is enabled again.
 func TestDesiredTunnelsKeepsTheAssignmentsOfADisabledHost(t *testing.T) {
 	hosts := []models.Host{enabledHost(1, true), enabledHost(2, false)}
-	hosts[1].IP = "127.0.0.2"
+	hosts[1].Address = "127.0.0.2"
 	sps := []models.ServicePort{testServicePort(1), testServicePort(2)}
 
 	assignments := []models.HostServicePort{
@@ -1065,8 +1065,8 @@ func TestReconcileRebuildsATunnelWhenItsHostKeyIsApproved(t *testing.T) {
 // carries a new scope to a running tunnel is the pass noticing that the
 // settings are no longer the ones it should have.
 func TestChangingTheBindScopeChangesTheFingerprint(t *testing.T) {
-	host := &models.Host{IP: "192.0.2.1", Port: 22, User: "tester"}
-	sp := &models.ServicePort{ServiceIP: "203.0.113.5", ServicePort: 5432, LocalPort: 15432}
+	host := &models.Host{Address: "192.0.2.1", Port: 22, User: "tester"}
+	sp := &models.ServicePort{ServiceAddress: "203.0.113.5", ServicePort: 5432, LocalPort: 15432}
 	creds := hostCreds{password: "secret"} // hook:allow
 
 	wildcard := connectionFingerprint(host, sp, models.BindScopeWildcard, creds)
@@ -1184,18 +1184,18 @@ func desiredCountsOf(t *testing.T, m *Manager) (int, int) {
 // from the tables, the way a pass would count them.
 func TestDesiredCountsComeFromTheLastPass(t *testing.T) {
 	hosts := []models.Host{enabledHost(1, true), enabledHost(2, false)}
-	hosts[1].IP = "127.0.0.2"
+	hosts[1].Address = "127.0.0.2"
 
 	stub := &desiredCountDB{
 		hosts: hosts,
 		sps:   []models.ServicePort{testServicePort(1), testServicePort(2)},
 		forwards: []models.LocalForward{
 			{Number: 1, HostID: 1, BindScope: models.BindScopeLoopback, LocalPort: freeDualStackPort(t),
-				TargetIP: "127.0.0.1", TargetPort: 1, Enabled: true},
+				TargetAddress: "127.0.0.1", TargetPort: 1, Enabled: true},
 			{Number: 2, HostID: 1, BindScope: models.BindScopeLoopback, LocalPort: freeDualStackPort(t),
-				TargetIP: "127.0.0.1", TargetPort: 1, Enabled: false},
+				TargetAddress: "127.0.0.1", TargetPort: 1, Enabled: false},
 			{Number: 1, HostID: 2, BindScope: models.BindScopeLoopback, LocalPort: freeDualStackPort(t),
-				TargetIP: "127.0.0.1", TargetPort: 1, Enabled: true},
+				TargetAddress: "127.0.0.1", TargetPort: 1, Enabled: true},
 		},
 	}
 	stub.assignments = allAssignments(stub.hosts, stub.sps)

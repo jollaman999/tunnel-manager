@@ -3066,8 +3066,8 @@ func TestEstablishConnectionOpensBothAddressesOfTheScope(t *testing.T) {
 			m := newSSHTestManager(t, 1)
 			serverAddr, requested := startScopedForwardSSHServer(t, func(string) bool { return true })
 
-			host := &models.Host{IP: "127.0.0.1", Port: 22}
-			sp := &models.ServicePort{ServiceIP: "127.0.0.1", ServicePort: 1, LocalPort: 18201}
+			host := &models.Host{Address: "127.0.0.1", Port: 22}
+			sp := &models.ServicePort{ServiceAddress: "127.0.0.1", ServicePort: 1, LocalPort: 18201}
 			localV4, localV6, _, _ := tunnelAddresses(host, sp, tc.scope)
 
 			tun, tunnel := newScopedSSHTestTunnel(t, serverAddr, localV4, localV6)
@@ -3372,8 +3372,8 @@ func TestAHostNameThatDoesNotResolveLeavesATunnelRowThatRetries(t *testing.T) {
 
 	const name = "tunnel-manager-test.invalid"
 
-	host := models.Host{ID: 1, IP: name, Port: 22, User: "user", Password: "pass", Enabled: true}
-	sp := models.ServicePort{ID: 2, ServiceIP: "127.0.0.1", ServicePort: 3306, LocalPort: 13306}
+	host := models.Host{ID: 1, Address: name, Port: 22, User: "user", Password: "pass", Enabled: true}
+	sp := models.ServicePort{ID: 2, ServiceAddress: "127.0.0.1", ServicePort: 3306, LocalPort: 13306}
 
 	err = m.StartTunnel(&host, &sp, models.BindScopeWildcard)
 	if err != nil {

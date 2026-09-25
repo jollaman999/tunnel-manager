@@ -105,7 +105,7 @@ func TestHostSecretsAreNotSerialized(t *testing.T) {
 	// what a stored one looks like.
 	host := Host{
 		ID:            1,
-		IP:            "192.0.2.10",
+		Address:       "192.0.2.10",
 		Port:          22,
 		User:          "operator",
 		Password:      "not-a-real-password",
@@ -138,7 +138,7 @@ func TestHostSecretsAreNotSerialized(t *testing.T) {
 		}
 	}
 
-	if !strings.Contains(body, `"ip":"192.0.2.10"`) {
+	if !strings.Contains(body, `"address":"192.0.2.10"`) {
 		t.Fatalf("the serialized Host is missing the address: %s", body)
 	}
 }
@@ -540,7 +540,7 @@ func TestHostServicePortHoldsOnePairOnce(t *testing.T) {
 // arrive as false and the second would quietly be given the first one's answer,
 // which is the trap the Enabled field on Host was already caught in.
 func TestCreateRequestsTellAnAbsentAssignmentFromFalse(t *testing.T) {
-	const noField = `{"ip":"192.0.2.10","port":22,"user":"operator"}`
+	const noField = `{"address":"192.0.2.10","port":22,"user":"operator"}`
 
 	var host CreateHostRequest
 
@@ -564,7 +564,7 @@ func TestCreateRequestsTellAnAbsentAssignmentFromFalse(t *testing.T) {
 
 	var sp CreateServicePortRequest
 
-	err = json.Unmarshal([]byte(`{"service_ip":"198.51.100.10","service_port":80,"local_port":8080}`), &sp)
+	err = json.Unmarshal([]byte(`{"service_address":"198.51.100.10","service_port":80,"local_port":8080}`), &sp)
 	if err != nil {
 		t.Fatalf("failed to read the request: %v", err)
 	}
@@ -611,14 +611,14 @@ func TestALocalForwardBindScopeThatIsNeitherIsRefused(t *testing.T) {
 	db := newLocalForwardTable(t)
 
 	for i, scope := range []string{"127.0.0.1", "0.0.0.0", "LOOPBACK", "anywhere"} {
-		err := db.Create(&LocalForward{HostID: 1, BindScope: scope, LocalPort: 10000 + i, TargetIP: "192.0.2.1", TargetPort: 22}).Error
+		err := db.Create(&LocalForward{HostID: 1, BindScope: scope, LocalPort: 10000 + i, TargetAddress: "192.0.2.1", TargetPort: 22}).Error
 		if err == nil {
 			t.Fatalf("a local forward was stored with the bind scope %q", scope)
 		}
 	}
 
 	for i, scope := range []string{"", BindScopeLoopback, BindScopeWildcard} {
-		err := db.Create(&LocalForward{HostID: 1, Number: uint(i) + 1, BindScope: scope, LocalPort: 20000 + i, TargetIP: "192.0.2.1", TargetPort: 22}).Error
+		err := db.Create(&LocalForward{HostID: 1, Number: uint(i) + 1, BindScope: scope, LocalPort: 20000 + i, TargetAddress: "192.0.2.1", TargetPort: 22}).Error
 		if err != nil {
 			t.Fatalf("a local forward with the bind scope %q was refused: %v", scope, err)
 		}
@@ -631,17 +631,17 @@ func TestALocalForwardBindScopeThatIsNeitherIsRefused(t *testing.T) {
 func TestALocalPortIsOpenedByOneLocalForward(t *testing.T) {
 	db := newLocalForwardTable(t)
 
-	err := db.Create(&LocalForward{HostID: 1, Number: 1, LocalPort: 15432, TargetIP: "192.0.2.1", TargetPort: 5432}).Error
+	err := db.Create(&LocalForward{HostID: 1, Number: 1, LocalPort: 15432, TargetAddress: "192.0.2.1", TargetPort: 5432}).Error
 	if err != nil {
 		t.Fatalf("the first local forward was refused: %v", err)
 	}
 
-	err = db.Create(&LocalForward{HostID: 2, Number: 1, LocalPort: 15432, TargetIP: "192.0.2.2", TargetPort: 5433}).Error
+	err = db.Create(&LocalForward{HostID: 2, Number: 1, LocalPort: 15432, TargetAddress: "192.0.2.2", TargetPort: 5433}).Error
 	if err == nil {
 		t.Fatal("a second local forward was stored on the same local port")
 	}
 
-	err = db.Create(&LocalForward{HostID: 1, Number: 2, LocalPort: 15433, TargetIP: "192.0.2.1", TargetPort: 5432}).Error
+	err = db.Create(&LocalForward{HostID: 1, Number: 2, LocalPort: 15433, TargetAddress: "192.0.2.1", TargetPort: 5432}).Error
 	if err != nil {
 		t.Fatalf("a local forward on another local port was refused: %v", err)
 	}

@@ -201,7 +201,7 @@ func sceneSignIn(r *recorder, cfg config, initial string) error {
 // recording, and the others the same way but quickly: once the first has been
 // seen, the others only need to be seen going in.
 func sceneServicePort(r *recorder, cfg config, _ string) error {
-	if err := r.click(`nav a[data-screen="service-ports"]`, `#service-port-create-service_ip`); err != nil {
+	if err := r.click(`nav a[data-screen="service-ports"]`, `#service-port-create-service_address`); err != nil {
 		return err
 	}
 
@@ -221,7 +221,7 @@ func sceneServicePort(r *recorder, cfg config, _ string) error {
 		}
 
 		fields := []struct{ sel, text string }{
-			{`#service-port-create-service_ip`, cfg.serviceIP},
+			{`#service-port-create-service_address`, cfg.serviceIP},
 			{`#service-port-create-service_port`, servicePort},
 			{`#service-port-create-local_port`, cfg.localPorts[i]},
 			{`#service-port-create-description`, fmt.Sprintf("Demo web service %d", i+1)},
@@ -260,7 +260,7 @@ func sceneServicePort(r *recorder, cfg config, _ string) error {
 }
 
 func sceneHost(r *recorder, cfg config, _ string) error {
-	if err := r.click(`nav a[data-screen="hosts"]`, `#host-create-ip`); err != nil {
+	if err := r.click(`nav a[data-screen="hosts"]`, `#host-create-address`); err != nil {
 		return err
 	}
 
@@ -270,7 +270,7 @@ func sceneHost(r *recorder, cfg config, _ string) error {
 
 	r.pause(time.Second)
 
-	if err := r.typeInto(`#host-create-ip`, cfg.hostIP, 3); err != nil {
+	if err := r.typeInto(`#host-create-address`, cfg.hostIP, 3); err != nil {
 		return err
 	}
 
@@ -431,7 +431,7 @@ func sceneLocalForward(r *recorder, cfg config, _ string) error {
 
 	fields := []struct{ sel, text string }{
 		{`#local-forward-create-local_port`, cfg.forwardPort},
-		{`#local-forward-create-target_ip`, cfg.targetIP},
+		{`#local-forward-create-target_address`, cfg.targetIP},
 		{`#local-forward-create-target_port`, cfg.targetPort},
 		{`#local-forward-create-description`, "Web inside the Host"},
 	}

@@ -278,9 +278,9 @@ func newWriteStubDB(t *testing.T) (*gorm.DB, *txConnPool) {
 	err := db.Callback().Query().Replace("gorm:query", func(tx *gorm.DB) {
 		switch dest := tx.Statement.Dest.(type) {
 		case *models.Host:
-			*dest = models.Host{ID: 1, IP: "192.0.2.1", Port: 22, User: "root", Enabled: true}
+			*dest = models.Host{ID: 1, Address: "192.0.2.1", Port: 22, User: "root", Enabled: true}
 		case *models.ServicePort:
-			*dest = models.ServicePort{ID: 2, ServiceIP: "192.0.2.2", ServicePort: 8081, LocalPort: 18081}
+			*dest = models.ServicePort{ID: 2, ServiceAddress: "192.0.2.2", ServicePort: 8081, LocalPort: 18081}
 		}
 		tx.RowsAffected = 1
 	})
@@ -296,8 +296,8 @@ func newWriteStubDB(t *testing.T) (*gorm.DB, *txConnPool) {
 // transaction is through. A pass that runs before the commit reads the state as
 // it was and leaves the tunnels of the rows the request wrote alone.
 func TestWriteHandlersWakeTheReconcileLoopAfterTheCommit(t *testing.T) {
-	const hostBody = `{"ip":"192.0.2.1","port":22,"user":"root","password":"fake-value-1"}` // hook:allow
-	const servicePortBody = `{"service_ip":"192.0.2.2","service_port":80,"local_port":8080}`
+	const hostBody = `{"address":"192.0.2.1","port":22,"user":"root","password":"fake-value-1"}` // hook:allow
+	const servicePortBody = `{"service_address":"192.0.2.2","service_port":80,"local_port":8080}`
 
 	tests := []struct {
 		name   string
@@ -427,7 +427,7 @@ func TestCreateServicePortDoesNotWakeTheLoopOnRollback(t *testing.T) {
 
 	e := echo.New()
 	e.Validator = &testValidator{validator: validator.New()}
-	body := `{"service_ip":"192.0.2.1","service_port":80,"local_port":8080}`
+	body := `{"service_address":"192.0.2.1","service_port":80,"local_port":8080}`
 	req := httptest.NewRequest(http.MethodPost, "/api/service-port", strings.NewReader(body))
 	req.Header.Set(echo.HeaderContentType, echo.MIMEApplicationJSON)
 	rec := httptest.NewRecorder()
@@ -528,8 +528,8 @@ func TestCreateServicePortIsCreatedWhenNoTunnelCanBeStarted(t *testing.T) {
 	}
 
 	const spID uint = 7
-	hosts := []models.Host{{ID: 1, IP: "127.0.0.1", Port: 1, User: "root", Password: password, Enabled: true}}
-	sps := []models.ServicePort{{ID: spID, ServiceIP: "192.0.2.2", ServicePort: 80, LocalPort: 8080}}
+	hosts := []models.Host{{ID: 1, Address: "127.0.0.1", Port: 1, User: "root", Password: password, Enabled: true}}
+	sps := []models.ServicePort{{ID: spID, ServiceAddress: "192.0.2.2", ServicePort: 80, LocalPort: 8080}}
 
 	db, txPool := newReconcileStubDB(t, hosts, sps, spID)
 
@@ -540,7 +540,7 @@ func TestCreateServicePortIsCreatedWhenNoTunnelCanBeStarted(t *testing.T) {
 
 	e := echo.New()
 	e.Validator = &testValidator{validator: validator.New()}
-	body := `{"service_ip":"192.0.2.2","service_port":80,"local_port":8080}`
+	body := `{"service_address":"192.0.2.2","service_port":80,"local_port":8080}`
 	req := httptest.NewRequest(http.MethodPost, "/api/service-port", strings.NewReader(body))
 	req.Header.Set(echo.HeaderContentType, echo.MIMEApplicationJSON)
 	rec := httptest.NewRecorder()
@@ -632,9 +632,9 @@ func newReadRecordingDB(t *testing.T, notFound bool) (*gorm.DB, *txConnPool, *re
 
 		switch dest := tx.Statement.Dest.(type) {
 		case *models.Host:
-			*dest = models.Host{ID: 1, IP: "192.0.2.1", Port: 22, User: "root", Enabled: true}
+			*dest = models.Host{ID: 1, Address: "192.0.2.1", Port: 22, User: "root", Enabled: true}
 		case *models.ServicePort:
-			*dest = models.ServicePort{ID: 2, ServiceIP: "192.0.2.2", ServicePort: 8081, LocalPort: 18081}
+			*dest = models.ServicePort{ID: 2, ServiceAddress: "192.0.2.2", ServicePort: 8081, LocalPort: 18081}
 		}
 		tx.RowsAffected = 1
 	})
@@ -660,7 +660,7 @@ func newReadRecordingDB(t *testing.T, notFound bool) (*gorm.DB, *txConnPool, *re
 // SQL without a word and without an error, so a lock written back in would
 // protect nothing while looking as though it did.
 func TestWriteHandlersReadTheirRowInsideTheTransaction(t *testing.T) {
-	const servicePortBody = `{"service_ip":"192.0.2.2","service_port":80,"local_port":8080}`
+	const servicePortBody = `{"service_address":"192.0.2.2","service_port":80,"local_port":8080}`
 
 	tests := []struct {
 		name   string
@@ -788,7 +788,7 @@ func TestCreateHandlersReadOnlyWhatTheyAssign(t *testing.T) {
 		{
 			name:     "create host",
 			target:   "/api/host",
-			body:     `{"ip":"192.0.2.1","port":22,"user":"root","password":"fake-value-1"}`, // hook:allow
+			body:     `{"address":"192.0.2.1","port":22,"user":"root","password":"fake-value-1"}`, // hook:allow
 			assigned: "service_ports",
 			own:      "hosts",
 			ownRead:  "SELECT `id` FROM `hosts` ORDER BY id desc LIMIT 1",
@@ -797,7 +797,7 @@ func TestCreateHandlersReadOnlyWhatTheyAssign(t *testing.T) {
 		{
 			name:     "create service port",
 			target:   "/api/service-port",
-			body:     `{"service_ip":"192.0.2.2","service_port":80,"local_port":8080}`,
+			body:     `{"service_address":"192.0.2.2","service_port":80,"local_port":8080}`,
 			assigned: "hosts",
 			own:      "service_ports",
 			call:     (*Handler).CreateServicePort,
@@ -877,7 +877,7 @@ func TestCreateHandlersReadOnlyWhatTheyAssign(t *testing.T) {
 // that is not there leaves no transaction behind. The read is made inside one,
 // so the path that finds nothing has one open.
 func TestWriteHandlersRollBackWhenTheRowIsGone(t *testing.T) {
-	const servicePortBody = `{"service_ip":"192.0.2.2","service_port":80,"local_port":8080}`
+	const servicePortBody = `{"service_address":"192.0.2.2","service_port":80,"local_port":8080}`
 
 	tests := []struct {
 		name   string
@@ -1040,13 +1040,13 @@ func newRowsDB(t *testing.T, hosts []models.Host, sps []models.ServicePort, tunn
 // statusHost is a Host with an address of its own, because the rows are stored
 // in a database now and two Hosts cannot share an IP.
 func statusHost(id uint, enabled bool) models.Host {
-	return models.Host{ID: id, IP: fmt.Sprintf("192.0.2.%d", id), Port: 22, User: "root", Enabled: enabled}
+	return models.Host{ID: id, Address: fmt.Sprintf("192.0.2.%d", id), Port: 22, User: "root", Enabled: enabled}
 }
 
 // statusServicePort is a service port that no other one collides with: the
 // service address and port are unique together, and so is the local port.
 func statusServicePort(id uint) models.ServicePort {
-	return models.ServicePort{ID: id, ServiceIP: "198.51.100.10", ServicePort: 8080 + int(id), LocalPort: 18080 + int(id)}
+	return models.ServicePort{ID: id, ServiceAddress: "198.51.100.10", ServicePort: 8080 + int(id), LocalPort: 18080 + int(id)}
 }
 
 func statusTunnel(hostID, spID uint, status string) models.Tunnel {
@@ -1289,7 +1289,7 @@ func newReadFailingDB(t *testing.T) *gorm.DB {
 func storedHost() models.Host {
 	return models.Host{
 		ID:          1,
-		IP:          "192.0.2.1",
+		Address:     "192.0.2.1",
 		Port:        22,
 		User:        "root",
 		Password:    storedHostPassword,
@@ -1358,7 +1358,7 @@ func TestGetHostAnswersTheStoredRow(t *testing.T) {
 
 	fields := map[string]interface{}{
 		"id":          float64(1),
-		"ip":          "192.0.2.1",
+		"address":     "192.0.2.1",
 		"port":        float64(22),
 		"user":        "root",
 		"description": "the host of the test",
@@ -1462,10 +1462,10 @@ func TestGetServicePortAnswersTheStoredRow(t *testing.T) {
 	}
 
 	fields := map[string]interface{}{
-		"id":           float64(2),
-		"service_ip":   "192.0.2.2",
-		"service_port": float64(8081),
-		"local_port":   float64(18081),
+		"id":              float64(2),
+		"service_address": "192.0.2.2",
+		"service_port":    float64(8081),
+		"local_port":      float64(18081),
 	}
 	for key, want := range fields {
 		got, ok := data[key]
@@ -1723,7 +1723,7 @@ func TestGetHostStatusCountsTheTunnelsOfTheHost(t *testing.T) {
 			if !ok {
 				t.Fatalf("the answer carries no host object, body: %s", rec.Body.String())
 			}
-			if host["id"] != float64(1) || host["ip"] != "192.0.2.1" {
+			if host["id"] != float64(1) || host["address"] != "192.0.2.1" {
 				t.Errorf("the answer is about another host: %v", host)
 			}
 
@@ -1806,7 +1806,7 @@ var errPathHandlers = []errPathHandler{
 		name:   "update service port",
 		method: http.MethodPut,
 		target: "/api/service-port/1",
-		body:   `{"service_ip":"192.0.2.2","service_port":80,"local_port":8080}`,
+		body:   `{"service_address":"192.0.2.2","service_port":80,"local_port":8080}`,
 		param:  "id",
 		inTx:   true,
 		call:   (*Handler).UpdateServicePort,
@@ -2068,9 +2068,9 @@ func causeOnlyDB(t *testing.T, pool gorm.ConnPool) *gorm.DB {
 	err = db.Callback().Query().Replace("gorm:query", func(tx *gorm.DB) {
 		switch dest := tx.Statement.Dest.(type) {
 		case *models.Host:
-			*dest = models.Host{ID: 1, IP: "192.0.2.1", Port: 22, User: "root", Enabled: true}
+			*dest = models.Host{ID: 1, Address: "192.0.2.1", Port: 22, User: "root", Enabled: true}
 		case *models.ServicePort:
-			*dest = models.ServicePort{ID: 2, ServiceIP: "192.0.2.2", ServicePort: 8081, LocalPort: 18081}
+			*dest = models.ServicePort{ID: 2, ServiceAddress: "192.0.2.2", ServicePort: 8081, LocalPort: 18081}
 		case *models.User:
 			*dest = models.User{ID: 1, SetupRequired: true}
 		}
@@ -2159,8 +2159,8 @@ type causeOnlyWriteCase struct {
 // causeOnlyHostBody and causeOnlyServicePortBody are bodies that get past the
 // validator, so the request reaches the transaction rather than being refused
 // before it.
-const causeOnlyHostBody = `{"ip":"192.0.2.1","port":22,"user":"root","password":"fake-value-1"}` // hook:allow
-const causeOnlyServicePortBody = `{"service_ip":"192.0.2.2","service_port":80,"local_port":8080}`
+const causeOnlyHostBody = `{"address":"192.0.2.1","port":22,"user":"root","password":"fake-value-1"}` // hook:allow
+const causeOnlyServicePortBody = `{"service_address":"192.0.2.2","service_port":80,"local_port":8080}`
 
 // causeOnlyWriteCases are the six handlers that write inside a transaction.
 var causeOnlyWriteCases = []causeOnlyWriteCase{
@@ -2412,7 +2412,7 @@ func TestTheBindScopeOfARegistrationIsCarriedOntoItsAssignments(t *testing.T) {
 			f.registerServicePort(t, 18080)
 			f.registerServicePort(t, 18081)
 
-			body := `{"ip":"192.0.2.10","port":22,"user":"operator","password":"a password"` +
+			body := `{"address":"192.0.2.10","port":22,"user":"operator","password":"a password"` +
 				tc.sent + `}`
 
 			rec := f.createHost(t, body)
@@ -2453,14 +2453,14 @@ func TestTheBindScopeOfANewServicePortIsCarriedOntoItsAssignments(t *testing.T) 
 	f := newHostFixture(t)
 
 	for _, ip := range []string{"192.0.2.10", "192.0.2.11"} {
-		rec := f.createHost(t, `{"ip":"`+ip+`","port":22,"user":"operator","password":"a password"}`)
+		rec := f.createHost(t, `{"address":"`+ip+`","port":22,"user":"operator","password":"a password"}`)
 		if rec.Code != http.StatusCreated {
 			t.Fatalf("the Host %s was answered %d: %s", ip, rec.Code, rec.Body.String())
 		}
 	}
 
 	rec := f.createServicePort(t,
-		`{"service_ip":"192.0.2.20","service_port":80,"local_port":18080,"bind_scope":"loopback"}`)
+		`{"service_address":"192.0.2.20","service_port":80,"local_port":18080,"bind_scope":"loopback"}`)
 	if rec.Code != http.StatusCreated {
 		t.Fatalf("status = %d, want %d, body: %s", rec.Code, http.StatusCreated, rec.Body.String())
 	}
@@ -2473,10 +2473,62 @@ func TestTheBindScopeOfANewServicePortIsCarriedOntoItsAssignments(t *testing.T) 
 	}
 
 	rec = f.createServicePort(t,
-		`{"service_ip":"192.0.2.20","service_port":81,"local_port":18081,"bind_scope":"everywhere"}`)
+		`{"service_address":"192.0.2.20","service_port":81,"local_port":18081,"bind_scope":"everywhere"}`)
 	if rec.Code != http.StatusBadRequest {
 		t.Fatalf("a scope that is neither was answered %d, want %d, body: %s",
 			rec.Code, http.StatusBadRequest, rec.Body.String())
+	}
+}
+
+// TestAHostIsNamedByAddressAndNotByTheOldName is the rename on the API. A Host
+// and a service port are registered by a host name as well as by an address,
+// under the new field names, and a request that carries only the old name is
+// one that names no address at all.
+func TestAHostIsNamedByAddressAndNotByTheOldName(t *testing.T) {
+	f := newHostFixture(t)
+
+	rec := f.createHost(t, `{"ip":"192.0.2.10","port":22,"user":"operator","password":"a password"}`)
+	if rec.Code != http.StatusBadRequest || errorCodeOf(t, rec) != errRequestValidationFailed {
+		t.Fatalf("a Host named by ip was answered %d: %s", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(strings.ToLower(rec.Body.String()), "address") {
+		t.Fatalf("the refusal does not name the address: %s", rec.Body.String())
+	}
+
+	rec = f.createServicePort(t, `{"service_ip":"192.0.2.20","service_port":80,"local_port":18080}`)
+	if rec.Code != http.StatusBadRequest || errorCodeOf(t, rec) != errRequestValidationFailed {
+		t.Fatalf("a service port named by service_ip was answered %d: %s", rec.Code, rec.Body.String())
+	}
+
+	rec = f.createHost(t, `{"address":"db.example.com","port":22,"user":"operator","password":"a password"}`)
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("a Host named by a host name was answered %d: %s", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), `"address":"db.example.com"`) {
+		t.Fatalf("the answer does not carry the address: %s", rec.Body.String())
+	}
+
+	rec = f.createServicePort(t, `{"service_address":"web.internal","service_port":80,"local_port":18080}`)
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("a service port named by a host name was answered %d: %s", rec.Code, rec.Body.String())
+	}
+
+	var host models.Host
+	err := f.db.First(&host).Error
+	if err != nil {
+		t.Fatalf("failed to read the Host back: %v", err)
+	}
+	if host.Address != "db.example.com" {
+		t.Fatalf("the Host was stored at %q", host.Address)
+	}
+
+	var sp models.ServicePort
+	err = f.db.First(&sp).Error
+	if err != nil {
+		t.Fatalf("failed to read the service port back: %v", err)
+	}
+	if sp.ServiceAddress != "web.internal" {
+		t.Fatalf("the service port was stored at %q", sp.ServiceAddress)
 	}
 }
 
@@ -2492,7 +2544,7 @@ func TestTheBindScopeOfANewServicePortIsCarriedOntoItsAssignments(t *testing.T) 
 func TestAChangeOpensWhatItAddsAndMovesWhatItNames(t *testing.T) {
 	f := newHostFixture(t)
 
-	rec := f.createHost(t, `{"ip":"192.0.2.10","port":22,"user":"operator","password":"a password"}`)
+	rec := f.createHost(t, `{"address":"192.0.2.10","port":22,"user":"operator","password":"a password"}`)
 	if rec.Code != http.StatusCreated {
 		t.Fatalf("the Host was answered %d: %s", rec.Code, rec.Body.String())
 	}
@@ -2586,7 +2638,7 @@ func TestAChangeOpensWhatItAddsAndMovesWhatItNames(t *testing.T) {
 func TestTheServicePortListSaysWhatEachAssignmentIsOpenedTo(t *testing.T) {
 	f := newHostFixture(t)
 
-	rec := f.createHost(t, `{"ip":"192.0.2.10","port":22,"user":"operator","password":"a password"}`)
+	rec := f.createHost(t, `{"address":"192.0.2.10","port":22,"user":"operator","password":"a password"}`)
 	if rec.Code != http.StatusCreated {
 		t.Fatalf("the Host was answered %d: %s", rec.Code, rec.Body.String())
 	}
@@ -2754,9 +2806,9 @@ func (f *hostFixture) registerServicePort(t *testing.T, localPort int) {
 	t.Helper()
 
 	err := f.db.Create(&models.ServicePort{
-		ServiceIP:   "192.0.2.20",
-		ServicePort: localPort,
-		LocalPort:   localPort,
+		ServiceAddress: "192.0.2.20",
+		ServicePort:    localPort,
+		LocalPort:      localPort,
 	}).Error
 	if err != nil {
 		t.Fatalf("failed to store the service port on %d: %v", localPort, err)
@@ -2861,7 +2913,7 @@ func TestCreateHostSealsThePrivateKey(t *testing.T) {
 	f := newHostFixture(t)
 	keyPEM := testPrivateKeyPEM(t, "")
 
-	body := `{"ip":"192.0.2.10","port":22,"user":"operator","private_key":` +
+	body := `{"address":"192.0.2.10","port":22,"user":"operator","private_key":` +
 		jsonString(t, keyPEM) + `}`
 
 	rec := f.createHost(t, body)
@@ -2905,7 +2957,7 @@ func TestCreateHostSealsTheKeyPassphrase(t *testing.T) {
 	f := newHostFixture(t)
 	keyPEM := testPrivateKeyPEM(t, "the passphrase of the test")
 
-	body := `{"ip":"192.0.2.10","port":22,"user":"operator","private_key":` +
+	body := `{"address":"192.0.2.10","port":22,"user":"operator","private_key":` +
 		jsonString(t, keyPEM) + `,"key_passphrase":"the passphrase of the test"}`
 
 	rec := f.createHost(t, body)
@@ -2938,7 +2990,7 @@ func TestCreateHostSealsTheKeyPassphrase(t *testing.T) {
 func TestCreateHostRefusesAHostWithNoWayIn(t *testing.T) {
 	f := newHostFixture(t)
 
-	rec := f.createHost(t, `{"ip":"192.0.2.10","port":22,"user":"operator"}`)
+	rec := f.createHost(t, `{"address":"192.0.2.10","port":22,"user":"operator"}`)
 	if rec.Code != http.StatusBadRequest {
 		t.Fatalf("status = %d, want %d, body: %s", rec.Code, http.StatusBadRequest, rec.Body.String())
 	}
@@ -2985,7 +3037,7 @@ func TestCreateHostRefusesAKeyThatCannotBeUsed(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			f := newHostFixture(t)
 
-			body := `{"ip":"192.0.2.10","port":22,"user":"operator","private_key":` +
+			body := `{"address":"192.0.2.10","port":22,"user":"operator","private_key":` +
 				jsonString(t, tc.keyPEM) + `,"key_passphrase":` + jsonString(t, tc.passphrase) + `}`
 
 			rec := f.createHost(t, body)
@@ -3049,7 +3101,7 @@ func TestUpdateHostKeepsTheStoredKeyWhenTheBoxIsEmpty(t *testing.T) {
 	f := newHostFixture(t)
 	keyPEM := testPrivateKeyPEM(t, "the passphrase of the test")
 
-	rec := f.createHost(t, `{"ip":"192.0.2.10","port":22,"user":"operator","private_key":`+
+	rec := f.createHost(t, `{"address":"192.0.2.10","port":22,"user":"operator","private_key":`+
 		jsonString(t, keyPEM)+`,"key_passphrase":"the passphrase of the test"}`)
 	if rec.Code != http.StatusCreated {
 		t.Fatalf("the Host was not created: %s", rec.Body.String())
@@ -3084,7 +3136,7 @@ func TestUpdateHostReplacesTheKeyAndItsPassphraseTogether(t *testing.T) {
 	locked := testPrivateKeyPEM(t, "the passphrase of the test")
 	open := testPrivateKeyPEM(t, "")
 
-	rec := f.createHost(t, `{"ip":"192.0.2.10","port":22,"user":"operator","private_key":`+
+	rec := f.createHost(t, `{"address":"192.0.2.10","port":22,"user":"operator","private_key":`+
 		jsonString(t, locked)+`,"key_passphrase":"the passphrase of the test"}`)
 	if rec.Code != http.StatusCreated {
 		t.Fatalf("the Host was not created: %s", rec.Body.String())
@@ -3117,7 +3169,7 @@ func TestUpdateHostRefusesAPassphraseOnItsOwn(t *testing.T) {
 	f := newHostFixture(t)
 	keyPEM := testPrivateKeyPEM(t, "the passphrase of the test")
 
-	rec := f.createHost(t, `{"ip":"192.0.2.10","port":22,"user":"operator","private_key":`+
+	rec := f.createHost(t, `{"address":"192.0.2.10","port":22,"user":"operator","private_key":`+
 		jsonString(t, keyPEM)+`,"key_passphrase":"the passphrase of the test"}`)
 	if rec.Code != http.StatusCreated {
 		t.Fatalf("the Host was not created: %s", rec.Body.String())
@@ -3144,7 +3196,7 @@ func TestHostAnswersNeverCarryThePrivateKey(t *testing.T) {
 	f := newHostFixture(t)
 	keyPEM := testPrivateKeyPEM(t, "the passphrase of the test")
 
-	rec := f.createHost(t, `{"ip":"192.0.2.10","port":22,"user":"operator","private_key":`+
+	rec := f.createHost(t, `{"address":"192.0.2.10","port":22,"user":"operator","private_key":`+
 		jsonString(t, keyPEM)+`,"key_passphrase":"the passphrase of the test","password":"fake-value-1"}`) // hook:allow
 	if rec.Code != http.StatusCreated {
 		t.Fatalf("the Host was not created: %s", rec.Body.String())
@@ -3613,9 +3665,9 @@ func TestCreateHostStoresTheEnabledItWasGiven(t *testing.T) {
 		body string
 		want bool
 	}{
-		{"a Host that says nothing", `{"ip":"192.0.2.10","port":22,"user":"operator","password":"the password of the Host"}`, true},
-		{"a Host asked for as enabled", `{"ip":"192.0.2.11","port":22,"user":"operator","password":"the password of the Host","enabled":true}`, true},
-		{"a Host asked for as disabled", `{"ip":"192.0.2.12","port":22,"user":"operator","password":"the password of the Host","enabled":false}`, false},
+		{"a Host that says nothing", `{"address":"192.0.2.10","port":22,"user":"operator","password":"the password of the Host"}`, true},
+		{"a Host asked for as enabled", `{"address":"192.0.2.11","port":22,"user":"operator","password":"the password of the Host","enabled":true}`, true},
+		{"a Host asked for as disabled", `{"address":"192.0.2.12","port":22,"user":"operator","password":"the password of the Host","enabled":false}`, false},
 	}
 
 	for _, tc := range tests {
@@ -3817,9 +3869,9 @@ func TestDeleteHostTakesItsLocalForwardsWithIt(t *testing.T) {
 	db := newRowsDB(t, hosts, nil, nil)
 
 	for _, lf := range []models.LocalForward{
-		{HostID: 1, Number: 1, LocalPort: 15432, TargetIP: "192.0.2.1", TargetPort: 5432},
-		{HostID: 1, Number: 2, LocalPort: 15433, TargetIP: "192.0.2.1", TargetPort: 5433},
-		{HostID: 2, Number: 1, LocalPort: 15434, TargetIP: "192.0.2.2", TargetPort: 5432},
+		{HostID: 1, Number: 1, LocalPort: 15432, TargetAddress: "192.0.2.1", TargetPort: 5432},
+		{HostID: 1, Number: 2, LocalPort: 15433, TargetAddress: "192.0.2.1", TargetPort: 5433},
+		{HostID: 2, Number: 1, LocalPort: 15434, TargetAddress: "192.0.2.2", TargetPort: 5432},
 	} {
 		err := db.Create(&lf).Error
 		if err != nil {
@@ -4313,7 +4365,7 @@ func createRequest(t *testing.T, target, body string) (echo.Context, *httptest.R
 // That is what every client written before the field existed sends, and what
 // it asked for is the whole installation: every service port on the new Host.
 func TestCreateHostAssignsTheServicePortsThatAreStored(t *testing.T) {
-	const address = `"ip":"192.0.2.50","port":22,"user":"root","password":"fake-value-1"` // hook:allow
+	const address = `"address":"192.0.2.50","port":22,"user":"root","password":"fake-value-1"` // hook:allow
 
 	tests := []struct {
 		name string
@@ -4369,7 +4421,7 @@ func TestCreateHostAssignsTheServicePortsThatAreStored(t *testing.T) {
 // service port registered while Hosts are stored is carried by them, so that
 // the tunnels to it are built without anyone opening a second screen.
 func TestCreateServicePortAssignsItToTheHostsThatAreStored(t *testing.T) {
-	const address = `"service_ip":"198.51.100.20","service_port":9090,"local_port":19090`
+	const address = `"service_address":"198.51.100.20","service_port":9090,"local_port":19090`
 
 	tests := []struct {
 		name string
@@ -4436,14 +4488,14 @@ func TestCreateHandlersLeaveNoRowWhenTheAssignmentsFail(t *testing.T) {
 		{
 			name:   "create host",
 			target: "/api/host",
-			body:   `{"ip":"192.0.2.50","port":22,"user":"root","password":"fake-value-1"}`, // hook:allow
+			body:   `{"address":"192.0.2.50","port":22,"user":"root","password":"fake-value-1"}`, // hook:allow
 			count:  func(db *gorm.DB) *gorm.DB { return db.Model(&models.Host{}) },
 			call:   (*Handler).CreateHost,
 		},
 		{
 			name:   "create service port",
 			target: "/api/service-port",
-			body:   `{"service_ip":"198.51.100.20","service_port":9090,"local_port":19090}`,
+			body:   `{"service_address":"198.51.100.20","service_port":9090,"local_port":19090}`,
 			count:  func(db *gorm.DB) *gorm.DB { return db.Model(&models.ServicePort{}) },
 			call:   (*Handler).CreateServicePort,
 		},
@@ -4514,7 +4566,7 @@ func numberingDB(t *testing.T, ids ...uint) *gorm.DB {
 	for _, id := range ids {
 		err := db.Create(&models.Host{
 			ID:       id,
-			IP:       fmt.Sprintf("192.0.2.%d", id),
+			Address:  fmt.Sprintf("192.0.2.%d", id),
 			Port:     22,
 			User:     "operator",
 			Password: storedHostPassword,
@@ -4651,7 +4703,7 @@ func TestARegisteredHostTakesTheNumberThatWasGivenUp(t *testing.T) {
 	h := NewHandler(db, manager, zap.NewNop(), newTestCipher(t))
 
 	c, rec := createRequest(t, "/api/host",
-		`{"ip":"192.0.2.77","port":22,"user":"root","password":"fake-value-1"}`) // hook:allow
+		`{"address":"192.0.2.77","port":22,"user":"root","password":"fake-value-1"}`) // hook:allow
 
 	err = h.CreateHost(c)
 	if err != nil {
@@ -4664,7 +4716,7 @@ func TestARegisteredHostTakesTheNumberThatWasGivenUp(t *testing.T) {
 
 	var stored models.Host
 
-	err = db.Where("ip = ?", "192.0.2.77").First(&stored).Error
+	err = db.Where("address = ?", "192.0.2.77").First(&stored).Error
 	if err != nil {
 		t.Fatalf("failed to read the Host back: %v", err)
 	}

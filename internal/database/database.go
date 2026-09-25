@@ -631,6 +631,81 @@ func numberLocalForwardsByHost(db *gorm.DB) error {
 	})
 }
 
+// addressRename is one name an address used to be stored under and the name it
+// is stored under now, on the table of model. The same shape carries the
+// columns and the unique indexes over them, since an index is named after the
+// columns it covers and has to follow them.
+type addressRename struct {
+	model interface{}
+	from  string
+	to    string
+}
+
+// The columns and indexes that said IP from when an address was the only thing
+// they took. They hold a host name as well now, and carry the word for both.
+var (
+	addressColumnRenames = []addressRename{
+		{model: &models.Host{}, from: "ip", to: "address"},
+		{model: &models.ServicePort{}, from: "service_ip", to: "service_address"},
+		{model: &models.LocalForward{}, from: "target_ip", to: "target_address"},
+	}
+	addressIndexRenames = []addressRename{
+		{model: &models.Host{}, from: "idx_hosts_ip", to: "idx_hosts_address"},
+		{model: &models.ServicePort{}, from: "idx_service_ip_port", to: "idx_service_address_port"},
+	}
+)
+
+// renameAddressColumns moves the addresses of a database written before the
+// columns were renamed onto the names the model carries, and the unique
+// indexes over them with them.
+//
+// It runs before AutoMigrate because AutoMigrate cannot rename. Against a table
+// still holding the old column it would add the new one beside it as a column
+// that may not be null, which SQLite refuses on a table with rows, and a
+// startup that got past that would read every address back empty. It also runs
+// before numberLocalForwardsByHost, which carries over only the columns the old
+// and the rebuilt table share, so a target still under its old name would be
+// left behind.
+//
+// SQLite points an index at the renamed column by itself, so the indexes only
+// change name. They are renamed rather than left to AutoMigrate, which would
+// build a second unique index under the new name and keep the old one beside
+// it.
+//
+// Each step asks first whether the old name is there and the new one is not,
+// so a database that has been through this, or one that was created with the
+// new names, is left as it is. The whole of it is one transaction, so a
+// failure leaves the names that went in.
+func renameAddressColumns(db *gorm.DB) error {
+	return db.Transaction(func(tx *gorm.DB) error {
+		migrator := tx.Migrator()
+
+		for _, rename := range addressColumnRenames {
+			if !migrator.HasColumn(rename.model, rename.from) || migrator.HasColumn(rename.model, rename.to) {
+				continue
+			}
+
+			err := migrator.RenameColumn(rename.model, rename.from, rename.to)
+			if err != nil {
+				return fmt.Errorf("failed to rename the column %s to %s: %w", rename.from, rename.to, err)
+			}
+		}
+
+		for _, rename := range addressIndexRenames {
+			if !migrator.HasIndex(rename.model, rename.from) || migrator.HasIndex(rename.model, rename.to) {
+				continue
+			}
+
+			err := migrator.RenameIndex(rename.model, rename.from, rename.to)
+			if err != nil {
+				return fmt.Errorf("failed to rename the index %s to %s: %w", rename.from, rename.to, err)
+			}
+		}
+
+		return nil
+	})
+}
+
 // sharedColumns is the columns two tables both have, in the order the first one
 // holds them.
 func sharedColumns(tx *gorm.DB, table string, other string) ([]string, error) {
@@ -774,6 +849,14 @@ func NewDatabase(path string, logger *zap.Logger, logLevel string) (*gorm.DB, *L
 	// Reads queue up with the writes, which is affordable: what is stored is a
 	// few dozen Hosts and service ports and the queries run over them.
 	sqlDB.SetMaxOpenConns(1)
+
+	// The addresses are moved onto their new names before anything below reads
+	// the tables by the model. Why it cannot be left to AutoMigrate is at
+	// renameAddressColumns.
+	err = renameAddressColumns(db)
+	if err != nil {
+		return nil, nil, err
+	}
 
 	// Whether the assignments are already stored is asked before AutoMigrate
 	// runs, because afterwards the answer is yes on every startup: AutoMigrate

@@ -81,7 +81,13 @@ type transferFile struct {
 // The id and the two timestamps are left out. They describe the rows of the
 // installation that was exported, and the import writes rows of its own.
 type hostContent struct {
-	IP            string `json:"ip"`
+	Address string `json:"address"`
+	// IP is the name Address was carried under by the releases before it took
+	// a host name as well as an address. It is read and never written, the way
+	// BindAddress below is, so that a file one of them exported still opens,
+	// and a file that names both is read by Address. What is made of it is in
+	// tunnelsContent.readOldNames.
+	IP            string `json:"ip,omitempty"`
 	Port          int    `json:"port"`
 	User          string `json:"user"`
 	Password      string `json:"password"`
@@ -231,9 +237,12 @@ func (host hostContent) opensSocks() bool {
 // Host it belongs to. The id, the Host id and the timestamps are left out for
 // the reason they are left out of a Host.
 type localForwardContent struct {
-	BindScope   string `json:"bind_scope"`
-	LocalPort   int    `json:"local_port"`
-	TargetIP    string `json:"target_ip"`
+	BindScope     string `json:"bind_scope"`
+	LocalPort     int    `json:"local_port"`
+	TargetAddress string `json:"target_address"`
+	// TargetIP is the name TargetAddress was carried under, read and never
+	// written for the reason hostContent.IP is.
+	TargetIP    string `json:"target_ip,omitempty"`
 	TargetPort  int    `json:"target_port"`
 	Description string `json:"description"`
 	// Enabled is a pointer so that a file from before a forward could be
@@ -252,7 +261,10 @@ func (lf localForwardContent) enabled() bool {
 // no secret, and the id and the timestamps are left out for the reason they are
 // left out of a Host.
 type servicePortContent struct {
-	ServiceIP   string `json:"service_ip"`
+	ServiceAddress string `json:"service_address"`
+	// ServiceIP is the name ServiceAddress was carried under, read and never
+	// written for the reason hostContent.IP is.
+	ServiceIP   string `json:"service_ip,omitempty"`
 	ServicePort int    `json:"service_port"`
 	LocalPort   int    `json:"local_port"`
 	Description string `json:"description"`
@@ -272,6 +284,39 @@ type servicePortContent struct {
 type tunnelsContent struct {
 	Hosts        []hostContent        `json:"hosts"`
 	ServicePorts []servicePortContent `json:"service_ports"`
+}
+
+// readOldNames moves every address a file carries under the name an earlier
+// release wrote it with onto the name it is read by now, so that nothing past
+// the decoding has to know there were two. Where a file names both, the new
+// name is the one kept: a file carrying it was written by a release that
+// reads it, and the old one beside it can only be left over. The old names are
+// emptied on the way, which also keeps them out of anything written from the
+// content afterwards.
+func (content *tunnelsContent) readOldNames() {
+	for i := range content.Hosts {
+		host := &content.Hosts[i]
+		if host.Address == "" {
+			host.Address = host.IP
+		}
+		host.IP = ""
+
+		for j := range host.LocalForwards {
+			forward := &host.LocalForwards[j]
+			if forward.TargetAddress == "" {
+				forward.TargetAddress = forward.TargetIP
+			}
+			forward.TargetIP = ""
+		}
+	}
+
+	for i := range content.ServicePorts {
+		sp := &content.ServicePorts[i]
+		if sp.ServiceAddress == "" {
+			sp.ServiceAddress = sp.ServiceIP
+		}
+		sp.ServiceIP = ""
+	}
 }
 
 // settingsContent is the content of a file of kind settings.
@@ -408,7 +453,7 @@ const (
 )
 
 // transferItem is one row of the file and what the import did with it. The name
-// is how the operator finds the row on the screens: the IP of a Host, and the
+// is how the operator finds the row on the screens: the address of a Host, and the
 // service and local port of a service port.
 //
 // A name or a reason that is an English sentence is named beside it by a
@@ -882,7 +927,7 @@ func (h *TransferHandler) unsealHost(host models.Host) (hostContent, error) {
 	}
 
 	return hostContent{
-		IP:            host.IP,
+		Address:       host.Address,
 		Port:          host.Port,
 		User:          host.User,
 		Password:      password,
@@ -983,12 +1028,12 @@ func localForwardsByHost(db *gorm.DB) (map[uint][]localForwardContent, error) {
 		enabled := lf.Enabled
 
 		byHost[lf.HostID] = append(byHost[lf.HostID], localForwardContent{
-			BindScope:   lf.BindScope,
-			LocalPort:   lf.LocalPort,
-			TargetIP:    lf.TargetIP,
-			TargetPort:  lf.TargetPort,
-			Description: lf.Description,
-			Enabled:     &enabled,
+			BindScope:     lf.BindScope,
+			LocalPort:     lf.LocalPort,
+			TargetAddress: lf.TargetAddress,
+			TargetPort:    lf.TargetPort,
+			Description:   lf.Description,
+			Enabled:       &enabled,
 		})
 	}
 
@@ -1076,7 +1121,7 @@ func (h *TransferHandler) ExportTunnels(c echo.Context) error {
 				logid.TransferHostSecretDoesNotOpen.Field(), zap.Uint("host_id", host.ID),
 				zap.Error(err))
 
-			return failure(c, http.StatusInternalServerError, errExportHostSecretsSealed, errorArgs{"host": host.IP})
+			return failure(c, http.StatusInternalServerError, errExportHostSecretsSealed, errorArgs{"host": host.Address})
 		}
 
 		// A Host that carries nothing is written as an empty list and never as
@@ -1104,10 +1149,10 @@ func (h *TransferHandler) ExportTunnels(c echo.Context) error {
 
 	for _, sp := range sps {
 		content.ServicePorts = append(content.ServicePorts, servicePortContent{
-			ServiceIP:   sp.ServiceIP,
-			ServicePort: sp.ServicePort,
-			LocalPort:   sp.LocalPort,
-			Description: sp.Description,
+			ServiceAddress: sp.ServiceAddress,
+			ServicePort:    sp.ServicePort,
+			LocalPort:      sp.LocalPort,
+			Description:    sp.Description,
 		})
 	}
 
@@ -1186,6 +1231,8 @@ func (h *TransferHandler) ImportTunnels(c echo.Context) error {
 		return failure(c, http.StatusBadRequest, errImportTunnelsUnreadable)
 	}
 
+	content.readOldNames()
+
 	refused = checkLocalForwards(c, content)
 	if refused != nil {
 		return refused.answer(c)
@@ -1235,7 +1282,7 @@ func (h *TransferHandler) ImportTunnels(c echo.Context) error {
 
 		if item.Action != transferSkipped {
 			written = append(written, host)
-			writtenAs[host.IP] = item.Action
+			writtenAs[host.Address] = item.Action
 		}
 
 		items = append(items, *item)
@@ -1335,7 +1382,7 @@ func (h *TransferHandler) ImportTunnels(c echo.Context) error {
 // it again once that row is fixed" the whole of the work left.
 func (h *TransferHandler) importHost(c echo.Context, tx *gorm.DB, host hostContent,
 	overwrite bool) (*transferItem, *refusal) {
-	name := host.IP
+	name := host.Address
 
 	// The rules of a create are run on what the file carries, so that a file
 	// that was written by hand cannot put into the database what the screens
@@ -1343,7 +1390,7 @@ func (h *TransferHandler) importHost(c echo.Context, tx *gorm.DB, host hostConte
 	socks := host.socksOf(models.Host{})
 
 	err := c.Validate(&models.CreateHostRequest{
-		IP:                  host.IP,
+		Address:             host.Address,
 		Port:                host.Port,
 		User:                host.User,
 		Password:            host.Password,
@@ -1382,7 +1429,7 @@ func (h *TransferHandler) importHost(c echo.Context, tx *gorm.DB, host hostConte
 
 	var stored models.Host
 
-	err = tx.Where("ip = ?", host.IP).First(&stored).Error
+	err = tx.Where("address = ?", host.Address).First(&stored).Error
 	found := err == nil
 
 	if err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
@@ -1462,7 +1509,7 @@ func (h *TransferHandler) importHost(c echo.Context, tx *gorm.DB, host hostConte
 	}
 
 	created := models.Host{
-		IP:            host.IP,
+		Address:       host.Address,
 		Port:          host.Port,
 		User:          host.User,
 		Password:      password,
@@ -1504,7 +1551,7 @@ func (h *TransferHandler) importHost(c echo.Context, tx *gorm.DB, host hostConte
 // are looked up.
 func (h *TransferHandler) importServicePort(c echo.Context, tx *gorm.DB, sp servicePortContent,
 	overwrite bool) (*transferItem, *refusal) {
-	serviceAddress := sp.ServiceIP + ":" + strconv.Itoa(sp.ServicePort)
+	serviceAddress := sp.ServiceAddress + ":" + strconv.Itoa(sp.ServicePort)
 	localPort := strconv.Itoa(sp.LocalPort)
 	named := transferText{textImportNameServicePort,
 		textArgs{"service_address": serviceAddress, "local_port": localPort}}
@@ -1512,10 +1559,10 @@ func (h *TransferHandler) importServicePort(c echo.Context, tx *gorm.DB, sp serv
 	nameCodes := map[string]textCode{"service_port": named.code}
 
 	err := c.Validate(&models.CreateServicePortRequest{
-		ServiceIP:   sp.ServiceIP,
-		ServicePort: sp.ServicePort,
-		LocalPort:   sp.LocalPort,
-		Description: sp.Description,
+		ServiceAddress: sp.ServiceAddress,
+		ServicePort:    sp.ServicePort,
+		LocalPort:      sp.LocalPort,
+		Description:    sp.Description,
 	})
 	if err != nil {
 		return nil, refuse(http.StatusBadRequest, errImportServicePortRefused,
@@ -1524,7 +1571,7 @@ func (h *TransferHandler) importServicePort(c echo.Context, tx *gorm.DB, sp serv
 
 	var onService models.ServicePort
 
-	err = tx.Where("service_ip = ? AND service_port = ?", sp.ServiceIP, sp.ServicePort).
+	err = tx.Where("service_address = ? AND service_port = ?", sp.ServiceAddress, sp.ServicePort).
 		First(&onService).Error
 	foundOnService := err == nil
 
@@ -1549,10 +1596,10 @@ func (h *TransferHandler) importServicePort(c echo.Context, tx *gorm.DB, sp serv
 
 	if !foundOnService && !foundOnLocal {
 		created := models.ServicePort{
-			ServiceIP:   sp.ServiceIP,
-			ServicePort: sp.ServicePort,
-			LocalPort:   sp.LocalPort,
-			Description: sp.Description,
+			ServiceAddress: sp.ServiceAddress,
+			ServicePort:    sp.ServicePort,
+			LocalPort:      sp.LocalPort,
+			Description:    sp.Description,
 		}
 
 		err = tx.Create(&created).Error
@@ -1597,7 +1644,7 @@ func (h *TransferHandler) importServicePort(c echo.Context, tx *gorm.DB, sp serv
 		stored = onLocal
 	}
 
-	stored.ServiceIP = sp.ServiceIP
+	stored.ServiceAddress = sp.ServiceAddress
 	stored.ServicePort = sp.ServicePort
 	stored.LocalPort = sp.LocalPort
 	stored.Description = sp.Description
@@ -1693,12 +1740,12 @@ func (h *TransferHandler) importAssignments(tx *gorm.DB, host hostContent,
 	content tunnelsContent) ([]transferItem, *refusal) {
 	var stored models.Host
 
-	err := tx.Where("ip = ?", host.IP).First(&stored).Error
+	err := tx.Where("address = ?", host.Address).First(&stored).Error
 	if err != nil {
 		h.hosts.logger.Error("failed to read back a Host while importing its assignments",
 			logid.TransferHostReadBackFailed.Field(),
 			zap.Error(err))
-		return nil, refuse(http.StatusInternalServerError, errImportAssignmentsHostRead, errorArgs{"host": host.IP})
+		return nil, refuse(http.StatusInternalServerError, errImportAssignmentsHostRead, errorArgs{"host": host.Address})
 	}
 
 	wanted := host.AssignedLocalPorts
@@ -1718,7 +1765,7 @@ func (h *TransferHandler) importAssignments(tx *gorm.DB, host hostContent,
 		h.hosts.logger.Error("failed to clear the assignments of a Host while importing",
 			logid.TransferHostAssignmentsClearFailed.Field(),
 			zap.Error(err))
-		return nil, refuse(http.StatusInternalServerError, errImportAssignmentsClearFailed, errorArgs{"host": host.IP})
+		return nil, refuse(http.StatusInternalServerError, errImportAssignmentsClearFailed, errorArgs{"host": host.Address})
 	}
 
 	items := make([]transferItem, 0)
@@ -1728,7 +1775,7 @@ func (h *TransferHandler) importAssignments(tx *gorm.DB, host hostContent,
 
 	for _, localPort := range wanted {
 		named := transferText{textImportNameAssignment,
-			textArgs{"host": host.IP, "local_port": strconv.Itoa(localPort)}}
+			textArgs{"host": host.Address, "local_port": strconv.Itoa(localPort)}}
 
 		var sp models.ServicePort
 
@@ -1765,7 +1812,7 @@ func (h *TransferHandler) importAssignments(tx *gorm.DB, host hostContent,
 			h.hosts.logger.Error("failed to store an assignment while importing",
 				logid.TransferAssignmentStoreFailed.Field(),
 				zap.Error(err))
-			return nil, refuse(http.StatusInternalServerError, errImportAssignmentsStoreFailed, errorArgs{"host": host.IP})
+			return nil, refuse(http.StatusInternalServerError, errImportAssignmentsStoreFailed, errorArgs{"host": host.Address})
 		}
 	}
 
@@ -1796,15 +1843,15 @@ func checkLocalForwards(c echo.Context, content tunnelsContent) *refusal {
 			localPort := strconv.Itoa(lf.LocalPort)
 
 			err := c.Validate(&models.LocalForwardRequest{
-				BindScope:   lf.BindScope,
-				LocalPort:   lf.LocalPort,
-				TargetIP:    lf.TargetIP,
-				TargetPort:  lf.TargetPort,
-				Description: lf.Description,
+				BindScope:     lf.BindScope,
+				LocalPort:     lf.LocalPort,
+				TargetAddress: lf.TargetAddress,
+				TargetPort:    lf.TargetPort,
+				Description:   lf.Description,
 			})
 			if err != nil {
 				return refuse(http.StatusBadRequest, errImportLocalForwardRefused,
-					errorArgs{"host": host.IP, "local_port": localPort, "reason": err.Error()})
+					errorArgs{"host": host.Address, "local_port": localPort, "reason": err.Error()})
 			}
 
 			if openedBy[lf.LocalPort] {
@@ -1877,17 +1924,17 @@ func (h *TransferHandler) importSocks(tx *gorm.DB, written []hostContent, writte
 
 		if isAPIPort(*host.SocksPort, apiPort, h.hosts.runningAPIPort) {
 			return nil, refuse(http.StatusConflict, errImportSocksAPIPort,
-				errorArgs{"host": host.IP, "socks_port": socksPort})
+				errorArgs{"host": host.Address, "socks_port": socksPort})
 		}
 
 		var stored models.Host
 
-		err := tx.Where("ip = ?", host.IP).First(&stored).Error
+		err := tx.Where("address = ?", host.Address).First(&stored).Error
 		if err != nil {
 			h.hosts.logger.Error("failed to read back a Host while importing its SOCKS5 proxy",
 				logid.TransferHostReadBackFailed.Field(),
 				zap.Error(err))
-			return nil, refuse(http.StatusInternalServerError, errImportAssignmentsHostRead, errorArgs{"host": host.IP})
+			return nil, refuse(http.StatusInternalServerError, errImportAssignmentsHostRead, errorArgs{"host": host.Address})
 		}
 
 		other, err := socksHolder(tx, *host.SocksPort, stored.ID)
@@ -1900,7 +1947,7 @@ func (h *TransferHandler) importSocks(tx *gorm.DB, written []hostContent, writte
 
 		if other != nil {
 			return nil, refuse(http.StatusConflict, errImportSocksPortTaken,
-				errorArgs{"host": host.IP, "socks_port": socksPort, "owner": other.IP})
+				errorArgs{"host": host.Address, "socks_port": socksPort, "owner": other.Address})
 		}
 
 		forward, owner, err := localForwardHolder(tx, *host.SocksPort)
@@ -1913,11 +1960,11 @@ func (h *TransferHandler) importSocks(tx *gorm.DB, written []hostContent, writte
 
 		if forward != nil {
 			return nil, refuse(http.StatusConflict, errImportSocksLocalForward,
-				errorArgs{"host": host.IP, "socks_port": socksPort, "owner": owner})
+				errorArgs{"host": host.Address, "socks_port": socksPort, "owner": owner})
 		}
 
-		named := transferText{textImportNameSocks, textArgs{"host": host.IP, "socks_port": socksPort}}
-		items = append(items, transferItem{Kind: "socks", Action: writtenAs[host.IP]}.namedBy(named))
+		named := transferText{textImportNameSocks, textArgs{"host": host.Address, "socks_port": socksPort}}
+		items = append(items, transferItem{Kind: "socks", Action: writtenAs[host.Address]}.namedBy(named))
 	}
 
 	return items, nil
@@ -1946,12 +1993,12 @@ func (h *TransferHandler) importLocalForwards(tx *gorm.DB, written []hostContent
 
 		var stored models.Host
 
-		err := tx.Where("ip = ?", host.IP).First(&stored).Error
+		err := tx.Where("address = ?", host.Address).First(&stored).Error
 		if err != nil {
 			h.hosts.logger.Error("failed to read back a Host while importing its local forwards",
 				logid.TransferHostReadBackFailed.Field(),
 				zap.Error(err))
-			return nil, refuse(http.StatusInternalServerError, errImportAssignmentsHostRead, errorArgs{"host": host.IP})
+			return nil, refuse(http.StatusInternalServerError, errImportAssignmentsHostRead, errorArgs{"host": host.Address})
 		}
 
 		var held []models.LocalForward
@@ -1974,7 +2021,7 @@ func (h *TransferHandler) importLocalForwards(tx *gorm.DB, written []hostContent
 			h.hosts.logger.Error("failed to clear the local forwards of a Host while importing",
 				logid.TransferHostLocalForwardsClearFailed.Field(),
 				zap.Error(err))
-			return nil, refuse(http.StatusInternalServerError, errImportLocalForwardsClearFailed, errorArgs{"host": host.IP})
+			return nil, refuse(http.StatusInternalServerError, errImportLocalForwardsClearFailed, errorArgs{"host": host.Address})
 		}
 
 		hostIDs[i] = stored.ID
@@ -1985,13 +2032,13 @@ func (h *TransferHandler) importLocalForwards(tx *gorm.DB, written []hostContent
 	for i, host := range written {
 		for _, lf := range host.LocalForwards {
 			localPort := strconv.Itoa(lf.LocalPort)
-			named := transferText{textImportNameLocalForward, textArgs{"host": host.IP,
+			named := transferText{textImportNameLocalForward, textArgs{"host": host.Address,
 				"local_port": localPort,
-				"target":     net.JoinHostPort(lf.TargetIP, strconv.Itoa(lf.TargetPort))}}
+				"target":     net.JoinHostPort(lf.TargetAddress, strconv.Itoa(lf.TargetPort))}}
 
 			if isAPIPort(lf.LocalPort, apiPort, h.hosts.runningAPIPort) {
 				return nil, refuse(http.StatusConflict, errImportLocalForwardAPIPort,
-					errorArgs{"host": host.IP, "local_port": localPort})
+					errorArgs{"host": host.Address, "local_port": localPort})
 			}
 
 			var holder models.LocalForward
@@ -2004,11 +2051,11 @@ func (h *TransferHandler) importLocalForwards(tx *gorm.DB, written []hostContent
 
 				var ownerHost models.Host
 				if tx.First(&ownerHost, holder.HostID).Error == nil {
-					owner = ownerHost.IP
+					owner = ownerHost.Address
 				}
 
 				return nil, refuse(http.StatusConflict, errImportLocalForwardPortTaken,
-					errorArgs{"host": host.IP, "local_port": localPort, "owner": owner})
+					errorArgs{"host": host.Address, "local_port": localPort, "owner": owner})
 			}
 
 			if !errors.Is(err, gorm.ErrRecordNotFound) {
@@ -2030,7 +2077,7 @@ func (h *TransferHandler) importLocalForwards(tx *gorm.DB, written []hostContent
 
 			if proxy != nil {
 				return nil, refuse(http.StatusConflict, errImportLocalForwardSocks,
-					errorArgs{"host": host.IP, "local_port": localPort, "owner": proxy.IP})
+					errorArgs{"host": host.Address, "local_port": localPort, "owner": proxy.Address})
 			}
 
 			// An empty scope is stored as the word it stands for, the way a
@@ -2049,20 +2096,20 @@ func (h *TransferHandler) importLocalForwards(tx *gorm.DB, written []hostContent
 			}
 
 			err = tx.Create(&models.LocalForward{
-				HostID:      hostIDs[i],
-				Number:      number,
-				BindScope:   bindScope,
-				LocalPort:   lf.LocalPort,
-				TargetIP:    lf.TargetIP,
-				TargetPort:  lf.TargetPort,
-				Description: lf.Description,
-				Enabled:     lf.enabled(),
+				HostID:        hostIDs[i],
+				Number:        number,
+				BindScope:     bindScope,
+				LocalPort:     lf.LocalPort,
+				TargetAddress: lf.TargetAddress,
+				TargetPort:    lf.TargetPort,
+				Description:   lf.Description,
+				Enabled:       lf.enabled(),
 			}).Error
 			if err != nil {
 				h.hosts.logger.Error("failed to store a local forward while importing",
 					logid.TransferLocalForwardStoreFailed.Field(),
 					zap.Error(err))
-				return nil, refuse(http.StatusInternalServerError, errImportLocalForwardsStoreFailed, errorArgs{"host": host.IP})
+				return nil, refuse(http.StatusInternalServerError, errImportLocalForwardsStoreFailed, errorArgs{"host": host.Address})
 			}
 
 			action := transferAdded

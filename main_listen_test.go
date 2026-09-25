@@ -371,13 +371,13 @@ func TestTheFallbackPortStaysClearOfTheSocksProxies(t *testing.T) {
 	}
 
 	rows := []interface{}{
-		&models.Host{ID: 1, IP: "192.0.2.1", Port: 22, User: "root", Enabled: true,
+		&models.Host{ID: 1, Address: "192.0.2.1", Port: 22, User: "root", Enabled: true,
 			SocksEnabled: true, SocksPort: 1080},
-		&models.Host{ID: 2, IP: "192.0.2.2", Port: 22, User: "root", Enabled: false,
+		&models.Host{ID: 2, Address: "192.0.2.2", Port: 22, User: "root", Enabled: false,
 			SocksEnabled: true, SocksPort: 1081},
-		&models.Host{ID: 3, IP: "192.0.2.3", Port: 22, User: "root", Enabled: true,
+		&models.Host{ID: 3, Address: "192.0.2.3", Port: 22, User: "root", Enabled: true,
 			SocksEnabled: false, SocksPort: 1082},
-		&models.LocalForward{HostID: 1, LocalPort: 15432, TargetIP: "127.0.0.1", TargetPort: 5432},
+		&models.LocalForward{HostID: 1, LocalPort: 15432, TargetAddress: "127.0.0.1", TargetPort: 5432},
 	}
 
 	for _, row := range rows {

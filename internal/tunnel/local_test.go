@@ -290,11 +290,11 @@ func newLocalForwardFixture(t *testing.T, scope string, localPort int, targetIP 
 
 	f := &localForwardFixture{server: server}
 	f.hosts = []models.Host{{
-		ID: 1, IP: serverHost, Port: port, User: "tester", Password: "pass", // hook:allow
+		ID: 1, Address: serverHost, Port: port, User: "tester", Password: "pass", // hook:allow
 		HostKey: MarshalHostKey(server.key), Enabled: true,
 	}}
 	f.forwards = []models.LocalForward{{
-		Number: 7, HostID: 1, BindScope: scope, LocalPort: localPort, TargetIP: targetIP, TargetPort: targetPort,
+		Number: 7, HostID: 1, BindScope: scope, LocalPort: localPort, TargetAddress: targetIP, TargetPort: targetPort,
 		Enabled: true,
 	}}
 

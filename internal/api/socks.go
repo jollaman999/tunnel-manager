@@ -69,7 +69,7 @@ func localForwardHolder(tx *gorm.DB, port int) (*models.LocalForward, string, er
 
 	var host models.Host
 	if tx.First(&host, holder.HostID).Error == nil {
-		owner = host.IP
+		owner = host.Address
 	}
 
 	return &holder, owner, nil
@@ -113,7 +113,7 @@ func socksPortRefused(tx *gorm.DB, id uint, port int, apiPort int, runningPort i
 	}
 	if other != nil {
 		return refuse(http.StatusConflict, errHostSocksPortTaken,
-			errorArgs{"socks_port": socksPort, "host": other.IP}), nil
+			errorArgs{"socks_port": socksPort, "host": other.Address}), nil
 	}
 
 	forward, owner, err := localForwardHolder(tx, port)

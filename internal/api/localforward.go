@@ -127,7 +127,7 @@ func localPortRefused(tx *gorm.DB, hostID uint, number uint, localPort int, apiP
 
 	if proxy != nil {
 		return refuse(http.StatusConflict, errLocalForwardPortSocks,
-			errorArgs{"local_port": strconv.Itoa(localPort), "host": proxy.IP}), nil
+			errorArgs{"local_port": strconv.Itoa(localPort), "host": proxy.Address}), nil
 	}
 
 	return nil, nil
@@ -191,19 +191,19 @@ type apiPortHolder struct {
 	// Number is which forward of its Host this is. It is the number and not a
 	// table-wide id because that is what the row is keyed by, and it is read
 	// beside HostID: a number on its own names a row on every Host.
-	Number     uint   `json:"number"`
-	HostID     uint   `json:"host_id"`
-	HostIP     string `json:"host_ip"`
-	LocalPort  int    `json:"local_port"`
-	TargetIP   string `json:"target_ip"`
-	TargetPort int    `json:"target_port"`
+	Number        uint   `json:"number"`
+	HostID        uint   `json:"host_id"`
+	HostAddress   string `json:"host_address"`
+	LocalPort     int    `json:"local_port"`
+	TargetAddress string `json:"target_address"`
+	TargetPort    int    `json:"target_port"`
 }
 
 // apiPortSocksHolder is the Host whose SOCKS5 proxy opens that port.
 type apiPortSocksHolder struct {
-	HostID    uint   `json:"host_id"`
-	HostIP    string `json:"host_ip"`
-	SocksPort int    `json:"socks_port"`
+	HostID      uint   `json:"host_id"`
+	HostAddress string `json:"host_address"`
+	SocksPort   int    `json:"socks_port"`
 }
 
 // apiPortTaken is the data of that refusal: what is in the way, and a port
@@ -248,8 +248,8 @@ func apiPortRefused(tx *gorm.DB, codes apiPortCodes, apiPort int, storedPort int
 
 	var owner models.Host
 	if tx.First(&owner, holder.HostID).Error == nil {
-		hostIP = owner.IP
-		host = owner.IP
+		hostIP = owner.Address
+		host = owner.Address
 	}
 
 	suggested, err := freeLocalPort(tx, apiPort, storedPort, runningPort)
@@ -260,15 +260,15 @@ func apiPortRefused(tx *gorm.DB, codes apiPortCodes, apiPort int, storedPort int
 	return refuse(http.StatusConflict, codes.forward, errorArgs{
 		"api_port": strconv.Itoa(apiPort),
 		"host":     host,
-		"target":   net.JoinHostPort(holder.TargetIP, strconv.Itoa(holder.TargetPort)),
+		"target":   net.JoinHostPort(holder.TargetAddress, strconv.Itoa(holder.TargetPort)),
 	}).carrying(apiPortTaken{
 		LocalForward: apiPortHolder{
-			Number:     holder.Number,
-			HostID:     holder.HostID,
-			HostIP:     hostIP,
-			LocalPort:  holder.LocalPort,
-			TargetIP:   holder.TargetIP,
-			TargetPort: holder.TargetPort,
+			Number:        holder.Number,
+			HostID:        holder.HostID,
+			HostAddress:   hostIP,
+			LocalPort:     holder.LocalPort,
+			TargetAddress: holder.TargetAddress,
+			TargetPort:    holder.TargetPort,
 		},
 		SuggestedPort: suggested,
 	}), nil
@@ -289,12 +289,12 @@ func apiPortSocksRefused(tx *gorm.DB, code errorCode, apiPort int, storedPort in
 
 	return refuse(http.StatusConflict, code, errorArgs{
 		"api_port": strconv.Itoa(apiPort),
-		"host":     holder.IP,
+		"host":     holder.Address,
 	}).carrying(apiPortTaken{
 		SocksHost: &apiPortSocksHolder{
-			HostID:    holder.ID,
-			HostIP:    holder.IP,
-			SocksPort: holder.SocksPort,
+			HostID:      holder.ID,
+			HostAddress: holder.Address,
+			SocksPort:   holder.SocksPort,
 		},
 		SuggestedPort: suggested,
 	}), nil
@@ -413,7 +413,7 @@ func (h *Handler) ListHostLocalForwards(c echo.Context) error {
 }
 
 // @Summary      Add a local forward to a Host
-// @Description  This machine opens local_port and carries every connection to it over the SSH connection of the Host to target_ip:target_port, as seen from the Host.
+// @Description  This machine opens local_port and carries every connection to it over the SSH connection of the Host to target_address:target_port, as seen from the Host. target_address is a host name or an IP address, resolved by the Host.
 // @Description  bind_scope is where local_port is opened on this machine: loopback, wildcard, or left out for the wildcard.
 // @Description  enabled is whether the forward runs. Left out, it is true. A forward that is off opens no port and makes no SSH connection, and still holds local_port.
 // @Tags         local forwards
@@ -497,14 +497,14 @@ func (h *Handler) CreateHostLocalForward(c echo.Context) error {
 	}
 
 	lf := models.LocalForward{
-		HostID:      host.ID,
-		Number:      number,
-		BindScope:   bindScope,
-		LocalPort:   req.LocalPort,
-		TargetIP:    req.TargetIP,
-		TargetPort:  req.TargetPort,
-		Description: req.Description,
-		Enabled:     req.Enabled == nil || *req.Enabled,
+		HostID:        host.ID,
+		Number:        number,
+		BindScope:     bindScope,
+		LocalPort:     req.LocalPort,
+		TargetAddress: req.TargetAddress,
+		TargetPort:    req.TargetPort,
+		Description:   req.Description,
+		Enabled:       req.Enabled == nil || *req.Enabled,
 	}
 
 	err = tx.Create(&lf).Error
@@ -571,7 +571,7 @@ func (h *Handler) GetLocalForward(c echo.Context) error {
 }
 
 // @Summary      Update a local forward of a Host
-// @Description  local_port, target_ip and target_port are all required. The Host it is carried by is not changed, and neither is its number.
+// @Description  local_port, target_address and target_port are all required. The Host it is carried by is not changed, and neither is its number.
 // @Description  enabled switches the forward on or off. Left out, it keeps what is stored.
 // @Tags         local forwards
 // @Accept   json
@@ -653,7 +653,7 @@ func (h *Handler) UpdateLocalForward(c echo.Context) error {
 		lf.BindScope = models.BindScopeWildcard
 	}
 	lf.LocalPort = req.LocalPort
-	lf.TargetIP = req.TargetIP
+	lf.TargetAddress = req.TargetAddress
 	lf.TargetPort = req.TargetPort
 	lf.Description = req.Description
 	if req.Enabled != nil {

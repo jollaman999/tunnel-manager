@@ -139,8 +139,8 @@ func TestStartTunnelSkipsDisabledHost(t *testing.T) {
 		t.Fatalf("failed to create manager: %v", err)
 	}
 
-	host := models.Host{ID: 1, IP: "127.0.0.1", Port: 22, User: "user", Password: "pass", Enabled: false}
-	sp := models.ServicePort{ID: 2, ServiceIP: "127.0.0.1", ServicePort: 3306, LocalPort: 13306}
+	host := models.Host{ID: 1, Address: "127.0.0.1", Port: 22, User: "user", Password: "pass", Enabled: false}
+	sp := models.ServicePort{ID: 2, ServiceAddress: "127.0.0.1", ServicePort: 3306, LocalPort: 13306}
 
 	err = m.StartTunnel(&host, &sp, models.BindScopeWildcard)
 	if err != nil {
@@ -165,8 +165,8 @@ func TestStartTunnelProceedsForEnabledHost(t *testing.T) {
 		t.Fatalf("failed to create manager: %v", err)
 	}
 
-	host := models.Host{ID: 1, IP: "127.0.0.1", Port: 22, User: "user", Password: "pass", Enabled: true}
-	sp := models.ServicePort{ID: 2, ServiceIP: "127.0.0.1", ServicePort: 3306, LocalPort: 13306}
+	host := models.Host{ID: 1, Address: "127.0.0.1", Port: 22, User: "user", Password: "pass", Enabled: true}
+	sp := models.ServicePort{ID: 2, ServiceAddress: "127.0.0.1", ServicePort: 3306, LocalPort: 13306}
 
 	// The failing database stops StartTunnel at the tunnel row, which it only
 	// reaches for a Host that is not skipped, so no SSH connection is attempted.
@@ -187,8 +187,8 @@ func TestStartTunnelLeavesNoTunnelWhenTheRowCannotBeCreated(t *testing.T) {
 		t.Fatalf("failed to create manager: %v", err)
 	}
 
-	host := models.Host{ID: 1, IP: "127.0.0.1", Port: 22, User: "user", Password: "pass", Enabled: true}
-	sp := models.ServicePort{ID: 2, ServiceIP: "127.0.0.1", ServicePort: 3306, LocalPort: 13306}
+	host := models.Host{ID: 1, Address: "127.0.0.1", Port: 22, User: "user", Password: "pass", Enabled: true}
+	sp := models.ServicePort{ID: 2, ServiceAddress: "127.0.0.1", ServicePort: 3306, LocalPort: 13306}
 
 	err = m.StartTunnel(&host, &sp, models.BindScopeWildcard)
 	if err == nil {
@@ -228,7 +228,7 @@ func TestHostPasswordDecryptsStoredValue(t *testing.T) {
 		t.Fatalf("failed to encrypt: %v", err)
 	}
 
-	host := models.Host{ID: 1, IP: "127.0.0.1", Port: 22, User: "user", Password: encrypted, Enabled: true}
+	host := models.Host{ID: 1, Address: "127.0.0.1", Port: 22, User: "user", Password: encrypted, Enabled: true}
 
 	got, err := m.hostPassword(&host)
 	if err != nil {
@@ -252,7 +252,7 @@ func TestHostPasswordFallsBackToPlaintext(t *testing.T) {
 		t.Fatalf("failed to create manager: %v", err)
 	}
 
-	host := models.Host{ID: 1, IP: "127.0.0.1", Port: 22, User: "user", Password: "s3cr3t", Enabled: true}
+	host := models.Host{ID: 1, Address: "127.0.0.1", Port: 22, User: "user", Password: "s3cr3t", Enabled: true}
 
 	got, err := m.hostPassword(&host)
 	if err != nil {
@@ -318,7 +318,7 @@ func TestHostPasswordKeepsTheStoredValueWhenTheKeyIsWrong(t *testing.T) {
 		t.Fatalf("failed to create manager: %v", err)
 	}
 
-	host := models.Host{ID: 1, IP: "127.0.0.1", Port: 22, User: "user", Password: stored, Enabled: true}
+	host := models.Host{ID: 1, Address: "127.0.0.1", Port: 22, User: "user", Password: stored, Enabled: true}
 
 	got, err := m.hostPassword(&host)
 	if err == nil {
@@ -350,7 +350,7 @@ func TestHostPasswordKeepsTheStoredValueWithoutMarkerWhenTheKeyIsWrong(t *testin
 		t.Fatalf("failed to create manager: %v", err)
 	}
 
-	host := models.Host{ID: 1, IP: "127.0.0.1", Port: 22, User: "user", Password: stored, Enabled: true}
+	host := models.Host{ID: 1, Address: "127.0.0.1", Port: 22, User: "user", Password: stored, Enabled: true}
 
 	_, err = m.hostPassword(&host)
 	if !errors.Is(err, crypto.ErrWrongKey) {
@@ -374,7 +374,7 @@ func TestHostPasswordMigratesPlaintext(t *testing.T) {
 		t.Fatalf("failed to create manager: %v", err)
 	}
 
-	host := models.Host{ID: 1, IP: "127.0.0.1", Port: 22, User: "user", Password: "s3cr3t", Enabled: true}
+	host := models.Host{ID: 1, Address: "127.0.0.1", Port: 22, User: "user", Password: "s3cr3t", Enabled: true}
 
 	got, err := m.hostPassword(&host)
 	if err != nil {
@@ -407,7 +407,7 @@ func TestHostPasswordMarksTheStoredValueWithoutMarker(t *testing.T) {
 		t.Fatalf("failed to create manager: %v", err)
 	}
 
-	host := models.Host{ID: 1, IP: "127.0.0.1", Port: 22, User: "user", Password: stored, Enabled: true}
+	host := models.Host{ID: 1, Address: "127.0.0.1", Port: 22, User: "user", Password: stored, Enabled: true}
 
 	got, err := m.hostPassword(&host)
 	if err != nil {
@@ -444,8 +444,8 @@ func TestStartTunnelFailsWhenTheKeyIsWrong(t *testing.T) {
 		t.Fatalf("failed to create manager: %v", err)
 	}
 
-	host := models.Host{ID: 1, IP: "127.0.0.1", Port: 22, User: "user", Password: stored, Enabled: true}
-	sp := models.ServicePort{ID: 2, ServiceIP: "127.0.0.1", ServicePort: 3306, LocalPort: 13306}
+	host := models.Host{ID: 1, Address: "127.0.0.1", Port: 22, User: "user", Password: stored, Enabled: true}
+	sp := models.ServicePort{ID: 2, ServiceAddress: "127.0.0.1", ServicePort: 3306, LocalPort: 13306}
 
 	err = m.StartTunnel(&host, &sp, models.BindScopeWildcard)
 	if !errors.Is(err, crypto.ErrWrongKey) {
@@ -555,8 +555,8 @@ func TestStopTunnelReportsMissingTunnel(t *testing.T) {
 }
 
 func TestStopTunnelUnregistersTheTunnelWhenTheRowCannotBeDeleted(t *testing.T) {
-	hosts := []models.Host{{ID: 1, IP: "127.0.0.1", Port: 1, User: "user", Enabled: true}}
-	sps := []models.ServicePort{{ID: 2, ServiceIP: "127.0.0.1", ServicePort: 8081, LocalPort: 18081}}
+	hosts := []models.Host{{ID: 1, Address: "127.0.0.1", Port: 1, User: "user", Enabled: true}}
+	sps := []models.ServicePort{{ID: 2, ServiceAddress: "127.0.0.1", ServicePort: 8081, LocalPort: 18081}}
 
 	m, err := NewManager(newStubDB(t, hosts, sps, errConnPoolClosed), zap.NewNop(), newTestCipher(t), 1)
 	if err != nil {
@@ -587,8 +587,8 @@ func TestStopTunnelUnregistersTheTunnelWhenTheRowCannotBeDeleted(t *testing.T) {
 func TestStopAllTunnelsStopsEveryRunningTunnel(t *testing.T) {
 	// The rows say nothing about what is running: one of the tunnels belongs
 	// to a Host that is no longer there, and it still has to be stopped.
-	hosts := []models.Host{{ID: 1, IP: "127.0.0.1", Port: 1, User: "user", Enabled: true}}
-	sps := []models.ServicePort{{ID: 2, ServiceIP: "127.0.0.1", ServicePort: 8081, LocalPort: 18081}}
+	hosts := []models.Host{{ID: 1, Address: "127.0.0.1", Port: 1, User: "user", Enabled: true}}
+	sps := []models.ServicePort{{ID: 2, ServiceAddress: "127.0.0.1", ServicePort: 8081, LocalPort: 18081}}
 
 	core, logs := observer.New(zapcore.DebugLevel)
 
@@ -618,8 +618,8 @@ func TestStopAllTunnelsStopsEveryRunningTunnel(t *testing.T) {
 }
 
 func TestStopAllTunnelsLogsNothingWhenNothingRuns(t *testing.T) {
-	hosts := []models.Host{{ID: 1, IP: "127.0.0.1", Port: 1, User: "user", Enabled: true}}
-	sps := []models.ServicePort{{ID: 2, ServiceIP: "127.0.0.1", ServicePort: 8081, LocalPort: 18081}}
+	hosts := []models.Host{{ID: 1, Address: "127.0.0.1", Port: 1, User: "user", Enabled: true}}
+	sps := []models.ServicePort{{ID: 2, ServiceAddress: "127.0.0.1", ServicePort: 8081, LocalPort: 18081}}
 
 	core, logs := observer.New(zapcore.DebugLevel)
 
@@ -636,8 +636,8 @@ func TestStopAllTunnelsLogsNothingWhenNothingRuns(t *testing.T) {
 }
 
 func TestStopAllTunnelsReportsFailureToStopAsError(t *testing.T) {
-	hosts := []models.Host{{ID: 1, IP: "127.0.0.1", Port: 22, User: "user", Password: "pass", Enabled: true}}
-	sps := []models.ServicePort{{ID: 2, ServiceIP: "127.0.0.1", ServicePort: 8081, LocalPort: 18081}}
+	hosts := []models.Host{{ID: 1, Address: "127.0.0.1", Port: 22, User: "user", Password: "pass", Enabled: true}}
+	sps := []models.ServicePort{{ID: 2, ServiceAddress: "127.0.0.1", ServicePort: 8081, LocalPort: 18081}}
 
 	core, logs := observer.New(zapcore.DebugLevel)
 
@@ -1115,8 +1115,8 @@ func TestTunnelAddressesBracketAnIPv6Host(t *testing.T) {
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			host := &models.Host{IP: tc.hostIP, Port: 22}
-			sp := &models.ServicePort{ServiceIP: tc.serviceIP, ServicePort: 5432, LocalPort: 15432}
+			host := &models.Host{Address: tc.hostIP, Port: 22}
+			sp := &models.ServicePort{ServiceAddress: tc.serviceIP, ServicePort: 5432, LocalPort: 15432}
 
 			localV4, localV6, server, remote := tunnelAddresses(host, sp, models.BindScopeWildcard)
 
@@ -1288,7 +1288,7 @@ func sealedHost(t *testing.T, c *crypto.Cipher, keyPEM, passphrase, password str
 
 	return &models.Host{
 		ID:            1,
-		IP:            "127.0.0.1",
+		Address:       "127.0.0.1",
 		Port:          22,
 		User:          "user",
 		Password:      seal(password),
@@ -1384,7 +1384,7 @@ func TestHostAuthReportsAHostWithNothingToLogInWith(t *testing.T) {
 		t.Fatalf("failed to create manager: %v", err)
 	}
 
-	host := &models.Host{ID: 7, IP: "127.0.0.1", Port: 22, User: "user", Enabled: true}
+	host := &models.Host{ID: 7, Address: "127.0.0.1", Port: 22, User: "user", Enabled: true}
 
 	methods, _, err := m.hostAuth(host)
 	if err == nil {
@@ -1637,7 +1637,7 @@ func TestHostPasswordLeavesAHostThatCarriesNoneAlone(t *testing.T) {
 		t.Fatalf("failed to create manager: %v", err)
 	}
 
-	host := models.Host{ID: 1, IP: "127.0.0.1", Port: 22, User: "user", Enabled: true}
+	host := models.Host{ID: 1, Address: "127.0.0.1", Port: 22, User: "user", Enabled: true}
 
 	password, err := m.hostPassword(&host)
 	if err != nil {
@@ -1708,8 +1708,8 @@ func TestStartTunnelWritesARowThatSaysNothingWasMeasured(t *testing.T) {
 		t.Fatalf("failed to read the port: %v", err)
 	}
 
-	host := models.Host{ID: 1, IP: "127.0.0.1", Port: hostPort, User: "user", Password: "pass", Enabled: true}
-	sp := models.ServicePort{ID: 2, ServiceIP: "127.0.0.1", ServicePort: 3306, LocalPort: 13306}
+	host := models.Host{ID: 1, Address: "127.0.0.1", Port: hostPort, User: "user", Password: "pass", Enabled: true}
+	sp := models.ServicePort{ID: 2, ServiceAddress: "127.0.0.1", ServicePort: 3306, LocalPort: 13306}
 
 	err = m.StartTunnel(&host, &sp, models.BindScopeWildcard)
 	if err != nil {
@@ -1935,7 +1935,7 @@ func TestTheHostKeyDecidesWhetherTheConnectionIsMade(t *testing.T) {
 				t.Fatalf("failed to create manager: %v", err)
 			}
 
-			host := &models.Host{ID: 7, IP: "127.0.0.1", Port: 22, User: "user",
+			host := &models.Host{ID: 7, Address: "127.0.0.1", Port: 22, User: "user",
 				HostKey: tc.trusted, Enabled: true}
 
 			client, err := ssh.Dial("tcp", addr, &ssh.ClientConfig{
@@ -2006,7 +2006,7 @@ func TestAHostKeyThatCannotBeWrittenDownStillRefusesTheConnection(t *testing.T) 
 		t.Fatalf("failed to create manager: %v", err)
 	}
 
-	host := &models.Host{ID: 7, IP: "127.0.0.1", Port: 22, User: "user", Enabled: true}
+	host := &models.Host{ID: 7, Address: "127.0.0.1", Port: 22, User: "user", Enabled: true}
 
 	client, err := ssh.Dial("tcp", addr, &ssh.ClientConfig{
 		User:            "user",
@@ -2049,7 +2049,7 @@ func TestATunnelRefusedOnItsHostKeyStopsTrying(t *testing.T) {
 		t.Fatalf("failed to create manager: %v", err)
 	}
 
-	host := &models.Host{ID: 1, IP: "127.0.0.1", Port: 22, User: "user", Password: "pass", Enabled: true}
+	host := &models.Host{ID: 1, Address: "127.0.0.1", Port: 22, User: "user", Password: "pass", Enabled: true}
 
 	hostID, spID := host.ID, uint(2)
 	tun, err := NewSSHTunnel(&hostID, &spID, "0.0.0.0:18099", "[::]:18099", addr, "127.0.0.1:1",
@@ -2136,8 +2136,8 @@ func TestBindScopeNamesAPairOfAddresses(t *testing.T) {
 // tunnel that opens a port to everything on a Host somebody asked to keep it
 // off.
 func TestTunnelAddressesCarriesTheScopeOfTheAssignment(t *testing.T) {
-	host := &models.Host{IP: "192.0.2.1", Port: 22}
-	sp := &models.ServicePort{ServiceIP: "203.0.113.5", ServicePort: 5432, LocalPort: 15432}
+	host := &models.Host{Address: "192.0.2.1", Port: 22}
+	sp := &models.ServicePort{ServiceAddress: "203.0.113.5", ServicePort: 5432, LocalPort: 15432}
 
 	cases := []struct {
 		scope  string

@@ -111,8 +111,8 @@ func LocalForwardAddresses(host *models.Host, lf *models.LocalForward) (listenV4
 
 	return net.JoinHostPort(bindV4, port),
 		net.JoinHostPort(bindV6, port),
-		net.JoinHostPort(host.IP, strconv.Itoa(host.Port)),
-		net.JoinHostPort(lf.TargetIP, strconv.Itoa(lf.TargetPort))
+		net.JoinHostPort(host.Address, strconv.Itoa(host.Port)),
+		net.JoinHostPort(lf.TargetAddress, strconv.Itoa(lf.TargetPort))
 }
 
 // localForwardFingerprint is connectionFingerprint for a local forward: the
@@ -786,7 +786,7 @@ func (m *Manager) reconcileLocalForwards(desired map[LocalForwardKey]desiredLoca
 					logid.TunnelStartFailed.Field(),
 					zap.Error(err),
 					zap.Uint("local_forward_number", want.lf.Number),
-					zap.String("host_ip", want.host.IP),
+					zap.String("host_ip", want.host.Address),
 					zap.Int("local_port", want.lf.LocalPort))
 				result.Failed++
 				continue

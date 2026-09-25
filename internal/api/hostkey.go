@@ -33,10 +33,10 @@ import (
 // here as well. TestTheHostViewCarriesEveryFieldOfAHost is what says the
 // leaving out was meant.
 type hostView struct {
-	ID   uint   `json:"id"`
-	IP   string `json:"ip"`
-	Port int    `json:"port"`
-	User string `json:"user"`
+	ID      uint   `json:"id"`
+	Address string `json:"address"`
+	Port    int    `json:"port"`
+	User    string `json:"user"`
 	// HostKeyFingerprint is the fingerprint of the key this Host is trusted
 	// on, and is empty for one that has never been approved.
 	//
@@ -78,7 +78,7 @@ const (
 func hostViewOf(host models.Host, socks map[uint]tunnel.SocksState) hostView {
 	view := hostView{
 		ID:                        host.ID,
-		IP:                        host.IP,
+		Address:                   host.Address,
 		Port:                      host.Port,
 		User:                      host.User,
 		HostKeyFingerprint:        tunnel.HostKeyFingerprint(host.HostKey),
@@ -173,7 +173,7 @@ func hostKeysChanged(db *gorm.DB) *gorm.DB {
 // The keys themselves are not in it, for the reason hostView states.
 type hostKeyWaiting struct {
 	HostID             uint   `json:"host_id"`
-	IP                 string `json:"ip"`
+	Address            string `json:"address"`
 	Mismatch           bool   `json:"mismatch"`
 	Fingerprint        string `json:"fingerprint"`
 	TrustedFingerprint string `json:"trusted_fingerprint"`
@@ -185,7 +185,7 @@ func hostKeyWaitingOf(host models.Host) hostKeyWaiting {
 
 	return hostKeyWaiting{
 		HostID:             host.ID,
-		IP:                 host.IP,
+		Address:            host.Address,
 		Mismatch:           trusted != "",
 		Fingerprint:        tunnel.HostKeyFingerprint(host.PendingHostKey),
 		TrustedFingerprint: trusted,

@@ -963,13 +963,67 @@ func TestTheValidatorAcceptsARequestThatIsFilledIn(t *testing.T) {
 	cv := &CustomValidator{validator: validator.New()}
 
 	err := cv.Validate(&models.CreateHostRequest{
-		IP:       "192.0.2.10",
+		Address:  "192.0.2.10",
 		Port:     22,
 		User:     "tester",
 		Password: "test-password", // hook:allow
 	})
 	if err != nil {
 		t.Fatalf("a request that is filled in was refused: %v", err)
+	}
+}
+
+// TestTheValidatorTakesAHostNameOrAnAddress holds every field that names where
+// to connect to the one rule: a host name or an address, either family, and
+// nothing else. A name is resolved when it is dialled, so the rule is about
+// its shape only.
+func TestTheValidatorTakesAHostNameOrAnAddress(t *testing.T) {
+	cv := &CustomValidator{validator: validator.New()}
+
+	requests := map[string]func(value string) interface{}{
+		"address of a new Host": func(value string) interface{} {
+			return &models.CreateHostRequest{Address: value, Port: 22, User: "tester"}
+		},
+		"service_address": func(value string) interface{} {
+			return &models.CreateServicePortRequest{ServiceAddress: value, ServicePort: 80, LocalPort: 8080}
+		},
+		"target_address": func(value string) interface{} {
+			return &models.LocalForwardRequest{LocalPort: 15432, TargetAddress: value, TargetPort: 5432}
+		},
+		"address of a changed Host": func(value string) interface{} {
+			return &models.UpdateHostRequest{Address: value}
+		},
+	}
+
+	for name, request := range requests {
+		for _, value := range []string{"db.example.com", "localhost", "192.0.2.1", "::1", "2001:db8::10"} {
+			err := cv.Validate(request(value))
+			if err != nil {
+				t.Errorf("%s %q was refused: %v", name, value, err)
+			}
+		}
+
+		for _, value := range []string{"bad host!", "-leading.example", "db_example.com", "a b"} {
+			err := cv.Validate(request(value))
+			if err == nil {
+				t.Errorf("%s %q was accepted", name, value)
+			}
+		}
+	}
+
+	for name, request := range requests {
+		err := cv.Validate(request(""))
+		if name == "address of a changed Host" {
+			if err != nil {
+				t.Errorf("a change that leaves the address out was refused: %v", err)
+			}
+
+			continue
+		}
+
+		if err == nil {
+			t.Errorf("%s left empty was accepted", name)
+		}
 	}
 }
 
@@ -980,18 +1034,18 @@ func TestTheValidatorNamesTheFieldAsTheApiSpellsIt(t *testing.T) {
 	cv := &CustomValidator{validator: validator.New()}
 
 	err := cv.Validate(&models.CreateServicePortRequest{
-		ServiceIP:   "not-an-address",
-		ServicePort: 22,
-		LocalPort:   70000,
+		ServiceAddress: "not an address",
+		ServicePort:    22,
+		LocalPort:      70000,
 	})
 	if err == nil {
 		t.Fatal("a request with an address that is not one and a port out of range was accepted")
 	}
 
-	if !strings.Contains(err.Error(), "service_ip") {
+	if !strings.Contains(err.Error(), "service_address") {
 		t.Fatalf("the field is not named as the api spells it: %v", err)
 	}
-	if strings.Contains(err.Error(), "ServiceIP") {
+	if strings.Contains(err.Error(), "ServiceAddress") {
 		t.Fatalf("the field is named by its Go name, which no caller ever sent: %v", err)
 	}
 	if !strings.Contains(err.Error(), "local_port") {

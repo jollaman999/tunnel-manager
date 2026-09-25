@@ -223,7 +223,7 @@ func (i *transferInstall) registerHost(t *testing.T, host hostContent) models.Ho
 	}
 
 	stored := models.Host{
-		IP:            host.IP,
+		Address:       host.Address,
 		Port:          host.Port,
 		User:          host.User,
 		Password:      password,
@@ -246,10 +246,10 @@ func (i *transferInstall) registerServicePort(t *testing.T, sp servicePortConten
 	t.Helper()
 
 	stored := models.ServicePort{
-		ServiceIP:   sp.ServiceIP,
-		ServicePort: sp.ServicePort,
-		LocalPort:   sp.LocalPort,
-		Description: sp.Description,
+		ServiceAddress: sp.ServiceAddress,
+		ServicePort:    sp.ServicePort,
+		LocalPort:      sp.LocalPort,
+		Description:    sp.Description,
 	}
 
 	err := i.db.Create(&stored).Error
@@ -292,7 +292,7 @@ func twoHosts(t *testing.T) (withKey hostContent, withPassword hostContent) {
 	t.Helper()
 
 	withKey = hostContent{
-		IP:            "192.0.2.10",
+		Address:       "192.0.2.10",
 		Port:          22,
 		User:          "operator",
 		PrivateKey:    testPrivateKeyPEM(t, "the passphrase of the key"),
@@ -302,7 +302,7 @@ func twoHosts(t *testing.T) (withKey hostContent, withPassword hostContent) {
 	}
 
 	withPassword = hostContent{
-		IP:          "192.0.2.11",
+		Address:     "192.0.2.11",
 		Port:        22,
 		User:        "operator",
 		Password:    "the password of the Host",
@@ -484,7 +484,7 @@ func TestAnExportedConfigurationIsReadableOnAnotherInstallation(t *testing.T) {
 	source.registerHost(t, withKey)
 	source.registerHost(t, withPassword)
 	source.registerServicePort(t, servicePortContent{
-		ServiceIP: "192.0.2.20", ServicePort: 80, LocalPort: 18080, Description: "a service",
+		ServiceAddress: "192.0.2.20", ServicePort: 80, LocalPort: 18080, Description: "a service",
 	})
 
 	file := source.exportTunnels(t, testExportPassword)
@@ -518,9 +518,9 @@ func TestAnExportedConfigurationIsReadableOnAnotherInstallation(t *testing.T) {
 	for _, want := range []hostContent{withKey, withPassword} {
 		var stored models.Host
 
-		err = target.db.Where("ip = ?", want.IP).First(&stored).Error
+		err = target.db.Where("address = ?", want.Address).First(&stored).Error
 		if err != nil {
-			t.Fatalf("the Host %s was not stored: %v", want.IP, err)
+			t.Fatalf("the Host %s was not stored: %v", want.Address, err)
 		}
 
 		for _, secret := range []struct {
@@ -535,7 +535,7 @@ func TestAnExportedConfigurationIsReadableOnAnotherInstallation(t *testing.T) {
 			if secret.want == "" {
 				if secret.stored != "" {
 					t.Errorf("the %s of the Host %s was stored while the file carried none",
-						secret.what, want.IP)
+						secret.what, want.Address)
 				}
 
 				continue
@@ -543,23 +543,23 @@ func TestAnExportedConfigurationIsReadableOnAnotherInstallation(t *testing.T) {
 
 			if !crypto.IsEncrypted(secret.stored) {
 				t.Errorf("the %s of the Host %s is not sealed with the key of this installation",
-					secret.what, want.IP)
+					secret.what, want.Address)
 			}
 
 			opened, err := target.cipher.Decrypt(secret.stored)
 			if err != nil {
 				t.Fatalf("the %s of the Host %s does not open with the key of this installation: %v",
-					secret.what, want.IP, err)
+					secret.what, want.Address, err)
 			}
 
 			if strings.TrimSpace(opened) != strings.TrimSpace(secret.want) {
-				t.Errorf("the %s of the Host %s came across altered", secret.what, want.IP)
+				t.Errorf("the %s of the Host %s came across altered", secret.what, want.Address)
 			}
 		}
 
 		if stored.Port != want.Port || stored.User != want.User ||
 			stored.Description != want.Description || stored.Enabled != want.Enabled {
-			t.Errorf("the Host %s came across with other fields than it was exported with", want.IP)
+			t.Errorf("the Host %s came across with other fields than it was exported with", want.Address)
 		}
 	}
 
@@ -570,8 +570,8 @@ func TestAnExportedConfigurationIsReadableOnAnotherInstallation(t *testing.T) {
 		t.Fatalf("the service port was not stored: %v", err)
 	}
 
-	if sp.ServiceIP != "192.0.2.20" || sp.ServicePort != 80 {
-		t.Errorf("the service port came across as %s:%d", sp.ServiceIP, sp.ServicePort)
+	if sp.ServiceAddress != "192.0.2.20" || sp.ServicePort != 80 {
+		t.Errorf("the service port came across as %s:%d", sp.ServiceAddress, sp.ServicePort)
 	}
 
 	if target.manager.count() != 1 {
@@ -590,7 +590,7 @@ func TestTheSameFileImportedTwiceSkipsEverything(t *testing.T) {
 	source.registerHost(t, withKey)
 	source.registerHost(t, withPassword)
 	source.registerServicePort(t, servicePortContent{
-		ServiceIP: "192.0.2.20", ServicePort: 80, LocalPort: 18080,
+		ServiceAddress: "192.0.2.20", ServicePort: 80, LocalPort: 18080,
 	})
 
 	file := source.exportTunnels(t, testExportPassword)
@@ -641,7 +641,7 @@ func TestAnImportWithOverwriteReplacesTheStoredRows(t *testing.T) {
 	source.registerHost(t, withKey)
 	source.registerHost(t, withPassword)
 	source.registerServicePort(t, servicePortContent{
-		ServiceIP: "192.0.2.20", ServicePort: 80, LocalPort: 18080, Description: "as exported",
+		ServiceAddress: "192.0.2.20", ServicePort: 80, LocalPort: 18080, Description: "as exported",
 	})
 
 	file := source.exportTunnels(t, testExportPassword)
@@ -656,7 +656,7 @@ func TestAnImportWithOverwriteReplacesTheStoredRows(t *testing.T) {
 	stale.Enabled = false
 	staleHost := target.registerHost(t, stale)
 	target.registerServicePort(t, servicePortContent{
-		ServiceIP: "192.0.2.20", ServicePort: 80, LocalPort: 18080, Description: "as stored here",
+		ServiceAddress: "192.0.2.20", ServicePort: 80, LocalPort: 18080, Description: "as stored here",
 	})
 
 	rec := target.importTunnels(t, file, testExportPassword, true)
@@ -675,7 +675,7 @@ func TestAnImportWithOverwriteReplacesTheStoredRows(t *testing.T) {
 
 	var replaced models.Host
 
-	err := target.db.Where("ip = ?", withPassword.IP).First(&replaced).Error
+	err := target.db.Where("address = ?", withPassword.Address).First(&replaced).Error
 	if err != nil {
 		t.Fatalf("the Host is gone: %v", err)
 	}
@@ -733,7 +733,7 @@ func TestAnImportThatIsRefusedWritesNothing(t *testing.T) {
 	file := sealedTunnelsFile(t, source, tunnelsContent{
 		Hosts: []hostContent{withKey, broken},
 		ServicePorts: []servicePortContent{
-			{ServiceIP: "192.0.2.20", ServicePort: 80, LocalPort: 18080},
+			{ServiceAddress: "192.0.2.20", ServicePort: 80, LocalPort: 18080},
 		},
 	}, testExportPassword)
 
@@ -743,7 +743,7 @@ func TestAnImportThatIsRefusedWritesNothing(t *testing.T) {
 	}
 
 	answer := decodeTransfer(t, rec)
-	if !strings.Contains(answer.Error, broken.IP) {
+	if !strings.Contains(answer.Error, broken.Address) {
 		t.Errorf("the refusal does not name the Host that stopped the import: %q", answer.Error)
 	}
 
@@ -767,7 +767,7 @@ func TestAHostWithNoWayInIsRefused(t *testing.T) {
 	target := newTransferInstall(t)
 
 	file := sealedTunnelsFile(t, source, tunnelsContent{
-		Hosts: []hostContent{{IP: "192.0.2.10", Port: 22, User: "operator", Enabled: true}},
+		Hosts: []hostContent{{Address: "192.0.2.10", Port: 22, User: "operator", Enabled: true}},
 	}, testExportPassword)
 
 	rec := target.importTunnels(t, file, testExportPassword, false)
@@ -794,15 +794,15 @@ func TestAServicePortMeetingTwoStoredRowsIsRefused(t *testing.T) {
 
 	file := sealedTunnelsFile(t, source, tunnelsContent{
 		ServicePorts: []servicePortContent{
-			{ServiceIP: "192.0.2.20", ServicePort: 80, LocalPort: 18080},
+			{ServiceAddress: "192.0.2.20", ServicePort: 80, LocalPort: 18080},
 		},
 	}, testExportPassword)
 
 	target.registerServicePort(t, servicePortContent{
-		ServiceIP: "192.0.2.20", ServicePort: 80, LocalPort: 18081,
+		ServiceAddress: "192.0.2.20", ServicePort: 80, LocalPort: 18081,
 	})
 	target.registerServicePort(t, servicePortContent{
-		ServiceIP: "192.0.2.21", ServicePort: 80, LocalPort: 18080,
+		ServiceAddress: "192.0.2.21", ServicePort: 80, LocalPort: 18080,
 	})
 
 	rec := target.importTunnels(t, file, testExportPassword, true)
@@ -872,7 +872,7 @@ func TestARefusedServicePortIsNamedByCode(t *testing.T) {
 
 	file := sealedTunnelsFile(t, source, tunnelsContent{
 		ServicePorts: []servicePortContent{
-			{ServiceIP: "192.0.2.20", ServicePort: 80, LocalPort: 0},
+			{ServiceAddress: "192.0.2.20", ServicePort: 80, LocalPort: 0},
 		},
 	}, testExportPassword)
 
@@ -1569,7 +1569,7 @@ func TestAnImportedHostThatWasDisabledStaysDisabled(t *testing.T) {
 	target := newTransferInstall(t)
 
 	off := hostContent{
-		IP:          "192.0.2.30",
+		Address:     "192.0.2.30",
 		Port:        22,
 		User:        "operator",
 		Password:    "the password of the Host",
@@ -1577,7 +1577,7 @@ func TestAnImportedHostThatWasDisabledStaysDisabled(t *testing.T) {
 		Enabled:     false,
 	}
 	on := hostContent{
-		IP:          "192.0.2.31",
+		Address:     "192.0.2.31",
 		Port:        22,
 		User:        "operator",
 		Password:    "the password of the Host",
@@ -1598,13 +1598,13 @@ func TestAnImportedHostThatWasDisabledStaysDisabled(t *testing.T) {
 	for _, want := range []hostContent{off, on} {
 		var stored models.Host
 
-		err := target.db.Where("ip = ?", want.IP).First(&stored).Error
+		err := target.db.Where("address = ?", want.Address).First(&stored).Error
 		if err != nil {
-			t.Fatalf("the Host %s did not arrive: %v", want.IP, err)
+			t.Fatalf("the Host %s did not arrive: %v", want.Address, err)
 		}
 		if stored.Enabled != want.Enabled {
 			t.Errorf("the Host %s arrived with enabled %v, want %v",
-				want.IP, stored.Enabled, want.Enabled)
+				want.Address, stored.Enabled, want.Enabled)
 		}
 	}
 }
@@ -1624,7 +1624,7 @@ const (
 func (i *transferInstall) presentedAKeyNobodyHasApproved(t *testing.T, hostIP string, key string) {
 	t.Helper()
 
-	err := i.db.Model(&models.Host{}).Where("ip = ?", hostIP).
+	err := i.db.Model(&models.Host{}).Where("address = ?", hostIP).
 		Update("pending_host_key", key).Error
 	if err != nil {
 		t.Fatalf("failed to store the pending key of the Host %s: %v", hostIP, err)
@@ -1649,7 +1649,7 @@ func TestTheTrustedHostKeyComesAcrossAndThePendingOneDoesNot(t *testing.T) {
 	withKey.HostKey = testTrustedHostKey
 
 	source.registerHost(t, withKey)
-	source.presentedAKeyNobodyHasApproved(t, withKey.IP, testPresentedHostKey)
+	source.presentedAKeyNobodyHasApproved(t, withKey.Address, testPresentedHostKey)
 
 	file := source.exportTunnels(t, testExportPassword)
 
@@ -1675,9 +1675,9 @@ func TestTheTrustedHostKeyComesAcrossAndThePendingOneDoesNot(t *testing.T) {
 
 	var stored models.Host
 
-	err = target.db.Where("ip = ?", withKey.IP).First(&stored).Error
+	err = target.db.Where("address = ?", withKey.Address).First(&stored).Error
 	if err != nil {
-		t.Fatalf("the Host %s did not arrive: %v", withKey.IP, err)
+		t.Fatalf("the Host %s did not arrive: %v", withKey.Address, err)
 	}
 
 	if stored.HostKey != testTrustedHostKey {
@@ -1710,7 +1710,7 @@ func TestImportingOverAHostDropsTheKeyItWasWaitingOnApprovalFor(t *testing.T) {
 	here := withKey
 	here.HostKey = "ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAABgQCtheKeyThisInstallationTrusted"
 	target.registerHost(t, here)
-	target.presentedAKeyNobodyHasApproved(t, here.IP, testPresentedHostKey)
+	target.presentedAKeyNobodyHasApproved(t, here.Address, testPresentedHostKey)
 
 	file := source.exportTunnels(t, testExportPassword)
 
@@ -1729,9 +1729,9 @@ func TestImportingOverAHostDropsTheKeyItWasWaitingOnApprovalFor(t *testing.T) {
 
 	var stored models.Host
 
-	err := target.db.Where("ip = ?", withKey.IP).First(&stored).Error
+	err := target.db.Where("address = ?", withKey.Address).First(&stored).Error
 	if err != nil {
-		t.Fatalf("the Host %s is no longer stored: %v", withKey.IP, err)
+		t.Fatalf("the Host %s is no longer stored: %v", withKey.Address, err)
 	}
 
 	if stored.HostKey != testTrustedHostKey {
@@ -1752,7 +1752,7 @@ func (i *transferInstall) assign(t *testing.T, hostIP string, localPort int) {
 
 	var host models.Host
 
-	err := i.db.Where("ip = ?", hostIP).First(&host).Error
+	err := i.db.Where("address = ?", hostIP).First(&host).Error
 	if err != nil {
 		t.Fatalf("the Host %s is not registered here: %v", hostIP, err)
 	}
@@ -1780,7 +1780,7 @@ func (i *transferInstall) openTo(t *testing.T, hostIP string, localPort int, sco
 
 	var host models.Host
 
-	err := i.db.Where("ip = ?", hostIP).First(&host).Error
+	err := i.db.Where("address = ?", hostIP).First(&host).Error
 	if err != nil {
 		t.Fatalf("the Host %s is not registered here: %v", hostIP, err)
 	}
@@ -1811,17 +1811,17 @@ func (i *transferInstall) carriedScopes(t *testing.T) []string {
 	t.Helper()
 
 	var rows []struct {
-		IP        string
+		Address   string
 		LocalPort int
 		BindScope string
 	}
 
 	err := i.db.Model(&models.HostServicePort{}).
-		Select("hosts.ip AS ip, service_ports.local_port AS local_port, " +
+		Select("hosts.address AS address, service_ports.local_port AS local_port, " +
 			"host_service_ports.bind_scope AS bind_scope").
 		Joins("JOIN hosts ON hosts.id = host_service_ports.host_id").
 		Joins("JOIN service_ports ON service_ports.id = host_service_ports.sp_id").
-		Order("hosts.ip, service_ports.local_port").
+		Order("hosts.address, service_ports.local_port").
 		Scan(&rows).Error
 	if err != nil {
 		t.Fatalf("failed to read the assignments: %v", err)
@@ -1829,7 +1829,7 @@ func (i *transferInstall) carriedScopes(t *testing.T) []string {
 
 	pairs := make([]string, 0, len(rows))
 	for _, row := range rows {
-		pairs = append(pairs, row.IP+" carries "+strconv.Itoa(row.LocalPort)+" on "+row.BindScope)
+		pairs = append(pairs, row.Address+" carries "+strconv.Itoa(row.LocalPort)+" on "+row.BindScope)
 	}
 
 	return pairs
@@ -1843,15 +1843,15 @@ func (i *transferInstall) carried(t *testing.T) []string {
 	t.Helper()
 
 	var rows []struct {
-		IP        string
+		Address   string
 		LocalPort int
 	}
 
 	err := i.db.Model(&models.HostServicePort{}).
-		Select("hosts.ip AS ip, service_ports.local_port AS local_port").
+		Select("hosts.address AS address, service_ports.local_port AS local_port").
 		Joins("JOIN hosts ON hosts.id = host_service_ports.host_id").
 		Joins("JOIN service_ports ON service_ports.id = host_service_ports.sp_id").
-		Order("hosts.ip, service_ports.local_port").
+		Order("hosts.address, service_ports.local_port").
 		Scan(&rows).Error
 	if err != nil {
 		t.Fatalf("failed to read the assignments: %v", err)
@@ -1859,7 +1859,7 @@ func (i *transferInstall) carried(t *testing.T) []string {
 
 	pairs := make([]string, 0, len(rows))
 	for _, row := range rows {
-		pairs = append(pairs, row.IP+" carries "+strconv.Itoa(row.LocalPort))
+		pairs = append(pairs, row.Address+" carries "+strconv.Itoa(row.LocalPort))
 	}
 
 	return pairs
@@ -1931,9 +1931,9 @@ func threeServicePorts(t *testing.T, install *transferInstall) {
 	t.Helper()
 
 	for _, sp := range []servicePortContent{
-		{ServiceIP: "192.0.2.20", ServicePort: 80, LocalPort: 18080, Description: "the first service"},
-		{ServiceIP: "192.0.2.21", ServicePort: 443, LocalPort: 18081, Description: "the second service"},
-		{ServiceIP: "192.0.2.22", ServicePort: 5432, LocalPort: 18082, Description: "the third service"},
+		{ServiceAddress: "192.0.2.20", ServicePort: 80, LocalPort: 18080, Description: "the first service"},
+		{ServiceAddress: "192.0.2.21", ServicePort: 443, LocalPort: 18081, Description: "the second service"},
+		{ServiceAddress: "192.0.2.22", ServicePort: 5432, LocalPort: 18082, Description: "the third service"},
 	} {
 		install.registerServicePort(t, sp)
 	}
@@ -1953,10 +1953,10 @@ func partlyAssigned(t *testing.T) *transferInstall {
 	source.registerHost(t, withPassword)
 	threeServicePorts(t, source)
 
-	source.assign(t, withKey.IP, 18080)
-	source.assign(t, withKey.IP, 18081)
-	source.assign(t, withPassword.IP, 18081)
-	source.assign(t, withPassword.IP, 18082)
+	source.assign(t, withKey.Address, 18080)
+	source.assign(t, withKey.Address, 18081)
+	source.assign(t, withPassword.Address, 18081)
+	source.assign(t, withPassword.Address, 18082)
 
 	return source
 }
@@ -2110,7 +2110,7 @@ func TestAFileFromWhenTheHostHeldTheAddressOpensItsAssignmentsThere(t *testing.T
 		func(host map[string]interface{}) {
 			delete(host, "assigned_bind_scopes")
 
-			if host["ip"] == "192.0.2.10" {
+			if host["address"] == "192.0.2.10" {
 				host["bind_address"] = "127.0.0.1"
 
 				return
@@ -2148,7 +2148,7 @@ func TestAFileNamingAScopeThatIsNeitherIsRefused(t *testing.T) {
 
 	byHand := rewriteHosts(t, source.exportTunnels(t, testExportPassword), testExportPassword,
 		func(host map[string]interface{}) {
-			if host["ip"] != "192.0.2.10" {
+			if host["address"] != "192.0.2.10" {
 				return
 			}
 
@@ -2298,7 +2298,7 @@ func TestTheAssignmentsOfASkippedHostAreLeftAlone(t *testing.T) {
 	withKey, _ := twoHosts(t)
 	target.registerHost(t, withKey)
 	threeServicePorts(t, target)
-	target.assign(t, withKey.IP, 18082)
+	target.assign(t, withKey.Address, 18082)
 
 	file := source.exportTunnels(t, testExportPassword)
 
@@ -2361,7 +2361,7 @@ func TestTheLocalForwardContentCarriesEveryFieldOfALocalForward(t *testing.T) {
 // forward tests need of one.
 func passwordHost(ip string) hostContent {
 	return hostContent{
-		IP:          ip,
+		Address:     ip,
 		Port:        22,
 		User:        "operator",
 		Password:    "the password of the Host",
@@ -2376,7 +2376,7 @@ func (i *transferInstall) forward(t *testing.T, hostIP string, lf localForwardCo
 
 	var host models.Host
 
-	err := i.db.Where("ip = ?", hostIP).First(&host).Error
+	err := i.db.Where("address = ?", hostIP).First(&host).Error
 	if err != nil {
 		t.Fatalf("the Host %s is not registered here: %v", hostIP, err)
 	}
@@ -2387,14 +2387,14 @@ func (i *transferInstall) forward(t *testing.T, hostIP string, lf localForwardCo
 	}
 
 	err = i.db.Create(&models.LocalForward{
-		HostID:      host.ID,
-		Number:      number,
-		BindScope:   lf.BindScope,
-		LocalPort:   lf.LocalPort,
-		TargetIP:    lf.TargetIP,
-		TargetPort:  lf.TargetPort,
-		Description: lf.Description,
-		Enabled:     lf.enabled(),
+		HostID:        host.ID,
+		Number:        number,
+		BindScope:     lf.BindScope,
+		LocalPort:     lf.LocalPort,
+		TargetAddress: lf.TargetAddress,
+		TargetPort:    lf.TargetPort,
+		Description:   lf.Description,
+		Enabled:       lf.enabled(),
 	}).Error
 	if err != nil {
 		t.Fatalf("failed to store the local forward: %v", err)
@@ -2427,17 +2427,17 @@ func (i *transferInstall) forwards(t *testing.T) []string {
 	t.Helper()
 
 	var rows []struct {
-		IP          string
-		BindScope   string
-		LocalPort   int
-		TargetIP    string
-		TargetPort  int
-		Description string
+		Address       string
+		BindScope     string
+		LocalPort     int
+		TargetAddress string
+		TargetPort    int
+		Description   string
 	}
 
 	err := i.db.Model(&models.LocalForward{}).
-		Select("hosts.ip AS ip, local_forwards.bind_scope AS bind_scope, " +
-			"local_forwards.local_port AS local_port, local_forwards.target_ip AS target_ip, " +
+		Select("hosts.address AS address, local_forwards.bind_scope AS bind_scope, " +
+			"local_forwards.local_port AS local_port, local_forwards.target_address AS target_address, " +
 			"local_forwards.target_port AS target_port, local_forwards.description AS description").
 		Joins("JOIN hosts ON hosts.id = local_forwards.host_id").
 		Order("local_forwards.local_port").
@@ -2448,8 +2448,8 @@ func (i *transferInstall) forwards(t *testing.T) []string {
 
 	named := make([]string, 0, len(rows))
 	for _, row := range rows {
-		named = append(named, row.IP+" "+row.BindScope+" "+strconv.Itoa(row.LocalPort)+" -> "+
-			row.TargetIP+":"+strconv.Itoa(row.TargetPort)+" ("+row.Description+")")
+		named = append(named, row.Address+" "+row.BindScope+" "+strconv.Itoa(row.LocalPort)+" -> "+
+			row.TargetAddress+":"+strconv.Itoa(row.TargetPort)+" ("+row.Description+")")
 	}
 
 	return named
@@ -2479,11 +2479,11 @@ func TestTheLocalForwardsOfAHostCrossToAnotherInstallation(t *testing.T) {
 	source.registerHost(t, passwordHost("192.0.2.10"))
 	source.registerHost(t, passwordHost("192.0.2.11"))
 	source.forward(t, "192.0.2.10", localForwardContent{BindScope: models.BindScopeLoopback,
-		LocalPort: 15433, TargetIP: "127.0.0.1", TargetPort: 5432, Description: "the database"})
+		LocalPort: 15433, TargetAddress: "127.0.0.1", TargetPort: 5432, Description: "the database"})
 	source.forward(t, "192.0.2.10", localForwardContent{BindScope: models.BindScopeWildcard,
-		LocalPort: 15432, TargetIP: "192.0.2.30", TargetPort: 5432})
+		LocalPort: 15432, TargetAddress: "192.0.2.30", TargetPort: 5432})
 	source.forward(t, "192.0.2.11", localForwardContent{
-		LocalPort: 18443, TargetIP: "192.0.2.31", TargetPort: 443, Description: "no scope"})
+		LocalPort: 18443, TargetAddress: "192.0.2.31", TargetPort: 443, Description: "no scope"})
 
 	rec := source.call(t, source.handler.ExportTunnels, `{"password":`+jsonString(t, testExportPassword)+`}`)
 	if rec.Code != http.StatusOK {
@@ -2546,9 +2546,9 @@ func TestWhetherALocalForwardIsOnCrossesWithIt(t *testing.T) {
 	off := false
 
 	source.registerHost(t, passwordHost("192.0.2.10"))
-	source.forward(t, "192.0.2.10", localForwardContent{LocalPort: 15432, TargetIP: "127.0.0.1", TargetPort: 5432,
+	source.forward(t, "192.0.2.10", localForwardContent{LocalPort: 15432, TargetAddress: "127.0.0.1", TargetPort: 5432,
 		Enabled: &off})
-	source.forward(t, "192.0.2.10", localForwardContent{LocalPort: 15433, TargetIP: "127.0.0.1", TargetPort: 5433})
+	source.forward(t, "192.0.2.10", localForwardContent{LocalPort: 15433, TargetAddress: "127.0.0.1", TargetPort: 5433})
 
 	file := source.exportTunnels(t, testExportPassword)
 
@@ -2557,7 +2557,7 @@ func TestWhetherALocalForwardIsOnCrossesWithIt(t *testing.T) {
 		t.Fatalf("the file does not open: %v", err)
 	}
 
-	if !strings.Contains(opened, `"local_port":15432,"target_ip":"127.0.0.1","target_port":5432,"description":"","enabled":false`) {
+	if !strings.Contains(opened, `"local_port":15432,"target_address":"127.0.0.1","target_port":5432,"description":"","enabled":false`) {
 		t.Errorf("the file does not say the forward on 15432 is off: %s", opened)
 	}
 
@@ -2618,7 +2618,7 @@ func TestAFileFromBeforeTheLocalForwardsWereStoredIsImported(t *testing.T) {
 	target := newTransferInstall(t)
 
 	source.registerHost(t, passwordHost("192.0.2.10"))
-	source.forward(t, "192.0.2.10", localForwardContent{LocalPort: 15432, TargetIP: "192.0.2.30", TargetPort: 5432})
+	source.forward(t, "192.0.2.10", localForwardContent{LocalPort: 15432, TargetAddress: "192.0.2.30", TargetPort: 5432})
 
 	file := rewriteHosts(t, source.exportTunnels(t, testExportPassword), testExportPassword,
 		func(host map[string]interface{}) {
@@ -2648,6 +2648,91 @@ func TestAFileFromBeforeTheLocalForwardsWereStoredIsImported(t *testing.T) {
 	}
 }
 
+// TestAFileFromBeforeTheAddressesWereRenamedIsImported is a file exported by a
+// release that carried the addresses as ip, service_ip and target_ip. Every
+// address it holds arrives under the new name, and a Host that names both is
+// stored at the new one.
+func TestAFileFromBeforeTheAddressesWereRenamedIsImported(t *testing.T) {
+	target := newTransferInstall(t)
+
+	content := json.RawMessage(`{
+		"hosts": [
+			{"ip": "192.0.2.10", "port": 22, "user": "operator", "password": "the password of the Host",
+			 "enabled": true, "assigned_local_ports": [18080],
+			 "local_forwards": [{"bind_scope": "loopback", "local_port": 15432,
+			  "target_ip": "192.0.2.30", "target_port": 5432, "description": "", "enabled": true}]},
+			{"ip": "192.0.2.99", "address": "db.example.com", "port": 22, "user": "operator",
+			 "password": "the password of the Host", "enabled": true, "assigned_local_ports": []}
+		],
+		"service_ports": [{"service_ip": "198.51.100.20", "service_port": 80, "local_port": 18080}]
+	}`)
+
+	file, err := target.handler.seal(transferKindTunnels, content, testExportPassword, time.Now())
+	if err != nil {
+		t.Fatalf("failed to seal the file: %v", err)
+	}
+
+	rec := target.importTunnels(t, file, testExportPassword, false)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("the import answered %d: %s", rec.Code, rec.Body.String())
+	}
+
+	var hosts []models.Host
+	err = target.db.Order("id").Find(&hosts).Error
+	if err != nil {
+		t.Fatalf("failed to read the Hosts: %v", err)
+	}
+	if len(hosts) != 2 || hosts[0].Address != "192.0.2.10" || hosts[1].Address != "db.example.com" {
+		t.Fatalf("the Hosts were stored as %+v", hosts)
+	}
+
+	var sp models.ServicePort
+	err = target.db.First(&sp).Error
+	if err != nil {
+		t.Fatalf("failed to read the service port: %v", err)
+	}
+	if sp.ServiceAddress != "198.51.100.20" {
+		t.Fatalf("the service port was stored at %q", sp.ServiceAddress)
+	}
+
+	want := []string{"192.0.2.10 loopback 15432 -> 192.0.2.30:5432 ()"}
+	if !reflect.DeepEqual(target.forwards(t), want) {
+		t.Fatalf("the installation that took the file in forwards %v, want %v", target.forwards(t), want)
+	}
+
+	if !reflect.DeepEqual(target.carried(t), []string{"192.0.2.10 carries 18080"}) {
+		t.Fatalf("the assignments are %v", target.carried(t))
+	}
+}
+
+// TestAnExportWritesOnlyTheNewNames holds the export to the names the import
+// reads first, so that a file written now never carries the old ones.
+func TestAnExportWritesOnlyTheNewNames(t *testing.T) {
+	source := newTransferInstall(t)
+
+	source.registerHost(t, passwordHost("192.0.2.10"))
+	source.registerServicePort(t, servicePortContent{ServiceAddress: "198.51.100.20", ServicePort: 80, LocalPort: 18080})
+	source.forward(t, "192.0.2.10", localForwardContent{LocalPort: 15432, TargetAddress: "192.0.2.30", TargetPort: 5432})
+
+	opened, err := crypto.DecryptWithPassword(source.exportTunnels(t, testExportPassword), testExportPassword)
+	if err != nil {
+		t.Fatalf("the file does not open: %v", err)
+	}
+
+	for _, name := range []string{`"ip"`, `"service_ip"`, `"target_ip"`} {
+		if strings.Contains(opened, name) {
+			t.Errorf("the file carries %s: %s", name, opened)
+		}
+	}
+
+	for _, name := range []string{`"address":"192.0.2.10"`, `"service_address":"198.51.100.20"`,
+		`"target_address":"192.0.2.30"`} {
+		if !strings.Contains(opened, name) {
+			t.Errorf("the file does not carry %s: %s", name, opened)
+		}
+	}
+}
+
 // TestALocalForwardTheFileCannotCarryIsRefused holds every local forward of the
 // file to what the screens refuse, and to the one local port per forward that
 // the table is held to, and the refusal leaves nothing behind.
@@ -2659,22 +2744,22 @@ func TestALocalForwardTheFileCannotCarryIsRefused(t *testing.T) {
 	}{
 		{
 			name:   "the local port of the other Host",
-			second: localForwardContent{LocalPort: 15432, TargetIP: "192.0.2.31", TargetPort: 22},
+			second: localForwardContent{LocalPort: 15432, TargetAddress: "192.0.2.31", TargetPort: 22},
 			code:   errImportLocalForwardDuplicate,
 		},
 		{
 			name:   "a scope that is neither",
-			second: localForwardContent{BindScope: "public", LocalPort: 15433, TargetIP: "192.0.2.31", TargetPort: 22},
+			second: localForwardContent{BindScope: "public", LocalPort: 15433, TargetAddress: "192.0.2.31", TargetPort: 22},
 			code:   errImportLocalForwardRefused,
 		},
 		{
 			name:   "a target that is not an address",
-			second: localForwardContent{LocalPort: 15433, TargetIP: "the database", TargetPort: 22},
+			second: localForwardContent{LocalPort: 15433, TargetAddress: "the database", TargetPort: 22},
 			code:   errImportLocalForwardRefused,
 		},
 		{
 			name:   "a port out of range",
-			second: localForwardContent{LocalPort: 70000, TargetIP: "192.0.2.31", TargetPort: 22},
+			second: localForwardContent{LocalPort: 70000, TargetAddress: "192.0.2.31", TargetPort: 22},
 			code:   errImportLocalForwardRefused,
 		},
 	}
@@ -2685,7 +2770,7 @@ func TestALocalForwardTheFileCannotCarryIsRefused(t *testing.T) {
 			target := newTransferInstall(t)
 
 			first := passwordHost("192.0.2.10")
-			first.LocalForwards = []localForwardContent{{LocalPort: 15432, TargetIP: "192.0.2.30", TargetPort: 22}}
+			first.LocalForwards = []localForwardContent{{LocalPort: 15432, TargetAddress: "192.0.2.30", TargetPort: 22}}
 
 			second := passwordHost("192.0.2.11")
 			second.LocalForwards = []localForwardContent{tc.second}
@@ -2729,7 +2814,7 @@ func TestALocalForwardOnThePortOfThisServerIsRefused(t *testing.T) {
 	}
 
 	host := passwordHost("192.0.2.10")
-	host.LocalForwards = []localForwardContent{{LocalPort: 19443, TargetIP: "192.0.2.30", TargetPort: 443}}
+	host.LocalForwards = []localForwardContent{{LocalPort: 19443, TargetAddress: "192.0.2.30", TargetPort: 443}}
 
 	file := sealedTunnelsFile(t, source, tunnelsContent{Hosts: []hostContent{host}}, testExportPassword)
 
@@ -2767,7 +2852,7 @@ func TestALocalForwardOnTheRunningPortOfThisServerIsRefused(t *testing.T) {
 			}
 
 			host := passwordHost("192.0.2.10")
-			host.LocalForwards = []localForwardContent{{LocalPort: 19500, TargetIP: "192.0.2.30", TargetPort: 443}}
+			host.LocalForwards = []localForwardContent{{LocalPort: 19500, TargetAddress: "192.0.2.30", TargetPort: 443}}
 
 			file := sealedTunnelsFile(t, source, tunnelsContent{Hosts: []hostContent{host}}, testExportPassword)
 
@@ -2816,7 +2901,7 @@ func TestImportedSettingsSuggestAPortClearOfTheRunningAPIPort(t *testing.T) {
 	target := newTransferInstall(t)
 	target.handler.hosts.SetRunningAPIPort(15433)
 
-	host := models.Host{IP: "192.0.2.10", Port: 22, User: "root"}
+	host := models.Host{Address: "192.0.2.10", Port: 22, User: "root"}
 
 	err := target.db.Create(&host).Error
 	if err != nil {
@@ -2824,7 +2909,7 @@ func TestImportedSettingsSuggestAPortClearOfTheRunningAPIPort(t *testing.T) {
 	}
 
 	forward := models.LocalForward{HostID: host.ID, BindScope: models.BindScopeLoopback, LocalPort: 15432,
-		TargetIP: "127.0.0.1", TargetPort: 5432}
+		TargetAddress: "127.0.0.1", TargetPort: 5432}
 
 	err = target.db.Create(&forward).Error
 	if err != nil {
@@ -2875,12 +2960,12 @@ func TestALocalPortAnotherHostHoldsIsRefused(t *testing.T) {
 
 	target.registerHost(t, passwordHost("192.0.2.12"))
 	target.forward(t, "192.0.2.12", localForwardContent{BindScope: models.BindScopeWildcard,
-		LocalPort: 15432, TargetIP: "192.0.2.40", TargetPort: 5432})
+		LocalPort: 15432, TargetAddress: "192.0.2.40", TargetPort: 5432})
 
 	before := target.forwards(t)
 
 	host := passwordHost("192.0.2.10")
-	host.LocalForwards = []localForwardContent{{LocalPort: 15432, TargetIP: "192.0.2.30", TargetPort: 5432}}
+	host.LocalForwards = []localForwardContent{{LocalPort: 15432, TargetAddress: "192.0.2.30", TargetPort: 5432}}
 
 	file := sealedTunnelsFile(t, source, tunnelsContent{Hosts: []hostContent{host}}, testExportPassword)
 
@@ -2923,22 +3008,22 @@ func TestAnOverwriteReplacesTheLocalForwardsOfTheHostsItWrites(t *testing.T) {
 	target.registerHost(t, passwordHost("192.0.2.10"))
 	target.registerHost(t, passwordHost("192.0.2.11"))
 	target.forward(t, "192.0.2.10", localForwardContent{BindScope: models.BindScopeWildcard,
-		LocalPort: 15432, TargetIP: "192.0.2.30", TargetPort: 5432})
+		LocalPort: 15432, TargetAddress: "192.0.2.30", TargetPort: 5432})
 	target.forward(t, "192.0.2.10", localForwardContent{BindScope: models.BindScopeWildcard,
-		LocalPort: 15499, TargetIP: "192.0.2.30", TargetPort: 99})
+		LocalPort: 15499, TargetAddress: "192.0.2.30", TargetPort: 99})
 	target.forward(t, "192.0.2.11", localForwardContent{BindScope: models.BindScopeWildcard,
-		LocalPort: 15433, TargetIP: "192.0.2.31", TargetPort: 5432})
+		LocalPort: 15433, TargetAddress: "192.0.2.31", TargetPort: 5432})
 
 	before := target.forwards(t)
 
 	// The two ports trade places, and the first Host drops the third.
 	first := passwordHost("192.0.2.10")
 	first.LocalForwards = []localForwardContent{{BindScope: models.BindScopeLoopback,
-		LocalPort: 15433, TargetIP: "192.0.2.30", TargetPort: 5432}}
+		LocalPort: 15433, TargetAddress: "192.0.2.30", TargetPort: 5432}}
 
 	second := passwordHost("192.0.2.11")
 	second.LocalForwards = []localForwardContent{{BindScope: models.BindScopeWildcard,
-		LocalPort: 15432, TargetIP: "192.0.2.31", TargetPort: 5432}}
+		LocalPort: 15432, TargetAddress: "192.0.2.31", TargetPort: 5432}}
 
 	file := sealedTunnelsFile(t, source, tunnelsContent{Hosts: []hostContent{first, second}}, testExportPassword)
 
@@ -2979,7 +3064,7 @@ func TestAFileFromBeforeTheLocalForwardsLeavesThemAlone(t *testing.T) {
 
 	target.registerHost(t, passwordHost("192.0.2.10"))
 	target.forward(t, "192.0.2.10", localForwardContent{BindScope: models.BindScopeWildcard,
-		LocalPort: 15432, TargetIP: "192.0.2.30", TargetPort: 5432})
+		LocalPort: 15432, TargetAddress: "192.0.2.30", TargetPort: 5432})
 
 	before := target.forwards(t)
 
@@ -3009,7 +3094,7 @@ func TestAHostCarriedAsForwardingNothingForwardsNothing(t *testing.T) {
 
 	target.registerHost(t, passwordHost("192.0.2.10"))
 	target.forward(t, "192.0.2.10", localForwardContent{BindScope: models.BindScopeWildcard,
-		LocalPort: 15432, TargetIP: "192.0.2.30", TargetPort: 5432})
+		LocalPort: 15432, TargetAddress: "192.0.2.30", TargetPort: 5432})
 
 	file := source.exportTunnels(t, testExportPassword)
 
@@ -3047,7 +3132,7 @@ func TestImportedSettingsWithAnAPIPortALocalForwardOpensAreNotStored(t *testing.
 
 	sqlDB.SetMaxOpenConns(1)
 
-	host := models.Host{IP: "192.0.2.10", Port: 22, User: "root"}
+	host := models.Host{Address: "192.0.2.10", Port: 22, User: "root"}
 
 	err = target.db.Create(&host).Error
 	if err != nil {
@@ -3055,7 +3140,7 @@ func TestImportedSettingsWithAnAPIPortALocalForwardOpensAreNotStored(t *testing.
 	}
 
 	forward := models.LocalForward{HostID: host.ID, BindScope: models.BindScopeLoopback, LocalPort: 15432,
-		TargetIP: "127.0.0.1", TargetPort: 5432}
+		TargetAddress: "127.0.0.1", TargetPort: 5432}
 
 	err = target.db.Create(&forward).Error
 	if err != nil {
@@ -3092,8 +3177,8 @@ func TestImportedSettingsWithAnAPIPortALocalForwardOpensAreNotStored(t *testing.
 		t.Errorf("error_code = %q, want %q", answer.Code, errImportSettingsAPIPortForward)
 	}
 
-	want := apiPortHolder{Number: forward.Number, HostID: host.ID, HostIP: "192.0.2.10", LocalPort: 15432,
-		TargetIP: "127.0.0.1", TargetPort: 5432}
+	want := apiPortHolder{Number: forward.Number, HostID: host.ID, HostAddress: "192.0.2.10", LocalPort: 15432,
+		TargetAddress: "127.0.0.1", TargetPort: 5432}
 	if answer.Data.LocalForward != want {
 		t.Errorf("local_forward = %+v, want %+v", answer.Data.LocalForward, want)
 	}
@@ -3248,19 +3333,19 @@ func TestTheItemsOfAnImportNameTheirSentences(t *testing.T) {
 	target := newTransferInstall(t)
 
 	target.registerHost(t, passwordHost("192.0.2.10"))
-	target.registerServicePort(t, servicePortContent{ServiceIP: "192.0.2.20", ServicePort: 80, LocalPort: 18080})
-	target.registerServicePort(t, servicePortContent{ServiceIP: "192.0.2.21", ServicePort: 81, LocalPort: 18090})
+	target.registerServicePort(t, servicePortContent{ServiceAddress: "192.0.2.20", ServicePort: 80, LocalPort: 18080})
+	target.registerServicePort(t, servicePortContent{ServiceAddress: "192.0.2.21", ServicePort: 81, LocalPort: 18090})
 
 	carrying := passwordHost("192.0.2.11")
 	carrying.AssignedLocalPorts = []int{19999}
 	carrying.LocalForwards = []localForwardContent{{BindScope: models.BindScopeLoopback,
-		LocalPort: 15432, TargetIP: "127.0.0.1", TargetPort: 5432}}
+		LocalPort: 15432, TargetAddress: "127.0.0.1", TargetPort: 5432}}
 
 	file := sealedTunnelsFile(t, target, tunnelsContent{
 		Hosts: []hostContent{passwordHost("192.0.2.10"), carrying},
 		ServicePorts: []servicePortContent{
-			{ServiceIP: "192.0.2.20", ServicePort: 80, LocalPort: 18081},
-			{ServiceIP: "192.0.2.22", ServicePort: 82, LocalPort: 18090},
+			{ServiceAddress: "192.0.2.20", ServicePort: 80, LocalPort: 18081},
+			{ServiceAddress: "192.0.2.22", ServicePort: 82, LocalPort: 18090},
 		},
 	}, testExportPassword)
 
