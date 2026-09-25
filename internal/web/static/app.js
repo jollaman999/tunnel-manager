@@ -495,7 +495,12 @@ function toNotice(note) {
 
 // showScreen draws a screen by name. Every path into a screen goes through it,
 // so the timer of the screen being left is stopped in one place.
+//
+// The panels over the screen being left are taken down here for the same
+// reason. The back button moves the page without pressing anything in them,
+// and a panel left up would stand over a screen it has nothing to do with.
 function showScreen(name) {
+  closeAllModals();
   stopRefresh();
 
   const screen = screens[name];
@@ -2848,6 +2853,17 @@ function openModal(spec) {
       spec.opened(close);
     }
   });
+}
+
+// closeAllModals takes down every panel that is up, the top one first. Each goes
+// through its own close, as a dismissal, so that whatever a panel does on the
+// way out is done: the page is let go once, the keyboard goes back, and a
+// caller waiting on the panel learns that nothing was chosen and stops what it
+// was keeping up for it.
+function closeAllModals() {
+  while (modalStack.length > 0) {
+    modalStack[modalStack.length - 1].close(null);
+  }
 }
 
 // modalFocusables is what the keyboard can reach inside a panel, in the order

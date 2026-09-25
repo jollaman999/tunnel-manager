@@ -2535,6 +2535,13 @@ async function drawHosts() {
 
   const answer = await apiCall("GET", "/api/host?" + pageQuery(page));
 
+  // A read that was in flight while the operator left, or that a panel set off
+  // as it was taken down by the move, must not draw over the screen they went
+  // to.
+  if (currentScreen !== "hosts") {
+    return;
+  }
+
   takeListPage(page, answer);
 
   // The rows of this page sit under items, and total is the whole list. The
@@ -2910,7 +2917,15 @@ async function deletePicked(spec) {
     return;
   }
 
+  // The screen the press was made on. A move to another takes the panel down
+  // with it, and the list it would draw again is then not on the screen.
+  const screen = currentScreen;
+
   await confirmPickedDeletes(spec, chosen);
+
+  if (currentScreen !== screen) {
+    return;
+  }
 
   return spec.draw();
 }
@@ -4682,6 +4697,9 @@ async function assignPickedToHosts(items, draw) {
     return;
   }
 
+  // The screen the press was made on, for the reason deletePicked keeps it.
+  const screen = currentScreen;
+
   const outcome = await pickHostsToAssignTo(chosen);
 
   // The ticks are what the press was made of, and the press has landed. Left
@@ -4693,6 +4711,10 @@ async function assignPickedToHosts(items, draw) {
     for (const item of chosen) {
       delete listPicks["service-ports"][String(item.id)];
     }
+  }
+
+  if (currentScreen !== screen) {
+    return;
   }
 
   return draw();
@@ -5097,6 +5119,11 @@ function enterServicePorts() {
 async function drawServicePorts() {
   const page = listPages["service-ports"];
   const answer = await apiCall("GET", "/api/service-port?" + pageQuery(page));
+
+  // Not over another screen, for the reason drawHosts gives.
+  if (currentScreen !== "service-ports") {
+    return;
+  }
 
   takeListPage(page, answer);
 
