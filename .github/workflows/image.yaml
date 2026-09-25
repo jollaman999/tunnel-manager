@@ -17,7 +17,12 @@ jobs:
   image:
     runs-on: ubuntu-26.04
     steps:
+    # Nothing here pushes to the repository; the registry login below takes the
+    # token on its own. Leaving it in .git/config would only hand it to every
+    # later step, the build context included.
     - uses: actions/checkout@v7
+      with:
+        persist-credentials: false
 
     # The program is cross-compiled by the builder stage, but the stage the
     # image is made of runs apk on the platform it is for, and that one needs

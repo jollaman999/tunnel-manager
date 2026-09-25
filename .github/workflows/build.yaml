@@ -19,7 +19,11 @@ jobs:
   build:
     runs-on: ubuntu-26.04
     steps:
+    # The job reads the repository and never pushes to it, so the token is not
+    # left behind in .git/config for a later step to find.
     - uses: actions/checkout@v7
+      with:
+        persist-credentials: false
 
     # The version comes from go.mod, from its toolchain line, so the Go this
     # builds with is the one the module names rather than a second copy of the
