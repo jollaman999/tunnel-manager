@@ -627,7 +627,7 @@ async function drawStatus() {
       const forward = isLocalForward(tunnel);
       const cells = [
         tunnel.host_id,
-        forward ? t("status.kind-local-forward.text") : t("status.kind-service-port.text"),
+        kindCell(forward),
         // A local forward is carried by no service port, and the column holds
         // a dash rather than a blank: a blank cell in a column of numbers
         // reads as a number that failed to come through.
@@ -741,6 +741,19 @@ async function drawStatus() {
 // addresses in them, and the only thing that tells them apart is this word.
 function isLocalForward(row) {
   return row.kind === "local_forward";
+}
+
+// kindCell is the word in the Kind column, kept on one line. The column is
+// sized by the longest word in it, and a two word name such as Service port or
+// 로컬 포워딩 broken at its space made the column as narrow as one word and
+// read as two values stacked in one cell.
+function kindCell(forward) {
+  const node = element("span",
+    forward ? t("status.kind-local-forward.text") : t("status.kind-service-port.text"));
+
+  node.className = "kind";
+
+  return node;
 }
 
 // openedCell is the address in the Opened column, with the machine the port is

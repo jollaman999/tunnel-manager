@@ -1346,6 +1346,12 @@ tbody tr.under > td {
   white-space: nowrap;
 }
 
+/* The sort of a row on the status screen is one name, and it stays on one line
+   for the reason a timestamp does. */
+.kind {
+  white-space: nowrap;
+}
+
 /* The log has no card around it, so the room a line is given at either end is
    its own rather than a card's. Without it a message runs to the edge of the
    box it is in and reads as having been cut there. */
