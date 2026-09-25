@@ -2311,7 +2311,9 @@ function buildForm(spec) {
     if (field.advise !== undefined) {
       const advice = element("small", "");
 
-      advice.className = "advice";
+      // A field whose warning is about who can get in says it in red. The rest
+      // are a second look at a value and stay in the plain small print.
+      advice.className = field.adviseKind === "danger" ? "advice danger" : "advice";
       advice.dataset.advice = field.name;
 
       const sayAdvice = function () {

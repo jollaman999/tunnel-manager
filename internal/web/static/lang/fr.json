@@ -350,6 +350,7 @@
   "hosts.service-ports.button": "Ports service",
   "hosts.socks-enabled.hint": "Ouvre sur cette machine un port par lequel un navigateur atteint le réseau derrière ce Host. Ouvert sur toutes les interfaces et sans adresse cliente autorisée, il laisse quiconque atteint cette machine entrer dans le réseau derrière le Host.",
   "hosts.socks-enabled.label": "Activer un proxy SOCKS5",
+  "hosts.socks-open.notice": "Sur toutes les interfaces, d'autres machines atteignent ce proxy, et il ne demande aucun mot de passe, donc quiconque atteint ce système sur le port atteint le réseau derrière le Host, sauf si {sources} désigne qui le peut.",
   "hosts.socks-port.label": "Port SOCKS5",
   "hosts.socks-sources.hint": "Vide, tout le monde peut se connecter. Séparez les adresses IP et les blocs CIDR par des virgules ou des espaces, par exemple 203.0.113.0/24, 198.51.100.7",
   "hosts.socks-sources.label": "Adresses clientes autorisées",

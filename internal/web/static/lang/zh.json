@@ -350,6 +350,7 @@
   "hosts.service-ports.button": "服务端口",
   "hosts.socks-enabled.hint": "在本机开放一个端口，让浏览器经由它访问此 Host 内侧的网络。在所有接口上开放且允许的来源地址为空时，任何能访问本机的人都能进入 Host 内侧的网络。",
   "hosts.socks-enabled.label": "启用 SOCKS5 代理",
+  "hosts.socks-open.notice": "在所有接口上打开时，其他系统也能连到这个代理，而代理不要求密码，所以除非用 {sources} 限定来源，任何能连到本系统这个端口的人都能进入 Host 背后的网络。",
   "hosts.socks-port.label": "SOCKS5 端口",
   "hosts.socks-sources.hint": "留空则任何人都能连接。IP 地址和 CIDR 用逗号或空格分隔，例如 203.0.113.0/24, 198.51.100.7",
   "hosts.socks-sources.label": "允许的来源地址",

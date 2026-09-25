@@ -350,6 +350,7 @@
   "hosts.service-ports.button": "Service-Ports",
   "hosts.socks-enabled.hint": "Öffnet auf diesem Rechner einen Port, über den ein Browser das Netz hinter diesem Host erreicht. Auf allen Schnittstellen geöffnet und ohne erlaubte Client-Adressen kommt jeder, der diesen Rechner erreicht, in das Netz hinter dem Host.",
   "hosts.socks-enabled.label": "SOCKS5-Proxy einschalten",
+  "hosts.socks-open.notice": "Auf allen Schnittstellen erreichen auch andere Rechner diesen Proxy, und er fragt nach keinem Passwort. Wer dieses System auf dem Port erreicht, erreicht daher das Netz hinter dem Host, außer {sources} legt fest, wer es darf.",
   "hosts.socks-port.label": "SOCKS5-Port",
   "hosts.socks-sources.hint": "Leer lässt jeden verbinden. IP-Adressen und CIDR-Blöcke mit Kommas oder Leerzeichen trennen, zum Beispiel 203.0.113.0/24, 198.51.100.7",
   "hosts.socks-sources.label": "Erlaubte Client-Adressen",

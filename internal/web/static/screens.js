@@ -3330,6 +3330,8 @@ function socksFields(host) {
       label: t("local-forwards.scope.label"),
       value: bindScopeStored(host.socks_bind_scope),
       options: localForwardScopeOptions(),
+      advise: socksScopeAdvice,
+      adviseKind: "danger",
       shownWhen: shown
     },
     {
@@ -3340,6 +3342,20 @@ function socksFields(host) {
       shownWhen: shown
     }
   ];
+}
+
+// socksScopeAdvice says what every interface means for the proxy, in red rather
+// than in the amber of bindScopeAdvice. The proxy asks for no password, so the
+// wildcard hands the network behind the Host to whoever reaches this port, and
+// the box that can narrow that is the one just below. It is still a warning and
+// not a refusal: a proxy on a network of its own, or behind a firewall, may be
+// meant to be reached from other machines.
+function socksScopeAdvice(value) {
+  if (value !== bindScopeWildcard) {
+    return "";
+  }
+
+  return t("hosts.socks-open.notice", { sources: t("hosts.socks-sources.label") });
 }
 
 async function createHost(values) {

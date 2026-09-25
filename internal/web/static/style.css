@@ -1074,6 +1074,24 @@ tbody tr.under > td {
   overflow-wrap: break-word;
 }
 
+/* A warning under a field about who can get in, such as a SOCKS5 proxy asked
+   for on every interface. It is red because what it describes is open to
+   anyone and not only worth a second look. */
+.advice.danger {
+  display: block;
+  margin-top: 0.35rem;
+  padding: 0.5rem 0.75rem;
+  border-radius: var(--radius-control);
+  color: var(--danger);
+  background: var(--danger-bg);
+  border: 1px solid var(--danger-border);
+  overflow-wrap: break-word;
+}
+
+.advice.danger[hidden] {
+  display: none;
+}
+
 /* What is said under a tunnel whose forwarded port did not answer. That row
    reads as connected in the column that is looked at first and is not usable
    all the same, so this is the one thing under a row that carries a colour:
