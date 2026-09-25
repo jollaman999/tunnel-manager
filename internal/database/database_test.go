@@ -2066,7 +2066,10 @@ func TestANewDatabaseIsClosedToTheRestOfTheMachine(t *testing.T) {
 // TestADatabaseFromAnEarlierReleaseIsNarrowedOnTheNextStartup is the half that
 // matters to a deployment that is already running. Creating new files narrowly
 // does nothing for the installations that hold the secrets today, so the
-// startup sets the mode of what it finds as well as of what it makes.
+// startup sets the mode of the files it finds as well as of those it makes.
+// The directory they are in is found rather than made on this startup, so it
+// is left as it was, for the reason TestADirectoryThatWasAlreadyThereKeepsItsMode
+// gives.
 func TestADatabaseFromAnEarlierReleaseIsNarrowedOnTheNextStartup(t *testing.T) {
 	skipWithoutFileModes(t)
 
@@ -2111,7 +2114,7 @@ func TestADatabaseFromAnEarlierReleaseIsNarrowedOnTheNextStartup(t *testing.T) {
 	})
 
 	requireMode(t, path, databaseFileMode)
-	requireMode(t, dir, databaseDirMode)
+	requireMode(t, dir, 0755)
 	requireSidecarsAreClosed(t, path)
 }
 
@@ -2176,7 +2179,7 @@ func TestTightenPermissionsReportsEveryPathItCouldNotSet(t *testing.T) {
 		t.Fatalf("failed to write the file that stands in for the database: %v", err)
 	}
 
-	err = tightenPermissions(path)
+	err = tightenPermissions(path, true)
 	if err == nil {
 		t.Fatal("a chmod that fails everywhere was reported as done")
 	}
@@ -2200,8 +2203,97 @@ func TestTightenPermissionsPassesOverAFileThatIsNotThere(t *testing.T) {
 		t.Fatalf("failed to write the file that stands in for the database: %v", err)
 	}
 
-	err = tightenPermissions(path)
+	err = tightenPermissions(path, true)
 	if err != nil {
 		t.Fatalf("a database with no files beside it was reported as a failure: %v", err)
 	}
+}
+
+// TestADirectoryThatWasAlreadyThereKeepsItsMode covers a database path the
+// operator pointed into a directory of their own. The directory is shared with
+// whatever else lives in it, so narrowing it would take it away from those as
+// well: -db /tmp/tunnel-manager.db run as root would turn /tmp into 0700 and
+// drop the sticky bit that keeps one user from removing the files of another.
+// What holds the secrets is the file, and that is narrowed either way.
+func TestADirectoryThatWasAlreadyThereKeepsItsMode(t *testing.T) {
+	skipWithoutFileModes(t)
+
+	for _, tc := range []struct {
+		name string
+		mode os.FileMode
+	}{
+		{"0755", 0755},
+		{"01777", 0777 | os.ModeSticky},
+	} {
+		mode := tc.mode
+
+		t.Run(tc.name, func(t *testing.T) {
+			dir := filepath.Join(t.TempDir(), "shared")
+
+			err := os.Mkdir(dir, 0700)
+			if err != nil {
+				t.Fatalf("failed to make the directory the operator made: %v", err)
+			}
+
+			// Mkdir is masked by umask and takes no sticky bit, so the mode
+			// is written after it.
+			err = os.Chmod(dir, mode)
+			if err != nil {
+				t.Fatalf("failed to put the directory at %#o: %v", mode, err)
+			}
+
+			path := filepath.Join(dir, "tunnel-manager.db")
+			core, _ := observer.New(zapcore.DebugLevel)
+
+			db, _, err := NewDatabase(path, zap.New(core), "error")
+			if err != nil {
+				t.Fatalf("failed to open the database: %v", err)
+			}
+
+			t.Cleanup(func() {
+				sqlDB, err := db.DB()
+				if err == nil {
+					_ = sqlDB.Close()
+				}
+			})
+
+			info, err := os.Stat(dir)
+			if err != nil {
+				t.Fatalf("failed to read the mode of %s: %v", dir, err)
+			}
+
+			got := info.Mode() & (os.ModePerm | os.ModeSticky | os.ModeSetuid | os.ModeSetgid)
+			if got != mode {
+				t.Fatalf("%s is at %v after the startup, want %v as it was", dir, got, mode)
+			}
+
+			requireMode(t, path, databaseFileMode)
+			requireSidecarsAreClosed(t, path)
+		})
+	}
+}
+
+// TestADirectoryThisProgramMakesIsClosedToTheRestOfTheMachine is the other
+// half: a directory that was not there is made by this program for the
+// database alone, so it is made for the account this process runs as.
+func TestADirectoryThisProgramMakesIsClosedToTheRestOfTheMachine(t *testing.T) {
+	skipWithoutFileModes(t)
+
+	path := filepath.Join(t.TempDir(), "state", "tunnel-manager.db")
+	core, _ := observer.New(zapcore.DebugLevel)
+
+	db, _, err := NewDatabase(path, zap.New(core), "error")
+	if err != nil {
+		t.Fatalf("failed to open the database: %v", err)
+	}
+
+	t.Cleanup(func() {
+		sqlDB, err := db.DB()
+		if err == nil {
+			_ = sqlDB.Close()
+		}
+	})
+
+	requireMode(t, filepath.Dir(path), databaseDirMode)
+	requireMode(t, path, databaseFileMode)
 }

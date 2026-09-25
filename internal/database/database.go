@@ -282,13 +282,20 @@ func Files(absPath string) []string {
 var chmod = os.Chmod
 
 // tightenPermissions takes the group and the rest of the machine off the
-// database file, the files SQLite keeps beside it and the directory they are
-// in.
+// database file and the files SQLite keeps beside it, and off the directory
+// they are in when madeDir says this startup made it.
 //
 // It runs on every startup rather than only on the one that creates the file.
 // An installation laid down by an earlier release has a 0644 database sitting
 // there, and creating new files narrowly would leave exactly the deployments
 // that already hold secrets as open as they were.
+//
+// The directory is set only when this program made it, because one that was
+// already there may be shared with whatever else the operator keeps in it.
+// Pointing the database into /tmp would otherwise turn /tmp into 0700 and drop
+// the sticky bit that keeps one user from removing the files of another. The
+// secrets are in the files, which are narrowed wherever they are, so what a
+// directory left as it was still shows is the names of the files in it.
 //
 // A file that is not there is passed over. The write-ahead log and the shared
 // memory file exist only while a connection is open and are removed when the
@@ -305,15 +312,19 @@ var chmod = os.Chmod
 // file writable, which is what a file this process writes to has to be. Nothing
 // is narrowed there and nothing fails over it either, which is why this is one
 // implementation and not a pair of platform files.
-func tightenPermissions(absPath string) error {
+func tightenPermissions(absPath string, madeDir bool) error {
 	var problems []error
 
-	dir := filepath.Dir(absPath)
+	if madeDir {
+		// MkdirAll wrote the mode through the umask, which may have taken
+		// owner bits away as well, so it is written again here.
+		dir := filepath.Dir(absPath)
 
-	err := chmod(dir, databaseDirMode)
-	if err != nil {
-		problems = append(problems, fmt.Errorf("failed to set the permission of the database directory %q: %w",
-			dir, err))
+		err := chmod(dir, databaseDirMode)
+		if err != nil {
+			problems = append(problems, fmt.Errorf("failed to set the permission of the database directory %q: %w",
+				dir, err))
+		}
 	}
 
 	for _, path := range Files(absPath) {
@@ -688,6 +699,14 @@ func NewDatabase(path string, logger *zap.Logger, logLevel string) (*gorm.DB, *L
 	// with nothing created. On Windows the directories made here are kept to
 	// the owner, SYSTEM and Administrators, and what SQLite creates in them
 	// takes that on.
+	//
+	// Whether the directory was there is asked first, because it decides
+	// whether tightenPermissions below may set its mode: a directory this
+	// program makes is the database's alone, while one that was already there
+	// is left as the operator has it.
+	_, err = os.Stat(filepath.Dir(absPath))
+	madeDir := errors.Is(err, os.ErrNotExist)
+
 	err = crypto.MkdirAllPrivate(filepath.Dir(absPath), databaseDirMode)
 	if err != nil {
 		return nil, nil, fmt.Errorf("failed to create the database directory %q: %w", filepath.Dir(absPath), err)
@@ -818,7 +837,7 @@ func NewDatabase(path string, logger *zap.Logger, logLevel string) (*gorm.DB, *L
 	// up over a file it has no way of narrowing. It is not logged either, since
 	// a line of this application carries an identifier the Logs screen
 	// translates it by and there is no identifier for this yet.
-	_ = tightenPermissions(absPath)
+	_ = tightenPermissions(absPath, madeDir)
 
 	if !hadAssignments {
 		err = fillHostServicePorts(db, logger)
