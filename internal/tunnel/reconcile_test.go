@@ -3,9 +3,11 @@ package tunnel
 import (
 	"context"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"sort"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -1079,5 +1081,189 @@ func TestChangingTheBindScopeChangesTheFingerprint(t *testing.T) {
 	// every startup.
 	if empty := connectionFingerprint(host, sp, "", creds); empty != wildcard {
 		t.Error("the empty scope and the wildcard give different fingerprints, so an upgraded row restarts for nothing")
+	}
+}
+
+var errStubRead = errors.New("the stub was told to fail reads")
+
+// desiredCountDB is a stub that answers the four tables the desired state is
+// read from out of what it holds, counts every read of them, and accepts every
+// write. failReads makes the reads fail.
+type desiredCountDB struct {
+	mu          sync.Mutex
+	hosts       []models.Host
+	sps         []models.ServicePort
+	assignments []models.HostServicePort
+	forwards    []models.LocalForward
+	reads       int
+	failReads   bool
+}
+
+func newDesiredCountDB(t *testing.T, stub *desiredCountDB) *gorm.DB {
+	t.Helper()
+
+	db := newFailingDB(t)
+
+	err := db.Callback().Query().Replace("gorm:query", func(tx *gorm.DB) {
+		stub.mu.Lock()
+		defer stub.mu.Unlock()
+
+		switch dest := tx.Statement.Dest.(type) {
+		case *[]models.Host:
+			*dest = append([]models.Host(nil), stub.hosts...)
+		case *[]models.ServicePort:
+			*dest = append([]models.ServicePort(nil), stub.sps...)
+		case *[]models.HostServicePort:
+			*dest = append([]models.HostServicePort(nil), stub.assignments...)
+		case *[]models.LocalForward:
+			*dest = append([]models.LocalForward(nil), stub.forwards...)
+		default:
+			return
+		}
+
+		stub.reads++
+		if stub.failReads {
+			_ = tx.AddError(errStubRead)
+		}
+	})
+	if err != nil {
+		t.Fatalf("failed to replace the query callback: %v", err)
+	}
+
+	for _, replace := range []func() error{
+		func() error { return db.Callback().Create().Replace("gorm:create", func(*gorm.DB) {}) },
+		func() error { return db.Callback().Update().Replace("gorm:update", func(*gorm.DB) {}) },
+		func() error { return db.Callback().Delete().Replace("gorm:delete", func(*gorm.DB) {}) },
+	} {
+		err = replace()
+		if err != nil {
+			t.Fatalf("failed to replace a write callback: %v", err)
+		}
+	}
+
+	return db
+}
+
+// takeReads returns how many reads the stub answered since it was last asked.
+func (s *desiredCountDB) takeReads() int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	reads := s.reads
+	s.reads = 0
+
+	return reads
+}
+
+func (s *desiredCountDB) change(edit func(s *desiredCountDB)) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	edit(s)
+}
+
+func desiredCountsOf(t *testing.T, m *Manager) (int, int) {
+	t.Helper()
+
+	tunnels, err := m.DesiredTunnelCount()
+	if err != nil {
+		t.Fatalf("DesiredTunnelCount returned an error: %v", err)
+	}
+
+	forwards, err := m.DesiredLocalForwardCount()
+	if err != nil {
+		t.Fatalf("DesiredLocalForwardCount returned an error: %v", err)
+	}
+
+	return tunnels, forwards
+}
+
+// TestDesiredCountsComeFromTheLastPass pins down that the counts the status
+// API asks for every few seconds read no table once a pass has completed, and
+// are the numbers that pass wanted. Before the first pass they are counted
+// from the tables, the way a pass would count them.
+func TestDesiredCountsComeFromTheLastPass(t *testing.T) {
+	hosts := []models.Host{enabledHost(1, true), enabledHost(2, false)}
+	hosts[1].IP = "127.0.0.2"
+
+	stub := &desiredCountDB{
+		hosts: hosts,
+		sps:   []models.ServicePort{testServicePort(1), testServicePort(2)},
+		forwards: []models.LocalForward{
+			{Number: 1, HostID: 1, BindScope: models.BindScopeLoopback, LocalPort: freeDualStackPort(t),
+				TargetIP: "127.0.0.1", TargetPort: 1, Enabled: true},
+			{Number: 2, HostID: 1, BindScope: models.BindScopeLoopback, LocalPort: freeDualStackPort(t),
+				TargetIP: "127.0.0.1", TargetPort: 1, Enabled: false},
+			{Number: 1, HostID: 2, BindScope: models.BindScopeLoopback, LocalPort: freeDualStackPort(t),
+				TargetIP: "127.0.0.1", TargetPort: 1, Enabled: true},
+		},
+	}
+	stub.assignments = allAssignments(stub.hosts, stub.sps)
+
+	m, err := NewManager(newDesiredCountDB(t, stub), zap.NewNop(), newTestCipher(t), 1)
+	if err != nil {
+		t.Fatalf("failed to create manager: %v", err)
+	}
+	t.Cleanup(m.StopAllTunnels)
+
+	// Before any pass the counts are read from the tables.
+	tunnels, forwards := desiredCountsOf(t, m)
+	if tunnels != 2 || forwards != 1 {
+		t.Fatalf("before a pass the counts are %d tunnels and %d local forwards, want 2 and 1", tunnels, forwards)
+	}
+	if reads := stub.takeReads(); reads == 0 {
+		t.Fatal("before a pass the counts were answered without reading the tables")
+	}
+
+	_, err = m.Reconcile()
+	if err != nil {
+		t.Fatalf("Reconcile returned an error: %v", err)
+	}
+	stub.takeReads()
+
+	// A row written after the pass is not seen until the next one: the counts
+	// are the numbers the pass wanted, and nothing is read for them.
+	stub.change(func(s *desiredCountDB) { s.hosts[1].Enabled = true })
+
+	tunnels, forwards = desiredCountsOf(t, m)
+	if tunnels != 2 || forwards != 1 {
+		t.Fatalf("after a pass the counts are %d tunnels and %d local forwards, want the 2 and 1 it wanted",
+			tunnels, forwards)
+	}
+	if reads := stub.takeReads(); reads != 0 {
+		t.Fatalf("after a pass the counts read the tables %d times, want none", reads)
+	}
+
+	_, err = m.Reconcile()
+	if err != nil {
+		t.Fatalf("Reconcile returned an error: %v", err)
+	}
+
+	tunnels, forwards = desiredCountsOf(t, m)
+	if tunnels != 4 || forwards != 2 {
+		t.Fatalf("after the next pass the counts are %d tunnels and %d local forwards, want 4 and 2",
+			tunnels, forwards)
+	}
+
+	// A pass that cannot read the tables keeps nothing, so the counts stay
+	// those of the last pass that could.
+	stub.change(func(s *desiredCountDB) {
+		s.hosts[1].Enabled = false
+		s.failReads = true
+	})
+
+	_, err = m.Reconcile()
+	if err == nil {
+		t.Fatal("Reconcile returned no error on reads that fail")
+	}
+	stub.takeReads()
+
+	tunnels, forwards = desiredCountsOf(t, m)
+	if tunnels != 4 || forwards != 2 {
+		t.Fatalf("after a failed pass the counts are %d tunnels and %d local forwards, want the 4 and 2 kept",
+			tunnels, forwards)
+	}
+	if reads := stub.takeReads(); reads != 0 {
+		t.Fatalf("after a failed pass the counts read the tables %d times, want none", reads)
 	}
 }

@@ -125,6 +125,21 @@ type Manager struct {
 	// under a lock of its own for the same reason.
 	socksProxies map[uint]*socksTunnel
 	socksMu      sync.RWMutex
+	// desiredCounts is how many tunnels and local forwards the last pass that
+	// completed wanted running. The status screen asks for these every few
+	// seconds for every browser that has it open, and counting them afresh
+	// reads four tables in full each time, so they are taken from the pass,
+	// which reads those tables anyway. desiredCounted is false until a pass
+	// has completed.
+	desiredCounts  desiredCounts
+	desiredCounted bool
+	desiredMu      sync.Mutex
+}
+
+// desiredCounts is how many of each sort of forward should be running.
+type desiredCounts struct {
+	tunnels       int
+	localForwards int
 }
 
 func NewManager(db *gorm.DB, logger *zap.Logger, cipher *crypto.Cipher, monitoringIntervalSec int) (*Manager, error) {

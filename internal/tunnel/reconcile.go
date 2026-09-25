@@ -264,6 +264,11 @@ func (m *Manager) restartTunnel(want desiredTunnel) error {
 // counted in the same result. Their rows are read before anything is changed,
 // with the rest of the desired state. The SOCKS5 proxies follow last; they are
 // read off the Hosts, which the pass has already.
+//
+// A pass that completes keeps how many tunnels and local forwards it wanted,
+// which is what DesiredTunnelCount and DesiredLocalForwardCount answer. A pass
+// that could not read the database keeps nothing, and the counts stay those of
+// the last pass that could.
 func (m *Manager) Reconcile() (ReconcileResult, error) {
 	var result ReconcileResult
 
@@ -366,6 +371,8 @@ func (m *Manager) Reconcile() (ReconcileResult, error) {
 	m.reconcileLocalForwards(desiredLocal, &result)
 	m.reconcileSocks(desiredSocksOf(hostByID), &result)
 
+	m.keepDesiredCounts(desiredCounts{tunnels: len(desired), localForwards: len(desiredLocal)})
+
 	return result, nil
 }
 
@@ -426,11 +433,38 @@ func (m *Manager) RunReconcileLoop(ctx context.Context, intervalSec int) {
 	}
 }
 
-// DesiredTunnelCount returns how many tunnels should be running. It counts the
-// combinations a reconcile pass builds its desired state from, so it cannot
-// drift from what the loop tries to start. A count above the number of tunnels
-// that exist means a pass could not start all of them.
+// keepDesiredCounts records what a pass that completed wanted running, for
+// DesiredTunnelCount and DesiredLocalForwardCount to answer from.
+func (m *Manager) keepDesiredCounts(counts desiredCounts) {
+	m.desiredMu.Lock()
+	defer m.desiredMu.Unlock()
+
+	m.desiredCounts = counts
+	m.desiredCounted = true
+}
+
+// keptDesiredCounts returns what the last pass that completed wanted running,
+// and false when no pass has completed yet.
+func (m *Manager) keptDesiredCounts() (desiredCounts, bool) {
+	m.desiredMu.Lock()
+	defer m.desiredMu.Unlock()
+
+	return m.desiredCounts, m.desiredCounted
+}
+
+// DesiredTunnelCount returns how many tunnels should be running. It is the
+// size of the desired state of the last pass that completed, so it cannot
+// drift from what the loop tries to start, and it reads nothing. A change
+// written since that pass shows once the next one completes, which a handler
+// that writes one asks for at once by waking the loop. Before the first pass
+// has completed it is counted with the code a pass uses. A count above the
+// number of tunnels that exist means a pass could not start all of them.
 func (m *Manager) DesiredTunnelCount() (int, error) {
+	counts, ok := m.keptDesiredCounts()
+	if ok {
+		return counts.tunnels, nil
+	}
+
 	desired, err := m.desiredTunnels()
 	if err != nil {
 		return 0, err

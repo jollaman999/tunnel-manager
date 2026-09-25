@@ -26,7 +26,9 @@ type tunnelManager interface {
 	WakeReconcile()
 	// DesiredTunnelCount reports how many tunnels should be running. It is
 	// taken from the manager rather than counted here, so the state the status
-	// is reported against is the one the loop works towards.
+	// is reported against is the one the loop works towards. It is what the
+	// last reconcile pass wanted, so a write shows in it once the pass the
+	// write wakes has run.
 	DesiredTunnelCount() (int, error)
 	// DesiredLocalForwardCount reports how many local forwards should be
 	// running, counted by the manager for the reason DesiredTunnelCount is.
@@ -1619,11 +1621,14 @@ func idList(ids []uint) string {
 //
 // There are four of them and each counts both sorts of forward together, a
 // local forward being a tunnel to whoever reads this answer. desired_tunnels
-// is what should be running; connected_tunnels, reconnecting_tunnels and
-// error_tunnels are how many rows carry each of those statuses. The last two
-// are apart because what they leave an operator to do differs: a row that is
-// reconnecting is on its way back on its own, and one in error is waiting for
-// somebody, and a single number over the two says nothing about which.
+// is what should be running, as the last reconcile pass saw it: the manager
+// keeps the number from the pass rather than reading the tables for it on
+// every refresh of the screen, so a write shows in it once the pass it wakes
+// has run. connected_tunnels, reconnecting_tunnels and error_tunnels are how
+// many rows carry each of those statuses. The last two are apart because what
+// they leave an operator to do differs: a row that is reconnecting is on its
+// way back on its own, and one in error is waiting for somebody, and a single
+// number over the two says nothing about which.
 //
 // The four do not add up to desired_tunnels, and are not meant to. A row that
 // is still starting or that is held up at a host key is in none of the three,
@@ -1642,7 +1647,7 @@ func idList(ids []uint) string {
 //
 // @Summary      The counts of the installation and one page of the status rows
 // @Description  tunnels carries both sorts of forward: kind is service_port or local_forward, and sp_id is null on a local forward, which is carried by no service port. On a local forward row, local is the address opened on this machine and remote the target reached from the Host, which is the mirror of what they hold on a service port row. forward_reach is on both sorts: on a service port row it says whether the port opened on the Host answered a connection from here, and on a local forward row whether the target answered one dialled from the Host.
-// @Description  The counts are over every row and not over the page: they say what the installation is doing, not what is on the page being looked at. There are four, and each counts the service port tunnels and the local forwards together: desired_tunnels is what should be running, and connected_tunnels, reconnecting_tunnels and error_tunnels are how many rows are in each of those statuses. A row that is starting or held up at a host key is in none of the three. total_rows is the rows of both sorts, which is what the pages are cut from.
+// @Description  The counts are over every row and not over the page: they say what the installation is doing, not what is on the page being looked at. There are four, and each counts the service port tunnels and the local forwards together: desired_tunnels is what should be running as of the last reconcile pass, which a change wakes, and connected_tunnels, reconnecting_tunnels and error_tunnels are how many rows are in each of those statuses. A row that is starting or held up at a host key is in none of the three. total_rows is the rows of both sorts, which is what the pages are cut from.
 // @Tags         status
 // @Produce  json
 // @Param   page  query  int  false  "The page, counted from 1. Below 1 is read as 1, and a page past the last one is answered with the last page"

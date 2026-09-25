@@ -748,11 +748,16 @@ func (m *Manager) desiredLocalForwardsOf(hostByID map[uint]*models.Host) (map[Lo
 }
 
 // DesiredLocalForwardCount returns how many local forwards should be running.
-// It counts what a pass builds its desired state from, the way
-// DesiredTunnelCount does over the tunnels, so it cannot drift from what the
-// loop tries to start. A count above the number that report connected means a
-// forward that should be up is not.
+// It is taken from the last pass that completed, the way DesiredTunnelCount is
+// over the tunnels, so it cannot drift from what the loop tries to start, and
+// before the first pass it is counted with the code a pass uses. A count above
+// the number that report connected means a forward that should be up is not.
 func (m *Manager) DesiredLocalForwardCount() (int, error) {
+	counts, ok := m.keptDesiredCounts()
+	if ok {
+		return counts.localForwards, nil
+	}
+
 	hostByID, err := m.hostsByID()
 	if err != nil {
 		return 0, err
