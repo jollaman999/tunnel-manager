@@ -44,18 +44,28 @@ jobs:
 
     # The two platforms the release builds a binary for. The other three a
     # release ships are not platforms a container runs on.
+    #
+    # The version reaches the script through the environment and not written
+    # into it. It is cut from a tag name, and a tag name expanded into the
+    # script text is script text: whoever can push a tag could put a command
+    # in it. The repository name is read from GITHUB_REPOSITORY, which the
+    # runner sets, for the same reason.
     - name: Build and push
+      env:
+        VERSION: ${{ steps.version.outputs.value }}
       run: |
         docker buildx build \
           --platform linux/amd64,linux/arm64 \
-          --tag "ghcr.io/${{ github.repository }}:${{ steps.version.outputs.value }}" \
-          --tag "ghcr.io/${{ github.repository }}:latest" \
+          --tag "ghcr.io/${GITHUB_REPOSITORY}:${VERSION}" \
+          --tag "ghcr.io/${GITHUB_REPOSITORY}:latest" \
           --push \
           .
 
     # What was pushed, said in the log, so that a run that went green can be
     # read back for which tags it put up.
     - name: Say what went up
+      env:
+        VERSION: ${{ steps.version.outputs.value }}
       run: |
-        echo "ghcr.io/${{ github.repository }}:${{ steps.version.outputs.value }}"
-        echo "ghcr.io/${{ github.repository }}:latest"
+        echo "ghcr.io/${GITHUB_REPOSITORY}:${VERSION}"
+        echo "ghcr.io/${GITHUB_REPOSITORY}:latest"
