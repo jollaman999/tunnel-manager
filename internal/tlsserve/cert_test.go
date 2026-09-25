@@ -159,10 +159,10 @@ func TestTheCertificateCarriesTheAddressesOfThisMachine(t *testing.T) {
 }
 
 // TestTheValidityIsWhatWasChosen holds the period to the constant and the
-// constant to a range, so that a value nobody meant cannot slip in. The upper
-// bound is not a rule any client enforces on a certificate like this one: it is
-// the point past which the number stops meaning anything to the operator, and
-// the lower bound is the point where renewing becomes a chore.
+// constant to a range. The upper bound is Apple's: a TLS server certificate
+// valid for longer than 825 days is refused on iOS and macOS even from a root
+// the user trusted. The lower bound is the point where renewing becomes a
+// chore.
 func TestTheValidityIsWhatWasChosen(t *testing.T) {
 	now := time.Date(2026, 9, 19, 12, 0, 0, 0, time.UTC)
 
@@ -172,8 +172,8 @@ func TestTheValidityIsWhatWasChosen(t *testing.T) {
 	if validity != certValidity {
 		t.Errorf("the certificate is valid for %v, want %v", validity, certValidity)
 	}
-	if validity > 10*365*24*time.Hour {
-		t.Errorf("the certificate is valid for %v, which is long enough that it says nothing",
+	if validity > 825*24*time.Hour {
+		t.Errorf("the certificate is valid for %v, longer than the 825 days Apple takes",
 			validity)
 	}
 	if validity < 365*24*time.Hour {

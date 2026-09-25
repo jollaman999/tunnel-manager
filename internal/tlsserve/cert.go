@@ -26,26 +26,19 @@ import (
 
 // certValidity is how long a generated certificate is good for.
 //
-// The limits platforms put on this do not reach it. Apple refuses a TLS server
-// certificate issued on or after 1 September 2020 whose validity runs past 398
-// days, and the same page says the rule is for certificates that chain to a
-// root shipped with the system: "if you are using a certificate from a
-// user-added or administrator-added Root CA, this change will not affect you"
-// (support.apple.com/en-us/102028). This certificate is exactly that, and an
-// operator who does not add it is clicking past the warning instead, which
-// skips the check altogether.
+// 825 days is the longest Apple takes. Its rule for TLS server certificates
+// issued after 1 July 2019 reads "TLS server certificates must have a validity
+// period of 825 days or fewer" and names no exception for a root the user added
+// (support.apple.com/en-us/103769). The later 398 day rule is the one limited to
+// roots shipped with the system (support.apple.com/en-us/102028), and this
+// number was once raised to five years on reading that one alone. An iPhone that
+// had imported and trusted a five year certificate went on refusing it, so a
+// certificate longer than this is one an operator on iOS or macOS cannot make
+// the warning go away for, whatever they trust.
 //
-// So the number is chosen for the operator rather than for a rule. Five years
-// covers the life of most installations without asking anyone to do anything,
-// and stops short of the decade that would mean never: a machine renamed or
-// readdressed in that time needs a new certificate anyway, because the names it
-// is made out to are no longer the ones it answers to. The screen says how long
-// is left and marks it when the end is near, and Make a new certificate is one
-// press.
-//
-// This used to be 825 days, on the belief that Apple applied its limit to a
-// certificate the operator had trusted by hand. It says the opposite.
-const certValidity = 5 * 365 * 24 * time.Hour
+// The screen says how long is left and marks it when the end is near, and Make
+// a new certificate is one press.
+const certValidity = 825 * 24 * time.Hour
 
 // clockSkew is how far back the certificate starts. A machine whose clock is a
 // few minutes behind the one that generated it would otherwise refuse a
