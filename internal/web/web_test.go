@@ -270,6 +270,43 @@ func TestEveryScreenPathServesTheIndex(t *testing.T) {
 	}
 }
 
+// TestThePageNamesEachIconWithItsHash pins what makes a redrawn icon show after
+// an update. A browser keeps the icon of a site apart from its cache and does
+// not ask again whether it moved, so each link carries a hash of the file it
+// names, and the file still comes back for the address with the hash on it.
+func TestThePageNamesEachIconWithItsHash(t *testing.T) {
+	e := newServer()
+
+	for _, target := range []string{uiPrefix, uiPrefix + "hosts"} {
+		page := get(e, target)
+		if page.Code != http.StatusOK {
+			t.Fatalf("GET %s = %d, want %d", target, page.Code, http.StatusOK)
+		}
+
+		links := regexp.MustCompile(`href="(/ui/icons/[^"?]+)(\?v=[0-9a-f]{12})?"`).
+			FindAllStringSubmatch(page.Body.String(), -1)
+		if len(links) == 0 {
+			t.Fatalf("GET %s links no icon", target)
+		}
+
+		for _, link := range links {
+			if link[2] == "" {
+				t.Fatalf("GET %s links %s with no hash on it", target, link[1])
+			}
+
+			icon := get(e, link[1]+link[2])
+			if icon.Code != http.StatusOK {
+				t.Fatalf("GET %s = %d, want %d", link[1]+link[2], icon.Code, http.StatusOK)
+			}
+
+			want := readStatic(t, strings.TrimPrefix(link[1], uiPrefix))
+			if icon.Body.String() != want {
+				t.Fatalf("GET %s did not answer the file %s", link[1]+link[2], link[1])
+			}
+		}
+	}
+}
+
 // TestThePageNamesItsAssetsAbsolutely pins what makes the screens above work.
 // The same HTML is served at /ui/hosts as at /ui/, so a src or href without a
 // leading slash would be resolved against the screen path and asked for as

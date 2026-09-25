@@ -8,7 +8,9 @@ import (
 	"io/fs"
 	"net/http"
 	"path"
+	"regexp"
 	"strings"
+	"sync"
 
 	"github.com/labstack/echo/v4"
 )
@@ -110,9 +112,59 @@ func serveRootIcon(c echo.Context) error {
 	return serveBody(c, contentTypeOf(rootIconAsset, body), body)
 }
 
+// iconReference is an icon the page links to in its head.
+var iconReference = regexp.MustCompile(`href="(` + regexp.QuoteMeta(uiPrefix) + `icons/[^"?]+)"`)
+
+// pageWithIconVersions is the page with a hash of each icon it links to added
+// to that link as a query, as in /ui/icons/logo.svg?v=1a2b3c4d5e6f.
+//
+// The icons are the one thing the headers of serveBody do not keep current. A
+// browser keeps the icon of a site in a store of its own, apart from its cache,
+// keyed by the address the page named, and it does not ask again whether the
+// file moved: a release that redrew the icons went on showing the old ones in
+// the tab after an update, reload or not. A link whose address changes with
+// the file is one the browser has not seen, so it fetches it. The route reads
+// the path alone, so the query reaches nothing but the browser's store.
+//
+// It is built once, since the page and the icons are both settled when the
+// binary is built.
+var pageWithIconVersions = sync.OnceValues(func() ([]byte, error) {
+	page, err := fs.ReadFile(staticFS, path.Join(staticRoot, indexFile))
+	if err != nil {
+		return nil, err
+	}
+
+	var failed error
+
+	out := iconReference.ReplaceAllFunc(page, func(match []byte) []byte {
+		target := string(iconReference.FindSubmatch(match)[1])
+
+		icon, err := fs.ReadFile(staticFS, path.Join(staticRoot, strings.TrimPrefix(target, uiPrefix)))
+		if err != nil {
+			failed = err
+
+			return match
+		}
+
+		sum := sha256.Sum256(icon)
+
+		return []byte(`href="` + target + "?v=" + hex.EncodeToString(sum[:6]) + `"`)
+	})
+
+	if failed != nil {
+		return nil, failed
+	}
+
+	return out, nil
+})
+
 // serveAsset answers everything under /ui/.
 func serveAsset(c echo.Context) error {
 	name := assetName(c.Param("*"))
+
+	if name == indexFile {
+		return servePage(c)
+	}
 
 	body, err := fs.ReadFile(staticFS, path.Join(staticRoot, name))
 	if err != nil {
@@ -127,15 +179,21 @@ func serveAsset(c echo.Context) error {
 		// Anything else is a path the page routes on its own, so the page is
 		// what gets served and it reads the path itself. Without this a reload
 		// of a screen the UI navigated to would come back as a 404.
-		body, err = fs.ReadFile(staticFS, path.Join(staticRoot, indexFile))
-		if err != nil {
-			return err
-		}
-
-		name = indexFile
+		return servePage(c)
 	}
 
 	return serveBody(c, contentTypeOf(name, body), body)
+}
+
+// servePage answers with the page, its icon links carrying the hashes
+// pageWithIconVersions adds.
+func servePage(c echo.Context) error {
+	body, err := pageWithIconVersions()
+	if err != nil {
+		return err
+	}
+
+	return serveBody(c, contentTypeOf(indexFile, body), body)
 }
 
 // serveBody hands back a built-in file with an entity tag over it, and asks
