@@ -1,4 +1,4 @@
-# <img src="../internal/web/static/icons/icon-192.png" alt="" width="36" align="absmiddle" /> Tunnel Manager
+# <img src="../internal/web/static/icons/logo.svg" alt="" width="36" align="absmiddle" /> Tunnel Manager
 
 [English](../README.md) · [한국어](README.ko.md) · [日本語](README.ja.md)
 
