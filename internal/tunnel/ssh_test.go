@@ -352,30 +352,23 @@ func TestStartEndsMonitorOnAuthFailure(t *testing.T) {
 	}
 }
 
-func TestMonitorDialTimeoutStaysBelowTheTick(t *testing.T) {
-	for _, monitoringIntervalSec := range []int{1, 2, 3, 5, 10, 30, 60, 300} {
+func TestMonitorCheckTimeoutIsTheInterval(t *testing.T) {
+	for _, monitoringIntervalSec := range []int{3, 5, 10, 30, 60, 300} {
 		interval := time.Duration(monitoringIntervalSec) * time.Second
-		got := monitorDialTimeout(monitoringIntervalSec)
-
-		if got <= 0 {
-			t.Errorf("monitorDialTimeout(%d) = %v, want a positive timeout, a dial without one never gives up",
-				monitoringIntervalSec, got)
-			continue
-		}
-		if got >= interval {
-			t.Errorf("monitorDialTimeout(%d) = %v, want less than the tick interval %v, "+
-				"a dial that lasts a whole tick halves the monitoring rate",
-				monitoringIntervalSec, got, interval)
+		if got := monitorCheckTimeout(interval); got != interval {
+			t.Errorf("monitorCheckTimeout(%v) = %v, want the interval itself, "+
+				"a silent server is tolerated for one interval", interval, got)
 		}
 	}
 }
 
-func TestMonitorDialTimeoutIsPositiveForAnyInterval(t *testing.T) {
-	// The configuration rejects these, but a zero timeout means no timeout at
-	// all to net.DialTimeout, which is the one outcome that must not happen.
-	for _, monitoringIntervalSec := range []int{0, -1} {
-		if got := monitorDialTimeout(monitoringIntervalSec); got <= 0 {
-			t.Errorf("monitorDialTimeout(%d) = %v, want a positive timeout", monitoringIntervalSec, got)
+func TestMonitorCheckTimeoutHasAFloor(t *testing.T) {
+	// 0 and below are rejected by the configuration and sub-second intervals
+	// only occur in tests, but a zero timeout means no timeout at all to
+	// net.DialTimeout, which is the one outcome that must not happen.
+	for _, interval := range []time.Duration{-time.Second, 0, 500 * time.Millisecond, time.Second, 2 * time.Second} {
+		if got := monitorCheckTimeout(interval); got != 3*time.Second {
+			t.Errorf("monitorCheckTimeout(%v) = %v, want the 3s floor", interval, got)
 		}
 	}
 }
@@ -1209,15 +1202,46 @@ func startMuteSSHServer(t *testing.T) string {
 	return ln.Addr().String()
 }
 
+// deadlineRecordingConn is a net.Conn that counts the deadlines put on it and
+// reports whether it was closed, so a test can tell what was done to the
+// connection an SSH client is built on.
+type deadlineRecordingConn struct {
+	net.Conn
+	deadlines atomic.Int32
+	closed    atomic.Bool
+}
+
+func (c *deadlineRecordingConn) SetDeadline(t time.Time) error {
+	c.deadlines.Add(1)
+	return c.Conn.SetDeadline(t)
+}
+
+func (c *deadlineRecordingConn) SetReadDeadline(t time.Time) error {
+	c.deadlines.Add(1)
+	return c.Conn.SetReadDeadline(t)
+}
+
+func (c *deadlineRecordingConn) SetWriteDeadline(t time.Time) error {
+	c.deadlines.Add(1)
+	return c.Conn.SetWriteDeadline(t)
+}
+
+func (c *deadlineRecordingConn) Close() error {
+	c.closed.Store(true)
+	return c.Conn.Close()
+}
+
 // dialTestSSHClient connects the way dialSSH does and hands back both the
-// client and the connection it was built on.
-func dialTestSSHClient(t *testing.T, serverAddr string) (*ssh.Client, net.Conn, func()) {
+// client and the connection it was built on, wrapped so that the deadlines put
+// on it are counted.
+func dialTestSSHClient(t *testing.T, serverAddr string) (*ssh.Client, *deadlineRecordingConn, func()) {
 	t.Helper()
 
-	conn, err := net.DialTimeout("tcp", serverAddr, 5*time.Second)
+	tcpConn, err := net.DialTimeout("tcp", serverAddr, 5*time.Second)
 	if err != nil {
 		t.Fatalf("failed to dial the test ssh server: %v", err)
 	}
+	conn := &deadlineRecordingConn{Conn: tcpConn}
 
 	c, chans, reqs, err := ssh.NewClientConn(conn, serverAddr, &ssh.ClientConfig{
 		User:            "tester",
@@ -1236,9 +1260,10 @@ func dialTestSSHClient(t *testing.T, serverAddr string) (*ssh.Client, net.Conn, 
 	}
 }
 
-// TestSendKeepaliveGivesUpOnAnUnresponsivePeer pins the deadline itself. Without
+// TestSendKeepaliveGivesUpOnAnUnresponsivePeer pins the timeout itself. Without
 // one the reply is waited for until TCP stops retransmitting, which on Linux
-// takes minutes.
+// takes minutes. Giving up closes the client, and it does so without putting a
+// deadline on the connection the forwarded traffic shares.
 func TestSendKeepaliveGivesUpOnAnUnresponsivePeer(t *testing.T) {
 	client, conn, closeClient := dialTestSSHClient(t, startMuteSSHServer(t))
 	defer closeClient()
@@ -1248,7 +1273,7 @@ func TestSendKeepaliveGivesUpOnAnUnresponsivePeer(t *testing.T) {
 	result := make(chan error, 1)
 	startedAt := time.Now()
 	go func() {
-		result <- sendKeepalive(client, conn, timeout)
+		result <- sendKeepalive(client, timeout)
 	}()
 
 	select {
@@ -1257,10 +1282,59 @@ func TestSendKeepaliveGivesUpOnAnUnresponsivePeer(t *testing.T) {
 			t.Fatal("sendKeepalive reported a peer that never answered as alive")
 		}
 		if elapsed := time.Since(startedAt); elapsed > 10*timeout {
-			t.Fatalf("sendKeepalive returned after %v, want about the %v deadline", elapsed, timeout)
+			t.Fatalf("sendKeepalive returned after %v, want about the %v timeout", elapsed, timeout)
 		}
 	case <-time.After(15 * time.Second):
 		t.Fatal("sendKeepalive did not return, the keepalive is waiting for TCP to give up")
+	}
+
+	if !conn.closed.Load() {
+		t.Fatal("sendKeepalive gave up but left the client open, the caller would go on " +
+			"forwarding over a connection that stopped answering")
+	}
+
+	waited := make(chan struct{})
+	go func() {
+		_ = client.Wait()
+		close(waited)
+	}()
+	select {
+	case <-waited:
+	case <-time.After(5 * time.Second):
+		t.Fatal("the client is still running after sendKeepalive gave up on it")
+	}
+
+	if n := conn.deadlines.Load(); n != 0 {
+		t.Fatalf("sendKeepalive put %d deadlines on the connection, a deadline there "+
+			"also cuts the forwarded writes in progress", n)
+	}
+}
+
+// TestKeepaliveRequestReturnsOnceTheClientIsClosed pins what keeps the goroutine
+// sendKeepalive leaves behind from leaking: a request that waits for a reply
+// that never comes returns as soon as the client is closed.
+func TestKeepaliveRequestReturnsOnceTheClientIsClosed(t *testing.T) {
+	client, _, closeClient := dialTestSSHClient(t, startMuteSSHServer(t))
+	defer closeClient()
+
+	returned := make(chan error, 1)
+	go func() {
+		_, _, err := client.SendRequest("keepalive@tunnel", true, nil)
+		returned <- err
+	}()
+
+	// Long enough for the request to be on the wire and waiting.
+	time.Sleep(100 * time.Millisecond)
+	_ = client.Close()
+
+	select {
+	case err := <-returned:
+		if err == nil {
+			t.Fatal("the request reported a reply from a peer that never sent one")
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("the request is still waiting after the client was closed, " +
+			"every keepalive that timed out would leave a goroutine behind")
 	}
 }
 
@@ -1272,12 +1346,11 @@ func TestMonitorTickIsNotHeldByAnUnresponsivePeer(t *testing.T) {
 	serverAddr := startMuteSSHServer(t)
 	tun, tunnel := newSSHTestTunnel(t, serverAddr)
 
-	client, conn, closeClient := dialTestSSHClient(t, serverAddr)
+	client, _, closeClient := dialTestSSHClient(t, serverAddr)
 	defer closeClient()
 
 	tun.clientMu.Lock()
 	tun.client = client
-	tun.clientConn = conn
 	tun.clientMu.Unlock()
 
 	stop := make(chan struct{})
@@ -1316,10 +1389,11 @@ func TestMonitorTickIsNotHeldByAnUnresponsivePeer(t *testing.T) {
 		"its keepalive has no deadline and the tick is blocked")
 }
 
-// TestSendKeepaliveClearsTheDeadline checks the other half. A deadline left
-// armed on the connection kills the forwarded traffic that comes after the
-// keepalive, which is worse than the problem the deadline solves.
-func TestSendKeepaliveClearsTheDeadline(t *testing.T) {
+// TestSendKeepaliveLeavesTheConnectionAlone checks the other half. A deadline
+// on the connection, armed or cleared, applies to the forwarded writes in
+// progress while it stands, and one of them that outlasts it fails the whole
+// connection. A keepalive that is answered leaves no trace on the connection.
+func TestSendKeepaliveLeavesTheConnectionAlone(t *testing.T) {
 	serverAddr, _ := startForwardingSSHServer(t)
 
 	client, conn, closeClient := dialTestSSHClient(t, serverAddr)
@@ -1327,18 +1401,26 @@ func TestSendKeepaliveClearsTheDeadline(t *testing.T) {
 
 	const timeout = 200 * time.Millisecond
 
-	if err := sendKeepalive(client, conn, timeout); err != nil {
+	if err := sendKeepalive(client, timeout); err != nil {
 		t.Fatalf("sendKeepalive failed against a server that answers: %v", err)
 	}
 
-	// Past the deadline the keepalive used. An armed deadline has torn the
+	if n := conn.deadlines.Load(); n != 0 {
+		t.Fatalf("sendKeepalive put %d deadlines on the connection, a deadline there "+
+			"also cuts the forwarded writes in progress", n)
+	}
+	if conn.closed.Load() {
+		t.Fatal("sendKeepalive closed a client whose peer answered")
+	}
+
+	// Past the timeout the keepalive used. Anything it left armed has torn the
 	// connection down by now.
 	time.Sleep(4 * timeout)
 
 	for i := 0; i < 3; i++ {
 		if _, _, err := client.SendRequest("keepalive@tunnel", true, nil); err != nil {
 			t.Fatalf("request %d over the connection failed after the keepalive: %v, "+
-				"the deadline was left armed", i, err)
+				"the keepalive left the connection broken", i, err)
 		}
 		time.Sleep(2 * timeout)
 	}
@@ -1348,33 +1430,274 @@ func TestSendKeepaliveClearsTheDeadline(t *testing.T) {
 	}
 }
 
-func TestMonitorKeepaliveTimeoutFitsInTheTick(t *testing.T) {
-	for _, monitoringIntervalSec := range []int{1, 2, 3, 5, 10, 30, 60, 300} {
-		interval := time.Duration(monitoringIntervalSec) * time.Second
-		dial := monitorDialTimeout(monitoringIntervalSec)
-		keepalive := monitorKeepaliveTimeout(monitoringIntervalSec)
+// startSlowSSHServer completes the SSH handshake and answers every keepalive
+// after delay, the way a live server behind a busy or slow link does. It
+// reports when each keepalive arrived.
+func startSlowSSHServer(t *testing.T, delay time.Duration) (string, func() []time.Time) {
+	t.Helper()
 
-		if keepalive <= 0 {
-			t.Errorf("monitorKeepaliveTimeout(%d) = %v, want a positive deadline, "+
-				"a keepalive without one never gives up", monitoringIntervalSec, keepalive)
-			continue
+	_, priv, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatalf("failed to generate host key: %v", err)
+	}
+
+	signer, err := ssh.NewSignerFromKey(priv)
+	if err != nil {
+		t.Fatalf("failed to create signer: %v", err)
+	}
+
+	config := &ssh.ServerConfig{
+		PasswordCallback: func(ssh.ConnMetadata, []byte) (*ssh.Permissions, error) {
+			return nil, nil
+		},
+	}
+	config.AddHostKey(signer)
+
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("failed to listen: %v", err)
+	}
+
+	var mu sync.Mutex
+	var conns []net.Conn
+	var arrivals []time.Time
+
+	t.Cleanup(func() {
+		_ = ln.Close()
+
+		mu.Lock()
+		defer mu.Unlock()
+		for _, conn := range conns {
+			_ = conn.Close()
 		}
-		if dial+keepalive >= interval {
-			t.Errorf("monitorKeepaliveTimeout(%d) = %v, with the %v dial that is %v of a %v tick, "+
-				"a check that lasts a whole tick halves the monitoring rate",
-				monitoringIntervalSec, keepalive, dial, dial+keepalive, interval)
+	})
+
+	go func() {
+		for {
+			conn, err := ln.Accept()
+			if err != nil {
+				return
+			}
+
+			mu.Lock()
+			conns = append(conns, conn)
+			mu.Unlock()
+
+			go func(conn net.Conn) {
+				_, chans, reqs, err := ssh.NewServerConn(conn, config)
+				if err != nil {
+					_ = conn.Close()
+					return
+				}
+
+				go func() {
+					for newChannel := range chans {
+						_ = newChannel.Reject(ssh.Prohibited, "no channels here")
+					}
+				}()
+
+				for req := range reqs {
+					if req.Type != "keepalive@tunnel" {
+						if req.WantReply {
+							_ = req.Reply(false, nil)
+						}
+						continue
+					}
+
+					mu.Lock()
+					arrivals = append(arrivals, time.Now())
+					mu.Unlock()
+
+					time.Sleep(delay)
+					_ = req.Reply(true, nil)
+				}
+			}(conn)
+		}
+	}()
+
+	return ln.Addr().String(), func() []time.Time {
+		mu.Lock()
+		defer mu.Unlock()
+
+		return append([]time.Time(nil), arrivals...)
+	}
+}
+
+// TestSlowKeepaliveReplyKeepsTheConnection is what the timeout of one interval
+// is for. With the default interval of five seconds the keepalive used to wait
+// 1.25s, so a reply held up behind forwarded traffic for longer than that cost
+// the connection and every forward on it. A reply that comes inside the
+// interval now keeps it.
+func TestSlowKeepaliveReplyKeepsTheConnection(t *testing.T) {
+	const delay = 1600 * time.Millisecond
+	serverAddr, _ := startSlowSSHServer(t, delay)
+
+	client, conn, closeClient := dialTestSSHClient(t, serverAddr)
+	defer closeClient()
+
+	checkSSHConnection(serverAddr, client, monitorCheckTimeout(5*time.Second), zap.NewNop(),
+		func(extra ...zap.Field) []zap.Field { return extra })
+
+	if conn.closed.Load() {
+		t.Fatalf("the check closed a connection whose server answered after %v, "+
+			"inside the %v interval", delay, 5*time.Second)
+	}
+	if _, _, err := client.SendRequest("keepalive@tunnel", true, nil); err != nil {
+		t.Fatalf("the connection is no longer usable after a slow keepalive: %v", err)
+	}
+}
+
+// TestWatchSSHConnectionDoesNotCatchUp pins that the checks never run back to
+// back. A check that took longer than the interval used to leave a tick
+// pending, and the next check went out the moment the last one ended. The next
+// check now waits a whole interval from the end of the last one.
+func TestWatchSSHConnectionDoesNotCatchUp(t *testing.T) {
+	const (
+		interval = 400 * time.Millisecond
+		delay    = 800 * time.Millisecond
+	)
+	serverAddr, arrivals := startSlowSSHServer(t, delay)
+
+	client, conn, closeClient := dialTestSSHClient(t, serverAddr)
+	defer closeClient()
+
+	stop := make(chan struct{})
+	exited := make(chan struct{})
+	go func() {
+		watchSSHConnection(stop, interval, serverAddr, func() *ssh.Client { return client },
+			zap.NewNop(), func(extra ...zap.Field) []zap.Field { return extra })
+		close(exited)
+	}()
+
+	deadline := time.Now().Add(15 * time.Second)
+	for len(arrivals()) < 3 && time.Now().Before(deadline) {
+		time.Sleep(20 * time.Millisecond)
+	}
+	close(stop)
+	<-exited
+
+	got := arrivals()
+	if len(got) < 3 {
+		t.Fatalf("the server saw %d keepalives, want at least 3", len(got))
+	}
+	if conn.closed.Load() {
+		t.Fatal("a keepalive answered inside the 3s floor closed the connection")
+	}
+
+	// A check lasts about delay, so a caught up tick sends the next one about
+	// delay after the last, while the timer waits delay plus interval.
+	for i := 1; i < len(got); i++ {
+		if gap := got[i].Sub(got[i-1]); gap < delay+interval/2 {
+			t.Fatalf("keepalive %d came %v after the one before, want at least %v, "+
+				"the check went out straight after the last one ended", i, gap, delay+interval/2)
 		}
 	}
 }
 
-func TestMonitorKeepaliveTimeoutIsPositiveForAnyInterval(t *testing.T) {
-	// The configuration rejects these, but a zero deadline is the one outcome
-	// that must not happen: SetDeadline reads it as no deadline at all.
-	for _, monitoringIntervalSec := range []int{0, -1} {
-		if got := monitorKeepaliveTimeout(monitoringIntervalSec); got <= 0 {
-			t.Errorf("monitorKeepaliveTimeout(%d) = %v, want a positive deadline",
-				monitoringIntervalSec, got)
+// startMonitorOnSlowServer runs monitorConnection for a tunnel that holds a
+// connection to a server answering keepalives after delay, and hands back the
+// tunnel, its row, the client, the connection under it and when the server saw
+// each keepalive. The monitor stops when the test ends.
+func startMonitorOnSlowServer(t *testing.T, monitoringIntervalSec int, delay time.Duration) (
+	*SSHTunnel, *models.Tunnel, *ssh.Client, *deadlineRecordingConn, func() []time.Time) {
+	t.Helper()
+
+	m := newSSHTestManager(t, monitoringIntervalSec)
+	serverAddr, arrivals := startSlowSSHServer(t, delay)
+	tun, tunnel := newSSHTestTunnel(t, serverAddr)
+
+	client, conn, closeClient := dialTestSSHClient(t, serverAddr)
+	t.Cleanup(closeClient)
+
+	tun.clientMu.Lock()
+	tun.client = client
+	tun.clientMu.Unlock()
+
+	tun.tunnelMu.Lock()
+	tunnel.Status = "connected"
+	tun.tunnelMu.Unlock()
+
+	stop := make(chan struct{})
+	exited := make(chan struct{})
+	go func() {
+		tun.monitorConnection(m, tunnel, stop)
+		close(exited)
+	}()
+	t.Cleanup(func() {
+		close(stop)
+		<-exited
+	})
+
+	return tun, tunnel, client, conn, arrivals
+}
+
+// TestMonitorConnectionDoesNotCatchUp is TestWatchSSHConnectionDoesNotCatchUp
+// for the loop of a tunnel.
+func TestMonitorConnectionDoesNotCatchUp(t *testing.T) {
+	const (
+		interval = time.Second
+		delay    = 1500 * time.Millisecond
+	)
+	_, _, _, conn, arrivals := startMonitorOnSlowServer(t, int(interval/time.Second), delay)
+
+	deadline := time.Now().Add(20 * time.Second)
+	for len(arrivals()) < 3 && time.Now().Before(deadline) {
+		time.Sleep(20 * time.Millisecond)
+	}
+
+	got := arrivals()
+	if len(got) < 3 {
+		t.Fatalf("the server saw %d keepalives, want at least 3", len(got))
+	}
+	if conn.closed.Load() {
+		t.Fatal("a keepalive answered inside the 3s floor closed the connection")
+	}
+
+	// A check lasts about delay, so a caught up tick sends the next one about
+	// delay after the last, while the timer waits delay plus interval.
+	for i := 1; i < len(got); i++ {
+		if gap := got[i].Sub(got[i-1]); gap < delay+interval/2 {
+			t.Fatalf("keepalive %d came %v after the one before, want at least %v, "+
+				"the check went out straight after the last one ended", i, gap, delay+interval/2)
 		}
+	}
+}
+
+// TestMonitorConnectionKeepsATunnelWithASlowReply is
+// TestSlowKeepaliveReplyKeepsTheConnection for a tunnel at the default interval
+// of five seconds: a reply that comes after the 1.25s the keepalive used to
+// wait, but inside the interval, leaves the tunnel connected.
+func TestMonitorConnectionKeepsATunnelWithASlowReply(t *testing.T) {
+	const delay = 1600 * time.Millisecond
+	tun, tunnel, client, conn, arrivals := startMonitorOnSlowServer(t, 5, delay)
+
+	deadline := time.Now().Add(15 * time.Second)
+	for len(arrivals()) < 1 && time.Now().Before(deadline) {
+		time.Sleep(20 * time.Millisecond)
+	}
+	if len(arrivals()) < 1 {
+		t.Fatal("the monitor sent no keepalive")
+	}
+
+	// Long enough for the reply to arrive and the check to finish.
+	time.Sleep(delay + 500*time.Millisecond)
+
+	tun.clientMu.RLock()
+	current := tun.client
+	tun.clientMu.RUnlock()
+
+	tun.tunnelMu.Lock()
+	status := tunnel.Status
+	retries := tunnel.RetryCount
+	tun.tunnelMu.Unlock()
+
+	if conn.closed.Load() || current != client {
+		t.Fatalf("the monitor dropped a connection whose server answered after %v, "+
+			"inside the 5s interval", delay)
+	}
+	if status != "connected" || retries != 0 {
+		t.Fatalf("status = %q with %d retries, want %q with none, "+
+			"a slow reply was taken for a lost server", status, retries, "connected")
 	}
 }
 

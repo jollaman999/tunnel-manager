@@ -302,9 +302,8 @@ type socksTunnel struct {
 	connFP   connFingerprint
 	interval time.Duration
 
-	client     *ssh.Client
-	clientConn net.Conn
-	clientMu   sync.RWMutex
+	client   *ssh.Client
+	clientMu sync.RWMutex
 
 	stateMu sync.Mutex
 	state   SocksState
@@ -413,11 +412,11 @@ func (p *socksTunnel) stopped() bool {
 	}
 }
 
-func (p *socksTunnel) currentClient() (*ssh.Client, net.Conn) {
+func (p *socksTunnel) currentClient() *ssh.Client {
 	p.clientMu.RLock()
 	defer p.clientMu.RUnlock()
 
-	return p.client, p.clientConn
+	return p.client
 }
 
 // errSocksStopped is errLocalForwardStopped for a proxy.
@@ -427,7 +426,7 @@ var errSocksStopped = errors.New("SOCKS5 proxy stopped")
 // the SSH connection or a listener ends. It is localTunnel.establish with the
 // lines of a proxy.
 func (p *socksTunnel) establish() error {
-	client, clientConn, err := dialSSHClient(p.server, p.config)
+	client, _, err := dialSSHClient(p.server, p.config)
 	if err != nil {
 		p.logger.Error("failed to establish SSH connection",
 			append([]zap.Field{logid.TunnelSshConnectFailed.Field()}, p.fields(zap.Error(err))...)...)
@@ -465,7 +464,6 @@ func (p *socksTunnel) establish() error {
 	}
 	p.listening.Add(1)
 	p.client = client
-	p.clientConn = clientConn
 	p.clientMu.Unlock()
 
 	defer func() {
@@ -516,7 +514,6 @@ func (p *socksTunnel) establish() error {
 	p.clientMu.Lock()
 	if p.client == client {
 		p.client = nil
-		p.clientConn = nil
 	}
 	p.clientMu.Unlock()
 	_ = client.Close()

@@ -58,14 +58,9 @@ type SSHTunnel struct {
 	// settings the tunnel should have. It is written before the tunnel is
 	// registered with the manager and never again, so it needs no lock of its
 	// own, and it is never formatted, so it cannot reach a log.
-	connFP connFingerprint
-	client *ssh.Client
-	// clientConn is the connection client was built on. ssh.Client hides it,
-	// and the monitor needs it to put a deadline on the keepalive it sends. It
-	// is guarded by clientMu together with client, so a reader always gets the
-	// connection that belongs to the client it read.
-	clientConn net.Conn
-	clientMu   sync.RWMutex
+	connFP   connFingerprint
+	client   *ssh.Client
+	clientMu sync.RWMutex
 	// tunnelMu serializes the tunnel row the Start loop and the monitor both
 	// write. It is taken before stopMu and never after it.
 	tunnelMu  sync.Mutex
@@ -163,10 +158,8 @@ func (t *SSHTunnel) reconnect(m *Manager, tunnel *models.Tunnel, observed *ssh.C
 		t.clientMu.Unlock()
 		return
 	}
-	// Closing the client closes clientConn with it (ssh, connection.Close).
 	_ = t.client.Close()
 	t.client = nil
-	t.clientConn = nil
 	t.clientMu.Unlock()
 
 	if !t.markReconnecting(m, tunnel) {
@@ -180,57 +173,72 @@ func (t *SSHTunnel) reconnect(m *Manager, tunnel *models.Tunnel, observed *ssh.C
 		zap.String("remote", t.Remote))
 }
 
-// minMonitorDialTimeout guards the derived dial timeout against a monitoring
-// interval that is not a whole second. The configuration rejects an interval
-// below one second, so it never applies to a running tunnel.
-const minMonitorDialTimeout = 500 * time.Millisecond
+// minMonitorCheckTimeout is the shortest a monitor check waits for the SSH
+// server. It is three seconds because that is when TCP sends a lost SYN for
+// the second time (the first retry goes out after the initial one second
+// retransmission timeout, RFC 6298), so a probe is not given up on after a
+// single lost packet. It also keeps a short monitoring interval from turning
+// into a limit a loaded link cannot meet.
+const minMonitorCheckTimeout = 3 * time.Second
 
-// monitorDialTimeout returns how long the monitor waits for the TCP handshake
-// with the SSH server. It is half of the monitoring interval, so that a server
-// that stopped answering cannot hold one check for the whole interval and halve
-// the monitoring rate, while a slow network still gets as much time to answer as
-// the interval allows.
-func monitorDialTimeout(monitoringIntervalSec int) time.Duration {
-	interval := time.Duration(monitoringIntervalSec) * time.Second
-	if interval <= minMonitorDialTimeout {
-		return minMonitorDialTimeout
+// monitorCheckTimeout returns how long the monitor waits for the SSH server,
+// both for the TCP handshake of its probe and for the reply to its keepalive.
+// The wait is how long a silent server is tolerated before its connection is
+// dropped, not a share of the tick: the checks run one after the other and the
+// next one is scheduled an interval after the last one ended, so a long wait
+// delays the next check instead of overlapping it. A keepalive queues behind
+// the forwarded traffic on the same connection, and its reply behind what the
+// server sends back, so on a busy or slow link a live server can take a while
+// to answer. One interval, and never less than minMonitorCheckTimeout, gives
+// it that time without adding a setting of its own.
+func monitorCheckTimeout(interval time.Duration) time.Duration {
+	if interval < minMonitorCheckTimeout {
+		return minMonitorCheckTimeout
 	}
 
-	return interval / 2
-}
-
-// monitorKeepaliveTimeout returns how long the monitor waits for the reply to
-// its keepalive. The dial that runs first may already have spent half of the
-// interval, so the keepalive gets half of what is left. A check a stuck peer
-// holds then still ends inside its own tick, which is what keeps the monitoring
-// rate at the configured interval.
-func monitorKeepaliveTimeout(monitoringIntervalSec int) time.Duration {
-	return monitorDialTimeout(monitoringIntervalSec) / 2
+	return interval
 }
 
 // sendKeepalive asks the SSH server for a reply and gives up after timeout.
 // SendRequest waits on a channel the connection's read loop fills and offers no
-// way to stop waiting, so the deadline has to go on the connection underneath
-// it. A peer that neither answers nor refuses would otherwise hold the call
-// until TCP gives up retransmitting, which takes minutes.
-func sendKeepalive(client *ssh.Client, conn net.Conn, timeout time.Duration) error {
-	err := conn.SetDeadline(time.Now().Add(timeout))
-	if err != nil {
-		return fmt.Errorf("failed to set the keepalive deadline: %w", err)
-	}
-	defer func() {
-		// An armed deadline would time out the forwarded traffic that follows.
-		_ = conn.SetDeadline(time.Time{})
+// way to stop waiting, so it runs on a goroutine of its own and the wait here is
+// on a timer. A peer that neither answers nor refuses would otherwise hold the
+// call until TCP gives up retransmitting, which takes minutes.
+//
+// No deadline goes on the connection underneath. A deadline there applies to
+// every write in progress, the forwarded traffic the client carries included,
+// and a write it cut short would fail the transport and with it every forward
+// on the connection. When the timer fires the client is closed instead, which
+// is what every caller does on a failed keepalive anyway. The closed connection
+// ends the read loop and fails a write that is still waiting, so SendRequest
+// returns and the goroutine does not outlive the client.
+func sendKeepalive(client *ssh.Client, timeout time.Duration) error {
+	result := make(chan error, 1)
+	go func() {
+		_, _, err := client.SendRequest("keepalive@tunnel", true, nil)
+		result <- err
 	}()
 
-	_, _, err = client.SendRequest("keepalive@tunnel", true, nil)
+	timer := time.NewTimer(timeout)
+	defer timer.Stop()
 
-	return err
+	select {
+	case err := <-result:
+		return err
+	case <-timer.C:
+		_ = client.Close()
+		return fmt.Errorf("no reply to the keepalive within %v", timeout)
+	}
 }
 
+// monitorConnection checks the connection once an interval until the tunnel
+// stops. It waits on a timer that is set again after each check rather than on
+// a ticker: a ticker keeps a tick that fell due during a long check and fires
+// it at once, which would send the next check straight after the last one.
 func (t *SSHTunnel) monitorConnection(m *Manager, tunnel *models.Tunnel, stop <-chan struct{}) {
-	ticker := time.NewTicker(time.Duration(m.monitoringIntervalSec) * time.Second)
-	defer ticker.Stop()
+	interval := time.Duration(m.monitoringIntervalSec) * time.Second
+	timer := time.NewTimer(interval)
+	defer timer.Stop()
 
 	for {
 		select {
@@ -238,38 +246,45 @@ func (t *SSHTunnel) monitorConnection(m *Manager, tunnel *models.Tunnel, stop <-
 			return
 		case <-stop:
 			return
-		case <-ticker.C:
-			t.clientMu.RLock()
-			client := t.client
-			clientConn := t.clientConn
-			t.clientMu.RUnlock()
-
-			if client != nil {
-				conn, err := net.DialTimeout("tcp", t.Server,
-					monitorDialTimeout(m.monitoringIntervalSec))
-				if err != nil {
-					t.logger.Warn("SSH connection lost, attempting reconnection",
-						logid.TunnelServerUnreachable.Field(),
-						zap.String("local", t.Local.String()),
-						zap.String("server", t.Server),
-						zap.String("remote", t.Remote),
-						zap.Error(err))
-					t.reconnect(m, tunnel, client)
-					continue
-				}
-				_ = conn.Close()
-
-				err = sendKeepalive(client, clientConn,
-					monitorKeepaliveTimeout(m.monitoringIntervalSec))
-				if err != nil {
-					t.logger.Warn("SSH keepalive check failed, attempting reconnection",
-						logid.TunnelKeepaliveFailed.Field(),
-						zap.String("server", t.Server),
-						zap.Error(err))
-					t.reconnect(m, tunnel, client)
-				}
-			}
+		case <-timer.C:
+			t.checkConnection(m, tunnel, monitorCheckTimeout(interval))
+			timer.Reset(interval)
 		}
+	}
+}
+
+// checkConnection is one check of monitorConnection: the SSH server has to
+// accept a TCP connection and answer a keepalive on the current one, each
+// within timeout, or the current connection is torn down.
+func (t *SSHTunnel) checkConnection(m *Manager, tunnel *models.Tunnel, timeout time.Duration) {
+	t.clientMu.RLock()
+	client := t.client
+	t.clientMu.RUnlock()
+
+	if client == nil {
+		return
+	}
+
+	conn, err := net.DialTimeout("tcp", t.Server, timeout)
+	if err != nil {
+		t.logger.Warn("SSH connection lost, attempting reconnection",
+			logid.TunnelServerUnreachable.Field(),
+			zap.String("local", t.Local.String()),
+			zap.String("server", t.Server),
+			zap.String("remote", t.Remote),
+			zap.Error(err))
+		t.reconnect(m, tunnel, client)
+		return
+	}
+	_ = conn.Close()
+
+	err = sendKeepalive(client, timeout)
+	if err != nil {
+		t.logger.Warn("SSH keepalive check failed, attempting reconnection",
+			logid.TunnelKeepaliveFailed.Field(),
+			zap.String("server", t.Server),
+			zap.Error(err))
+		t.reconnect(m, tunnel, client)
 	}
 }
 
@@ -724,7 +739,7 @@ func (t *SSHTunnel) establishConnection(m *Manager, tunnel *models.Tunnel) error
 	if err != nil {
 		// The client is kept on the tunnel only once a forward is open, so on
 		// this way out nothing else would ever close it. Closing it closes
-		// clientConn as well, the connection it was built on.
+		// the connection it was built on as well.
 		_ = client.Close()
 
 		m.logger.Error("failed to start remote listener",
@@ -759,7 +774,6 @@ func (t *SSHTunnel) establishConnection(m *Manager, tunnel *models.Tunnel) error
 
 	t.clientMu.Lock()
 	t.client = client
-	t.clientConn = clientConn
 	t.clientMu.Unlock()
 
 	boundPort := opened.confirmedPort(t.Local.port())
@@ -974,7 +988,6 @@ func (t *SSHTunnel) acceptForwards(m *Manager, tunnel *models.Tunnel, client *ss
 		if current {
 			_ = t.client.Close()
 			t.client = nil
-			t.clientConn = nil
 		}
 		t.clientMu.Unlock()
 
@@ -1148,7 +1161,6 @@ func (t *SSHTunnel) Stop(m *Manager) error {
 	if t.client != nil {
 		_ = t.client.Close()
 		t.client = nil
-		t.clientConn = nil
 	}
 	t.clientMu.Unlock()
 

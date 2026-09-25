@@ -80,9 +80,8 @@ type localTunnel struct {
 	connFP   connFingerprint
 	interval time.Duration
 
-	client     *ssh.Client
-	clientConn net.Conn
-	clientMu   sync.RWMutex
+	client   *ssh.Client
+	clientMu sync.RWMutex
 
 	stateMu sync.Mutex
 	state   LocalForwardState
@@ -204,7 +203,7 @@ var errLocalForwardStopped = errors.New("local forward stopped")
 // establish connects, opens the local port and carries what it accepts until
 // the SSH connection or a listener ends.
 func (f *localTunnel) establish() error {
-	client, clientConn, err := dialSSHClient(f.server, f.config)
+	client, _, err := dialSSHClient(f.server, f.config)
 	if err != nil {
 		f.logger.Error("failed to establish SSH connection",
 			append([]zap.Field{logid.TunnelSshConnectFailed.Field()}, f.fields(zap.Error(err))...)...)
@@ -244,7 +243,6 @@ func (f *localTunnel) establish() error {
 	}
 	f.listening.Add(1)
 	f.client = client
-	f.clientConn = clientConn
 	f.clientMu.Unlock()
 
 	defer func() {
@@ -312,7 +310,6 @@ func (f *localTunnel) establish() error {
 	f.clientMu.Lock()
 	if f.client == client {
 		f.client = nil
-		f.clientConn = nil
 	}
 	f.clientMu.Unlock()
 	_ = client.Close()
@@ -462,51 +459,59 @@ func (f *localTunnel) monitor(stop <-chan struct{}) {
 	watchSSHConnection(stop, f.interval, f.server, f.currentClient, f.logger, f.fields)
 }
 
-func (f *localTunnel) currentClient() (*ssh.Client, net.Conn) {
+func (f *localTunnel) currentClient() *ssh.Client {
 	f.clientMu.RLock()
 	defer f.clientMu.RUnlock()
 
-	return f.client, f.clientConn
+	return f.client
 }
 
 // watchSSHConnection is the loop of monitor, shared with the SOCKS5 proxies,
 // which hold their connection the same way. current returns the connection
 // that stands, or a nil client while there is none, and fields are what every
-// line about the owner carries.
+// line about the owner carries. It waits on a timer set again after each check
+// for the reason SSHTunnel.monitorConnection does.
 func watchSSHConnection(stop <-chan struct{}, interval time.Duration, server string,
-	current func() (*ssh.Client, net.Conn), logger *zap.Logger, fields func(extra ...zap.Field) []zap.Field) {
-	ticker := time.NewTicker(interval)
-	defer ticker.Stop()
+	current func() *ssh.Client, logger *zap.Logger, fields func(extra ...zap.Field) []zap.Field) {
+	timer := time.NewTimer(interval)
+	defer timer.Stop()
 
-	intervalSec := int(interval / time.Second)
+	timeout := monitorCheckTimeout(interval)
 
 	for {
 		select {
 		case <-stop:
 			return
-		case <-ticker.C:
-			client, clientConn := current()
-
-			if client == nil {
-				continue
-			}
-
-			conn, err := net.DialTimeout("tcp", server, monitorDialTimeout(intervalSec))
-			if err != nil {
-				logger.Warn("SSH connection lost, attempting reconnection",
-					append([]zap.Field{logid.TunnelServerUnreachable.Field()}, fields(zap.Error(err))...)...)
-				_ = client.Close()
-				continue
-			}
-			_ = conn.Close()
-
-			err = sendKeepalive(client, clientConn, monitorKeepaliveTimeout(intervalSec))
-			if err != nil {
-				logger.Warn("SSH keepalive check failed, attempting reconnection",
-					append([]zap.Field{logid.TunnelKeepaliveFailed.Field()}, fields(zap.Error(err))...)...)
-				_ = client.Close()
-			}
+		case <-timer.C:
+			checkSSHConnection(server, current(), timeout, logger, fields)
+			timer.Reset(interval)
 		}
+	}
+}
+
+// checkSSHConnection is one check of watchSSHConnection. It is
+// SSHTunnel.checkConnection for a connection that has nothing to report but
+// its end: a client that fails the check is closed, and a nil one is skipped.
+func checkSSHConnection(server string, client *ssh.Client, timeout time.Duration,
+	logger *zap.Logger, fields func(extra ...zap.Field) []zap.Field) {
+	if client == nil {
+		return
+	}
+
+	conn, err := net.DialTimeout("tcp", server, timeout)
+	if err != nil {
+		logger.Warn("SSH connection lost, attempting reconnection",
+			append([]zap.Field{logid.TunnelServerUnreachable.Field()}, fields(zap.Error(err))...)...)
+		_ = client.Close()
+		return
+	}
+	_ = conn.Close()
+
+	err = sendKeepalive(client, timeout)
+	if err != nil {
+		logger.Warn("SSH keepalive check failed, attempting reconnection",
+			append([]zap.Field{logid.TunnelKeepaliveFailed.Field()}, fields(zap.Error(err))...)...)
+		_ = client.Close()
 	}
 }
 
