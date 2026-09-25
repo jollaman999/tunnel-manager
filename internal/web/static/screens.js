@@ -1110,13 +1110,24 @@ function forwardAddresses(tunnel) {
 // unknown on a forward whose requests were both agreed to and which answered a
 // connection is not something to put on the screen: it is the ordinary state of
 // a Host this end cannot ask.
+//
+// A server that said no to one of the two requests is still ordinary where the
+// Host named both addresses of the pair. That is the server set to bind every
+// interface: it took both families on the first request and said no to the
+// second, and the Host listing both is the measurement that settles it. There
+// the answer counts for nothing and the box would only explain away a no that
+// the Host has already answered. A Host that named nothing leaves the no
+// standing, and the box stays.
 function nothingCameOutOfTheOrdinary(tunnel, reach) {
-  if (reach !== "both") {
+  if (tunnel.forward_reach === "unreachable") {
     return false;
   }
 
-  if (tunnel.forward_reach === "unreachable") {
-    return false;
+  if (reach !== "both") {
+    const named = typeof tunnel.listen_addresses === "string" && tunnel.listen_addresses !== "";
+
+    return named && bindScopePairOf(tunnel.local) !== null &&
+      listeningIsWhatWasAsked(tunnel.local, tunnel.listen_addresses);
   }
 
   return listeningIsWhatWasAsked(tunnel.local, tunnel.listen_addresses);
