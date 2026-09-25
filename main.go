@@ -300,21 +300,34 @@ const (
 func prepareLogFile(s *settings.Settings, installDir string) error {
 	logFilePath := resolveInstallPath(installDir, s.LoggingFilePath)
 	logDir := filepath.Dir(logFilePath)
-	err := crypto.MkdirAllPrivate(logDir, logDirMode)
+
+	// Whether the directory was there is asked first, because it decides
+	// whether its mode is set below.
+	_, err := os.Stat(logDir)
+	madeDir := errors.Is(err, os.ErrNotExist)
+
+	err = crypto.MkdirAllPrivate(logDir, logDirMode)
 	if err != nil {
 		return fmt.Errorf("failed to create log directory: %v", err)
 	}
 
-	// The directory is narrowed as well as created, because MkdirAll writes the
-	// mode only for the directories it makes and an installation from an
-	// earlier release has one that is already there at 0755.
+	// A directory this startup made is set again after it is created, because
+	// MkdirAll writes the mode through the umask, which may have taken owner
+	// bits away as well. One that was already there is left as it is, since it
+	// may be shared with whatever else the operator keeps in it: a log file
+	// pointed into /tmp would otherwise turn /tmp into 0700 and drop the sticky
+	// bit that keeps one user from removing the files of another. What the log
+	// holds is in the files, which are narrowed wherever they are, so what a
+	// directory left as it was still shows is the names of the files in it.
 	//
 	// What this and the call below report is dropped, and that is the whole of
 	// the handling. A mode that cannot be set is no reason to stop writing logs:
 	// the file opened, and an installation on a file system that carries no
 	// Unix modes would otherwise come up with its logging turned off over a
 	// file it has no way of narrowing.
-	_ = os.Chmod(logDir, logDirMode)
+	if madeDir {
+		_ = os.Chmod(logDir, logDirMode)
+	}
 
 	// On Windows the file is made with the DACL of the owner, SYSTEM and
 	// Administrators before it is opened, since the log directory may be the

@@ -294,8 +294,10 @@ func TestANewLogFileIsClosedToTheRestOfTheMachine(t *testing.T) {
 // TestALogFromAnEarlierReleaseIsNarrowedAtStartup is the half that matters to
 // a deployment that is already running. Creating new files narrowly does
 // nothing for the logs that are already lying there at 0644, so the startup
-// sets the mode of what it finds as well as of what it makes, and it does that
-// without touching what the file holds.
+// sets the mode of the file it finds as well as of one it makes, and it does
+// that without touching what the file holds. The directory is found rather
+// than made on this startup, so it is left as it was, for the reason
+// TestALogDirectoryThatWasAlreadyThereKeepsItsMode gives.
 func TestALogFromAnEarlierReleaseIsNarrowedAtStartup(t *testing.T) {
 	skipWithoutFileModes(t)
 
@@ -326,7 +328,7 @@ func TestALogFromAnEarlierReleaseIsNarrowedAtStartup(t *testing.T) {
 	}
 
 	requireMode(t, logFile, logFileMode)
-	requireMode(t, logDir, logDirMode)
+	requireMode(t, logDir, 0755)
 
 	body, err := os.ReadFile(logFile)
 	if err != nil {
@@ -334,6 +336,61 @@ func TestALogFromAnEarlierReleaseIsNarrowedAtStartup(t *testing.T) {
 	}
 	if !strings.Contains(string(body), "a line an earlier release wrote") {
 		t.Fatalf("the lines that were already in the log are gone, it holds %q", string(body))
+	}
+}
+
+// TestALogDirectoryThatWasAlreadyThereKeepsItsMode covers a log path the
+// operator pointed into a directory of their own. The directory is shared with
+// whatever else lives in it, so narrowing it would take it away from those as
+// well: a log file under /tmp run as root would turn /tmp into 0700 and drop
+// the sticky bit that keeps one user from removing the files of another. What
+// the log holds is in the file, and that is narrowed either way.
+func TestALogDirectoryThatWasAlreadyThereKeepsItsMode(t *testing.T) {
+	skipWithoutFileModes(t)
+
+	for _, tc := range []struct {
+		name string
+		mode os.FileMode
+	}{
+		{"0755", 0755},
+		{"01777", 0777 | os.ModeSticky},
+	} {
+		mode := tc.mode
+
+		t.Run(tc.name, func(t *testing.T) {
+			logDir := filepath.Join(t.TempDir(), "shared")
+
+			err := os.Mkdir(logDir, 0700)
+			if err != nil {
+				t.Fatalf("failed to make the directory the operator made: %v", err)
+			}
+
+			// Mkdir is masked by umask and takes no sticky bit, so the mode
+			// is written after it.
+			err = os.Chmod(logDir, mode)
+			if err != nil {
+				t.Fatalf("failed to put the directory at %v: %v", mode, err)
+			}
+
+			logFile := filepath.Join(logDir, "tunnel-manager.log")
+
+			err = prepareLogFile(newLoggingSettings(logFile), "")
+			if err != nil {
+				t.Fatalf("failed to prepare the log file: %v", err)
+			}
+
+			info, err := os.Stat(logDir)
+			if err != nil {
+				t.Fatalf("failed to read the mode of %s: %v", logDir, err)
+			}
+
+			got := info.Mode() & (os.ModePerm | os.ModeSticky | os.ModeSetuid | os.ModeSetgid)
+			if got != mode {
+				t.Fatalf("%s is at %v after the startup, want %v as it was", logDir, got, mode)
+			}
+
+			requireMode(t, logFile, logFileMode)
+		})
 	}
 }
 
