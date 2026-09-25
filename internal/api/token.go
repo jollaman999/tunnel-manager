@@ -63,8 +63,8 @@ var tokenExpiryDays = []int{30, 90, 365, 0}
 // table below says which. They are coarse on purpose: a scope per route would
 // be a list of checkboxes nobody reads before ticking all of them.
 const (
-	// TokenScopeRead opens every read. It is what a monitoring script needs,
-	// and it is the one scope ticked by default.
+	// TokenScopeRead opens every read but the account's. It is what a
+	// monitoring script needs, and it is the one scope ticked by default.
 	TokenScopeRead = "read"
 	// TokenScopeHosts opens adding, changing and deleting a Host.
 	TokenScopeHosts = "hosts"
@@ -110,7 +110,6 @@ const (
 // written in here. TestEveryRouteIsInTheTokenTable in package main is what
 // makes that show.
 var tokenRouteScopes = map[string]string{
-	"GET /api/account":                        TokenScopeRead,
 	"GET /api/host":                           TokenScopeRead,
 	"GET /api/host/:id":                       TokenScopeRead,
 	"GET /api/host-key":                       TokenScopeRead,
@@ -161,12 +160,15 @@ var tokenRouteScopes = map[string]string{
 	"POST /api/logs/clear":     TokenScopeOperations,
 }
 
-// tokenNeverRoutes are the routes no scope opens. What they change is the
-// credentials themselves, or they are how a session is had: a token that could
-// reach them could make itself another token, or a session that outlives it.
+// tokenNeverRoutes are the routes no scope opens. What they read or change is
+// the credentials themselves, or they are how a session is had: a token that
+// could reach them could make itself another token, or a session that outlives
+// it. The account is not read with a token either: the name that signs in is
+// half of a login, and no script needs it.
 var tokenNeverRoutes = map[string]bool{
 	"POST /api/logout":      true,
 	"POST /api/setup":       true,
+	"GET /api/account":      true,
 	"PUT /api/account":      true,
 	"GET /api/token":        true,
 	"POST /api/token":       true,

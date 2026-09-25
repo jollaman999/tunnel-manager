@@ -1736,7 +1736,7 @@ A token reaches only the routes of the scopes it was made with:
 
 | Scope | What it opens |
 |-------|---------------|
-| `read` | Every `GET`. Ticked by default |
+| `read` | Every `GET` but `GET /api/account`. Ticked by default |
 | `hosts` | `POST /api/host`, `PUT` and `DELETE /api/host/:id` |
 | `tunnels` | The `POST`, `PUT` and `DELETE` of `/api/service-port`, `PUT /api/host/:id/service-port`, and the `POST`, `PUT` and `DELETE` of `/api/host/:id/local-forward` |
 | `host-keys` | `POST /api/host/:id/host-key`, `POST /api/host-key` |
@@ -1744,9 +1744,9 @@ A token reaches only the routes of the scopes it was made with:
 | `transfer` | `/api/export/*`, `/api/import/*` |
 | `operations` | `POST /api/restart`, `/api/update/check`, `/api/update/install`, `/api/uninstall`, `/api/logs/clear` |
 
-No scope opens `PUT /api/account`, `/api/token`, `POST /api/setup` or
-`POST /api/logout`: a token cannot change the credentials, make another token or
-turn itself into a session. The calls that ask for the account password again,
+No scope opens `GET` and `PUT /api/account`, `/api/token`, `POST /api/setup` or
+`POST /api/logout`: a token cannot read or change the credentials, make another
+token or turn itself into a session. The calls that ask for the account password again,
 the uninstall among them, still ask for it with a token.
 
 A token lives 30, 90 or 365 days, or never runs out; 90 is the default. Changing

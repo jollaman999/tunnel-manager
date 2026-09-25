@@ -1428,10 +1428,10 @@ func endOnServiceStop() {
 // @description  on the Settings screen or with POST /api/token, and send it as
 // @description  Authorization: Bearer <token>. A request that does needs no
 // @description  cookie and no X-CSRF-Token, and reaches only the routes of the
-// @description  scopes the token was made with: read opens every GET, and the
-// @description  others open the changes of one area each. PUT /api/account,
-// @description  /api/token, /api/setup and /api/logout are never open to a
-// @description  token.
+// @description  scopes the token was made with: read opens every GET but
+// @description  GET /api/account, and the others open the changes of one area
+// @description  each. GET and PUT /api/account, /api/token, /api/setup and
+// @description  /api/logout are never open to a token.
 // @description
 // @description  Every answer has the same shape: {"success":true,"data":...}
 // @description  or {"success":false,"error":"..."}. An answer that says no

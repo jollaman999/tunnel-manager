@@ -417,6 +417,7 @@ func TestNoScopeOpensTheRoutesThatAreNeverGranted(t *testing.T) {
 	all := f.create(t, cookies, `{"name":"everything","scopes":["`+strings.Join(tokenScopes, `","`)+`"]}`)
 
 	for _, route := range []struct{ method, path string }{
+		{http.MethodGet, "/api/account"},
 		{http.MethodPut, "/api/account"},
 		{http.MethodGet, "/api/token"},
 		{http.MethodPost, "/api/token"},
@@ -434,6 +435,30 @@ func TestNoScopeOpensTheRoutesThatAreNeverGranted(t *testing.T) {
 
 	if views := f.list(t, cookies); len(views) != 1 {
 		t.Fatalf("the tokens are %+v after the refusals, want the one that was made", views)
+	}
+}
+
+// TestAReadTokenDoesNotReadTheAccount holds the account read to sessions: the
+// read scope opens every other read, and not this one.
+func TestAReadTokenDoesNotReadTheAccount(t *testing.T) {
+	f := newTokenFixture(t)
+	cookies := f.signIn(t)
+	reader := f.create(t, cookies, `{"name":"reader","scopes":["read"]}`)
+
+	rec := f.withBearer(http.MethodGet, "/api/account", "", reader.Token, "")
+	if rec.Code != http.StatusForbidden || decodeTokenAnswer(t, rec).ErrorCode != string(errAuthTokenRouteRefused) {
+		t.Fatalf("the account read with a read token answered %d %s, want 403 %s",
+			rec.Code, rec.Body.String(), errAuthTokenRouteRefused)
+	}
+
+	if strings.Contains(rec.Body.String(), testUsername) {
+		t.Fatalf("the refusal carries the account name: %s", rec.Body.String())
+	}
+
+	rec = do(f.e, http.MethodGet, "/api/account", "", cookies...)
+	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), testUsername) {
+		t.Fatalf("the account read with a session answered %d %s, want 200 with %q",
+			rec.Code, rec.Body.String(), testUsername)
 	}
 }
 

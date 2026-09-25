@@ -1562,7 +1562,7 @@ curl -s -b cookies.txt -X POST "$BASE/api/setup" \
 
 | スコープ | 開くもの |
 |----------|----------|
-| `read` | すべての `GET`。最初から選ばれています |
+| `read` | `GET /api/account` を除くすべての `GET`。最初から選ばれています |
 | `hosts` | `POST /api/host`、`PUT` と `DELETE /api/host/:id` |
 | `tunnels` | `/api/service-port` の `POST`、`PUT`、`DELETE`、`PUT /api/host/:id/service-port`、`/api/host/:id/local-forward` の `POST`、`PUT`、`DELETE` |
 | `host-keys` | `POST /api/host/:id/host-key`、`POST /api/host-key` |
@@ -1570,8 +1570,8 @@ curl -s -b cookies.txt -X POST "$BASE/api/setup" \
 | `transfer` | `/api/export/*`、`/api/import/*` |
 | `operations` | `POST /api/restart`、`/api/update/check`、`/api/update/install`、`/api/uninstall`、`/api/logs/clear` |
 
-`PUT /api/account`、`/api/token`、`POST /api/setup`、`POST /api/logout` はどのスコープでも
-開きません。トークンでアカウント情報を変えることも、トークンを増やすことも、セッションを得る
+`GET` と `PUT /api/account`、`/api/token`、`POST /api/setup`、`POST /api/logout` はどのスコープでも
+開きません。トークンでアカウント情報を読むことも変えることも、トークンを増やすことも、セッションを得る
 こともできません。アンインストールのようにアカウントのパスワードをもう一度求める呼び出しは、
 トークンで呼んでもパスワードを求めます。
 

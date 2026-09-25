@@ -1513,7 +1513,7 @@ curl -s -b cookies.txt -X POST "$BASE/api/setup" \
 
 | 권한 | 여는 것 |
 |------|---------|
-| `read` | 모든 `GET`. 처음부터 골라져 있습니다 |
+| `read` | `GET /api/account` 를 뺀 모든 `GET`. 처음부터 골라져 있습니다 |
 | `hosts` | `POST /api/host`, `PUT` 과 `DELETE /api/host/:id` |
 | `tunnels` | `/api/service-port` 의 `POST`, `PUT`, `DELETE`, `PUT /api/host/:id/service-port`, `/api/host/:id/local-forward` 의 `POST`, `PUT`, `DELETE` |
 | `host-keys` | `POST /api/host/:id/host-key`, `POST /api/host-key` |
@@ -1521,8 +1521,8 @@ curl -s -b cookies.txt -X POST "$BASE/api/setup" \
 | `transfer` | `/api/export/*`, `/api/import/*` |
 | `operations` | `POST /api/restart`, `/api/update/check`, `/api/update/install`, `/api/uninstall`, `/api/logs/clear` |
 
-`PUT /api/account`, `/api/token`, `POST /api/setup`, `POST /api/logout` 은 어떤 권한으로도
-열리지 않습니다. 토큰으로 계정 정보를 바꾸거나, 토큰을 더 만들거나, 세션을 얻을 수 없습니다.
+`GET` 과 `PUT /api/account`, `/api/token`, `POST /api/setup`, `POST /api/logout` 은 어떤 권한으로도
+열리지 않습니다. 토큰으로 계정 정보를 읽거나 바꾸거나, 토큰을 더 만들거나, 세션을 얻을 수 없습니다.
 제거처럼 계정 비밀번호를 다시 묻는 호출은 토큰으로 불러도 비밀번호를 묻습니다.
 
 토큰의 유효기간은 30, 90, 365일 또는 무기한이고 기본은 90일입니다. 계정 비밀번호를 바꿔도

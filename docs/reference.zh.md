@@ -1377,7 +1377,7 @@ curl -s -b cookies.txt -X POST "$BASE/api/setup" \
 
 | 权限范围 | 开放的内容 |
 |----------|------------|
-| `read` | 所有 `GET`。默认勾选 |
+| `read` | 除 `GET /api/account` 以外的所有 `GET`。默认勾选 |
 | `hosts` | `POST /api/host`，`PUT` 和 `DELETE /api/host/:id` |
 | `tunnels` | `/api/service-port` 的 `POST`、`PUT`、`DELETE`，`PUT /api/host/:id/service-port`，`/api/host/:id/local-forward` 的 `POST`、`PUT`、`DELETE` |
 | `host-keys` | `POST /api/host/:id/host-key`，`POST /api/host-key` |
@@ -1385,8 +1385,8 @@ curl -s -b cookies.txt -X POST "$BASE/api/setup" \
 | `transfer` | `/api/export/*`，`/api/import/*` |
 | `operations` | `POST /api/restart`、`/api/update/check`、`/api/update/install`、`/api/uninstall`、`/api/logs/clear` |
 
-`PUT /api/account`、`/api/token`、`POST /api/setup` 和 `POST /api/logout` 不对任何权限范围开放：
-令牌不能修改账号信息，不能再创建令牌，也不能换成会话。像卸载这样需要再次输入账号密码的调用，
+`GET` 和 `PUT /api/account`、`/api/token`、`POST /api/setup` 和 `POST /api/logout` 不对任何权限范围开放：
+令牌不能读取或修改账号信息，不能再创建令牌，也不能换成会话。像卸载这样需要再次输入账号密码的调用，
 用令牌调用时仍然要输入密码。
 
 令牌的有效期是 30、90、365 天或永不过期，默认 90 天。修改账号密码不会吊销令牌。用令牌做的修改
