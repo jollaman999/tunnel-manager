@@ -58,6 +58,7 @@ var contentTypes = map[string]string{
 	".js":   "text/javascript; charset=utf-8",
 	".css":  "text/css; charset=utf-8",
 	".json": "application/json; charset=utf-8",
+	".svg":  "image/svg+xml",
 }
 
 // versionPath answers what version of the binary is serving the UI. It sits

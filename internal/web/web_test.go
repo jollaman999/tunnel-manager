@@ -87,6 +87,7 @@ func TestEmbeddedFilesArePresent(t *testing.T) {
 		"static/" + apiDocsDir + "/swagger-ui.css",
 		"static/icons/apple-touch-icon.png", "static/icons/favicon-32.png",
 		"static/icons/favicon.ico", "static/icons/icon-192.png", "static/icons/icon-512.png",
+		"static/icons/logo.svg",
 	}
 	for _, code := range catalogCodes {
 		want = append(want, "static/lang/"+code+".json")
@@ -207,6 +208,7 @@ func TestAssetsAreServedWithTheirType(t *testing.T) {
 		{target: "/ui/icons/apple-touch-icon.png", contentType: "image/png"},
 		{target: "/ui/icons/icon-512.png", contentType: "image/png"},
 		{target: "/ui/icons/favicon.ico", contentType: "image/x-icon"},
+		{target: "/ui/icons/logo.svg", contentType: "image/svg+xml"},
 	}
 
 	e := newServer()
