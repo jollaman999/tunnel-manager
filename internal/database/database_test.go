@@ -576,14 +576,13 @@ func TestNewDatabaseWrapsAnOpenFailure(t *testing.T) {
 		t.Fatalf("the error %q does not carry what the driver reported", err)
 	}
 
-	// gorm reports a failed open through the logger it was handed, which is the
-	// one built here, so the line has to come out under the "gorm" name rather
-	// than going to stderr on its own.
-	entries := logs.All()
-	if len(entries) == 0 {
-		t.Fatalf("the failure was not reported through the given logger")
-	}
-	for _, entry := range entries {
+	// The returned error is what reports the failure: the caller logs it with
+	// its own id. gorm stopped logging a failed open itself in v1.30.0, when it
+	// began returning early from a dialector that fails to initialize, which is
+	// where the SQLite driver first touches the file. Whatever gorm does log has
+	// to go through the logger it was handed, the one built here, and so come
+	// out under the "gorm" name rather than going to stderr on its own.
+	for _, entry := range logs.All() {
 		if entry.LoggerName != "gorm" {
 			t.Fatalf("an entry came out under %q, want %q", entry.LoggerName, "gorm")
 		}
