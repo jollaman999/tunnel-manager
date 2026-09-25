@@ -20,10 +20,14 @@ CHROME="${CHROME:-/usr/bin/google-chrome}"
 IMAGE=tunnel-manager-demo-host
 CONTAINER=tunnel-manager-demo-host
 UI_ADDR=127.0.0.1:8888
-SERVICE_ADDR=127.0.0.1:8000
+SERVICE_IP=127.0.0.1
+SERVICE_PORTS=(8000 8001 8002)
 HOST_IP=127.0.0.2
 HOST_SSH_PORT=2222
-HOST_OPEN_PORT=8080
+# The ports the Host opens for the service ports, one for each. All of them are
+# published out of the container, since tunnel-manager checks from here that
+# each one answers; the recording opens the first.
+HOST_OPEN_PORTS=(8080 8081 8082)
 FORWARD_ADDR=127.0.0.1:18080
 SOCKS_ADDR=127.0.0.1:1080
 MAX_GIF_BYTES=$((5 * 1024 * 1024))
@@ -75,7 +79,24 @@ wait_for() {
 	return 1
 }
 
-for addr in "$UI_ADDR" "$SERVICE_ADDR" "$HOST_IP:$HOST_SSH_PORT" "$HOST_IP:$HOST_OPEN_PORT" "$FORWARD_ADDR" "$SOCKS_ADDR"; do
+SERVICE_ADDRS=()
+for port in "${SERVICE_PORTS[@]}"; do
+	SERVICE_ADDRS+=("$SERVICE_IP:$port")
+done
+
+HOST_OPEN_ADDRS=()
+PUBLISH=()
+for port in "${HOST_OPEN_PORTS[@]}"; do
+	HOST_OPEN_ADDRS+=("$HOST_IP:$port")
+	PUBLISH+=(-p "$HOST_IP:$port:$port")
+done
+
+join() {
+	local IFS=,
+	echo "$*"
+}
+
+for addr in "$UI_ADDR" "${SERVICE_ADDRS[@]}" "$HOST_IP:$HOST_SSH_PORT" "${HOST_OPEN_ADDRS[@]}" "$FORWARD_ADDR" "$SOCKS_ADDR"; do
 	if ! port_free "$addr"; then
 		echo "$addr is already in use. Stop what listens there and run this again." >&2
 		exit 1
@@ -99,11 +120,11 @@ timeout 600 docker build -q -t "$IMAGE" "$DEMO_DIR" >/dev/null
 log "starting the Host"
 timeout 60 docker run -d --rm --name "$CONTAINER" \
 	-p "$HOST_IP:$HOST_SSH_PORT:22" \
-	-p "$HOST_IP:$HOST_OPEN_PORT:$HOST_OPEN_PORT" \
+	"${PUBLISH[@]}" \
 	"$IMAGE" >/dev/null
 
-log "starting the demo service on $SERVICE_ADDR"
-"$WORK/service" -listen "$SERVICE_ADDR" >"$WORK/service.log" 2>&1 &
+log "starting the demo service on $(join "${SERVICE_ADDRS[@]}")"
+"$WORK/service" -listen "$(join "${SERVICE_ADDRS[@]}")" >"$WORK/service.log" 2>&1 &
 SERVICE_PID=$!
 
 log "starting tunnel-manager with its data in $WORK/data"
@@ -112,7 +133,9 @@ mkdir -p "$WORK/data"
 TM_PID=$!
 
 wait_for "the Host SSH server" 30 timeout 2 bash -c "exec 3<>/dev/tcp/$HOST_IP/$HOST_SSH_PORT && head -c 4 <&3 | grep -q SSH"
-wait_for "the demo service" 30 timeout 2 curl -fsS "http://$SERVICE_ADDR/"
+for addr in "${SERVICE_ADDRS[@]}"; do
+	wait_for "the demo service on $addr" 30 timeout 2 curl -fsS "http://$addr/"
+done
 wait_for "tunnel-manager" 60 timeout 2 curl -kfsS "https://$UI_ADDR/ui/"
 wait_for "the initial password" 30 test -s "$WORK/data/initial-password"
 
@@ -122,12 +145,12 @@ log "recording"
 	-initial-password-file "$WORK/data/initial-password" \
 	-frames "$WORK/frames" \
 	-chrome "$CHROME" \
-	-service-ip "${SERVICE_ADDR%:*}" \
-	-service-port "${SERVICE_ADDR##*:}" \
-	-local-port "$HOST_OPEN_PORT" \
+	-service-ip "$SERVICE_IP" \
+	-service-ports "$(join "${SERVICE_PORTS[@]}")" \
+	-local-ports "$(join "${HOST_OPEN_PORTS[@]}")" \
 	-host-ip "$HOST_IP" \
 	-host-port "$HOST_SSH_PORT" \
-	-service-url "http://$HOST_IP:$HOST_OPEN_PORT/" \
+	-service-url "http://$HOST_IP:${HOST_OPEN_PORTS[0]}/" \
 	-forward-port "${FORWARD_ADDR##*:}" \
 	-socks-port "${SOCKS_ADDR##*:}"
 

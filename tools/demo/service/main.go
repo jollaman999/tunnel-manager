@@ -1,12 +1,17 @@
-// Command service is the web service the demo publishes through a tunnel. It
-// answers every path with one page, which is what the recording opens on the
-// far side of the Host.
+// Command service is the web service the demo publishes through the tunnels. It
+// listens on every address it is given at once and answers every path with one
+// page that names the port it was served on, which is what the recording opens
+// on the far side of the Host.
 package main
 
 import (
 	"flag"
+	"fmt"
+	"html"
 	"log"
+	"net"
 	"net/http"
+	"strings"
 	"time"
 )
 
@@ -28,7 +33,7 @@ const page = `<!DOCTYPE html>
 <body>
 <main>
 <h1>Hello from the service behind the tunnel</h1>
-<p>This page is served on the machine tunnel-manager runs on.</p>
+<p>This page is served on port <code>%s</code> of the system tunnel-manager runs on.</p>
 <p>It was reached at <code id="address"></code></p>
 </main>
 <script>document.getElementById("address").textContent = window.location.href;</script>
@@ -37,18 +42,35 @@ const page = `<!DOCTYPE html>
 `
 
 func main() {
-	listen := flag.String("listen", "127.0.0.1:8000", "address to listen on")
+	listen := flag.String("listen", "127.0.0.1:8000,127.0.0.1:8001,127.0.0.1:8002",
+		"comma-separated addresses to listen on")
 	flag.Parse()
 
-	server := &http.Server{
-		Addr: *listen,
-		Handler: http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-			w.Header().Set("Content-Type", "text/html; charset=utf-8")
-			_, _ = w.Write([]byte(page))
-		}),
-		ReadHeaderTimeout: 10 * time.Second,
+	addrs := strings.Split(*listen, ",")
+	failed := make(chan error, len(addrs))
+
+	for _, addr := range addrs {
+		_, port, err := net.SplitHostPort(addr)
+		if err != nil {
+			log.Fatalf("%q is not an address: %v", addr, err)
+		}
+
+		body := fmt.Sprintf(page, html.EscapeString(port))
+
+		server := &http.Server{
+			Addr: addr,
+			Handler: http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				w.Header().Set("Content-Type", "text/html; charset=utf-8")
+				_, _ = w.Write([]byte(body))
+			}),
+			ReadHeaderTimeout: 10 * time.Second,
+		}
+
+		go func() {
+			log.Printf("demo service listening on %s", addr)
+			failed <- fmt.Errorf("%s: %w", addr, server.ListenAndServe())
+		}()
 	}
 
-	log.Printf("demo service listening on %s", *listen)
-	log.Fatal(server.ListenAndServe())
+	log.Fatal(<-failed)
 }

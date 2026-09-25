@@ -15,24 +15,32 @@ What it does, in order:
    user `demo` whose password is `demo-host-password`. A small web server inside
    it answers on `127.0.0.1:80` of the container only.
 2. Starts a container of it with `127.0.0.2:2222` published to its SSH port and
-   `127.0.0.2:8080` to the port the Host opens for the service.
-3. Starts the demo service (`service/`) on `127.0.0.1:8000`.
+   `127.0.0.2:8080`, `127.0.0.2:8081` and `127.0.0.2:8082` to the ports the
+   Host opens for the service ports, so that tunnel-manager can check from here
+   that each of them answers.
+3. Starts the demo service (`service/`) on `127.0.0.1:8000`, `127.0.0.1:8001`
+   and `127.0.0.1:8002` at once. Each answers with a page that names its port.
 4. Builds tunnel-manager from this repository and starts it with a data
    directory of its own under a new temporary directory. Nothing of an
    installation that is already on the machine is read or changed.
 5. Drives the UI in headless Chrome (`recorder/`): the first sign in and the
-   setup of the account `admin`, a service port, the Host, the approval of its
-   host key, the tunnel coming up, the service opened through the port the Host
-   opened, a local forward on `127.0.0.1:18080` that reaches the web server
-   inside the Host, the status screen with the tunnel and the forward in one
-   table, and the SOCKS5 proxy of the Host on `127.0.0.1:1080`, which a second
-   Chrome opens that same web server through.
+   setup of the account `admin`, three service ports that the Host opens on
+   `8080`, `8081` and `8082` (the first at the pace of the rest, the other two
+   the same way but quickly), the Host, the approval of its host key, the
+   tunnels coming up, the first service opened through the port the Host opened
+   for it, a local forward on `127.0.0.1:18080` that reaches the web server
+   inside the Host (the recording does not wait there for its status to say
+   connected; it opens the port as soon as the port answers), the status screen
+   with the tunnels and the forward in one table, and the SOCKS5 proxy of the
+   Host on `127.0.0.1:1080`, which a second Chrome opens that same web server
+   through.
 6. Turns the frames into a GIF 960 pixels wide with ffmpeg, with fewer colors
    when it comes out larger than 5 MB.
 
 It needs Go, Docker, ffmpeg and Google Chrome, and these addresses free:
-`127.0.0.1:8888` (tunnel-manager), `127.0.0.1:8000`, `127.0.0.2:2222`,
-`127.0.0.2:8080`, `127.0.0.1:18080` and `127.0.0.1:1080`. The script says which one is taken if one is.
+`127.0.0.1:8888` (tunnel-manager), `127.0.0.1:8000`, `127.0.0.1:8001`,
+`127.0.0.1:8002`, `127.0.0.2:2222`, `127.0.0.2:8080`, `127.0.0.2:8081`,
+`127.0.0.2:8082`, `127.0.0.1:18080` and `127.0.0.1:1080`. The script says which one is taken if one is.
 
 | Variable | What it changes |
 |----------|-----------------|

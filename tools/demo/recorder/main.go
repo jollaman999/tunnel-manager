@@ -9,7 +9,9 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"io"
 	"log"
+	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
@@ -26,8 +28,8 @@ type config struct {
 	account         string
 	accountPassword string
 	serviceIP       string
-	servicePort     string
-	localPort       string
+	servicePorts    []string
+	localPorts      []string
 	hostIP          string
 	hostPort        string
 	hostUser        string
@@ -52,13 +54,13 @@ func main() {
 	flag.StringVar(&cfg.account, "account", "admin", "username the setup gives the account")
 	flag.StringVar(&cfg.accountPassword, "account-password", "demo-account-password", "password the setup gives the account")
 	flag.StringVar(&cfg.serviceIP, "service-ip", "127.0.0.1", "address of the demo service")
-	flag.StringVar(&cfg.servicePort, "service-port", "8000", "port of the demo service")
-	flag.StringVar(&cfg.localPort, "local-port", "8080", "port the Host opens for the service")
+	servicePorts := flag.String("service-ports", "8000,8001,8002", "comma-separated ports of the demo service")
+	localPorts := flag.String("local-ports", "8080,8081,8082", "comma-separated ports the Host opens for them, one for each")
 	flag.StringVar(&cfg.hostIP, "host-ip", "127.0.0.2", "address the Host is registered at")
 	flag.StringVar(&cfg.hostPort, "host-port", "2222", "SSH port the Host is registered at")
 	flag.StringVar(&cfg.hostUser, "host-user", "demo", "SSH user of the Host")
 	flag.StringVar(&cfg.hostPassword, "host-password", "demo-host-password", "SSH password of the Host")
-	flag.StringVar(&cfg.serviceURL, "service-url", "http://127.0.0.2:8080/", "address the Host opened, as a browser reaches it")
+	flag.StringVar(&cfg.serviceURL, "service-url", "http://127.0.0.2:8080/", "address the Host opened for the first service port, as a browser reaches it")
 	flag.StringVar(&cfg.forwardPort, "forward-port", "18080", "port the local forward opens on this machine")
 	flag.StringVar(&cfg.targetIP, "target-ip", "127.0.0.1", "address the local forward reaches from the Host")
 	flag.StringVar(&cfg.targetPort, "target-port", "80", "port the local forward reaches from the Host")
@@ -70,6 +72,13 @@ func main() {
 
 	if cfg.passwordFile == "" {
 		log.Fatal("-initial-password-file is required")
+	}
+
+	cfg.servicePorts = strings.Split(*servicePorts, ",")
+	cfg.localPorts = strings.Split(*localPorts, ",")
+
+	if len(cfg.servicePorts) != len(cfg.localPorts) {
+		log.Fatal("-service-ports and -local-ports must name as many ports as each other")
 	}
 
 	if err := record(cfg); err != nil {
@@ -188,6 +197,9 @@ func sceneSignIn(r *recorder, cfg config, initial string) error {
 	return nil
 }
 
+// sceneServicePort adds the first service port at the pace of the rest of the
+// recording, and the others the same way but quickly: once the first has been
+// seen, the others only need to be seen going in.
 func sceneServicePort(r *recorder, cfg config, _ string) error {
 	if err := r.click(`nav a[data-screen="service-ports"]`, `#service-port-create-service_ip`); err != nil {
 		return err
@@ -199,28 +211,50 @@ func sceneServicePort(r *recorder, cfg config, _ string) error {
 
 	r.pause(time.Second)
 
-	fields := []struct{ sel, text string }{
-		{`#service-port-create-service_ip`, cfg.serviceIP},
-		{`#service-port-create-service_port`, cfg.servicePort},
-		{`#service-port-create-local_port`, cfg.localPort},
-		{`#service-port-create-description`, "Demo web service"},
-	}
+	for i, servicePort := range cfg.servicePorts {
+		if i == 1 {
+			if err := r.caption("2. Add the other ports of the service the same way"); err != nil {
+				return err
+			}
 
-	for _, field := range fields {
-		if err := r.typeInto(field.sel, field.text, 3); err != nil {
+			r.fast = true
+		}
+
+		fields := []struct{ sel, text string }{
+			{`#service-port-create-service_ip`, cfg.serviceIP},
+			{`#service-port-create-service_port`, servicePort},
+			{`#service-port-create-local_port`, cfg.localPorts[i]},
+			{`#service-port-create-description`, fmt.Sprintf("Demo web service %d", i+1)},
+		}
+
+		for _, field := range fields {
+			if err := r.typeInto(field.sel, field.text, 3); err != nil {
+				return err
+			}
+		}
+
+		if err := r.click(`[data-action="service-port-create-submit"]`, ``); err != nil {
 			return err
 		}
-	}
 
-	if err := r.click(`[data-action="service-port-create-submit"]`, `[data-action^="service-port-edit-"]`); err != nil {
-		return err
-	}
+		added := fmt.Sprintf(`document.querySelectorAll('[data-action^="service-port-edit-"]').length >= %d`, i+1)
 
-	if err := r.scrollTo(`table`); err != nil {
-		return err
-	}
+		if err := r.waitTrue(added, fmt.Sprintf("service port %d in the table", i+1), 20*time.Second); err != nil {
+			return err
+		}
 
-	r.pause(1500 * time.Millisecond)
+		if err := r.scrollTo(`table`); err != nil {
+			return err
+		}
+
+		// The table with all of them in it is held as long as the first one
+		// was, so that what the quick part added can be read.
+		if i == len(cfg.servicePorts)-1 {
+			r.fast = false
+		}
+
+		r.pause(1500 * time.Millisecond)
+	}
 
 	return nil
 }
@@ -273,7 +307,7 @@ func sceneHost(r *recorder, cfg config, _ string) error {
 	return nil
 }
 
-func sceneStatus(r *recorder, _ config, _ string) error {
+func sceneStatus(r *recorder, cfg config, _ string) error {
 	if err := r.click(`nav a[data-screen="status"]`, `[data-count="connected"]`); err != nil {
 		return err
 	}
@@ -314,7 +348,10 @@ func sceneStatus(r *recorder, _ config, _ string) error {
 		return err
 	}
 
-	if err := r.waitWhileShooting(`.badge[data-status="connected"]`, 90*time.Second); err != nil {
+	all := fmt.Sprintf(`document.querySelectorAll('table tbody .badge[data-status="connected"]').length >= %d`,
+		len(cfg.servicePorts))
+
+	if err := r.waitTrueWhileShooting(all, "every service port tunnel to be connected", 90*time.Second); err != nil {
 		return err
 	}
 
@@ -405,8 +442,6 @@ func sceneLocalForward(r *recorder, cfg config, _ string) error {
 		}
 	}
 
-	connected := `[data-modal-panel="local-forwards"] .badge[data-status="connected"]`
-
 	if err := r.click(`[data-action="local-forward-create-submit"]`, ``); err != nil {
 		return err
 	}
@@ -415,23 +450,18 @@ func sceneLocalForward(r *recorder, cfg config, _ string) error {
 		return err
 	}
 
-	if err := r.waitWhileShooting(connected, 60*time.Second); err != nil {
-		return err
-	}
-
-	if err := r.point(connected); err != nil {
-		return err
-	}
-
-	if err := r.shot(2500 * time.Millisecond); err != nil {
-		return err
-	}
-
+	// The recording moves on without waiting for the new row to say it is
+	// connected; the status screen shows that later. Until the forward answers,
+	// the page below would not load, so that is waited for off camera.
 	if err := r.click(`[data-action="local-forwards-close"]`, ``); err != nil {
 		return err
 	}
 
 	address := fmt.Sprintf("http://127.0.0.1:%s/", cfg.forwardPort)
+
+	if err := waitAnswers(address, "Hello from inside the Host", 60*time.Second); err != nil {
+		return err
+	}
 
 	if err := r.navigate(address); err != nil {
 		return err
@@ -470,13 +500,15 @@ func sceneStatusBoth(r *recorder, cfg config, _ string) error {
 		return err
 	}
 
-	if err := r.caption("8. The status screen holds the tunnel and the local forward in one table"); err != nil {
+	if err := r.caption("8. The status screen holds the tunnels and the local forward in one table"); err != nil {
 		return err
 	}
 
-	// Both sorts of row carry the same badge, so what is waited for is the
-	// second one rather than a badge of its own.
-	both := `document.querySelectorAll('table tbody .badge[data-status="connected"]').length >= 2`
+	// Both sorts of row carry the same badge, so what is waited for is one
+	// more of them than there are service port tunnels rather than a badge of
+	// its own.
+	both := fmt.Sprintf(`document.querySelectorAll('table tbody .badge[data-status="connected"]').length >= %d`,
+		len(cfg.servicePorts)+1)
 
 	if err := r.waitTrueWhileShooting(both, "both rows to be connected", 60*time.Second); err != nil {
 		return err
@@ -639,6 +671,10 @@ type recorder struct {
 	options []chromedp.ExecAllocatorOption
 	width   int
 	height  int
+
+	// fast cuts every hold to a fifth and types a field in one go, for steps
+	// that repeat one the recording has already shown at its own pace.
+	fast bool
 }
 
 func (r *recorder) run(actions ...chromedp.Action) error {
@@ -667,6 +703,8 @@ func (r *recorder) navigate(url string) error {
 // shot saves what the viewport shows and holds it for hold. A frame that is the
 // same as the one before it only lengthens that one.
 func (r *recorder) shot(hold time.Duration) error {
+	hold = r.held(hold)
+
 	var png []byte
 
 	if err := r.run(chromedp.CaptureScreenshot(&png)); err != nil {
@@ -693,8 +731,16 @@ func (r *recorder) shot(hold time.Duration) error {
 
 func (r *recorder) hold(d time.Duration) {
 	if len(r.frames) > 0 {
-		r.frames[len(r.frames)-1].hold += d
+		r.frames[len(r.frames)-1].hold += r.held(d)
 	}
+}
+
+func (r *recorder) held(d time.Duration) time.Duration {
+	if r.fast {
+		return d / 5
+	}
+
+	return d
 }
 
 func (r *recorder) pause(d time.Duration) {
@@ -796,6 +842,10 @@ func (r *recorder) typeInto(sel, text string, chunk int) error {
 
 	runes := []rune(text)
 
+	if r.fast {
+		chunk = len(runes)
+	}
+
 	for start := 0; start < len(runes); start += chunk {
 		end := min(start+chunk, len(runes))
 
@@ -879,6 +929,50 @@ func (r *recorder) waitTrueWhileShooting(expr, what string, limit time.Duration)
 	}
 
 	return fmt.Errorf("%s did not show up within %s", what, limit)
+}
+
+// waitTrue waits until expr is true on the page without taking frames.
+func (r *recorder) waitTrue(expr, what string, limit time.Duration) error {
+	deadline := time.Now().Add(limit)
+
+	for time.Now().Before(deadline) {
+		var found bool
+
+		if err := r.run(chromedp.Evaluate(expr, &found)); err != nil {
+			return err
+		}
+
+		if found {
+			return nil
+		}
+
+		time.Sleep(100 * time.Millisecond)
+	}
+
+	return fmt.Errorf("waited %s for %s", limit, what)
+}
+
+// waitAnswers waits, without taking frames, until address answers with a page
+// that holds want.
+func waitAnswers(address, want string, limit time.Duration) error {
+	client := &http.Client{Timeout: 2 * time.Second}
+	deadline := time.Now().Add(limit)
+
+	for time.Now().Before(deadline) {
+		resp, err := client.Get(address)
+		if err == nil {
+			body, _ := io.ReadAll(resp.Body)
+			_ = resp.Body.Close()
+
+			if strings.Contains(string(body), want) {
+				return nil
+			}
+		}
+
+		time.Sleep(250 * time.Millisecond)
+	}
+
+	return fmt.Errorf("%s did not answer with %q within %s", address, want, limit)
 }
 
 func (r *recorder) waitGone(sel string, limit time.Duration) error {
