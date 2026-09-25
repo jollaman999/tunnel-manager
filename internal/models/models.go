@@ -189,6 +189,14 @@ type LocalForward struct {
 	TargetAddress string `gorm:"not null" json:"target_address"`
 	TargetPort    int    `gorm:"not null" json:"target_port"`
 	Description   string `json:"description"`
+	// AllowedSources is the list of addresses and CIDR blocks a client of the
+	// local port may connect from, in the form Host.SocksAllowedSources takes.
+	// An empty value lets every address in, which is what every forward did
+	// before the column existed, so it carries no "not null" and no default
+	// for the reason the SOCKS5 columns carry none. It is held to the list on
+	// either scope, the way the proxy is: on the wildcard it is what keeps the
+	// port from being open to anyone who can reach it.
+	AllowedSources string `json:"allowed_sources"`
 	// Enabled is whether this forward runs. One that is off opens no port and
 	// makes no SSH connection, and still holds LocalPort. It carries no
 	// database default for the reason Host.Enabled carries none.
@@ -408,6 +416,10 @@ type LocalForwardRequest struct {
 	TargetAddress string `json:"target_address" validate:"required,hostname_rfc1123|ip"`
 	TargetPort    int    `json:"target_port" validate:"required,min=1,max=65535"`
 	Description   string `json:"description"`
+	// AllowedSources is LocalForward.AllowedSources, a pointer for the reason
+	// Enabled is one. A creation that leaves it out lets every address in, and
+	// a change that leaves it out keeps what is stored.
+	AllowedSources *string `json:"allowed_sources"`
 	// Enabled is a pointer for the reason CreateHostRequest.Enabled is. A
 	// creation that leaves it out makes a forward that runs, and a change that
 	// leaves it out keeps what is stored.

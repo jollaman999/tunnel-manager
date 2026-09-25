@@ -148,6 +148,7 @@ const (
 	errLocalForwardPortTaken     errorCode = "local_forward.local_port.taken"
 	errLocalForwardPortIsAPIPort errorCode = "local_forward.local_port.api_port"
 	errLocalForwardPortSocks     errorCode = "local_forward.local_port.socks"
+	errLocalForwardSourcesBad    errorCode = "local_forward.allowed_sources.invalid"
 
 	errAssignmentAddAndRemove        errorCode = "assignment.add_and_remove"
 	errAssignmentServicePortsMissing errorCode = "assignment.service_port.not_found"
@@ -382,6 +383,7 @@ var errorMessages = map[errorCode]string{
 	errLocalForwardPortTaken:     "The local port {local_port} is already opened by another local forward",
 	errLocalForwardPortIsAPIPort: "The local port {local_port} is the port this server listens on",
 	errLocalForwardPortSocks:     "The local port {local_port} is already opened by the SOCKS5 proxy of the Host {host}",
+	errLocalForwardSourcesBad:    "The allowed sources of the local forward are refused: {reason}",
 
 	// Which service ports a Host carries.
 	errAssignmentAddAndRemove:        "The change names the same service port to add and to remove: {ids}",

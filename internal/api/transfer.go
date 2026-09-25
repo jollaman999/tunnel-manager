@@ -250,6 +250,10 @@ type localForwardContent struct {
 	// false. Every forward of such a file was running, so it is stored as on.
 	// The export writes it every time.
 	Enabled *bool `json:"enabled"`
+	// AllowedSources is models.LocalForward.AllowedSources. A file from before
+	// the list existed carries no field, which reads as empty: every address
+	// let in, as every forward of such a file did.
+	AllowedSources string `json:"allowed_sources"`
 }
 
 // enabled is whether the forward is stored as switched on.
@@ -1036,12 +1040,13 @@ func localForwardsByHost(db *gorm.DB) (map[uint][]localForwardContent, error) {
 		enabled := lf.Enabled
 
 		byHost[lf.HostID] = append(byHost[lf.HostID], localForwardContent{
-			BindScope:     lf.BindScope,
-			LocalPort:     lf.LocalPort,
-			TargetAddress: lf.TargetAddress,
-			TargetPort:    lf.TargetPort,
-			Description:   lf.Description,
-			Enabled:       &enabled,
+			BindScope:      lf.BindScope,
+			LocalPort:      lf.LocalPort,
+			TargetAddress:  lf.TargetAddress,
+			TargetPort:     lf.TargetPort,
+			Description:    lf.Description,
+			AllowedSources: lf.AllowedSources,
+			Enabled:        &enabled,
 		})
 	}
 
@@ -1857,6 +1862,9 @@ func checkLocalForwards(c echo.Context, content tunnelsContent) *refusal {
 				TargetPort:    lf.TargetPort,
 				Description:   lf.Description,
 			})
+			if err == nil {
+				_, err = tunnel.ParseAllowedSources(lf.AllowedSources)
+			}
 			if err != nil {
 				return refuse(http.StatusBadRequest, errImportLocalForwardRefused,
 					errorArgs{"host": host.Address, "local_port": localPort, "reason": err.Error()})
@@ -2104,14 +2112,15 @@ func (h *TransferHandler) importLocalForwards(tx *gorm.DB, written []hostContent
 			}
 
 			err = tx.Create(&models.LocalForward{
-				HostID:        hostIDs[i],
-				Number:        number,
-				BindScope:     bindScope,
-				LocalPort:     lf.LocalPort,
-				TargetAddress: lf.TargetAddress,
-				TargetPort:    lf.TargetPort,
-				Description:   lf.Description,
-				Enabled:       lf.enabled(),
+				HostID:         hostIDs[i],
+				Number:         number,
+				BindScope:      bindScope,
+				LocalPort:      lf.LocalPort,
+				TargetAddress:  lf.TargetAddress,
+				TargetPort:     lf.TargetPort,
+				Description:    lf.Description,
+				AllowedSources: lf.AllowedSources,
+				Enabled:        lf.enabled(),
 			}).Error
 			if err != nil {
 				h.hosts.logger.Error("failed to store a local forward while importing",

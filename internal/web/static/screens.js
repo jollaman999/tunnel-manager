@@ -4837,6 +4837,13 @@ function localForwardForm(item, onSubmit, onCancel) {
         options: localForwardScopeOptions(),
         note: t("local-forwards.scope.hint")
       },
+      {
+        name: "allowed_sources",
+        label: t("local-forwards.sources.label"),
+        value: typeof stored.allowed_sources === "string" ? stored.allowed_sources : "",
+        note: t("local-forwards.sources.hint"),
+        shownWhen: { field: "bind_scope", is: bindScopeWildcard }
+      },
       targetAddress,
       portField("target_port", t("local-forwards.target-port.label"), stored.target_port),
       { name: "description", label: t("local-forwards.description.label"), value: stored.description }
@@ -4851,21 +4858,39 @@ function localForwardForm(item, onSubmit, onCancel) {
   return buildForm(spec);
 }
 
+// The allowed sources are asked for only on the wildcard, and the form sends an
+// empty list on the loopback: the server holds a forward to its list on either
+// scope, and a list the form no longer shows would otherwise go on refusing
+// clients with nothing on the screen to say why.
 function localForwardBody(values) {
+  const sources = typeof values.allowed_sources === "string" ? values.allowed_sources : "";
+
   return {
     bind_scope: values.bind_scope,
     local_port: asNumber(values.local_port),
     target_address: values.target_address.trim(),
     target_port: asNumber(values.target_port),
-    description: values.description
+    description: values.description,
+    allowed_sources: values.bind_scope === bindScopeWildcard ? sources.trim() : ""
   };
+}
+
+// localForwardKeptBody is a stored local forward sent back with the allowed
+// sources left out, so that the server keeps the list it holds whichever scope
+// the row is on. It is what a press that changes one other value sends.
+function localForwardKeptBody(item) {
+  const body = localForwardBody(item);
+
+  delete body.allowed_sources;
+
+  return body;
 }
 
 // localForwardFlipBody is a stored local forward switched on or off. The update
 // takes the whole record, so the row goes back as it was read with enabled
 // beside it, and the edit form leaves enabled out so as to keep it.
 function localForwardFlipBody(item, on) {
-  const body = localForwardBody(item);
+  const body = localForwardKeptBody(item);
 
   body.enabled = on;
 
@@ -7039,7 +7064,7 @@ async function moveLocalForward(hostID, number, port) {
   const item = await apiCall("GET", path);
 
   return apiCall("PUT", path,
-    localForwardBody(Object.assign({}, item, { local_port: String(port) })));
+    localForwardKeptBody(Object.assign({}, item, { local_port: String(port) })));
 }
 
 // settingsPending is what is stored with a value this service is not running

@@ -106,6 +106,7 @@ const (
 	TunnelLocalForwardConnectFailedGivingUp ID = "tunnel.local_forward_connect_failed_giving_up"
 	TunnelLocalForwardListenFailed          ID = "tunnel.local_forward_listen_failed"
 	TunnelLocalForwardTargetDialFailed      ID = "tunnel.local_forward_target_dial_failed"
+	TunnelLocalForwardSourceRefused         ID = "tunnel.local_forward_source_refused"
 	// The SOCKS5 proxies of the Hosts. What they share with the local
 	// forwards, the SSH connection, the listeners and the copy, is logged
 	// under the IDs above.

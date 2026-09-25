@@ -977,7 +977,7 @@
                         "CSRFToken": []
                     }
                 ],
-                "description": "This machine opens local_port and carries every connection to it over the SSH connection of the Host to target_address:target_port, as seen from the Host. target_address is a host name or an IP address, resolved by the Host.\nbind_scope is where local_port is opened on this machine: loopback, wildcard, or left out for the wildcard.\nenabled is whether the forward runs. Left out, it is true. A forward that is off opens no port and makes no SSH connection, and still holds local_port.",
+                "description": "This machine opens local_port and carries every connection to it over the SSH connection of the Host to target_address:target_port, as seen from the Host. target_address is a host name or an IP address, resolved by the Host.\nbind_scope is where local_port is opened on this machine: loopback, wildcard, or left out for the wildcard.\nenabled is whether the forward runs. Left out, it is true. A forward that is off opens no port and makes no SSH connection, and still holds local_port.\nallowed_sources is the addresses and CIDR blocks a client may connect to local_port from, separated by commas or spaces; empty or left out lets every address in. It is taken and held to on either bind_scope, the way socks_allowed_sources of a Host is.",
                 "consumes": [
                     "application/json"
                 ],
@@ -1026,7 +1026,7 @@
                         }
                     },
                     "400": {
-                        "description": "The body is refused",
+                        "description": "The body is refused, or allowed_sources is not a list of addresses and CIDR blocks",
                         "schema": {
                             "$ref": "#/definitions/api.errorBody"
                         }
@@ -1105,7 +1105,7 @@
                         "CSRFToken": []
                     }
                 ],
-                "description": "local_port, target_address and target_port are all required. The Host it is carried by is not changed, and neither is its number.\nenabled switches the forward on or off. Left out, it keeps what is stored.",
+                "description": "local_port, target_address and target_port are all required. The Host it is carried by is not changed, and neither is its number.\nenabled switches the forward on or off. Left out, it keeps what is stored.\nallowed_sources left out keeps what is stored; sent empty it lets every address in.",
                 "consumes": [
                     "application/json"
                 ],
@@ -1161,7 +1161,7 @@
                         }
                     },
                     "400": {
-                        "description": "The body is refused",
+                        "description": "The body is refused, or allowed_sources is not a list of addresses and CIDR blocks",
                         "schema": {
                             "$ref": "#/definitions/api.errorBody"
                         }
@@ -2822,6 +2822,7 @@
                 "local_forward.local_port.taken",
                 "local_forward.local_port.api_port",
                 "local_forward.local_port.socks",
+                "local_forward.allowed_sources.invalid",
                 "assignment.add_and_remove",
                 "assignment.service_port.not_found",
                 "assignment.update_failed",
@@ -2979,6 +2980,7 @@
                 "errLocalForwardPortTaken",
                 "errLocalForwardPortIsAPIPort",
                 "errLocalForwardPortSocks",
+                "errLocalForwardSourcesBad",
                 "errAssignmentAddAndRemove",
                 "errAssignmentServicePortsMissing",
                 "errAssignmentUpdateFailed",
@@ -3417,6 +3419,10 @@
         "api.localForwardView": {
             "type": "object",
             "properties": {
+                "allowed_sources": {
+                    "description": "AllowedSources is the list of addresses and CIDR blocks a client of the\nlocal port may connect from, in the form Host.SocksAllowedSources takes.\nAn empty value lets every address in, which is what every forward did\nbefore the column existed, so it carries no \"not null\" and no default\nfor the reason the SOCKS5 columns carry none. It is held to the list on\neither scope, the way the proxy is: on the wildcard it is what keeps the\nport from being open to anyone who can reach it.",
+                    "type": "string"
+                },
                 "bind_scope": {
                     "description": "BindScope is where on this machine LocalPort is opened, with the words\nand the constraint HostServicePort.BindScope carries, and an empty value\nis the wildcard for the same reason.",
                     "type": "string"
@@ -4007,6 +4013,10 @@
                 "target_port"
             ],
             "properties": {
+                "allowed_sources": {
+                    "description": "AllowedSources is LocalForward.AllowedSources, a pointer for the reason\nEnabled is one. A creation that leaves it out lets every address in, and\na change that leaves it out keeps what is stored.",
+                    "type": "string"
+                },
                 "bind_scope": {
                     "type": "string",
                     "enum": [

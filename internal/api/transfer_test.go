@@ -2387,14 +2387,15 @@ func (i *transferInstall) forward(t *testing.T, hostIP string, lf localForwardCo
 	}
 
 	err = i.db.Create(&models.LocalForward{
-		HostID:        host.ID,
-		Number:        number,
-		BindScope:     lf.BindScope,
-		LocalPort:     lf.LocalPort,
-		TargetAddress: lf.TargetAddress,
-		TargetPort:    lf.TargetPort,
-		Description:   lf.Description,
-		Enabled:       lf.enabled(),
+		HostID:         host.ID,
+		Number:         number,
+		BindScope:      lf.BindScope,
+		LocalPort:      lf.LocalPort,
+		TargetAddress:  lf.TargetAddress,
+		TargetPort:     lf.TargetPort,
+		Description:    lf.Description,
+		AllowedSources: lf.AllowedSources,
+		Enabled:        lf.enabled(),
 	}).Error
 	if err != nil {
 		t.Fatalf("failed to store the local forward: %v", err)
@@ -2761,6 +2762,12 @@ func TestALocalForwardTheFileCannotCarryIsRefused(t *testing.T) {
 			name:   "a port out of range",
 			second: localForwardContent{LocalPort: 70000, TargetAddress: "192.0.2.31", TargetPort: 22},
 			code:   errImportLocalForwardRefused,
+		},
+		{
+			name: "allowed sources that are not addresses",
+			second: localForwardContent{LocalPort: 15433, TargetAddress: "192.0.2.31", TargetPort: 22,
+				AllowedSources: "192.0.2.0/24, not-an-address"},
+			code: errImportLocalForwardRefused,
 		},
 	}
 
@@ -3450,4 +3457,90 @@ func TestADroppedPathNamesItsReason(t *testing.T) {
 			reasonValues: textArgs{"stored": defaults.LoggingFilePath},
 		},
 	})
+}
+
+// TestTheAllowedSourcesOfALocalForwardCrossWithIt is the list on the round
+// trip: the export writes it, the import stores it, and a file from before the
+// list, which carries no field, stores every forward with an empty list, which
+// lets every address in as those forwards always did.
+func TestTheAllowedSourcesOfALocalForwardCrossWithIt(t *testing.T) {
+	source := newTransferInstall(t)
+
+	source.registerHost(t, passwordHost("192.0.2.10"))
+	source.forward(t, "192.0.2.10", localForwardContent{BindScope: models.BindScopeWildcard, LocalPort: 15432,
+		TargetAddress: "127.0.0.1", TargetPort: 5432, AllowedSources: "192.0.2.0/24, 198.51.100.7"})
+
+	file := source.exportTunnels(t, testExportPassword)
+
+	opened, err := crypto.DecryptWithPassword(file, testExportPassword)
+	if err != nil {
+		t.Fatalf("the file does not open: %v", err)
+	}
+
+	if !strings.Contains(opened, `"allowed_sources":"192.0.2.0/24, 198.51.100.7"`) {
+		t.Fatalf("the file does not carry the allowed sources: %s", opened)
+	}
+
+	sources := func(install *transferInstall) []string {
+		var rows []models.LocalForward
+
+		err := install.db.Order("local_port").Find(&rows).Error
+		if err != nil {
+			t.Fatalf("failed to read the local forwards: %v", err)
+		}
+
+		lists := make([]string, 0, len(rows))
+		for _, row := range rows {
+			lists = append(lists, row.AllowedSources)
+		}
+
+		return lists
+	}
+
+	target := newTransferInstall(t)
+
+	rec := target.importTunnels(t, file, testExportPassword, false)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("the import answered %d: %s", rec.Code, rec.Body.String())
+	}
+
+	if got := sources(target); !reflect.DeepEqual(got, []string{"192.0.2.0/24, 198.51.100.7"}) {
+		t.Fatalf("the installation that took the file in holds %q", got)
+	}
+
+	older := rewriteHosts(t, file, testExportPassword, func(host map[string]interface{}) {
+		forwards, ok := host["local_forwards"].([]interface{})
+		if !ok {
+			t.Fatalf("the Host carries no list of local forwards")
+		}
+
+		for _, entry := range forwards {
+			forward, ok := entry.(map[string]interface{})
+			if !ok {
+				t.Fatalf("a local forward in the file is not an object")
+			}
+
+			delete(forward, "allowed_sources")
+		}
+	})
+
+	opened, err = crypto.DecryptWithPassword(older, testExportPassword)
+	if err != nil {
+		t.Fatalf("the file does not open: %v", err)
+	}
+
+	if strings.Contains(opened, `"allowed_sources"`) {
+		t.Fatalf("the file still carries the allowed sources: %s", opened)
+	}
+
+	fromOlder := newTransferInstall(t)
+
+	rec = fromOlder.importTunnels(t, older, testExportPassword, false)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("the import of the older file answered %d: %s", rec.Code, rec.Body.String())
+	}
+
+	if got := sources(fromOlder); !reflect.DeepEqual(got, []string{""}) {
+		t.Fatalf("the installation that took the older file in holds %q, want one empty list", got)
+	}
 }

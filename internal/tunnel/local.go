@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"net"
+	"net/netip"
 	"strconv"
 	"sync"
 	"time"
@@ -74,7 +75,11 @@ type localTunnel struct {
 	listen localPair
 	server string
 	target string
-	config *ssh.ClientConfig
+	// allowed is the parsed LocalForward.AllowedSources. A connection from a
+	// source outside it is closed before anything is dialled for it, the way
+	// the SOCKS5 proxy closes one.
+	allowed []netip.Prefix
+	config  *ssh.ClientConfig
 	// connFP is written before the forward is registered and never again,
 	// the way SSHTunnel.connFP is.
 	connFP   connFingerprint
@@ -92,6 +97,10 @@ type localTunnel struct {
 
 	stateMu sync.Mutex
 	state   LocalForwardState
+
+	refusedMu     sync.Mutex
+	refusedLogged time.Time
+	refusedSince  int
 
 	done     chan struct{}
 	stopOnce sync.Once
@@ -125,7 +134,9 @@ func LocalForwardAddresses(host *models.Host, lf *models.LocalForward) (listenV4
 // localForwardFingerprint is connectionFingerprint for a local forward: the
 // server, the user, every credential, the trusted host key, the listen pair
 // and the target, each with its length in front. The reasons each of them is
-// in there are the ones given at connectionFingerprint.
+// in there are the ones given at connectionFingerprint. The allowed sources
+// are in there for the reason socksFingerprint carries them: a list that was
+// changed has to reach the forward, and it is read where the forward is built.
 func localForwardFingerprint(host *models.Host, lf *models.LocalForward, creds hostCreds) connFingerprint {
 	listenV4, listenV6, server, target := LocalForwardAddresses(host, lf)
 
@@ -133,7 +144,7 @@ func localForwardFingerprint(host *models.Host, lf *models.LocalForward, creds h
 	for _, value := range []string{
 		server, target, listenV4, listenV6, host.User,
 		creds.password, creds.privateKey, creds.passphrase,
-		host.HostKey,
+		host.HostKey, lf.AllowedSources,
 	} {
 		_, _ = fmt.Fprintf(h, "%d:%s", len(value), value)
 	}
@@ -144,6 +155,11 @@ func localForwardFingerprint(host *models.Host, lf *models.LocalForward, creds h
 func newLocalTunnel(lf *models.LocalForward, host *models.Host, config *ssh.ClientConfig,
 	interval time.Duration, logger *zap.Logger) (*localTunnel, error) {
 	listenV4, listenV6, serverAddr, target := LocalForwardAddresses(host, lf)
+
+	allowed, err := ParseAllowedSources(lf.AllowedSources)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read the allowed sources: %w", err)
+	}
 
 	v4, err := net.ResolveTCPAddr("tcp4", listenV4)
 	if err != nil {
@@ -161,6 +177,7 @@ func newLocalTunnel(lf *models.LocalForward, host *models.Host, config *ssh.Clie
 		listen:   localPair{v4: v4, v6: v6},
 		server:   dialAddress(serverAddr),
 		target:   target,
+		allowed:  allowed,
 		config:   config,
 		interval: interval,
 		state:    LocalForwardState{Status: localStatusStarting},
@@ -360,8 +377,34 @@ func (f *localTunnel) accept(listener net.Listener, client *ssh.Client) error {
 			return err
 		}
 
+		if !sourceAllowed(f.allowed, conn.RemoteAddr()) {
+			_ = conn.Close()
+			f.refused(conn.RemoteAddr())
+			continue
+		}
+
 		go f.forward(conn, client, forwardIdleTimeout)
 	}
+}
+
+// refused is socksTunnel.refused for a local forward: a connection from a
+// source that is not allowed is logged at most once every
+// socksRefusalLogInterval, with the number refused since the last line.
+func (f *localTunnel) refused(source net.Addr) {
+	f.refusedMu.Lock()
+	f.refusedSince++
+	if !f.refusedLogged.IsZero() && time.Since(f.refusedLogged) < socksRefusalLogInterval {
+		f.refusedMu.Unlock()
+		return
+	}
+	count := f.refusedSince
+	f.refusedSince = 0
+	f.refusedLogged = time.Now()
+	f.refusedMu.Unlock()
+
+	f.logger.Info("refused a connection to the local forward from a source that is not allowed",
+		append([]zap.Field{logid.TunnelLocalForwardSourceRefused.Field()},
+			f.fields(zap.String("source", source.String()), zap.Int("refused", count))...)...)
 }
 
 // forward joins a connection the local port accepted to the target, dialled

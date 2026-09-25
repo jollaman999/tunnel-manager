@@ -133,6 +133,24 @@ func localPortRefused(tx *gorm.DB, hostID uint, number uint, localPort int, apiP
 	return nil, nil
 }
 
+// checkLocalForwardSources holds the allowed sources a request carries to the
+// list ParseAllowedSources reads, as checkSocks holds those of a proxy. A list
+// is taken on either scope, as the proxy takes one: on the loopback it is held
+// to the addresses of this machine alone, which is the operator's choice to
+// make and not one to refuse.
+func checkLocalForwardSources(sources *string) *refusal {
+	if sources == nil {
+		return nil
+	}
+
+	_, err := tunnel.ParseAllowedSources(*sources)
+	if err != nil {
+		return refuse(http.StatusBadRequest, errLocalForwardSourcesBad, errorArgs{"reason": err.Error()})
+	}
+
+	return nil
+}
+
 // nextLocalForwardNumber is the number a forward added to this Host is given:
 // the lowest one the Host is not already using.
 //
@@ -416,6 +434,7 @@ func (h *Handler) ListHostLocalForwards(c echo.Context) error {
 // @Description  This machine opens local_port and carries every connection to it over the SSH connection of the Host to target_address:target_port, as seen from the Host. target_address is a host name or an IP address, resolved by the Host.
 // @Description  bind_scope is where local_port is opened on this machine: loopback, wildcard, or left out for the wildcard.
 // @Description  enabled is whether the forward runs. Left out, it is true. A forward that is off opens no port and makes no SSH connection, and still holds local_port.
+// @Description  allowed_sources is the addresses and CIDR blocks a client may connect to local_port from, separated by commas or spaces; empty or left out lets every address in. It is taken and held to on either bind_scope, the way socks_allowed_sources of a Host is.
 // @Tags         local forwards
 // @Accept   json
 // @Produce  json
@@ -423,7 +442,7 @@ func (h *Handler) ListHostLocalForwards(c echo.Context) error {
 // @Param   id    path  int  true  "The id of the Host"
 // @Param   body  body  models.LocalForwardRequest  true  "The local forward to add"
 // @Success  201  {object}  models.Response{data=api.localForwardView}
-// @Failure  400  {object}  api.errorBody  "The body is refused"
+// @Failure  400  {object}  api.errorBody  "The body is refused, or allowed_sources is not a list of addresses and CIDR blocks"
 // @Failure  404  {object}  api.errorBody  "No such Host"
 // @Failure  409  {object}  api.errorBody  "local_port is taken by another local forward or a SOCKS5 proxy, or is the port of this server"
 // @Router       /host/{id}/local-forward [post]
@@ -442,6 +461,11 @@ func (h *Handler) CreateHostLocalForward(c echo.Context) error {
 	err = c.Validate(&req)
 	if err != nil {
 		return failure(c, http.StatusBadRequest, errRequestValidationFailed, errorArgs{"reason": err.Error()})
+	}
+
+	refusedSources := checkLocalForwardSources(req.AllowedSources)
+	if refusedSources != nil {
+		return refusedSources.answer(c)
 	}
 
 	apiPort, err := h.storedAPIPort()
@@ -505,6 +529,9 @@ func (h *Handler) CreateHostLocalForward(c echo.Context) error {
 		TargetPort:    req.TargetPort,
 		Description:   req.Description,
 		Enabled:       req.Enabled == nil || *req.Enabled,
+	}
+	if req.AllowedSources != nil {
+		lf.AllowedSources = *req.AllowedSources
 	}
 
 	err = tx.Create(&lf).Error
@@ -573,6 +600,7 @@ func (h *Handler) GetLocalForward(c echo.Context) error {
 // @Summary      Update a local forward of a Host
 // @Description  local_port, target_address and target_port are all required. The Host it is carried by is not changed, and neither is its number.
 // @Description  enabled switches the forward on or off. Left out, it keeps what is stored.
+// @Description  allowed_sources left out keeps what is stored; sent empty it lets every address in.
 // @Tags         local forwards
 // @Accept   json
 // @Produce  json
@@ -581,7 +609,7 @@ func (h *Handler) GetLocalForward(c echo.Context) error {
 // @Param   number  path  int  true  "The number of the local forward on that Host"
 // @Param   body  body  models.LocalForwardRequest  true  "The local forward as it should stand"
 // @Success  200  {object}  models.Response{data=api.localForwardView}
-// @Failure  400  {object}  api.errorBody  "The body is refused"
+// @Failure  400  {object}  api.errorBody  "The body is refused, or allowed_sources is not a list of addresses and CIDR blocks"
 // @Failure  404  {object}  api.errorBody  "The Host carries no forward with that number"
 // @Failure  409  {object}  api.errorBody  "local_port is taken by another local forward or a SOCKS5 proxy, or is the port of this server"
 // @Router       /host/{id}/local-forward/{number} [put]
@@ -600,6 +628,11 @@ func (h *Handler) UpdateLocalForward(c echo.Context) error {
 	err = c.Validate(&req)
 	if err != nil {
 		return failure(c, http.StatusBadRequest, errRequestValidationFailed, errorArgs{"reason": err.Error()})
+	}
+
+	refusedSources := checkLocalForwardSources(req.AllowedSources)
+	if refusedSources != nil {
+		return refusedSources.answer(c)
 	}
 
 	apiPort, err := h.storedAPIPort()
@@ -658,6 +691,9 @@ func (h *Handler) UpdateLocalForward(c echo.Context) error {
 	lf.Description = req.Description
 	if req.Enabled != nil {
 		lf.Enabled = *req.Enabled
+	}
+	if req.AllowedSources != nil {
+		lf.AllowedSources = *req.AllowedSources
 	}
 
 	err = tx.Save(&lf).Error

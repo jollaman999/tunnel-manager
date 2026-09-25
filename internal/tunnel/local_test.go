@@ -10,6 +10,7 @@ import (
 	"strings"
 	"sync"
 	"sync/atomic"
+	"syscall"
 	"testing"
 	"time"
 
@@ -805,5 +806,110 @@ func TestALocalForwardReconnectsAfterTheHostDropsIt(t *testing.T) {
 	}
 	if handled := f.server.handled.Load(); handled < 2 {
 		t.Fatalf("the server saw %d SSH connections, want a second one after the drop", handled)
+	}
+}
+
+// dialRefused connects to the local port at address, sends nothing and returns
+// how long the forward held the connection before closing it, failing the test
+// if anything came back.
+func dialRefused(t *testing.T, address string) time.Duration {
+	t.Helper()
+
+	conn, err := net.DialTimeout("tcp", address, localTestTimeout)
+	if err != nil {
+		t.Fatalf("failed to connect to the local port %s: %v", address, err)
+	}
+	defer func() {
+		_ = conn.Close()
+	}()
+
+	_ = conn.SetDeadline(time.Now().Add(localTestTimeout))
+
+	began := time.Now()
+	got, err := io.ReadAll(conn)
+	waited := time.Since(began)
+
+	if len(got) != 0 {
+		t.Fatalf("a source that is not allowed was answered with %q", got)
+	}
+	if err != nil && !errors.Is(err, syscall.ECONNRESET) {
+		t.Fatalf("the connection of a source that is not allowed ended with %v, want it closed", err)
+	}
+
+	return waited
+}
+
+// TestALocalForwardClosesASourceThatIsNotAllowed holds the forward on every
+// interface to its allowed sources: a client from outside the list is closed
+// without the Host being asked for anything, a list that takes the client in
+// carries it, and an empty list lets every address in. Each change of the list
+// rebuilds the forward, since the list is read where the forward is built.
+func TestALocalForwardClosesASourceThatIsNotAllowed(t *testing.T) {
+	targetIP, targetPort := startEchoService(t, "echo:")
+	localPort := freeDualStackPort(t)
+
+	f := newLocalForwardFixture(t, models.BindScopeWildcard, localPort, targetIP, targetPort)
+	f.change(func(_ []models.Host, forwards *[]models.LocalForward) {
+		(*forwards)[0].AllowedSources = "192.0.2.0/24"
+	})
+
+	f.reconcile(t)
+	waitLocalStatus(t, f.m, f.key(), "the local forward to connect and measure the target",
+		func(state LocalForwardState) bool {
+			return isConnected(state) && state.ForwardReach != forwardReachUnknown
+		})
+
+	// The probe is the one dial made so far. A refused client adds none.
+	probed := len(f.server.targets())
+	local := net.JoinHostPort("127.0.0.1", strconv.Itoa(localPort))
+
+	if waited := dialRefused(t, local); waited >= forwardDialTimeout/2 {
+		t.Fatalf("the connection was held for %v before it was closed", waited)
+	}
+	if dialed := f.server.targets(); len(dialed) != probed {
+		t.Fatalf("the Host was asked to dial for a source that is not allowed: %v", dialed)
+	}
+
+	for _, allowed := range []string{"198.51.100.0/24, 127.0.0.0/8 ::1", ""} {
+		f.change(func(_ []models.Host, forwards *[]models.LocalForward) {
+			(*forwards)[0].AllowedSources = allowed
+		})
+
+		if result := f.reconcile(t); result != (ReconcileResult{Restarted: 1}) {
+			t.Fatalf("changing the allowed sources to %q reported %+v, want one restarted", allowed, result)
+		}
+
+		waitLocalStatus(t, f.m, f.key(), "the rebuilt local forward to connect", isConnected)
+
+		if got := exchange(t, local, "ping"); got != "echo:ping" {
+			t.Fatalf("with the allowed sources %q the answer through the local port was %q, want %q",
+				allowed, got, "echo:ping")
+		}
+	}
+}
+
+// TestTheLocalForwardFingerprintCarriesTheAllowedSources pins the list into
+// the fingerprint: two lists are two fingerprints, and the same list is the
+// same one.
+func TestTheLocalForwardFingerprintCarriesTheAllowedSources(t *testing.T) {
+	host := &models.Host{ID: 1, Address: "192.0.2.10", Port: 22, User: "tester"}
+	creds := hostCreds{password: "pass"} // hook:allow
+
+	forward := func(allowed string) *models.LocalForward {
+		return &models.LocalForward{
+			HostID: 1, Number: 1, BindScope: models.BindScopeWildcard, LocalPort: 8080,
+			TargetAddress: "198.51.100.20", TargetPort: 80, AllowedSources: allowed,
+		}
+	}
+
+	open := localForwardFingerprint(host, forward(""), creds)
+	listed := localForwardFingerprint(host, forward("192.0.2.0/24"), creds)
+	other := localForwardFingerprint(host, forward("198.51.100.0/24"), creds)
+
+	if open == listed || listed == other {
+		t.Fatal("a change of the allowed sources left the fingerprint as it was")
+	}
+	if again := localForwardFingerprint(host, forward("192.0.2.0/24"), creds); again != listed {
+		t.Fatal("the same allowed sources gave two fingerprints")
 	}
 }

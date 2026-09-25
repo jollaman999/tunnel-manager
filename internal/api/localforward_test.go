@@ -1129,3 +1129,124 @@ func TestANumberIsGivenBackAfterTheForwardHoldingItIsDeleted(t *testing.T) {
 		t.Fatalf("with 1, 2 and 3 all held the next number is %d, want 4", got)
 	}
 }
+
+// TestALocalForwardCarriesItsAllowedSources pins the list through the API: a
+// creation that leaves it out stores an empty one, a list sent is stored and
+// answered on either scope, an update that leaves it out keeps it, and one that
+// sends it empty lets every address in again.
+func TestALocalForwardCarriesItsAllowedSources(t *testing.T) {
+	db := newLocalForwardDB(t, []models.Host{statusHost(1, true)}, nil)
+	h := NewHandler(db, &wakeRecorder{tx: &txConnPool{}}, zap.NewNop(), newTestCipher(t))
+
+	for _, tc := range []struct {
+		body string
+		want string
+	}{
+		{`{"bind_scope":"wildcard","local_port":15001,"target_address":"127.0.0.1","target_port":5432}`, ""},
+		{`{"bind_scope":"wildcard","local_port":15002,"target_address":"127.0.0.1","target_port":5432,` +
+			`"allowed_sources":"192.0.2.0/24, 198.51.100.7"}`, "192.0.2.0/24, 198.51.100.7"},
+		{`{"bind_scope":"loopback","local_port":15003,"target_address":"127.0.0.1","target_port":5432,` +
+			`"allowed_sources":"127.0.0.1"}`, "127.0.0.1"},
+	} {
+		c, rec := localForwardRequest(t, http.MethodPost, "/api/host/1/local-forward", tc.body, "1")
+
+		err := h.CreateHostLocalForward(c)
+		if err != nil {
+			t.Fatalf("CreateHostLocalForward returned error: %v", err)
+		}
+		if rec.Code != http.StatusCreated {
+			t.Fatalf("status = %d, want %d, body: %s", rec.Code, http.StatusCreated, rec.Body.String())
+		}
+
+		if got := readLocalForwardAnswer(t, rec); got.AllowedSources != tc.want {
+			t.Errorf("%s: answered allowed_sources %q, want %q", tc.body, got.AllowedSources, tc.want)
+		}
+	}
+
+	c, rec := localForwardRowRequest(t, http.MethodGet, "/api/host/1/local-forward/2", "", "1", "2")
+
+	err := h.GetLocalForward(c)
+	if err != nil {
+		t.Fatalf("GetLocalForward returned error: %v", err)
+	}
+	if got := readLocalForwardAnswer(t, rec); got.AllowedSources != "192.0.2.0/24, 198.51.100.7" {
+		t.Errorf("the read answered allowed_sources %q", got.AllowedSources)
+	}
+
+	for _, tc := range []struct {
+		body string
+		want string
+	}{
+		{`{"bind_scope":"wildcard","local_port":15002,"target_address":"127.0.0.1","target_port":5433}`,
+			"192.0.2.0/24, 198.51.100.7"},
+		{`{"bind_scope":"wildcard","local_port":15002,"target_address":"127.0.0.1","target_port":5433,` +
+			`"allowed_sources":""}`, ""},
+	} {
+		c, rec := localForwardRowRequest(t, http.MethodPut, "/api/host/1/local-forward/2", tc.body, "1", "2")
+
+		err := h.UpdateLocalForward(c)
+		if err != nil {
+			t.Fatalf("UpdateLocalForward returned error: %v", err)
+		}
+		if rec.Code != http.StatusOK {
+			t.Fatalf("status = %d, want %d, body: %s", rec.Code, http.StatusOK, rec.Body.String())
+		}
+
+		got := readLocalForwardAnswer(t, rec)
+		rows := storedLocalForwards(t, db)
+
+		if got.AllowedSources != tc.want || rows[1].AllowedSources != tc.want {
+			t.Errorf("%s: answered %q, stored %q, want %q", tc.body, got.AllowedSources, rows[1].AllowedSources, tc.want)
+		}
+	}
+}
+
+// TestAllowedSourcesThatAreNotAddressesAreRefused is a list ParseAllowedSources
+// cannot read, sent to a creation and to an update: both are refused under
+// their own code with the reason, and nothing is stored or changed.
+func TestAllowedSourcesThatAreNotAddressesAreRefused(t *testing.T) {
+	stored := storedLocalForward(1, 1, 15001)
+	stored.AllowedSources = "192.0.2.0/24"
+
+	db := newLocalForwardDB(t, []models.Host{statusHost(1, true)}, []models.LocalForward{stored})
+	manager := &wakeRecorder{tx: &txConnPool{}}
+	h := NewHandler(db, manager, zap.NewNop(), newTestCipher(t))
+
+	for _, sources := range []string{"192.0.2.0/24, not-an-address", "192.0.2.0/33", "fe80::1%eth0"} {
+		body := `{"bind_scope":"wildcard","local_port":15002,"target_address":"127.0.0.1","target_port":5432,` +
+			`"allowed_sources":"` + sources + `"}`
+
+		c, rec := localForwardRequest(t, http.MethodPost, "/api/host/1/local-forward", body, "1")
+
+		err := h.CreateHostLocalForward(c)
+		if err != nil {
+			t.Fatalf("CreateHostLocalForward returned error: %v", err)
+		}
+		if rec.Code != http.StatusBadRequest || readRefusalCode(t, rec) != string(errLocalForwardSourcesBad) {
+			t.Errorf("a creation with %q answered %d: %s", sources, rec.Code, rec.Body.String())
+		}
+		if !strings.Contains(rec.Body.String(), "allowed sources of the local forward are refused") {
+			t.Errorf("the refusal of %q does not say what was refused: %s", sources, rec.Body.String())
+		}
+
+		c, rec = localForwardRowRequest(t, http.MethodPut, "/api/host/1/local-forward/1",
+			strings.Replace(body, "15002", "15001", 1), "1", "1")
+
+		err = h.UpdateLocalForward(c)
+		if err != nil {
+			t.Fatalf("UpdateLocalForward returned error: %v", err)
+		}
+		if rec.Code != http.StatusBadRequest || readRefusalCode(t, rec) != string(errLocalForwardSourcesBad) {
+			t.Errorf("an update with %q answered %d: %s", sources, rec.Code, rec.Body.String())
+		}
+	}
+
+	rows := storedLocalForwards(t, db)
+	if len(rows) != 1 || rows[0].AllowedSources != "192.0.2.0/24" || rows[0].BindScope != models.BindScopeLoopback {
+		t.Errorf("stored = %+v, want the one row as it was", rows)
+	}
+
+	if wakes, _ := manager.counts(); wakes != 0 {
+		t.Errorf("reconcile wake-ups = %d, want 0", wakes)
+	}
+}
