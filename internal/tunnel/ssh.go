@@ -1111,6 +1111,9 @@ func (t *SSHTunnel) Start(m *Manager, tunnel *models.Tunnel) {
 }
 
 func (t *SSHTunnel) Stop(m *Manager) error {
+	t.tunnelMu.Lock()
+	defer t.tunnelMu.Unlock()
+
 	t.stopMu.Lock()
 	if t.isStopped {
 		t.stopMu.Unlock()

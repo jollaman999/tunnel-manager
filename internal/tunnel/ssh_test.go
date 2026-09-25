@@ -850,6 +850,124 @@ func TestStopKeepsTunnelStatusUntouched(t *testing.T) {
 	}
 }
 
+// gatedConnPool runs statements on a real database and holds back the first
+// statement hold picks until release is closed, closing held once it is
+// waiting there.
+type gatedConnPool struct {
+	*sql.DB
+	hold    func(query string) bool
+	armed   atomic.Bool
+	once    sync.Once
+	held    chan struct{}
+	release chan struct{}
+}
+
+func (p *gatedConnPool) ExecContext(ctx context.Context, query string, args ...interface{}) (sql.Result, error) {
+	if p.armed.Load() && p.hold(query) {
+		p.once.Do(func() {
+			close(p.held)
+			<-p.release
+		})
+	}
+
+	return p.DB.ExecContext(ctx, query, args...)
+}
+
+// TestStopIsNotUndoneByAStatusSaveInFlight holds a status save between its
+// isStopped check and its write to the database and runs Stop in that gap.
+// gorm turns a save that updates nothing into an insert, so a save that lands
+// after Stop deleted the row writes it back, and the status screen goes on
+// showing a tunnel that is gone.
+func TestStopIsNotUndoneByAStatusSaveInFlight(t *testing.T) {
+	sqlDB, err := sql.Open("sqlite", t.TempDir()+"/tunnel-manager.db")
+	if err != nil {
+		t.Fatalf("failed to open the database: %v", err)
+	}
+	defer sqlDB.Close()
+
+	pool := &gatedConnPool{
+		DB:      sqlDB,
+		hold:    func(query string) bool { return strings.HasPrefix(query, "UPDATE") },
+		held:    make(chan struct{}),
+		release: make(chan struct{}),
+	}
+
+	db, err := gorm.Open(sqlite.Dialector{Conn: pool}, &gorm.Config{
+		Logger:                 logger.Discard,
+		SkipDefaultTransaction: true,
+	})
+	if err != nil {
+		t.Fatalf("failed to open gorm: %v", err)
+	}
+	if err := db.AutoMigrate(&models.Tunnel{}); err != nil {
+		t.Fatalf("failed to migrate: %v", err)
+	}
+
+	m, err := NewManager(db, zap.NewNop(), newTestCipher(t), 1)
+	if err != nil {
+		t.Fatalf("failed to create manager: %v", err)
+	}
+
+	tun, tunnel := newSSHTestTunnel(t, startClosingListener(t))
+	if err := db.Create(tunnel).Error; err != nil {
+		t.Fatalf("failed to create the tunnel row: %v", err)
+	}
+
+	pool.armed.Store(true)
+
+	saved := make(chan struct{})
+	go func() {
+		tun.markReconnecting(m, tunnel)
+		close(saved)
+	}()
+
+	select {
+	case <-pool.held:
+	case <-time.After(5 * time.Second):
+		t.Fatal("the status save never reached the database")
+	}
+
+	stopped := make(chan error, 1)
+	go func() {
+		stopped <- tun.Stop(m)
+	}()
+
+	var stopErr error
+	stopReturned := false
+	select {
+	case stopErr = <-stopped:
+		stopReturned = true
+	case <-time.After(500 * time.Millisecond):
+	}
+
+	close(pool.release)
+
+	select {
+	case <-saved:
+	case <-time.After(5 * time.Second):
+		t.Fatal("the status save did not return")
+	}
+
+	if !stopReturned {
+		select {
+		case stopErr = <-stopped:
+		case <-time.After(5 * time.Second):
+			t.Fatal("Stop did not return after the status save did")
+		}
+	}
+	if stopErr != nil {
+		t.Fatalf("Stop failed: %v", stopErr)
+	}
+
+	var rows int64
+	if err := db.Model(&models.Tunnel{}).Count(&rows).Error; err != nil {
+		t.Fatalf("failed to count tunnel rows: %v", err)
+	}
+	if rows != 0 {
+		t.Fatalf("tunnel rows after Stop = %d, want 0, a status save wrote the deleted row back", rows)
+	}
+}
+
 func TestStartKeepsRetryIntervalAfterEOF(t *testing.T) {
 	const cycles = 3
 
