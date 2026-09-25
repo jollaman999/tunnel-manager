@@ -1092,6 +1092,22 @@ tbody tr.under > td {
   display: none;
 }
 
+/* A way to do something, such as reaching a SOCKS5 proxy kept to this machine
+   from another one. It is boxed like the warning so that the command in it
+   stands out, and plain so that it is not read as one. */
+.advice.note {
+  display: block;
+  margin-top: 0.35rem;
+  padding: 0.5rem 0.75rem;
+  border-radius: var(--radius-control);
+  border: 1px solid var(--border);
+  overflow-wrap: break-word;
+}
+
+.advice.note[hidden] {
+  display: none;
+}
+
 /* The command inside a warning sits on a line of its own, so that it can be
    picked out and copied whole. */
 .advice .command {
@@ -1099,11 +1115,15 @@ tbody tr.under > td {
   margin: 0.35rem 0;
   padding: 0.3rem 0.5rem;
   border-radius: var(--radius-control);
-  background: var(--danger-bg-soft);
+  background: var(--border-soft);
   font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
   white-space: pre-wrap;
   overflow-wrap: anywhere;
   user-select: all;
+}
+
+.advice.danger .command {
+  background: var(--danger-bg-soft);
 }
 
 /* What is said under a tunnel whose forwarded port did not answer. That row

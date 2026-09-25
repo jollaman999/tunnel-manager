@@ -443,7 +443,7 @@
                         "CSRFToken": []
                     }
                 ],
-                "description": "enabled is optional and a Host that does not say is enabled.\nbind_scope is what every assignment this registration makes is opened to: loopback, wildcard, or left out for the wildcard. It is read only when the assignments are made.\nsocks_enabled switches on the SOCKS5 proxy of the Host, which needs socks_port. socks_bind_scope is loopback, wildcard, or left out for the wildcard. socks_allowed_sources is the addresses and CIDR blocks a client may connect from, separated by commas or spaces; empty lets every address in.",
+                "description": "enabled is optional and a Host that does not say is enabled.\nbind_scope is what every assignment this registration makes is opened to: loopback, wildcard, or left out for the wildcard. It is read only when the assignments are made.\nsocks_enabled switches on the SOCKS5 proxy of the Host, which needs socks_port. socks_bind_scope is loopback, wildcard, or left out for loopback. socks_allowed_sources is the addresses and CIDR blocks a client may connect from, separated by commas or spaces; empty lets every address in.",
                 "consumes": [
                     "application/json"
                 ],
@@ -3923,7 +3923,7 @@
                     ]
                 },
                 "socks_enabled": {
-                    "description": "SocksEnabled, SocksPort, SocksBindScope and SocksAllowedSources are the\nSOCKS5 proxy of the Host, as Host holds them. A request that switches\nthe proxy on names its port; a request that leaves SocksEnabled out\nregisters a Host without one. An empty SocksBindScope is the wildcard.",
+                    "description": "SocksEnabled, SocksPort, SocksBindScope and SocksAllowedSources are the\nSOCKS5 proxy of the Host, as Host holds them. A request that switches\nthe proxy on names its port; a request that leaves SocksEnabled out\nregisters a Host without one. An empty SocksBindScope is loopback on a\nHost being added, and keeps what is stored on one being changed.",
                     "type": "boolean"
                 },
                 "socks_port": {

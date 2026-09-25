@@ -346,7 +346,8 @@ type CreateHostRequest struct {
 	// SocksEnabled, SocksPort, SocksBindScope and SocksAllowedSources are the
 	// SOCKS5 proxy of the Host, as Host holds them. A request that switches
 	// the proxy on names its port; a request that leaves SocksEnabled out
-	// registers a Host without one. An empty SocksBindScope is the wildcard.
+	// registers a Host without one. An empty SocksBindScope is loopback on a
+	// Host being added, and keeps what is stored on one being changed.
 	SocksEnabled        bool   `json:"socks_enabled"`
 	SocksPort           int    `json:"socks_port" validate:"omitempty,min=1,max=65535"`
 	SocksBindScope      string `json:"socks_bind_scope" validate:"omitempty,oneof=loopback wildcard"`

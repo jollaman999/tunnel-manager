@@ -350,6 +350,7 @@
   "hosts.service-ports.button": "Puertos de servicio",
   "hosts.socks-enabled.hint": "Abre en esta máquina un puerto por el que un navegador llega a la red detrás de este Host. Abierto en todas las interfaces y sin direcciones de cliente permitidas, cualquiera que llegue a esta máquina puede entrar en la red detrás del Host.",
   "hosts.socks-enabled.label": "Activar un proxy SOCKS5",
+  "hosts.socks-local.notice": "El proxy se abre solo en esta máquina, así que solo llegan los programas que corren aquí. Para usarlo desde otra máquina, llévelo por SSH desde aquella:",
   "hosts.socks-open-browser.text": "Después apunte allí el navegador a 127.0.0.1:{port}.",
   "hosts.socks-open-login.text": "usuario@esta-maquina",
   "hosts.socks-open.notice": "Con todas las interfaces, otras máquinas llegan a este proxy, y no pide contraseña, así que cualquiera que llegue a este sistema por el puerto llega a la red detrás del Host, salvo que {sources} indique quién puede. Para usarlo desde otra máquina sin abrirlo, déjelo solo en esta máquina y llévelo por SSH desde aquella:",

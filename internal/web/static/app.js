@@ -2231,11 +2231,17 @@ function showAdvice(node, said) {
   node.replaceChildren();
 
   if (typeof said === "string") {
+    node.classList.remove("danger", "note");
     node.textContent = said;
     node.hidden = said === "";
 
     return;
   }
+
+  // A warning about who can get in is drawn in red and a way to do something
+  // in the plain box of a note, so the colour says which of the two it is.
+  node.classList.toggle("danger", said.kind === "danger");
+  node.classList.toggle("note", said.kind !== "danger");
 
   node.appendChild(document.createTextNode(said.say));
 
@@ -2342,7 +2348,7 @@ function buildForm(spec) {
 
       // A field whose warning is about who can get in says it in red. The rest
       // are a second look at a value and stay in the plain small print.
-      advice.className = field.adviseKind === "danger" ? "advice danger" : "advice";
+      advice.className = "advice";
       advice.dataset.advice = field.name;
 
       const sayAdvice = function () {

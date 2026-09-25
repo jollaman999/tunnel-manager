@@ -113,7 +113,7 @@ func storedHostByIP(t *testing.T, db *gorm.DB, ip string) (models.Host, bool) {
 }
 
 // TestCreateHostStoresTheSocksProxy pins a create that switches the proxy on:
-// the four fields are stored, an empty scope as the wildcard, and the answer
+// the four fields are stored, an empty scope as loopback, and the answer
 // carries them with the status of a proxy nothing runs for yet.
 func TestCreateHostStoresTheSocksProxy(t *testing.T) {
 	db := newSocksDB(t, []models.Host{statusHost(1, true)}, nil)
@@ -134,9 +134,9 @@ func TestCreateHostStoresTheSocksProxy(t *testing.T) {
 	}
 
 	view := readHostAnswer(t, rec)
-	if !view.SocksEnabled || view.SocksPort != 1080 || view.SocksBindScope != models.BindScopeWildcard ||
+	if !view.SocksEnabled || view.SocksPort != 1080 || view.SocksBindScope != models.BindScopeLoopback ||
 		view.SocksAllowedSources != "192.0.2.0/24, 198.51.100.7" {
-		t.Errorf("answer = %+v, want the proxy that was sent on the wildcard", view)
+		t.Errorf("answer = %+v, want the proxy that was sent on loopback", view)
 	}
 	if view.SocksStatus != socksStatusStopped {
 		t.Errorf("socks_status = %q, want %q", view.SocksStatus, socksStatusStopped)
@@ -144,8 +144,8 @@ func TestCreateHostStoresTheSocksProxy(t *testing.T) {
 
 	stored, found := storedHostByIP(t, db, "192.0.2.50")
 	if !found || !stored.SocksEnabled || stored.SocksPort != 1080 ||
-		stored.SocksBindScope != models.BindScopeWildcard {
-		t.Errorf("stored = %+v, want the proxy on 1080 on the wildcard", stored)
+		stored.SocksBindScope != models.BindScopeLoopback {
+		t.Errorf("stored = %+v, want the proxy on 1080 on loopback", stored)
 	}
 }
 

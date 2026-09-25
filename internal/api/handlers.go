@@ -321,7 +321,7 @@ func nextHostID(tx *gorm.DB) (uint, error) {
 // @Summary      Register a Host
 // @Description  enabled is optional and a Host that does not say is enabled.
 // @Description  bind_scope is what every assignment this registration makes is opened to: loopback, wildcard, or left out for the wildcard. It is read only when the assignments are made.
-// @Description  socks_enabled switches on the SOCKS5 proxy of the Host, which needs socks_port. socks_bind_scope is loopback, wildcard, or left out for the wildcard. socks_allowed_sources is the addresses and CIDR blocks a client may connect from, separated by commas or spaces; empty lets every address in.
+// @Description  socks_enabled switches on the SOCKS5 proxy of the Host, which needs socks_port. socks_bind_scope is loopback, wildcard, or left out for loopback. socks_allowed_sources is the addresses and CIDR blocks a client may connect from, separated by commas or spaces; empty lets every address in.
 // @Tags         hosts
 // @Accept   json
 // @Produce  json
@@ -366,11 +366,12 @@ func (h *Handler) CreateHost(c echo.Context) error {
 		return h.keyRefused(c, err, errHostCreateKeyRefused)
 	}
 
-	// An empty scope is stored as the word it stands for, the way the local
-	// forwards store theirs.
+	// A scope left out is this machine alone. The proxy asks for no password,
+	// so opening it to other machines is a choice made by naming the wildcard,
+	// not one a request makes by saying nothing.
 	socksBindScope := req.SocksBindScope
 	if socksBindScope == "" {
-		socksBindScope = models.BindScopeWildcard
+		socksBindScope = models.BindScopeLoopback
 	}
 
 	socks := models.Host{

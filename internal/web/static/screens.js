@@ -3341,10 +3341,9 @@ function socksFields(host) {
     {
       name: "socks_bind_scope",
       label: t("local-forwards.scope.label"),
-      value: bindScopeStored(host.socks_bind_scope),
+      value: socksScopeStored(host),
       options: localForwardScopeOptions(),
       advise: socksScopeAdvice,
-      adviseKind: "danger",
       shownWhen: shown
     },
     {
@@ -3357,25 +3356,37 @@ function socksFields(host) {
   ];
 }
 
-// socksScopeAdvice says what every interface means for the proxy, in red rather
-// than in the amber of bindScopeAdvice. The proxy asks for no password, so the
-// wildcard hands the network behind the Host to whoever reaches this port, and
-// the box that can narrow that is the one just below. It is still a warning and
-// not a refusal: a proxy on a network of its own, or behind a firewall, may be
-// meant to be reached from other machines.
-//
-// The command it gives names the port typed in the SOCKS5 port box, and the
-// default port while that box holds no port, so that it can be copied as it is.
-function socksScopeAdvice(value, other) {
-  if (value !== bindScopeWildcard) {
-    return "";
+// socksScopeStored is where the proxy of a Host is opened, as the form starts
+// out on it. A Host that is being added starts on this machine alone: the proxy
+// asks for no password, so the reach that opens it to other machines is one to
+// pick knowingly rather than one a form hands over. A stored Host shows what it
+// is stored with, and a stored blank is the wildcard it has always meant.
+function socksScopeStored(host) {
+  if (host.id === undefined) {
+    return bindScopeLoopback;
   }
 
+  return bindScopeStored(host.socks_bind_scope);
+}
+
+// socksScopeAdvice says how the proxy is reached from another machine, under
+// either choice. On every interface it says so in red and why: the proxy asks
+// for no password, so the wildcard hands the network behind the Host to whoever
+// reaches this port. Kept to this machine alone it says the same way in the
+// plain colour of a note, since that is the way to use it from elsewhere.
+//
+// The command names the port typed in the SOCKS5 port box, and the default port
+// while that box holds no port, so that it can be copied as it is.
+function socksScopeAdvice(value, other) {
   const typed = String(other("socks_port")).trim();
   const port = /^[0-9]+$/.test(typed) ? typed : String(socksDefaultPort);
+  const open = value === bindScopeWildcard;
 
   return {
-    say: t("hosts.socks-open.notice", { sources: t("hosts.socks-sources.label") }),
+    kind: open ? "danger" : "note",
+    say: open
+      ? t("hosts.socks-open.notice", { sources: t("hosts.socks-sources.label") })
+      : t("hosts.socks-local.notice"),
     code: "ssh -N -L " + port + ":127.0.0.1:" + port + " " + t("hosts.socks-open-login.text"),
     then: t("hosts.socks-open-browser.text", { port: port })
   };

@@ -350,6 +350,7 @@
   "hosts.service-ports.button": "서비스 포트",
   "hosts.socks-enabled.hint": "이 시스템에 포트를 열어 브라우저가 이 Host 안쪽 망에 닿게 합니다. 모든 인터페이스로 열고 허용할 접속 주소를 비워 두면 이 시스템에 닿는 누구나 Host 안쪽 망에 들어갈 수 있습니다.",
   "hosts.socks-enabled.label": "SOCKS5 프록시 켜기",
+  "hosts.socks-local.notice": "프록시가 이 시스템에만 열려서 여기서 도는 프로그램만 접속합니다. 다른 시스템에서 쓰려면 그 시스템에서 SSH 로 끌어가십시오:",
   "hosts.socks-open-browser.text": "그다음 그 시스템의 브라우저에 127.0.0.1:{port} 을 지정합니다.",
   "hosts.socks-open-login.text": "사용자@이-시스템",
   "hosts.socks-open.notice": "모든 인터페이스로 열면 다른 시스템도 이 프록시에 닿고, 프록시는 비밀번호를 묻지 않습니다. {sources} 를 비워 두면 이 시스템의 이 포트에 닿는 누구나 Host 안쪽 망에 들어갑니다. 열지 않고 다른 시스템에서 쓰려면 범위를 이 시스템만으로 두고, 쓸 시스템에서 SSH 로 끌어가십시오:",

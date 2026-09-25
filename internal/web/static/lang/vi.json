@@ -350,6 +350,7 @@
   "hosts.service-ports.button": "Cổng dịch vụ",
   "hosts.socks-enabled.hint": "Mở một cổng trên máy này để trình duyệt đi vào mạng phía sau Host này. Nếu mở trên mọi giao diện mà để trống địa chỉ máy khách được phép, bất kỳ ai tới được máy này đều vào được mạng phía sau Host.",
   "hosts.socks-enabled.label": "Bật proxy SOCKS5",
+  "hosts.socks-local.notice": "Proxy chỉ mở trên hệ thống này, nên chỉ các chương trình chạy ở đây tới được. Để dùng từ máy khác, hãy mang nó qua SSH từ máy đó:",
   "hosts.socks-open-browser.text": "Rồi đặt trình duyệt bên đó dùng 127.0.0.1:{port}.",
   "hosts.socks-open-login.text": "user@he-thong-nay",
   "hosts.socks-open.notice": "Mở trên mọi giao diện mạng thì máy khác cũng tới được proxy này, và proxy không hỏi mật khẩu, nên ai tới được hệ thống này qua cổng đó đều vào được mạng phía sau Host, trừ khi {sources} giới hạn ai được phép. Để dùng từ máy khác mà không mở nó ra, hãy chỉ mở trên hệ thống này và mang nó qua SSH từ máy kia:",
