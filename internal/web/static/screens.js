@@ -3363,12 +3363,22 @@ function socksFields(host) {
 // the box that can narrow that is the one just below. It is still a warning and
 // not a refusal: a proxy on a network of its own, or behind a firewall, may be
 // meant to be reached from other machines.
-function socksScopeAdvice(value) {
+//
+// The command it gives names the port typed in the SOCKS5 port box, and the
+// default port while that box holds no port, so that it can be copied as it is.
+function socksScopeAdvice(value, other) {
   if (value !== bindScopeWildcard) {
     return "";
   }
 
-  return t("hosts.socks-open.notice", { sources: t("hosts.socks-sources.label") });
+  const typed = String(other("socks_port")).trim();
+  const port = /^[0-9]+$/.test(typed) ? typed : String(socksDefaultPort);
+
+  return {
+    say: t("hosts.socks-open.notice", { sources: t("hosts.socks-sources.label") }),
+    code: "ssh -N -L " + port + ":127.0.0.1:" + port + " " + t("hosts.socks-open-login.text"),
+    then: t("hosts.socks-open-browser.text", { port: port })
+  };
 }
 
 async function createHost(values) {

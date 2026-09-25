@@ -2219,6 +2219,35 @@ function listControl(field) {
   return select;
 }
 
+// showAdvice writes what a field's advise answered into the line under it. The
+// answer is a sentence, or an empty one for nothing to say, or a sentence with
+// a command after it and another sentence after that.
+//
+// The command goes in a line of its own and not into the sentence. What t
+// writes into a sentence is wrapped in marks of direction that show as nothing
+// and are copied with the text, and a command copied with them in it is not the
+// command: ssh refuses a port that starts with one.
+function showAdvice(node, said) {
+  node.replaceChildren();
+
+  if (typeof said === "string") {
+    node.textContent = said;
+    node.hidden = said === "";
+
+    return;
+  }
+
+  node.appendChild(document.createTextNode(said.say));
+
+  const command = element("code", said.code);
+  command.className = "command";
+  command.dir = "ltr";
+  node.appendChild(command);
+
+  node.appendChild(document.createTextNode(said.then));
+  node.hidden = false;
+}
+
 // showFormRow puts a row of a form on the screen or takes it away.
 //
 // The hidden property alone does not do it here. What the browser attaches to
@@ -2320,13 +2349,27 @@ function buildForm(spec) {
         // The value is read the way the submit reads it. A checkbox carries
         // "on" in value whether it is ticked or not, so advice given that
         // would say the same thing in both states.
-        const said = field.advise(input.type === "checkbox" ? input.checked : input.value);
+        //
+        // The value of another field is handed over as well, for advice that
+        // names it: the warning on where a SOCKS5 proxy is opened writes the
+        // port typed above it into the command it gives.
+        const said = field.advise(input.type === "checkbox" ? input.checked : input.value,
+          function (name) {
+            const other = inputs[name];
 
-        advice.textContent = said;
-        advice.hidden = said === "";
+            if (other === undefined) {
+              return "";
+            }
+
+            return other.type === "checkbox" ? other.checked : other.value;
+          });
+
+        showAdvice(advice, said);
       };
 
-      input.addEventListener("input", sayAdvice);
+      // Heard on the whole form rather than on this field alone, so that
+      // advice naming another field follows it as it is typed.
+      form.addEventListener("input", sayAdvice);
       sayAdvice();
 
       row.appendChild(advice);
