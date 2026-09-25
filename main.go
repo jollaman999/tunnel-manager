@@ -29,6 +29,7 @@ import (
 	"gorm.io/gorm"
 
 	"github.com/go-playground/validator/v10"
+	"github.com/jollaman999/tunnel-manager/internal/alert"
 	"github.com/jollaman999/tunnel-manager/internal/api"
 	"github.com/jollaman999/tunnel-manager/internal/auth"
 	"github.com/jollaman999/tunnel-manager/internal/crypto"
@@ -1911,7 +1912,12 @@ func serve() {
 	// against what is stored and name the settings a restart is still owed for.
 	// Dropped here, the only place that knew would be the answer to the save
 	// that stored them, which is gone as soon as the screen is left.
-	settingsHandler := api.NewSettingsHandler(db, logger, logLevel, gormLevel, running, installDir)
+	//
+	// The alert sender goes with them, so that the test presses on the screen
+	// send through the very sender the watcher below uses.
+	alertSender := alert.NewSender(logger, cipher)
+	settingsHandler := api.NewSettingsHandler(db, logger, logLevel, gormLevel, running, installDir,
+		cipher, alertSender)
 	// The log screen is handed the path this process resolved, the same one the
 	// logger above writes through. Worked out on the screen instead it would be
 	// a second place that knows what a relative logging.file.path is read
@@ -2028,6 +2034,10 @@ func serve() {
 
 	g.GET("/settings", settingsHandler.GetSettings)
 	g.PUT("/settings", settingsHandler.UpdateSettings)
+	// The two test presses are POST: each sends a message to somewhere else,
+	// which is not a thing a link or a prefetch may set off.
+	g.POST("/settings/alert/test-webhook", settingsHandler.TestAlertWebhook)
+	g.POST("/settings/alert/test-smtp", settingsHandler.TestAlertSMTP)
 
 	// The exports are POST because the password that seals the file is in the
 	// body. A password in a URL is written to the access log of this server and
@@ -2062,6 +2072,21 @@ func serve() {
 	// does, so the shutdown that stops one stops the other. It is started after
 	// the handler exists because both of them keep the one answer.
 	go runUpdateChecks(reconcileCtx, logger, db, updateHandler, canInstallUpdate(databaseFile))
+
+	// The alert watcher runs on the same context, so the shutdown that stops
+	// the tunnels stops the scans of them as well. It reads the stored alert
+	// settings on every scan, which is what lets a save take hold without a
+	// restart.
+	alertWatcher := alert.NewWatcher(logger, manager.AlertConditions, func() (alert.Config, error) {
+		stored, err := settings.Load(db)
+		if err != nil {
+			return alert.Config{}, err
+		}
+
+		return alert.ConfigOf(stored), nil
+	}, alertSender, alert.InstallationName())
+
+	go alertWatcher.Run(reconcileCtx, alert.ScanInterval)
 
 	g.GET("/update", updateHandler.GetUpdate)
 	// Both of these are POST rather than GET. The check makes a request to

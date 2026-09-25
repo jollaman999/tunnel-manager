@@ -3,6 +3,9 @@ package settings
 import (
 	"errors"
 	"fmt"
+	"net"
+	"net/mail"
+	"net/url"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -129,6 +132,53 @@ type Settings struct {
 	// that stays where they left it.
 	UpdateAutoInstall bool `gorm:"default:false" json:"update_auto_install"`
 
+	// AlertAfterSec is how long a tunnel, a local forward or a SOCKS5 proxy
+	// has to have been without a connection before it is reported as down.
+	// A connection that drops and comes back within the monitoring interval
+	// or two is what a network does now and then, and a message for each of
+	// those would teach whoever receives them to stop reading. Five minutes
+	// is past that and short enough that somebody hears about an outage while
+	// it is still one.
+	//
+	// The columns below carry their defaults so that an installation upgraded
+	// onto this version reads back what a fresh one gives, and every column
+	// is named here because the name gorm works out for SMTP runs the letters
+	// into what follows.
+	AlertAfterSec int `gorm:"column:alert_after_sec;default:300" json:"alert_after_sec"`
+	// AlertWebhookURL is where a down and an up are posted to as JSON. Empty
+	// is the webhook switched off.
+	AlertWebhookURL string `gorm:"column:alert_webhook_url" json:"alert_webhook_url"`
+
+	// SMTPHost is the mail server a down and an up are sent through. Empty is
+	// mail switched off, which is what a fresh installation is on: there is
+	// no server this program could guess at.
+	SMTPHost string `gorm:"column:smtp_host" json:"smtp_host"`
+	SMTPPort int    `gorm:"column:smtp_port;default:587" json:"smtp_port"`
+	// SMTPSecurity is how the connection to the server is protected: "none",
+	// "starttls" or "tls". STARTTLS on 587 is what the submission port is for
+	// (RFC 8314 names it next to implicit TLS on 465), and it is the default
+	// because it is what a mail provider hands out as the settings to use.
+	SMTPSecurity string `gorm:"column:smtp_security;default:starttls" json:"smtp_security"`
+	// SMTPAuth is how this program logs in to the server: "none", "plain" or
+	// "login". Neither of the two that send a password does so over a
+	// connection that is not protected by TLS.
+	SMTPAuth     string `gorm:"column:smtp_auth;default:plain" json:"smtp_auth"`
+	SMTPUsername string `gorm:"column:smtp_username" json:"smtp_username"`
+	// SMTPPassword is held sealed with the key of this installation, the way
+	// the password of a Host is. It is kept out of the JSON in both
+	// directions: a read of the settings says whether one is stored and never
+	// what it is, and a save reaches it only through the request that seals
+	// it on the way in.
+	SMTPPassword string `gorm:"column:smtp_password" json:"-"`
+	SMTPFrom     string `gorm:"column:smtp_from" json:"smtp_from"`
+	// SMTPTo is the addresses a message goes to, separated by commas.
+	SMTPTo string `gorm:"column:smtp_to" json:"smtp_to"`
+	// SMTPSkipVerify turns off the check of the certificate the mail server
+	// presents. It is off by default, and what turning it on costs is that
+	// anybody who can get between this program and the server can read the
+	// password it logs in with.
+	SMTPSkipVerify bool `gorm:"column:smtp_skip_verify;default:false" json:"smtp_skip_verify"`
+
 	// UpdatedAt is when the row was last written. It is this end's account of
 	// that and not a setting anybody chooses, so it is kept out of the JSON: a
 	// save binds the request body onto the stored set, which makes every field
@@ -184,6 +234,15 @@ func Defaults() Settings {
 		UpdateCheckEnabled:       true,
 		UpdateCheckIntervalHours: 24,
 		UpdateAutoInstall:        false,
+		// Both ways of being told are off until somebody names where to send
+		// to, and the mail settings wait on what a submission port expects.
+		AlertAfterSec:   300,
+		AlertWebhookURL: "",
+		SMTPHost:        "",
+		SMTPPort:        587,
+		SMTPSecurity:    SMTPSecurityStartTLS,
+		SMTPAuth:        SMTPAuthPlain,
+		SMTPSkipVerify:  false,
 	}
 }
 
@@ -297,6 +356,197 @@ func validateDataPath(setting string, path string) error {
 // answer it under a code of its own, with the list of languages in it.
 var ErrLanguageUnsupported = errors.New("invalid UI language")
 
+// The ways the connection to the mail server is protected.
+const (
+	SMTPSecurityNone     = "none"
+	SMTPSecurityStartTLS = "starttls"
+	SMTPSecurityTLS      = "tls"
+)
+
+// The ways this program logs in to the mail server.
+const (
+	SMTPAuthNone  = "none"
+	SMTPAuthPlain = "plain"
+	SMTPAuthLogin = "login"
+)
+
+// The bounds of alert.after_sec. Below ten seconds a connection that drops
+// for one monitoring interval is already an outage, and past a day the alert
+// arrives after whoever needed the tunnel has found out on their own.
+const (
+	MinAlertAfterSec = 10
+	MaxAlertAfterSec = 86400
+)
+
+// maxWebhookURLLength bounds the webhook address. It is a URL somebody pastes
+// out of another service, and a value much longer than any of those is a paste
+// that went wrong.
+const maxWebhookURLLength = 2048
+
+// The rules of the alert settings that are refused under a code of their own.
+// Each of them is a value rather than a sentence for the reason
+// ErrLanguageUnsupported is: the API tells them apart and answers each with a
+// sentence a screen can put in its own language.
+var (
+	ErrAlertAfterInvalid    = errors.New("invalid alert delay")
+	ErrWebhookURLInvalid    = errors.New("invalid webhook URL")
+	ErrSMTPHostInvalid      = errors.New("invalid mail server")
+	ErrSMTPPortInvalid      = errors.New("invalid mail server port")
+	ErrSMTPSecurityInvalid  = errors.New("invalid mail connection security")
+	ErrSMTPAuthInvalid      = errors.New("invalid mail login method")
+	ErrSMTPFromRequired     = errors.New("the sender address is required")
+	ErrSMTPFromInvalid      = errors.New("invalid sender address")
+	ErrSMTPToRequired       = errors.New("at least one recipient address is required")
+	ErrSMTPToInvalid        = errors.New("invalid recipient address")
+	ErrSMTPUsernameRequired = errors.New("the mail user name is required")
+)
+
+// SettingError is a refusal of one setting that carries the value that was
+// refused next to the rule it broke, so that the answer can name the value
+// without parsing it back out of a sentence.
+type SettingError struct {
+	Rule  error
+	Value string
+}
+
+func (e *SettingError) Error() string {
+	if e.Value == "" {
+		return e.Rule.Error()
+	}
+
+	return e.Rule.Error() + ": " + e.Value
+}
+
+func (e *SettingError) Unwrap() error {
+	return e.Rule
+}
+
+func refused(rule error, value string) error {
+	return &SettingError{Rule: rule, Value: value}
+}
+
+// hasLineBreak says whether a value would end a mail header line early. A
+// header is a line, so a value carrying a line break is a header of its own
+// written by whoever typed the value.
+func hasLineBreak(value string) bool {
+	return strings.ContainsAny(value, "\r\n")
+}
+
+// validMailHost says whether the mail server is a name or an address that can
+// be dialled. It is held to the characters a host name is made of rather than
+// resolved, because whether it resolves is a fact about the network at the time
+// and not about the setting.
+func validMailHost(host string) bool {
+	if host == "" || len(host) > 253 {
+		return false
+	}
+
+	if net.ParseIP(host) != nil {
+		return true
+	}
+
+	for _, label := range strings.Split(strings.TrimSuffix(host, "."), ".") {
+		if label == "" || len(label) > 63 || label[0] == '-' || label[len(label)-1] == '-' {
+			return false
+		}
+
+		for _, r := range label {
+			if !(r >= 'a' && r <= 'z' || r >= 'A' && r <= 'Z' || r >= '0' && r <= '9' || r == '-') {
+				return false
+			}
+		}
+	}
+
+	return true
+}
+
+// MailRecipients splits smtp_to into the addresses it names. An entry left
+// empty between two commas is passed over, so a list typed with a comma at the
+// end is the list without it.
+func MailRecipients(to string) []string {
+	var recipients []string
+
+	for _, entry := range strings.Split(to, ",") {
+		entry = strings.TrimSpace(entry)
+		if entry != "" {
+			recipients = append(recipients, entry)
+		}
+	}
+
+	return recipients
+}
+
+// validateAlerts holds the alert settings to their rules. The mail settings
+// that only matter while mail is on are checked only then, except that a
+// value that is there is held to its shape either way, so that what the screen
+// shows is never a value the server would refuse the moment mail is turned on.
+func (s *Settings) validateAlerts() error {
+	if s.AlertAfterSec < MinAlertAfterSec || s.AlertAfterSec > MaxAlertAfterSec {
+		return refused(ErrAlertAfterInvalid, strconv.Itoa(s.AlertAfterSec))
+	}
+
+	if s.AlertWebhookURL != "" {
+		parsed, err := url.Parse(s.AlertWebhookURL)
+		if err != nil || len(s.AlertWebhookURL) > maxWebhookURLLength ||
+			(parsed.Scheme != "http" && parsed.Scheme != "https") || parsed.Host == "" ||
+			hasLineBreak(s.AlertWebhookURL) {
+			return refused(ErrWebhookURLInvalid, s.AlertWebhookURL)
+		}
+	}
+
+	if s.SMTPHost != "" && !validMailHost(s.SMTPHost) {
+		return refused(ErrSMTPHostInvalid, s.SMTPHost)
+	}
+
+	if s.SMTPPort < 1 || s.SMTPPort > 65535 {
+		return refused(ErrSMTPPortInvalid, strconv.Itoa(s.SMTPPort))
+	}
+
+	switch s.SMTPSecurity {
+	case SMTPSecurityNone, SMTPSecurityStartTLS, SMTPSecurityTLS:
+	default:
+		return refused(ErrSMTPSecurityInvalid, s.SMTPSecurity)
+	}
+
+	switch s.SMTPAuth {
+	case SMTPAuthNone, SMTPAuthPlain, SMTPAuthLogin:
+	default:
+		return refused(ErrSMTPAuthInvalid, s.SMTPAuth)
+	}
+
+	if s.SMTPFrom != "" {
+		_, err := mail.ParseAddress(s.SMTPFrom)
+		if err != nil || hasLineBreak(s.SMTPFrom) {
+			return refused(ErrSMTPFromInvalid, s.SMTPFrom)
+		}
+	}
+
+	for _, recipient := range MailRecipients(s.SMTPTo) {
+		_, err := mail.ParseAddress(recipient)
+		if err != nil || hasLineBreak(recipient) {
+			return refused(ErrSMTPToInvalid, recipient)
+		}
+	}
+
+	if s.SMTPHost == "" {
+		return nil
+	}
+
+	if s.SMTPFrom == "" {
+		return refused(ErrSMTPFromRequired, "")
+	}
+
+	if len(MailRecipients(s.SMTPTo)) == 0 {
+		return refused(ErrSMTPToRequired, "")
+	}
+
+	if s.SMTPAuth != SMTPAuthNone && s.SMTPUsername == "" {
+		return refused(ErrSMTPUsernameRequired, "")
+	}
+
+	return nil
+}
+
 // Validate holds the rules the configuration file was checked against before
 // the settings moved into the database. They matter more here than they did
 // there: a file that refuses to start can be edited, while a stored setting
@@ -391,7 +641,7 @@ func (s *Settings) Validate() error {
 			s.UpdateCheckIntervalHours)
 	}
 
-	return nil
+	return s.validateAlerts()
 }
 
 // read returns the stored row, or nil when there is none. It does not validate,
@@ -647,7 +897,36 @@ func values(s *Settings) []value {
 		{"update.check_enabled", strconv.FormatBool(s.UpdateCheckEnabled)},
 		{"update.check_interval_hours", strconv.Itoa(s.UpdateCheckIntervalHours)},
 		{"update.auto_install", strconv.FormatBool(s.UpdateAutoInstall)},
+		{"alert.after_sec", strconv.Itoa(s.AlertAfterSec)},
+		{"alert.webhook_url", s.AlertWebhookURL},
+		{"alert.smtp.host", s.SMTPHost},
+		{"alert.smtp.port", strconv.Itoa(s.SMTPPort)},
+		{"alert.smtp.security", s.SMTPSecurity},
+		{"alert.smtp.auth", s.SMTPAuth},
+		{"alert.smtp.username", s.SMTPUsername},
+		{"alert.smtp.password", maskedSecret(s.SMTPPassword)},
+		{"alert.smtp.from", s.SMTPFrom},
+		{"alert.smtp.to", s.SMTPTo},
+		{"alert.smtp.skip_verify", strconv.FormatBool(s.SMTPSkipVerify)},
 	}
+}
+
+// SecretMask is what a stored secret is written as wherever the settings are
+// named one by one: in the changes a save answers with and in the lines a
+// reset logs. Those go to a browser and to the log file, and the password of
+// the mail server is not for either, sealed or not.
+//
+// The mask is the same whatever the secret is, so one password replaced by
+// another is not a change this list can see. The save that replaces it says so
+// itself.
+const SecretMask = "********"
+
+func maskedSecret(secret string) string {
+	if secret == "" {
+		return ""
+	}
+
+	return SecretMask
 }
 
 // Diff returns the settings that differ between the two sets. A nil before

@@ -174,12 +174,28 @@ const (
 	errStatusDesiredCountFailed errorCode = "status.desired_count_failed"
 	errStatusFetchFailed        errorCode = "status.fetch_failed"
 
-	errSettingsReadFailed          errorCode = "settings.read_failed"
-	errSettingsStoreFailed         errorCode = "settings.store_failed"
-	errSettingsRefused             errorCode = "settings.refused"
-	errSettingsLanguageUnsupported errorCode = "settings.ui_language.unsupported"
-	errSettingsAPIPortLocalForward errorCode = "settings.api_port.local_forward"
-	errSettingsAPIPortSocks        errorCode = "settings.api_port.socks"
+	errSettingsReadFailed           errorCode = "settings.read_failed"
+	errSettingsStoreFailed          errorCode = "settings.store_failed"
+	errSettingsRefused              errorCode = "settings.refused"
+	errSettingsLanguageUnsupported  errorCode = "settings.ui_language.unsupported"
+	errSettingsAPIPortLocalForward  errorCode = "settings.api_port.local_forward"
+	errSettingsAPIPortSocks         errorCode = "settings.api_port.socks"
+	errSettingsAlertAfterInvalid    errorCode = "settings.alert_after.invalid"
+	errSettingsWebhookURLInvalid    errorCode = "settings.alert_webhook_url.invalid"
+	errSettingsSMTPHostInvalid      errorCode = "settings.smtp_host.invalid"
+	errSettingsSMTPPortInvalid      errorCode = "settings.smtp_port.invalid"
+	errSettingsSMTPSecurityInvalid  errorCode = "settings.smtp_security.invalid"
+	errSettingsSMTPAuthInvalid      errorCode = "settings.smtp_auth.invalid"
+	errSettingsSMTPFromRequired     errorCode = "settings.smtp_from.required"
+	errSettingsSMTPFromInvalid      errorCode = "settings.smtp_from.invalid"
+	errSettingsSMTPToRequired       errorCode = "settings.smtp_to.required"
+	errSettingsSMTPToInvalid        errorCode = "settings.smtp_to.invalid"
+	errSettingsSMTPUserRequired     errorCode = "settings.smtp_username.required"
+	errSettingsSMTPPasswordSeal     errorCode = "settings.smtp_password.seal_failed"
+	errSettingsSMTPPasswordRequired errorCode = "settings.smtp_password.required"
+	errAlertTestWebhookOff          errorCode = "settings.alert_test.webhook_off"
+	errAlertTestSMTPOff             errorCode = "settings.alert_test.smtp_off"
+	errAlertTestFailed              errorCode = "settings.alert_test.failed"
 
 	errCertificateHTTPSOff       errorCode = "certificate.https_off"
 	errCertificateServedUnread   errorCode = "certificate.served.read_failed"
@@ -451,6 +467,32 @@ var errorMessages = map[errorCode]string{
 	// The same port opened by the SOCKS5 proxy of a Host. data carries the
 	// proxy in socks_host beside the suggested port.
 	errSettingsAPIPortSocks: "The settings are refused: the port {api_port} is opened by the SOCKS5 proxy of the Host {host}. Move the SOCKS5 proxy to another port, or choose another port for this server",
+	// The alert settings. Each rule is raised under a code of its own for the
+	// reason the language is: the value that was refused goes into a sentence
+	// the screen writes in its own language, and the rule is in the sentence
+	// rather than in an English {reason}.
+	errSettingsAlertAfterInvalid:   "The settings are refused: {value} is not a delay an alert can wait for. Use a number of seconds from {min} to {max}",
+	errSettingsWebhookURLInvalid:   "The settings are refused: {value} is not a webhook address. Use an address that begins with http:// or https://, or leave it empty to turn the webhook off",
+	errSettingsSMTPHostInvalid:     "The settings are refused: {value} is not the name or the address of a mail server",
+	errSettingsSMTPPortInvalid:     "The settings are refused: {value} is not a port of a mail server. Use a number from 1 to 65535",
+	errSettingsSMTPSecurityInvalid: "The settings are refused: {value} is not a connection security this server knows. Use none, starttls or tls",
+	errSettingsSMTPAuthInvalid:     "The settings are refused: {value} is not a login method this server knows. Use none, plain or login",
+	errSettingsSMTPFromRequired:    "The settings are refused: a mail server is set and no sender address is. Give the address alerts are sent from",
+	errSettingsSMTPFromInvalid:     "The settings are refused: {value} is not a mail address",
+	errSettingsSMTPToRequired:      "The settings are refused: a mail server is set and no recipient address is. Give at least one address to send alerts to",
+	errSettingsSMTPToInvalid:       "The settings are refused: {value} is not a mail address. Separate several addresses with commas",
+	errSettingsSMTPUserRequired:    "The settings are refused: the login method sends a user name and none is set. Give the user name, or set the login method to none",
+	errSettingsSMTPPasswordSeal:    "Failed to encrypt the mail password",
+	// The stored mail password is sent only to the server it was given for.
+	// A body that moves the target has to give it again: see
+	// guardStoredPassword.
+	errSettingsSMTPPasswordRequired: "The settings are refused: the mail server, its port, the user name or the connection security changed, or the certificate check was turned off, and no new password was given. The stored password is sent only to the server it was given for. Type the password again, or set the login method to none",
+	// The two test presses on the Settings screen. The failure carries what
+	// went wrong in {reason}: it is what the webhook or the mail server said,
+	// which is no sentence of this server's to translate.
+	errAlertTestWebhookOff: "No webhook address is set, so there is nowhere to send a test alert to",
+	errAlertTestSMTPOff:    "No mail server is set, so there is nothing to send a test alert through",
+	errAlertTestFailed:     "The test alert was not delivered: {reason}",
 
 	// The TLS certificate this installation serves with.
 	errCertificateHTTPSOff:       "No certificate is in use, because HTTPS is turned off. Turn on \"Serve over HTTPS\" and start tunnel-manager again",

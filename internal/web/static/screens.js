@@ -6685,6 +6685,7 @@ async function drawSettings() {
   }
 
   nodes.push(settingsForm(set));
+  nodes.push(alertsCard(set));
   nodes.push(certificateCard(set, certificate));
   nodes.push(certificateForm());
   nodes.push(accountCard(account));
@@ -6856,6 +6857,245 @@ function settingsForm(set) {
       }
     ],
     onSubmit: saveSettings
+  });
+}
+
+// alertsCard is where an operator says how to be told about a tunnel, a local
+// forward or a SOCKS5 proxy that stays down. The webhook and mail are each
+// switched off by leaving the address or the server empty, so the two are
+// turned on and off apart.
+//
+// The password box is always drawn empty. A read never carries the password,
+// only whether one is stored, and a box left empty on a save keeps the stored
+// one: the tick under it is how a stored password is taken away.
+//
+// The two test presses send what the boxes hold without saving it, so that a
+// setting can be tried before it is stored. What they answer is said in the
+// box at the corner and the screen is not drawn again, which would throw away
+// whatever was typed and not yet saved.
+function alertsCard(set) {
+  const passwordSet = set.smtp_password_set === true;
+
+  const fields = [
+    {
+      name: "alert_after_sec",
+      label: t("alerts.after.label"),
+      value: set.alert_after_sec,
+      hint: t("form.seconds-example.hint"),
+      inputMode: "numeric",
+      filter: portCharacters,
+      check: checkAlertAfter,
+      note: t("alerts.after.hint")
+    },
+    {
+      name: "alert_webhook_url",
+      label: t("alerts.webhook.label"),
+      value: set.alert_webhook_url,
+      hint: "https://",
+      check: checkWebhookURL,
+      note: t("alerts.webhook.hint")
+    },
+    {
+      name: "smtp_host",
+      label: t("alerts.smtp-host.label"),
+      value: set.smtp_host,
+      hint: "mail.example.com",
+      note: t("alerts.smtp-host.hint")
+    },
+    settingsField(portField("smtp_port", t("alerts.smtp-port.label"), set.smtp_port),
+      t("alerts.smtp-port.hint")),
+    {
+      name: "smtp_security",
+      label: t("alerts.security.label"),
+      value: set.smtp_security,
+      options: [
+        { value: "starttls", text: t("alerts.security-starttls.option") },
+        { value: "tls", text: t("alerts.security-tls.option") },
+        { value: "none", text: t("alerts.security-none.option") }
+      ],
+      note: t("alerts.security.hint")
+    },
+    {
+      name: "smtp_auth",
+      label: t("alerts.auth.label"),
+      value: set.smtp_auth,
+      options: [
+        { value: "plain", text: t("alerts.auth-plain.option") },
+        { value: "login", text: t("alerts.auth-login.option") },
+        { value: "none", text: t("alerts.auth-none.option") }
+      ]
+    },
+    {
+      name: "smtp_username",
+      label: t("alerts.username.label"),
+      value: set.smtp_username
+    },
+    {
+      name: "smtp_password",
+      label: t("alerts.password.label"),
+      type: "password",
+      value: "",
+      note: passwordSet ? t("alerts.password-set.hint") : t("alerts.password-none.hint")
+    }
+  ];
+
+  if (passwordSet) {
+    fields.push({
+      name: "smtp_password_clear",
+      label: t("alerts.password-clear.label"),
+      type: "checkbox",
+      value: false
+    });
+  }
+
+  fields.push(
+    {
+      name: "smtp_from",
+      label: t("alerts.from.label"),
+      value: set.smtp_from,
+      hint: "tunnel-manager@example.com"
+    },
+    {
+      name: "smtp_to",
+      label: t("alerts.to.label"),
+      value: set.smtp_to,
+      hint: "ops@example.com, oncall@example.com",
+      note: t("alerts.to.hint")
+    },
+    {
+      name: "smtp_skip_verify",
+      label: t("alerts.skip-verify.label"),
+      type: "checkbox",
+      value: set.smtp_skip_verify,
+      // What turning the check off costs is said beside the box as soon as
+      // it is ticked, rather than left to the word "verify".
+      advise: function (ticked) {
+        return ticked ? t("alerts.skip-verify.notice") : "";
+      }
+    }
+  );
+
+  const form = buildForm({
+    name: "alerts",
+    legend: t("alerts.card.title"),
+    intro: [element("p", t("alerts.card.text"))],
+    submitLabel: t("common.save.button"),
+    fields: fields,
+    onSubmit: saveAlertSettings
+  });
+
+  const buttons = form.querySelector("div.buttons");
+
+  const webhook = actionButton(t("alerts.test-webhook.button"), "alerts-test-webhook", function () {
+    return sendTestAlert(form, webhook, "/api/settings/alert/test-webhook");
+  });
+
+  const mail = actionButton(t("alerts.test-smtp.button"), "alerts-test-smtp", function () {
+    return sendTestAlert(form, mail, "/api/settings/alert/test-smtp");
+  });
+
+  buttons.appendChild(webhook);
+  buttons.appendChild(mail);
+
+  return form;
+}
+
+// checkAlertAfter holds the delay to what the server takes. Below ten seconds a
+// single missed check is already an outage, and past a day the alert comes after
+// everybody has found out.
+function checkAlertAfter(value) {
+  const seconds = Number(String(value).trim());
+
+  if (String(value).trim() === "" || !Number.isInteger(seconds) || seconds < 10 || seconds > 86400) {
+    return t("alerts.after.error");
+  }
+
+  return "";
+}
+
+// checkWebhookURL lets an empty box through, which is the webhook turned off,
+// and otherwise asks for an address the server can post to.
+function checkWebhookURL(value) {
+  const trimmed = String(value).trim();
+
+  if (trimmed === "" || /^https?:\/\/[^\s/]+/i.test(trimmed)) {
+    return "";
+  }
+
+  return t("alerts.webhook.error");
+}
+
+// alertSettingsBody is what the card sends, for a save and for a test alike.
+// The password goes only when something was typed, and the tick that clears it
+// only when it is ticked, so a save that touched neither leaves the stored
+// password where it is.
+function alertSettingsBody(values) {
+  const body = {
+    alert_after_sec: asNumber(values.alert_after_sec),
+    alert_webhook_url: values.alert_webhook_url.trim(),
+    smtp_host: values.smtp_host.trim(),
+    smtp_port: asNumber(values.smtp_port),
+    smtp_security: values.smtp_security,
+    smtp_auth: values.smtp_auth,
+    smtp_username: values.smtp_username,
+    smtp_from: values.smtp_from.trim(),
+    smtp_to: values.smtp_to.trim(),
+    smtp_skip_verify: values.smtp_skip_verify
+  };
+
+  if (values.smtp_password !== "") {
+    Object.assign(body, { smtp_password: values.smtp_password });
+  }
+
+  if (values.smtp_password_clear === true) {
+    body.smtp_password_clear = true;
+  }
+
+  return body;
+}
+
+async function saveAlertSettings(values) {
+  const data = await apiCall("PUT", "/api/settings", alertSettingsBody(values));
+
+  saySettingsSaved(data, "alerts.saved.notice", "settings.saved-next-start.notice");
+
+  return drawSettings();
+}
+
+// alertFormValues reads the boxes of the card the way a submit reads them.
+function alertFormValues(form) {
+  const values = {};
+
+  for (const input of form.querySelectorAll("[data-field]")) {
+    values[input.dataset.field] = input.type === "checkbox" ? input.checked : input.value;
+  }
+
+  return values;
+}
+
+// sendTestAlert sends a test through one of the two ways with what the card
+// holds. The answer goes in the box at the corner, the failure as well as the
+// success: the failure is what the webhook or the mail server said, and drawing
+// the screen again to show it would throw away what was typed.
+async function sendTestAlert(form, button, path) {
+  button.disabled = true;
+
+  try {
+    await apiCall("POST", path, alertSettingsBody(alertFormValues(form)));
+  } catch (error) {
+    if (error instanceof Redirected) {
+      throw error;
+    }
+
+    showToast(sayOf(error), "error");
+
+    return;
+  } finally {
+    button.disabled = false;
+  }
+
+  setToast(function () {
+    return t("alerts.test-sent.notice");
   });
 }
 

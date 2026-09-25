@@ -142,9 +142,11 @@ var tokenRouteScopes = map[string]string{
 	"POST /api/host/:id/host-key": TokenScopeHostKeys,
 	"POST /api/host-key":          TokenScopeHostKeys,
 
-	"PUT /api/settings":           TokenScopeSettings,
-	"POST /api/certificate/renew": TokenScopeSettings,
-	"PUT /api/certificate":        TokenScopeSettings,
+	"PUT /api/settings":                     TokenScopeSettings,
+	"POST /api/settings/alert/test-webhook": TokenScopeSettings,
+	"POST /api/settings/alert/test-smtp":    TokenScopeSettings,
+	"POST /api/certificate/renew":           TokenScopeSettings,
+	"PUT /api/certificate":                  TokenScopeSettings,
 
 	"POST /api/export/tunnels":  TokenScopeTransfer,
 	"POST /api/import/tunnels":  TokenScopeTransfer,

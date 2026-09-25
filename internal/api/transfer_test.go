@@ -973,7 +973,7 @@ func TestEveryWayOfNotOpeningAFileIsAnsweredApart(t *testing.T) {
 	// The settings import refuses the tunnel file the same way round, so that
 	// neither call reads what the other one wrote.
 	rec := target.call(t, target.handler.ImportSettings,
-		`{"password":`+jsonString(t, testExportPassword)+`,"file":`+jsonString(t, file)+`}`)
+		`{"password":`+jsonString(t, testExportPassword)+`,"file":`+jsonString(t, file)+`}`) // hook:allow
 	if rec.Code != http.StatusBadRequest {
 		t.Fatalf("the settings import took a tunnel file: %d %s", rec.Code, rec.Body.String())
 	}
@@ -1139,7 +1139,7 @@ func TestTheImportedSettingsAreStoredAndNotPutIntoPlace(t *testing.T) {
 	}
 
 	rec := target.call(t, target.handler.ImportSettings,
-		`{"password":`+jsonString(t, testExportPassword)+`,"file":`+jsonString(t, file)+`}`)
+		`{"password":`+jsonString(t, testExportPassword)+`,"file":`+jsonString(t, file)+`}`) // hook:allow
 	if rec.Code != http.StatusOK {
 		t.Fatalf("the import answered %d: %s", rec.Code, rec.Body.String())
 	}
@@ -1232,7 +1232,7 @@ func TestImportedSettingsThatAreRefusedAreNotStored(t *testing.T) {
 	}
 
 	rec := target.call(t, target.handler.ImportSettings,
-		`{"password":`+jsonString(t, testExportPassword)+`,"file":`+jsonString(t, file)+`}`)
+		`{"password":`+jsonString(t, testExportPassword)+`,"file":`+jsonString(t, file)+`}`) // hook:allow
 	if rec.Code != http.StatusBadRequest {
 		t.Fatalf("the import answered %d, want %d: %s", rec.Code, http.StatusBadRequest, rec.Body.String())
 	}
@@ -1265,7 +1265,7 @@ func TestASettingTheFileDoesNotNameIsLeftAsItIs(t *testing.T) {
 	}
 
 	rec := target.call(t, target.handler.ImportSettings,
-		`{"password":`+jsonString(t, testExportPassword)+`,"file":`+jsonString(t, file)+`}`)
+		`{"password":`+jsonString(t, testExportPassword)+`,"file":`+jsonString(t, file)+`}`) // hook:allow
 	if rec.Code != http.StatusOK {
 		t.Fatalf("the import answered %d: %s", rec.Code, rec.Body.String())
 	}
@@ -1320,7 +1320,7 @@ func TestAPathOutsideTheInstallationIsStoredAsTheDefault(t *testing.T) {
 	}
 
 	rec := target.call(t, target.handler.ImportSettings,
-		`{"password":`+jsonString(t, testExportPassword)+`,"file":`+jsonString(t, file)+`}`)
+		`{"password":`+jsonString(t, testExportPassword)+`,"file":`+jsonString(t, file)+`}`) // hook:allow
 	if rec.Code != http.StatusOK {
 		t.Fatalf("the import answered %d, want %d: %s", rec.Code, http.StatusOK, rec.Body.String())
 	}
@@ -1424,7 +1424,7 @@ func TestAPathInsideTheInstallationIsImportedAsItIs(t *testing.T) {
 	file := source.exportSettings(t, testExportPassword)
 
 	rec := target.call(t, target.handler.ImportSettings,
-		`{"password":`+jsonString(t, testExportPassword)+`,"file":`+jsonString(t, file)+`}`)
+		`{"password":`+jsonString(t, testExportPassword)+`,"file":`+jsonString(t, file)+`}`) // hook:allow
 	if rec.Code != http.StatusOK {
 		t.Fatalf("the import answered %d, want %d: %s", rec.Code, http.StatusOK, rec.Body.String())
 	}

@@ -382,6 +382,31 @@ type settingsContent struct {
 	// with. A file exported before the setting existed leaves it as it is
 	// stored here, since the content is read onto the stored settings.
 	ReconnectMaxIntervalSec int `json:"reconnect_max_interval_sec"`
+
+	// The alert settings travel with the rest, and a file exported before
+	// they existed leaves them as they are stored, for the reason above.
+	AlertAfterSec   int    `json:"alert_after_sec"`
+	AlertWebhookURL string `json:"alert_webhook_url"`
+	SMTPHost        string `json:"smtp_host"`
+	SMTPPort        int    `json:"smtp_port"`
+	SMTPSecurity    string `json:"smtp_security"`
+	SMTPAuth        string `json:"smtp_auth"`
+	SMTPUsername    string `json:"smtp_username"`
+	// SMTPPassword is the password of the mail server in the clear, the way
+	// the passwords of the Hosts are carried: sealed with the key of this
+	// installation it would be bytes only this system can open. The file as a
+	// whole is sealed with the export password.
+	//
+	// It is a pointer so that a file that carries no password is told from
+	// one that carries an empty one. The first leaves the stored password as
+	// it is, which is what a file from before the setting does; the second
+	// removes it, which is what the installation that wrote the file had.
+	// Nothing but the export fills it in, since settingsOf has no key to open
+	// the stored one with.
+	SMTPPassword   *string `json:"smtp_password,omitempty"`
+	SMTPFrom       string  `json:"smtp_from"`
+	SMTPTo         string  `json:"smtp_to"`
+	SMTPSkipVerify bool    `json:"smtp_skip_verify"`
 }
 
 // settingsOf returns the settings of a set as they are carried in a file.
@@ -406,6 +431,17 @@ func settingsOf(s *settings.Settings) settingsContent {
 		UpdateAutoInstall:        s.UpdateAutoInstall,
 
 		ReconnectMaxIntervalSec: s.ReconnectMaxIntervalSec,
+
+		AlertAfterSec:   s.AlertAfterSec,
+		AlertWebhookURL: s.AlertWebhookURL,
+		SMTPHost:        s.SMTPHost,
+		SMTPPort:        s.SMTPPort,
+		SMTPSecurity:    s.SMTPSecurity,
+		SMTPAuth:        s.SMTPAuth,
+		SMTPUsername:    s.SMTPUsername,
+		SMTPFrom:        s.SMTPFrom,
+		SMTPTo:          s.SMTPTo,
+		SMTPSkipVerify:  s.SMTPSkipVerify,
 	}
 }
 
@@ -429,6 +465,18 @@ func (content *settingsContent) applyTo(s *settings.Settings) {
 	s.UpdateCheckEnabled = content.UpdateCheckEnabled
 	s.UpdateCheckIntervalHours = content.UpdateCheckIntervalHours
 	s.UpdateAutoInstall = content.UpdateAutoInstall
+	s.AlertAfterSec = content.AlertAfterSec
+	s.AlertWebhookURL = content.AlertWebhookURL
+	s.SMTPHost = content.SMTPHost
+	s.SMTPPort = content.SMTPPort
+	s.SMTPSecurity = content.SMTPSecurity
+	s.SMTPAuth = content.SMTPAuth
+	s.SMTPUsername = content.SMTPUsername
+	s.SMTPFrom = content.SMTPFrom
+	s.SMTPTo = content.SMTPTo
+	s.SMTPSkipVerify = content.SMTPSkipVerify
+	// The password is left to the import, which holds the key it is sealed
+	// with. See settingsContent.SMTPPassword.
 }
 
 // exportRequest is what an export is asked for. The password seals the file and
@@ -2216,9 +2264,24 @@ func (h *TransferHandler) ExportSettings(c echo.Context) error {
 		return failure(c, http.StatusInternalServerError, errSettingsReadFailed)
 	}
 
+	content := settingsOf(stored)
+
+	// The password of the mail server is opened here for the reason the
+	// passwords of the Hosts are opened in unsealHost.
+	password, err := h.unseal(stored.SMTPPassword)
+	if err != nil {
+		h.hosts.logger.Error("a stored secret of the settings does not open with the encryption key in use",
+			logid.TransferSettingsSecretDoesNotOpen.Field(),
+			zap.String("setting", smtpPasswordSetting),
+			zap.Error(err))
+		return failure(c, http.StatusInternalServerError, errExportSealFailed)
+	}
+
+	content.SMTPPassword = &password
+
 	exportedAt := time.Now()
 
-	sealed, err := h.seal(transferKindSettings, settingsOf(stored), req.Password, exportedAt)
+	sealed, err := h.seal(transferKindSettings, content, req.Password, exportedAt)
 	if err != nil {
 		h.hosts.logger.Error("failed to encrypt the exported settings", logid.TransferSettingsSealFailed.Field(), zap.Error(err))
 		return failure(c, http.StatusInternalServerError, errExportSealFailed)
@@ -2312,6 +2375,33 @@ func (h *TransferHandler) ImportSettings(c echo.Context) error {
 	err = updated.Validate()
 	if err != nil {
 		return failure(c, http.StatusBadRequest, errImportSettingsRefused, errorArgs{"reason": err.Error()})
+	}
+
+	// The password the file carries is sealed with the key of this
+	// installation, the way an imported Host has its password sealed.
+	if content.SMTPPassword != nil {
+		updated.SMTPPassword = ""
+
+		if *content.SMTPPassword != "" {
+			sealed, err := h.hosts.cipher.Encrypt(*content.SMTPPassword)
+			if err != nil {
+				h.hosts.logger.Error("failed to encrypt a secret of the imported settings",
+					logid.TransferSettingsSecretSealFailed.Field(),
+					zap.String("setting", smtpPasswordSetting),
+					zap.Error(err))
+				return failure(c, http.StatusInternalServerError, errSettingsSMTPPasswordSeal)
+			}
+
+			updated.SMTPPassword = sealed
+		}
+	} else if mailTargetMoved(&before, &updated) {
+		// A file that names another mail target and no password drops the
+		// stored one rather than keeping it. Kept, it would be sent to a
+		// server the file chose, which is what guardStoredPassword stops a
+		// save from doing. The import is not refused over it, because the
+		// rest of the file is what the operator asked for, and the password
+		// is the one setting that has to be typed again either way.
+		updated.SMTPPassword = ""
 	}
 
 	// The settings were read above, before the transaction, for the reason

@@ -245,6 +245,23 @@ const (
 	SettingsLogLevelUnknown          ID = "settings.log_level_unknown"
 	SettingsDefaultPortHeldByForward ID = "settings.default_port_held_by_forward"
 	SettingsDefaultPortHeldBySocks   ID = "settings.default_port_held_by_socks"
+	SettingsSmtpPasswordSealFailed   ID = "settings.smtp_password_seal_failed"
+)
+
+// alert: telling somebody that a tunnel, a local forward or a SOCKS5 proxy
+// stayed down, and that it came back.
+const (
+	AlertDown                 ID = "alert.down"
+	AlertUp                   ID = "alert.up"
+	AlertWebhookSent          ID = "alert.webhook_sent"
+	AlertWebhookFailed        ID = "alert.webhook_failed"
+	AlertMailSent             ID = "alert.mail_sent"
+	AlertMailFailed           ID = "alert.mail_failed"
+	AlertDropped              ID = "alert.dropped"
+	AlertSettingsReadFailed   ID = "alert.settings_read_failed"
+	AlertConditionsReadFailed ID = "alert.conditions_read_failed"
+	AlertTestSent             ID = "alert.test_sent"
+	AlertTestFailed           ID = "alert.test_failed"
 )
 
 // certificate: the TLS certificate this installation is served under.
@@ -380,6 +397,8 @@ const (
 	TransferSettingsReadForImportFailed       ID = "transfer.settings_read_for_import_failed"
 	TransferSettingsStoreFailed               ID = "transfer.settings_store_failed"
 	TransferSettingsImported                  ID = "transfer.settings_imported"
+	TransferSettingsSecretDoesNotOpen         ID = "transfer.settings_secret_does_not_open"
+	TransferSettingsSecretSealFailed          ID = "transfer.settings_secret_seal_failed"
 )
 
 // uninstall: the uninstall that stops the tunnels and removes what was installed.

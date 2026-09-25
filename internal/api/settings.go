@@ -3,8 +3,11 @@ package api
 import (
 	"errors"
 	"net/http"
+	"strconv"
 	"strings"
 
+	"github.com/jollaman999/tunnel-manager/internal/alert"
+	"github.com/jollaman999/tunnel-manager/internal/crypto"
 	"github.com/jollaman999/tunnel-manager/internal/logid"
 	"github.com/jollaman999/tunnel-manager/internal/models"
 	"github.com/jollaman999/tunnel-manager/internal/settings"
@@ -54,10 +57,18 @@ type SettingsHandler struct {
 	// installDir is the directory the database file is in, which is what a
 	// stored path that is not absolute is read against.
 	installDir string
+	// cipher seals the password of the mail server as it is stored, with the
+	// key the passwords of the Hosts are sealed with.
+	cipher *crypto.Cipher
+	// alerts is what the two test presses send through. It is the sender the
+	// alert watcher uses, so a test that goes through is one an alert would
+	// go through as well.
+	alerts *alert.Sender
 }
 
 func NewSettingsHandler(db *gorm.DB, logger *zap.Logger, logLevel zap.AtomicLevel,
-	gormLevel databaseLogLevel, startup settings.Settings, installDir string) *SettingsHandler {
+	gormLevel databaseLogLevel, startup settings.Settings, installDir string,
+	cipher *crypto.Cipher, alerts *alert.Sender) *SettingsHandler {
 	return &SettingsHandler{
 		db:         db,
 		logger:     logger,
@@ -65,6 +76,8 @@ func NewSettingsHandler(db *gorm.DB, logger *zap.Logger, logLevel zap.AtomicLeve
 		gormLevel:  gormLevel,
 		startup:    startup,
 		installDir: installDir,
+		cipher:     cipher,
+		alerts:     alerts,
 	}
 }
 
@@ -121,6 +134,10 @@ type settingsView struct {
 	// rather than describe it, since what it is depends on how the service was
 	// started and the operator cannot see it from a browser.
 	InstallDir string `json:"install_dir"`
+
+	// SMTPPasswordSet says whether a password for the mail server is stored.
+	// It stands in for the password itself, which no answer carries.
+	SMTPPasswordSet bool `json:"smtp_password_set"`
 }
 
 // GetSettings answers with what is stored, along with what is stored but not
@@ -141,9 +158,10 @@ func (h *SettingsHandler) GetSettings(c echo.Context) error {
 	return c.JSON(http.StatusOK, models.Response{
 		Success: true,
 		Data: settingsView{
-			Settings:       stored,
-			PendingRestart: h.pendingRestart(stored),
-			InstallDir:     h.installDir,
+			Settings:        stored,
+			PendingRestart:  h.pendingRestart(stored),
+			InstallDir:      h.installDir,
+			SMTPPasswordSet: stored.SMTPPassword != "",
 		},
 	})
 }
@@ -191,6 +209,25 @@ type updateSettingsRequest struct {
 	UpdateCheckEnabled       *bool `json:"update_check_enabled"`
 	UpdateCheckIntervalHours *int  `json:"update_check_interval_hours"`
 	UpdateAutoInstall        *bool `json:"update_auto_install"`
+
+	AlertAfterSec   *int    `json:"alert_after_sec"`
+	AlertWebhookURL *string `json:"alert_webhook_url"`
+
+	SMTPHost     *string `json:"smtp_host"`
+	SMTPPort     *int    `json:"smtp_port"`
+	SMTPSecurity *string `json:"smtp_security"`
+	SMTPAuth     *string `json:"smtp_auth"`
+	SMTPUsername *string `json:"smtp_username"`
+	// SMTPPassword is the password of the mail server in the clear, sealed
+	// before it is stored. It is the one field where an empty value is not
+	// stored as it stands: a read never carries the password, so a screen
+	// that sends back what it read sends none, and that has to leave the
+	// stored one alone. Clearing it is what SMTPPasswordClear is for.
+	SMTPPassword      *string `json:"smtp_password"`
+	SMTPPasswordClear *bool   `json:"smtp_password_clear"`
+	SMTPFrom          *string `json:"smtp_from"`
+	SMTPTo            *string `json:"smtp_to"`
+	SMTPSkipVerify    *bool   `json:"smtp_skip_verify"`
 }
 
 // apply puts what the body named onto the stored settings and leaves the rest
@@ -260,6 +297,159 @@ func (r *updateSettingsRequest) apply(s *settings.Settings) {
 	if r.UpdateAutoInstall != nil {
 		s.UpdateAutoInstall = *r.UpdateAutoInstall
 	}
+
+	if r.AlertAfterSec != nil {
+		s.AlertAfterSec = *r.AlertAfterSec
+	}
+	if r.AlertWebhookURL != nil {
+		s.AlertWebhookURL = strings.TrimSpace(*r.AlertWebhookURL)
+	}
+
+	if r.SMTPHost != nil {
+		s.SMTPHost = strings.TrimSpace(*r.SMTPHost)
+	}
+	if r.SMTPPort != nil {
+		s.SMTPPort = *r.SMTPPort
+	}
+	if r.SMTPSecurity != nil {
+		s.SMTPSecurity = *r.SMTPSecurity
+	}
+	if r.SMTPAuth != nil {
+		s.SMTPAuth = *r.SMTPAuth
+	}
+	if r.SMTPUsername != nil {
+		s.SMTPUsername = *r.SMTPUsername
+	}
+	if r.SMTPFrom != nil {
+		s.SMTPFrom = strings.TrimSpace(*r.SMTPFrom)
+	}
+	if r.SMTPTo != nil {
+		s.SMTPTo = strings.TrimSpace(*r.SMTPTo)
+	}
+	if r.SMTPSkipVerify != nil {
+		s.SMTPSkipVerify = *r.SMTPSkipVerify
+	}
+}
+
+// applyPassword puts the password the body carries onto the stored settings,
+// sealed. It is apart from apply because sealing can fail, and a failure there
+// is this end failing rather than a value that was refused.
+//
+// A password that is sent is stored; an empty or missing one leaves the stored
+// one as it is; smtp_password_clear with no password removes it.
+func (r *updateSettingsRequest) applyPassword(s *settings.Settings, cipher *crypto.Cipher) error {
+	if r.SMTPPassword != nil && *r.SMTPPassword != "" {
+		sealed, err := cipher.Encrypt(*r.SMTPPassword)
+		if err != nil {
+			return err
+		}
+
+		s.SMTPPassword = sealed
+
+		return nil
+	}
+
+	if r.SMTPPasswordClear != nil && *r.SMTPPasswordClear {
+		s.SMTPPassword = ""
+	}
+
+	return nil
+}
+
+// passwordChanged says whether the body asked for the stored password to be
+// replaced or removed.
+func (r *updateSettingsRequest) passwordChanged() bool {
+	return (r.SMTPPassword != nil && *r.SMTPPassword != "") ||
+		(r.SMTPPasswordClear != nil && *r.SMTPPasswordClear)
+}
+
+// mailTargetMoved says whether the password stored for one mail server would
+// now be sent somewhere else, or sent where it can be read on the way: the
+// server, its port, the user it logs in as or the connection security changed,
+// or the check of the certificate was turned off.
+func mailTargetMoved(before *settings.Settings, after *settings.Settings) bool {
+	return before.SMTPHost != after.SMTPHost ||
+		before.SMTPPort != after.SMTPPort ||
+		before.SMTPUsername != after.SMTPUsername ||
+		before.SMTPSecurity != after.SMTPSecurity ||
+		(!before.SMTPSkipVerify && after.SMTPSkipVerify)
+}
+
+// guardStoredPassword keeps the stored mail password with the server it was
+// given for.
+//
+// A read never answers with the password, and that is worth nothing if a body
+// can name another server and have the stored password sent to it: a save
+// would send it with the next alert and a test would send it at once. So a
+// body that moves the target has to carry the password again. One that turns
+// the login off or clears the password does not, and the stored password is
+// dropped for it: kept, it would go to the new server the moment the login was
+// turned back on, which the next body could do without moving anything.
+func guardStoredPassword(req *updateSettingsRequest, before *settings.Settings, after *settings.Settings) *refusal {
+	if before.SMTPPassword == "" || !mailTargetMoved(before, after) {
+		return nil
+	}
+
+	if req.SMTPPassword != nil && *req.SMTPPassword != "" {
+		return nil
+	}
+
+	if after.SMTPAuth == settings.SMTPAuthNone || (req.SMTPPasswordClear != nil && *req.SMTPPasswordClear) {
+		after.SMTPPassword = ""
+
+		return nil
+	}
+
+	return refuse(http.StatusBadRequest, errSettingsSMTPPasswordRequired)
+}
+
+// settingsRefusal answers a set Validate refused. The language and the alert
+// settings are answered under codes of their own; the rest arrive as a
+// sentence in {reason}, since there is nothing for a screen to do with a port
+// number but repeat it.
+func settingsRefusal(err error, updated *settings.Settings, fallback errorCode) *refusal {
+	if errors.Is(err, settings.ErrLanguageUnsupported) {
+		return refuse(http.StatusBadRequest, errSettingsLanguageUnsupported, errorArgs{
+			"language":  updated.UIDefaultLanguage,
+			"languages": strings.Join(settings.Languages(), ", "),
+		})
+	}
+
+	var refused *settings.SettingError
+	if errors.As(err, &refused) {
+		value := refused.Value
+
+		switch refused.Rule {
+		case settings.ErrAlertAfterInvalid:
+			return refuse(http.StatusBadRequest, errSettingsAlertAfterInvalid, errorArgs{
+				"value": value,
+				"min":   strconv.Itoa(settings.MinAlertAfterSec),
+				"max":   strconv.Itoa(settings.MaxAlertAfterSec),
+			})
+		case settings.ErrWebhookURLInvalid:
+			return refuse(http.StatusBadRequest, errSettingsWebhookURLInvalid, errorArgs{"value": value})
+		case settings.ErrSMTPHostInvalid:
+			return refuse(http.StatusBadRequest, errSettingsSMTPHostInvalid, errorArgs{"value": value})
+		case settings.ErrSMTPPortInvalid:
+			return refuse(http.StatusBadRequest, errSettingsSMTPPortInvalid, errorArgs{"value": value})
+		case settings.ErrSMTPSecurityInvalid:
+			return refuse(http.StatusBadRequest, errSettingsSMTPSecurityInvalid, errorArgs{"value": value})
+		case settings.ErrSMTPAuthInvalid:
+			return refuse(http.StatusBadRequest, errSettingsSMTPAuthInvalid, errorArgs{"value": value})
+		case settings.ErrSMTPFromRequired:
+			return refuse(http.StatusBadRequest, errSettingsSMTPFromRequired)
+		case settings.ErrSMTPFromInvalid:
+			return refuse(http.StatusBadRequest, errSettingsSMTPFromInvalid, errorArgs{"value": value})
+		case settings.ErrSMTPToRequired:
+			return refuse(http.StatusBadRequest, errSettingsSMTPToRequired)
+		case settings.ErrSMTPToInvalid:
+			return refuse(http.StatusBadRequest, errSettingsSMTPToInvalid, errorArgs{"value": value})
+		case settings.ErrSMTPUsernameRequired:
+			return refuse(http.StatusBadRequest, errSettingsSMTPUserRequired)
+		}
+	}
+
+	return refuse(http.StatusBadRequest, fallback, errorArgs{"reason": err.Error()})
 }
 
 // UpdateSettings stores what the request carries and puts into place whatever
@@ -269,6 +459,7 @@ func (r *updateSettingsRequest) apply(s *settings.Settings) {
 // @Description  Answers with what changed and whether a restart is needed. logging.level is the one setting this process takes on without being started again.
 // @Description  A new api_port that a local forward opens as its local port is refused with 409; data then carries that local forward and suggested_port, a port neither a local forward, a SOCKS5 proxy nor the stored or asked for api_port holds, or 0 when there is none.
 // @Description  A new api_port that the SOCKS5 proxy of a Host opens is refused with 409 under its own error_code; data then carries that Host in socks_host, local_forward left empty, and suggested_port.
+// @Description  smtp_password is write-only: a read says only smtp_password_set, an empty or missing one keeps the stored password, and smtp_password_clear removes it. While a password is stored, a body that changes smtp_host, smtp_port, smtp_username or smtp_security, or turns smtp_skip_verify on, has to carry smtp_password, or it is refused with 400 under settings.smtp_password.required; with smtp_auth none or smtp_password_clear the stored password is removed instead.
 // @Tags         settings
 // @Accept   json
 // @Produce  json
@@ -309,18 +500,20 @@ func (h *SettingsHandler) UpdateSettings(c echo.Context) error {
 	// on only one of them.
 	err = updated.Validate()
 	if err != nil {
-		// The language is the one rule whose refusal is answered under a code
-		// of its own, because a screen that says no to it has to list what it
-		// would say yes to. The rest arrive as a sentence in {reason}: there is
-		// nothing for a screen to do with a port number but repeat it.
-		if errors.Is(err, settings.ErrLanguageUnsupported) {
-			return failure(c, http.StatusBadRequest, errSettingsLanguageUnsupported, errorArgs{
-				"language":  updated.UIDefaultLanguage,
-				"languages": strings.Join(settings.Languages(), ", "),
-			})
-		}
+		return settingsRefusal(err, &updated, errSettingsRefused).answer(c)
+	}
 
-		return failure(c, http.StatusBadRequest, errSettingsRefused, errorArgs{"reason": err.Error()})
+	refused := guardStoredPassword(&req, &before, &updated)
+	if refused != nil {
+		return refused.answer(c)
+	}
+
+	// Sealed after the rules are run, so that a set that is refused never
+	// has a password sealed for it.
+	err = req.applyPassword(&updated, h.cipher)
+	if err != nil {
+		h.logger.Error("failed to encrypt the mail password", logid.SettingsSmtpPasswordSealFailed.Field(), zap.Error(err))
+		return failure(c, http.StatusInternalServerError, errSettingsSMTPPasswordSeal)
 	}
 
 	// The settings were read above, before the transaction, for the reason
@@ -364,6 +557,19 @@ func (h *SettingsHandler) UpdateSettings(c echo.Context) error {
 	}
 
 	changes := h.applyChanges(&before, &updated)
+
+	// A password replaced by another is written as the same mask on both
+	// sides, so the list above does not see it. The save says so itself,
+	// since a save that answered "nothing changed" to a new password would be
+	// read as one that did not take it.
+	if req.passwordChanged() && before.SMTPPassword != updated.SMTPPassword && !namesChange(changes, smtpPasswordSetting) {
+		changes = append(changes, settingsChange{
+			Name:    smtpPasswordSetting,
+			From:    maskedPassword(before.SMTPPassword),
+			To:      maskedPassword(updated.SMTPPassword),
+			Applied: appliedNow,
+		})
+	}
 
 	restart := false
 	for _, change := range changes {
@@ -414,6 +620,46 @@ var appliedNowSettings = map[string]func(h *SettingsHandler, s *settings.Setting
 	"ui.default_language": func(h *SettingsHandler, s *settings.Settings) bool {
 		return true
 	},
+	// The alert settings are read by the alert watcher on every scan, so the
+	// scan after a save runs on what was stored.
+	"alert.after_sec":        alertSettingInPlace,
+	"alert.webhook_url":      alertSettingInPlace,
+	"alert.smtp.host":        alertSettingInPlace,
+	"alert.smtp.port":        alertSettingInPlace,
+	"alert.smtp.security":    alertSettingInPlace,
+	"alert.smtp.auth":        alertSettingInPlace,
+	"alert.smtp.username":    alertSettingInPlace,
+	smtpPasswordSetting:      alertSettingInPlace,
+	"alert.smtp.from":        alertSettingInPlace,
+	"alert.smtp.to":          alertSettingInPlace,
+	"alert.smtp.skip_verify": alertSettingInPlace,
+}
+
+// smtpPasswordSetting is the name the password of the mail server goes by in
+// the list of changes.
+const smtpPasswordSetting = "alert.smtp.password"
+
+func alertSettingInPlace(h *SettingsHandler, s *settings.Settings) bool {
+	return true
+}
+
+// namesChange says whether a list of changes has one for the setting.
+func namesChange(changes []settingsChange, name string) bool {
+	for _, change := range changes {
+		if change.Name == name {
+			return true
+		}
+	}
+
+	return false
+}
+
+func maskedPassword(sealed string) string {
+	if sealed == "" {
+		return ""
+	}
+
+	return settings.SecretMask
 }
 
 // applyChanges puts into place what this process can take on and reports every

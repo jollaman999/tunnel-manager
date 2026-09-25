@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/glebarez/sqlite"
+	"github.com/jollaman999/tunnel-manager/internal/alert"
 	"github.com/jollaman999/tunnel-manager/internal/models"
 	"github.com/jollaman999/tunnel-manager/internal/settings"
 	"github.com/labstack/echo/v4"
@@ -96,7 +97,11 @@ func newSettingsHandler(t *testing.T, db *gorm.DB) (*SettingsHandler, zap.Atomic
 		t.Fatalf("failed to read the settings: %v", err)
 	}
 
-	return NewSettingsHandler(db, zap.New(core), level, gormLevel, *startup, t.TempDir()), level, gormLevel, logs
+	logger := zap.New(core)
+	cipher := newTestCipher(t)
+
+	return NewSettingsHandler(db, logger, level, gormLevel, *startup, t.TempDir(), cipher,
+		alert.NewSender(logger, cipher)), level, gormLevel, logs
 }
 
 // settingsRequest runs one call against the handler and hands back what it
@@ -704,13 +709,18 @@ func jsonName(field reflect.StructField) string {
 // of their own, so that a field added to the request is covered by them the
 // moment it is added and a tag that was typed wrong shows up as a field that
 // never arrives.
+//
+// The password of the mail server and the flag that clears it are left out.
+// They are not stored as they are sent: the one is sealed first and the other
+// is no setting at all, so a comparison of what was sent with what was stored
+// says nothing about them. The tests of the password are what covers them.
 func requestFields() map[string]bool {
 	names := map[string]bool{}
 
 	typ := reflect.TypeOf(updateSettingsRequest{})
 	for i := 0; i < typ.NumField(); i++ {
 		name := jsonName(typ.Field(i))
-		if name != "" {
+		if name != "" && name != "smtp_password" && name != "smtp_password_clear" {
 			names[name] = true
 		}
 	}
@@ -802,6 +812,16 @@ func anotherSet() settings.Settings {
 		UpdateCheckEnabled:       false,
 		UpdateCheckIntervalHours: 6,
 		UpdateAutoInstall:        true,
+		AlertAfterSec:            600,
+		AlertWebhookURL:          "https://hooks.example.com/alert",
+		SMTPHost:                 "mail.example.com",
+		SMTPPort:                 465,
+		SMTPSecurity:             settings.SMTPSecurityTLS,
+		SMTPAuth:                 settings.SMTPAuthLogin,
+		SMTPUsername:             "alerts",
+		SMTPFrom:                 "tunnel-manager@example.com",
+		SMTPTo:                   "ops@example.com, oncall@example.net",
+		SMTPSkipVerify:           true,
 	}
 }
 

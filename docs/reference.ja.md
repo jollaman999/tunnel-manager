@@ -1566,7 +1566,7 @@ curl -s -b cookies.txt -X POST "$BASE/api/setup" \
 | `hosts` | `POST /api/host`、`PUT` と `DELETE /api/host/:id` |
 | `tunnels` | `/api/service-port` の `POST`、`PUT`、`DELETE`、`PUT /api/host/:id/service-port`、`/api/host/:id/local-forward` の `POST`、`PUT`、`DELETE` |
 | `host-keys` | `POST /api/host/:id/host-key`、`POST /api/host-key` |
-| `settings` | `PUT /api/settings`、`POST /api/certificate/renew`、`PUT /api/certificate` |
+| `settings` | `PUT /api/settings`、`POST /api/settings/alert/test-webhook`、`POST /api/settings/alert/test-smtp`、`POST /api/certificate/renew`、`PUT /api/certificate` |
 | `transfer` | `/api/export/*`、`/api/import/*` |
 | `operations` | `POST /api/restart`、`/api/update/check`、`/api/update/install`、`/api/uninstall`、`/api/logs/clear` |
 

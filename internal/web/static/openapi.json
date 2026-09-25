@@ -2129,7 +2129,7 @@
                         "CSRFToken": []
                     }
                 ],
-                "description": "Answers with what changed and whether a restart is needed. logging.level is the one setting this process takes on without being started again.\nA new api_port that a local forward opens as its local port is refused with 409; data then carries that local forward and suggested_port, a port neither a local forward, a SOCKS5 proxy nor the stored or asked for api_port holds, or 0 when there is none.\nA new api_port that the SOCKS5 proxy of a Host opens is refused with 409 under its own error_code; data then carries that Host in socks_host, local_forward left empty, and suggested_port.",
+                "description": "Answers with what changed and whether a restart is needed. logging.level is the one setting this process takes on without being started again.\nA new api_port that a local forward opens as its local port is refused with 409; data then carries that local forward and suggested_port, a port neither a local forward, a SOCKS5 proxy nor the stored or asked for api_port holds, or 0 when there is none.\nA new api_port that the SOCKS5 proxy of a Host opens is refused with 409 under its own error_code; data then carries that Host in socks_host, local_forward left empty, and suggested_port.\nsmtp_password is write-only: a read says only smtp_password_set, an empty or missing one keeps the stored password, and smtp_password_clear removes it. While a password is stored, a body that changes smtp_host, smtp_port, smtp_username or smtp_security, or turns smtp_skip_verify on, has to carry smtp_password, or it is refused with 400 under settings.smtp_password.required; with smtp_auth none or smtp_password_clear the stored password is removed instead.",
                 "consumes": [
                     "application/json"
                 ],
@@ -2192,6 +2192,130 @@
                                     }
                                 }
                             ]
+                        }
+                    }
+                }
+            }
+        },
+        "/settings/alert/test-smtp": {
+            "post": {
+                "security": [
+                    {
+                        "CSRFToken": []
+                    }
+                ],
+                "description": "The stored settings are used, with any alert setting the body names put over them, smtp_password among them; nothing is stored. The body is the one PUT /settings takes and may be left out. A body that changes smtp_host, smtp_port, smtp_username or smtp_security, or turns smtp_skip_verify on, has to carry smtp_password while a password is stored, or it is refused with 400 under settings.smtp_password.required. A message the mail server did not take is answered with 502 and what went wrong in error_args.reason.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "settings"
+                ],
+                "summary": "Send a test alert by mail",
+                "parameters": [
+                    {
+                        "description": "Settings to test with instead of the stored ones",
+                        "name": "body",
+                        "in": "body",
+                        "schema": {
+                            "$ref": "#/definitions/api.updateSettingsRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/models.Response"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "data": {
+                                            "$ref": "#/definitions/api.alertTestSent"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "400": {
+                        "description": "A setting broke one of the rules, no mail server is set, or the body moves the mail target without a new password",
+                        "schema": {
+                            "$ref": "#/definitions/api.errorBody"
+                        }
+                    },
+                    "502": {
+                        "description": "The mail server was not reached or did not take the message",
+                        "schema": {
+                            "$ref": "#/definitions/api.errorBody"
+                        }
+                    }
+                }
+            }
+        },
+        "/settings/alert/test-webhook": {
+            "post": {
+                "security": [
+                    {
+                        "CSRFToken": []
+                    }
+                ],
+                "description": "The stored settings are used, with any alert setting the body names put over them; nothing is stored. The body is the one PUT /settings takes and may be left out. A webhook that is not reached, or answers outside 2xx, is answered with 502 and what went wrong in error_args.reason.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "settings"
+                ],
+                "summary": "Post a test alert to the webhook",
+                "parameters": [
+                    {
+                        "description": "Settings to test with instead of the stored ones",
+                        "name": "body",
+                        "in": "body",
+                        "schema": {
+                            "$ref": "#/definitions/api.updateSettingsRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/models.Response"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "data": {
+                                            "$ref": "#/definitions/api.alertTestSent"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "400": {
+                        "description": "A setting broke one of the rules, or no webhook address is set",
+                        "schema": {
+                            "$ref": "#/definitions/api.errorBody"
+                        }
+                    },
+                    "502": {
+                        "description": "The webhook was not reached or did not take the alert",
+                        "schema": {
+                            "$ref": "#/definitions/api.errorBody"
                         }
                     }
                 }
@@ -2738,6 +2862,15 @@
                 }
             }
         },
+        "api.alertTestSent": {
+            "type": "object",
+            "properties": {
+                "channel": {
+                    "description": "Channel is \"webhook\" or \"smtp\", whichever the test was sent through.",
+                    "type": "string"
+                }
+            }
+        },
         "api.apiPortHolder": {
             "type": "object",
             "properties": {
@@ -2992,6 +3125,22 @@
                 "settings.ui_language.unsupported",
                 "settings.api_port.local_forward",
                 "settings.api_port.socks",
+                "settings.alert_after.invalid",
+                "settings.alert_webhook_url.invalid",
+                "settings.smtp_host.invalid",
+                "settings.smtp_port.invalid",
+                "settings.smtp_security.invalid",
+                "settings.smtp_auth.invalid",
+                "settings.smtp_from.required",
+                "settings.smtp_from.invalid",
+                "settings.smtp_to.required",
+                "settings.smtp_to.invalid",
+                "settings.smtp_username.required",
+                "settings.smtp_password.seal_failed",
+                "settings.smtp_password.required",
+                "settings.alert_test.webhook_off",
+                "settings.alert_test.smtp_off",
+                "settings.alert_test.failed",
                 "certificate.https_off",
                 "certificate.served.read_failed",
                 "certificate.renew_failed",
@@ -3166,6 +3315,22 @@
                 "errSettingsLanguageUnsupported",
                 "errSettingsAPIPortLocalForward",
                 "errSettingsAPIPortSocks",
+                "errSettingsAlertAfterInvalid",
+                "errSettingsWebhookURLInvalid",
+                "errSettingsSMTPHostInvalid",
+                "errSettingsSMTPPortInvalid",
+                "errSettingsSMTPSecurityInvalid",
+                "errSettingsSMTPAuthInvalid",
+                "errSettingsSMTPFromRequired",
+                "errSettingsSMTPFromInvalid",
+                "errSettingsSMTPToRequired",
+                "errSettingsSMTPToInvalid",
+                "errSettingsSMTPUserRequired",
+                "errSettingsSMTPPasswordSeal",
+                "errSettingsSMTPPasswordRequired",
+                "errAlertTestWebhookOff",
+                "errAlertTestSMTPOff",
+                "errAlertTestFailed",
                 "errCertificateHTTPSOff",
                 "errCertificateServedUnread",
                 "errCertificateRenewFailed",
@@ -3845,6 +4010,14 @@
         "api.settingsView": {
             "type": "object",
             "properties": {
+                "alert_after_sec": {
+                    "description": "AlertAfterSec is how long a tunnel, a local forward or a SOCKS5 proxy\nhas to have been without a connection before it is reported as down.\nA connection that drops and comes back within the monitoring interval\nor two is what a network does now and then, and a message for each of\nthose would teach whoever receives them to stop reading. Five minutes\nis past that and short enough that somebody hears about an outage while\nit is still one.\n\nThe columns below carry their defaults so that an installation upgraded\nonto this version reads back what a fresh one gives, and every column\nis named here because the name gorm works out for SMTP runs the letters\ninto what follows.",
+                    "type": "integer"
+                },
+                "alert_webhook_url": {
+                    "description": "AlertWebhookURL is where a down and an up are posted to as JSON. Empty\nis the webhook switched off.",
+                    "type": "string"
+                },
                 "api_https_enabled": {
                     "description": "APIHTTPSEnabled is what decides whether the port above is served over\nTLS. It is stored with a column default of true so that a database\nwritten by a version that had no such column reads back as HTTPS on:\nSQLite fills the rows that are already there with the default as the\ncolumn is added, and an installation that is upgraded gets the same\nanswer a fresh one does.\n\nThe column is named here because the name gorm works out from the field\nis api_http_s_enabled: it knows HTTP as one word and leaves the S of\nHTTPS on its own.",
                     "type": "boolean"
@@ -3895,6 +4068,39 @@
                     "type": "integer"
                 },
                 "security_key_file": {
+                    "type": "string"
+                },
+                "smtp_auth": {
+                    "description": "SMTPAuth is how this program logs in to the server: \"none\", \"plain\" or\n\"login\". Neither of the two that send a password does so over a\nconnection that is not protected by TLS.",
+                    "type": "string"
+                },
+                "smtp_from": {
+                    "type": "string"
+                },
+                "smtp_host": {
+                    "description": "SMTPHost is the mail server a down and an up are sent through. Empty is\nmail switched off, which is what a fresh installation is on: there is\nno server this program could guess at.",
+                    "type": "string"
+                },
+                "smtp_password_set": {
+                    "description": "SMTPPasswordSet says whether a password for the mail server is stored.\nIt stands in for the password itself, which no answer carries.",
+                    "type": "boolean"
+                },
+                "smtp_port": {
+                    "type": "integer"
+                },
+                "smtp_security": {
+                    "description": "SMTPSecurity is how the connection to the server is protected: \"none\",\n\"starttls\" or \"tls\". STARTTLS on 587 is what the submission port is for\n(RFC 8314 names it next to implicit TLS on 465), and it is the default\nbecause it is what a mail provider hands out as the settings to use.",
+                    "type": "string"
+                },
+                "smtp_skip_verify": {
+                    "description": "SMTPSkipVerify turns off the check of the certificate the mail server\npresents. It is off by default, and what turning it on costs is that\nanybody who can get between this program and the server can read the\npassword it logs in with.",
+                    "type": "boolean"
+                },
+                "smtp_to": {
+                    "description": "SMTPTo is the addresses a message goes to, separated by commas.",
+                    "type": "string"
+                },
+                "smtp_username": {
                     "type": "string"
                 },
                 "ui_default_language": {
@@ -4081,6 +4287,12 @@
         "api.updateSettingsRequest": {
             "type": "object",
             "properties": {
+                "alert_after_sec": {
+                    "type": "integer"
+                },
+                "alert_webhook_url": {
+                    "type": "string"
+                },
                 "api_https_enabled": {
                     "type": "boolean"
                 },
@@ -4118,6 +4330,37 @@
                     "type": "integer"
                 },
                 "security_key_file": {
+                    "type": "string"
+                },
+                "smtp_auth": {
+                    "type": "string"
+                },
+                "smtp_from": {
+                    "type": "string"
+                },
+                "smtp_host": {
+                    "type": "string"
+                },
+                "smtp_password": {
+                    "description": "SMTPPassword is the password of the mail server in the clear, sealed\nbefore it is stored. It is the one field where an empty value is not\nstored as it stands: a read never carries the password, so a screen\nthat sends back what it read sends none, and that has to leave the\nstored one alone. Clearing it is what SMTPPasswordClear is for.",
+                    "type": "string"
+                },
+                "smtp_password_clear": {
+                    "type": "boolean"
+                },
+                "smtp_port": {
+                    "type": "integer"
+                },
+                "smtp_security": {
+                    "type": "string"
+                },
+                "smtp_skip_verify": {
+                    "type": "boolean"
+                },
+                "smtp_to": {
+                    "type": "string"
+                },
+                "smtp_username": {
                     "type": "string"
                 },
                 "ui_default_language": {
@@ -4402,6 +4645,14 @@
         "settings.Settings": {
             "type": "object",
             "properties": {
+                "alert_after_sec": {
+                    "description": "AlertAfterSec is how long a tunnel, a local forward or a SOCKS5 proxy\nhas to have been without a connection before it is reported as down.\nA connection that drops and comes back within the monitoring interval\nor two is what a network does now and then, and a message for each of\nthose would teach whoever receives them to stop reading. Five minutes\nis past that and short enough that somebody hears about an outage while\nit is still one.\n\nThe columns below carry their defaults so that an installation upgraded\nonto this version reads back what a fresh one gives, and every column\nis named here because the name gorm works out for SMTP runs the letters\ninto what follows.",
+                    "type": "integer"
+                },
+                "alert_webhook_url": {
+                    "description": "AlertWebhookURL is where a down and an up are posted to as JSON. Empty\nis the webhook switched off.",
+                    "type": "string"
+                },
                 "api_https_enabled": {
                     "description": "APIHTTPSEnabled is what decides whether the port above is served over\nTLS. It is stored with a column default of true so that a database\nwritten by a version that had no such column reads back as HTTPS on:\nSQLite fills the rows that are already there with the default as the\ncolumn is added, and an installation that is upgraded gets the same\nanswer a fresh one does.\n\nThe column is named here because the name gorm works out from the field\nis api_http_s_enabled: it knows HTTP as one word and leaves the S of\nHTTPS on its own.",
                     "type": "boolean"
@@ -4442,6 +4693,35 @@
                     "type": "integer"
                 },
                 "security_key_file": {
+                    "type": "string"
+                },
+                "smtp_auth": {
+                    "description": "SMTPAuth is how this program logs in to the server: \"none\", \"plain\" or\n\"login\". Neither of the two that send a password does so over a\nconnection that is not protected by TLS.",
+                    "type": "string"
+                },
+                "smtp_from": {
+                    "type": "string"
+                },
+                "smtp_host": {
+                    "description": "SMTPHost is the mail server a down and an up are sent through. Empty is\nmail switched off, which is what a fresh installation is on: there is\nno server this program could guess at.",
+                    "type": "string"
+                },
+                "smtp_port": {
+                    "type": "integer"
+                },
+                "smtp_security": {
+                    "description": "SMTPSecurity is how the connection to the server is protected: \"none\",\n\"starttls\" or \"tls\". STARTTLS on 587 is what the submission port is for\n(RFC 8314 names it next to implicit TLS on 465), and it is the default\nbecause it is what a mail provider hands out as the settings to use.",
+                    "type": "string"
+                },
+                "smtp_skip_verify": {
+                    "description": "SMTPSkipVerify turns off the check of the certificate the mail server\npresents. It is off by default, and what turning it on costs is that\nanybody who can get between this program and the server can read the\npassword it logs in with.",
+                    "type": "boolean"
+                },
+                "smtp_to": {
+                    "description": "SMTPTo is the addresses a message goes to, separated by commas.",
+                    "type": "string"
+                },
+                "smtp_username": {
                     "type": "string"
                 },
                 "ui_default_language": {

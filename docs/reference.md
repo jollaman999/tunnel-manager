@@ -1740,7 +1740,7 @@ A token reaches only the routes of the scopes it was made with:
 | `hosts` | `POST /api/host`, `PUT` and `DELETE /api/host/:id` |
 | `tunnels` | The `POST`, `PUT` and `DELETE` of `/api/service-port`, `PUT /api/host/:id/service-port`, and the `POST`, `PUT` and `DELETE` of `/api/host/:id/local-forward` |
 | `host-keys` | `POST /api/host/:id/host-key`, `POST /api/host-key` |
-| `settings` | `PUT /api/settings`, `POST /api/certificate/renew`, `PUT /api/certificate` |
+| `settings` | `PUT /api/settings`, `POST /api/settings/alert/test-webhook`, `POST /api/settings/alert/test-smtp`, `POST /api/certificate/renew`, `PUT /api/certificate` |
 | `transfer` | `/api/export/*`, `/api/import/*` |
 | `operations` | `POST /api/restart`, `/api/update/check`, `/api/update/install`, `/api/uninstall`, `/api/logs/clear` |
 
