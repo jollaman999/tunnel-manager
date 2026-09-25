@@ -44,6 +44,7 @@
   "api.session-ended.error": "सेशन खत्म हो चुका है। दोबारा लॉगिन करें।",
   "api.setup-first.error": "पहले खाते का सेटअप पूरा करें।",
   "api.status.error": "सर्वर ने जवाब दिया: {status} {said}",
+  "api.timeout.error": "सर्वर ने {seconds} सेकंड के भीतर जवाब नहीं दिया",
   "api.unreachable.error": "सर्वर से कनेक्ट नहीं हो सका: {reason}",
   "app.no-screen.error": "{path} पर कोई स्क्रीन नहीं है",
   "certificate.card.title": "HTTPS और प्रमाणपत्र",

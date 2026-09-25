@@ -44,6 +44,7 @@
   "api.session-ended.error": "Die Sitzung ist zu Ende. Melden Sie sich erneut an.",
   "api.setup-first.error": "Richten Sie zuerst das Konto fertig ein.",
   "api.status.error": "Der Server antwortete {status} {said}",
+  "api.timeout.error": "Der Server hat nicht innerhalb von {seconds} Sekunden geantwortet",
   "api.unreachable.error": "Der Server ist nicht erreichbar: {reason}",
   "app.no-screen.error": "Unter {path} gibt es keine Seite",
   "certificate.card.title": "HTTPS und das Zertifikat",

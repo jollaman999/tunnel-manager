@@ -44,6 +44,7 @@
   "api.session-ended.error": "セッションが終了しました。もう一度ログインしてください。",
   "api.setup-first.error": "先にアカウントの初期設定を終わらせてください。",
   "api.status.error": "サーバーの応答は {status} {said} でした",
+  "api.timeout.error": "サーバーが {seconds} 秒以内に応答しませんでした",
   "api.unreachable.error": "サーバーに接続できません: {reason}",
   "app.no-screen.error": "{path} に画面はありません",
   "certificate.card.title": "HTTPS と証明書",

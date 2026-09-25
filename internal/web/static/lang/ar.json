@@ -44,6 +44,7 @@
   "api.session-ended.error": "انتهت الجلسة. سجّل الدخول من جديد.",
   "api.setup-first.error": "أكمل إعداد الحساب أولًا.",
   "api.status.error": "جواب الخادم: {status} {said}",
+  "api.timeout.error": "لم يستجب الخادم خلال {seconds} ثانية",
   "api.unreachable.error": "تعذّر الاتصال بالخادم: {reason}",
   "app.no-screen.error": "لا توجد شاشة على هذا المسار: {path}",
   "certificate.card.title": "HTTPS والشهادة",

@@ -44,6 +44,7 @@
   "api.session-ended.error": "The session has ended. Sign in again.",
   "api.setup-first.error": "Finish setting up the account first.",
   "api.status.error": "The server answered {status} {said}",
+  "api.timeout.error": "The server did not answer within {seconds} seconds",
   "api.unreachable.error": "Cannot reach the server: {reason}",
   "app.no-screen.error": "There is no screen at {path}",
   "certificate.card.title": "HTTPS and the certificate",

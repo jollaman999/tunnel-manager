@@ -44,6 +44,7 @@
   "api.session-ended.error": "La session a pris fin. Reconnectez-vous.",
   "api.setup-first.error": "Terminez d'abord la configuration du compte.",
   "api.status.error": "Le serveur a répondu {status} {said}",
+  "api.timeout.error": "Le serveur n'a pas répondu dans les {seconds} secondes",
   "api.unreachable.error": "Impossible de joindre le serveur : {reason}",
   "app.no-screen.error": "Aucun écran ne correspond à {path}",
   "certificate.card.title": "HTTPS et certificat",

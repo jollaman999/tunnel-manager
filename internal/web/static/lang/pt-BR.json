@@ -44,6 +44,7 @@
   "api.session-ended.error": "A sessão terminou. Entre novamente.",
   "api.setup-first.error": "Conclua primeiro a configuração da conta.",
   "api.status.error": "O servidor respondeu {status} {said}",
+  "api.timeout.error": "O servidor não respondeu em {seconds} segundos",
   "api.unreachable.error": "Não foi possível conectar ao servidor: {reason}",
   "app.no-screen.error": "Não existe nenhuma tela em {path}",
   "certificate.card.title": "HTTPS e o certificado",

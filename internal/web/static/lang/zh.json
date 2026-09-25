@@ -44,6 +44,7 @@
   "api.session-ended.error": "会话已经结束。请重新登录。",
   "api.setup-first.error": "请先完成账号初始化。",
   "api.status.error": "服务器返回了 {status} {said}",
+  "api.timeout.error": "服务器在 {seconds} 秒内没有响应",
   "api.unreachable.error": "无法连接服务器：{reason}",
   "app.no-screen.error": "{path} 没有对应的页面",
   "certificate.card.title": "HTTPS 与证书",

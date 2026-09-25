@@ -523,9 +523,9 @@ async function submitSetup(values) {
 function enterStatus() {
   const drawn = drawStatus();
 
-  refreshTimer = window.setInterval(function () {
+  startRefresh(function () {
     refreshWhenStill(drawStatus);
-  }, statusRefreshMs);
+  });
 
   return drawn;
 }
@@ -5363,13 +5363,13 @@ let logAutoRefresh = true;
 function enterLogs() {
   const drawn = drawLogs();
 
-  refreshTimer = window.setInterval(function () {
+  startRefresh(function () {
     if (!logAutoRefresh) {
       return;
     }
 
     refreshWhenStill(drawLogs);
-  }, statusRefreshMs);
+  });
 
   return drawn;
 }

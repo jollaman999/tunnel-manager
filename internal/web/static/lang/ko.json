@@ -44,6 +44,7 @@
   "api.session-ended.error": "세션이 끝났습니다. 다시 로그인하십시오.",
   "api.setup-first.error": "계정 설정을 먼저 끝내십시오.",
   "api.status.error": "서버가 이렇게 응답했습니다: {status} {said}",
+  "api.timeout.error": "서버가 {seconds}초 안에 응답하지 않았습니다",
   "api.unreachable.error": "서버에 접속하지 못했습니다: {reason}",
   "app.no-screen.error": "{path} 에는 화면이 없습니다",
   "certificate.card.title": "HTTPS 와 인증서",

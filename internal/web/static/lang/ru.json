@@ -44,6 +44,7 @@
   "api.session-ended.error": "Сессия завершена. Войдите снова.",
   "api.setup-first.error": "Сначала завершите настройку учётной записи.",
   "api.status.error": "Сервер ответил: {status} {said}",
+  "api.timeout.error": "Сервер не ответил в течение {seconds} секунд",
   "api.unreachable.error": "Сервер недоступен: {reason}",
   "app.no-screen.error": "Экрана по адресу {path} нет",
   "certificate.card.title": "HTTPS и сертификат",

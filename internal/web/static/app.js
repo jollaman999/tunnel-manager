@@ -8,6 +8,18 @@ const uiPrefix = "/ui/";
 // pass of that loop behind what the server has done.
 const statusRefreshMs = 5000;
 
+// apiReadTimeoutMs is how long a read of the API is waited for before it is
+// given up on.
+//
+// Only reads are cut off. Every one of them answers from what the server
+// already holds, so one that has not come back in this long is one that is not
+// coming back, and a refresh left waiting on it would keep every tick behind it
+// from being taken. A change is never cut off: an update being put in, a file
+// being brought in or a restart can take longer than this and still be going
+// well, and abandoning the request would not stop it on the server, only hide
+// how it ended.
+const apiReadTimeoutMs = 15000;
+
 // scrollQuietMs is how long after the last scroll a refresh of the screen
 // waits.
 //
@@ -359,6 +371,11 @@ let toastSay = null;
 // stopped, leaving one more timer running per visit.
 let refreshTimer = null;
 
+// refreshTick is what the timer of the screen that is up calls, kept so that a
+// tab coming back into view can take one tick at once rather than waiting out
+// the rest of a period on an answer from before it was hidden.
+let refreshTick = null;
+
 // scrolledAt is when the page last moved, and scrollRetryTimer is the refresh
 // that is waiting for it to stop moving. The timer is here beside refreshTimer
 // and for the same reason: leaving the screen has to be able to stop it, and
@@ -379,7 +396,13 @@ let scrollRetryTimer = null;
 // So the draw is built either way and held at the last step, which is also the
 // only step that costs the reader anything. Nothing is fetched twice, and the
 // screen goes up the moment the page settles.
-let periodicDraw = false;
+//
+// periodicDraw is a token of the tick that is in flight rather than a flag, and
+// null when there is none. Only the tick that set it clears it, so a tick that
+// ends after the screen it was taken on was left cannot clear the one the next
+// screen has in flight. While it is set no other tick is taken: one that is
+// still waiting for its answer is already fetching what the next one would.
+let periodicDraw = null;
 let heldScreen = null;
 let heldScreenTimer = null;
 
@@ -505,14 +528,28 @@ function redraw() {
   run(screen.draw, true);
 }
 
+// startRefresh starts the periodic redraw of the screen that is up. tick is
+// what each period calls, and it is also what a tab coming back into view calls
+// once. The timer is stopped by showScreen when the screen is left.
+function startRefresh(tick) {
+  refreshTick = tick;
+  refreshTimer = window.setInterval(tick, statusRefreshMs);
+}
+
 // stopRefresh ends the periodic redraw of the status screen, and with it the
 // tick that was waiting for the scrolling to stop. A tick left waiting would
 // come due on the screen that replaced the one it was started on.
+//
+// A tick still in flight is let go of as well. It belongs to the screen being
+// left, and the ticks of the next screen are not to wait for it.
 function stopRefresh() {
   if (refreshTimer !== null) {
     window.clearInterval(refreshTimer);
     refreshTimer = null;
   }
+
+  refreshTick = null;
+  periodicDraw = null;
 
   if (scrollRetryTimer !== null) {
     window.clearTimeout(scrollRetryTimer);
@@ -609,13 +646,25 @@ function textIsSelected() {
 // soon as the scrolling stops, so a screen cannot be left standing on an old
 // answer because a finger happened to be down when the timer went off. Only one
 // tick is ever held: the ones behind it would fetch the same answer it does.
+//
+// A tick is not taken at all while the one before it is still waiting for its
+// answer, or while the tab is hidden. Nobody is reading a hidden tab, and the
+// tab coming back into view takes a tick of its own at once.
 function refreshWhenStill(draw) {
-  if (scrollRetryTimer !== null) {
+  if (scrollRetryTimer !== null || periodicDraw !== null || document.hidden) {
     return;
   }
 
   if (!pageIsHeld()) {
-    periodicDraw = true;
+    const token = {};
+
+    periodicDraw = token;
+
+    const settle = function () {
+      if (periodicDraw === token) {
+        periodicDraw = null;
+      }
+    };
 
     const started = draw();
 
@@ -624,12 +673,10 @@ function refreshWhenStill(draw) {
       // promise itself it would be passed to then as a value, which then
       // ignores, and a draw that failed would go to nobody.
       run(function () {
-        return started.finally(function () {
-          periodicDraw = false;
-        });
+        return started.finally(settle);
       }, true);
     } else {
-      periodicDraw = false;
+      settle();
     }
 
     return;
@@ -1175,11 +1222,39 @@ async function apiCall(method, path, body) {
     options.body = JSON.stringify(body);
   }
 
+  // A read is given up on after apiReadTimeoutMs, the body as well as the
+  // headers: a server that sends the headers and then stalls holds the call as
+  // long as one that sends nothing.
+  let abort = null;
+  let abortTimer = null;
+
+  if (method === "GET" && typeof AbortController === "function") {
+    abort = new AbortController();
+    options.signal = abort.signal;
+    abortTimer = window.setTimeout(function () {
+      abort.abort();
+    }, apiReadTimeoutMs);
+  }
+
+  const timedOut = function () {
+    const seconds = apiReadTimeoutMs / 1000;
+
+    return apiFailure(function () {
+      return t("api.timeout.error", { seconds: seconds });
+    });
+  };
+
   let response;
 
   try {
     response = await fetch(path, options);
   } catch (error) {
+    window.clearTimeout(abortTimer);
+
+    if (abort !== null && abort.signal.aborted) {
+      throw timedOut();
+    }
+
     const reason = error.message;
 
     throw apiFailure(function () {
@@ -1188,6 +1263,14 @@ async function apiCall(method, path, body) {
   }
 
   const payload = await readPayload(response);
+
+  window.clearTimeout(abortTimer);
+
+  // readPayload reads a body it could not finish as no body at all, which on a
+  // read that was cut off would pass for an empty answer.
+  if (payload === null && abort !== null && abort.signal.aborted) {
+    throw timedOut();
+  }
 
   if (response.status === 401 && path !== apiLoginPath && path !== apiUninstallPath &&
       path !== apiAccountPath && !saysPasswordWrong(payload)) {
@@ -4127,6 +4210,15 @@ if (window.PointerEvent !== undefined) {
 
 window.addEventListener("blur", function () {
   pointerDown = false;
+});
+
+// A tab that comes back into view takes a tick of the refresh at once. The
+// ticks were skipped while it was hidden, so what it shows is as old as the
+// moment it was hidden.
+document.addEventListener("visibilitychange", function () {
+  if (!document.hidden && refreshTick !== null) {
+    refreshTick();
+  }
 });
 
 window.addEventListener("popstate", function () {

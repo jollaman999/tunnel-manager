@@ -44,6 +44,7 @@
   "api.session-ended.error": "Phiên làm việc đã kết thúc. Hãy đăng nhập lại.",
   "api.setup-first.error": "Hãy thiết lập xong tài khoản trước đã.",
   "api.status.error": "Máy chủ trả lời {status} {said}",
+  "api.timeout.error": "Máy chủ không phản hồi trong vòng {seconds} giây",
   "api.unreachable.error": "Không kết nối được tới máy chủ: {reason}",
   "app.no-screen.error": "Không có màn hình nào ở {path}",
   "certificate.card.title": "HTTPS và chứng chỉ",

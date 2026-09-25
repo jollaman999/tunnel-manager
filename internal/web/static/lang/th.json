@@ -44,6 +44,7 @@
   "api.session-ended.error": "เซสชันสิ้นสุดแล้ว เข้าสู่ระบบอีกครั้ง",
   "api.setup-first.error": "ตั้งค่าบัญชีให้เสร็จก่อน",
   "api.status.error": "เซิร์ฟเวอร์ตอบ {status} {said}",
+  "api.timeout.error": "เซิร์ฟเวอร์ไม่ตอบกลับภายใน {seconds} วินาที",
   "api.unreachable.error": "ติดต่อเซิร์ฟเวอร์ไม่ได้: {reason}",
   "app.no-screen.error": "ไม่มีหน้าจอที่ {path}",
   "certificate.card.title": "HTTPS และใบรับรอง",
