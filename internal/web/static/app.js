@@ -490,7 +490,7 @@ function showScreen(name) {
 
   const enter = screen.enter === undefined ? screen.draw : screen.enter;
 
-  run(enter);
+  run(enter, true);
 }
 
 // redraw draws the current screen again without entering it. It is what follows
@@ -502,7 +502,7 @@ function redraw() {
     return;
   }
 
-  run(screen.draw);
+  run(screen.draw, true);
 }
 
 // stopRefresh ends the periodic redraw of the status screen, and with it the
@@ -627,7 +627,7 @@ function refreshWhenStill(draw) {
         return started.finally(function () {
           periodicDraw = false;
         });
-      });
+      }, true);
     } else {
       periodicDraw = false;
     }
@@ -737,7 +737,13 @@ function paintToast() {
 // run carries out something that may fail and puts what went wrong on the
 // screen. Every button and every draw goes through it, so no click can end as
 // an unhandled rejection with a screen that silently did nothing.
-function run(action) {
+//
+// drawing says the action is a draw of the screen. What follows a failed action
+// is a draw, so the line saying why is put up; what follows a failed draw cannot
+// be that same draw, which would fail the same way and be followed by itself for
+// as long as the server stays down, with the line never put up. The line is put
+// up on its own instead, and the next draw anything asks for tries again.
+function run(action, drawing) {
   Promise.resolve()
     .then(action)
     .catch(function (error) {
@@ -746,8 +752,55 @@ function run(action) {
       }
 
       setFailure(sayOf(error));
-      redraw();
+
+      if (drawing === true) {
+        paintNotice();
+      } else {
+        redraw();
+      }
     });
+}
+
+// paintNotice puts the line above the screen up without drawing the screen.
+//
+// Where the screen up is the one that failed to draw, what it shows is kept and
+// only the line is written over: a refresh that could not be fetched leaves the
+// last answer on the page, with the line saying it is no longer being kept up.
+// Anywhere else there is nothing of this screen to keep, and the line goes up
+// under a heading made of the screen's name.
+function paintNotice() {
+  const app = document.getElementById("app");
+  const heading = app.querySelector("h1");
+
+  if (drawnScreen === currentScreen && heading !== null) {
+    const line = document.createElement("p");
+    line.className = "notice " + notice.kind;
+    line.textContent = notice.say();
+
+    const shown = app.querySelector(":scope > p.notice");
+    if (shown !== null) {
+      shown.replaceWith(line);
+
+      return;
+    }
+
+    let row = heading;
+    while (row.parentNode !== app) {
+      row = row.parentNode;
+    }
+
+    row.after(line);
+
+    return;
+  }
+
+  const screen = screens[currentScreen];
+  const title = screen !== undefined && screen.label !== undefined
+    ? t(screen.label)
+    : t("common.brand.text");
+
+  dropHeldScreen();
+  paint(title, []);
 }
 
 // sayOf is what an error reads as, as something that can be said again once
