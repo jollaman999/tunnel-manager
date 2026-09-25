@@ -1,3 +1,18 @@
+# v3.13.6
+
+## Add/fix features:
+
+- **A generated certificate is good for 825 days again, so an iPhone or a Mac can trust it.** v3.2.3 raised it to five years on reading Apple's 398 day rule, which is for roots shipped with the system. The earlier 825 day rule covers every TLS server certificate, a root the user added included (support.apple.com/en-us/103769), so an iPhone that had imported and trusted a five year certificate kept refusing it: the warning stayed, and Chrome on iOS never fetched the icons of the page, showing a globe in the tab.
+- **A new SOCKS5 proxy is opened on this machine alone unless the wildcard is picked.** The proxy asks for no password, so the reach that opens it to other machines is one to choose rather than one the form starts on. With this machine alone picked, the form says how to use the proxy from another machine: the ssh command that carries it there, with the port typed in the SOCKS5 port box. An API request that leaves socks_bind_scope out gets loopback where it got the wildcard. A Host that is stored keeps the scope it has.
+- **The status screen no longer explains a no from the SSH server that the Host has already answered.** A server set to bind every interface takes both families on the first request and says no to the second. Where the Host then names both addresses of the pair as listening, both are open, and the box under the row that told what the no does not mean is left out.
+- **The animation at the top of the README was recorded again** on this release.
+
+## Notes:
+
+- A script that adds a Host with socks_enabled and without socks_bind_scope now opens the proxy on loopback. Send socks_bind_scope wildcard to keep it open to other machines.
+- **A certificate generated before this release keeps its five years until it is replaced.** Press Make a new certificate on the Settings screen, then import the new one wherever the old one was trusted. A certificate installed by hand is not touched.
+- The notes of v3.13.3 hold for an installation that comes from before it: a data directory from a release before v3.7.0 keeps the mode it has, and the rest of the upgrade note of v3.7.0 still holds.
+
 # v3.13.5
 
 ## Add/fix features:
