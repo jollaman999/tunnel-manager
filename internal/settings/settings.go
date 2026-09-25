@@ -49,7 +49,17 @@ type Settings struct {
 	APIHTTPSEnabled bool `gorm:"column:api_https_enabled;default:true" json:"api_https_enabled"`
 
 	MonitoringIntervalSec int `json:"monitoring_interval_sec"`
-	ReconcileIntervalSec  int `json:"reconcile_interval_sec"`
+	// ReconnectMaxIntervalSec is the longest a connection that keeps failing
+	// waits before it is tried again. The first wait is the monitoring
+	// interval and each failure in a row doubles it up to this, so a Host that
+	// is down for an hour is not asked every five seconds for all of it, while
+	// one that blinked is back within the interval. A value below the
+	// monitoring interval leaves every wait at the interval.
+	//
+	// The column carries its default so that an installation upgraded onto
+	// this version reads back the same answer a fresh one gives.
+	ReconnectMaxIntervalSec int `gorm:"default:60" json:"reconnect_max_interval_sec"`
+	ReconcileIntervalSec    int `json:"reconcile_interval_sec"`
 
 	SecurityKeyFile string `json:"security_key_file"`
 
@@ -153,16 +163,20 @@ func Defaults() Settings {
 		APIPort:               8888,
 		APIHTTPSEnabled:       true,
 		MonitoringIntervalSec: 5,
-		ReconcileIntervalSec:  5,
-		SecurityKeyFile:       "keys/tunnel-manager.key",
-		LoggingLevel:          "info",
-		LoggingFormat:         "json",
-		LoggingFilePath:       "logs/tunnel-manager.log",
-		LoggingFileMaxSize:    100,
-		LoggingFileMaxBackups: 5,
-		LoggingFileMaxAge:     30,
-		LoggingFileCompress:   true,
-		UIDefaultLanguage:     "",
+		// A minute is long enough that a Host which is down is asked once a
+		// minute rather than every interval, and short enough that one which
+		// comes back is not left waiting on this long after it answers.
+		ReconnectMaxIntervalSec: 60,
+		ReconcileIntervalSec:    5,
+		SecurityKeyFile:         "keys/tunnel-manager.key",
+		LoggingLevel:            "info",
+		LoggingFormat:           "json",
+		LoggingFilePath:         "logs/tunnel-manager.log",
+		LoggingFileMaxSize:      100,
+		LoggingFileMaxBackups:   5,
+		LoggingFileMaxAge:       30,
+		LoggingFileCompress:     true,
+		UIDefaultLanguage:       "",
 		// The check is on and the install is off. Reading what the newest
 		// release is costs one request and changes nothing; installing it
 		// takes the service down, and when that may happen is the operator's
@@ -300,6 +314,14 @@ func (s *Settings) Validate() error {
 
 	if s.MonitoringIntervalSec <= 0 {
 		return fmt.Errorf("invalid monitoring interval: %d", s.MonitoringIntervalSec)
+	}
+
+	// The ceiling is an hour. Past it a Host that came back would sit unused
+	// for longer than anybody would wait on it without going to look, so a
+	// number beyond it is a typo rather than a choice.
+	if s.ReconnectMaxIntervalSec < 1 || s.ReconnectMaxIntervalSec > 3600 {
+		return fmt.Errorf("invalid reconnect max interval: %d. It is in seconds, from 1 to 3600",
+			s.ReconnectMaxIntervalSec)
 	}
 
 	if s.ReconcileIntervalSec <= 0 {
@@ -611,6 +633,7 @@ func values(s *Settings) []value {
 		{"api.port", strconv.Itoa(s.APIPort)},
 		{"api.https_enabled", strconv.FormatBool(s.APIHTTPSEnabled)},
 		{"monitoring.interval_sec", strconv.Itoa(s.MonitoringIntervalSec)},
+		{"monitoring.reconnect_max_interval_sec", strconv.Itoa(s.ReconnectMaxIntervalSec)},
 		{"reconcile.interval_sec", strconv.Itoa(s.ReconcileIntervalSec)},
 		{"security.key_file", s.SecurityKeyFile},
 		{"logging.level", s.LoggingLevel},

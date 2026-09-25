@@ -3691,6 +3691,10 @@
                 "reconcile_interval_sec": {
                     "type": "integer"
                 },
+                "reconnect_max_interval_sec": {
+                    "description": "ReconnectMaxIntervalSec is the longest a connection that keeps failing\nwaits before it is tried again. The first wait is the monitoring\ninterval and each failure in a row doubles it up to this, so a Host that\nis down for an hour is not asked every five seconds for all of it, while\none that blinked is back within the interval. A value below the\nmonitoring interval leaves every wait at the interval.\n\nThe column carries its default so that an installation upgraded onto\nthis version reads back the same answer a fresh one gives.",
+                    "type": "integer"
+                },
                 "security_key_file": {
                     "type": "string"
                 },
@@ -3837,6 +3841,9 @@
                     "type": "integer"
                 },
                 "reconcile_interval_sec": {
+                    "type": "integer"
+                },
+                "reconnect_max_interval_sec": {
                     "type": "integer"
                 },
                 "security_key_file": {
@@ -4153,6 +4160,10 @@
                     "type": "integer"
                 },
                 "reconcile_interval_sec": {
+                    "type": "integer"
+                },
+                "reconnect_max_interval_sec": {
+                    "description": "ReconnectMaxIntervalSec is the longest a connection that keeps failing\nwaits before it is tried again. The first wait is the monitoring\ninterval and each failure in a row doubles it up to this, so a Host that\nis down for an hour is not asked every five seconds for all of it, while\none that blinked is back within the interval. A value below the\nmonitoring interval leaves every wait at the interval.\n\nThe column carries its default so that an installation upgraded onto\nthis version reads back the same answer a fresh one gives.",
                     "type": "integer"
                 },
                 "security_key_file": {

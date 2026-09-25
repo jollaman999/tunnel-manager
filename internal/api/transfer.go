@@ -362,6 +362,11 @@ type settingsContent struct {
 	UpdateCheckEnabled       bool `json:"update_check_enabled"`
 	UpdateCheckIntervalHours int  `json:"update_check_interval_hours"`
 	UpdateAutoInstall        bool `json:"update_auto_install"`
+
+	// ReconnectMaxIntervalSec is carried like the monitoring interval it goes
+	// with. A file exported before the setting existed leaves it as it is
+	// stored here, since the content is read onto the stored settings.
+	ReconnectMaxIntervalSec int `json:"reconnect_max_interval_sec"`
 }
 
 // settingsOf returns the settings of a set as they are carried in a file.
@@ -384,6 +389,8 @@ func settingsOf(s *settings.Settings) settingsContent {
 		UpdateCheckEnabled:       s.UpdateCheckEnabled,
 		UpdateCheckIntervalHours: s.UpdateCheckIntervalHours,
 		UpdateAutoInstall:        s.UpdateAutoInstall,
+
+		ReconnectMaxIntervalSec: s.ReconnectMaxIntervalSec,
 	}
 }
 
@@ -393,6 +400,7 @@ func (content *settingsContent) applyTo(s *settings.Settings) {
 	s.APIPort = content.APIPort
 	s.APIHTTPSEnabled = content.APIHTTPSEnabled
 	s.MonitoringIntervalSec = content.MonitoringIntervalSec
+	s.ReconnectMaxIntervalSec = content.ReconnectMaxIntervalSec
 	s.ReconcileIntervalSec = content.ReconcileIntervalSec
 	s.SecurityKeyFile = content.SecurityKeyFile
 	s.LoggingLevel = content.LoggingLevel

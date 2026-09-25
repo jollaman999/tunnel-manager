@@ -58,7 +58,11 @@ type SSHTunnel struct {
 	// settings the tunnel should have. It is written before the tunnel is
 	// registered with the manager and never again, so it needs no lock of its
 	// own, and it is never formatted, so it cannot reach a log.
-	connFP   connFingerprint
+	connFP connFingerprint
+	// backoff is the wait before the next connection attempt. Start and the
+	// connect it runs are the only ones to touch it, and they run on the one
+	// goroutine.
+	backoff  reconnectBackoff
 	client   *ssh.Client
 	clientMu sync.RWMutex
 	// tunnelMu serializes the tunnel row the Start loop and the monitor both
@@ -776,6 +780,8 @@ func (t *SSHTunnel) establishConnection(m *Manager, tunnel *models.Tunnel) error
 	t.client = client
 	t.clientMu.Unlock()
 
+	t.backoff.reset()
+
 	boundPort := opened.confirmedPort(t.Local.port())
 
 	t.tunnelMu.Lock()
@@ -1037,10 +1043,10 @@ func isAuthFailure(err error) bool {
 	return strings.Contains(err.Error(), authFailureMessage)
 }
 
-// waitBeforeRetry waits for the retry interval and reports whether the tunnel
-// should keep running.
-func (t *SSHTunnel) waitBeforeRetry(m *Manager) bool {
-	timer := time.NewTimer(time.Duration(m.monitoringIntervalSec) * time.Second)
+// waitBeforeRetry waits for wait and reports whether the tunnel should keep
+// running.
+func (t *SSHTunnel) waitBeforeRetry(wait time.Duration) bool {
+	timer := time.NewTimer(wait)
 	defer timer.Stop()
 
 	select {
@@ -1072,6 +1078,8 @@ func (t *SSHTunnel) Start(m *Manager, tunnel *models.Tunnel) {
 		monitorWg.Wait()
 	}()
 
+	t.backoff = m.reconnectBackoff()
+
 	for {
 		select {
 		case <-t.done:
@@ -1087,7 +1095,7 @@ func (t *SSHTunnel) Start(m *Manager, tunnel *models.Tunnel) {
 			err := t.establishConnection(m, tunnel)
 			if err != nil {
 				if errors.Is(err, errConnectionClosed) {
-					if !t.waitBeforeRetry(m) {
+					if !t.waitBeforeRetry(time.Duration(m.monitoringIntervalSec) * time.Second) {
 						return
 					}
 					continue
@@ -1118,15 +1126,16 @@ func (t *SSHTunnel) Start(m *Manager, tunnel *models.Tunnel) {
 					return
 				}
 
-				t.logger.Error("connection failed, retrying in "+strconv.Itoa(m.monitoringIntervalSec)+" seconds",
+				wait := t.backoff.failed()
+				t.logger.Error("connection failed, retrying in "+strconv.Itoa(retryInSec(wait))+" seconds",
 					logid.TunnelConnectFailedRetrying.Field(),
-					zap.Int("retry_in_sec", m.monitoringIntervalSec),
+					zap.Int("retry_in_sec", retryInSec(wait)),
 					zap.String("local", t.Local.String()),
 					zap.String("server", t.Server),
 					zap.String("remote", t.Remote),
 					zap.Error(err))
 
-				if !t.waitBeforeRetry(m) {
+				if !t.waitBeforeRetry(wait) {
 					return
 				}
 

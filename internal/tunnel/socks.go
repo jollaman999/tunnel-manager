@@ -301,6 +301,10 @@ type socksTunnel struct {
 	// way localTunnel.connFP is.
 	connFP   connFingerprint
 	interval time.Duration
+	// maxInterval and backoff are localTunnel.maxInterval and
+	// localTunnel.backoff for a proxy.
+	maxInterval time.Duration
+	backoff     reconnectBackoff
 
 	client   *ssh.Client
 	clientMu sync.RWMutex
@@ -470,6 +474,8 @@ func (p *socksTunnel) establish() error {
 		opened.close()
 		p.listening.Done()
 	}()
+
+	p.backoff.reset()
 
 	p.setState(func(state *SocksState) {
 		state.Status = localStatusConnected
@@ -655,6 +661,8 @@ func (p *socksTunnel) Start() {
 		monitorWg.Wait()
 	}()
 
+	p.backoff = newReconnectBackoff(p.interval, p.maxInterval)
+
 	for !p.stopped() {
 		err := p.establish()
 		if errors.Is(err, errSocksStopped) {
@@ -674,12 +682,12 @@ func (p *socksTunnel) Start() {
 			return
 		}
 
-		retryInSec := int(p.interval / time.Second)
-		p.logger.Error("SOCKS5 proxy connection failed, retrying in "+strconv.Itoa(retryInSec)+" seconds",
+		wait := p.backoff.failed()
+		p.logger.Error("SOCKS5 proxy connection failed, retrying in "+strconv.Itoa(retryInSec(wait))+" seconds",
 			append([]zap.Field{logid.TunnelSocksConnectFailedRetrying.Field()},
-				p.fields(zap.Int("retry_in_sec", retryInSec), zap.Error(err))...)...)
+				p.fields(zap.Int("retry_in_sec", retryInSec(wait)), zap.Error(err))...)...)
 
-		if !waitUnlessDone(p.done, p.interval) {
+		if !waitUnlessDone(p.done, wait) {
 			return
 		}
 
@@ -733,6 +741,7 @@ func (m *Manager) startSocks(host *models.Host) error {
 	}
 
 	p.connFP = socksFingerprint(host, creds)
+	p.maxInterval = time.Duration(m.reconnectMaxIntervalSec) * time.Second
 
 	m.socksProxies[host.ID] = p
 

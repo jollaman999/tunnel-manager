@@ -6698,6 +6698,7 @@ function settingsForm(set) {
         t("settings.api-port.hint")),
       settingsField(secondsField("monitoring_interval_sec", t("settings.monitoring.label"),
         set.monitoring_interval_sec), t("settings.monitoring.hint")),
+      settingsField(reconnectMaxField(set.reconnect_max_interval_sec), t("settings.reconnect-max.hint")),
       settingsField(secondsField("reconcile_interval_sec", t("settings.reconcile.label"),
         set.reconcile_interval_sec), t("settings.reconcile.hint")),
       {
@@ -6796,6 +6797,23 @@ function secondsField(name, label, value) {
   };
 }
 
+// reconnectMaxField is a period with a ceiling as well as a floor. The server
+// refuses a wait past an hour, so the box says so before the save does.
+function reconnectMaxField(value) {
+  const field = secondsField("reconnect_max_interval_sec", t("settings.reconnect-max.label"), value);
+
+  field.check = function (text) {
+    const empty = checkSeconds(text);
+    if (empty !== "") {
+      return empty;
+    }
+
+    return Number(String(text).trim()) > 3600 ? t("settings.reconnect-max.error") : "";
+  };
+
+  return field;
+}
+
 function countField(name, label, value) {
   return {
     name: name,
@@ -6812,6 +6830,7 @@ async function saveSettings(values) {
   const body = {
     api_port: asNumber(values.api_port),
     monitoring_interval_sec: asNumber(values.monitoring_interval_sec),
+    reconnect_max_interval_sec: asNumber(values.reconnect_max_interval_sec),
     reconcile_interval_sec: asNumber(values.reconcile_interval_sec),
     security_key_file: values.security_key_file.trim(),
     logging_level: values.logging_level,

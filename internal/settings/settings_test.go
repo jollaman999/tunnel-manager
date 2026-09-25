@@ -86,6 +86,7 @@ func TestDefaultsAreTheValuesTheConfigurationFileRanOn(t *testing.T) {
 		{"api.port", d.APIPort, 8888},
 		{"api.https_enabled", d.APIHTTPSEnabled, true},
 		{"monitoring.interval_sec", d.MonitoringIntervalSec, 5},
+		{"monitoring.reconnect_max_interval_sec", d.ReconnectMaxIntervalSec, 60},
 		{"reconcile.interval_sec", d.ReconcileIntervalSec, 5},
 		{"security.key_file", d.SecurityKeyFile, "keys/tunnel-manager.key"},
 		{"logging.level", d.LoggingLevel, "info"},
@@ -241,6 +242,64 @@ func TestARowWrittenBeforeTheHTTPSSettingReadsAsHTTPSOn(t *testing.T) {
 	}
 }
 
+// TestARowWrittenBeforeTheReconnectCeilingReadsAsAMinute covers the
+// installation that is upgraded onto the reconnect ceiling. A column added
+// without a default would read back as zero, which Validate refuses, and the
+// upgraded process would not start.
+func TestARowWrittenBeforeTheReconnectCeilingReadsAsAMinute(t *testing.T) {
+	db := newDB(t)
+
+	_, err := Load(db)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+
+	err = db.Exec("ALTER TABLE settings DROP COLUMN reconnect_max_interval_sec").Error
+	if err != nil {
+		t.Fatalf("dropping the column to build a row from before it existed: %v", err)
+	}
+
+	err = db.AutoMigrate(&Settings{})
+	if err != nil {
+		t.Fatalf("migrating the column back: %v", err)
+	}
+
+	upgraded, err := Load(db)
+	if err != nil {
+		t.Fatalf("Load after the migration: %v", err)
+	}
+	if upgraded.ReconnectMaxIntervalSec != 60 {
+		t.Fatalf("a row written before the setting existed reads as %d, want 60",
+			upgraded.ReconnectMaxIntervalSec)
+	}
+}
+
+// TestTheReconnectCeilingTakesItsBounds stores both ends of what the ceiling
+// is allowed to be. One second is below every monitoring interval but zero,
+// which is a ceiling that leaves every wait at the interval, and an hour is the
+// longest a Host that came back is left unused.
+func TestTheReconnectCeilingTakesItsBounds(t *testing.T) {
+	db := newDB(t)
+
+	for _, sec := range []int{1, 3600} {
+		s := Defaults()
+		s.ReconnectMaxIntervalSec = sec
+
+		err := Save(db, &s)
+		if err != nil {
+			t.Fatalf("Save refused a reconnect ceiling of %d: %v", sec, err)
+		}
+
+		loaded, err := Load(db)
+		if err != nil {
+			t.Fatalf("Load: %v", err)
+		}
+		if loaded.ReconnectMaxIntervalSec != sec {
+			t.Fatalf("the reconnect ceiling reads back as %d, want %d", loaded.ReconnectMaxIntervalSec, sec)
+		}
+	}
+}
+
 // TestSaveRefusesASetThatWouldNotStart is why the validation moved here with
 // the settings. A stored api.port of 0 keeps the process from serving the very
 // screen the setting is changed on, so the save is refused and what is stored
@@ -284,6 +343,10 @@ func TestValidateRejects(t *testing.T) {
 		{"api port out of range", func(s *Settings) { s.APIPort = 70000 }, "API port"},
 		{"zero monitoring interval", func(s *Settings) { s.MonitoringIntervalSec = 0 }, "monitoring interval"},
 		{"negative monitoring interval", func(s *Settings) { s.MonitoringIntervalSec = -1 }, "monitoring interval"},
+		{"zero reconnect max interval", func(s *Settings) { s.ReconnectMaxIntervalSec = 0 }, "reconnect max interval"},
+		{"negative reconnect max interval", func(s *Settings) { s.ReconnectMaxIntervalSec = -1 }, "reconnect max interval"},
+		{"reconnect max interval over an hour", func(s *Settings) { s.ReconnectMaxIntervalSec = 3601 },
+			"reconnect max interval"},
 		{"zero reconcile interval", func(s *Settings) { s.ReconcileIntervalSec = 0 }, "reconcile interval"},
 		{"negative reconcile interval", func(s *Settings) { s.ReconcileIntervalSec = -1 }, "reconcile interval"},
 		{"empty key file", func(s *Settings) { s.SecurityKeyFile = "" }, "encryption key file"},

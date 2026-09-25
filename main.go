@@ -1643,6 +1643,7 @@ func serve() {
 		zap.String("log_file", resolveInstallPath(installDir, set.LoggingFilePath)),
 		zap.Int("api_port", set.APIPort),
 		zap.Int("monitoring_interval_sec", set.MonitoringIntervalSec),
+		zap.Int("reconnect_max_interval_sec", set.ReconnectMaxIntervalSec),
 		zap.Int("reconcile_interval_sec", set.ReconcileIntervalSec))
 
 	warnIfNotPrivileged(logger)
@@ -1709,6 +1710,8 @@ func serve() {
 	if err != nil {
 		logger.Fatal("failed to create the tunnel manager", logid.TunnelManagerCreateFailed.Field(), zap.Error(err))
 	}
+
+	manager.SetReconnectMaxInterval(set.ReconnectMaxIntervalSec)
 
 	// The first reconcile pass runs before anything is served, so the tunnels
 	// of the rows that are already stored are up by the time the first request

@@ -79,6 +79,13 @@ type localTunnel struct {
 	// the way SSHTunnel.connFP is.
 	connFP   connFingerprint
 	interval time.Duration
+	// maxInterval is the ceiling of the wait before a failed connection is
+	// tried again. It is written before the forward starts and never again.
+	// Zero leaves every wait at the interval.
+	maxInterval time.Duration
+	// backoff is the wait before the next attempt. Start and establish are
+	// the only ones to touch it, and they run on the one goroutine.
+	backoff reconnectBackoff
 
 	client   *ssh.Client
 	clientMu sync.RWMutex
@@ -249,6 +256,8 @@ func (f *localTunnel) establish() error {
 		opened.close()
 		f.listening.Done()
 	}()
+
+	f.backoff.reset()
 
 	f.setState(func(state *LocalForwardState) {
 		state.Status = localStatusConnected
@@ -515,10 +524,10 @@ func checkSSHConnection(server string, client *ssh.Client, timeout time.Duration
 	}
 }
 
-// waitBeforeRetry waits for the retry interval and reports whether the
-// forward should keep running.
-func (f *localTunnel) waitBeforeRetry() bool {
-	return waitUnlessDone(f.done, f.interval)
+// waitBeforeRetry waits for wait and reports whether the forward should keep
+// running.
+func (f *localTunnel) waitBeforeRetry(wait time.Duration) bool {
+	return waitUnlessDone(f.done, wait)
 }
 
 // waitUnlessDone waits for wait and reports false if done closes first. It is
@@ -556,6 +565,8 @@ func (f *localTunnel) Start() {
 		monitorWg.Wait()
 	}()
 
+	f.backoff = newReconnectBackoff(f.interval, f.maxInterval)
+
 	for !f.stopped() {
 		err := f.establish()
 		if errors.Is(err, errLocalForwardStopped) {
@@ -563,7 +574,7 @@ func (f *localTunnel) Start() {
 		}
 
 		if errors.Is(err, errConnectionClosed) {
-			if !f.waitBeforeRetry() {
+			if !f.waitBeforeRetry(f.interval) {
 				return
 			}
 			continue
@@ -575,12 +586,12 @@ func (f *localTunnel) Start() {
 			return
 		}
 
-		retryInSec := int(f.interval / time.Second)
-		f.logger.Error("local forward connection failed, retrying in "+strconv.Itoa(retryInSec)+" seconds",
+		wait := f.backoff.failed()
+		f.logger.Error("local forward connection failed, retrying in "+strconv.Itoa(retryInSec(wait))+" seconds",
 			append([]zap.Field{logid.TunnelLocalForwardConnectFailedRetrying.Field()},
-				f.fields(zap.Int("retry_in_sec", retryInSec), zap.Error(err))...)...)
+				f.fields(zap.Int("retry_in_sec", retryInSec(wait)), zap.Error(err))...)...)
 
-		if !f.waitBeforeRetry() {
+		if !f.waitBeforeRetry(wait) {
 			return
 		}
 
@@ -636,6 +647,7 @@ func (m *Manager) startLocalForward(host *models.Host, lf *models.LocalForward) 
 	}
 
 	f.connFP = localForwardFingerprint(host, lf, creds)
+	f.maxInterval = time.Duration(m.reconnectMaxIntervalSec) * time.Second
 
 	m.localForwards[localForwardKeyOf(lf)] = f
 

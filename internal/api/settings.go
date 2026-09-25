@@ -171,8 +171,9 @@ type updateSettingsRequest struct {
 	APIPort         *int  `json:"api_port"`
 	APIHTTPSEnabled *bool `json:"api_https_enabled"`
 
-	MonitoringIntervalSec *int `json:"monitoring_interval_sec"`
-	ReconcileIntervalSec  *int `json:"reconcile_interval_sec"`
+	MonitoringIntervalSec   *int `json:"monitoring_interval_sec"`
+	ReconnectMaxIntervalSec *int `json:"reconnect_max_interval_sec"`
+	ReconcileIntervalSec    *int `json:"reconcile_interval_sec"`
 
 	SecurityKeyFile *string `json:"security_key_file"`
 
@@ -211,6 +212,9 @@ func (r *updateSettingsRequest) apply(s *settings.Settings) {
 
 	if r.MonitoringIntervalSec != nil {
 		s.MonitoringIntervalSec = *r.MonitoringIntervalSec
+	}
+	if r.ReconnectMaxIntervalSec != nil {
+		s.ReconnectMaxIntervalSec = *r.ReconnectMaxIntervalSec
 	}
 	if r.ReconcileIntervalSec != nil {
 		s.ReconcileIntervalSec = *r.ReconcileIntervalSec

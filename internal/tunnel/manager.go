@@ -109,6 +109,11 @@ type Manager struct {
 	logger                *zap.Logger
 	cipher                *crypto.Cipher
 	monitoringIntervalSec int
+	// reconnectMaxIntervalSec is the ceiling of the wait before a failed
+	// connection is tried again (reconnectBackoff). It is zero until
+	// SetReconnectMaxInterval is called, which leaves every wait at the
+	// monitoring interval.
+	reconnectMaxIntervalSec int
 	// reconcileWake carries the request for a reconcile pass. It holds one
 	// wake-up, so a caller never waits for the loop to pick the previous one up.
 	reconcileWake chan struct{}
@@ -153,6 +158,22 @@ func NewManager(db *gorm.DB, logger *zap.Logger, cipher *crypto.Cipher, monitori
 		localForwards:         make(map[LocalForwardKey]*localTunnel),
 		socksProxies:          make(map[uint]*socksTunnel),
 	}, nil
+}
+
+// SetReconnectMaxInterval sets the ceiling of the wait before a failed
+// connection is tried again. It is read by every tunnel, local forward and
+// SOCKS5 proxy as it starts and never locked, so it is called before the first
+// of them is started, which is where the startup calls it. A change stored on
+// the Settings screen reaches it at the next start, the way the monitoring
+// interval does.
+func (m *Manager) SetReconnectMaxInterval(sec int) {
+	m.reconnectMaxIntervalSec = sec
+}
+
+// reconnectBackoff returns the backoff a connect loop starts on.
+func (m *Manager) reconnectBackoff() reconnectBackoff {
+	return newReconnectBackoff(time.Duration(m.monitoringIntervalSec)*time.Second,
+		time.Duration(m.reconnectMaxIntervalSec)*time.Second)
 }
 
 // hostPassword returns the password to authenticate to the Host with. A stored

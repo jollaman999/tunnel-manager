@@ -788,6 +788,7 @@ func anotherSet() settings.Settings {
 		APIPort:                  9443,
 		APIHTTPSEnabled:          false,
 		MonitoringIntervalSec:    30,
+		ReconnectMaxIntervalSec:  120,
 		ReconcileIntervalSec:     45,
 		SecurityKeyFile:          "secrets/another.key",
 		LoggingLevel:             "warn",
