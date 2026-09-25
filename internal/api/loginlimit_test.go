@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -280,6 +281,175 @@ func TestASuccessfulLoginForgetsTheFailuresBeforeIt(t *testing.T) {
 
 	t.Logf("%d failures, a successful login, and %d more failures, none of them held",
 		loginAddressFailureLimit-1, loginAddressFailureLimit-1)
+}
+
+// TestWrongLoginsSentAtOnceAreCountedAsTheyAreLetThrough is the limit against
+// guesses that arrive together rather than one after another. Every one of
+// them is let go at the same moment, so they all ask the limiter while the
+// first few are still in bcrypt. Were the failures counted only once the
+// compare has answered, every one would find the counter where the first did
+// and all of them would be checked; counted as they are let through, no more
+// than the limit reach the password and the rest are refused as held.
+func TestWrongLoginsSentAtOnceAreCountedAsTheyAreLetThrough(t *testing.T) {
+	e, h := newTestServer(t, newTestAccount(t, false))
+
+	const (
+		guesser = "198.51.100.21"
+		sent    = 8 * loginAddressFailureLimit
+	)
+
+	codes := make([]int, sent)
+
+	var (
+		ready sync.WaitGroup
+		done  sync.WaitGroup
+	)
+
+	start := make(chan struct{})
+
+	for i := 0; i < sent; i++ {
+		ready.Add(1)
+		done.Add(1)
+
+		go func(i int) {
+			defer done.Done()
+
+			ready.Done()
+			<-start
+
+			codes[i] = loginFrom(e, guesser, badLogin).Code
+		}(i)
+	}
+
+	ready.Wait()
+	close(start)
+	done.Wait()
+
+	checked, refused := 0, 0
+
+	for i, code := range codes {
+		switch code {
+		case http.StatusUnauthorized:
+			checked++
+		case http.StatusTooManyRequests:
+			refused++
+		default:
+			t.Errorf("attempt %d: status = %d, want %d or %d",
+				i+1, code, http.StatusUnauthorized, http.StatusTooManyRequests)
+		}
+	}
+
+	t.Logf("%d wrong logins sent at once: %d had the password checked, %d were refused as held",
+		sent, checked, refused)
+
+	if checked > loginAddressFailureLimit {
+		t.Errorf("%d of %d wrong logins sent at once had the password checked, want no more than %d",
+			checked, sent, loginAddressFailureLimit)
+	}
+
+	if checked == 0 {
+		t.Errorf("none of %d wrong logins had the password checked, want at least one", sent)
+	}
+
+	// Every reservation was given back, whichever way the attempt ended.
+	h.logins.mu.Lock()
+	inFlight := len(h.logins.inFlight)
+	h.logins.mu.Unlock()
+
+	if inFlight != 0 {
+		t.Errorf("the limiter still counts %d keys in flight after every login came back, want 0", inFlight)
+	}
+}
+
+// TestALoginInFlightHoldsTheOnesAfterIt is the same thing on the limiter
+// alone, where the attempts can be held open for as long as the test likes
+// rather than for as long as a bcrypt compare happens to take. It also covers
+// the three ways an attempt ends: a release gives the place back without
+// counting anything, a failure turns it into a failure, and a success forgets
+// the lot.
+func TestALoginInFlightHoldsTheOnesAfterIt(t *testing.T) {
+	limiter := newLoginLimiter()
+
+	at := time.Date(2026, 9, 22, 10, 0, 0, 0, time.UTC)
+	limiter.now = func() time.Time { return at }
+
+	const guesser = "198.51.100.22"
+
+	attempts := make([]*loginAttempt, 0, loginAddressFailureLimit)
+
+	for i := 0; i < loginAddressFailureLimit; i++ {
+		attempt, _, held := limiter.begin(guesser, 1)
+		if held {
+			t.Fatalf("attempt %d of %d was held with nothing yet recorded", i+1, loginAddressFailureLimit)
+		}
+
+		attempts = append(attempts, attempt)
+	}
+
+	_, wait, held := limiter.begin(guesser, 1)
+	if !held {
+		t.Fatalf("attempt %d was let through with %d already in flight",
+			loginAddressFailureLimit+1, loginAddressFailureLimit)
+	}
+
+	if retryAfterSeconds(wait) != 1 {
+		t.Errorf("a login held only for what is in flight is told to wait %d seconds, want 1",
+			retryAfterSeconds(wait))
+	}
+
+	// Another address is not held by these: the account counter is far below
+	// its own limit.
+	other, _, held := limiter.begin("203.0.113.22", 1)
+	if held {
+		t.Errorf("another address was held by the logins in flight from %s", guesser)
+	} else {
+		other.release()
+	}
+
+	// A release gives one place back and records nothing, and a second one
+	// after it does nothing.
+	attempts[0].release()
+	attempts[0].release()
+	attempts[0].failed()
+
+	again, _, held := limiter.begin(guesser, 1)
+	if held {
+		t.Fatalf("a released attempt did not give its place back")
+	}
+
+	attempts[0] = again
+
+	// Every attempt failing turns the reservations into failures, which is
+	// the ordinary hold, deadline and all.
+	for _, attempt := range attempts {
+		attempt.failed()
+		attempt.release()
+	}
+
+	_, wait, held = limiter.begin(guesser, 1)
+	if !held || wait != loginAddressBlockFor {
+		t.Errorf("after %d failures: held = %v, wait = %v, want true and %v",
+			loginAddressFailureLimit, held, wait, loginAddressBlockFor)
+	}
+
+	if len(limiter.inFlight) != 0 {
+		t.Errorf("the limiter still counts %d keys in flight, want 0", len(limiter.inFlight))
+	}
+
+	// A success forgets both counters and gives the place back.
+	at = at.Add(loginAddressBlockFor)
+
+	attempt, _, held := limiter.begin(guesser, 1)
+	if held {
+		t.Fatalf("the hold did not end when it ran out")
+	}
+
+	attempt.succeeded()
+
+	if len(limiter.failures) != 0 || len(limiter.inFlight) != 0 {
+		t.Errorf("after a success the limiter holds %d counters and %d keys in flight, want 0 and 0",
+			len(limiter.failures), len(limiter.inFlight))
+	}
 }
 
 // TestAnOrdinaryLoginIsUntouchedByTheLimiter is the evidence that none of this

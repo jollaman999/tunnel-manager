@@ -571,10 +571,11 @@ func (h *AuthHandler) Login(c echo.Context) error {
 	// nothing.
 	address := h.loginAddress(c)
 
-	wait, held := h.logins.retryAfter(address, user.ID)
+	attempt, wait, held := h.logins.begin(address, user.ID)
 	if held {
 		return h.refuseHeldLogin(c, wait)
 	}
+	defer attempt.release()
 
 	// The password is hashed and compared whatever the username was, so that a
 	// wrong username is not answered faster than a wrong password. Before the
@@ -586,7 +587,7 @@ func (h *AuthHandler) Login(c echo.Context) error {
 	}
 
 	if !ok {
-		h.logins.failed(address, user.ID)
+		attempt.failed()
 
 		return failure(c, http.StatusUnauthorized, errAuthCredentialsInvalid)
 	}
@@ -595,7 +596,7 @@ func (h *AuthHandler) Login(c echo.Context) error {
 	// here, before the session is made. The one who got the password right is
 	// not the one the counters are for, and a failure that is still counted
 	// after a successful sign in would hold the operator on their next slip.
-	h.logins.succeeded(address, user.ID)
+	attempt.succeeded()
 
 	token, csrfToken, err := h.sessions.Create(user.ID)
 	if err != nil {

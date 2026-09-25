@@ -163,6 +163,12 @@ type loginLimiter struct {
 	// on, and the contention on a login is not what costs anything here.
 	mu       sync.Mutex
 	failures map[loginKey]loginFailures
+	// inFlight is how many logins per key have been let through to the
+	// password check and have not come back from it yet. It is apart from
+	// failures so that neither live nor prune can drop a count that is still
+	// owed a release, and it is bounded by the requests being served at once
+	// rather than by anything a sender piles up over time.
+	inFlight map[loginKey]int
 	// now is the clock the deadlines are measured against. It is a field so a
 	// test can move time forward instead of waiting for it, which is what
 	// SessionStore does with the same name.
@@ -178,6 +184,7 @@ type loginLimiter struct {
 func newLoginLimiter() *loginLimiter {
 	return &loginLimiter{
 		failures: make(map[loginKey]loginFailures),
+		inFlight: make(map[loginKey]int),
 		now:      time.Now,
 	}
 }
@@ -233,9 +240,14 @@ func (l *loginLimiter) failed(address string, accountID uint) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 
+	l.recordFailure(loginKeysOf(address, accountID))
+}
+
+// recordFailure is failed with the lock already held.
+func (l *loginLimiter) recordFailure(keys [2]loginKey) {
 	now := l.now()
 
-	for _, key := range loginKeysOf(address, accountID) {
+	for _, key := range keys {
 		limit, blockFor := key.limits()
 
 		entry, ok := l.live(key, now)
@@ -267,9 +279,140 @@ func (l *loginLimiter) succeeded(address string, accountID uint) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 
-	for _, key := range loginKeysOf(address, accountID) {
+	l.forget(loginKeysOf(address, accountID))
+}
+
+// forget is succeeded with the lock already held.
+func (l *loginLimiter) forget(keys [2]loginKey) {
+	for _, key := range keys {
 		delete(l.failures, key)
 	}
+}
+
+// begin is what the login asks before it checks a password, and unlike
+// retryAfter it is a reservation and not only a question.
+//
+// retryAfter looks at the failures that have been recorded, and a failure is
+// recorded only once bcrypt has answered. Between the two there is the whole
+// of the compare, and every request that arrives in that time finds the
+// counters where the first one found them: fifty wrong guesses sent at once
+// all pass the check before any of them is counted, and all fifty reach
+// bcrypt. That is the very pair of holes the limit is here to close, reached
+// by sending in parallel what would have been refused in sequence.
+//
+// So the attempt is counted as it is let through. A key is held when the
+// failures it has recorded and the attempts it has in the compare right now
+// add up to its limit, which is the most it could be at once those attempts
+// come back. For requests that arrive one at a time nothing is in flight when
+// the next one asks, and the answer is exactly the one retryAfter gives.
+//
+// An attempt refused only for what is in flight has no deadline to name yet:
+// whether a hold follows depends on how those attempts come out, which is a
+// matter of the length of a bcrypt compare. The wait answered is then zero,
+// which retryAfterSeconds turns into one second.
+//
+// The attempt returned is nil when held is true. Otherwise it must be ended
+// exactly once, by failed, succeeded or release, and the caller defers
+// release so that a path that returns without an outcome gives the
+// reservation back rather than holding the key forever.
+func (l *loginLimiter) begin(address string, accountID uint) (*loginAttempt, time.Duration, bool) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+
+	now := l.now()
+	keys := loginKeysOf(address, accountID)
+	longest := time.Duration(0)
+	held := false
+
+	for _, key := range keys {
+		limit, _ := key.limits()
+
+		entry, ok := l.live(key, now)
+		if ok && entry.blocked {
+			held = true
+
+			left := entry.expiresAt.Sub(now)
+			if left > longest {
+				longest = left
+			}
+
+			continue
+		}
+
+		if entry.count+l.inFlight[key] >= limit {
+			held = true
+		}
+	}
+
+	if held {
+		return nil, longest, true
+	}
+
+	for _, key := range keys {
+		l.inFlight[key]++
+	}
+
+	return &loginAttempt{limiter: l, keys: keys}, 0, false
+}
+
+// loginAttempt is one login that begin let through to the password check.
+type loginAttempt struct {
+	limiter *loginLimiter
+	keys    [2]loginKey
+	// ended is set by whichever of failed, succeeded or release comes first,
+	// under the limiter's lock, so that the ones after it do nothing.
+	ended bool
+}
+
+// end gives the reservation back and reports whether it was still held. The
+// lock is held by the caller.
+func (a *loginAttempt) end() bool {
+	if a.ended {
+		return false
+	}
+
+	a.ended = true
+
+	for _, key := range a.keys {
+		a.limiter.inFlight[key]--
+		if a.limiter.inFlight[key] <= 0 {
+			delete(a.limiter.inFlight, key)
+		}
+	}
+
+	return true
+}
+
+// failed ends the attempt as a wrong password, which turns the reservation
+// into a recorded failure in one step, so that no other request can find the
+// key between the two and see neither.
+func (a *loginAttempt) failed() {
+	a.limiter.mu.Lock()
+	defer a.limiter.mu.Unlock()
+
+	if a.end() {
+		a.limiter.recordFailure(a.keys)
+	}
+}
+
+// succeeded ends the attempt as the right password and forgets both counters,
+// for the reason loginLimiter.succeeded gives.
+func (a *loginAttempt) succeeded() {
+	a.limiter.mu.Lock()
+	defer a.limiter.mu.Unlock()
+
+	if a.end() {
+		a.limiter.forget(a.keys)
+	}
+}
+
+// release ends the attempt without an outcome. It is what the caller defers,
+// and after failed or succeeded it does nothing.
+func (a *loginAttempt) release() {
+	a.limiter.mu.Lock()
+	defer a.limiter.mu.Unlock()
+
+	a.end()
 }
 
 // prune keeps the map from being the attack.
