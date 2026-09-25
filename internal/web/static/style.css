@@ -1006,6 +1006,37 @@ button[type="submit"].danger:active {
   overflow-wrap: anywhere;
 }
 
+/* The button that copies a value sits beside the value and is smaller than the
+   buttons that act on a row, so that it reads as belonging to the value and not
+   as one more thing the row can do. The colours are the ones every button
+   takes, which is what carries it into both themes. */
+button.copy {
+  margin-inline-start: 0.4rem;
+  padding: 0.05rem 0.55rem;
+  font-size: 12px;
+  vertical-align: baseline;
+  white-space: nowrap;
+}
+
+/* A value and its copy button stay on one line while there is room, and the
+   button goes under the value rather than being cut off where there is not. */
+.copyable {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  row-gap: 0.2rem;
+}
+
+/* Under a fingerprint in the host key boxes and under a command, the button is
+   a line of its own, lined up with the start of the value, and the sentence
+   after a command starts under it rather than beside it. A button made a block
+   stays as wide as its label. */
+.host-key-fingerprint > button.copy,
+.advice > button.copy {
+  display: block;
+  margin: 0.3rem 0 0.35rem;
+}
+
 /* The scroller keeps a wide table inside its own box. Without it the table
    pushes the page wider than the screen and everything scrolls sideways. */
 .table-scroll {

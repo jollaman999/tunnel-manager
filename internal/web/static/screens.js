@@ -776,9 +776,14 @@ function openedCell(row) {
     return "";
   }
 
-  return isLocalForward(row)
+  const said = isLocalForward(row)
     ? t("status.opened-here.text", { address: address })
     : t("status.opened-host.text", { address: address });
+
+  // The copy button copies the address alone. The machine written beside it is
+  // for reading, and what is pasted into a client is the address.
+  return copyable(element("span", said), address,
+    t("status.copy-address.aria", { address: address }));
 }
 
 // statusBadge is what a tunnel is, drawn so that the one row that is not
@@ -2132,23 +2137,31 @@ function hostKeyFingerprints(trusted, waiting) {
   pair.className = "host-key-fingerprints";
 
   if (trusted !== "") {
-    pair.appendChild(hostKeyFingerprint("trusted", t("status.host-key-trusted.label"), trusted));
+    pair.appendChild(hostKeyFingerprint("trusted", t("status.host-key-trusted.label"), trusted,
+      t("status.host-key-copy-trusted.aria")));
   }
 
-  pair.appendChild(hostKeyFingerprint("presented", t("status.host-key-presented.label"), waiting));
+  pair.appendChild(hostKeyFingerprint("presented", t("status.host-key-presented.label"), waiting,
+    t("status.host-key-copy-presented.aria")));
 
   return pair;
 }
 
 // hostKeyFingerprint is one of those boxes: which key it is, and the
-// fingerprint itself in the face every fingerprint on these screens is in.
-function hostKeyFingerprint(name, label, fingerprint) {
+// fingerprint itself in the face every fingerprint on these screens is in, with
+// a button under it that copies it to be held against what the server says.
+function hostKeyFingerprint(name, label, fingerprint, copyLabel) {
   const box = document.createElement("div");
 
   box.className = "host-key-fingerprint";
   box.dataset.fingerprint = name;
   box.appendChild(element("small", label));
   box.appendChild(fingerprintValue(fingerprint));
+
+  const copy = copyButton(fingerprint, copyLabel);
+  if (copy !== null) {
+    box.appendChild(copy);
+  }
 
   return box;
 }
@@ -3414,6 +3427,7 @@ function socksScopeAdvice(value, other) {
       ? t("hosts.socks-open.notice", { sources: t("hosts.socks-sources.label") })
       : t("hosts.socks-local.notice"),
     code: "ssh -N -L " + port + ":127.0.0.1:" + port + " " + t("hosts.socks-open-login.text"),
+    copy: t("hosts.socks-copy-command.aria"),
     then: t("hosts.socks-open-browser.text", { port: port })
   };
 }
@@ -4611,12 +4625,14 @@ function localForwardRow(item, edit, flip, remove) {
     ? ""
     : String(item.description);
 
+  const target = item.target_ip + ":" + item.target_port;
+
   const row = {
     cells: [
       item.number,
       item.local_port,
       localForwardScopeText(item.bind_scope),
-      item.target_ip + ":" + item.target_port,
+      copyable(element("span", target), target, t("local-forwards.copy-target.aria", { address: target })),
       description,
       statusBadge(item.status),
       buttons
@@ -6903,7 +6919,8 @@ function certificateCard(set, certificate) {
   const hosts = view.hosts === null || view.hosts === undefined ? [] : view.hosts;
 
   card.appendChild(buildTable([t("certificate.what.column"), t("certificate.value.column")], [
-    [t("certificate.fingerprint.label"), fingerprintValue(view.fingerprint_sha256)],
+    [t("certificate.fingerprint.label"), copyable(fingerprintValue(view.fingerprint_sha256),
+      view.fingerprint_sha256, t("certificate.copy-fingerprint.aria"))],
     [t("certificate.subject.label"), view.subject],
     [t("certificate.issuer.label"), view.issuer],
     [t("certificate.signed-by.label"), view.self_signed
@@ -7097,6 +7114,12 @@ function certificateReplacement(result) {
     const line = element("p", t("certificate.previous.text"));
 
     line.appendChild(fingerprintValue(result.previous_fingerprint_sha256));
+
+    const copy = copyButton(result.previous_fingerprint_sha256, t("certificate.copy-previous.aria"));
+    if (copy !== null) {
+      line.appendChild(copy);
+    }
+
     wrap.appendChild(line);
   }
 

@@ -1668,6 +1668,89 @@ function actionButton(label, name, onClick, variant) {
   return node;
 }
 
+// copiedHoldMs is how long a copy button says it copied before it goes back to
+// saying what it does. It is long enough to be seen and short enough that a
+// second press, for the value next to it, finds the button ready again.
+const copiedHoldMs = 1500;
+
+// copyButton is a button that puts value on the clipboard, for the values an
+// operator would otherwise pick out with the mouse and copy by hand: a
+// fingerprint to hold against another one, a command to paste into a
+// terminal, an address to paste into a client. label is what is read out for
+// it, and it names the value, because a screen can carry several of these.
+//
+// It is null where the browser offers no clipboard to write to. A page served
+// over plain HTTP is not a secure context, and there navigator.clipboard is
+// not there at all: a button that could only ever fail is left out, and the
+// value stays on the screen to be copied the way it always was.
+//
+// It is null for a value that is not there either, since a button that copies
+// nothing would say a value was copied that the screen does not show.
+//
+// What was copied is said on the button itself for a moment rather than in
+// the toast. The toast is for an action that went through, and it would put
+// away a message about something else that was still being read.
+function copyButton(value, label) {
+  const clipboard = window.navigator.clipboard;
+
+  if (clipboard === undefined || clipboard === null || typeof clipboard.writeText !== "function") {
+    return null;
+  }
+
+  if (value === undefined || value === null || String(value) === "") {
+    return null;
+  }
+
+  const node = document.createElement("button");
+  let timer = null;
+
+  node.type = "button";
+  node.className = "copy";
+  node.textContent = t("common.copy.button");
+  node.setAttribute("aria-label", label);
+  node.dataset.action = "copy";
+
+  node.addEventListener("click", function () {
+    clipboard.writeText(String(value)).then(function () {
+      if (timer !== null) {
+        window.clearTimeout(timer);
+      }
+
+      node.textContent = t("common.copied.text");
+
+      timer = window.setTimeout(function () {
+        timer = null;
+        node.textContent = t("common.copy.button");
+      }, copiedHoldMs);
+    }, function () {
+      showToast(function () {
+        return t("common.copy-failed.notice");
+      }, "error");
+    });
+  });
+
+  return node;
+}
+
+// copyable is node with a copy button for value after it, kept together in
+// one box so that the two sit on one line where there is room. It is node
+// alone where there is no clipboard to write to.
+function copyable(node, value, label) {
+  const button = copyButton(value, label);
+
+  if (button === null) {
+    return node;
+  }
+
+  const box = document.createElement("span");
+
+  box.className = "copyable";
+  box.appendChild(node);
+  box.appendChild(button);
+
+  return box;
+}
+
 // buildTable draws a list. A cell is either a value, which is set as text, or a
 // node that was built by the caller.
 //
@@ -2368,6 +2451,9 @@ function listControl(field) {
 // writes into a sentence is wrapped in marks of direction that show as nothing
 // and are copied with the text, and a command copied with them in it is not the
 // command: ssh refuses a port that starts with one.
+//
+// An answer that names the command under copy gets a button after it that
+// copies the command as it is written, which is the same reason again.
 function showAdvice(node, said) {
   node.replaceChildren();
 
@@ -2390,6 +2476,14 @@ function showAdvice(node, said) {
   command.className = "command";
   command.dir = "ltr";
   node.appendChild(command);
+
+  if (typeof said.copy === "string") {
+    const button = copyButton(said.code, said.copy);
+
+    if (button !== null) {
+      node.appendChild(button);
+    }
+  }
 
   node.appendChild(document.createTextNode(said.then));
   node.hidden = false;
