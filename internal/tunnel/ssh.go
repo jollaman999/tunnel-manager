@@ -715,6 +715,11 @@ func (t *SSHTunnel) establishConnection(m *Manager, tunnel *models.Tunnel) error
 
 	opened, err := t.openForwards(client)
 	if err != nil {
+		// The client is kept on the tunnel only once a forward is open, so on
+		// this way out nothing else would ever close it. Closing it closes
+		// clientConn as well, the connection it was built on.
+		_ = client.Close()
+
 		m.logger.Error("failed to start remote listener",
 			logid.TunnelRemoteListenerFailed.Field(),
 			zap.String("local", t.Local.String()),

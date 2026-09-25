@@ -2376,6 +2376,21 @@ func TestAFailureThatIsNotARefusalIsLeftUnnamed(t *testing.T) {
 func startScopedForwardSSHServer(t *testing.T, grant func(addr string) bool) (string, func() []string) {
 	t.Helper()
 
+	addr, asked, _ := startScopedForwardSSHServerNotingEnds(t, grant)
+
+	return addr, asked
+}
+
+// startScopedForwardSSHServerNotingEnds is startScopedForwardSSHServer that
+// also says when a client connection has ended. The server reads the requests
+// of a connection until the client goes away, so the end of that loop is the
+// moment the server sees the connection closed, and a test that expects the
+// client to close its end can wait for it there.
+func startScopedForwardSSHServerNotingEnds(t *testing.T, grant func(addr string) bool) (string, func() []string, <-chan struct{}) {
+	t.Helper()
+
+	ended := make(chan struct{}, 16)
+
 	_, priv, err := ed25519.GenerateKey(rand.Reader)
 	if err != nil {
 		t.Fatalf("failed to generate host key: %v", err)
@@ -2471,6 +2486,11 @@ func startScopedForwardSSHServer(t *testing.T, grant func(addr string) bool) (st
 
 					_ = req.Reply(true, ssh.Marshal(struct{ Port uint32 }{Port: forward.Port}))
 				}
+
+				select {
+				case ended <- struct{}{}:
+				default:
+				}
 			}(conn)
 		}
 	}()
@@ -2480,7 +2500,7 @@ func startScopedForwardSSHServer(t *testing.T, grant func(addr string) bool) (st
 		defer mu.Unlock()
 
 		return append([]string(nil), asked...)
-	}
+	}, ended
 }
 
 // newScopedSSHTestTunnel is newSSHTestTunnel with the pair of local addresses
@@ -2663,6 +2683,33 @@ func TestEstablishConnectionFailsWhenNeitherAddressOpens(t *testing.T) {
 			t.Errorf("the last error %q does not name %q, so it names one refusal and not both",
 				tunnel.LastError, want)
 		}
+	}
+}
+
+// A connection whose forwards were all refused is handed to nobody, so the
+// failure has to close it. Left open it would stay with the SSH server for as
+// long as this process runs, one more for every retry of the tunnel.
+func TestEstablishConnectionClosesTheClientWhenNeitherAddressOpens(t *testing.T) {
+	m := newSSHTestManager(t, 1)
+	serverAddr, _, ended := startScopedForwardSSHServerNotingEnds(t, func(string) bool { return false })
+
+	tun, tunnel := newScopedSSHTestTunnel(t, serverAddr, "0.0.0.0:18204", "[::]:18204")
+
+	if err := tun.establishConnection(m, tunnel); err == nil {
+		t.Fatal("establishConnection returned no error although neither address opened")
+	}
+
+	select {
+	case <-ended:
+	case <-time.After(5 * time.Second):
+		t.Fatal("the SSH server still holds the connection after the forwards were refused")
+	}
+
+	tun.clientMu.Lock()
+	client := tun.client
+	tun.clientMu.Unlock()
+	if client != nil {
+		t.Error("the tunnel kept a client although the connection failed")
 	}
 }
 
