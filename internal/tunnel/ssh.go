@@ -955,15 +955,22 @@ func (t *SSHTunnel) acceptForwards(m *Manager, tunnel *models.Tunnel, client *ss
 
 		// Drop the dead client, or the monitor keeps checking it and
 		// tears down the connection the Start loop establishes next.
+		//
+		// A client that is no longer the current one was dropped by
+		// reconnect, which already reported the tunnel as reconnecting,
+		// and reporting it here again would count one drop twice.
 		t.clientMu.Lock()
-		if t.client == client {
+		current := t.client == client
+		if current {
 			_ = t.client.Close()
 			t.client = nil
 			t.clientConn = nil
 		}
 		t.clientMu.Unlock()
 
-		t.markReconnecting(m, tunnel)
+		if current {
+			t.markReconnecting(m, tunnel)
+		}
 
 		return errConnectionClosed
 	}

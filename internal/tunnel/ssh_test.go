@@ -723,7 +723,7 @@ func TestEstablishConnectionReportsClosedConnection(t *testing.T) {
 	}()
 
 	waitTunnelClient(t, tun, 10*time.Second)
-	closeTunnelClient(t, tun)
+	closeTunnelClientOnly(t, tun)
 
 	select {
 	case err := <-errc:
@@ -734,15 +734,62 @@ func TestEstablishConnectionReportsClosedConnection(t *testing.T) {
 		t.Fatal("establishConnection did not return after the connection was closed")
 	}
 
-	if tunnel.Status != "reconnecting" {
+	tun.tunnelMu.Lock()
+	status, retries, lastError := tunnel.Status, tunnel.RetryCount, tunnel.LastError
+	tun.tunnelMu.Unlock()
+
+	if status != "reconnecting" {
 		t.Fatalf("tunnel status = %q, want %q, the tunnel is down until Start reconnects",
-			tunnel.Status, "reconnecting")
+			status, "reconnecting")
 	}
-	if tunnel.RetryCount != 1 {
-		t.Fatalf("RetryCount = %d, want 1, the closed connection starts a reconnect cycle", tunnel.RetryCount)
+	if retries != 1 {
+		t.Fatalf("RetryCount = %d, want 1, the closed connection starts a reconnect cycle", retries)
 	}
-	if tunnel.LastError != "" {
-		t.Fatalf("LastError = %q, want empty, a closed connection is not an error", tunnel.LastError)
+	if lastError != "" {
+		t.Fatalf("LastError = %q, want empty, a closed connection is not an error", lastError)
+	}
+}
+
+// TestADroppedConnectionIsCountedOnce holds one dropped connection to one retry.
+// The monitor that tears the connection down reports it, and the accept loop
+// that ends with it is looking at a connection that is no longer the current
+// one.
+func TestADroppedConnectionIsCountedOnce(t *testing.T) {
+	m := newSSHTestManager(t, 1)
+	serverAddr, _ := startForwardingSSHServer(t)
+	tun, tunnel := newSSHTestTunnel(t, serverAddr)
+
+	errc := make(chan error, 1)
+	go func() {
+		errc <- tun.establishConnection(m, tunnel)
+	}()
+
+	waitTunnelClient(t, tun, 10*time.Second)
+
+	tun.clientMu.RLock()
+	client := tun.client
+	tun.clientMu.RUnlock()
+
+	tun.reconnect(m, tunnel, client)
+
+	select {
+	case err := <-errc:
+		if !errors.Is(err, errConnectionClosed) {
+			t.Fatalf("establishConnection returned %v, want %v", err, errConnectionClosed)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("establishConnection did not return after the connection was closed")
+	}
+
+	tun.tunnelMu.Lock()
+	status, retries := tunnel.Status, tunnel.RetryCount
+	tun.tunnelMu.Unlock()
+
+	if status != "reconnecting" {
+		t.Fatalf("tunnel status = %q, want %q", status, "reconnecting")
+	}
+	if retries != 1 {
+		t.Fatalf("RetryCount = %d, want 1, one dropped connection was counted more than once", retries)
 	}
 }
 
@@ -813,9 +860,10 @@ func TestEstablishConnectionReportsServerConfirmedPort(t *testing.T) {
 	}
 
 	// The test server hands out port 12345 for a request on port 0.
-	if tunnel.Local != "127.0.0.1:12345" {
+	_, local, _ := readTunnelOpenReach(tun, tunnel)
+	if local != "127.0.0.1:12345" {
 		t.Fatalf("reported local = %q, want %q, the requested port was not the one the server bound",
-			tunnel.Local, "127.0.0.1:12345")
+			local, "127.0.0.1:12345")
 	}
 }
 
@@ -842,11 +890,15 @@ func TestStopKeepsTunnelStatusUntouched(t *testing.T) {
 
 	// Stop deleted the tunnel row, so writing a status after it would bring the
 	// row back.
-	if tunnel.Status != "connected" {
-		t.Fatalf("tunnel status = %q, want %q, the status was updated after Stop", tunnel.Status, "connected")
+	tun.tunnelMu.Lock()
+	status, retries := tunnel.Status, tunnel.RetryCount
+	tun.tunnelMu.Unlock()
+
+	if status != "connected" {
+		t.Fatalf("tunnel status = %q, want %q, the status was updated after Stop", status, "connected")
 	}
-	if tunnel.RetryCount != 0 {
-		t.Fatalf("RetryCount = %d, want 0, it was increased after Stop", tunnel.RetryCount)
+	if retries != 0 {
+		t.Fatalf("RetryCount = %d, want 0, it was increased after Stop", retries)
 	}
 }
 
