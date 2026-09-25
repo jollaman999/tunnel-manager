@@ -1,3 +1,14 @@
+# v3.13.4
+
+## Add/fix features:
+
+- **The Kind column of the status screen keeps its name on one line.** Service port and Local forward broke at their space when the table ran short of room, which made the column one word wide and read as two values stacked in one cell. The column is as wide as its longest name now, and a table that does not fit scrolls sideways as it did before.
+- **The animation at the top of the README was recorded again** on this release.
+
+## Notes:
+
+- The notes of v3.13.3 hold for an installation that comes from before it: a data directory from a release before v3.7.0 keeps the mode it has, and the rest of the upgrade note of v3.7.0 still holds.
+
 # v3.13.3
 
 ## Add/fix features:
