@@ -354,7 +354,7 @@
   "hosts.socks-open-login.text": "用户@本系统",
   "hosts.socks-open.notice": "在所有接口上打开时，其他系统也能连到这个代理，而代理不要求密码，所以除非用 {sources} 限定来源，任何能连到本系统这个端口的人都能进入 Host 背后的网络。 若要不开放而从其他系统使用，请只在本系统上打开，再从那台系统用 SSH 转发过去：",
   "hosts.socks-port.label": "SOCKS5 端口",
-  "hosts.socks-sources.hint": "留空则任何人都能连接。IP 地址和 CIDR 用逗号或空格分隔，例如 203.0.113.0/24, 198.51.100.7",
+  "hosts.socks-sources.hint": "留空则任何人都能连接。IP 地址和 CIDR 用逗号或空格分隔，例如 203.0.113.0/24, 198.51.100.7。逗号后的空格可有可无：203.0.113.0/24,198.51.100.7 与 203.0.113.0/24, 198.51.100.7 读法相同。",
   "hosts.socks-sources.label": "允许的来源地址",
   "hosts.socks.column": "SOCKS5 代理",
   "hosts.ssh-port.label": "SSH 端口",

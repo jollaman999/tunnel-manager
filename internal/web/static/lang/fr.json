@@ -354,7 +354,7 @@
   "hosts.socks-open-login.text": "utilisateur@cette-machine",
   "hosts.socks-open.notice": "Sur toutes les interfaces, d'autres machines atteignent ce proxy, et il ne demande aucun mot de passe, donc quiconque atteint ce système sur le port atteint le réseau derrière le Host, sauf si {sources} désigne qui le peut. Pour l'utiliser depuis une autre machine sans l'ouvrir, gardez-le à cette machine seule et faites-le passer par SSH depuis l'autre :",
   "hosts.socks-port.label": "Port SOCKS5",
-  "hosts.socks-sources.hint": "Vide, tout le monde peut se connecter. Séparez les adresses IP et les blocs CIDR par des virgules ou des espaces, par exemple 203.0.113.0/24, 198.51.100.7",
+  "hosts.socks-sources.hint": "Vide, tout le monde peut se connecter. Séparez les adresses IP et les blocs CIDR par des virgules ou des espaces, par exemple 203.0.113.0/24, 198.51.100.7. L'espace après la virgule est facultatif : 203.0.113.0/24,198.51.100.7 et 203.0.113.0/24, 198.51.100.7 sont lus de la même façon.",
   "hosts.socks-sources.label": "Adresses clientes autorisées",
   "hosts.socks.column": "Proxy SOCKS5",
   "hosts.ssh-port.label": "Port SSH",

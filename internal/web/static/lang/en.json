@@ -354,7 +354,7 @@
   "hosts.socks-open-login.text": "user@this-machine",
   "hosts.socks-open.notice": "Every interface lets other machines reach this proxy, and it asks for no password, so anyone who reaches this machine on the port reaches the network behind the Host, unless {sources} names who may. To reach it from another machine without opening it, keep it to this machine alone and carry it over SSH from that machine:",
   "hosts.socks-port.label": "SOCKS5 port",
-  "hosts.socks-sources.hint": "Empty lets anyone connect. Separate IP addresses and CIDR blocks with commas or spaces, for example 203.0.113.0/24, 198.51.100.7",
+  "hosts.socks-sources.hint": "Empty lets anyone connect. Separate IP addresses and CIDR blocks with commas or spaces, for example 203.0.113.0/24, 198.51.100.7. A space after a comma is optional: 203.0.113.0/24,198.51.100.7 and 203.0.113.0/24, 198.51.100.7 are read the same.",
   "hosts.socks-sources.label": "Allowed client addresses",
   "hosts.socks.column": "SOCKS5 proxy",
   "hosts.ssh-port.label": "SSH port",

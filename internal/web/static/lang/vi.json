@@ -354,7 +354,7 @@
   "hosts.socks-open-login.text": "user@he-thong-nay",
   "hosts.socks-open.notice": "Mở trên mọi giao diện mạng thì máy khác cũng tới được proxy này, và proxy không hỏi mật khẩu, nên ai tới được hệ thống này qua cổng đó đều vào được mạng phía sau Host, trừ khi {sources} giới hạn ai được phép. Để dùng từ máy khác mà không mở nó ra, hãy chỉ mở trên hệ thống này và mang nó qua SSH từ máy kia:",
   "hosts.socks-port.label": "Cổng SOCKS5",
-  "hosts.socks-sources.hint": "Để trống thì ai cũng kết nối được. Phân tách địa chỉ IP và khối CIDR bằng dấu phẩy hoặc khoảng trắng, ví dụ 203.0.113.0/24, 198.51.100.7",
+  "hosts.socks-sources.hint": "Để trống thì ai cũng kết nối được. Phân tách địa chỉ IP và khối CIDR bằng dấu phẩy hoặc khoảng trắng, ví dụ 203.0.113.0/24, 198.51.100.7. Khoảng trắng sau dấu phẩy có hay không đều được: 203.0.113.0/24,198.51.100.7 và 203.0.113.0/24, 198.51.100.7 được đọc như nhau.",
   "hosts.socks-sources.label": "Địa chỉ máy khách được phép",
   "hosts.socks.column": "Proxy SOCKS5",
   "hosts.ssh-port.label": "Cổng SSH",

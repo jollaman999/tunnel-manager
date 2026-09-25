@@ -354,7 +354,7 @@
   "hosts.socks-open-login.text": "benutzer@dieser-rechner",
   "hosts.socks-open.notice": "Auf allen Schnittstellen erreichen auch andere Rechner diesen Proxy, und er fragt nach keinem Passwort. Wer dieses System auf dem Port erreicht, erreicht daher das Netz hinter dem Host, außer {sources} legt fest, wer es darf. Um ihn von einem anderen Rechner aus zu nutzen, ohne ihn zu öffnen, lassen Sie ihn nur auf diesem Rechner und holen ihn von dort über SSH:",
   "hosts.socks-port.label": "SOCKS5-Port",
-  "hosts.socks-sources.hint": "Leer lässt jeden verbinden. IP-Adressen und CIDR-Blöcke mit Kommas oder Leerzeichen trennen, zum Beispiel 203.0.113.0/24, 198.51.100.7",
+  "hosts.socks-sources.hint": "Leer lässt jeden verbinden. IP-Adressen und CIDR-Blöcke mit Kommas oder Leerzeichen trennen, zum Beispiel 203.0.113.0/24, 198.51.100.7. Ein Leerzeichen nach dem Komma ist freigestellt: 203.0.113.0/24,198.51.100.7 und 203.0.113.0/24, 198.51.100.7 werden gleich gelesen.",
   "hosts.socks-sources.label": "Erlaubte Client-Adressen",
   "hosts.socks.column": "SOCKS5-Proxy",
   "hosts.ssh-port.label": "SSH-Port",
