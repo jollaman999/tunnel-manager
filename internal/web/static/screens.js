@@ -333,6 +333,7 @@ let uninstallResult = null;
 // tab that has never signed in.
 async function logOut() {
   await apiCall("POST", "/api/logout");
+  forgetSession();
   await forgetInstallationLang();
 
   // Said on the window rather than carried to the login as a line above it.
@@ -402,6 +403,8 @@ async function submitLogin(values) {
     username: values.username,
     password: values.password
   });
+
+  rememberSession();
 
   // The account has no username and no chosen password yet, and a session that
   // is in that state is refused everywhere but at the setup.

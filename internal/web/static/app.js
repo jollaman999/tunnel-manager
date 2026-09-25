@@ -146,6 +146,18 @@ const langKey = "tm_lang";
 // waiting on it, and nobody else's screen has anything to be told.
 const updateMarkKey = "tm_update";
 
+// sessionMarkKey is where this browser notes that it signed in, so that a
+// refusal for want of a session can tell a session that ended from one there
+// never was. The cookies cannot say it: they are handed out with the lifetime
+// of the session and go with it, so the browser holds nothing of a session
+// that ran out, and a first visit and a return after the session ran out look
+// the same from here.
+//
+// It is a key of the local storage of the one browser and is never sent
+// anywhere. What it holds is only that a sign in happened, which is not a
+// credential and opens nothing.
+const sessionMarkKey = "tm_session";
+
 // updateMarkHoldSec is how old a mark may be and still be worth a message.
 //
 // The page that started the install waits updateWaitLimitSec seconds for a
@@ -1130,10 +1142,16 @@ async function apiCall(method, path, body) {
     // reader with no session, in the language the browser asks for and not
     // the one the installation names. The notice is picked after the switch
     // so that it comes in the same language as the screen it sits on.
+    //
+    // It is only said to a browser that had signed in. A first visit meets
+    // the same refusal on the way to the login, and a line telling it that
+    // its session ended would be about a session it never had.
+    const ended = hadSession();
+    forgetSession();
     await forgetInstallationLang();
-    navigate("login", function () {
+    navigate("login", ended ? function () {
       return t("api.session-ended.error");
-    });
+    } : null);
 
     throw new Redirected();
   }
@@ -3583,6 +3601,34 @@ function storedLang() {
   }
 
   return languageFor(picked) === null ? null : picked;
+}
+
+// rememberSession, hadSession and forgetSession keep the mark sessionMarkKey
+// names. A browser with storage turned off throws on the access itself, and
+// what it loses is only the line that says a session ended: the login it is
+// sent to is the same.
+function rememberSession() {
+  try {
+    window.localStorage.setItem(sessionMarkKey, "1");
+  } catch (error) {
+    return;
+  }
+}
+
+function hadSession() {
+  try {
+    return window.localStorage.getItem(sessionMarkKey) !== null;
+  } catch (error) {
+    return false;
+  }
+}
+
+function forgetSession() {
+  try {
+    window.localStorage.removeItem(sessionMarkKey);
+  } catch (error) {
+    return;
+  }
 }
 
 // rememberLang keeps the pick for the next visit. A browser that will not keep
