@@ -50,8 +50,8 @@ type SSHTunnel struct {
 	// tcpip-forward reply carries a port and nothing else, so the SSH server
 	// never confirms which address it bound, only that it bound something.
 	Local  localPair
-	Server *net.TCPAddr
-	Remote *net.TCPAddr
+	Server string
+	Remote string
 	Config *ssh.ClientConfig
 	// connFP is the fingerprint of the connection settings this tunnel was
 	// built from. A reconcile pass compares it with the fingerprint of the
@@ -90,26 +90,33 @@ func NewSSHTunnel(hostID, spID *uint, localV4Addr, localV6Addr, serverAddr, remo
 		return nil, fmt.Errorf("failed to resolve local IPv6 address: %w", err)
 	}
 
-	server, err := net.ResolveTCPAddr("tcp", serverAddr)
-	if err != nil {
-		return nil, fmt.Errorf("failed to resolve server address: %w", err)
-	}
-
-	remote, err := net.ResolveTCPAddr("tcp", remoteAddr)
-	if err != nil {
-		return nil, fmt.Errorf("failed to resolve remote address: %w", err)
-	}
-
 	return &SSHTunnel{
 		HostID: hostID,
 		SPID:   spID,
 		Local:  localPair{v4: localV4, v6: localV6},
-		Server: server,
-		Remote: remote,
+		Server: dialAddress(serverAddr),
+		Remote: dialAddress(remoteAddr),
 		Config: sshConfig,
 		done:   make(chan bool),
 		logger: logger,
 	}, nil
+}
+
+// dialAddress returns a host:port address in the form it is dialled and logged
+// in. An IP literal is written the way net.TCPAddr writes it, so a log line
+// reads the same as it did when the address was resolved up front, and a name
+// is left as it is for the dialer to look up.
+func dialAddress(hostPort string) string {
+	host, port, err := net.SplitHostPort(hostPort)
+	if err != nil {
+		return hostPort
+	}
+
+	if ip := net.ParseIP(host); ip != nil {
+		return net.JoinHostPort(ip.String(), port)
+	}
+
+	return hostPort
 }
 
 func (t *SSHTunnel) saveTunnelStatus(m *Manager, tunnel *models.Tunnel) {
@@ -169,8 +176,8 @@ func (t *SSHTunnel) reconnect(m *Manager, tunnel *models.Tunnel, observed *ssh.C
 	t.logger.Info("closed current connection, waiting for the tunnel to be re-established",
 		logid.TunnelReconnectWaiting.Field(),
 		zap.String("local", t.Local.String()),
-		zap.String("server", t.Server.String()),
-		zap.String("remote", t.Remote.String()))
+		zap.String("server", t.Server),
+		zap.String("remote", t.Remote))
 }
 
 // minMonitorDialTimeout guards the derived dial timeout against a monitoring
@@ -238,14 +245,14 @@ func (t *SSHTunnel) monitorConnection(m *Manager, tunnel *models.Tunnel, stop <-
 			t.clientMu.RUnlock()
 
 			if client != nil {
-				conn, err := net.DialTimeout("tcp", t.Server.String(),
+				conn, err := net.DialTimeout("tcp", t.Server,
 					monitorDialTimeout(m.monitoringIntervalSec))
 				if err != nil {
 					t.logger.Warn("SSH connection lost, attempting reconnection",
 						logid.TunnelServerUnreachable.Field(),
 						zap.String("local", t.Local.String()),
-						zap.String("server", t.Server.String()),
-						zap.String("remote", t.Remote.String()),
+						zap.String("server", t.Server),
+						zap.String("remote", t.Remote),
 						zap.Error(err))
 					t.reconnect(m, tunnel, client)
 					continue
@@ -257,7 +264,7 @@ func (t *SSHTunnel) monitorConnection(m *Manager, tunnel *models.Tunnel, stop <-
 				if err != nil {
 					t.logger.Warn("SSH keepalive check failed, attempting reconnection",
 						logid.TunnelKeepaliveFailed.Field(),
-						zap.String("server", t.Server.String()),
+						zap.String("server", t.Server),
 						zap.Error(err))
 					t.reconnect(m, tunnel, client)
 				}
@@ -414,9 +421,9 @@ type forwardProbe struct {
 // dial from here: the wildcard is no address at all and the loopback one is
 // this machine rather than the Host.
 //
-// It is the one address of the Host this program holds, so it carries one
-// address family. The other family of the Host is not known here, and a port
-// that was asked for on it cannot be tried at all.
+// It is the address the SSH connection was made to, so it carries one address
+// family. The other family of the Host is not known here, and a port that was
+// asked for on it cannot be tried at all.
 func forwardProbeAddress(server *net.TCPAddr, port int) string {
 	return net.JoinHostPort(server.IP.String(), strconv.Itoa(port))
 }
@@ -432,7 +439,7 @@ func forwardProbeAddress(server *net.TCPAddr, port int) string {
 // tunnel that is doing what was asked of it.
 //
 // Two things make a silence worth nothing. The probe can only dial the address
-// family of the Host address, so a scope whose request for that family was
+// family the SSH connection was made over, so a scope whose request for that family was
 // turned down was never confirmed for the family being tried. And a scope that
 // asks for the loopback addresses asks for them on the Host, which nothing here
 // can reach, however well the port is carrying traffic on that machine.
@@ -504,8 +511,8 @@ func (t *SSHTunnel) recordForwardReach(m *Manager, tunnel *models.Tunnel, measur
 		zap.String("probed", probe.address),
 		zap.String("server_banner", banner),
 		zap.String("local", t.Local.String()),
-		zap.String("server", t.Server.String()),
-		zap.String("remote", t.Remote.String()))
+		zap.String("server", t.Server),
+		zap.String("remote", t.Remote))
 }
 
 // countingReader counts what was read from src, which is how forward tells a
@@ -543,13 +550,13 @@ func (t *SSHTunnel) forward(localConn net.Conn, idleTimeout time.Duration) {
 		_ = localConn.Close()
 	}()
 
-	remoteConn, err := net.DialTimeout("tcp", t.Remote.String(), forwardDialTimeout)
+	remoteConn, err := net.DialTimeout("tcp", t.Remote, forwardDialTimeout)
 	if err != nil {
 		t.logger.Error("failed to dial remote service",
 			logid.TunnelRemoteDialFailed.Field(),
 			zap.String("local", t.Local.String()),
-			zap.String("server", t.Server.String()),
-			zap.String("remote", t.Remote.String()),
+			zap.String("server", t.Server),
+			zap.String("remote", t.Remote),
 			zap.Error(err))
 		return
 	}
@@ -646,7 +653,7 @@ func joinConns(localConn, remoteConn net.Conn, idleTimeout time.Duration, logger
 // handshake, and wrap the result. NewClientConn closes the connection itself
 // when the handshake fails, so a failure here leaves nothing open.
 func (t *SSHTunnel) dialSSH() (*ssh.Client, net.Conn, error) {
-	return dialSSHClient(t.Server.String(), t.Config)
+	return dialSSHClient(t.Server, t.Config)
 }
 
 // dialSSHClient is dialSSH for any server and configuration, so the local
@@ -701,8 +708,8 @@ func (t *SSHTunnel) establishConnection(m *Manager, tunnel *models.Tunnel) error
 		m.logger.Error("failed to establish SSH connection",
 			logid.TunnelSshConnectFailed.Field(),
 			zap.String("local", t.Local.String()),
-			zap.String("server", t.Server.String()),
-			zap.String("remote", t.Remote.String()), zap.Error(err))
+			zap.String("server", t.Server),
+			zap.String("remote", t.Remote), zap.Error(err))
 
 		t.tunnelMu.Lock()
 		tunnel.Status = connectFailureStatus(err)
@@ -723,8 +730,8 @@ func (t *SSHTunnel) establishConnection(m *Manager, tunnel *models.Tunnel) error
 		m.logger.Error("failed to start remote listener",
 			logid.TunnelRemoteListenerFailed.Field(),
 			zap.String("local", t.Local.String()),
-			zap.String("server", t.Server.String()),
-			zap.String("remote", t.Remote.String()), zap.Error(err))
+			zap.String("server", t.Server),
+			zap.String("remote", t.Remote), zap.Error(err))
 
 		t.tunnelMu.Lock()
 		tunnel.Status = "error"
@@ -783,17 +790,20 @@ func (t *SSHTunnel) establishConnection(m *Manager, tunnel *models.Tunnel) error
 		logid.TunnelConnected.Field(),
 		zap.String("local", t.Local.String()),
 		zap.String("open_reach", opened.reach),
-		zap.String("server", t.Server.String()),
-		zap.String("remote", t.Remote.String()))
+		zap.String("server", t.Server),
+		zap.String("remote", t.Remote))
 
 	// Measured here and not on every pass. What decides it is the
 	// configuration of the SSH server, which does not change under a
 	// connection that stands, while a probe per status read would be one
 	// connection per tunnel per reader.
-	go t.recordForwardReach(m, tunnel, client, forwardProbe{
-		address: forwardProbeAddress(t.Server, boundPort),
-		silence: forwardProbeSilence(t.Local, t.Server, opened.reach),
-	})
+	server, isTCP := clientConn.RemoteAddr().(*net.TCPAddr)
+	if isTCP {
+		go t.recordForwardReach(m, tunnel, client, forwardProbe{
+			address: forwardProbeAddress(server, boundPort),
+			silence: forwardProbeSilence(t.Local, server, opened.reach),
+		})
+	}
 
 	// Asked here and not on every pass for the same reason, and on a goroutine
 	// of its own rather than after the probe so that neither waits out the
@@ -950,8 +960,8 @@ func (t *SSHTunnel) acceptForwards(m *Manager, tunnel *models.Tunnel, client *ss
 		t.logger.Info("connection closed",
 			logid.TunnelConnectionClosed.Field(),
 			zap.String("local", t.Local.String()),
-			zap.String("server", t.Server.String()),
-			zap.String("remote", t.Remote.String()))
+			zap.String("server", t.Server),
+			zap.String("remote", t.Remote))
 
 		// Drop the dead client, or the monitor keeps checking it and
 		// tears down the connection the Start loop establishes next.
@@ -978,8 +988,8 @@ func (t *SSHTunnel) acceptForwards(m *Manager, tunnel *models.Tunnel, client *ss
 	m.logger.Error("listener accept error",
 		logid.TunnelListenerAcceptFailed.Field(),
 		zap.String("local", t.Local.String()),
-		zap.String("server", t.Server.String()),
-		zap.String("remote", t.Remote.String()), zap.Error(err))
+		zap.String("server", t.Server),
+		zap.String("remote", t.Remote), zap.Error(err))
 
 	return fmt.Errorf("listener accept error: %w", err)
 }
@@ -1032,8 +1042,8 @@ func (t *SSHTunnel) Start(m *Manager, tunnel *models.Tunnel) {
 	t.logger.Info("attempting to start tunnel",
 		logid.TunnelStarting.Field(),
 		zap.String("local", t.Local.String()),
-		zap.String("server", t.Server.String()),
-		zap.String("remote", t.Remote.String()))
+		zap.String("server", t.Server),
+		zap.String("remote", t.Remote))
 
 	stopMonitor := make(chan struct{})
 	var monitorWg sync.WaitGroup
@@ -1089,8 +1099,8 @@ func (t *SSHTunnel) Start(m *Manager, tunnel *models.Tunnel) {
 					t.logger.Error("connection failed",
 						logid.TunnelConnectFailedGivingUp.Field(),
 						zap.String("local", t.Local.String()),
-						zap.String("server", t.Server.String()),
-						zap.String("remote", t.Remote.String()),
+						zap.String("server", t.Server),
+						zap.String("remote", t.Remote),
 						zap.Error(err))
 					return
 				}
@@ -1099,8 +1109,8 @@ func (t *SSHTunnel) Start(m *Manager, tunnel *models.Tunnel) {
 					logid.TunnelConnectFailedRetrying.Field(),
 					zap.Int("retry_in_sec", m.monitoringIntervalSec),
 					zap.String("local", t.Local.String()),
-					zap.String("server", t.Server.String()),
-					zap.String("remote", t.Remote.String()),
+					zap.String("server", t.Server),
+					zap.String("remote", t.Remote),
 					zap.Error(err))
 
 				if !t.waitBeforeRetry(m) {

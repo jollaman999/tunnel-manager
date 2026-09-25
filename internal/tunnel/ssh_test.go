@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"io"
 	"net"
+	"net/netip"
 	"runtime"
 	"strconv"
 	"strings"
@@ -2223,12 +2224,7 @@ func TestForwardProbeAddressIsTheServerAtTheConfirmedPort(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			server, err := net.ResolveTCPAddr("tcp", tt.server)
-			if err != nil {
-				t.Fatalf("failed to resolve %q: %v", tt.server, err)
-			}
-
-			got := forwardProbeAddress(server, tt.port)
+			got := forwardProbeAddress(resolveTestTCPAddr(t, tt.server), tt.port)
 			if got != tt.want {
 				t.Fatalf("forwardProbeAddress = %q, want %q", got, tt.want)
 			}
@@ -2282,17 +2278,17 @@ func TestASilenceIsAReadingOnlyWhereAnAnswerWasExpected(t *testing.T) {
 	}
 }
 
-// resolveTestTCPAddr is net.ResolveTCPAddr with the failure reported here, so
-// that a table of addresses reads as a table.
+// resolveTestTCPAddr parses an IP literal and port with the failure reported
+// here, so that a table of addresses reads as a table.
 func resolveTestTCPAddr(t *testing.T, address string) *net.TCPAddr {
 	t.Helper()
 
-	addr, err := net.ResolveTCPAddr("tcp", address)
+	addr, err := netip.ParseAddrPort(address)
 	if err != nil {
-		t.Fatalf("failed to resolve %q: %v", address, err)
+		t.Fatalf("failed to parse %q: %v", address, err)
 	}
 
-	return addr
+	return net.TCPAddrFromAddrPort(addr)
 }
 
 // readTunnelReach reads the two readings the way the probe writes them, under
@@ -2954,5 +2950,142 @@ func TestDialSSHClientKeepsTheConnectionPastTheTimeout(t *testing.T) {
 		}
 	case <-time.After(5 * time.Second):
 		t.Fatal("request after the timeout got no reply")
+	}
+}
+
+// TestDialAddressWritesAnIPLiteralTheWayTCPAddrDoes pins the text of the Server
+// and Remote addresses a log line carries. They used to be resolved up front
+// and printed as a net.TCPAddr, and an IP literal has to go on reading the same
+// now that they are dialled as they are. A name is left for the dialer.
+func TestDialAddressWritesAnIPLiteralTheWayTCPAddrDoes(t *testing.T) {
+	tests := []struct {
+		in   string
+		want string
+	}{
+		{"192.0.2.10:22", "192.0.2.10:22"},
+		{"[2001:DB8:0::1]:22", "[2001:db8::1]:22"},
+		{"[::ffff:192.0.2.10]:22", "192.0.2.10:22"},
+		{"localhost:22", "localhost:22"},
+		{"ssh.example.com:2222", "ssh.example.com:2222"},
+	}
+
+	for _, tt := range tests {
+		if got := dialAddress(tt.in); got != tt.want {
+			t.Errorf("dialAddress(%q) = %q, want %q", tt.in, got, tt.want)
+		}
+	}
+}
+
+// TestAHostNameIsResolvedWhereTheTunnelConnects connects a tunnel whose server
+// is a name rather than an address. The name is looked up by the dial, and the
+// probe of the forwarded port takes its address from the connection that was
+// made, so a name reaches the same connected state an address does.
+func TestAHostNameIsResolvedWhereTheTunnelConnects(t *testing.T) {
+	m := newSSHTestManager(t, 1)
+	serverAddr, _ := startForwardingSSHServer(t)
+
+	_, port, err := net.SplitHostPort(serverAddr)
+	if err != nil {
+		t.Fatalf("failed to read the port: %v", err)
+	}
+
+	tun, tunnel := newSSHTestTunnel(t, net.JoinHostPort("localhost", port))
+	if tun.Server != net.JoinHostPort("localhost", port) {
+		t.Fatalf("the tunnel holds the server as %q, want the name as it was given", tun.Server)
+	}
+
+	errc := make(chan error, 1)
+	go func() {
+		errc <- tun.establishConnection(m, tunnel)
+	}()
+
+	waitTunnelClient(t, tun, 10*time.Second)
+
+	tun.tunnelMu.Lock()
+	status := tunnel.Status
+	tun.tunnelMu.Unlock()
+
+	if status != "connected" {
+		t.Fatalf("tunnel status = %q, want %q", status, "connected")
+	}
+
+	closeTunnelClientOnly(t, tun)
+
+	select {
+	case <-errc:
+	case <-time.After(5 * time.Second):
+		t.Fatal("establishConnection did not return after the connection was closed")
+	}
+}
+
+// TestAHostNameThatDoesNotResolveLeavesATunnelRowThatRetries starts a tunnel
+// whose Host is a name no resolver answers. The name is looked up where the
+// tunnel connects, so StartTunnel creates the row and the failure lands on it
+// the way a refused connection does, with the error and the retries, rather
+// than StartTunnel failing before there is a row to show it on.
+func TestAHostNameThatDoesNotResolveLeavesATunnelRowThatRetries(t *testing.T) {
+	sqlDB, err := sql.Open("sqlite", t.TempDir()+"/tunnel-manager.db")
+	if err != nil {
+		t.Fatalf("failed to open the database: %v", err)
+	}
+	defer sqlDB.Close()
+	sqlDB.SetMaxOpenConns(1)
+
+	db, err := gorm.Open(sqlite.Dialector{Conn: sqlDB}, &gorm.Config{
+		Logger:                 logger.Discard,
+		SkipDefaultTransaction: true,
+	})
+	if err != nil {
+		t.Fatalf("failed to open gorm: %v", err)
+	}
+	if err := db.AutoMigrate(&models.Tunnel{}); err != nil {
+		t.Fatalf("failed to migrate: %v", err)
+	}
+
+	m, err := NewManager(db, zap.NewNop(), newTestCipher(t), 1)
+	if err != nil {
+		t.Fatalf("failed to create manager: %v", err)
+	}
+
+	const name = "tunnel-manager-test.invalid"
+
+	host := models.Host{ID: 1, IP: name, Port: 22, User: "user", Password: "pass", Enabled: true}
+	sp := models.ServicePort{ID: 2, ServiceIP: "127.0.0.1", ServicePort: 3306, LocalPort: 13306}
+
+	err = m.StartTunnel(&host, &sp, models.BindScopeWildcard)
+	if err != nil {
+		t.Fatalf("StartTunnel returned an error for a name that does not resolve: %v", err)
+	}
+	t.Cleanup(func() {
+		_ = m.StopTunnel(host.ID, sp.ID)
+	})
+
+	var row models.Tunnel
+	found := false
+	deadline := time.Now().Add(30 * time.Second)
+	for time.Now().Before(deadline) {
+		row = models.Tunnel{}
+		err := db.Where("host_id = ? AND sp_id = ?", host.ID, sp.ID).First(&row).Error
+		found = err == nil
+		if found && row.RetryCount >= 1 && strings.Contains(row.LastError, name) {
+			break
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+
+	if !found {
+		t.Fatal("no tunnel row was created for a Host whose name does not resolve")
+	}
+	if !strings.Contains(row.LastError, name) {
+		t.Fatalf("the tunnel row says last error %q, want the failed lookup of %q", row.LastError, name)
+	}
+	if row.RetryCount < 1 {
+		t.Fatalf("RetryCount = %d, want the failed lookup retried", row.RetryCount)
+	}
+	if row.Status != "error" && row.Status != "reconnecting" {
+		t.Fatalf("tunnel status = %q, want error or reconnecting", row.Status)
+	}
+	if row.Server != net.JoinHostPort(name, "22") {
+		t.Fatalf("the tunnel row names the server %q, want %q", row.Server, net.JoinHostPort(name, "22"))
 	}
 }

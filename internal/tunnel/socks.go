@@ -294,7 +294,7 @@ func socksReplyFor(err error) byte {
 type socksTunnel struct {
 	hostID  uint
 	listen  localPair
-	server  *net.TCPAddr
+	server  string
 	allowed []netip.Prefix
 	config  *ssh.ClientConfig
 	// connFP is written before the proxy is registered and never again, the
@@ -368,15 +368,10 @@ func newSocksTunnel(host *models.Host, config *ssh.ClientConfig, interval time.D
 		return nil, fmt.Errorf("failed to resolve local IPv6 address: %w", err)
 	}
 
-	server, err := net.ResolveTCPAddr("tcp", serverAddr)
-	if err != nil {
-		return nil, fmt.Errorf("failed to resolve server address: %w", err)
-	}
-
 	return &socksTunnel{
 		hostID:   host.ID,
 		listen:   localPair{v4: v4, v6: v6},
-		server:   server,
+		server:   dialAddress(serverAddr),
 		allowed:  allowed,
 		config:   config,
 		interval: interval,
@@ -391,7 +386,7 @@ func (p *socksTunnel) fields(extra ...zap.Field) []zap.Field {
 	return append([]zap.Field{
 		zap.Uint("host_id", p.hostID),
 		zap.String("local", p.listen.String()),
-		zap.String("server", p.server.String()),
+		zap.String("server", p.server),
 	}, extra...)
 }
 
@@ -432,7 +427,7 @@ var errSocksStopped = errors.New("SOCKS5 proxy stopped")
 // the SSH connection or a listener ends. It is localTunnel.establish with the
 // lines of a proxy.
 func (p *socksTunnel) establish() error {
-	client, clientConn, err := dialSSHClient(p.server.String(), p.config)
+	client, clientConn, err := dialSSHClient(p.server, p.config)
 	if err != nil {
 		p.logger.Error("failed to establish SSH connection",
 			append([]zap.Field{logid.TunnelSshConnectFailed.Field()}, p.fields(zap.Error(err))...)...)
@@ -655,7 +650,7 @@ func (p *socksTunnel) Start() {
 	monitorWg.Add(1)
 	go func() {
 		defer monitorWg.Done()
-		watchSSHConnection(stopMonitor, p.interval, p.server.String(), p.currentClient, p.logger, p.fields)
+		watchSSHConnection(stopMonitor, p.interval, p.server, p.currentClient, p.logger, p.fields)
 	}()
 
 	defer func() {

@@ -72,7 +72,7 @@ type localTunnel struct {
 	// listen is the pair of addresses of this machine the local port is
 	// opened on, one per address family.
 	listen localPair
-	server *net.TCPAddr
+	server string
 	target string
 	config *ssh.ClientConfig
 	// connFP is written before the forward is registered and never again,
@@ -149,16 +149,11 @@ func newLocalTunnel(lf *models.LocalForward, host *models.Host, config *ssh.Clie
 		return nil, fmt.Errorf("failed to resolve local IPv6 address: %w", err)
 	}
 
-	server, err := net.ResolveTCPAddr("tcp", serverAddr)
-	if err != nil {
-		return nil, fmt.Errorf("failed to resolve server address: %w", err)
-	}
-
 	return &localTunnel{
 		id:       lf.Number,
 		hostID:   host.ID,
 		listen:   localPair{v4: v4, v6: v6},
-		server:   server,
+		server:   dialAddress(serverAddr),
 		target:   target,
 		config:   config,
 		interval: interval,
@@ -174,7 +169,7 @@ func (f *localTunnel) fields(extra ...zap.Field) []zap.Field {
 		zap.Uint("local_forward_number", f.id),
 		zap.Uint("host_id", f.hostID),
 		zap.String("local", f.listen.String()),
-		zap.String("server", f.server.String()),
+		zap.String("server", f.server),
 		zap.String("target", f.target),
 	}, extra...)
 }
@@ -209,7 +204,7 @@ var errLocalForwardStopped = errors.New("local forward stopped")
 // establish connects, opens the local port and carries what it accepts until
 // the SSH connection or a listener ends.
 func (f *localTunnel) establish() error {
-	client, clientConn, err := dialSSHClient(f.server.String(), f.config)
+	client, clientConn, err := dialSSHClient(f.server, f.config)
 	if err != nil {
 		f.logger.Error("failed to establish SSH connection",
 			append([]zap.Field{logid.TunnelSshConnectFailed.Field()}, f.fields(zap.Error(err))...)...)
@@ -464,7 +459,7 @@ func (f *localTunnel) recordForwardReach(measured *ssh.Client) {
 // Closing it is all it does: establish sees the connection end and takes the
 // forward down to be connected again.
 func (f *localTunnel) monitor(stop <-chan struct{}) {
-	watchSSHConnection(stop, f.interval, f.server.String(), f.currentClient, f.logger, f.fields)
+	watchSSHConnection(stop, f.interval, f.server, f.currentClient, f.logger, f.fields)
 }
 
 func (f *localTunnel) currentClient() (*ssh.Client, net.Conn) {
