@@ -47,7 +47,7 @@ import (
 	"gopkg.in/natefinch/lumberjack.v2"
 )
 
-const version = "3.13.2"
+const version = "3.13.3"
 
 // Maximum time to wait for in-flight HTTP requests to finish on shutdown.
 const shutdownTimeout = 10 * time.Second
@@ -1407,7 +1407,7 @@ func endOnServiceStop() {
 // handlers.
 //
 // @title        Tunnel Manager API
-// @version      3.13.2
+// @version      3.13.3
 // @description  The API the Tunnel Manager screens are built on. Every path
 // @description  below sits under /api and needs a session, except POST
 // @description  /api/login and GET /api/setup.

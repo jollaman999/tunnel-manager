@@ -1,3 +1,20 @@
+# v3.13.3
+
+## Add/fix features:
+
+- **A SOCKS5 proxy asked for on every interface is warned about in red.** The proxy asks for no password, so on every interface it lets anyone who reaches this system on its port into the network behind the Host, unless Allowed client addresses says who may. The Host form says so under the choice, in red, and says how to reach a proxy kept to this system alone from another machine instead: `ssh -N -L 1080:127.0.0.1:1080 user@this-machine`, then 127.0.0.1:1080 in the browser there. The default is unchanged and nothing is refused.
+- **The login screen no longer tells a first visit that its session ended.** Any refusal for want of a session sent the page to the login with that line, including the first one a browser that had never signed in meets on its way there. It is said only to a browser that has signed in since.
+- **The database and the log no longer narrow a directory that was already there.** Each set the directory it was put in to 0700 at every start, so a database or a log pointed at a shared directory such as /tmp took the sticky bit and every other user's access off it. Only a directory the program makes itself is made 0700. The files inside are still 0600.
+- **The icons are drawn again, from an SVG.** The page offers the SVG as well as the PNG and ICO sizes, which are rendered from it, the 16 pixel one being a simplified drawing that stays legible at that size. The SVG is also what sits beside the title of every README.
+- **Every dependency is at its newest release**, gorm 1.31.2, validator 10.30.5, echo 4.15.4, zap 1.28.0 and the SQLite driver among them. The image is built on golang:1.27.1-trixie and runs on alpine:3.24.2, both pinned by digest.
+- **The animation at the top of the README was recorded again**, with three service ports added and the local forward moving on without waiting for it to connect.
+
+## Notes:
+
+- An installation that upgrades from a release before v3.7.0 keeps the mode its data directory already has, where v3.7.0 made it 0700. The database, its key and its log are 0600 either way.
+- The rest of the upgrade note of v3.7.0 still holds: every Host stops until its key is approved, and a stored path outside the data directory is put back to its default.
+- For those building from the repository: `make update` moves both modules to their newest dependencies, the workflows run on Ubuntu 26.04 with every action pinned to a commit, and the test-server directory is gone.
+
 # v3.13.2
 
 ## Add/fix features:
