@@ -816,8 +816,13 @@ function openedCell(row) {
 
   // The copy button copies the address alone. The machine written beside it is
   // for reading, and what is pasted into a client is the address.
-  return copyable(element("span", said), address,
+  const cell = copyable(element("span", said), address,
     t("status.copy-address.aria", { address: address }));
+
+  // One line, the way the local forwards of a Host keep theirs.
+  cell.classList.add("opened");
+
+  return cell;
 }
 
 // statusBadge is what a tunnel is, drawn so that the one row that is not

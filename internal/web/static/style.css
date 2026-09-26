@@ -1064,6 +1064,13 @@ button.copy {
   flex-wrap: nowrap;
 }
 
+/* The Opened column of the status table is held to one line the same way: the
+   machine, the address and the copy button read as one value. */
+.copyable.opened {
+  flex-wrap: nowrap;
+  white-space: nowrap;
+}
+
 /* The scroller keeps a wide table inside its own box. Without it the table
    pushes the page wider than the screen and everything scrolls sideways. */
 .table-scroll {
