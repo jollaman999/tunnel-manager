@@ -1,3 +1,18 @@
+# v3.14.1
+
+## Add/fix features:
+
+- **Mail alerts start on SSL/TLS, port 465, logged in with LOGIN.** Picking a security mode on the Settings screen fills the port box with the usual port for it, 25, 587 or 465, and nothing is stored until Save is pressed. A mail server that is already stored keeps its mode, port and login, and an installation with no mail server set shows the new starting values.
+- **The alerts card says what is sent where.** With no webhook address nothing goes by webhook, and with no mail server nothing goes by mail. The recipient box says that a space after a comma is optional.
+- **A copy button stands beside the PEM of the certificate** on the Settings screen.
+- **Narrow screens hold together.** The search boxes span the width. Save has a line of its own in the alerts card and the two test buttons share the next. In the local forwards of a Host, where a forward is opened and the address it reaches stay on one line, with the copy button beside the address, and so does the Opened cell of the status.
+- **The README says how Tunnel Manager differs** from a forward left to itself: reverse tunnels built from service ports, local forwards on the same Hosts, records kept up by the reconcile pass, reach chosen per forward and measured, alerts, and settings kept in one place.
+- **The animation at the top of the README was recorded again** on this release. It opens each of the three services through the port the Host opened for it, and plays a little slower.
+
+## Notes:
+
+- The notes of v3.14.0 hold for an installation that comes from before it: the API fields that held an address are renamed, and a database it has started on cannot be opened by an earlier release.
+
 # v3.14.0
 
 ## Add/fix features:
