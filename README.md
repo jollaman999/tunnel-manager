@@ -74,6 +74,34 @@ The last row is optional and is the second picture above. A local forward
 belongs to the Host it is made on and is added from the **Local forwards** button
 in the row of that Host.
 
+## How it differs
+
+A port forward is usually set up once and left alone: an `ssh -R`, `-L` or
+`-D` command, perhaps under autossh or in a systemd unit, one per forward.
+Tunnel Manager keeps the forwards as records and runs what the records say.
+
+- **Records, not a pile of commands.** Hosts, service ports and assignments are
+  rows in the database. A reconcile pass keeps the running tunnels equal to the
+  stored ones and builds a dropped one again, doubling the wait after each
+  failure in a row up to a ceiling. One status screen shows how many should be
+  running, how many are connected and how many are in error.
+- **Reach chosen per forward, then measured.** Each assignment and each local
+  forward opens its port on every interface or on loopback alone. For a tunnel
+  on every interface, tunnel-manager connects to the forwarded port once it is
+  up and shows whether it answered, since the SSH server has the last word on
+  the bind (`GatewayPorts` on OpenSSH). A SOCKS5 proxy opens on loopback unless
+  you pick every interface, and the proxy and the local forwards can be limited
+  to a list of client addresses.
+- **Alerts.** A webhook or a mail when a tunnel, a local forward or a proxy
+  stays down past a delay you set, and another when it comes back.
+- **Settings in one place.** The settings are in the database and are changed
+  in the browser. The whole configuration moves as one file sealed with a
+  password. SSH passwords, private keys and the webhook and mail settings are
+  kept encrypted with the key file of the installation.
+- **Also:** API tokens limited to their scopes, Prometheus metrics at
+  `/api/metrics`, one binary that installs itself as a service with
+  `-install`, and screens in thirteen languages.
+
 ## What it does
 
 - Builds a tunnel for every assignment, watches it, and builds it again when the
