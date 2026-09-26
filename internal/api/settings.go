@@ -646,6 +646,13 @@ var appliedNowSettings = map[string]func(h *SettingsHandler, s *settings.Setting
 	"alert.smtp.from":        alertSettingInPlace,
 	"alert.smtp.to":          alertSettingInPlace,
 	"alert.smtp.skip_verify": alertSettingInPlace,
+	// The update settings are read by the update loop on every pass. The
+	// interval is one of them: the loop's timer runs at a fixed minute and the
+	// pass holds the stored interval against the time of the last look, so a
+	// changed interval is the one the next pass decides on.
+	"update.check_enabled":        updateSettingInPlace,
+	"update.check_interval_hours": updateSettingInPlace,
+	"update.auto_install":         updateSettingInPlace,
 }
 
 // smtpPasswordSetting is the name the password of the mail server goes by in
@@ -653,6 +660,10 @@ var appliedNowSettings = map[string]func(h *SettingsHandler, s *settings.Setting
 const smtpPasswordSetting = "alert.smtp.password"
 
 func alertSettingInPlace(h *SettingsHandler, s *settings.Settings) bool {
+	return true
+}
+
+func updateSettingInPlace(h *SettingsHandler, s *settings.Settings) bool {
 	return true
 }
 

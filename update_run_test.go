@@ -1,13 +1,22 @@
 package main
 
 import (
+	"context"
 	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strings"
+	"sync/atomic"
 	"testing"
+	"time"
+
+	"go.uber.org/zap"
+
+	"github.com/jollaman999/tunnel-manager/internal/api"
+	"github.com/jollaman999/tunnel-manager/internal/install"
+	"github.com/jollaman999/tunnel-manager/internal/settings"
 )
 
 // TestInstallCommandRunsOutsideThisServiceOnSystemd covers the one thing that
@@ -217,5 +226,87 @@ func TestStartInstallLetsGoOfTheReportTheInstallGoesOnWritingTo(t *testing.T) {
 	err = os.Remove(report)
 	if err != nil {
 		t.Errorf("the report file could not be deleted once the install had ended: %v", err)
+	}
+}
+
+// TestTheUpdateLoopTakesUpAChangedSettingWithoutARestart stores the check and
+// the install switched off, starts the loop, and turns both on underneath it.
+// The Settings screen reports the two as in place on the strength of the loop
+// reading them on every pass, so a loop that held what it started with would
+// make that report untrue.
+func TestTheUpdateLoopTakesUpAChangedSettingWithoutARestart(t *testing.T) {
+	db := newSettingsDB(t)
+
+	// The row is created first and switched off after. A first insert leaves
+	// out a false that has a default of true, and the check would be on.
+	loaded, err := settings.Load(db)
+	if err != nil {
+		t.Fatalf("failed to read the settings: %v", err)
+	}
+
+	stored := *loaded
+	stored.UpdateCheckEnabled = false
+	stored.UpdateAutoInstall = false
+
+	err = settings.Save(db, &stored, nil)
+	if err != nil {
+		t.Fatalf("failed to store the settings: %v", err)
+	}
+
+	var looks, installs atomic.Int32
+
+	check := func(context.Context, string) (install.Latest, error) {
+		looks.Add(1)
+
+		return install.Latest{Tag: "v99.0.0", Newer: true, Comparable: true}, nil
+	}
+	start := func() error {
+		installs.Add(1)
+
+		return nil
+	}
+
+	handler := api.NewUpdateHandler(zap.NewNop(), db, "3.0.0", true, check, start)
+
+	tick := updateCheckTick
+	updateCheckTick = 5 * time.Millisecond
+
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+
+	t.Cleanup(func() {
+		cancel()
+		<-done
+		updateCheckTick = tick
+	})
+
+	go func() {
+		defer close(done)
+		runUpdateChecks(ctx, zap.NewNop(), db, handler, true)
+	}()
+
+	time.Sleep(100 * time.Millisecond)
+
+	if looks.Load() != 0 || installs.Load() != 0 {
+		t.Fatalf("looks = %d, installs = %d while the settings say neither, want none",
+			looks.Load(), installs.Load())
+	}
+
+	stored.UpdateCheckEnabled = true
+	stored.UpdateAutoInstall = true
+
+	err = settings.Save(db, &stored, nil)
+	if err != nil {
+		t.Fatalf("failed to store the settings: %v", err)
+	}
+
+	deadline := time.Now().Add(5 * time.Second)
+	for installs.Load() == 0 && time.Now().Before(deadline) {
+		time.Sleep(5 * time.Millisecond)
+	}
+
+	if looks.Load() != 1 || installs.Load() != 1 {
+		t.Fatalf("looks = %d, installs = %d after both were turned on, want one of each",
+			looks.Load(), installs.Load())
 	}
 }

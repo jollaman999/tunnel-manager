@@ -270,4 +270,4 @@ func runUpdateChecks(ctx context.Context, logger *zap.Logger, db *gorm.DB,
 // updateCheckTick is how often the pass above runs. It is not the interval the
 // settings name: the pass reads that and decides whether the interval has gone
 // by, and this is only how often it asks itself the question.
-const updateCheckTick = time.Minute
+var updateCheckTick = time.Minute

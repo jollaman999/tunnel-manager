@@ -328,6 +328,47 @@ func TestSaveReportsWhatWaitsForARestart(t *testing.T) {
 	}
 }
 
+// TestTheUpdateSettingsTakeHoldWithoutARestart saves each of the three on its
+// own. The update loop reads them on every pass, so a save that called any of
+// them waiting would leave the Update screen saying the next start is owed for
+// a change that is already in place.
+func TestTheUpdateSettingsTakeHoldWithoutARestart(t *testing.T) {
+	cases := []struct {
+		name string
+		body string
+	}{
+		{"update.check_enabled", `{"update_check_enabled":false}`},
+		{"update.check_interval_hours", `{"update_check_interval_hours":6}`},
+		{"update.auto_install", `{"update_auto_install":true}`},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			db := newSettingsDB(t)
+			h, _, _, _ := newSettingsHandler(t, db)
+
+			rec := settingsRequest(t, h, tc.body)
+			if rec.Code != http.StatusOK {
+				t.Fatalf("status = %d, want %d, body: %s", rec.Code, http.StatusOK, rec.Body.String())
+			}
+
+			saved := decodeSaved(t, rec)
+			if len(saved.Changes) != 1 || saved.Changes[0].Name != tc.name ||
+				saved.Changes[0].Applied != appliedNow {
+				t.Fatalf("changes = %+v, want %s applied %s", saved.Changes, tc.name, appliedNow)
+			}
+			if saved.RestartRequired {
+				t.Fatalf("a save of %s asks for a restart", tc.name)
+			}
+
+			pending, _ := decodePending(t, settingsRequest(t, h, ""))
+			if len(pending) != 0 {
+				t.Fatalf("pending = %+v, want none for %s", pending, tc.name)
+			}
+		})
+	}
+}
+
 // TestSaveKeepsWhatTheBodyDoesNotName is what lets the screen send the fields
 // it has. A setting the body leaves out keeps its stored value rather than
 // being stored as a zero.
