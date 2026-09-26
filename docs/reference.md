@@ -523,14 +523,16 @@ at 1080. Through the API the same four fields are sent on the Host, see
 |-------|------------|
 | `socks_enabled` | Whether the Host carries a proxy. Off unless it is sent |
 | `socks_port` | The port opened on this machine, 1 to 65535. Required while the proxy is on |
-| `socks_bind_scope` | Which addresses of this machine it is opened on: `wildcard` (`0.0.0.0` and `::`) or `loopback` (`127.0.0.1` and `::1`). Left out, it is the wildcard |
+| `socks_bind_scope` | Which addresses of this machine it is opened on: `wildcard` (`0.0.0.0` and `::`) or `loopback` (`127.0.0.1` and `::1`). Left out when the Host is registered, it is `loopback` |
 | `socks_allowed_sources` | The addresses a client may connect from. Empty lets every address in |
 
-**The default is the wildcard, and the proxy asks for no password.** A proxy
-kept to `loopback` is of no use to a browser on another machine, which is what
-it is usually for, so it is opened on every interface unless you choose
-otherwise. That makes it an open door into the network of the Host for anybody
-who reaches this machine on `socks_port`. **Fill in the allowed client
+**The default is `loopback`, and the proxy asks for no password.** Since
+v3.13.6 a Host registered without `socks_bind_scope`, and one added on the Hosts
+screen, opens its proxy on this machine alone; a Host stored before then keeps
+the scope it was stored with. A browser on another machine, which is what a
+proxy is usually for, reaches it only once `wildcard` is chosen, and that makes
+it an open door into the network of the Host for anybody who reaches this
+machine on `socks_port`. **Fill in the allowed client
 addresses** for a proxy on the wildcard. Chrome and Firefox have no place to give
 a SOCKS5 proxy a password, so the source address of the client is what the proxy is
 limited by instead of a login, and a firewall in front of the port is the other
@@ -2180,7 +2182,7 @@ The body of a create and of an update takes these fields.
 | `description`, `enabled` | Optional | Optional |
 | `assign_all_service_ports` | Optional. Left out, and the Host is given every service port that is stored. Send it as false to register a Host that carries none | Not read. What a Host carries is changed through `PUT /api/host/:id/service-port` |
 | `socks_enabled`, `socks_port` | Optional. `socks_port` is required when `socks_enabled` is true | Optional; what is left out stays as it is |
-| `socks_bind_scope` | Optional. `loopback` or `wildcard`, and left out or sent empty it is the wildcard | Optional; left out or sent empty, the stored scope stays |
+| `socks_bind_scope` | Optional. `loopback` or `wildcard`, and left out or sent empty it is `loopback` | Optional; left out or sent empty, the stored scope stays |
 | `socks_allowed_sources` | Optional. Empty lets every address in | Optional; left out, the stored list stays, and sent as `""` it lets every address in |
 
 A create that carries neither a key nor a password is refused, and so is a key

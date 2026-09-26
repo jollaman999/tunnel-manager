@@ -411,12 +411,13 @@ flowchart LR
 |------|--------|
 | `socks_enabled` | 这台 Host 是否带代理。不发就是关闭 |
 | `socks_port` | 在本机打开的端口，1 到 65535。代理开启时必填 |
-| `socks_bind_scope` | 开在本机的哪些地址上：`wildcard`（`0.0.0.0` 和 `::`）或 `loopback`（`127.0.0.1` 和 `::1`）。不给就是通配范围 |
+| `socks_bind_scope` | 开在本机的哪些地址上：`wildcard`（`0.0.0.0` 和 `::`）或 `loopback`（`127.0.0.1` 和 `::1`）。注册 Host 时不给就是 `loopback` |
 | `socks_allowed_sources` | 客户端可以从哪些地址连进来。留空则接受所有地址 |
 
-**默认是通配范围，而且代理不要求密码。** 代理通常是给别的机器上的浏览器用的，开在 `loopback`
-上就没有用处，所以除非另选，它会开在所有接口上。这样一来，任何能连到本机 `socks_port` 的人都能
-进入 Host 那边的网络。开在通配范围上的代理，**请填上允许的来源地址**。Chrome 和 Firefox 都没有
+**默认是 `loopback`，而且代理不要求密码。** 从 v3.13.6 起，不带 `socks_bind_scope` 注册的
+Host，以及在 Hosts 页面添加的 Host，代理只开在本机上；在那之前保存的 Host 保留已保存的范围。代理
+通常是给别的机器上的浏览器用的，这就要选 `wildcard`，而这样一来，任何能连到本机 `socks_port` 的人
+都能进入 Host 那边的网络。开在通配范围上的代理，**请填上允许的来源地址**。Chrome 和 Firefox 都没有
 地方给 SOCKS5 代理填密码，所以代理靠客户端的来源地址来限制，而不是靠登录；端口前面的防火墙是
 另一半。
 
@@ -1750,7 +1751,7 @@ curl -s -b cookies.txt "$BASE/api/host?q=example&page=1&size=20"
 | `description`、`enabled` | 可不填 | 可不填 |
 | `assign_all_service_ports` | 可不填。不填的话，现存的服务端口全部分给这台 Host。发成 false 则注册一台不负责任何服务端口的 Host | 不读取。一台 Host 负责什么，通过 `PUT /api/host/:id/service-port` 修改 |
 | `socks_enabled`、`socks_port` | 可不填。`socks_enabled` 为 true 时 `socks_port` 必填 | 可不填；没写的保持原样 |
-| `socks_bind_scope` | 可不填。取 `loopback` 或 `wildcard`，不填或发成空就是通配范围 | 可不填；不填或发成空，保留已保存的范围 |
+| `socks_bind_scope` | 可不填。取 `loopback` 或 `wildcard`，不填或发成空就是 `loopback` | 可不填；不填或发成空，保留已保存的范围 |
 | `socks_allowed_sources` | 可不填。留空则接受所有地址 | 可不填；不填则保留已保存的列表，发成 `""` 则接受所有地址 |
 
 既没有密钥又没有密码的创建会被拒绝，无法使用的密钥也一样。拒绝时会说明是哪一种：这个值不是

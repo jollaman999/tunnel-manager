@@ -450,13 +450,14 @@ flowchart LR
 |------|----------|
 | `socks_enabled` | Host 가 프록시를 가질지. 보내지 않으면 꺼짐 |
 | `socks_port` | 이 장비에 여는 포트. 1 ~ 65535. 프록시가 켜져 있으면 필수 |
-| `socks_bind_scope` | 이 장비의 어느 주소에 열지. `wildcard`(`0.0.0.0` 과 `::`) 또는 `loopback`(`127.0.0.1` 과 `::1`). 안 주면 와일드카드 |
+| `socks_bind_scope` | 이 장비의 어느 주소에 열지. `wildcard`(`0.0.0.0` 과 `::`) 또는 `loopback`(`127.0.0.1` 과 `::1`). Host 를 등록할 때 안 주면 `loopback` |
 | `socks_allowed_sources` | 클라이언트가 접속해 올 수 있는 주소. 비우면 모든 주소를 받음 |
 
-**기본은 와일드카드이고, 프록시는 비밀번호를 묻지 않습니다.** 프록시는 보통 다른 장비의
-브라우저가 쓰는 것이라 `loopback` 으로 열면 쓸모가 없으므로, 따로 고르지 않으면 모든
-인터페이스에 엽니다. 그러면 이 장비의 `socks_port` 에 닿는 사람은 누구나 Host 쪽 망으로
-들어올 수 있습니다. 와일드카드로 여는 프록시에는 **허용할 접속 주소를 채우십시오.** Chrome 과
+**기본은 `loopback` 이고, 프록시는 비밀번호를 묻지 않습니다.** v3.13.6 부터
+`socks_bind_scope` 없이 등록한 Host 와 Hosts 화면에서 추가한 Host 는 프록시를 이 장비에만
+엽니다. 그 전에 저장된 Host 는 저장된 범위를 그대로 씁니다. 프록시는 보통 다른 장비의
+브라우저가 쓰는 것인데, 그러려면 `wildcard` 를 골라야 하고, 그러면 이 장비의 `socks_port` 에
+닿는 사람은 누구나 Host 쪽 망으로 들어올 수 있습니다. 와일드카드로 여는 프록시에는 **허용할 접속 주소를 채우십시오.** Chrome 과
 Firefox 에는 SOCKS5 프록시에 비밀번호를 넣을 자리가 없으므로, 로그인 대신 클라이언트의
 출발지 주소로 프록시를 제한합니다. 그 포트 앞의 방화벽이 나머지 절반입니다.
 
@@ -1912,7 +1913,7 @@ curl -s -b cookies.txt "$BASE/api/host?q=example&page=1&size=20"
 | `description`, `enabled` | 선택 | 선택 |
 | `assign_all_service_ports` | 선택. 안 보내면 저장돼 있는 서비스 포트를 전부 받습니다. 아무것도 담당하지 않는 Host 로 등록하려면 false 로 보냅니다 | 읽지 않습니다. 무엇을 담당하는지는 `PUT /api/host/:id/service-port` 로 바꿉니다 |
 | `socks_enabled`, `socks_port` | 선택. `socks_enabled` 가 true 면 `socks_port` 는 필수입니다 | 선택. 빠뜨린 것은 그대로 둡니다 |
-| `socks_bind_scope` | 선택. `loopback` 또는 `wildcard` 이고, 빼거나 빈 값으로 보내면 와일드카드입니다 | 선택. 빼거나 빈 값으로 보내면 저장된 범위를 그대로 둡니다 |
+| `socks_bind_scope` | 선택. `loopback` 또는 `wildcard` 이고, 빼거나 빈 값으로 보내면 `loopback` 입니다 | 선택. 빼거나 빈 값으로 보내면 저장된 범위를 그대로 둡니다 |
 | `socks_allowed_sources` | 선택. 비우면 모든 주소를 받습니다 | 선택. 빼면 저장된 목록을 그대로 두고, `""` 로 보내면 모든 주소를 받습니다 |
 
 키도 비밀번호도 없는 생성은 거부하고, 쓸 수 없는 키도 거부합니다. 거부 응답은 셋 중 무엇인지를
