@@ -233,7 +233,7 @@ func (h *UpdateHandler) InstallUpdate(c echo.Context) error {
 
 	err := c.Bind(&req)
 	if err != nil {
-		return failure(c, http.StatusBadRequest, errRequestBodyInvalid, errorArgs{"reason": err.Error()})
+		return unreadableBody(err).answer(c)
 	}
 
 	if !h.installable {

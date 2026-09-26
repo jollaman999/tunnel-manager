@@ -1142,7 +1142,7 @@ func (h *TransferHandler) ExportTunnels(c echo.Context) error {
 
 	err := c.Bind(&req)
 	if err != nil {
-		return failure(c, http.StatusBadRequest, errRequestBodyInvalid, errorArgs{"reason": err.Error()})
+		return unreadableBody(err).answer(c)
 	}
 
 	refused := checkExportPassword(req.Password)
@@ -1301,7 +1301,7 @@ func (h *TransferHandler) ImportTunnels(c echo.Context) error {
 
 	err := c.Bind(&req)
 	if err != nil {
-		return failure(c, http.StatusBadRequest, errRequestBodyInvalid, errorArgs{"reason": err.Error()})
+		return unreadableBody(err).answer(c)
 	}
 
 	file, refused := h.open(req.File, req.Password, transferKindTunnels)
@@ -2248,7 +2248,7 @@ func (h *TransferHandler) ExportSettings(c echo.Context) error {
 
 	err := c.Bind(&req)
 	if err != nil {
-		return failure(c, http.StatusBadRequest, errRequestBodyInvalid, errorArgs{"reason": err.Error()})
+		return unreadableBody(err).answer(c)
 	}
 
 	refused := checkExportPassword(req.Password)
@@ -2341,7 +2341,7 @@ func (h *TransferHandler) ImportSettings(c echo.Context) error {
 
 	err := c.Bind(&req)
 	if err != nil {
-		return failure(c, http.StatusBadRequest, errRequestBodyInvalid, errorArgs{"reason": err.Error()})
+		return unreadableBody(err).answer(c)
 	}
 
 	file, refused := h.open(req.File, req.Password, transferKindSettings)

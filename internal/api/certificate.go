@@ -199,7 +199,7 @@ func (h *CertificateHandler) InstallCertificate(c echo.Context) error {
 
 	err := c.Bind(&body)
 	if err != nil {
-		return failure(c, http.StatusBadRequest, errRequestBodyInvalid, errorArgs{"reason": err.Error()})
+		return unreadableBody(err).answer(c)
 	}
 
 	now := time.Now()

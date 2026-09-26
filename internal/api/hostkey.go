@@ -311,7 +311,7 @@ func (h *Handler) ApproveHostKey(c echo.Context) error {
 
 	err = c.Bind(&req)
 	if err != nil {
-		return failure(c, http.StatusBadRequest, errRequestBodyInvalid, errorArgs{"reason": err.Error()})
+		return unreadableBody(err).answer(c)
 	}
 
 	// The password of the account is checked here, before the transaction is
@@ -665,7 +665,7 @@ func (h *Handler) ApproveHostKeys(c echo.Context) error {
 
 	err := c.Bind(&req)
 	if err != nil {
-		return failure(c, http.StatusBadRequest, errRequestBodyInvalid, errorArgs{"reason": err.Error()})
+		return unreadableBody(err).answer(c)
 	}
 
 	// How many Hosts one request may name, for the reason hostKeyApprovalsMax

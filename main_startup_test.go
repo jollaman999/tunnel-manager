@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bufio"
 	"context"
 	"crypto/ed25519"
 	"crypto/rand"
@@ -16,6 +17,7 @@ import (
 	"fmt"
 	"io"
 	"math/big"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -28,6 +30,7 @@ import (
 
 	"github.com/glebarez/sqlite"
 	"github.com/go-playground/validator/v10"
+	"github.com/jollaman999/tunnel-manager/internal/api"
 	"github.com/jollaman999/tunnel-manager/internal/crypto"
 	"github.com/jollaman999/tunnel-manager/internal/models"
 	"github.com/jollaman999/tunnel-manager/internal/settings"
@@ -1476,6 +1479,211 @@ func TestACertificateRegistrationStillFitsTheGeneralLimit(t *testing.T) {
 
 	if got := readCount(t, recorder); got != len(body) {
 		t.Fatalf("the handler read %d bytes of a %d byte registration", got, len(body))
+	}
+}
+
+// bindBackHandler binds the body the way every handler in internal/api does and
+// answers with how long the field it bound came out. The read error is handed
+// back as it is, so what the client is told is what the body limit makes of it.
+func bindBackHandler(c echo.Context) error {
+	var body struct {
+		File string `json:"file"`
+	}
+
+	err := c.Bind(&body)
+	if err != nil {
+		return err
+	}
+
+	return c.JSON(http.StatusOK, map[string]int{"read": len(body.File)})
+}
+
+// newBindingServer is newHardenedServer with handlers that read the body through
+// c.Bind rather than io.ReadAll. The JSON decoder behind c.Bind is what dropped
+// the error of echo's own limit, so a limit that holds against io.ReadAll says
+// nothing about these routes. /api/login is the handler main registers, since
+// it is the one route anybody who can reach the port can send a body to.
+func newBindingServer() *httptest.Server {
+	e := echo.New()
+	e.HideBanner = true
+	e.HidePort = true
+
+	harden(e, noCertificate)
+
+	g := e.Group(apiPrefix)
+
+	g.POST("/login", api.NewAuthHandler(nil, zap.NewNop(), "").Login)
+	g.POST("/bind", bindBackHandler)
+	g.POST(importTunnelsPath, bindBackHandler, importBodyLimitMiddleware())
+
+	return httptest.NewServer(e)
+}
+
+// fileBody is a JSON body of exactly size bytes with the padding in the field
+// bindBackHandler reads.
+func fileBody(size int64) []byte {
+	const head, tail = `{"file":"`, `"}`
+
+	return []byte(head + strings.Repeat("a", int(size)-len(head)-len(tail)) + tail)
+}
+
+// postChunked sends body to path over a connection of its own, chunked and with
+// no Content-Length, and hands back the status and the body of the answer.
+//
+// It is written on the wire rather than through http.Client so that nothing
+// between the test and the server decides how the body is framed. The body is
+// written from another goroutine while the answer is read, because a server
+// that refuses the body answers before it has taken all of it.
+func postChunked(t *testing.T, server *httptest.Server, path string, body []byte) (int, string) {
+	t.Helper()
+
+	conn, err := net.Dial("tcp", server.Listener.Addr().String())
+	if err != nil {
+		t.Fatalf("Dial: %v", err)
+	}
+	defer conn.Close()
+
+	err = conn.SetDeadline(time.Now().Add(time.Minute))
+	if err != nil {
+		t.Fatalf("SetDeadline: %v", err)
+	}
+
+	written := make(chan struct{})
+
+	go func() {
+		defer close(written)
+
+		w := bufio.NewWriter(conn)
+
+		fmt.Fprintf(w, "POST %s HTTP/1.1\r\nHost: tunnel-manager.test\r\n", path)
+		fmt.Fprintf(w, "Content-Type: application/json\r\nTransfer-Encoding: chunked\r\n\r\n")
+
+		const chunkSize = 64 * 1024
+
+		for start := 0; start < len(body); start += chunkSize {
+			chunk := body[start:min(start+chunkSize, len(body))]
+
+			fmt.Fprintf(w, "%x\r\n", len(chunk))
+			w.Write(chunk)
+			w.WriteString("\r\n")
+		}
+
+		w.WriteString("0\r\n\r\n")
+
+		// A write that fails is the server having closed the connection on a
+		// body it refused, and the answer read below is what says so.
+		w.Flush()
+	}()
+
+	response, err := http.ReadResponse(bufio.NewReader(conn), nil)
+	if err != nil {
+		t.Fatalf("reading the answer to a chunked POST %s: %v", path, err)
+	}
+
+	answer, err := io.ReadAll(response.Body)
+	if err != nil {
+		t.Fatalf("reading the body of the answer to a chunked POST %s: %v", path, err)
+	}
+
+	conn.Close()
+	<-written
+
+	return response.StatusCode, string(answer)
+}
+
+// TestAChunkedBodyOverTheGeneralLimitIsRefusedWhenItIsBound is the case echo's
+// BodyLimit let through: a body with no Content-Length, read by c.Bind. One
+// byte over is refused as well as a body twice the limit.
+func TestAChunkedBodyOverTheGeneralLimitIsRefusedWhenItIsBound(t *testing.T) {
+	server := newBindingServer()
+	defer server.Close()
+
+	for _, size := range []int64{generalBodyLimit + 1, 2 * generalBodyLimit} {
+		t.Run(fmt.Sprint(size), func(t *testing.T) {
+			status, answer := postChunked(t, server, apiPrefix+"/bind", fileBody(size))
+
+			if status != http.StatusRequestEntityTooLarge {
+				t.Fatalf("a chunked body of %d bytes was answered %d, want %d: %s",
+					size, status, http.StatusRequestEntityTooLarge, answer)
+			}
+		})
+	}
+}
+
+// TestAChunkedBodyOfExactlyTheGeneralLimitIsBoundWhole says the limit is the
+// most a body may hold and not one byte less.
+func TestAChunkedBodyOfExactlyTheGeneralLimitIsBoundWhole(t *testing.T) {
+	server := newBindingServer()
+	defer server.Close()
+
+	body := fileBody(generalBodyLimit)
+
+	status, answer := postChunked(t, server, apiPrefix+"/bind", body)
+
+	if status != http.StatusOK {
+		t.Fatalf("a chunked body of exactly the limit was answered %d, want %d: %s",
+			status, http.StatusOK, answer)
+	}
+
+	want := len(body) - len(`{"file":""}`)
+	if answer != fmt.Sprintf("{\"read\":%d}\n", want) {
+		t.Fatalf("the handler answered %q, want it to have bound all %d bytes of the field", answer, want)
+	}
+}
+
+// TestAChunkedBodyPaddedPastTheLimitWithWhitespaceIsStillBound covers the other
+// side of the decoder. It stops once it has read one whole value, so whatever
+// follows the value past the limit is never read and nothing trips. That is
+// harmless, since what was held in memory stayed under the limit, and it is
+// allowed rather than refused.
+func TestAChunkedBodyPaddedPastTheLimitWithWhitespaceIsStillBound(t *testing.T) {
+	server := newBindingServer()
+	defer server.Close()
+
+	body := []byte(`{"file":"a"}` + strings.Repeat(" ", 2*1024*1024))
+
+	status, answer := postChunked(t, server, apiPrefix+"/bind", body)
+
+	if status != http.StatusOK {
+		t.Fatalf("a small object padded with whitespace was answered %d, want %d: %s",
+			status, http.StatusOK, answer)
+	}
+}
+
+// TestAChunkedImportOverTheImportLimitIsRefused holds the import routes to the
+// limit of their own the same way.
+func TestAChunkedImportOverTheImportLimitIsRefused(t *testing.T) {
+	server := newBindingServer()
+	defer server.Close()
+
+	status, answer := postChunked(t, server, apiPrefix+importTunnelsPath, fileBody(importBodyLimit+1))
+
+	if status != http.StatusRequestEntityTooLarge {
+		t.Fatalf("a chunked import one byte over the limit was answered %d, want %d: %s",
+			status, http.StatusRequestEntityTooLarge, answer)
+	}
+}
+
+// TestAChunkedLoginOverTheLimitIsRefusedAsTooLarge sends to the login handler
+// main registers, which writes its own refusal for a body it could not bind.
+// The answer has to be the 413 a body that gave its length is refused with,
+// and not a 400 saying the body is malformed.
+func TestAChunkedLoginOverTheLimitIsRefusedAsTooLarge(t *testing.T) {
+	server := newBindingServer()
+	defer server.Close()
+
+	status, answer := postChunked(t, server, apiPrefix+"/login", fileBody(2*1024*1024))
+
+	if status != http.StatusRequestEntityTooLarge {
+		t.Fatalf("a chunked 2MB login was answered %d, want %d: %s",
+			status, http.StatusRequestEntityTooLarge, answer)
+	}
+
+	measured := postJSON(newHardenedServer(noCertificate), http.MethodPost, apiPrefix+"/login", 2*1024*1024)
+
+	if answer != measured.Body.String() {
+		t.Fatalf("the chunked login was answered %q and one with a Content-Length %q",
+			answer, measured.Body.String())
 	}
 }
 

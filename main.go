@@ -91,7 +91,7 @@ const (
 // certificate chain and a PEM private key, and the creation of a Host, which
 // carries one PEM private key: a 4096-bit RSA key is around 3KB and a chain a
 // few KB more.
-const generalBodyLimit = "1M"
+const generalBodyLimit int64 = 1_000_000
 
 // importBodyLimit is what the two imports are allowed instead. Their body is a
 // whole exported configuration, and the size of that follows from how much the
@@ -105,7 +105,7 @@ const generalBodyLimit = "1M"
 // 32MB carries a few thousand Hosts or every service port an installation can
 // hold. An import is behind the session, so what this allows is an
 // administrator who is already authenticated.
-const importBodyLimit = "32M"
+const importBodyLimit int64 = 32_000_000
 
 // The timeouts the API server runs under. echo builds its http.Server with all
 // of them at zero, which means a client that opens a connection and says
@@ -995,11 +995,53 @@ func isImportRoute(c echo.Context) bool {
 }
 
 // importBodyLimitMiddleware is what the two import routes are registered with.
-// It is a function rather than one value shared by both, because the
-// middleware keeps a pool of readers and there is no reason for the two routes
-// to contend on one.
 func importBodyLimitMiddleware() echo.MiddlewareFunc {
-	return middleware.BodyLimit(importBodyLimit)
+	return bodyLimit(importBodyLimit, nil)
+}
+
+// bodyLimit refuses a request body longer than limit with 413. A body that says
+// how long it is in Content-Length is refused on that number before anything
+// is read; one that does not, which is a chunked request, is cut off by
+// http.MaxBytesReader when the handler reads past the limit.
+//
+// echo's own BodyLimit is not used, because its reader does not stop. Once past
+// the limit it goes on reading the body and hands every read back as bytes and
+// the 413 together. io.ReadAll stops at the error, but the JSON decoder behind
+// c.Bind keeps the bytes and drops the error that came with them, so a chunked
+// body of any size was bound in full. http.MaxBytesReader hands back what is
+// left up to the limit and from then on nothing but the error, so every reader
+// sees it.
+//
+// A handler that returns the read error as it is gets 413 here, the answer the
+// Content-Length check gives. The handlers in internal/api that write their own
+// refusal for a body they could not read do the same there.
+func bodyLimit(limit int64, skipper middleware.Skipper) echo.MiddlewareFunc {
+	return func(next echo.HandlerFunc) echo.HandlerFunc {
+		return func(c echo.Context) error {
+			if skipper != nil && skipper(c) {
+				return next(c)
+			}
+
+			request := c.Request()
+
+			if request.ContentLength > limit {
+				return echo.ErrStatusRequestEntityTooLarge
+			}
+
+			if request.Body != nil {
+				request.Body = http.MaxBytesReader(c.Response(), request.Body, limit)
+			}
+
+			err := next(c)
+
+			var tooLarge *http.MaxBytesError
+			if errors.As(err, &tooLarge) {
+				return echo.ErrStatusRequestEntityTooLarge
+			}
+
+			return err
+		}
+	}
 }
 
 // applyServerTimeouts puts the deadlines on the servers echo would otherwise
@@ -1026,10 +1068,7 @@ func applyServerTimeouts(servers ...*http.Server) {
 // both go out through the same response and both carry the headers.
 func harden(e *echo.Echo, servedCertificate func() *tls.Certificate) {
 	e.Use(securityHeaders(contentSecurityPolicy(indexHTML), servedCertificate))
-	e.Use(middleware.BodyLimitWithConfig(middleware.BodyLimitConfig{
-		Skipper: isImportRoute,
-		Limit:   generalBodyLimit,
-	}))
+	e.Use(bodyLimit(generalBodyLimit, isImportRoute))
 
 	applyServerTimeouts(e.Server, e.TLSServer)
 }

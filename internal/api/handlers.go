@@ -321,7 +321,7 @@ func renamedFieldRefused(c echo.Context, old string, current string) *refusal {
 
 	body, err := io.ReadAll(request.Body)
 	if err != nil {
-		return refuse(http.StatusBadRequest, errRequestBodyInvalid, errorArgs{"reason": err.Error()})
+		return unreadableBody(err)
 	}
 
 	request.Body = io.NopCloser(bytes.NewReader(body))
@@ -399,7 +399,7 @@ func (h *Handler) CreateHost(c echo.Context) error {
 	var req models.CreateHostRequest
 	err := c.Bind(&req)
 	if err != nil {
-		return failure(c, http.StatusBadRequest, errRequestBodyInvalid, errorArgs{"reason": err.Error()})
+		return unreadableBody(err).answer(c)
 	}
 
 	err = c.Validate(&req)
@@ -695,7 +695,7 @@ func (h *Handler) UpdateHost(c echo.Context) error {
 	var req models.UpdateHostRequest
 	err = c.Bind(&req)
 	if err != nil {
-		return failure(c, http.StatusBadRequest, errRequestBodyInvalid, errorArgs{"reason": err.Error()})
+		return unreadableBody(err).answer(c)
 	}
 
 	err = c.Validate(&req)
@@ -948,7 +948,7 @@ func (h *Handler) CreateServicePort(c echo.Context) error {
 	var req models.CreateServicePortRequest
 	err := c.Bind(&req)
 	if err != nil {
-		return failure(c, http.StatusBadRequest, errRequestBodyInvalid, errorArgs{"reason": err.Error()})
+		return unreadableBody(err).answer(c)
 	}
 
 	err = c.Validate(&req)
@@ -1138,7 +1138,7 @@ func (h *Handler) UpdateServicePort(c echo.Context) error {
 	var req models.CreateServicePortRequest
 	err = c.Bind(&req)
 	if err != nil {
-		return failure(c, http.StatusBadRequest, errRequestBodyInvalid, errorArgs{"reason": err.Error()})
+		return unreadableBody(err).answer(c)
 	}
 
 	err = c.Validate(&req)
@@ -1501,7 +1501,7 @@ func (h *Handler) UpdateHostServicePorts(c echo.Context) error {
 	var req hostServicePortChange
 	err = c.Bind(&req)
 	if err != nil {
-		return failure(c, http.StatusBadRequest, errRequestBodyInvalid, errorArgs{"reason": err.Error()})
+		return unreadableBody(err).answer(c)
 	}
 
 	// The scope is held to the two words it may be. The column is under the

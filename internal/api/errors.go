@@ -1,6 +1,7 @@
 package api
 
 import (
+	"errors"
 	"net/http"
 	"sort"
 	"strings"
@@ -647,10 +648,11 @@ func writeFailure(c echo.Context, status int, code errorCode, values errorArgs, 
 // that has to be rolled back before anything reaches the client, and sometimes
 // it is a helper with no echo.Context to write through.
 type refusal struct {
-	status int
-	code   errorCode
-	args   errorArgs
-	data   interface{}
+	status   int
+	code     errorCode
+	args     errorArgs
+	data     interface{}
+	tooLarge bool
 }
 
 // refuse builds one. args is variadic for the reason failure's is.
@@ -701,7 +703,29 @@ func (r *refusal) carrying(data interface{}) *refusal {
 
 // answer writes the refusal out.
 func (r *refusal) answer(c echo.Context) error {
+	if r.tooLarge {
+		return echo.ErrStatusRequestEntityTooLarge
+	}
+
 	return writeFailure(c, r.status, r.code, r.args, r.data)
+}
+
+// unreadableBody is the refusal of a request body that Bind or a read of it
+// failed on.
+//
+// A body that ran past the body limit the server puts on every route (main.go,
+// bodyLimit) is refused with 413 rather than 400. It is the answer the same
+// body gets when its Content-Length already says it is too long, and it is
+// handed to echo to write so that both go out the same way. The limit is only
+// found out here when the body is chunked, and a client should not be told its
+// body is malformed when what was wrong with it is its size.
+func unreadableBody(err error) *refusal {
+	var tooLarge *http.MaxBytesError
+	if errors.As(err, &tooLarge) {
+		return &refusal{tooLarge: true}
+	}
+
+	return refuse(http.StatusBadRequest, errRequestBodyInvalid, errorArgs{"reason": err.Error()})
 }
 
 // renderErrorMessage writes the values into the sentence and reports whether

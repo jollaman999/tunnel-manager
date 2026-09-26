@@ -460,7 +460,7 @@ func (h *Handler) CreateHostLocalForward(c echo.Context) error {
 	var req models.LocalForwardRequest
 	err = c.Bind(&req)
 	if err != nil {
-		return failure(c, http.StatusBadRequest, errRequestBodyInvalid, errorArgs{"reason": err.Error()})
+		return unreadableBody(err).answer(c)
 	}
 
 	err = c.Validate(&req)
@@ -632,7 +632,7 @@ func (h *Handler) UpdateLocalForward(c echo.Context) error {
 	var req models.LocalForwardRequest
 	err := c.Bind(&req)
 	if err != nil {
-		return failure(c, http.StatusBadRequest, errRequestBodyInvalid, errorArgs{"reason": err.Error()})
+		return unreadableBody(err).answer(c)
 	}
 
 	err = c.Validate(&req)

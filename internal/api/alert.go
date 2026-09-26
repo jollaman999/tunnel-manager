@@ -38,7 +38,7 @@ func (h *SettingsHandler) alertTestSettings(c echo.Context, mail bool) (*setting
 
 	err = c.Bind(&req)
 	if err != nil {
-		return nil, refuse(http.StatusBadRequest, errRequestBodyInvalid, errorArgs{"reason": err.Error()})
+		return nil, unreadableBody(err)
 	}
 
 	asked := *stored

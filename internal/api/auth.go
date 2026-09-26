@@ -554,7 +554,7 @@ func (h *AuthHandler) Login(c echo.Context) error {
 
 	err := c.Bind(&req)
 	if err != nil {
-		return failure(c, http.StatusBadRequest, errRequestBodyInvalid, errorArgs{"reason": err.Error()})
+		return unreadableBody(err).answer(c)
 	}
 
 	user, err := h.readUser()
@@ -689,7 +689,7 @@ func (h *AuthHandler) Setup(c echo.Context) error {
 
 	err := c.Bind(&req)
 	if err != nil {
-		return failure(c, http.StatusBadRequest, errRequestBodyInvalid, errorArgs{"reason": err.Error()})
+		return unreadableBody(err).answer(c)
 	}
 
 	// The name is stored with the surrounding space taken off, because that is

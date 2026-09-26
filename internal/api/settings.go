@@ -489,7 +489,7 @@ func (h *SettingsHandler) UpdateSettings(c echo.Context) error {
 
 	err = c.Bind(&req)
 	if err != nil {
-		return failure(c, http.StatusBadRequest, errRequestBodyInvalid, errorArgs{"reason": err.Error()})
+		return unreadableBody(err).answer(c)
 	}
 
 	updated := *stored

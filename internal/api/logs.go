@@ -244,7 +244,7 @@ func (h *LogsHandler) ClearLogs(c echo.Context) error {
 
 	err := c.Bind(&req)
 	if err != nil {
-		return failure(c, http.StatusBadRequest, errRequestBodyInvalid, errorArgs{"reason": err.Error()})
+		return unreadableBody(err).answer(c)
 	}
 
 	// A path that is empty means the logging settings name no file at all, and
