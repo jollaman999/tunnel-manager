@@ -80,6 +80,17 @@ A port forward is usually set up once and left alone: an `ssh -R`, `-L` or
 `-D` command, perhaps under autossh or in a systemd unit, one per forward.
 Tunnel Manager keeps the forwards as records and runs what the records say.
 
+- **Reverse tunnels built from service ports.** A service is stored once, as
+  the address it answers on from this machine and the port the Hosts open for
+  it. Assigning it to Hosts makes each of them open that port and carry what
+  arrives back to the service, the way `ssh -R` does, so one service is
+  published through several Hosts and one Host carries several services,
+  without a command for every pair.
+- **Local forwards on the same Hosts.** The `ssh -L` direction is kept the
+  same way: a port opened on this machine that reaches, through a Host, an
+  address only that Host reaches. It is stored with its Host, built again when
+  it drops, and listed in the same status table as the tunnels. A Host can also
+  be a SOCKS5 proxy, the way `ssh -D` does.
 - **Records, not a pile of commands.** Hosts, service ports and assignments are
   rows in the database. A reconcile pass keeps the running tunnels equal to the
   stored ones and builds a dropped one again, doubling the wait after each
