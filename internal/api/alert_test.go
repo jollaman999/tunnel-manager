@@ -409,6 +409,68 @@ func TestTheWebhookTestPostsToTheStoredURL(t *testing.T) {
 	}
 }
 
+// TestAFailedWebhookTestDoesNotNameTheAddress fails the test press against an
+// address nothing listens on and against a webhook that answers 500, with the
+// token in the path and in the query, both as the stored address and as one
+// the body names. The answer and the logs say what went wrong and carry no
+// part of the token.
+func TestAFailedWebhookTestDoesNotNameTheAddress(t *testing.T) {
+	const token = "T000-B000-webhook-token" // hook:allow
+
+	failing := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+	}))
+	defer failing.Close()
+
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("failed to listen: %v", err)
+	}
+
+	refused := listener.Addr().String()
+	_ = listener.Close()
+
+	secret := "/services/" + token + "?token=" + token
+
+	for _, address := range []string{"http://" + refused + secret, failing.URL + secret} {
+		db := newSettingsDB(t)
+		h, _, _, logs := newSettingsHandler(t, db)
+
+		rec := settingsRequest(t, h, `{"alert_webhook_url":`+jsonString(t, address)+`}`)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("the save answered %d: %s", rec.Code, rec.Body.String())
+		}
+
+		for _, body := range []string{"", `{"alert_webhook_url":` + jsonString(t, address) + `}`} {
+			rec = alertCall(t, h.TestAlertWebhook, body)
+
+			code, args := refusalOf(t, rec)
+			if rec.Code != http.StatusBadGateway || code != string(errAlertTestFailed) {
+				t.Fatalf("the test of %s with %q answered %d under %s", address, body, rec.Code, code)
+			}
+
+			if args["reason"] == "" {
+				t.Errorf("the test of %s with %q gives no reason", address, body)
+			}
+
+			if strings.Contains(rec.Body.String(), token) {
+				t.Errorf("the answer to the test with %q carries the token: %s", body, rec.Body.String())
+			}
+		}
+
+		for _, entry := range logs.All() {
+			line := entry.Message
+			for key, value := range entry.ContextMap() {
+				line += fmt.Sprintf(" %s=%v", key, value)
+			}
+
+			if strings.Contains(line, token) {
+				t.Errorf("a log line carries the token: %s", line)
+			}
+		}
+	}
+}
+
 // TestAnAlertSettingIsRefusedUnderItsOwnCode holds two of the rules to the
 // code and the values a screen writes its sentence from.
 func TestAnAlertSettingIsRefusedUnderItsOwnCode(t *testing.T) {

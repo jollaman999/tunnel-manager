@@ -10,6 +10,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"net/url"
 	"time"
 
 	"github.com/jollaman999/tunnel-manager/internal/crypto"
@@ -171,7 +172,7 @@ func (s *Sender) Webhook(ctx context.Context, url string, event Event) error {
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(body))
 	if err != nil {
-		return err
+		return webhookError(err)
 	}
 
 	req.Header.Set("Content-Type", "application/json")
@@ -179,7 +180,7 @@ func (s *Sender) Webhook(ctx context.Context, url string, event Event) error {
 
 	resp, err := s.client.Do(req)
 	if err != nil {
-		return err
+		return webhookError(err)
 	}
 	defer resp.Body.Close()
 
@@ -192,6 +193,19 @@ func (s *Sender) Webhook(ctx context.Context, url string, event Event) error {
 	}
 
 	return nil
+}
+
+// webhookError is a failure to post with the address of the webhook taken
+// out. A *url.Error names the address it failed on, the one a redirect led to
+// among them, and the path and the query of a webhook address are where its
+// token is. What was done and why it failed are kept.
+func webhookError(err error) error {
+	var urlErr *url.Error
+	if errors.As(err, &urlErr) {
+		return fmt.Errorf("%s to the webhook: %w", urlErr.Op, urlErr.Err)
+	}
+
+	return err
 }
 
 // errNoPassword is the mail password that is asked for and not stored.
