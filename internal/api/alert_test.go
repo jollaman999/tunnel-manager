@@ -175,6 +175,240 @@ func TestASaveWithoutAPasswordKeepsTheStoredOne(t *testing.T) {
 	}
 }
 
+const webhookSecret = "https://hooks.example.com/services/T000/B000/webhook-secret" // hook:allow
+
+// TestTheWebhookURLIsNeverAnswered stores a webhook address and reads what
+// the API says afterwards. The address lets whoever holds it post to the
+// channel, so no answer carries it: a read says only that one is stored, and
+// the save names the change under the mask.
+func TestTheWebhookURLIsNeverAnswered(t *testing.T) {
+	db := newSettingsDB(t)
+	h, _, _, _ := newSettingsHandler(t, db)
+
+	if !strings.Contains(settingsRequest(t, h, "").Body.String(), `"alert_webhook_url_set":false`) {
+		t.Fatal("a fresh read does not say that no webhook address is stored")
+	}
+
+	rec := settingsRequest(t, h, `{"alert_webhook_url":`+jsonString(t, webhookSecret)+`}`)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("the save answered %d: %s", rec.Code, rec.Body.String())
+	}
+
+	stored, _ := settings.LoadOpened(db, h.cipher)
+	if stored.AlertWebhookURL != webhookSecret {
+		t.Fatalf("the save stored %q", stored.AlertWebhookURL)
+	}
+
+	read := settingsRequest(t, h, "").Body.String()
+
+	for what, answer := range map[string]string{"save": rec.Body.String(), "read": read} {
+		if strings.Contains(answer, webhookSecret) || strings.Contains(answer, "webhook-secret") {
+			t.Errorf("the answer to the %s carries the webhook address: %s", what, answer)
+		}
+
+		if strings.Contains(answer, `"alert_webhook_url":`) {
+			t.Errorf("the answer to the %s names alert_webhook_url: %s", what, answer)
+		}
+	}
+
+	if !strings.Contains(read, `"alert_webhook_url_set":true`) {
+		t.Errorf("the read does not say a webhook address is stored: %s", read)
+	}
+
+	found := false
+
+	for _, change := range decodeSaved(t, rec).Changes {
+		if change.Name == "alert.webhook_url" {
+			found = true
+
+			if change.From != "" || change.To != settings.SecretMask {
+				t.Errorf("the webhook change is reported as %+v", change)
+			}
+		}
+	}
+
+	if !found {
+		t.Error("the save does not report the webhook address")
+	}
+}
+
+// TestASaveWithoutAWebhookURLKeepsTheStoredOne covers the saves that send no
+// address, which is every save of a screen that read the settings, a new
+// address put over the stored one, and the tick that removes it.
+func TestASaveWithoutAWebhookURLKeepsTheStoredOne(t *testing.T) {
+	db := newSettingsDB(t)
+	h, _, _, _ := newSettingsHandler(t, db)
+
+	rec := settingsRequest(t, h, `{"alert_webhook_url":`+jsonString(t, webhookSecret)+`}`)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("the save answered %d: %s", rec.Code, rec.Body.String())
+	}
+
+	for _, body := range []string{
+		`{"monitoring_interval_sec":7}`,
+		`{"alert_webhook_url":""}`,
+		`{"alert_webhook_url":"   "}`,
+		`{"alert_webhook_url":null,"alert_webhook_url_clear":false}`,
+	} {
+		rec = settingsRequest(t, h, body)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("%s answered %d: %s", body, rec.Code, rec.Body.String())
+		}
+
+		after, _ := settings.LoadOpened(db, h.cipher)
+		if after.AlertWebhookURL != webhookSecret {
+			t.Fatalf("%s changed the stored address to %q", body, after.AlertWebhookURL)
+		}
+
+		for _, change := range decodeSaved(t, rec).Changes {
+			if change.Name == "alert.webhook_url" {
+				t.Fatalf("%s reports a change of the webhook address: %+v", body, change)
+			}
+		}
+	}
+
+	const replaced = "https://hooks.example.com/services/T000/B000/replaced" // hook:allow
+
+	rec = settingsRequest(t, h, `{"alert_webhook_url":`+jsonString(t, replaced)+`,"alert_webhook_url_clear":true}`)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("the replace answered %d: %s", rec.Code, rec.Body.String())
+	}
+
+	after, _ := settings.LoadOpened(db, h.cipher)
+	if after.AlertWebhookURL != replaced {
+		t.Fatalf("a new address with the clear stored %q, want the new address", after.AlertWebhookURL)
+	}
+
+	if strings.Contains(rec.Body.String(), replaced) {
+		t.Fatalf("the answer to the replace carries the address: %s", rec.Body.String())
+	}
+
+	reported := false
+
+	for _, change := range decodeSaved(t, rec).Changes {
+		if change.Name == "alert.webhook_url" {
+			reported = true
+
+			if change.From != settings.SecretMask || change.To != settings.SecretMask {
+				t.Errorf("the replace is reported as %+v", change)
+			}
+		}
+	}
+
+	if !reported {
+		t.Error("the replace does not report the webhook address")
+	}
+
+	rec = settingsRequest(t, h, `{"alert_webhook_url_clear":true}`)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("the clear answered %d: %s", rec.Code, rec.Body.String())
+	}
+
+	cleared, _ := settings.LoadOpened(db, h.cipher)
+	if cleared.AlertWebhookURL != "" {
+		t.Fatalf("the address was not removed: %q", cleared.AlertWebhookURL)
+	}
+
+	reported = false
+
+	for _, change := range decodeSaved(t, rec).Changes {
+		if change.Name == "alert.webhook_url" {
+			reported = true
+
+			if change.From != settings.SecretMask || change.To != "" {
+				t.Errorf("the clear is reported as %+v", change)
+			}
+		}
+	}
+
+	if !reported {
+		t.Error("the clear does not report the webhook address")
+	}
+
+	if !strings.Contains(settingsRequest(t, h, "").Body.String(), `"alert_webhook_url_set":false`) {
+		t.Fatal("the read still says a webhook address is stored")
+	}
+}
+
+// TestTheWebhookTestPostsToTheStoredURL stores the address of a webhook and
+// presses the test with a body that names none, which is what the card sends
+// when its box is left empty. The stored address is posted to without being
+// answered. A body that names another address is posted to that one, and a
+// body that clears the address has nowhere to post to.
+func TestTheWebhookTestPostsToTheStoredURL(t *testing.T) {
+	db := newSettingsDB(t)
+	h, _, _, _ := newSettingsHandler(t, db)
+
+	stored := make(chan string, 4)
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		stored <- r.URL.Path
+	}))
+	defer server.Close()
+
+	other := make(chan string, 4)
+
+	elsewhere := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		other <- r.URL.Path
+	}))
+	defer elsewhere.Close()
+
+	address := server.URL + "/services/T000/B000/webhook-secret" // hook:allow
+
+	rec := settingsRequest(t, h, `{"alert_webhook_url":`+jsonString(t, address)+`}`)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("the save answered %d: %s", rec.Code, rec.Body.String())
+	}
+
+	for _, body := range []string{"", `{"alert_webhook_url":""}`, `{"alert_after_sec":60}`} {
+		rec = alertCall(t, h.TestAlertWebhook, body)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("the test with %q answered %d: %s", body, rec.Code, rec.Body.String())
+		}
+
+		if strings.Contains(rec.Body.String(), "webhook-secret") {
+			t.Fatalf("the answer to the test carries the address: %s", rec.Body.String())
+		}
+
+		select {
+		case path := <-stored:
+			if path != "/services/T000/B000/webhook-secret" {
+				t.Fatalf("the test with %q posted to %s", body, path)
+			}
+		default:
+			t.Fatalf("the test with %q did not post to the stored address", body)
+		}
+	}
+
+	rec = alertCall(t, h.TestAlertWebhook, `{"alert_webhook_url":`+jsonString(t, elsewhere.URL+"/typed")+`}`)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("the test with another address answered %d: %s", rec.Code, rec.Body.String())
+	}
+
+	select {
+	case path := <-other:
+		if path != "/typed" {
+			t.Fatalf("the test with another address posted to %s", path)
+		}
+	default:
+		t.Fatal("the test with another address did not post to it")
+	}
+
+	if len(stored) != 0 {
+		t.Fatal("the test with another address posted to the stored one as well")
+	}
+
+	rec = alertCall(t, h.TestAlertWebhook, `{"alert_webhook_url_clear":true}`)
+	if code, _ := refusalOf(t, rec); rec.Code != http.StatusBadRequest || code != string(errAlertTestWebhookOff) {
+		t.Fatalf("a test that clears the address answered %d under %s", rec.Code, code)
+	}
+
+	after, _ := settings.LoadOpened(db, h.cipher)
+	if after.AlertWebhookURL != address {
+		t.Fatalf("a test changed the stored address to %q", after.AlertWebhookURL)
+	}
+}
+
 // TestAnAlertSettingIsRefusedUnderItsOwnCode holds two of the rules to the
 // code and the values a screen writes its sentence from.
 func TestAnAlertSettingIsRefusedUnderItsOwnCode(t *testing.T) {
@@ -349,6 +583,10 @@ func TestTheAlertSettingsTravelWithAnExport(t *testing.T) {
 		t.Fatalf("the answer to the import carries the password: %s", rec.Body.String())
 	}
 
+	if strings.Contains(rec.Body.String(), stored.AlertWebhookURL) {
+		t.Fatalf("the answer to the import carries the webhook address: %s", rec.Body.String())
+	}
+
 	after, _ := settings.LoadOpened(target.db, target.cipher)
 
 	if after.AlertAfterSec != 120 || after.AlertWebhookURL != stored.AlertWebhookURL ||
@@ -501,17 +739,21 @@ func TestTheAlertSettingsAreStoredSealedAndReadInTheClear(t *testing.T) {
 	}
 
 	for name, value := range map[string]interface{}{
-		"alert_webhook_url": want.AlertWebhookURL,
-		"smtp_host":         want.SMTPHost,
-		"smtp_port":         float64(want.SMTPPort),
-		"smtp_username":     want.SMTPUsername,
-		"smtp_from":         want.SMTPFrom,
-		"smtp_to":           want.SMTPTo,
-		"smtp_security":     "tls",
+		"alert_webhook_url_set": true,
+		"smtp_host":             want.SMTPHost,
+		"smtp_port":             float64(want.SMTPPort),
+		"smtp_username":         want.SMTPUsername,
+		"smtp_from":             want.SMTPFrom,
+		"smtp_to":               want.SMTPTo,
+		"smtp_security":         "tls",
 	} {
 		if read.Data[name] != value {
 			t.Errorf("a read answers %s = %v, want %v", name, read.Data[name], value)
 		}
+	}
+
+	if _, found := read.Data["alert_webhook_url"]; found {
+		t.Error("a read carries the webhook address")
 	}
 
 	if _, found := read.Data["alert_secrets"]; found {

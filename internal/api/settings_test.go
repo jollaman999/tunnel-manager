@@ -704,23 +704,34 @@ func jsonName(field reflect.StructField) string {
 	return name
 }
 
+// writeOnlyFields are the fields of updateSettingsRequest requestFields leaves
+// out, for the reason given there.
+var writeOnlyFields = map[string]bool{
+	"smtp_password":           true,
+	"smtp_password_clear":     true,
+	"alert_webhook_url":       true,
+	"alert_webhook_url_clear": true,
+}
+
 // requestFields is every field a save may name, read off updateSettingsRequest
 // itself. The tests below are written against this rather than against a list
 // of their own, so that a field added to the request is covered by them the
 // moment it is added and a tag that was typed wrong shows up as a field that
 // never arrives.
 //
-// The password of the mail server and the flag that clears it are left out.
-// They are not stored as they are sent: the one is sealed first and the other
-// is no setting at all, so a comparison of what was sent with what was stored
-// says nothing about them. The tests of the password are what covers them.
+// The password of the mail server, the webhook address and the flags that
+// clear them are left out. The password is sealed before it is stored, the
+// address is kept out of the JSON of the stored settings the way the password
+// is, and the flags are no setting at all, so a comparison of what was sent
+// with what was stored says nothing about them. The tests of the password and
+// of the webhook address are what covers them.
 func requestFields() map[string]bool {
 	names := map[string]bool{}
 
 	typ := reflect.TypeOf(updateSettingsRequest{})
 	for i := 0; i < typ.NumField(); i++ {
 		name := jsonName(typ.Field(i))
-		if name != "" && name != "smtp_password" && name != "smtp_password_clear" {
+		if name != "" && !writeOnlyFields[name] {
 			names[name] = true
 		}
 	}

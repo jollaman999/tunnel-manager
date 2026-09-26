@@ -139,6 +139,10 @@ type settingsView struct {
 	// SMTPPasswordSet says whether a password for the mail server is stored.
 	// It stands in for the password itself, which no answer carries.
 	SMTPPasswordSet bool `json:"smtp_password_set"`
+
+	// AlertWebhookURLSet says whether a webhook address is stored. It stands
+	// in for the address, which no answer carries either.
+	AlertWebhookURLSet bool `json:"alert_webhook_url_set"`
 }
 
 // GetSettings answers with what is stored, along with what is stored but not
@@ -159,10 +163,11 @@ func (h *SettingsHandler) GetSettings(c echo.Context) error {
 	return c.JSON(http.StatusOK, models.Response{
 		Success: true,
 		Data: settingsView{
-			Settings:        stored,
-			PendingRestart:  h.pendingRestart(stored),
-			InstallDir:      h.installDir,
-			SMTPPasswordSet: stored.SMTPPassword != "",
+			Settings:           stored,
+			PendingRestart:     h.pendingRestart(stored),
+			InstallDir:         h.installDir,
+			SMTPPasswordSet:    stored.SMTPPassword != "",
+			AlertWebhookURLSet: stored.AlertWebhookURL != "",
 		},
 	})
 }
@@ -211,8 +216,12 @@ type updateSettingsRequest struct {
 	UpdateCheckIntervalHours *int  `json:"update_check_interval_hours"`
 	UpdateAutoInstall        *bool `json:"update_auto_install"`
 
-	AlertAfterSec   *int    `json:"alert_after_sec"`
-	AlertWebhookURL *string `json:"alert_webhook_url"`
+	AlertAfterSec *int `json:"alert_after_sec"`
+	// AlertWebhookURL is held the way SMTPPassword is: a read never carries
+	// it, so an empty or missing one leaves the stored address alone, and
+	// AlertWebhookURLClear is what removes it.
+	AlertWebhookURL      *string `json:"alert_webhook_url"`
+	AlertWebhookURLClear *bool   `json:"alert_webhook_url_clear"`
 
 	SMTPHost     *string `json:"smtp_host"`
 	SMTPPort     *int    `json:"smtp_port"`
@@ -302,8 +311,10 @@ func (r *updateSettingsRequest) apply(s *settings.Settings) {
 	if r.AlertAfterSec != nil {
 		s.AlertAfterSec = *r.AlertAfterSec
 	}
-	if r.AlertWebhookURL != nil {
+	if r.AlertWebhookURL != nil && strings.TrimSpace(*r.AlertWebhookURL) != "" {
 		s.AlertWebhookURL = strings.TrimSpace(*r.AlertWebhookURL)
+	} else if r.AlertWebhookURLClear != nil && *r.AlertWebhookURLClear {
+		s.AlertWebhookURL = ""
 	}
 
 	if r.SMTPHost != nil {
@@ -461,6 +472,7 @@ func settingsRefusal(err error, updated *settings.Settings, fallback errorCode) 
 // @Description  A new api_port that a local forward opens as its local port is refused with 409; data then carries that local forward and suggested_port, a port neither a local forward, a SOCKS5 proxy nor the stored or asked for api_port holds, or 0 when there is none.
 // @Description  A new api_port that the SOCKS5 proxy of a Host opens is refused with 409 under its own error_code; data then carries that Host in socks_host, local_forward left empty, and suggested_port.
 // @Description  smtp_password is write-only: a read says only smtp_password_set, an empty or missing one keeps the stored password, and smtp_password_clear removes it. While a password is stored, a body that changes smtp_host, smtp_port, smtp_username or smtp_security, or turns smtp_skip_verify on, has to carry smtp_password, or it is refused with 400 under settings.smtp_password.required; with smtp_auth none or smtp_password_clear the stored password is removed instead.
+// @Description  alert_webhook_url is write-only in the same way: a read says only alert_webhook_url_set, an empty or missing one keeps the stored address, and alert_webhook_url_clear removes it. A new address and the clear in one body store the address.
 // @Tags         settings
 // @Accept   json
 // @Produce  json

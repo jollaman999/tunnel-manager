@@ -6861,13 +6861,13 @@ function settingsForm(set) {
 }
 
 // alertsCard is where an operator says how to be told about a tunnel, a local
-// forward or a SOCKS5 proxy that stays down. The webhook and mail are each
-// switched off by leaving the address or the server empty, so the two are
-// turned on and off apart.
+// forward or a SOCKS5 proxy that stays down. The webhook is switched off by
+// removing the stored address and mail by leaving the server empty, so the two
+// are turned on and off apart.
 //
-// The password box is always drawn empty. A read never carries the password,
-// only whether one is stored, and a box left empty on a save keeps the stored
-// one: the tick under it is how a stored password is taken away.
+// The webhook address and the password boxes are always drawn empty. A read
+// never carries either, only whether one is stored, and a box left empty on a
+// save keeps the stored one: the tick under each is how it is taken away.
 //
 // The two test presses send what the boxes hold without saving it, so that a
 // setting can be tried before it is stored. What they answer is said in the
@@ -6875,6 +6875,7 @@ function settingsForm(set) {
 // whatever was typed and not yet saved.
 function alertsCard(set) {
   const passwordSet = set.smtp_password_set === true;
+  const webhookSet = set.alert_webhook_url_set === true;
 
   const fields = [
     {
@@ -6890,11 +6891,23 @@ function alertsCard(set) {
     {
       name: "alert_webhook_url",
       label: t("alerts.webhook.label"),
-      value: set.alert_webhook_url,
+      value: "",
       hint: "https://",
       check: checkWebhookURL,
-      note: t("alerts.webhook.hint")
-    },
+      note: webhookSet ? t("alerts.webhook-set.hint") : t("alerts.webhook.hint")
+    }
+  ];
+
+  if (webhookSet) {
+    fields.push({
+      name: "alert_webhook_url_clear",
+      label: t("alerts.webhook-clear.label"),
+      type: "checkbox",
+      value: false
+    });
+  }
+
+  fields.push(
     {
       name: "smtp_host",
       label: t("alerts.smtp-host.label"),
@@ -6937,7 +6950,7 @@ function alertsCard(set) {
       value: "",
       note: passwordSet ? t("alerts.password-set.hint") : t("alerts.password-none.hint")
     }
-  ];
+  );
 
   if (passwordSet) {
     fields.push({
@@ -7013,8 +7026,9 @@ function checkAlertAfter(value) {
   return "";
 }
 
-// checkWebhookURL lets an empty box through, which is the webhook turned off,
-// and otherwise asks for an address the server can post to.
+// checkWebhookURL lets an empty box through, which keeps the stored address or
+// leaves the webhook off when none is stored, and otherwise asks for an address
+// the server can post to.
 function checkWebhookURL(value) {
   const trimmed = String(value).trim();
 
@@ -7026,13 +7040,12 @@ function checkWebhookURL(value) {
 }
 
 // alertSettingsBody is what the card sends, for a save and for a test alike.
-// The password goes only when something was typed, and the tick that clears it
-// only when it is ticked, so a save that touched neither leaves the stored
-// password where it is.
+// The webhook address and the password go only when something was typed, and
+// the ticks that clear them only when they are ticked, so a save that touched
+// neither leaves what is stored where it is.
 function alertSettingsBody(values) {
   const body = {
     alert_after_sec: asNumber(values.alert_after_sec),
-    alert_webhook_url: values.alert_webhook_url.trim(),
     smtp_host: values.smtp_host.trim(),
     smtp_port: asNumber(values.smtp_port),
     smtp_security: values.smtp_security,
@@ -7042,6 +7055,14 @@ function alertSettingsBody(values) {
     smtp_to: values.smtp_to.trim(),
     smtp_skip_verify: values.smtp_skip_verify
   };
+
+  if (values.alert_webhook_url.trim() !== "") {
+    body.alert_webhook_url = values.alert_webhook_url.trim();
+  }
+
+  if (values.alert_webhook_url_clear === true) {
+    body.alert_webhook_url_clear = true;
+  }
 
   if (values.smtp_password !== "") {
     Object.assign(body, { smtp_password: values.smtp_password });

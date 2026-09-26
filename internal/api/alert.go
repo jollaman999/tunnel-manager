@@ -79,7 +79,7 @@ func testEvent() alert.Event {
 // TestAlertWebhook posts a test alert to the webhook.
 //
 // @Summary      Post a test alert to the webhook
-// @Description  The stored settings are used, with any alert setting the body names put over them; nothing is stored. The body is the one PUT /settings takes and may be left out. A webhook that is not reached, or answers outside 2xx, is answered with 502 and what went wrong in error_args.reason.
+// @Description  The stored settings are used, with any alert setting the body names put over them; nothing is stored. The body is the one PUT /settings takes and may be left out. A body with no alert_webhook_url, or an empty one, posts to the stored address, which the answer does not name; one the body names is posted to instead. A webhook that is not reached, or answers outside 2xx, is answered with 502 and what went wrong in error_args.reason.
 // @Tags         settings
 // @Accept   json
 // @Produce  json

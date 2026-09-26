@@ -475,7 +475,7 @@ var errorMessages = map[errorCode]string{
 	// the screen writes in its own language, and the rule is in the sentence
 	// rather than in an English {reason}.
 	errSettingsAlertAfterInvalid:   "The settings are refused: {value} is not a delay an alert can wait for. Use a number of seconds from {min} to {max}",
-	errSettingsWebhookURLInvalid:   "The settings are refused: {value} is not a webhook address. Use an address that begins with http:// or https://, or leave it empty to turn the webhook off",
+	errSettingsWebhookURLInvalid:   "The settings are refused: {value} is not a webhook address. Use an address that begins with http:// or https://, or remove the stored address to turn the webhook off",
 	errSettingsSMTPHostInvalid:     "The settings are refused: {value} is not the name or the address of a mail server",
 	errSettingsSMTPPortInvalid:     "The settings are refused: {value} is not a port of a mail server. Use a number from 1 to 65535",
 	errSettingsSMTPSecurityInvalid: "The settings are refused: {value} is not a connection security this server knows. Use none, starttls or tls",

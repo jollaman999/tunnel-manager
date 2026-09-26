@@ -2167,7 +2167,7 @@
                         "CSRFToken": []
                     }
                 ],
-                "description": "Answers with what changed and whether a restart is needed. logging.level is the one setting this process takes on without being started again.\nA new api_port that a local forward opens as its local port is refused with 409; data then carries that local forward and suggested_port, a port neither a local forward, a SOCKS5 proxy nor the stored or asked for api_port holds, or 0 when there is none.\nA new api_port that the SOCKS5 proxy of a Host opens is refused with 409 under its own error_code; data then carries that Host in socks_host, local_forward left empty, and suggested_port.\nsmtp_password is write-only: a read says only smtp_password_set, an empty or missing one keeps the stored password, and smtp_password_clear removes it. While a password is stored, a body that changes smtp_host, smtp_port, smtp_username or smtp_security, or turns smtp_skip_verify on, has to carry smtp_password, or it is refused with 400 under settings.smtp_password.required; with smtp_auth none or smtp_password_clear the stored password is removed instead.",
+                "description": "Answers with what changed and whether a restart is needed. logging.level is the one setting this process takes on without being started again.\nA new api_port that a local forward opens as its local port is refused with 409; data then carries that local forward and suggested_port, a port neither a local forward, a SOCKS5 proxy nor the stored or asked for api_port holds, or 0 when there is none.\nA new api_port that the SOCKS5 proxy of a Host opens is refused with 409 under its own error_code; data then carries that Host in socks_host, local_forward left empty, and suggested_port.\nsmtp_password is write-only: a read says only smtp_password_set, an empty or missing one keeps the stored password, and smtp_password_clear removes it. While a password is stored, a body that changes smtp_host, smtp_port, smtp_username or smtp_security, or turns smtp_skip_verify on, has to carry smtp_password, or it is refused with 400 under settings.smtp_password.required; with smtp_auth none or smtp_password_clear the stored password is removed instead.\nalert_webhook_url is write-only in the same way: a read says only alert_webhook_url_set, an empty or missing one keeps the stored address, and alert_webhook_url_clear removes it. A new address and the clear in one body store the address.",
                 "consumes": [
                     "application/json"
                 ],
@@ -2304,7 +2304,7 @@
                         "CSRFToken": []
                     }
                 ],
-                "description": "The stored settings are used, with any alert setting the body names put over them; nothing is stored. The body is the one PUT /settings takes and may be left out. A webhook that is not reached, or answers outside 2xx, is answered with 502 and what went wrong in error_args.reason.",
+                "description": "The stored settings are used, with any alert setting the body names put over them; nothing is stored. The body is the one PUT /settings takes and may be left out. A body with no alert_webhook_url, or an empty one, posts to the stored address, which the answer does not name; one the body names is posted to instead. A webhook that is not reached, or answers outside 2xx, is answered with 502 and what went wrong in error_args.reason.",
                 "consumes": [
                     "application/json"
                 ],
@@ -4054,9 +4054,9 @@
                     "description": "AlertAfterSec is how long a tunnel, a local forward or a SOCKS5 proxy\nhas to have been without a connection before it is reported as down.\nA connection that drops and comes back within the monitoring interval\nor two is what a network does now and then, and a message for each of\nthose would teach whoever receives them to stop reading. Five minutes\nis past that and short enough that somebody hears about an outage while\nit is still one.\n\nThe columns below carry their defaults so that an installation upgraded\nonto this version reads back what a fresh one gives, and every column\nis named here because the name gorm works out for SMTP runs the letters\ninto what follows.",
                     "type": "integer"
                 },
-                "alert_webhook_url": {
-                    "description": "AlertWebhookURL is where a down and an up are posted to as JSON. Empty\nis the webhook switched off.",
-                    "type": "string"
+                "alert_webhook_url_set": {
+                    "description": "AlertWebhookURLSet says whether a webhook address is stored. It stands\nin for the address, which no answer carries either.",
+                    "type": "boolean"
                 },
                 "api_https_enabled": {
                     "description": "APIHTTPSEnabled is what decides whether the port above is served over\nTLS. It is stored with a column default of true so that a database\nwritten by a version that had no such column reads back as HTTPS on:\nSQLite fills the rows that are already there with the default as the\ncolumn is added, and an installation that is upgraded gets the same\nanswer a fresh one does.\n\nThe column is named here because the name gorm works out from the field\nis api_http_s_enabled: it knows HTTP as one word and leaves the S of\nHTTPS on its own.",
@@ -4331,7 +4331,11 @@
                     "type": "integer"
                 },
                 "alert_webhook_url": {
+                    "description": "AlertWebhookURL is held the way SMTPPassword is: a read never carries\nit, so an empty or missing one leaves the stored address alone, and\nAlertWebhookURLClear is what removes it.",
                     "type": "string"
+                },
+                "alert_webhook_url_clear": {
+                    "type": "boolean"
                 },
                 "api_https_enabled": {
                     "type": "boolean"
@@ -4688,10 +4692,6 @@
                 "alert_after_sec": {
                     "description": "AlertAfterSec is how long a tunnel, a local forward or a SOCKS5 proxy\nhas to have been without a connection before it is reported as down.\nA connection that drops and comes back within the monitoring interval\nor two is what a network does now and then, and a message for each of\nthose would teach whoever receives them to stop reading. Five minutes\nis past that and short enough that somebody hears about an outage while\nit is still one.\n\nThe columns below carry their defaults so that an installation upgraded\nonto this version reads back what a fresh one gives, and every column\nis named here because the name gorm works out for SMTP runs the letters\ninto what follows.",
                     "type": "integer"
-                },
-                "alert_webhook_url": {
-                    "description": "AlertWebhookURL is where a down and an up are posted to as JSON. Empty\nis the webhook switched off.",
-                    "type": "string"
                 },
                 "api_https_enabled": {
                     "description": "APIHTTPSEnabled is what decides whether the port above is served over\nTLS. It is stored with a column default of true so that a database\nwritten by a version that had no such column reads back as HTTPS on:\nSQLite fills the rows that are already there with the default as the\ncolumn is added, and an installation that is upgraded gets the same\nanswer a fresh one does.\n\nThe column is named here because the name gorm works out from the field\nis api_http_s_enabled: it knows HTTP as one word and leaves the S of\nHTTPS on its own.",

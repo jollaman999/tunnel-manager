@@ -154,7 +154,12 @@ type Settings struct {
 	// It and the mail server, its port, the user name and the two addresses
 	// are not columns of their own. They are held here in the clear and
 	// stored sealed in AlertSecrets; see there.
-	AlertWebhookURL string `gorm:"-" json:"alert_webhook_url"`
+	//
+	// It is kept out of the JSON in both directions, the way SMTPPassword is.
+	// An address of the kind a chat service hands out lets whoever holds it
+	// post to the channel, so a read says whether one is stored and never
+	// what it is, and a save reaches it only through the request.
+	AlertWebhookURL string `gorm:"-" json:"-"`
 
 	// SMTPHost is the mail server a down and an up are sent through. Empty is
 	// mail switched off, which is what a fresh installation is on: there is
