@@ -33,6 +33,7 @@
 - **The update settings take hold as soon as they are saved.** Whether to check for a release, how often and whether to install it on its own were answered as waiting for the next start, which asked for a restart nothing needed: the update loop reads them again every minute. The Manual lists them with the settings that apply at once.
 - **What a settings export carries is listed in full**, the display language, the update settings and the alerts included, and it says that the mail password, the mail server and the webhook address are in the file in the clear under the password of the file.
 - **The reference says a SOCKS5 proxy opens on this machine alone by default**, which it has done since v3.13.6. It said every interface.
+- **The animation at the top of the README was recorded again** on this release.
 
 ## Notes:
 
