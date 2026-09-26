@@ -322,13 +322,13 @@ func sceneStatus(r *recorder, cfg config, _ string) error {
 
 	r.pause(time.Second)
 
-	if err := r.click(`[data-action="host-keys"]`, `[data-modal-panel="host-keys"] .host-key-row button`); err != nil {
+	if err := r.click(`[data-action="host-keys"]`, `[data-modal-panel="host-keys"] .host-key-row .buttons button`); err != nil {
 		return err
 	}
 
 	r.pause(time.Second)
 
-	if err := r.click(`[data-modal-panel="host-keys"] .host-key-row button`, `[data-action="host-key-approve"]`); err != nil {
+	if err := r.click(`[data-modal-panel="host-keys"] .host-key-row .buttons button`, `[data-action="host-key-approve"]`); err != nil {
 		return err
 	}
 
