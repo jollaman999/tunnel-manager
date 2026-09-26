@@ -318,10 +318,11 @@ func twoHosts(t *testing.T) (withKey hostContent, withPassword hostContent) {
 // other is carried by nothing and would be found by whoever imports a file and
 // sees the setting fall back to what was already stored.
 //
-// The row id and the time the row was written are the two that are left out on
-// purpose: both describe the row an export was read from.
+// The row id and the time the row was written are left out on purpose: both
+// describe the row an export was read from. So is AlertSecrets, which is the
+// sealed form of six settings the file carries one by one in the clear.
 func TestTheSettingsContentCarriesEverySetting(t *testing.T) {
-	left := map[string]bool{"ID": true, "UpdatedAt": true}
+	left := map[string]bool{"ID": true, "UpdatedAt": true, "AlertSecrets": true}
 
 	stored := reflect.TypeOf(settings.Settings{})
 	carried := reflect.TypeOf(settingsContent{})
@@ -1122,7 +1123,7 @@ func TestTheImportedSettingsAreStoredAndNotPutIntoPlace(t *testing.T) {
 	stored.MonitoringIntervalSec = 47
 	stored.LoggingFormat = "console"
 
-	err = settings.Save(source.db, stored)
+	err = settings.Save(source.db, stored, source.cipher)
 	if err != nil {
 		t.Fatalf("failed to store the settings: %v", err)
 	}
@@ -1416,7 +1417,7 @@ func TestAPathInsideTheInstallationIsImportedAsItIs(t *testing.T) {
 	stored.SecurityKeyFile = "secrets/tunnel-manager.key"
 	stored.LoggingFilePath = "logs/tunnel-manager.log"
 
-	err = settings.Save(source.db, stored)
+	err = settings.Save(source.db, stored, source.cipher)
 	if err != nil {
 		t.Fatalf("failed to store the settings: %v", err)
 	}
@@ -2988,7 +2989,7 @@ func TestALocalForwardOnThePortOfThisServerIsRefused(t *testing.T) {
 	stored := settings.Defaults()
 	stored.APIPort = 19443
 
-	err := settings.Save(target.db, &stored)
+	err := settings.Save(target.db, &stored, target.cipher)
 	if err != nil {
 		t.Fatalf("failed to store the settings: %v", err)
 	}
@@ -3026,7 +3027,7 @@ func TestALocalForwardOnTheRunningPortOfThisServerIsRefused(t *testing.T) {
 			stored := settings.Defaults()
 			stored.APIPort = 19443
 
-			err := settings.Save(target.db, &stored)
+			err := settings.Save(target.db, &stored, target.cipher)
 			if err != nil {
 				t.Fatalf("failed to store the settings: %v", err)
 			}
@@ -3103,7 +3104,7 @@ func TestImportedSettingsSuggestAPortClearOfTheRunningAPIPort(t *testing.T) {
 
 	stored.APIPort = 15432
 
-	err = settings.Save(source.db, stored)
+	err = settings.Save(source.db, stored, source.cipher)
 	if err != nil {
 		t.Fatalf("failed to store the settings: %v", err)
 	}
@@ -3335,7 +3336,7 @@ func TestImportedSettingsWithAnAPIPortALocalForwardOpensAreNotStored(t *testing.
 	stored.APIPort = 15432
 	stored.MonitoringIntervalSec = 47
 
-	err = settings.Save(source.db, stored)
+	err = settings.Save(source.db, stored, source.cipher)
 	if err != nil {
 		t.Fatalf("failed to store the settings: %v", err)
 	}

@@ -1698,6 +1698,18 @@ func serve() {
 
 	logger.Info("loaded the encryption key", logid.EncryptionKeyLoaded.Field(), zap.String("path", keyPath))
 
+	// A database written by the version before this one holds the webhook
+	// address and the mail settings in the clear. They are sealed as soon as
+	// there is a key to seal them with. A write that fails stops the startup,
+	// because nothing reads those columns any more and alerts would go
+	// nowhere without a word.
+	_, err = settings.SealLegacyAlertColumns(db, cipher)
+	if err != nil {
+		logger.Fatal("failed to seal the webhook and mail settings stored in the clear",
+			logid.SettingsStoreFailed.Field(),
+			zap.Error(err))
+	}
+
 	// The signals are taken over before anything that has to be torn down is
 	// built, because until they are the default disposition kills the process
 	// and leaves the tunnels behind. The same channel is read by the shutdown
@@ -2083,7 +2095,7 @@ func serve() {
 	// settings on every scan, which is what lets a save take hold without a
 	// restart.
 	alertWatcher := alert.NewWatcher(logger, manager.AlertConditions, func() (alert.Config, error) {
-		stored, err := settings.Load(db)
+		stored, err := settings.LoadOpened(db, cipher)
 		if err != nil {
 			return alert.Config{}, err
 		}

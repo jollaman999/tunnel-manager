@@ -43,9 +43,8 @@ func TestARowWrittenBeforeTheAlertSettingsReadsAsTheDefaults(t *testing.T) {
 		t.Fatalf("Load: %v", err)
 	}
 
-	for _, column := range []string{"alert_after_sec", "alert_webhook_url", "smtp_host", "smtp_port",
-		"smtp_security", "smtp_auth", "smtp_username", "smtp_password", "smtp_from", "smtp_to",
-		"smtp_skip_verify"} {
+	for _, column := range []string{"alert_after_sec", "smtp_security", "smtp_auth", "smtp_password",
+		"smtp_skip_verify", "alert_secrets"} {
 		err = db.Exec("ALTER TABLE settings DROP COLUMN " + column).Error
 		if err != nil {
 			t.Fatalf("dropping %s: %v", column, err)

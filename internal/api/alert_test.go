@@ -4,6 +4,8 @@ import (
 	"bufio"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
+	"fmt"
 	"io"
 	"net"
 	"net/http"
@@ -14,6 +16,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/jollaman999/tunnel-manager/internal/alert"
 	"github.com/jollaman999/tunnel-manager/internal/crypto"
 	"github.com/jollaman999/tunnel-manager/internal/settings"
 	"github.com/labstack/echo/v4"
@@ -88,7 +91,7 @@ func TestTheMailPasswordIsSealedAndNeverAnswered(t *testing.T) {
 
 	saved := rec.Body.String()
 
-	stored, err := settings.Load(db)
+	stored, err := settings.LoadOpened(db, h.cipher)
 	if err != nil {
 		t.Fatalf("failed to read the settings: %v", err)
 	}
@@ -139,7 +142,7 @@ func TestASaveWithoutAPasswordKeepsTheStoredOne(t *testing.T) {
 		t.Fatalf("the save answered %d: %s", rec.Code, rec.Body.String())
 	}
 
-	first, _ := settings.Load(db)
+	first, _ := settings.LoadOpened(db, h.cipher)
 
 	for _, body := range []string{
 		`{"monitoring_interval_sec":7}`,
@@ -151,7 +154,7 @@ func TestASaveWithoutAPasswordKeepsTheStoredOne(t *testing.T) {
 			t.Fatalf("%s answered %d: %s", body, rec.Code, rec.Body.String())
 		}
 
-		after, _ := settings.Load(db)
+		after, _ := settings.LoadOpened(db, h.cipher)
 		if after.SMTPPassword != first.SMTPPassword {
 			t.Fatalf("%s changed the stored password", body)
 		}
@@ -162,7 +165,7 @@ func TestASaveWithoutAPasswordKeepsTheStoredOne(t *testing.T) {
 		t.Fatalf("the clear answered %d: %s", rec.Code, rec.Body.String())
 	}
 
-	cleared, _ := settings.Load(db)
+	cleared, _ := settings.LoadOpened(db, h.cipher)
 	if cleared.SMTPPassword != "" {
 		t.Fatalf("the password was not removed: %q", cleared.SMTPPassword)
 	}
@@ -197,7 +200,7 @@ func TestAnAlertSettingIsRefusedUnderItsOwnCode(t *testing.T) {
 		t.Fatalf("refused with %d under %s with %v", rec.Code, code, args)
 	}
 
-	stored, _ := settings.Load(db)
+	stored, _ := settings.LoadOpened(db, h.cipher)
 	if stored.SMTPHost != "" || stored.AlertAfterSec != 300 {
 		t.Fatalf("a refused save was stored: %+v", stored)
 	}
@@ -256,7 +259,7 @@ func TestTheWebhookTestPostsWhatTheBoxesHold(t *testing.T) {
 		t.Fatalf("the webhook was posted %v, want a test event", body)
 	}
 
-	stored, _ := settings.Load(db)
+	stored, _ := settings.LoadOpened(db, h.cipher)
 	if stored.AlertWebhookURL != "" {
 		t.Fatalf("the test stored the webhook: %q", stored.AlertWebhookURL)
 	}
@@ -310,7 +313,7 @@ func TestTheAlertSettingsTravelWithAnExport(t *testing.T) {
 	source := newTransferInstall(t)
 	target := newTransferInstall(t)
 
-	stored, _ := settings.Load(source.db)
+	stored, _ := settings.LoadOpened(source.db, source.cipher)
 	stored.AlertAfterSec = 120
 	stored.AlertWebhookURL = "https://hooks.example.com/tm"
 	stored.SMTPHost = "mail.example.com"
@@ -329,7 +332,7 @@ func TestTheAlertSettingsTravelWithAnExport(t *testing.T) {
 
 	stored.SMTPPassword = sealed
 
-	err = settings.Save(source.db, stored)
+	err = settings.Save(source.db, stored, source.cipher)
 	if err != nil {
 		t.Fatalf("failed to store the settings: %v", err)
 	}
@@ -346,7 +349,7 @@ func TestTheAlertSettingsTravelWithAnExport(t *testing.T) {
 		t.Fatalf("the answer to the import carries the password: %s", rec.Body.String())
 	}
 
-	after, _ := settings.Load(target.db)
+	after, _ := settings.LoadOpened(target.db, target.cipher)
 
 	if after.AlertAfterSec != 120 || after.AlertWebhookURL != stored.AlertWebhookURL ||
 		after.SMTPHost != stored.SMTPHost || after.SMTPPort != 465 || after.SMTPSecurity != "tls" ||
@@ -363,6 +366,263 @@ func TestTheAlertSettingsTravelWithAnExport(t *testing.T) {
 	if err != nil || opened != mailPassword {
 		t.Fatalf("the imported password opens to %q, %v", opened, err)
 	}
+
+	// The webhook address and the mail settings arrive sealed with the key
+	// of the installation that imported them, and in the clear nowhere.
+	row := rawSettingsRow(t, target.db)
+	requireNothingInTheClear(t, row, stored)
+
+	_, err = source.cipher.Decrypt(row["alert_secrets"])
+	if err == nil {
+		t.Fatal("the imported settings open with the key of the other installation")
+	}
+
+	_, err = target.cipher.Decrypt(row["alert_secrets"])
+	if err != nil {
+		t.Fatalf("the imported settings do not open with the key of the installation: %v", err)
+	}
+}
+
+// rawSettingsRow reads the settings row as the database holds it, every
+// column as text, the way a copy of the database file would be read.
+func rawSettingsRow(t *testing.T, db *gorm.DB) map[string]string {
+	t.Helper()
+
+	var rows []map[string]interface{}
+
+	err := db.Raw("SELECT * FROM settings").Scan(&rows).Error
+	if err != nil || len(rows) != 1 {
+		t.Fatalf("failed to read the settings row: %d rows, %v", len(rows), err)
+	}
+
+	row := map[string]string{}
+
+	for column, value := range rows[0] {
+		switch v := value.(type) {
+		case nil:
+			row[column] = ""
+		case []byte:
+			row[column] = string(v)
+		default:
+			row[column] = fmt.Sprint(v)
+		}
+	}
+
+	return row
+}
+
+// requireNothingInTheClear fails when a column of the row holds one of the
+// sealed settings of s as it was typed.
+func requireNothingInTheClear(t *testing.T, row map[string]string, s *settings.Settings) {
+	t.Helper()
+
+	for column, stored := range row {
+		for _, value := range []string{s.AlertWebhookURL, s.SMTPHost, s.SMTPUsername, s.SMTPFrom, s.SMTPTo} {
+			if value != "" && strings.Contains(stored, value) {
+				t.Errorf("column %s holds %q in the clear", column, value)
+			}
+		}
+	}
+}
+
+// sealedAlertBody is a save that names every one of the six sealed settings.
+const sealedAlertBody = `{"alert_webhook_url":"https://hooks.example.com/services/T000/secret-token",` +
+	`"smtp_host":"mail.example.com","smtp_port":465,"smtp_security":"tls","smtp_username":"alerts-sender",` +
+	`"smtp_password":"sealed-mail-password","smtp_from":"tm@example.com","smtp_to":"ops@example.com"}` // hook:allow
+
+// TestTheAlertSettingsAreStoredSealedAndReadInTheClear saves the six, reads
+// the row the way a copy of the database file would be read, and reads the
+// settings the way the screen does.
+func TestTheAlertSettingsAreStoredSealedAndReadInTheClear(t *testing.T) {
+	db := newSettingsDB(t)
+	h, _, _, logs := newSettingsHandler(t, db)
+
+	rec := settingsRequest(t, h, sealedAlertBody)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("the save answered %d: %s", rec.Code, rec.Body.String())
+	}
+
+	want := settings.Settings{
+		AlertWebhookURL: "https://hooks.example.com/services/T000/secret-token",
+		SMTPHost:        "mail.example.com",
+		SMTPPort:        465,
+		SMTPUsername:    "alerts-sender",
+		SMTPFrom:        "tm@example.com",
+		SMTPTo:          "ops@example.com",
+	}
+
+	row := rawSettingsRow(t, db)
+	requireNothingInTheClear(t, row, &want)
+
+	if !crypto.IsEncrypted(row["alert_secrets"]) {
+		t.Fatalf("alert_secrets is stored as %q, which is not sealed", row["alert_secrets"])
+	}
+
+	// The changes the save answers with name the six under the mask.
+	changes := decodeSaved(t, rec).Changes
+	for _, name := range []string{"alert.webhook_url", "alert.smtp.host", "alert.smtp.port",
+		"alert.smtp.username", "alert.smtp.from", "alert.smtp.to"} {
+		found := false
+
+		for _, change := range changes {
+			if change.Name != name {
+				continue
+			}
+
+			found = true
+
+			if change.To != settings.SecretMask || (change.From != "" && change.From != settings.SecretMask) {
+				t.Errorf("%s is reported as %q to %q, want the mask", name, change.From, change.To)
+			}
+		}
+
+		if !found {
+			t.Errorf("the save does not report %s: %+v", name, changes)
+		}
+	}
+
+	// Nothing the save logged carries them either.
+	for _, entry := range logs.All() {
+		line := entry.Message
+		for _, field := range entry.Context {
+			line += " " + field.String
+		}
+
+		requireNothingInTheClear(t, map[string]string{"log": line}, &want)
+	}
+
+	var read struct {
+		Data map[string]interface{} `json:"data"`
+	}
+
+	err := json.Unmarshal(settingsRequest(t, h, "").Body.Bytes(), &read)
+	if err != nil {
+		t.Fatalf("failed to read the answer: %v", err)
+	}
+
+	for name, value := range map[string]interface{}{
+		"alert_webhook_url": want.AlertWebhookURL,
+		"smtp_host":         want.SMTPHost,
+		"smtp_port":         float64(want.SMTPPort),
+		"smtp_username":     want.SMTPUsername,
+		"smtp_from":         want.SMTPFrom,
+		"smtp_to":           want.SMTPTo,
+		"smtp_security":     "tls",
+	} {
+		if read.Data[name] != value {
+			t.Errorf("a read answers %s = %v, want %v", name, read.Data[name], value)
+		}
+	}
+
+	if _, found := read.Data["alert_secrets"]; found {
+		t.Error("a read carries the sealed value")
+	}
+}
+
+// TestAStoredAlertGoesWhereTheSealedSettingsSay stores a webhook and a mail
+// server on this system and sends to them the two ways the stored settings
+// are read: the test presses with no body, and the read the alert watcher
+// makes on every scan.
+func TestAStoredAlertGoesWhereTheSealedSettingsSay(t *testing.T) {
+	db := newSettingsDB(t)
+	h, _, _, _ := newSettingsHandler(t, db)
+
+	posted := make(chan map[string]interface{}, 4)
+
+	webhook := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		raw, _ := io.ReadAll(r.Body)
+
+		var body map[string]interface{}
+		_ = json.Unmarshal(raw, &body)
+		posted <- body
+	}))
+	defer webhook.Close()
+
+	mail := newCapturingMailServer(t)
+
+	rec := settingsRequest(t, h, `{"alert_webhook_url":`+jsonString(t, webhook.URL)+
+		`,"smtp_host":"127.0.0.1","smtp_port":`+strconv.Itoa(mail.port)+
+		`,"smtp_security":"none","smtp_auth":"none","smtp_from":"tm@example.com","smtp_to":"ops@example.com"}`)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("the save answered %d: %s", rec.Code, rec.Body.String())
+	}
+
+	rec = alertCall(t, h.TestAlertWebhook, "")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("the webhook test answered %d: %s", rec.Code, rec.Body.String())
+	}
+
+	if body := <-posted; body["event"] != alert.EventTest {
+		t.Fatalf("the webhook was posted %v, want a test event", body)
+	}
+
+	rec = alertCall(t, h.TestAlertSMTP, "")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("the mail test answered %d: %s", rec.Code, rec.Body.String())
+	}
+
+	if _, lines := mail.seen(); !strings.Contains(lines, "RCPT TO:<ops@example.com>") {
+		t.Fatalf("the mail test did not reach the stored server:\n%s", lines)
+	}
+
+	// The read main hands the watcher.
+	stored, err := settings.LoadOpened(db, h.cipher)
+	if err != nil {
+		t.Fatalf("LoadOpened: %v", err)
+	}
+
+	h.alerts.Send(t.Context(), alert.ConfigOf(stored), alert.Event{
+		Event:     alert.EventDown,
+		Kind:      "local_forward",
+		Host:      "192.0.2.10",
+		LocalPort: 15432,
+	})
+
+	if body := <-posted; body["event"] != alert.EventDown || body["host"] != "192.0.2.10" {
+		t.Fatalf("the webhook was posted %v, want the down", body)
+	}
+
+	if accepted, lines := mail.seen(); accepted != 2 || !strings.Contains(lines, "192.0.2.10") {
+		t.Fatalf("the mail server was connected to %d times and was sent:\n%s", accepted, lines)
+	}
+}
+
+// TestAWrongKeyIsAFailureAndNotMailSwitchedOff reads settings sealed with
+// one key through a process holding another. Every reader says so rather
+// than reading the six as their defaults, which would be alerts switched off.
+func TestAWrongKeyIsAFailureAndNotMailSwitchedOff(t *testing.T) {
+	db := newSettingsDB(t)
+	h, _, _, _ := newSettingsHandler(t, db)
+
+	rec := settingsRequest(t, h, sealedAlertBody)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("the save answered %d: %s", rec.Code, rec.Body.String())
+	}
+
+	sealed := rawSettingsRow(t, db)["alert_secrets"]
+
+	other, _, _, _ := newSettingsHandler(t, db)
+
+	for name, rec := range map[string]*httptest.ResponseRecorder{
+		"read":         settingsRequest(t, other, ""),
+		"save":         settingsRequest(t, other, `{"monitoring_interval_sec":7}`),
+		"webhook test": alertCall(t, other.TestAlertWebhook, ""),
+		"mail test":    alertCall(t, other.TestAlertSMTP, ""),
+	} {
+		code, _ := refusalOf(t, rec)
+		if rec.Code != http.StatusInternalServerError || code != string(errSettingsReadFailed) {
+			t.Errorf("the %s answered %d under %s, want 500 under %s", name, rec.Code, code, errSettingsReadFailed)
+		}
+	}
+
+	if rawSettingsRow(t, db)["alert_secrets"] != sealed {
+		t.Fatal("a process with another key changed the sealed settings")
+	}
+
+	_, err := settings.LoadOpened(db, other.cipher)
+	if !errors.Is(err, settings.ErrAlertSecretsDoNotOpen) {
+		t.Fatalf("the read the watcher makes = %v, want %v", err, settings.ErrAlertSecretsDoNotOpen)
+	}
 }
 
 // TestAFileWithoutThePasswordLeavesTheStoredOne is a file from before the
@@ -371,7 +631,7 @@ func TestTheAlertSettingsTravelWithAnExport(t *testing.T) {
 func TestAFileWithoutThePasswordLeavesTheStoredOne(t *testing.T) {
 	install := newTransferInstall(t)
 
-	stored, _ := settings.Load(install.db)
+	stored, _ := settings.LoadOpened(install.db, install.cipher)
 
 	sealed, err := install.cipher.Encrypt(mailPassword)
 	if err != nil {
@@ -380,7 +640,7 @@ func TestAFileWithoutThePasswordLeavesTheStoredOne(t *testing.T) {
 
 	stored.SMTPPassword = sealed
 
-	err = settings.Save(install.db, stored)
+	err = settings.Save(install.db, stored, install.cipher)
 	if err != nil {
 		t.Fatalf("failed to store the settings: %v", err)
 	}
@@ -399,7 +659,7 @@ func TestAFileWithoutThePasswordLeavesTheStoredOne(t *testing.T) {
 		t.Fatalf("the import answered %d: %s", rec.Code, rec.Body.String())
 	}
 
-	after, _ := settings.Load(install.db)
+	after, _ := settings.LoadOpened(install.db, install.cipher)
 	if after.SMTPPassword != sealed {
 		t.Fatal("a file that names no password changed the stored one")
 	}
@@ -418,7 +678,7 @@ func TestAFileWithoutThePasswordLeavesTheStoredOne(t *testing.T) {
 		t.Fatalf("the import answered %d: %s", rec.Code, rec.Body.String())
 	}
 
-	after, _ = settings.Load(install.db)
+	after, _ = settings.LoadOpened(install.db, install.cipher)
 	if after.SMTPPassword != "" {
 		t.Fatal("a file that names an empty password left the stored one")
 	}
@@ -617,7 +877,7 @@ func TestASaveThatMovesTheMailTargetNeedsThePassword(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			h, db := storeMailLogin(t)
-			before, _ := settings.Load(db)
+			before, _ := settings.LoadOpened(db, h.cipher)
 
 			rec := settingsRequest(t, h, tc.body)
 
@@ -626,7 +886,7 @@ func TestASaveThatMovesTheMailTargetNeedsThePassword(t *testing.T) {
 				t.Fatalf("answered %d under %s: %s", rec.Code, code, rec.Body.String())
 			}
 
-			after, _ := settings.Load(db)
+			after, _ := settings.LoadOpened(db, h.cipher)
 			if *after != *before {
 				t.Fatalf("a refused save changed the settings: %+v", after)
 			}
@@ -639,14 +899,14 @@ func TestASaveThatMovesTheMailTargetNeedsThePassword(t *testing.T) {
 // off.
 func TestASaveThatMovesTheMailTargetWithAPasswordIsStored(t *testing.T) {
 	h, db := storeMailLogin(t)
-	first, _ := settings.Load(db)
+	first, _ := settings.LoadOpened(db, h.cipher)
 
 	rec := settingsRequest(t, h, `{"smtp_from":"other@example.com","smtp_skip_verify":false}`)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("a save that moves nothing answered %d: %s", rec.Code, rec.Body.String())
 	}
 
-	kept, _ := settings.Load(db)
+	kept, _ := settings.LoadOpened(db, h.cipher)
 	if kept.SMTPPassword != first.SMTPPassword {
 		t.Fatal("a save that moves nothing changed the stored password")
 	}
@@ -656,7 +916,7 @@ func TestASaveThatMovesTheMailTargetWithAPasswordIsStored(t *testing.T) {
 		t.Fatalf("a move with a new password answered %d: %s", rec.Code, rec.Body.String())
 	}
 
-	moved, _ := settings.Load(db)
+	moved, _ := settings.LoadOpened(db, h.cipher)
 
 	opened, err := h.cipher.Decrypt(moved.SMTPPassword)
 	if moved.SMTPHost != "mail.example.net" || err != nil || opened != "new-password" {
@@ -671,7 +931,7 @@ func TestASaveThatMovesTheMailTargetWithAPasswordIsStored(t *testing.T) {
 		t.Fatalf("a move with the login off answered %d: %s", rec.Code, rec.Body.String())
 	}
 
-	relay, _ := settings.Load(db)
+	relay, _ := settings.LoadOpened(db, h.cipher)
 	if relay.SMTPPassword != "" {
 		t.Fatal("the password was kept for a server it was not given for")
 	}
@@ -682,7 +942,7 @@ func TestASaveThatMovesTheMailTargetWithAPasswordIsStored(t *testing.T) {
 func TestAnImportThatMovesTheMailTargetWithoutAPasswordDropsIt(t *testing.T) {
 	install := newTransferInstall(t)
 
-	stored, _ := settings.Load(install.db)
+	stored, _ := settings.LoadOpened(install.db, install.cipher)
 	stored.SMTPHost = "mail.example.com"
 	stored.SMTPUsername = "alerts"
 	stored.SMTPFrom = "tm@example.com"
@@ -695,7 +955,7 @@ func TestAnImportThatMovesTheMailTargetWithoutAPasswordDropsIt(t *testing.T) {
 
 	stored.SMTPPassword = sealed
 
-	err = settings.Save(install.db, stored)
+	err = settings.Save(install.db, stored, install.cipher)
 	if err != nil {
 		t.Fatalf("failed to store the settings: %v", err)
 	}
@@ -715,7 +975,7 @@ func TestAnImportThatMovesTheMailTargetWithoutAPasswordDropsIt(t *testing.T) {
 		t.Fatalf("the import answered %d: %s", rec.Code, rec.Body.String())
 	}
 
-	after, _ := settings.Load(install.db)
+	after, _ := settings.LoadOpened(install.db, install.cipher)
 	if after.SMTPHost != "mail.example.net" || after.SMTPPassword != "" {
 		t.Fatalf("after the import the host is %q and a password is stored: %v", after.SMTPHost, after.SMTPPassword != "")
 	}

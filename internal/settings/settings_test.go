@@ -157,7 +157,7 @@ func TestLoadReturnsWhatWasStored(t *testing.T) {
 	stored.APIPort = 9999
 	stored.LoggingLevel = "debug"
 
-	err = Save(db, stored)
+	err = Save(db, stored, nil)
 	if err != nil {
 		t.Fatalf("Save: %v", err)
 	}
@@ -194,7 +194,7 @@ func TestSaveStoresHTTPSTurnedOff(t *testing.T) {
 
 	stored.APIHTTPSEnabled = false
 
-	err = Save(db, stored)
+	err = Save(db, stored, nil)
 	if err != nil {
 		t.Fatalf("Save: %v", err)
 	}
@@ -285,7 +285,7 @@ func TestTheReconnectCeilingTakesItsBounds(t *testing.T) {
 		s := Defaults()
 		s.ReconnectMaxIntervalSec = sec
 
-		err := Save(db, &s)
+		err := Save(db, &s, nil)
 		if err != nil {
 			t.Fatalf("Save refused a reconnect ceiling of %d: %v", sec, err)
 		}
@@ -315,7 +315,7 @@ func TestSaveRefusesASetThatWouldNotStart(t *testing.T) {
 	broken := *stored
 	broken.APIPort = 0
 
-	err = Save(db, &broken)
+	err = Save(db, &broken, nil)
 	if err == nil {
 		t.Fatal("Save accepted an API port of 0")
 	}
@@ -415,7 +415,7 @@ func TestEveryLanguageTheUIOffersCanBeStored(t *testing.T) {
 
 		stored.UIDefaultLanguage = code
 
-		err = Save(db, stored)
+		err = Save(db, stored, nil)
 		if err != nil {
 			t.Fatalf("Save of the %s language: %v", code, err)
 		}
@@ -449,14 +449,14 @@ func TestNoLanguageIsAValueOfItsOwn(t *testing.T) {
 
 	stored.UIDefaultLanguage = "ko"
 
-	err = Save(db, stored)
+	err = Save(db, stored, nil)
 	if err != nil {
 		t.Fatalf("Save: %v", err)
 	}
 
 	stored.UIDefaultLanguage = ""
 
-	err = Save(db, stored)
+	err = Save(db, stored, nil)
 	if err != nil {
 		t.Fatalf("Save of no language at all: %v", err)
 	}
@@ -517,7 +517,7 @@ func TestARowWrittenBeforeTheLanguageSettingReadsAsNoLanguage(t *testing.T) {
 
 	stored.LoggingLevel = "debug"
 
-	err = Save(db, stored)
+	err = Save(db, stored, nil)
 	if err != nil {
 		t.Fatalf("Save: %v", err)
 	}
@@ -585,7 +585,7 @@ func TestResetPutsTheDefaultsBackAndSaysWhatChanged(t *testing.T) {
 
 	stored.LoggingLevel = "debug"
 
-	err = Save(db, stored)
+	err = Save(db, stored, nil)
 	if err != nil {
 		t.Fatalf("Save: %v", err)
 	}
@@ -692,7 +692,7 @@ func resetWithPorts(t *testing.T, forwards []models.LocalForward, hosts []models
 
 	stored.APIPort = 9443
 
-	err = Save(db, stored)
+	err = Save(db, stored, nil)
 	if err != nil {
 		t.Fatalf("Save: %v", err)
 	}
@@ -954,7 +954,7 @@ func TestRepairPathsRepairsOnlyThePathThatIsRefused(t *testing.T) {
 
 	stored.SecurityKeyFile = "secrets/its-own-name.key"
 
-	err = Save(db, stored)
+	err = Save(db, stored, nil)
 	if err != nil {
 		t.Fatalf("Save: %v", err)
 	}
@@ -1061,7 +1061,7 @@ func TestTheStoredTimestampComesFromTheServerAndNotTheBody(t *testing.T) {
 
 	before := time.Now().Truncate(time.Second)
 
-	err = Save(db, &sent)
+	err = Save(db, &sent, nil)
 	if err != nil {
 		t.Fatalf("Save: %v", err)
 	}

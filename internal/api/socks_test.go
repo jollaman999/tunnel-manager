@@ -690,7 +690,7 @@ func TestASocksProxyTheInstallationCannotOpenIsRefused(t *testing.T) {
 			stored := settings.Defaults()
 			stored.APIPort = apiPort
 
-			err := settings.Save(target.db, &stored)
+			err := settings.Save(target.db, &stored, target.cipher)
 			if err != nil {
 				t.Fatalf("failed to store the settings: %v", err)
 			}
@@ -766,7 +766,7 @@ func TestImportedSettingsWithAnAPIPortASocksProxyOpensAreNotStored(t *testing.T)
 
 	stored.APIPort = 15432
 
-	err = settings.Save(source.db, stored)
+	err = settings.Save(source.db, stored, source.cipher)
 	if err != nil {
 		t.Fatalf("failed to store the settings: %v", err)
 	}

@@ -1,6 +1,8 @@
 package settings
 
 import (
+	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net"
@@ -11,6 +13,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/jollaman999/tunnel-manager/internal/crypto"
 	"github.com/jollaman999/tunnel-manager/internal/logid"
 	"github.com/jollaman999/tunnel-manager/internal/models"
 	"go.uber.org/zap"
@@ -147,13 +150,17 @@ type Settings struct {
 	AlertAfterSec int `gorm:"column:alert_after_sec;default:300" json:"alert_after_sec"`
 	// AlertWebhookURL is where a down and an up are posted to as JSON. Empty
 	// is the webhook switched off.
-	AlertWebhookURL string `gorm:"column:alert_webhook_url" json:"alert_webhook_url"`
+	//
+	// It and the mail server, its port, the user name and the two addresses
+	// are not columns of their own. They are held here in the clear and
+	// stored sealed in AlertSecrets; see there.
+	AlertWebhookURL string `gorm:"-" json:"alert_webhook_url"`
 
 	// SMTPHost is the mail server a down and an up are sent through. Empty is
 	// mail switched off, which is what a fresh installation is on: there is
 	// no server this program could guess at.
-	SMTPHost string `gorm:"column:smtp_host" json:"smtp_host"`
-	SMTPPort int    `gorm:"column:smtp_port;default:587" json:"smtp_port"`
+	SMTPHost string `gorm:"-" json:"smtp_host"`
+	SMTPPort int    `gorm:"-" json:"smtp_port"`
 	// SMTPSecurity is how the connection to the server is protected: "none",
 	// "starttls" or "tls". STARTTLS on 587 is what the submission port is for
 	// (RFC 8314 names it next to implicit TLS on 465), and it is the default
@@ -163,21 +170,43 @@ type Settings struct {
 	// "login". Neither of the two that send a password does so over a
 	// connection that is not protected by TLS.
 	SMTPAuth     string `gorm:"column:smtp_auth;default:plain" json:"smtp_auth"`
-	SMTPUsername string `gorm:"column:smtp_username" json:"smtp_username"`
+	SMTPUsername string `gorm:"-" json:"smtp_username"`
 	// SMTPPassword is held sealed with the key of this installation, the way
 	// the password of a Host is. It is kept out of the JSON in both
 	// directions: a read of the settings says whether one is stored and never
 	// what it is, and a save reaches it only through the request that seals
 	// it on the way in.
 	SMTPPassword string `gorm:"column:smtp_password" json:"-"`
-	SMTPFrom     string `gorm:"column:smtp_from" json:"smtp_from"`
+	SMTPFrom     string `gorm:"-" json:"smtp_from"`
 	// SMTPTo is the addresses a message goes to, separated by commas.
-	SMTPTo string `gorm:"column:smtp_to" json:"smtp_to"`
+	SMTPTo string `gorm:"-" json:"smtp_to"`
 	// SMTPSkipVerify turns off the check of the certificate the mail server
 	// presents. It is off by default, and what turning it on costs is that
 	// anybody who can get between this program and the server can read the
 	// password it logs in with.
 	SMTPSkipVerify bool `gorm:"column:smtp_skip_verify;default:false" json:"smtp_skip_verify"`
+
+	// AlertSecrets is the webhook address and the mail settings that say
+	// where a message goes and as whom, sealed as one JSON document with the
+	// key of this installation. The webhook address often carries a token in
+	// its path, and the server, the user and the addresses together say who
+	// this installation reports to, so a copy of the database file carries
+	// none of them readable. What stays in the clear are the modes: the
+	// delay, the connection security, the login method and the certificate
+	// check.
+	//
+	// It is one sealed value rather than one per setting because the six are
+	// read and written together, by the watcher and by the Settings screen,
+	// and one value keeps the port a number inside it instead of a text
+	// column. Empty is the six at their defaults, which is what a fresh
+	// installation and a reset store without a key at hand.
+	//
+	// A read leaves it sealed and the six at their defaults. Open fills them
+	// in and empties it, so that in memory it holds something only while the
+	// six are not what is stored, and Save refuses a set that still holds
+	// something: a caller that forgot the key cannot store the defaults over
+	// what was sealed. Save seals the six again from the fields.
+	AlertSecrets string `gorm:"column:alert_secrets" json:"-"`
 
 	// UpdatedAt is when the row was last written. It is this end's account of
 	// that and not a setting anybody chooses, so it is kept out of the JSON: a
@@ -658,6 +687,11 @@ func read(db *gorm.DB) (*Settings, error) {
 		return nil, fmt.Errorf("failed to read the settings: %w", err)
 	}
 
+	// The sealed settings are not columns, so they read as their defaults
+	// until Open fills them in. The defaults pass the rules, so a startup
+	// that reads the row before it has the key is not refused over them.
+	s.setAlertSecrets(defaultAlertSecrets())
+
 	return &s, nil
 }
 
@@ -692,6 +726,283 @@ func Load(db *gorm.DB) (*Settings, error) {
 	}
 
 	return stored, nil
+}
+
+// LoadOpened is Load with the sealed alert settings opened with the key of
+// this installation. It is what every reader of the webhook address and the
+// mail settings goes through; Load alone is for the startup, which reads the
+// settings before it knows where the key is, and for the readers that need
+// none of the six.
+//
+// A sealed value that does not open fails the read rather than coming back
+// as the defaults: an empty mail server is mail switched off, and a watcher
+// that read it that way would stop sending alerts without a word.
+func LoadOpened(db *gorm.DB, cipher *crypto.Cipher) (*Settings, error) {
+	stored, err := Load(db)
+	if err != nil {
+		return nil, err
+	}
+
+	err = stored.Open(cipher)
+	if err != nil {
+		return nil, err
+	}
+
+	err = stored.Validate()
+	if err != nil {
+		return nil, fmt.Errorf("the stored settings are refused: %w. Start with -reset-settings "+
+			"to put every setting back to its default", err)
+	}
+
+	return stored, nil
+}
+
+// ErrAlertSecretsDoNotOpen is what a read fails with when the sealed alert
+// settings do not open with the key in use. The error it is wrapped in carries
+// the one crypto.Decrypt gave as well, so crypto.ErrWrongKey can be asked for.
+var ErrAlertSecretsDoNotOpen = errors.New("the stored webhook and mail settings do not open with the encryption key in use")
+
+// ErrAlertSecretsNotOpened is what Save refuses a set with that was read and
+// never opened. Storing it would seal the defaults over what is stored.
+var ErrAlertSecretsNotOpened = errors.New("the stored webhook and mail settings were read without being opened, " +
+	"so storing the set would replace them with their defaults")
+
+// alertSecrets is what AlertSecrets holds once it is opened.
+type alertSecrets struct {
+	WebhookURL   string `json:"alert_webhook_url"`
+	SMTPHost     string `json:"smtp_host"`
+	SMTPPort     int    `json:"smtp_port"`
+	SMTPUsername string `json:"smtp_username"`
+	SMTPFrom     string `json:"smtp_from"`
+	SMTPTo       string `json:"smtp_to"`
+}
+
+func defaultAlertSecrets() alertSecrets {
+	d := Defaults()
+
+	return d.alertSecrets()
+}
+
+func (s *Settings) alertSecrets() alertSecrets {
+	return alertSecrets{
+		WebhookURL:   s.AlertWebhookURL,
+		SMTPHost:     s.SMTPHost,
+		SMTPPort:     s.SMTPPort,
+		SMTPUsername: s.SMTPUsername,
+		SMTPFrom:     s.SMTPFrom,
+		SMTPTo:       s.SMTPTo,
+	}
+}
+
+func (s *Settings) setAlertSecrets(secrets alertSecrets) {
+	s.AlertWebhookURL = secrets.WebhookURL
+	s.SMTPHost = secrets.SMTPHost
+	s.SMTPPort = secrets.SMTPPort
+	s.SMTPUsername = secrets.SMTPUsername
+	s.SMTPFrom = secrets.SMTPFrom
+	s.SMTPTo = secrets.SMTPTo
+}
+
+// sealedOnly says whether the set holds sealed alert settings that were not
+// opened, so the six fields are the defaults read put there and not what is
+// stored.
+func (s *Settings) sealedOnly() bool {
+	return s.AlertSecrets != ""
+}
+
+// Open fills the webhook address and the mail settings in from AlertSecrets
+// and empties it. A set with nothing sealed needs no key and keeps what its
+// fields hold.
+func (s *Settings) Open(cipher *crypto.Cipher) error {
+	if s.AlertSecrets == "" {
+		return nil
+	}
+
+	if cipher == nil {
+		return fmt.Errorf("%w: no key was given to open them with", ErrAlertSecretsDoNotOpen)
+	}
+
+	plaintext, err := cipher.Decrypt(s.AlertSecrets)
+	if err != nil {
+		return fmt.Errorf("%w: %w", ErrAlertSecretsDoNotOpen, err)
+	}
+
+	var secrets alertSecrets
+
+	err = json.Unmarshal([]byte(plaintext), &secrets)
+	if err != nil {
+		return fmt.Errorf("%w: the opened value is not what was sealed: %w", ErrAlertSecretsDoNotOpen, err)
+	}
+
+	s.setAlertSecrets(secrets)
+	s.AlertSecrets = ""
+
+	return nil
+}
+
+// sealAlertSecrets returns what AlertSecrets is stored as for the six fields
+// the set holds. The six at their defaults are stored as the empty string, so
+// that the defaults a first startup and a reset store need no key.
+func (s *Settings) sealAlertSecrets(cipher *crypto.Cipher) (string, error) {
+	if s.sealedOnly() {
+		return "", ErrAlertSecretsNotOpened
+	}
+
+	secrets := s.alertSecrets()
+	if secrets == defaultAlertSecrets() {
+		return "", nil
+	}
+
+	return sealAlertSecrets(secrets, cipher)
+}
+
+func sealAlertSecrets(secrets alertSecrets, cipher *crypto.Cipher) (string, error) {
+	if cipher == nil {
+		return "", errors.New("the webhook and mail settings are sealed with the encryption key, and no key was given")
+	}
+
+	plaintext, err := json.Marshal(secrets)
+	if err != nil {
+		return "", fmt.Errorf("failed to encode the webhook and mail settings: %w", err)
+	}
+
+	sealed, err := cipher.Encrypt(string(plaintext))
+	if err != nil {
+		return "", fmt.Errorf("failed to encrypt the webhook and mail settings: %w", err)
+	}
+
+	return sealed, nil
+}
+
+// legacyAlertColumns are the columns the six sealed settings were stored in,
+// in the clear, by the version that brought the alerts in. That version was
+// never released, but a database it wrote may be around, so the columns are
+// left in the schema, emptied by SealLegacyAlertColumns and read by nothing
+// else.
+var legacyAlertColumns = []string{"alert_webhook_url", "smtp_host", "smtp_port", "smtp_username", "smtp_from", "smtp_to"}
+
+// legacyAlertRow is the six legacy columns as they are stored. Every one of
+// them may be NULL: AutoMigrate added them to a row that was already there.
+type legacyAlertRow struct {
+	AlertWebhookURL sql.NullString `gorm:"column:alert_webhook_url"`
+	SMTPHost        sql.NullString `gorm:"column:smtp_host"`
+	SMTPPort        sql.NullInt64  `gorm:"column:smtp_port"`
+	SMTPUsername    sql.NullString `gorm:"column:smtp_username"`
+	SMTPFrom        sql.NullString `gorm:"column:smtp_from"`
+	SMTPTo          sql.NullString `gorm:"column:smtp_to"`
+}
+
+// secrets returns what the row holds, with a port that is not stored read as
+// the default.
+func (r legacyAlertRow) secrets() alertSecrets {
+	port := defaultAlertSecrets().SMTPPort
+	if r.SMTPPort.Valid && r.SMTPPort.Int64 != 0 {
+		port = int(r.SMTPPort.Int64)
+	}
+
+	return alertSecrets{
+		WebhookURL:   r.AlertWebhookURL.String,
+		SMTPHost:     r.SMTPHost.String,
+		SMTPPort:     port,
+		SMTPUsername: r.SMTPUsername.String,
+		SMTPFrom:     r.SMTPFrom.String,
+		SMTPTo:       r.SMTPTo.String,
+	}
+}
+
+// legacyAlertColumnsPresent says whether the table still has every one of
+// the legacy columns. A database made by this version has none of them.
+func legacyAlertColumnsPresent(db *gorm.DB) bool {
+	for _, column := range legacyAlertColumns {
+		if !db.Migrator().HasColumn(&Settings{}, column) {
+			return false
+		}
+	}
+
+	return true
+}
+
+// blankedLegacyAlertColumns is what the legacy columns are written as once
+// what they held is sealed: nothing, and the port its default, which says
+// nothing about any server.
+func blankedLegacyAlertColumns() map[string]interface{} {
+	return map[string]interface{}{
+		"alert_webhook_url": "",
+		"smtp_host":         "",
+		"smtp_port":         defaultAlertSecrets().SMTPPort,
+		"smtp_username":     "",
+		"smtp_from":         "",
+		"smtp_to":           "",
+	}
+}
+
+// readLegacyAlertColumns returns what the legacy columns hold, and whether
+// they hold anything other than the defaults. A table without them holds
+// nothing.
+func readLegacyAlertColumns(db *gorm.DB) (alertSecrets, bool, error) {
+	if !legacyAlertColumnsPresent(db) {
+		return alertSecrets{}, false, nil
+	}
+
+	var row legacyAlertRow
+
+	err := db.Table("settings").Select(legacyAlertColumns).Where("id = ?", settingsID).Take(&row).Error
+	if err != nil {
+		return alertSecrets{}, false, fmt.Errorf("failed to read the webhook and mail settings stored in the clear: %w", err)
+	}
+
+	legacy := row.secrets()
+
+	return legacy, legacy != defaultAlertSecrets(), nil
+}
+
+// SealLegacyAlertColumns moves the six settings a database written by the
+// version before this one holds in the clear into AlertSecrets, sealed with
+// the key of this installation, and empties the columns they were in. It
+// reports whether it changed anything, and it changes nothing the second time
+// it runs: the columns are empty by then.
+//
+// What is sealed already is not written over. A row holds both only when the
+// older version was started on the database again after this one had sealed
+// the settings, and the sealed value is the one this version stored and
+// answered with. The columns are emptied either way, so no copy stays in the
+// clear.
+//
+// It runs at startup once the key is loaded, which is after the first read of
+// the settings. That read does not look at the columns, so it is not refused
+// or misled by what they hold.
+func SealLegacyAlertColumns(db *gorm.DB, cipher *crypto.Cipher) (bool, error) {
+	stored, err := read(db)
+	if err != nil {
+		return false, err
+	}
+
+	if stored == nil {
+		return false, nil
+	}
+
+	legacy, held, err := readLegacyAlertColumns(db)
+	if err != nil || !held {
+		return false, err
+	}
+
+	update := blankedLegacyAlertColumns()
+
+	if stored.AlertSecrets == "" {
+		sealed, err := sealAlertSecrets(legacy, cipher)
+		if err != nil {
+			return false, err
+		}
+
+		update["alert_secrets"] = sealed
+	}
+
+	err = db.Table("settings").Where("id = ?", settingsID).Updates(update).Error
+	if err != nil {
+		return false, fmt.Errorf("failed to store the webhook and mail settings sealed: %w", err)
+	}
+
+	return true, nil
 }
 
 // RepairPaths puts a stored path that names a place outside the installation
@@ -769,7 +1080,11 @@ func RepairPaths(db *gorm.DB) ([]Change, error) {
 // starting again never reaches the database. The whole row is written in one
 // statement: a save that landed field by field could leave a set that no screen
 // ever asked for if the process ended in the middle of it.
-func Save(db *gorm.DB, s *Settings) error {
+//
+// The webhook address and the mail settings are sealed with cipher on the way
+// in. cipher may be nil only while the six are at their defaults, which are
+// stored without a key.
+func Save(db *gorm.DB, s *Settings, cipher *crypto.Cipher) error {
 	err := s.Validate()
 	if err != nil {
 		return err
@@ -778,11 +1093,18 @@ func Save(db *gorm.DB, s *Settings) error {
 	stored := *s
 	stored.ID = settingsID
 
+	stored.AlertSecrets, err = s.sealAlertSecrets(cipher)
+	if err != nil {
+		return err
+	}
+
 	err = db.Save(&stored).Error
 	if err != nil {
 		return fmt.Errorf("failed to store the settings: %w", err)
 	}
 
+	// The set handed back is an opened one, as the caller gave it.
+	stored.AlertSecrets = ""
 	*s = stored
 
 	return nil
@@ -798,11 +1120,36 @@ func Reset(db *gorm.DB) (before *Settings, after *Settings, err error) {
 		return nil, nil, err
 	}
 
+	// What the legacy columns hold is what the reset puts back, so it stands
+	// in the set reported as before. Diff writes it out masked. Nothing that
+	// is sealed already is replaced by it, since the sealed value is the one
+	// SealLegacyAlertColumns would have kept.
+	if before != nil && before.AlertSecrets == "" {
+		legacy, held, err := readLegacyAlertColumns(db)
+		if err != nil {
+			return nil, nil, err
+		}
+
+		if held {
+			before.setAlertSecrets(legacy)
+		}
+	}
+
 	defaults := Defaults()
 
-	err = Save(db, &defaults)
+	err = Save(db, &defaults, nil)
 	if err != nil {
 		return nil, nil, err
+	}
+
+	// The reset runs before the key is loaded, so the columns a database of
+	// the version before this one holds in the clear are emptied here rather
+	// than left for SealLegacyAlertColumns to seal back in.
+	if legacyAlertColumnsPresent(db) {
+		err = db.Table("settings").Where("id = ?", settingsID).Updates(blankedLegacyAlertColumns()).Error
+		if err != nil {
+			return nil, nil, fmt.Errorf("failed to empty the webhook and mail settings stored in the clear: %w", err)
+		}
 	}
 
 	return before, &defaults, nil
@@ -878,6 +1225,33 @@ type value struct {
 	text string
 }
 
+// sealedSettings are the settings stored in AlertSecrets. Diff compares them
+// and never writes them out: a change of one is reported with SecretMask on
+// either side.
+var sealedSettings = map[string]bool{
+	"alert.webhook_url":   true,
+	"alert.smtp.host":     true,
+	"alert.smtp.port":     true,
+	"alert.smtp.username": true,
+	"alert.smtp.from":     true,
+	"alert.smtp.to":       true,
+}
+
+// sealedText is what a sealed setting of a set that was not opened is
+// compared as. The fields hold the defaults read put there, so it is the
+// sealed value that is compared: it differs from anything opened, and a set
+// that was not opened is reported as changing all six.
+const sealedText = "\x00sealed:"
+
+// alertSecret is one of the six sealed settings as Diff sees it.
+func (s *Settings) alertSecret(name string, text string) value {
+	if s.sealedOnly() {
+		text = sealedText + s.AlertSecrets
+	}
+
+	return value{name, text}
+}
+
 func values(s *Settings) []value {
 	return []value{
 		{"api.port", strconv.Itoa(s.APIPort)},
@@ -898,15 +1272,15 @@ func values(s *Settings) []value {
 		{"update.check_interval_hours", strconv.Itoa(s.UpdateCheckIntervalHours)},
 		{"update.auto_install", strconv.FormatBool(s.UpdateAutoInstall)},
 		{"alert.after_sec", strconv.Itoa(s.AlertAfterSec)},
-		{"alert.webhook_url", s.AlertWebhookURL},
-		{"alert.smtp.host", s.SMTPHost},
-		{"alert.smtp.port", strconv.Itoa(s.SMTPPort)},
+		s.alertSecret("alert.webhook_url", s.AlertWebhookURL),
+		s.alertSecret("alert.smtp.host", s.SMTPHost),
+		s.alertSecret("alert.smtp.port", strconv.Itoa(s.SMTPPort)),
 		{"alert.smtp.security", s.SMTPSecurity},
 		{"alert.smtp.auth", s.SMTPAuth},
-		{"alert.smtp.username", s.SMTPUsername},
+		s.alertSecret("alert.smtp.username", s.SMTPUsername),
 		{"alert.smtp.password", maskedSecret(s.SMTPPassword)},
-		{"alert.smtp.from", s.SMTPFrom},
-		{"alert.smtp.to", s.SMTPTo},
+		s.alertSecret("alert.smtp.from", s.SMTPFrom),
+		s.alertSecret("alert.smtp.to", s.SMTPTo),
 		{"alert.smtp.skip_verify", strconv.FormatBool(s.SMTPSkipVerify)},
 	}
 }
@@ -914,11 +1288,13 @@ func values(s *Settings) []value {
 // SecretMask is what a stored secret is written as wherever the settings are
 // named one by one: in the changes a save answers with and in the lines a
 // reset logs. Those go to a browser and to the log file, and the password of
-// the mail server is not for either, sealed or not.
+// the mail server is not for either, sealed or not, and neither are the
+// webhook address and the mail settings that are stored sealed.
 //
 // The mask is the same whatever the secret is, so one password replaced by
 // another is not a change this list can see. The save that replaces it says so
-// itself.
+// itself. The sealed settings are compared in the clear and only written out
+// masked, so a change of one of them is listed.
 const SecretMask = "********"
 
 func maskedSecret(secret string) string {
@@ -938,7 +1314,7 @@ func Diff(before *Settings, after *Settings) []Change {
 	if before == nil {
 		changes := make([]Change, 0, len(newValues))
 		for _, v := range newValues {
-			changes = append(changes, Change{Name: v.name, From: "", To: v.text})
+			changes = append(changes, Change{Name: v.name, From: "", To: v.shown()})
 		}
 		return changes
 	}
@@ -951,8 +1327,17 @@ func Diff(before *Settings, after *Settings) []Change {
 		if oldValues[i].text == v.text {
 			continue
 		}
-		changes = append(changes, Change{Name: v.name, From: oldValues[i].text, To: v.text})
+		changes = append(changes, Change{Name: v.name, From: oldValues[i].shown(), To: v.shown()})
 	}
 
 	return changes
+}
+
+// shown is the text a change writes the value out as.
+func (v value) shown() string {
+	if sealedSettings[v.name] {
+		return maskedSecret(v.text)
+	}
+
+	return v.text
 }

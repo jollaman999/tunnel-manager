@@ -165,7 +165,7 @@ func TestGetSettingsAnswersWhatIsStored(t *testing.T) {
 	stored.APIPort = 9001
 	stored.LoggingLevel = "warn"
 
-	err := settings.Save(db, &stored)
+	err := settings.Save(db, &stored, nil)
 	if err != nil {
 		t.Fatalf("failed to store the settings: %v", err)
 	}
@@ -338,7 +338,7 @@ func TestSaveKeepsWhatTheBodyDoesNotName(t *testing.T) {
 	stored.SecurityKeyFile = "secrets/tunnel-manager.key"
 	stored.LoggingFileMaxBackups = 9
 
-	err := settings.Save(db, &stored)
+	err := settings.Save(db, &stored, nil)
 	if err != nil {
 		t.Fatalf("failed to store the settings: %v", err)
 	}
@@ -868,7 +868,7 @@ func TestSaveTakesEveryFieldTheRequestNames(t *testing.T) {
 		t.Fatalf("status = %d, want %d, body: %s", rec.Code, http.StatusOK, rec.Body.String())
 	}
 
-	after, err := settings.Load(db)
+	after, err := settings.LoadOpened(db, h.cipher)
 	if err != nil {
 		t.Fatalf("failed to read the settings: %v", err)
 	}
@@ -935,7 +935,7 @@ func TestSaveWritesNothingTheRequestDoesNotName(t *testing.T) {
 		t.Fatalf("status = %d, want %d, body: %s", rec.Code, http.StatusOK, rec.Body.String())
 	}
 
-	after, err := settings.Load(db)
+	after, err := settings.LoadOpened(db, h.cipher)
 	if err != nil {
 		t.Fatalf("failed to read the settings: %v", err)
 	}

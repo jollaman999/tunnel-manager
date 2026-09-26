@@ -28,7 +28,7 @@ type alertTestSent struct {
 // stored password to a server named in the body would hand it to whoever named
 // the server. The webhook test sends no password and is not held to it.
 func (h *SettingsHandler) alertTestSettings(c echo.Context, mail bool) (*settings.Settings, *refusal) {
-	stored, err := settings.Load(h.db)
+	stored, err := settings.LoadOpened(h.db, h.cipher)
 	if err != nil {
 		h.logger.Error("failed to read the settings", logid.SettingsReadFailed.Field(), zap.Error(err))
 		return nil, refuse(http.StatusInternalServerError, errSettingsReadFailed)

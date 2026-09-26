@@ -58,7 +58,8 @@ type SettingsHandler struct {
 	// stored path that is not absolute is read against.
 	installDir string
 	// cipher seals the password of the mail server as it is stored, with the
-	// key the passwords of the Hosts are sealed with.
+	// key the passwords of the Hosts are sealed with, and seals and opens the
+	// webhook address and the mail settings the settings keep sealed.
 	cipher *crypto.Cipher
 	// alerts is what the two test presses send through. It is the sender the
 	// alert watcher uses, so a test that goes through is one an alert would
@@ -149,7 +150,7 @@ type settingsView struct {
 // @Success  200  {object}  models.Response{data=api.settingsView}
 // @Router       /settings [get]
 func (h *SettingsHandler) GetSettings(c echo.Context) error {
-	stored, err := settings.Load(h.db)
+	stored, err := settings.LoadOpened(h.db, h.cipher)
 	if err != nil {
 		h.logger.Error("failed to read the settings", logid.SettingsReadFailed.Field(), zap.Error(err))
 		return failure(c, http.StatusInternalServerError, errSettingsReadFailed)
@@ -470,7 +471,7 @@ func settingsRefusal(err error, updated *settings.Settings, fallback errorCode) 
 // @Failure  409  {object}  api.errorBody{data=api.apiPortTaken}  "api_port is the local port of a local forward or the port of a SOCKS5 proxy. Nothing was stored"
 // @Router       /settings [put]
 func (h *SettingsHandler) UpdateSettings(c echo.Context) error {
-	stored, err := settings.Load(h.db)
+	stored, err := settings.LoadOpened(h.db, h.cipher)
 	if err != nil {
 		h.logger.Error("failed to read the settings", logid.SettingsReadFailed.Field(), zap.Error(err))
 		return failure(c, http.StatusInternalServerError, errSettingsReadFailed)
@@ -543,7 +544,7 @@ func (h *SettingsHandler) UpdateSettings(c echo.Context) error {
 		}
 	}
 
-	err = settings.Save(tx, &updated)
+	err = settings.Save(tx, &updated, h.cipher)
 	if err != nil {
 		tx.Rollback()
 		h.logger.Error("failed to store the settings", logid.SettingsStoreFailed.Field(), zap.Error(err))

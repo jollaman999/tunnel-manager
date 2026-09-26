@@ -2256,7 +2256,16 @@ func (h *TransferHandler) ExportSettings(c echo.Context) error {
 		return refused.answer(c)
 	}
 
-	stored, err := settings.Load(h.hosts.db)
+	// The webhook address and the mail settings are opened here and carried
+	// in the clear, for the reason the password of the mail server is below.
+	stored, err := settings.LoadOpened(h.hosts.db, h.hosts.cipher)
+	if errors.Is(err, settings.ErrAlertSecretsDoNotOpen) {
+		h.hosts.logger.Error("a stored secret of the settings does not open with the encryption key in use",
+			logid.TransferSettingsSecretDoesNotOpen.Field(),
+			zap.String("setting", "alert"),
+			zap.Error(err))
+		return failure(c, http.StatusInternalServerError, errExportSealFailed)
+	}
 	if err != nil {
 		h.hosts.logger.Error("failed to read the settings for an export",
 			logid.TransferSettingsReadForExportFailed.Field(),
@@ -2340,7 +2349,10 @@ func (h *TransferHandler) ImportSettings(c echo.Context) error {
 		return refused.answer(c)
 	}
 
-	stored, err := settings.Load(h.hosts.db)
+	// Opened so that a file that leaves the webhook address and the mail
+	// settings out keeps them as they are stored, and so that they are held
+	// against what the file names in the clear.
+	stored, err := settings.LoadOpened(h.hosts.db, h.hosts.cipher)
 	if err != nil {
 		h.hosts.logger.Error("failed to read the settings for an import",
 			logid.TransferSettingsReadForImportFailed.Field(),
@@ -2433,7 +2445,7 @@ func (h *TransferHandler) ImportSettings(c echo.Context) error {
 		}
 	}
 
-	err = settings.Save(tx, &updated)
+	err = settings.Save(tx, &updated, h.hosts.cipher)
 	if err != nil {
 		tx.Rollback()
 		h.hosts.logger.Error("failed to store the imported settings",

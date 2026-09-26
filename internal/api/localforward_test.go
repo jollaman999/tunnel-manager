@@ -62,7 +62,7 @@ func newLocalForwardDB(t *testing.T, hosts []models.Host, forwards []models.Loca
 	stored := settings.Defaults()
 	stored.APIPort = localForwardAPIPort
 
-	err = settings.Save(db, &stored)
+	err = settings.Save(db, &stored, nil)
 	if err != nil {
 		t.Fatalf("failed to store the settings: %v", err)
 	}
