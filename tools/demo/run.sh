@@ -26,7 +26,7 @@ HOST_IP=127.0.0.2
 HOST_SSH_PORT=2222
 # The ports the Host opens for the service ports, one for each. All of them are
 # published out of the container, since tunnel-manager checks from here that
-# each one answers; the recording opens the first.
+# each one answers; the recording opens all of them.
 HOST_OPEN_PORTS=(8080 8081 8082)
 FORWARD_ADDR=127.0.0.1:18080
 SOCKS_ADDR=127.0.0.1:1080
@@ -150,7 +150,6 @@ log "recording"
 	-local-ports "$(join "${HOST_OPEN_PORTS[@]}")" \
 	-host-ip "$HOST_IP" \
 	-host-port "$HOST_SSH_PORT" \
-	-service-url "http://$HOST_IP:${HOST_OPEN_PORTS[0]}/" \
 	-forward-port "${FORWARD_ADDR##*:}" \
 	-socks-port "${SOCKS_ADDR##*:}"
 

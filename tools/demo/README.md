@@ -27,8 +27,10 @@ What it does, in order:
    setup of the account `admin`, three service ports that the Host opens on
    `8080`, `8081` and `8082` (the first at the pace of the rest, the other two
    the same way but quickly), the Host, the approval of its host key, the
-   tunnels coming up, the first service opened through the port the Host opened
-   for it, a local forward on `127.0.0.1:18080` that reaches the web server
+   tunnels coming up, the three services opened through the ports the Host
+   opened for them, `8080`, `8081` and `8082` in turn (the first at the pace of
+   the rest, the other two quickly), each page naming the port of the service it
+   came from, a local forward on `127.0.0.1:18080` that reaches the web server
    inside the Host (the recording does not wait there for its status to say
    connected; it opens the port as soon as the port answers), the status screen
    with the tunnels and the forward in one table, and the SOCKS5 proxy of the
@@ -47,6 +49,11 @@ It needs Go, Docker, ffmpeg and Google Chrome, and these addresses free:
 | `TM_SRC` | The tree tunnel-manager is built from. The repository this script is in when it is not set |
 | `CHROME` | The Chrome executable. `/usr/bin/google-chrome` when it is not set |
 | `DEMO_WORK_PARENT` | Where the work directory is made. `$TMPDIR`, or `/tmp`, when it is not set |
+
+The recorder takes `-pace`, how many times as long every frame of the GIF is
+held as the recording asks for. It is `1.15` when it is not given, which is
+what `run.sh` uses; a larger one makes the whole GIF play slower, a smaller one
+quicker.
 
 The work directory holds the frames, the logs and the data directory of the
 demo installation. It is left in place and its path is the last line the script

@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"net"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -34,7 +35,6 @@ type config struct {
 	hostPort        string
 	hostUser        string
 	hostPassword    string
-	serviceURL      string
 	forwardPort     string
 	targetIP        string
 	targetPort      string
@@ -42,6 +42,7 @@ type config struct {
 	socksURL        string
 	width           int
 	height          int
+	pace            float64
 }
 
 func main() {
@@ -60,7 +61,6 @@ func main() {
 	flag.StringVar(&cfg.hostPort, "host-port", "2222", "SSH port the Host is registered at")
 	flag.StringVar(&cfg.hostUser, "host-user", "demo", "SSH user of the Host")
 	flag.StringVar(&cfg.hostPassword, "host-password", "demo-host-password", "SSH password of the Host")
-	flag.StringVar(&cfg.serviceURL, "service-url", "http://127.0.0.2:8080/", "address the Host opened for the first service port, as a browser reaches it")
 	flag.StringVar(&cfg.forwardPort, "forward-port", "18080", "port the local forward opens on this machine")
 	flag.StringVar(&cfg.targetIP, "target-ip", "127.0.0.1", "address the local forward reaches from the Host")
 	flag.StringVar(&cfg.targetPort, "target-port", "80", "port the local forward reaches from the Host")
@@ -68,10 +68,15 @@ func main() {
 	flag.StringVar(&cfg.socksURL, "socks-url", "http://127.0.0.1/", "address opened through the SOCKS5 proxy, as the Host reaches it")
 	flag.IntVar(&cfg.width, "width", 1440, "viewport width")
 	flag.IntVar(&cfg.height, "height", 900, "viewport height")
+	flag.Float64Var(&cfg.pace, "pace", 1.15, "how many times as long every frame is held as the recording asks for")
 	flag.Parse()
 
 	if cfg.passwordFile == "" {
 		log.Fatal("-initial-password-file is required")
+	}
+
+	if cfg.pace <= 0 {
+		log.Fatal("-pace must be more than 0")
 	}
 
 	cfg.servicePorts = strings.Split(*servicePorts, ",")
@@ -113,7 +118,7 @@ func record(cfg config) error {
 	ctx, cancelTimeout := context.WithTimeout(ctx, 6*time.Minute)
 	defer cancelTimeout()
 
-	r := &recorder{ctx: ctx, dir: cfg.frames, options: options, width: cfg.width, height: cfg.height}
+	r := &recorder{ctx: ctx, dir: cfg.frames, options: options, width: cfg.width, height: cfg.height, pace: cfg.pace}
 
 	if err := chromedp.Run(ctx, chromedp.EmulateViewport(int64(cfg.width), int64(cfg.height))); err != nil {
 		return fmt.Errorf("starting Chrome: %w", err)
@@ -370,32 +375,55 @@ func sceneStatus(r *recorder, cfg config, _ string) error {
 	return nil
 }
 
+// sceneService opens the port the Host opened for each service port, the first
+// at the pace of the rest of the recording and the others quickly, the way
+// sceneServicePort adds them. Each page names the port of the service it was
+// served on.
 func sceneService(r *recorder, cfg config, _ string) error {
-	if err := r.navigate(cfg.serviceURL); err != nil {
-		return err
+	for i, localPort := range cfg.localPorts {
+		address := fmt.Sprintf("http://%s/", net.JoinHostPort(cfg.hostIP, localPort))
+
+		if err := r.navigate(address); err != nil {
+			return err
+		}
+
+		var heading, port string
+
+		if err := r.run(
+			chromedp.WaitVisible(`h1`, chromedp.ByQuery),
+			chromedp.Text(`h1`, &heading, chromedp.ByQuery),
+			chromedp.Text(`main p code`, &port, chromedp.ByQuery),
+		); err != nil {
+			return err
+		}
+
+		if !strings.Contains(heading, "Hello from the service behind the tunnel") {
+			return fmt.Errorf("the page at %s says %q and not the demo service", address, heading)
+		}
+
+		if port != cfg.servicePorts[i] {
+			return fmt.Errorf("the page at %s names port %q and not %s", address, port, cfg.servicePorts[i])
+		}
+
+		caption := "5. A client opens the port on the Host and reaches the service"
+
+		if i > 0 {
+			caption = "5. The other ports on the Host reach the other ports of the service"
+			r.fast = true
+		}
+
+		if err := r.caption(caption); err != nil {
+			return err
+		}
+
+		if err := r.shot(3500 * time.Millisecond); err != nil {
+			return err
+		}
 	}
 
-	if err := r.run(
-		chromedp.WaitVisible(`h1`, chromedp.ByQuery),
-	); err != nil {
-		return err
-	}
+	r.fast = false
 
-	var heading string
-
-	if err := r.run(chromedp.Text(`h1`, &heading, chromedp.ByQuery)); err != nil {
-		return err
-	}
-
-	if !strings.Contains(heading, "Hello from the service behind the tunnel") {
-		return fmt.Errorf("the page at %s says %q and not the demo service", cfg.serviceURL, heading)
-	}
-
-	if err := r.caption("5. A client opens the port on the Host and reaches the service"); err != nil {
-		return err
-	}
-
-	return r.shot(3500 * time.Millisecond)
+	return nil
 }
 
 func sceneLocalForward(r *recorder, cfg config, _ string) error {
@@ -675,6 +703,10 @@ type recorder struct {
 	// fast cuts every hold to a fifth and types a field in one go, for steps
 	// that repeat one the recording has already shown at its own pace.
 	fast bool
+
+	// pace is how many times as long every hold is as the step asks for, so
+	// that the whole recording plays slower or quicker at once.
+	pace float64
 }
 
 func (r *recorder) run(actions ...chromedp.Action) error {
@@ -736,6 +768,8 @@ func (r *recorder) hold(d time.Duration) {
 }
 
 func (r *recorder) held(d time.Duration) time.Duration {
+	d = time.Duration(float64(d) * r.pace)
+
 	if r.fast {
 		return d / 5
 	}
