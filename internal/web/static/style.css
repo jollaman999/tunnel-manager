@@ -877,6 +877,14 @@ h3 {
   gap: 0.5rem;
 }
 
+/* The two test buttons of the alerts card are one run inside the row, so that
+   a row too narrow for all three breaks after Save and not between the tests. */
+.alert-tests {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}
+
 button {
   padding: 0.35rem 0.9rem;
   font: inherit;
@@ -1035,6 +1043,25 @@ button.copy {
 .advice > button.copy {
   display: block;
   margin: 0.3rem 0 0.35rem;
+}
+
+/* Over the PEM the button is a line of its own. It goes above the text rather
+   than under it, where it would sit below a scrolled wall of base64. */
+.pem-box > button.copy {
+  display: block;
+  margin: 0 0 0.5rem;
+}
+
+/* Where a local forward is opened and the address it goes to are each one
+   value, and broken over two lines they read as two. A narrow screen scrolls
+   the table sideways instead, and the copy button stays beside the address. */
+.assign-list[data-list="local-forwards"] td:nth-last-child(5),
+.assign-list[data-list="local-forwards"] td:nth-last-child(4) {
+  white-space: nowrap;
+}
+
+.assign-list[data-list="local-forwards"] td:nth-last-child(4) .copyable {
+  flex-wrap: nowrap;
 }
 
 /* The scroller keeps a wide table inside its own box. Without it the table
@@ -2148,6 +2175,29 @@ input.list-search:focus {
   .page-turn .page-number,
   .page-turn .page-shift {
     min-width: 1.9rem;
+  }
+
+  /* The search box takes the whole width here. Held to the width of a form
+     box it leaves a gap beside it that nothing else fits into, and above the
+     log it is a line of its own. */
+  input.list-search {
+    max-width: none;
+  }
+
+  .log-controls input.list-search {
+    flex-basis: 100%;
+  }
+
+  /* Save has a line to itself and the two tests share the next one half and
+     half, rather than three buttons wrapping into two uneven lines. */
+  .alert-tests {
+    flex: 1 1 100%;
+    flex-wrap: nowrap;
+  }
+
+  .alert-tests > button {
+    flex: 1 1 0;
+    min-width: 0;
   }
 
   /* The log is laid out as blocks rather than as a table at this width.

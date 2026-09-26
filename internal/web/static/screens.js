@@ -7007,8 +7007,13 @@ function alertsCard(set) {
     return sendTestAlert(form, mail, "/api/settings/alert/test-smtp");
   });
 
-  buttons.appendChild(webhook);
-  buttons.appendChild(mail);
+  // The tests are one box, so a narrow row breaks after Save and not between them.
+  const tests = document.createElement("div");
+
+  tests.className = "alert-tests";
+  tests.appendChild(webhook);
+  tests.appendChild(mail);
+  buttons.appendChild(tests);
 
   return form;
 }
@@ -7561,10 +7566,18 @@ function certificatePEM(view) {
   note.textContent = t("certificate.pem.hint");
   box.appendChild(note);
 
+  const pem = view.cert_pem === null || view.cert_pem === undefined
+    ? "" : view.cert_pem;
+
+  // Over the text rather than under it, where it would be past the scroll.
+  const copy = copyButton(pem, t("certificate.copy-pem.aria"));
+  if (copy !== null) {
+    box.appendChild(copy);
+  }
+
   const text = document.createElement("pre");
   text.className = "pem";
-  text.textContent = view.cert_pem === null || view.cert_pem === undefined
-    ? "" : view.cert_pem;
+  text.textContent = pem;
   box.appendChild(text);
 
   return box;
