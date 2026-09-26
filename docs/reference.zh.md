@@ -10,21 +10,27 @@ Tunnel Manager 建立 SSH 隧道，并让它们保持连接。你注册它要登
 
 这里建的是**反向**隧道，也就是说监听套接字开在 Host 上，而不是开在 Tunnel Manager 所在的机器
 上。客户端连接 **Host 的** `local_port`，流量通过 SSH 连接送到 Tunnel Manager，再由它连接
-`service_ip:service_port`，双向转发数据。只有 Tunnel Manager 能访问的服务，就这样变成从 Host
+`service_address:service_port`，双向转发数据。只有 Tunnel Manager 能访问的服务，就这样变成从 Host
 也能访问。只有[本地转发](#本地转发)和 [Host 的 SOCKS5 代理](#host-的-socks5-代理)方向相反：端口开在
 本机上，连接从 Host 那边发出。
 
 | 你注册的内容 | 字段 | 是什么 |
 |--------------|------|--------|
-| Host | `ip`、`port`、`user`、`private_key`、`key_passphrase`、`password`、`description`、`enabled`、`socks_enabled`、`socks_port`、`socks_bind_scope`、`socks_allowed_sources` | Tunnel Manager 要登录的 SSH 服务器。可以用私钥登录，可以用密码登录，也可以两个都注册，但至少要有一个。密钥、密钥的密码和登录密码都加密保存。`socks_` 开头的字段是它可以带的 [SOCKS5 代理](#host-的-socks5-代理)。 |
-| 服务端口 | `service_ip`、`service_port`、`local_port` | 要发布的服务，以及在负责它的每台 Host 上打开的端口。 |
+| Host | `address`、`port`、`user`、`private_key`、`key_passphrase`、`password`、`description`、`enabled`、`socks_enabled`、`socks_port`、`socks_bind_scope`、`socks_allowed_sources` | Tunnel Manager 要登录的 SSH 服务器。可以用私钥登录，可以用密码登录，也可以两个都注册，但至少要有一个。密钥、密钥的密码和登录密码都加密保存。`socks_` 开头的字段是它可以带的 [SOCKS5 代理](#host-的-socks5-代理)。 |
+| 服务端口 | `service_address`、`service_port`、`local_port` | 要发布的服务，以及在负责它的每台 Host 上打开的端口。 |
 | 分配关系 | `host_id`、`sp_id`、`bind_scope` | 一台 Host 配一个服务端口，表示这台 Host 负责它。隧道就是根据它建立的，你注册 Host 或服务端口时它会自动生成。`bind_scope` 是请求把转发端口开在 Host 的哪个范围上，取 `loopback` 或 `wildcard`，不给就是通配范围。 |
-| 本地转发 | `local_port`、`bind_scope`、`target_ip`、`target_port`、`description` | 在本机打开的端口，连到它的连接通过一台 Host 的 SSH 连接送到 Host 眼中的 `target_ip:target_port`。只属于那台 Host。 |
+| 本地转发 | `local_port`、`bind_scope`、`target_address`、`target_port`、`description` | 在本机打开的端口，连到它的连接通过一台 Host 的 SSH 连接送到 Host 眼中的 `target_address:target_port`。只属于那台 Host。 |
 
-`ip` 和 `service_ip` 都收 IPv4 或 IPv6 地址。IPv6 地址照原样写成 `2001:db8::1`，建立连接时需要
-的方括号，由用到这个地址的地方自己补上。带 zone 的写法，像 `fe80::1%eth0`，会被拒绝。
+`address`、`service_address` 以及本地转发的 `target_address` 收主机名或 IPv4、IPv6 地址。名字不是在
+保存时解析，而是每次建立连接时解析，所以一个名字换了地址，从下一次连接起就跟过去。`address` 和
+`service_address` 由本机解析，`target_address` 由 Host 解析。IPv6 地址照原样写成 `2001:db8::1`，
+建立连接时需要的方括号，由用到这个地址的地方自己补上。带 zone 的写法，像 `fe80::1%eth0`，会被拒绝。
 
-**一条分配关系，只要它的 Host 是启用的，就是一条隧道。** 负责三个服务端口的 Host 运行三条隧道，
+**这三个字段在 v3.14.0 之前叫 `ip`、`service_ip` 和 `target_ip`。** 仍然发送旧名字的请求不会被
+悄悄丢掉那个字段，而是以 `400` 和 `request.field_renamed` 拒绝，并指出旧字段和新字段的名字。
+以前的版本导出的文件仍然可以导入：导入时旧名字也会被读取。
+
+**一条分配关系，只要它本身开着、它的 Host 是启用的，就是一条隧道。** 负责三个服务端口的 Host 运行三条隧道，
 一个都不负责的 Host 一条也不运行，保存了多少个服务端口都一样。注册一台 Host 时，现有的服务端口
 全部分配给它；注册一个服务端口时，现有的 Host 全部分配到它，除非请求里另有指定。所以从不修改分配
 关系的安装，运行的仍是原来的全组合。之后要修改一台 Host 负责什么，用 Hosts 页面上那一行里的
@@ -103,7 +109,7 @@ Tunnel Manager 持续比对期望状态和实际状态。
 
 | 状态 | 是什么 | 从哪里来 |
 |------|--------|----------|
-| 期望 | 每台启用的 Host 上，分配给它的每一个服务端口 | `hosts`、`service_ports` 和 `host_service_ports` 里的行 |
+| 期望 | 每台启用的 Host 上，每一条开着的分配关系 | `hosts`、`service_ports` 和 `host_service_ports` 里的行 |
 | 实际 | 此刻正在运行的隧道 | 进程内部的管理器，以及它写下的 `tunnels` 行 |
 
 一次**调谐**把两边比对一遍，再消除差异：期望有而未运行的就启动，运行中但不再期望的就停止，连接
@@ -118,7 +124,7 @@ POST /api/service-port
   201 Created          <- 响应不等待任何隧道
 
 调谐循环
-  期望 = Host 处于启用状态的那些分配关系
+  期望 = 开着的、Host 处于启用状态的那些分配关系
   实际 = 正在运行的隧道
   期望有而未运行    -> 启动
   运行中但不再期望  -> 停止
@@ -146,6 +152,7 @@ POST /api/service-port
 | 注册一台 Host | 那一刻存着的服务端口全部分给它，除非请求把 `assign_all_service_ports` 发成 false |
 | 注册一个服务端口 | 那一刻存着的每台 Host 都分到它，除非请求把 `assign_to_all_hosts` 发成 false |
 | 停用一台 Host | 分配关系保持不变。它的隧道会停止，重新启用就全部恢复 |
+| 关闭一条分配关系 | 它连同范围一起保留。只停它自己的隧道，重新开启就恢复 |
 | 删除一台 Host 或一个服务端口 | 涉及它的分配关系在同一个事务里一起删除 |
 | 加了这张表的那次升级之后的第一次启动 | 每台 Host 分到每一个服务端口 |
 
@@ -234,11 +241,19 @@ Host 上的监听到底会不会开在所请求的地方，由 Host 上的 SSH �
 监控间隔和调谐间隔是两件不同的事。监控是检查一条已建立的隧道是否仍然存活，不存活就重连。调谐
 循环检查的是应有的那一组隧道是否都存在。
 
+**监控等 keepalive 应答的时间等于监控间隔，最短 3 秒。** SSH 服务器是排在这条连接正在承载的流量
+后面回复 keepalive 的，所以在繁忙的线路上，活着的服务器也可能回得慢。这段时间内没有应答，就关掉
+连接重新建立。
+
+**一直失败的连接，每失败一次就多等一些。** 重试之前的第一次等待是监控间隔，之后每连续失败一次，
+下一次等待翻倍，直到 `reconnect_max_interval_sec`（默认 60 秒）为止。连接建立后，等待回到监控间隔。
+上限小于监控间隔时，每次等待都是监控间隔。本地转发和 SOCKS5 代理也一样。
+
 ### 本地转发
 
 **本地转发和隧道方向相反。** 隧道让 Host 打开一个端口，把到达那里的流量送到本机能访问到的服务。
 本地转发则是**本机**打开 `local_port`，把连到它的每个连接通过 Host 的 SSH 连接送到
-`target_ip:target_port`，也就是 Host 能访问到的地址。它做的就是 `ssh -L` 做的事，并像隧道一样
+`target_address:target_port`，也就是 Host 能访问到的地址。它做的就是 `ssh -L` 做的事，并像隧道一样
 持续维护。
 
 ```mermaid
@@ -251,7 +266,7 @@ flowchart LR
     subgraph host ["Host - 你注册的 SSH 服务器"]
         sshd["SSH 服务器"]
     end
-    target[("target_ip:target_port<br/>Host 能访问到的任意地址")]
+    target[("target_address:target_port<br/>Host 能访问到的任意地址")]
 
     tm ==>|"1. 通过 SSH 连接，然后打开 local_port"| sshd
     client -->|"2. 连接 local_port"| port
@@ -275,10 +290,11 @@ Host 的编号是没有缺口的 1、2、3。代价是写在日志或记录里�
 |------|--------|
 | `local_port` | 在本机打开的端口，1 到 65535 |
 | `bind_scope` | 开在本机的哪些地址上，见下文 |
-| `target_ip` | 从 Host 出发连接的地方。IPv4 或 IPv6 地址，不收主机名 |
+| `target_address` | 从 Host 出发连接的地方。由 Host 解析的主机名，或 IPv4、IPv6 地址 |
 | `target_port` | 目标的端口，1 到 65535 |
 | `description` | 自由文本 |
 | `enabled` | 是否运行。创建时不带就是运行的本地转发，修改时不带就保持已保存的值 |
+| `allowed_sources` | 允许连到 `local_port` 的地址。留空放行所有地址。创建时不带就是空，修改时不带就保持已保存的值 |
 
 **这里的 `bind_scope` 说的是本机，不是 Host。** 它和分配关系收同样的两个词，指的也是同样的地址对。
 
@@ -288,8 +304,16 @@ Host 的编号是没有缺口的 1、2、3。代价是写在日志或记录里�
 | `loopback` | `127.0.0.1` 和 `::1` |
 
 **通配范围会让本机成为通往 Host 那边网络的一扇门。** 任何能连到本机 `local_port` 的人，不用登录
-Host 就能到达 Host 眼中的 `target_ip:target_port`，因为 SSH 登录已经由 tunnel-manager 做过了。
+Host 就能到达 Host 眼中的 `target_address:target_port`，因为 SSH 登录已经由 tunnel-manager 做过了。
 除非本机以外的地方要用这个转发，否则请选 `loopback`；要用的话，请在这个端口前面加防火墙。
+
+**`allowed_sources` 限定谁能连到通配范围上的本地转发。** 它收的和
+[SOCKS5 代理](#host-的-socks5-代理)的 `socks_allowed_sources` 一样：IPv4、IPv6 地址和 CIDR 块，用
+逗号或空格隔开，如 `192.0.2.0/24, 198.51.100.7`；读不通的值以 `400` 和
+`local_forward.allowed_sources.invalid` 拒绝。留空就放行所有地址，这个字段出现之前保存的本地转发
+都是这样。不在列表里的地址来的客户端，在为它连接任何东西之前就被关掉；拒绝记录为
+`tunnel.local_forward_source_refused`，每个本地转发每分钟最多一条。列表在两种范围上都生效，但表单
+只在通配范围时询问，以 `loopback` 保存会清空列表。
 
 地址对里的两个地址会各按自己的地址族去打开，**只要打开一个就继续**：没有 IPv6 的机器只打开 IPv4
 那一半。两个都打不开时，比如端口被别的程序占着，它会报 `error` 并重试。在 Windows 上，wildcard
@@ -311,12 +335,13 @@ Host 就能到达 Host 眼中的 `target_ip:target_port`，因为 SSH 登录已�
 
 **本地转发只在它自己开启、而且它的 Host 启用时运行。** 关闭后，下一次调谐会停掉它：关掉端口，
 断开 SSH 连接。调谐循环像对待隧道一样启动、重建和停止本地转发：一行就是
-它自己的一条 SSH 连接，Host、登录凭据、信任的主机密钥、端口、范围、目标中任何一个变了，就停掉
+它自己的一条 SSH 连接，Host、登录凭据、信任的主机密钥、端口、范围、目标、允许的来源地址中任何一个变了，就停掉
 再启动。只改描述不会重建任何东西。
 
 **`local_port` 只在 SSH 连接存在时打开。** 连接建好后才打开，连接一断就关掉，所以在没有 Host
 可以承载时连进来的客户端会被直接拒绝，而不是先被接受再被断开。连接像隧道一样每个监控间隔检查
-一次，断开的连接在同样一个间隔之后重连。
+一次，断开的连接在同样一个间隔之后重连，尝试一直失败时则等得更久，见
+[一条隧道的全过程](#一条隧道的全过程)。
 
 **登录被拒和主机密钥被拒时会停下。** 用同样的密码或密钥重试也只会同样失败，所以它会一直等到
 构建它的东西有了变化：给 Host 换上新的登录凭据，或者批准密钥，见[主机密钥的批准](#主机密钥的批准)。
@@ -333,7 +358,7 @@ Host 就能到达 Host 眼中的 `target_ip:target_port`，因为 SSH 登录已�
 | `starting` | 正在建立第一次连接 |
 | `connected` | SSH 连接存在，`local_port` 已打开 |
 | `reconnecting` | 连接断了或尝试失败了，正在重新连接。`retry_count` 是次数 |
-| `error` | 上一次尝试失败了，原因在 `last_error`。登录被拒时会停在这里直到修改 Host；其他情况会在监控间隔之后重试 |
+| `error` | 上一次尝试失败了，原因在 `last_error`。登录被拒时会停在这里直到修改 Host；其他情况会在监控间隔之后重试，每连续失败一次等待翻倍，直到 `reconnect_max_interval_sec` |
 | `host_key_unapproved`、`host_key_mismatch` | 和隧道一样，主机密钥被拒绝了。会停在这里直到批准密钥 |
 
 **状态保存在运行本地转发的那个进程的内存里**，本地转发的接口和 `GET /api/status` 都会返回
@@ -428,7 +453,7 @@ SSH 服务器不允许，其他情况则是一般性失败。从 Host 发起的�
 来源地址，或者 Host 的地址、登录凭据、信任的主机密钥变了，就停掉再启动，经过它的连接也随之断开。
 
 **`socks_port` 只在 SSH 连接存在时打开**，和 `local_port` 一样：连接建好后才打开，断开就关掉，
-在监控间隔之后重连。登录被拒和主机密钥被拒时，会停下来直到构建它的东西有了变化，见
+在监控间隔之后重连，连续失败时和本地转发一样等得更久。登录被拒和主机密钥被拒时，会停下来直到构建它的东西有了变化，见
 [主机密钥的批准](#主机密钥的批准)。
 
 状态放在 Host 的 `socks_status` 里，旁边是 `socks_last_error`。Hosts 页面在 **SOCKS5 代理** 一栏
@@ -914,11 +939,11 @@ curl -s -b cookies.txt -X PUT "$BASE/api/account" \
 
 | 页面 | 路径 | 显示什么、能做什么 |
 |------|------|--------------------|
-| Status | `/ui/status` | 四个计数（期望、已连接、重连中、出错，四个都把两种转发合在一起数）、一句话说明它们之间的差是怎么回事，以及两种行各占一行：Host、种类、服务端口、状态、服务器、开在哪、连到哪、端口是否可达、重试次数、上次连上的时间。本地转发那一行的服务端口一栏是 `-`，开在哪和连到哪两栏里还写着那个地址属于哪一台机器，因为两种转发打开端口的那一端正好相反。端口是否可达这一栏两种行上都会填，而且问的不是同一件事：在隧道上问的是开在 Host 上的那个端口，在本地转发上问的是从 Host 那边连到的目标。出了问题的隧道会在它下面横跨整张表再加一行写清哪里不对；转发端口无法连接的隧道，多出来的那一行写的是要在它指出的那台 SSH 服务器上修改什么、还要检查什么。已建立的隧道，下面还会写出关于这条转发的地址已知的信息，把请求过的、SSH 服务器应答的、从这里发起的连接确认过的分开来写；它从不说端口是开着的。这些行是一页一页出的，一开始每页十行，页大小和页码在表格上方选；计数始终是整套安装的计数，不是这一页的。它每 5 秒刷新一次，刷新后仍停在你正在看的那一页。 |
-| Hosts | `/ui/hosts` | 每台 Host 一行，有 ID、IP、端口、用户、描述、是否启用、SOCKS5 代理和更新时间。行是一页一页出的，一开始每页十行，页大小（10、20、30、50 或 100）和页码在表格上方选。这个选择只记在这个页面上，而短到一页最小页大小就放得下的列表，索性连控件都不显示。可以添加 Host、编辑、启用或停用、删除。添加和编辑表单里有粘贴私钥的框、拖放密钥文件的区域，还有给带密码的密钥填密码的框；添加表单里有一个默认勾上的 **Assign all service ports**，它决定这台 Host 一开始负责什么，旁边的 **在 Host 上的可达范围** 列表则是这个勾选所建立的全部分配关系的起点范围。行里的 **Service ports** 会打开一个面板，列出所有服务端口，这台 Host 负责的那些已勾选，每一行旁边还有它的可达范围：可以在上方选一个范围套用到所有勾选的行，也可以单独改一行，没勾的行不会被动；保存时只发送改动过的部分，所以在这个面板里勾选一项，不会影响你没有查看的那些页。行里的 **Local forwards** 会打开一个面板，一页一页地列出这台 Host 的本地转发及各自的状态，在那里添加、修改、开启和关闭、删除，可以一行一行地做，也可以对勾选的行一起做，见[本地转发](#本地转发)。添加和编辑表单还能开启这台 Host 的 SOCKS5 代理，那一栏显示端口和状态，见 [Host 的 SOCKS5 代理](#host-的-socks5-代理)。 |
-| Service Ports | `/ui/service-ports` | 每个服务端口一行，有 ID、服务 IP、服务端口、本地端口、描述和更新时间。行和 Hosts 一样是一页一页出的，页大小和页码各记各的。可以添加、编辑和删除。添加表单里有一个默认勾上的 **Assign to all hosts**，它决定一开始哪些 Host 负责它，旁边的 **在 Host 上的可达范围** 列表则是这个勾选所建立的分配关系的起点范围；之后哪些 Host 负责它、每条分配关系各能到多远，都在 Hosts 页面上修改。 |
+| Status | `/ui/status` | 四个计数（期望、已连接、重连中、出错，四个都把两种转发合在一起数）、一句话说明它们之间的差是怎么回事，以及两种行各占一行：Host、种类、服务端口、状态、服务器、开在哪、连到哪、端口是否可达、重试次数、上次连上的时间。本地转发那一行的服务端口一栏是 `-`，开在哪和连到哪两栏里还写着那个地址属于哪一台机器，因为两种转发打开端口的那一端正好相反。端口是否可达这一栏两种行上都会填，而且问的不是同一件事：在隧道上问的是开在 Host 上的那个端口，在本地转发上问的是从 Host 那边连到的目标。出了问题的隧道会在它下面横跨整张表再加一行写清哪里不对；转发端口无法连接的隧道，多出来的那一行写的是要在它指出的那台 SSH 服务器上修改什么、还要检查什么。已建立的隧道，下面还会写出关于这条转发的地址已知的信息，把请求过的、SSH 服务器应答的、从这里发起的连接确认过的分开来写；它从不说端口是开着的。这些行是一页一页出的，一开始每页十行，页大小和页码在表格上方选；计数始终是整套安装的计数，不是这一页的。它每 5 秒刷新一次，刷新后仍停在你正在看的那一页。表格上方的搜索框可以缩小行，见[搜索](#搜索)。 |
+| Hosts | `/ui/hosts` | 每台 Host 一行，有 ID、地址、端口、用户、描述、是否启用、SOCKS5 代理和更新时间。行是一页一页出的，一开始每页十行，页大小（10、20、30、50 或 100）和页码在表格上方选。这个选择只记在这个页面上，而短到一页最小页大小就放得下的列表，索性连控件都不显示。可以添加 Host、编辑、启用或停用、删除。添加和编辑表单里有粘贴私钥的框、拖放密钥文件的区域，还有给带密码的密钥填密码的框；添加表单里有一个默认勾上的 **Assign all service ports**，它决定这台 Host 一开始负责什么，旁边的 **在 Host 上的可达范围** 列表则是这个勾选所建立的全部分配关系的起点范围。行里的 **Service ports** 会打开一个面板，列出所有服务端口，这台 Host 负责的那些已勾选，每一行旁边还有它的可达范围：可以在上方选一个范围套用到所有勾选的行，也可以单独改一行，没勾的行不会被动；每一行的 **启用** 勾选框可以暂停这条分配关系的隧道而不拿走它；保存时只发送改动过的部分，所以在这个面板里勾选一项，不会影响你没有查看的那些页。行里的 **Local forwards** 会打开一个面板，一页一页地列出这台 Host 的本地转发及各自的状态，在那里添加、修改、开启和关闭、删除，可以一行一行地做，也可以对勾选的行一起做，见[本地转发](#本地转发)。添加和编辑表单还能开启这台 Host 的 SOCKS5 代理，那一栏显示端口和状态，见 [Host 的 SOCKS5 代理](#host-的-socks5-代理)。 |
+| Service Ports | `/ui/service-ports` | 每个服务端口一行，有 ID、服务地址、服务端口、本地端口、描述和更新时间。行和 Hosts 一样是一页一页出的，页大小和页码各记各的。可以添加、编辑和删除。添加表单里有一个默认勾上的 **Assign to all hosts**，它决定一开始哪些 Host 负责它，旁边的 **在 Host 上的可达范围** 列表则是这个勾选所建立的分配关系的起点范围；之后哪些 Host 负责它、每条分配关系各能到多远，都在 Hosts 页面上修改。Hosts 和 Service Ports 页面的表格上方各有一个搜索框，见[搜索](#搜索)。 |
 | Logs | `/ui/logs` | 日志文件的末尾，最新的在最下面，可以按级别过滤，也可以选看多少行。它每 5 秒刷新一次。它读的是进程此刻正在写的那个文件，轮转后的文件不显示。行按页面的语言显示，文件本身还是英文；见[页面的语言](#页面的语言)。 |
-| Settings | `/ui/settings` | 已经保存但还没生效的设置，那张卡片里有一个让它们生效的 Restart；所有已保存的设置，以及一次保存改了什么（没选过语言的浏览器看本安装用哪种语言，也在这里）；正在使用的证书，带一个重新生成它的按钮和两个注册你自己证书的框；这个账号的用户名和密码；把隧道配置和管理器的设置各加密成一个文件导出，以及把这样的文件导回来的导入；一个停止服务再重新启动的 Restart；还有最下面的卸载。见[设置](#设置)。 |
+| Settings | `/ui/settings` | 已经保存但还没生效的设置，那张卡片里有一个让它们生效的 Restart；所有已保存的设置，以及一次保存改了什么（没选过语言的浏览器看本安装用哪种语言，以及各带一个测试按钮的 webhook 和邮件告警，也在这里，见[告警](#告警)）；正在使用的证书，带一个重新生成它的按钮和两个注册你自己证书的框；这个账号的用户名和密码；把隧道配置和管理器的设置各加密成一个文件导出，以及把这样的文件导回来的导入；一个停止服务再重新启动的 Restart；还有最下面的卸载。见[设置](#设置)。 |
 | Update | `/ui/update` | 本安装正在运行的版本，与最新发布并排显示，以及决定是否再去查看这两者的两个设置。最新发布是按计时读取的，不是在打开页面时读取，所以打开页面不会给发布 API 带来负担；要立刻读取就按按钮。若发布更新，且本进程是由服务注册启动的，页面会给出安装按钮，它会要求账户密码，并在最后重启服务。参见[更新](#更新)。 |
 | Manual | `/ui/manual` | 一套安装由什么组成，在一个页面上用图和文字讲清楚：它做什么、一条隧道的完整流程、Host 和服务端口以及它们之间的分配关系、转发端口无法连接意味着什么、那两个间隔，还有文件放在哪里。它不向服务器请求任何数据，所以登录页面也能显示同样的内容。 |
 | Login | `/ui/login` | 没有会话的客户端会落到这里。第一次登录时用户名留空。账号还没有用户名时，它会把你带到初始化页面。上面的 **Manual** 按钮会把手册作为面板盖在它上面打开，不需要会话，因为最需要手册的时刻，正是什么都还没运行起来的时候。 |
@@ -936,8 +961,8 @@ Português (Brasil)、Русский、العربية、हिन्दी、Ti�
 页面会跟着翻转。没选过语言的浏览器看哪种语言，是本安装的一项设置；那项设置和语言按什么
 顺序决定，见[页面的语言](#页面的语言)。
 
-表单在发出去之前先检查输入。端口只收数字，必须在 1 到 65535 之间；IP 框只收地址里会出现的
-字符，而且要能读成 IPv4 或 IPv6 地址。哪里不对就写在哪个字段旁边，改对之前什么都不会离开浏览器。
+表单在发出去之前先检查输入。端口只收数字，必须在 1 到 65535 之间；地址框只收字母、数字、
+连字符、点和冒号，而且要能读成主机名、IPv4 或 IPv6 地址。哪里不对就写在哪个字段旁边，改对之前什么都不会离开浏览器。
 
 **拖进来的密钥文件是在浏览器里读的。** 发出去的是密钥的文本，和粘贴进去完全一样；文件本身不会
 上传。超过私钥可能大小的文件，或者拖进来的根本不是文件，都会被拒绝，理由写在拖放区
@@ -1006,6 +1031,7 @@ Settings 页面。同样的值通过 `GET /api/settings` 和 `PUT /api/settings`
 | API port | `api_port` | `api.port` | `8888` | 下次启动 |
 | Serve over HTTPS | `api_https_enabled` | `api.https_enabled` | `true` | 下次启动 |
 | Monitoring interval (seconds) | `monitoring_interval_sec` | `monitoring.interval_sec` | `5` | 下次启动 |
+| 重连最长等待（秒） | `reconnect_max_interval_sec` | `monitoring.reconnect_max_interval_sec` | `60` | 下次启动 |
 | Reconcile interval (seconds) | `reconcile_interval_sec` | `reconcile.interval_sec` | `5` | 下次启动 |
 | Encryption key file | `security_key_file` | `security.key_file` | `keys/tunnel-manager.key` | 下次启动 |
 | Log level | `logging_level` | `logging.level` | `info` | **保存的那一刻** |
@@ -1019,8 +1045,19 @@ Settings 页面。同样的值通过 `GET /api/settings` 和 `PUT /api/settings`
 | 查看是否有新发布 | `update_check_enabled` | `update.check_enabled` | `true` | **保存的那一刻** |
 | 查看间隔（小时） | `update_check_interval_hours` | `update.check_interval_hours` | `24` | **保存的那一刻** |
 | 自动安装新发布 | `update_auto_install` | `update.auto_install` | `false` | **保存的那一刻** |
+| 告警等待时间（秒） | `alert_after_sec` | `alert.after_sec` | `300` | **保存的那一刻** |
+| Webhook URL | `alert_webhook_url` | `alert.webhook_url` | 空，即 webhook 关闭 | **保存的那一刻** |
+| 邮件服务器 | `smtp_host` | `alert.smtp.host` | 空，即邮件关闭 | **保存的那一刻** |
+| 邮件服务器端口 | `smtp_port` | `alert.smtp.port` | `587` | **保存的那一刻** |
+| 连接安全 | `smtp_security` | `alert.smtp.security` | `starttls` | **保存的那一刻** |
+| 登录方式 | `smtp_auth` | `alert.smtp.auth` | `plain` | **保存的那一刻** |
+| 用户名 | `smtp_username` | `alert.smtp.username` | 空 | **保存的那一刻** |
+| 密码 | `smtp_password` | `alert.smtp.password` | 无 | **保存的那一刻** |
+| 发件地址 | `smtp_from` | `alert.smtp.from` | 空 | **保存的那一刻** |
+| 收件地址 | `smtp_to` | `alert.smtp.to` | 空 | **保存的那一刻** |
+| 不检查邮件服务器的证书 | `smtp_skip_verify` | `alert.smtp.skip_verify` | `false` | **保存的那一刻** |
 
-**保存的那一刻就生效的设置有两项：日志级别和语言。** 日志级别会传给启动时创建的每一个
+**保存的那一刻就生效的设置是：日志级别、语言、三项更新设置和告警设置。** 告警设置每次检查时都重新读取，见[告警](#告警)。 日志级别会传给启动时创建的每一个
 日志器，包括数据库用来报告自己语句的那个，而这通常正是开 `debug` 想看的另一半。语言这个进程
 本身不读取：是浏览器在读，从保存它的那次请求的响应里读，之后每次读取也都读得到，所以没有什么
 需要靠重启来生效。空的语言是一个值，不是没填：它的意思是本安装不指定语言，浏览器显示它自己
@@ -1033,12 +1070,19 @@ Settings 页面。同样的值通过 `GET /api/settings` 和 `PUT /api/settings`
 |------|------|
 | `api_port` | 1 到 65535。改成某个本地转发或 SOCKS5 代理打开的端口会被 `409` 拒绝，见[本地转发](#本地转发) |
 | `monitoring_interval_sec`、`reconcile_interval_sec` | 大于零 |
+| `reconnect_max_interval_sec` | 1 到 3600 |
 | `security_key_file`、`logging_file_path` | 不能为空，而且要是数据库文件所在的目录底下的路径：绝对路径和用 `..` 爬出去的路径都会被拒绝。见[文件放在哪里](#文件放在哪里) |
 | `logging_level` | `debug`、`info`、`warn`、`error`、`dpanic`、`panic` 或 `fatal` |
 | `logging_format` | `json` 或 `console` |
 | `logging_file_max_size`、`logging_file_max_backups`、`logging_file_max_age` | 零或更大 |
 | `ui_default_language` | 空，或者 `en`、`ko`、`ja`、`zh`、`es`、`fr`、`de`、`pt-BR`、`ru`、`ar`、`hi`、`vi`、`th` 中的一个，一字不差：`EN` 和 `ko-KR` 都会被拒绝 |
 | `update_check_interval_hours` | 1 到 8760。0 是被拒绝而不是被当作关闭：0 会让计时器以能重新装填的速度不断发出请求，而对面是一个会计数的 API。要关闭请用 `update_check_enabled` |
+| `alert_after_sec` | 10 到 86400 |
+| `alert_webhook_url` | 空，或不超过 2048 个字符的 `http://` 或 `https://` 地址 |
+| `smtp_port` | 1 到 65535 |
+| `smtp_security` | `none`、`starttls` 或 `tls` |
+| `smtp_auth` | `none`、`plain` 或 `login` |
+| `smtp_from`、`smtp_to` | 邮件地址，`smtp_to` 可用逗号隔开写多个。设了 `smtp_host` 时两者都必填；`smtp_auth` 不是 `none` 时 `smtp_username` 也必填 |
 
 ```bash
 curl -s -b cookies.txt -X PUT "$BASE/api/settings" \
@@ -1096,6 +1140,79 @@ curl -s -b cookies.txt "$BASE/api/settings"
 落在那个端口上时 `reused_previous` 记为 `true`。这个端口不会被保存：下次启动仍先尝试保存的端口，在那之前
 `pending_restart` 会列出 `api.port`，`running` 是实际在用的端口。如果 Docker 按端口号发布了
 端口，或者防火墙按端口号放行，改用的端口从外面可能访问不到，这时请腾出保存的端口再重启。
+
+### 告警
+
+**隧道、本地转发或 SOCKS5 代理在 `alert_after_sec`（默认 300 秒）内一直没有连接时发出告警，重新
+连上后再发一次。** 设置在设置页面的 **告警** 卡片里，webhook 和邮件分开开启：保存了 webhook URL
+就开启 webhook，填了邮件服务器就开启邮件。两个都没有时，什么都不监视。
+
+监视的是所有正在运行的转发，每 5 秒读一次状态页面显示的同一份状态。`connected` 以外的状态都算
+断开，`starting`、`reconnecting`、`error` 和被拒的主机密钥都算。一次断开对应一个 `down` 和一个
+`up`。被关闭、被删除或所在 Host 被停用的转发不算断开，不发 `up` 就忘掉。发过什么只记在内存里，
+所以重启后从头计算：重启后仍断开的转发，等待时间过后会再告警一次；服务停着期间恢复的转发收不到
+`up`。告警关闭期间开始的断开，从开启告警那一刻起计算。
+
+**webhook 收到的是这段 JSON**，以 `Content-Type: application/json` POST。2xx 以外的响应算失败，
+每次 POST 给 10 秒，不重发，失败记入日志。
+
+```json
+{
+  "event": "down",
+  "kind": "service_port",
+  "host": "192.0.2.10",
+  "local_port": 18080,
+  "since": "2026-09-26T01:02:03Z",
+  "last_error": "<转发最后报告的错误>",
+  "installation": "<本机的主机名>"
+}
+```
+
+| 字段 | 是什么 |
+|------|--------|
+| `event` | `down`、`up`，以及测试按钮发的 `test` |
+| `kind` | `service_port`、`local_forward` 或 `socks` |
+| `host` | 这个转发经过的 Host 的地址 |
+| `local_port` | 这个转发打开的端口：服务端口开在 Host 上，本地转发和 SOCKS5 代理开在本机 |
+| `since` | 第一次看到它没有连接的时间，UTC 的 RFC 3339；`up` 带的是它所对应的 `down` 的同一个时间 |
+| `last_error` | 断开期间看到的最后一个错误 |
+| `installation` | 本机的主机名，用来区分多套安装发到同一处的告警 |
+
+**邮件是带同样字段的纯文本消息**，主题形如
+`[tunnel-manager <installation>] DOWN: <kind> <local_port> on <host>`。连接安全默认是 587 端口的
+`starttls`，另有 `tls`（465）和 `none`；服务器不提供 STARTTLS 时 `starttls` 会失败。登录方式默认是
+`plain`，另有 `login` 和 `none`。除非邮件服务器就是本机，否则不会在没有 TLS 的连接上发送密码。
+除非打开 `smtp_skip_verify`，否则会检查服务器的证书；打开后，本机和服务器之间的任何人都能读到
+密码。每封邮件给 30 秒。
+
+**告警发往哪里是加密保存的。** 邮件密码，以及 webhook URL、邮件服务器、它的端口、用户名和两个
+地址，都先用[加密密钥](#加密密钥)加密再保存。等待时间、连接安全、登录方式和是否检查证书按原样
+保存。
+
+**webhook URL 和邮件密码只能写入。** `GET /api/settings` 以 `alert_webhook_url_set` 和
+`smtp_password_set` 代替它们的值返回，保存响应的改动列表里所有加密保存的设置也都被遮住。保存时
+不带其中之一或发送空值，保存的值不变；把 `alert_webhook_url_clear` 或 `smtp_password_clear` 设为
+true 则删除它。
+
+**改了邮件的发送目标，就要再给一次密码。** 保存着密码时，修改 `smtp_host`、`smtp_port`、
+`smtp_username` 或 `smtp_security`，或者打开 `smtp_skip_verify` 的保存或测试，必须同时带上
+`smtp_password`，否则以 `400` 和 `settings.smtp_password.required` 拒绝。不这样的话，一个请求体
+就能写上别的服务器，让保存的密码发过去。这样的请求体如果关闭了登录或清除了密码，则改为删除保存
+的密码。
+
+**两个测试按钮立即发出一条 `test` 告警**：`POST /api/settings/alert/test-webhook` 和
+`POST /api/settings/alert/test-smtp`。它们收的请求体和 `PUT /api/settings` 一样，叠加在已保存的
+设置上，所以页面上的值可以在保存之前先试，而且什么都不保存。webhook 或邮件服务器没有接收告警时
+返回 `502`，原因在 `error_args.reason` 里。
+
+```bash
+curl -s -b cookies.txt -X POST "$BASE/api/settings/alert/test-webhook" \
+  -H 'Content-Type: application/json' \
+  -H "X-CSRF-Token: $CSRF" \
+  -d '{"alert_webhook_url":"https://hooks.example.com/tunnel-manager"}'
+```
+
+设置导出会把告警设置，包括 webhook URL 和邮件密码，以明文放进加密的文件里，和放 Host 的密码一样。
 
 ### 重启服务
 
@@ -1313,12 +1430,12 @@ curl -s -b cookies.txt "$BASE/api/status"
 curl -s -b cookies.txt -X POST "$BASE/api/host" \
   -H 'Content-Type: application/json' \
   -H "X-CSRF-Token: $CSRF" \
-  -d '{"ip":"192.0.2.10","port":22,"user":"ubuntu","password":"<host-password>","description":"example"}'
+  -d '{"address":"192.0.2.10","port":22,"user":"ubuntu","password":"<host-password>","description":"example"}'
 
 curl -s -b cookies.txt -X POST "$BASE/api/service-port" \
   -H 'Content-Type: application/json' \
   -H "X-CSRF-Token: $CSRF" \
-  -d '{"service_ip":"198.51.100.20","service_port":8080,"local_port":18080}'
+  -d '{"service_address":"198.51.100.20","service_port":8080,"local_port":18080}'
 
 # 5. 脚本结束时退出登录。
 curl -s -b cookies.txt -X POST "$BASE/api/logout" -H "X-CSRF-Token: $CSRF"
@@ -1349,6 +1466,7 @@ curl -s -b cookies.txt -X POST "$BASE/api/setup" \
 | `403 The account setup is not finished...` | 账号还没有用户名。先调 `POST /api/setup`。 |
 | `401 Invalid username or password` | 登录被拒。它故意不说是两者中的哪一个错了。 |
 | `400 The settings are refused: ...` | 某项设置违反了上面的规则。没有保存任何内容。 |
+| `400 The field ip was renamed to address. Send address instead` | 请求体仍用 v3.14.0 之前的名字（`ip`、`service_ip` 或 `target_ip`）写字段，`error_code` 是 `request.field_renamed`。没有保存任何内容。 |
 | `401 The password does not open this account` | 卸载时密码错误。没有停止任何隧道，也没有删除任何文件。 |
 
 每个响应的结构都一样：`{"success":true,"data":...}` 或 `{"success":false,"error":"..."}`。
@@ -1576,6 +1694,25 @@ curl -s -b cookies.txt "$BASE/api/host?page=2&size=20"
 curl -s -b cookies.txt "$BASE/api/status?page=99999&size=10"
 ```
 
+### 搜索
+
+**`q` 把同样这三个列表缩小到包含这段文字的行。** 没有 `q` 或 `q` 为空时不缩小。ASCII 字母不分
+大小写；端口按写出来的文字匹配，所以 `22` 也能找到 `2222` 端口的 Host；`%` 和 `_` 按字面处理，
+不是通配符。Hosts、Service Ports 和状态页面表格上方的搜索框发送的就是它。
+
+| 列表 | 在哪里找 `q` |
+|------|--------------|
+| `GET /api/host` | 地址、用户、描述和 SSH 端口 |
+| `GET /api/service-port` | 服务地址、服务端口、本地端口和描述 |
+| `GET /api/status` | Host 的地址和描述，以及这一行的开在哪、连到哪两个地址 |
+
+页是从匹配的行里切出来的，所以前两个列表的 `total` 和状态的 `total_rows` 是匹配的行数。
+`GET /api/status` 的四个计数仍然是整套安装的计数。
+
+```bash
+curl -s -b cookies.txt "$BASE/api/host?q=example&page=1&size=20"
+```
+
 ### 账号
 
 | 方法 | 路径 | 做什么 |
@@ -1592,7 +1729,7 @@ curl -s -b cookies.txt "$BASE/api/status?page=99999&size=10"
 | 方法 | 路径 | 做什么 |
 |------|------|--------|
 | `POST` | `/api/host` | 创建一台 Host。`enabled` 可以不填，未指定时 Host 为启用状态；`bind_scope` 是这次请求所建立的分配关系开在哪个范围上 |
-| `GET` | `/api/host` | Host 的一页，旧的在前。收 `page` 和 `size`，见[分页](#分页) |
+| `GET` | `/api/host` | Host 的一页，旧的在前。收 `page` 和 `size`，见[分页](#分页)；也收 `q`，见[搜索](#搜索) |
 | `GET` | `/api/host/:id` | 读一台 Host |
 | `PUT` | `/api/host/:id` | 更新一台 Host。每个字段都可以不填；`enabled` 为 false 会停止它的隧道 |
 | `DELETE` | `/api/host/:id` | 删除一台 Host，以及涉及它的分配关系和它的本地转发 |
@@ -1605,7 +1742,7 @@ curl -s -b cookies.txt "$BASE/api/status?page=99999&size=10"
 
 | 字段 | 创建时 | 更新时 |
 |------|--------|--------|
-| `ip`、`port`、`user` | 必填 | 可不填；没写的保持原样 |
+| `address`、`port`、`user` | 必填。`address` 是主机名或 IP 地址 | 可不填；没写的保持原样 |
 | `private_key` | PEM 私钥文件的文本内容。给了 `password` 就可以不填 | 空的或者没发，保留已保存的密钥。发送的密钥会把已保存的密钥连同它的密码一起替换 |
 | `key_passphrase` | 只有带密码保护的密钥才要填 | 跟着它所属的密钥一起发。单独发而没有 `private_key`，会被拒绝 |
 | `password` | 给了 `private_key` 就可以不填 | 空的或者没发，保留已保存的密码 |
@@ -1640,7 +1777,7 @@ Host 本身不持有范围，所以 `PUT /api/host/:id` 不读这个字段，任
 # 一台用密钥登录的 Host。密钥是按文件的文本内容发的，所以里面的换行必须原样保留：
 # 这里用 jq 来读文件。
 jq -n --arg key "$(cat ~/.ssh/id_ed25519)" \
-  '{ip:"192.0.2.10",port:22,user:"ubuntu",private_key:$key,description:"example"}' |
+  '{address:"192.0.2.10",port:22,user:"ubuntu",private_key:$key,description:"example"}' |
 curl -s -b cookies.txt -X POST "$BASE/api/host" \
   -H 'Content-Type: application/json' \
   -H "X-CSRF-Token: $CSRF" \
@@ -1673,9 +1810,9 @@ curl -s -b cookies.txt -X PUT "$BASE/api/host/3" \
   "success": true,
   "data": {
     "items": [
-      { "id": 1, "service_ip": "198.51.100.20", "service_port": 8080,
+      { "id": 1, "service_address": "198.51.100.20", "service_port": 8080,
         "local_port": 18080, "description": "", "assigned": true,
-        "bind_scope": "wildcard" }
+        "bind_scope": "wildcard", "enabled": true }
     ],
     "total": 1,
     "page": 1,
@@ -1686,7 +1823,7 @@ curl -s -b cookies.txt -X PUT "$BASE/api/host/3" \
 
 行上的 `bind_scope` 是这台 Host 的这条分配关系开在哪个范围上。**这台 Host 不负责的行上它是
 空值**：范围由分配关系持有，所以没有分配关系的服务端口就没有范围，界面在那里将要建立的行，在你
-另选之前从通配范围出发。
+另选之前从通配范围出发。`enabled` 是这条分配关系的隧道是否运行，在这台 Host 不负责的行上是 false。
 
 **`PUT /api/host/:id/service-port` 收的是改动，不是整套。** 列表是一页一页提供的，客户端手里
 只有一页，对没读到的那些页上的行一无所知；从那里发出的“整套”只能包含这一页，而这一页之外的
@@ -1700,7 +1837,7 @@ curl -s -b cookies.txt -X PUT "$BASE/api/host/1/service-port" \
 ```
 
 ```json
-{ "success": true, "data": { "added": 2, "removed": 1, "rescoped": 1 } }
+{ "success": true, "data": { "added": 2, "removed": 1, "rescoped": 1, "switched": 0 } }
 ```
 
 | 字段 | 做什么 |
@@ -1709,6 +1846,8 @@ curl -s -b cookies.txt -X PUT "$BASE/api/host/1/service-port" \
 | `remove` | 要从这台 Host 拿走的服务端口 |
 | `rescope` | 要移到 `bind_scope` 上的分配关系，同样按 id 指定。这台 Host 不负责的 id 不会移动任何行 |
 | `bind_scope` | 取 `loopback` 或 `wildcard`，不填就是通配范围。它是 `add` 写入的行的起点，也是 `rescope` 指名的行要移到的地方 |
+| `switch` | 要切换到 `enabled` 的分配关系，同样按 id 指定。这台 Host 不负责的 id 不会切换任何行，不带 `enabled` 的请求也不会切换任何行 |
+| `enabled` | `add` 写入的行是否运行，以及 `switch` 指名的行要切换成什么。不填时 `add` 的行运行，不切换任何行 |
 
 **已经存在的分配关系，除非 `rescope` 指名，否则保持它现在的范围。**这也是把两个列表分开的原因。
 反过来的话，一个把本来就勾着的框又勾了一次的客户端，或者一个在这套机制出现之前写成的客户端，
@@ -1716,9 +1855,23 @@ curl -s -b cookies.txt -X PUT "$BASE/api/host/1/service-port" \
 如何都不能发生的事。`add` 不放宽任何东西。界面上的批量应用是按勾选的内容而不是按列出的内容来填
 `rescope` 的，所以你没勾的行不会被动。
 
-`added`、`removed` 和 `rescoped` 数的是行，不是请求里的项：已经分配过的服务端口再要一次，不会
-写新行；本来就没分配的被移除，也不会有行消失；把这台 Host 不负责的分配关系写进 `rescope`，也
-不会有行被移动。三个列表都可以不填，什么都不改的请求会正常响应，而不是被拒绝。
+**分配关系可以关掉而不拿走。** 关掉的分配关系连同范围一起保留，只是不运行隧道；重新开启就回到
+同一条隧道。Host 的 **Service ports** 面板里每一行的 **启用** 勾选框，在页面上做的是同一件事。
+和范围一样，只有 `switch` 指名的行才会变，所以把本来就勾着的框再勾一次，不会让别人暂停的隧道
+跑起来。
+
+```bash
+# 在 Host 1 上暂停服务端口 3，但不拿走它。
+curl -s -b cookies.txt -X PUT "$BASE/api/host/1/service-port" \
+  -H 'Content-Type: application/json' \
+  -H "X-CSRF-Token: $CSRF" \
+  -d '{"switch":[3],"enabled":false}'
+```
+
+`added`、`removed`、`rescoped` 和 `switched` 数的是行，不是请求里的项：已经分配过的服务端口再要
+一次，不会写新行；本来就没分配的被移除，也不会有行消失；把这台 Host 不负责的分配关系写进
+`rescope` 或 `switch`，也不会有行改变。四个列表都可以不填，什么都不改的请求会正常响应，而不是被
+拒绝。
 
 | 发来的是什么 | 会怎样 |
 |--------------|--------|
@@ -1764,7 +1917,7 @@ Host 信任的密钥，后者是某台服务器在一次被拒绝的连接里出
   "success": true,
   "data": {
     "items": [
-      { "host_id": 1, "ip": "192.0.2.10", "mismatch": true,
+      { "host_id": 1, "address": "192.0.2.10", "mismatch": true,
         "fingerprint": "SHA256:<服务器出示的密钥>",
         "trusted_fingerprint": "SHA256:<这台 Host 信任的密钥>" }
     ],
@@ -1860,7 +2013,7 @@ false，并带上这次拒绝：`error`、`error_code`，句子里有值的还�
 curl -s -b cookies.txt -X POST "$BASE/api/host/1/local-forward" \
   -H 'Content-Type: application/json' \
   -H "X-CSRF-Token: $CSRF" \
-  -d '{"local_port":15432,"bind_scope":"loopback","target_ip":"198.51.100.30","target_port":5432,"description":"database"}'
+  -d '{"local_port":15432,"bind_scope":"loopback","target_address":"db.example.com","target_port":5432,"description":"database"}'
 ```
 
 ```json
@@ -1869,8 +2022,8 @@ curl -s -b cookies.txt -X POST "$BASE/api/host/1/local-forward" \
   "data": {
     "items": [
       { "host_id": 1, "number": 1, "bind_scope": "loopback", "local_port": 15432,
-        "target_ip": "198.51.100.30", "target_port": 5432, "description": "database",
-        "enabled": true,
+        "target_address": "db.example.com", "target_port": 5432, "description": "database",
+        "enabled": true, "allowed_sources": "",
         "status": "connected", "last_error": "", "retry_count": 0,
         "last_connected_at": "<连接建立的时间>",
         "created_at": "<...>", "updated_at": "<...>" }
@@ -1889,16 +2042,17 @@ curl -s -b cookies.txt -X POST "$BASE/api/host/1/local-forward" \
 **这个列表以前返回全部行，`data` 就是它们的数组。** 现在分页了，`data` 是上面的对象，原来读
 `data[0]` 的客户端现在读 `data.items[0]`。
 
-创建和修改的请求体收同样的字段，而且修改要收全部字段：两者都必须有 `local_port`、`target_ip` 和
+创建和修改的请求体收同样的字段，而且修改要收全部字段：两者都必须有 `local_port`、`target_address` 和
 `target_port`，**修改时不带 `bind_scope` 会把这个转发改成通配范围**，要保持原来的范围就把它一起发。
-`enabled` 是修改时不带也能保持的唯一字段：不带时，开启还是关闭都照旧；创建时不带，就是运行的本地转发。
+`enabled` 和 `allowed_sources` 是修改时不带也能保持的两个字段：不带时，开启还是关闭都照旧，列表也
+照旧；创建时不带，就是放行所有地址、正在运行的本地转发。
 
 ```bash
 # 关闭 Host 1 的 1 号本地转发。修改要收全部字段，所以要保持的值也再发一次。
 curl -s -b cookies.txt -X PUT "$BASE/api/host/1/local-forward/1" \
   -H 'Content-Type: application/json' \
   -H "X-CSRF-Token: $CSRF" \
-  -d '{"local_port":15432,"bind_scope":"loopback","target_ip":"198.51.100.30","target_port":5432,"description":"database","enabled":false}'
+  -d '{"local_port":15432,"bind_scope":"loopback","target_address":"db.example.com","target_port":5432,"description":"database","enabled":false}'
 ```
 
 写操作的响应是在调谐循环轮到这一行之前生成的，所以里面的状态可能是本地转发启动或重建之前的。要看
@@ -1906,7 +2060,9 @@ curl -s -b cookies.txt -X PUT "$BASE/api/host/1/local-forward/1" \
 
 | 发送了什么 | 会怎样 |
 |------------|--------|
-| 1 到 65535 之外的端口、不是 IP 地址的 `target_ip`、既不是 `loopback` 也不是 `wildcard` 的 `bind_scope` | `400`，什么都不写 |
+| 1 到 65535 之外的端口、既不是主机名也不是 IP 地址的 `target_address`、既不是 `loopback` 也不是 `wildcard` 的 `bind_scope` | `400`，什么都不写 |
+| 读不通的 `allowed_sources` | `400`，`local_forward.allowed_sources.invalid`，什么都不写 |
+| 用 `target_ip` 代替 `target_address` | `400`，`request.field_renamed`，什么都不写 |
 | 另一个本地转发已在用的 `local_port` | `409`，指出这个端口 |
 | 与本服务器保存下来要监听的端口相同的 `local_port` | `409`，指出这个端口 |
 | 没有保存过的 Host id，或者这台 Host 上没有的编号 | `404` |
@@ -1916,9 +2072,9 @@ curl -s -b cookies.txt -X PUT "$BASE/api/host/1/local-forward/1" \
 | 方法 | 路径 | 做什么 |
 |------|------|--------|
 | `POST` | `/api/service-port` | 创建一个服务端口。`assign_to_all_hosts` 可以不填：不填时，现存的每台 Host 都分到它；发成 false 则注册成没有 Host 负责。`bind_scope` 是这次请求所建立的分配关系开在哪个范围上 |
-| `GET` | `/api/service-port` | 服务端口的一页，旧的在前。收 `page` 和 `size`，见[分页](#分页) |
+| `GET` | `/api/service-port` | 服务端口的一页，旧的在前。收 `page` 和 `size`，见[分页](#分页)；也收 `q`，见[搜索](#搜索) |
 | `GET` | `/api/service-port/:id` | 读一个服务端口 |
-| `PUT` | `/api/service-port/:id` | 更新一个服务端口。`service_ip`、`service_port` 和 `local_port` 都是必填的 |
+| `PUT` | `/api/service-port/:id` | 更新一个服务端口。`service_address`、`service_port` 和 `local_port` 都是必填的 |
 | `DELETE` | `/api/service-port/:id` | 删除一个服务端口，以及涉及它的分配关系 |
 
 创建时的 `bind_scope` 是 `assign_to_all_hosts` 所建立的那批分配关系开在哪个范围上，和
@@ -1930,7 +2086,7 @@ Host 的分配关系，是因为这两个词在任何一台系统上的意思都
 
 | 方法 | 路径 | 做什么 |
 |------|------|--------|
-| `GET` | `/api/status` | 本安装的几个计数，以及状态行的一页：服务端口的隧道和本地转发一起返回，每一行都带着 `kind`。收 `page` 和 `size`，见[分页](#分页) |
+| `GET` | `/api/status` | 本安装的几个计数，以及状态行的一页：服务端口的隧道和本地转发一起返回，每一行都带着 `kind`。收 `page` 和 `size`，见[分页](#分页)；也收 `q`，见[搜索](#搜索) |
 | `GET` | `/api/status/:hostId` | 这台 Host 和它的隧道。不分页：一台 Host 负责几个服务端口就有几条隧道 |
 | `GET` | `/api/metrics` | 同样的状态，以 Prometheus 文本格式返回。见[指标](#指标) |
 
@@ -1940,6 +2096,8 @@ Host 的分配关系，是因为这两个词在任何一台系统上的意思都
 |------|------|--------|
 | `GET` | `/api/settings` | 已保存的设置，以及 `pending_restart` 里这个进程尚未运行的那些 |
 | `PUT` | `/api/settings` | 把请求体里的设置合并到已保存的设置上，响应里说明改了什么、是否需要重启 |
+| `POST` | `/api/settings/alert/test-webhook` | 把请求体里的设置叠加到已保存的设置上，向 webhook 发一条 `test` 告警。什么都不保存，见[告警](#告警) |
+| `POST` | `/api/settings/alert/test-smtp` | 用同样的方式通过邮件发一条 `test` 告警 |
 | `GET` | `/api/certificate` | 正在使用的证书：指纹、主体、签发者、覆盖的名字、有效期和剩余天数 |
 | `POST` | `/api/certificate/renew` | 重新生成一张自签证书，从下一个连接起使用它 |
 | `PUT` | `/api/certificate` | 收 `cert_pem` 和 `key_pem`，保存并从下一个连接起使用它们 |
@@ -2009,12 +2167,17 @@ ASCII，粘到输入框、消息或者工单里也不会因为换行而损坏。
 的一样。它只读不写，所以导入不会悄悄把谁收窄过的设置又放宽回去，而这个版本写出的文件里根本
 没有 `bind_address`。
 
+**每条分配关系是否运行也一起带走**，放在 Host 的 `assigned_enabled` 里，用同一个本地端口作键。
+只有关掉的分配关系才写一条 `false`，没有条目的分配关系就运行，所以分配关系还不能关闭之前写出的
+文件，导入后所有分配关系都是开着的。
+
 **每台 Host 的本地转发也跟着一起走**，写在 Host 的 `local_forwards` 里，导出响应里的
 `local_forwards` 是它们的个数。和 `assigned_local_ports` 一样，这个列表是导入后这台 Host 拥有的
 全部，没有这个字段和空列表是两种不同的答案。
 
 列表里的每个本地转发都带着 `enabled`，导出总会写上它。没有 `enabled` 的本地转发，也就是本地转发还
-不能关闭之前写出的文件里的那些，都按开启保存：在写出这个文件的地方，它们都在运行。
+不能关闭之前写出的文件里的那些，都按开启保存：在写出这个文件的地方，它们都在运行。每个本地转发
+还带着 `allowed_sources`，没有它的本地转发放行所有地址，这个字段出现之前的本地转发都是这样。
 
 | 文件中 Host 上的 `local_forwards` | 写入这台 Host 的导入会做什么 |
 |------------------------------------|------------------------------|
@@ -2371,7 +2534,7 @@ Host 开出来的那个端口，对从这里发起的连接答不答应。本地
 
 ## 加密密钥
 
-Host 的 SSH 密码在保存之前，用 AES-256-GCM 加密。密钥从 **Encryption key file** 这项设置
+Host 的 SSH 密码在保存之前，用 AES-256-GCM 加密；它的私钥和私钥密码、证书的私钥、邮件密码，以及决定告警发往哪里的设置（见[告警](#告警)）也一样。密钥从 **Encryption key file** 这项设置
 指定的文件里读，默认是 `keys/tunnel-manager.key`。那个文件不存在的话，第一次启动会生成一把 32
 字节的密钥，权限 `0600`；已经存在的话，照原样读。
 

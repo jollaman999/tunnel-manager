@@ -14,7 +14,7 @@ SSH 接続を通してサービスまで転送します。あとはトンネル�
 はなく、最初の起動の前に用意しておく設定もありません。
 
 **サービスポート: Host がポートを開きます。** サービスポートを担当する Host がそれぞれ
-`local_port` を開き、そこに届いた接続を tunnel-manager が `service_ip:service_port` へ運びます。
+`local_port` を開き、そこに届いた接続を tunnel-manager が `service_address:service_port` へ運びます。
 
 ```mermaid
 flowchart LR
@@ -25,7 +25,7 @@ flowchart LR
     subgraph here ["tunnel-manager が動作するマシン"]
         tm["tunnel-manager"]
     end
-    service[("service_ip:service_port<br/>tunnel-manager が接続できるアドレス")]
+    service[("service_address:service_port<br/>tunnel-manager が接続できるアドレス")]
 
     tm ==>|"1. SSH で接続してポートを要求する"| port
     client -->|"2. local_port に接続する"| port
@@ -35,7 +35,7 @@ flowchart LR
 
 **ローカルフォワード: このマシンがポートを開きます。** 向きが逆で、`ssh -L` と同じです。
 tunnel-manager がこのマシンに `local_port` を開き、そこへの接続を Host の SSH 接続を通して、
-その Host が接続できるアドレス `target_ip:target_port` へ運びます。
+その Host が接続できるアドレス `target_address:target_port` へ運びます。
 
 ```mermaid
 flowchart LR
@@ -47,7 +47,7 @@ flowchart LR
     subgraph host ["Host - 登録した SSH サーバー"]
         sshd["SSH サーバー"]
     end
-    target[("target_ip:target_port<br/>Host が接続できるアドレス")]
+    target[("target_address:target_port<br/>Host が接続できるアドレス")]
 
     tm ==>|"1. SSH で接続してから local_port を開く"| sshd
     client -->|"2. local_port に接続する"| port
@@ -61,9 +61,9 @@ flowchart LR
 
 | 構成要素 | 何か |
 |----------|------|
-| Host | 接続先の SSH サーバーです。アドレス、ポート、ユーザー、そして秘密鍵かパスワードを登録します |
+| Host | 接続先の SSH サーバーです。アドレスかホスト名、ポート、ユーザー、そして秘密鍵かパスワードを登録します |
 | サービスポート | 公開したいサービス (このマシンが接続できるアドレスなら、どこにあっても構いません) と、このサービスポートを担当する Host の上に開くポートです |
-| 割り当て | どの Host がどのサービスポートを担当するかです。Host が有効になっている割り当て 1 つが、トンネル 1 本です |
+| 割り当て | どの Host がどのサービスポートを担当するかです。Host が有効で、それ自体もオンになっている割り当て 1 つが、トンネル 1 本です |
 | ローカルフォワード | このマシンに開くポートです。届いた接続を 1 台の Host を経由して、その Host が届くアドレスへ送ります |
 
 最後の行は任意で、上の 2 つ目の図がこれです。ローカルフォワードは作成した Host に属し、その Host の行の **Local forwards**
@@ -87,6 +87,8 @@ flowchart LR
   スコープの範囲だけです。
 - トンネルの状態を Prometheus メトリクスとして出し、Prometheus や telegraf が読み取りトークンで
   収集できます。
+- トンネル、ローカルフォワード、SOCKS5 プロキシが設定した時間より長く切れたままなら、Webhook か
+  メールで知らせ、つながり直したらもう一度知らせます。
 - 画面を 13 の言語で表示します。ブラウザの隅で選ぶか、インストールに設定しておきます。
   ログファイルは英語のままです。
 - Linux、macOS、Windows でバイナリ 1 つとして動作します。C ライブラリも、別に動かす
@@ -172,7 +174,7 @@ Windows では、**管理者として実行**で開いた PowerShell かコマ�
 | [HTTPS と証明書](reference.ja.md#https-と証明書) | ブラウザの警告、独自の証明書の登録、更新、HTTPS の無効化 |
 | [初回起動とアカウント](reference.ja.md#初回起動とアカウント) | 初期パスワード、初期設定、認証情報の変更 |
 | [内蔵 UI](reference.ja.md#内蔵-ui) | それぞれの画面が何を見せ、何ができるか、そしてどの言語で表示できるか |
-| [設定](reference.ja.md#設定) | すべての設定項目、いつ有効になるか、サーバーが起動しなくなったときの復旧手順 |
+| [設定](reference.ja.md#設定) | すべての設定項目、いつ有効になるか、アラート、サーバーが起動しなくなったときの復旧手順 |
 | [API エンドポイント](reference.ja.md#api-エンドポイント) | すべての呼び出しと、スクリプトに要るログインと CSRF トークン |
 | [トンネルの状態を読む](reference.ja.md#トンネルの状態を読む) | 3 つの数、状態が意味するもの、転送ポートに到達できたかどうか |
 | [暗号化キー](reference.ja.md#暗号化キー) | 暗号化キーが何を暗号化するか、失うと何が起きるか |

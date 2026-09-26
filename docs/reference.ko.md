@@ -12,22 +12,30 @@ Tunnel Manager 는 SSH 터널을 열고 그 상태를 계속 유지합니다. �
 
 여기서 만드는 터널은 **역방향(reverse)** 터널입니다. 즉 대기 소켓이 Tunnel Manager 가 실행되는
 장비가 아니라 **Host 쪽에** 열립니다. Host 의 `local_port` 로 접속한 클라이언트는 SSH 연결을
-타고 Tunnel Manager 까지 오고, Tunnel Manager 가 `service_ip:service_port` 로 연결해 양방향으로
+타고 Tunnel Manager 까지 오고, Tunnel Manager 가 `service_address:service_port` 로 연결해 양방향으로
 데이터를 전달합니다. Tunnel Manager 만 접속할 수 있는 서비스를 Host 에서 쓸 수 있게 만드는 것이
 이 구조입니다. [로컬 포워딩](#로컬-포워딩)과 [Host 의 SOCKS5 프록시](#host-의-socks5-프록시)만
 방향이 반대입니다. 포트는 이 장비에 열리고 연결은 Host 에서 나갑니다.
 
 | 등록하는 것 | 항목 | 무엇인가 |
 |-------------|------|----------|
-| Host | `ip`, `port`, `user`, `private_key`, `key_passphrase`, `password`, `description`, `enabled`, `socks_enabled`, `socks_port`, `socks_bind_scope`, `socks_allowed_sources` | Tunnel Manager 가 접속하는 SSH 서버입니다. 개인키로 접속할 수도, 비밀번호로 접속할 수도, 둘 다 등록할 수도 있으며 둘 중 하나는 반드시 있어야 합니다. 키와 키 암호와 비밀번호는 모두 암호화해서 저장합니다. `socks_` 항목은 이 Host 가 가질 수 있는 [SOCKS5 프록시](#host-의-socks5-프록시)입니다. |
-| 서비스 포트 | `service_ip`, `service_port`, `local_port` | 내보낼 서비스와, 그 서비스를 담당하는 Host 마다 열 포트입니다. |
+| Host | `address`, `port`, `user`, `private_key`, `key_passphrase`, `password`, `description`, `enabled`, `socks_enabled`, `socks_port`, `socks_bind_scope`, `socks_allowed_sources` | Tunnel Manager 가 접속하는 SSH 서버입니다. 개인키로 접속할 수도, 비밀번호로 접속할 수도, 둘 다 등록할 수도 있으며 둘 중 하나는 반드시 있어야 합니다. 키와 키 암호와 비밀번호는 모두 암호화해서 저장합니다. `socks_` 항목은 이 Host 가 가질 수 있는 [SOCKS5 프록시](#host-의-socks5-프록시)입니다. |
+| 서비스 포트 | `service_address`, `service_port`, `local_port` | 내보낼 서비스와, 그 서비스를 담당하는 Host 마다 열 포트입니다. |
 | 할당 | `host_id`, `sp_id`, `bind_scope` | Host 하나와 서비스 포트 하나를 짝지은 것입니다. 이 Host 가 이 서비스 포트를 담당한다는 뜻이며, 터널은 여기서 만들어집니다. Host 나 서비스 포트를 등록할 때 같이 만들어집니다. `bind_scope` 는 포워딩된 포트를 Host 의 어느 범위에 열도록 요청할지이고, `loopback` 또는 `wildcard` 이며, 안 주면 와일드카드입니다. |
-| 로컬 포워딩 | `local_port`, `bind_scope`, `target_ip`, `target_port`, `description` | 이 장비에 여는 포트입니다. 거기로 온 연결을 Host 하나의 SSH 연결을 타고 Host 가 보는 `target_ip:target_port` 로 나릅니다. 그 Host 에만 딸립니다. |
+| 로컬 포워딩 | `local_port`, `bind_scope`, `target_address`, `target_port`, `description` | 이 장비에 여는 포트입니다. 거기로 온 연결을 Host 하나의 SSH 연결을 타고 Host 가 보는 `target_address:target_port` 로 나릅니다. 그 Host 에만 딸립니다. |
 
-`ip` 와 `service_ip` 는 IPv4 와 IPv6 를 모두 받습니다. IPv6 주소는 `2001:db8::1` 처럼 그대로 적고,
-연결할 때 필요한 대괄호는 쓰이는 자리에서 붙습니다. `fe80::1%eth0` 같은 영역(zone) 표기는 거부합니다.
+`address`, `service_address`, 그리고 로컬 포워딩의 `target_address` 는 호스트 이름이나 IPv4,
+IPv6 주소를 받습니다. 이름은 저장할 때가 아니라 연결할 때마다 찾으므로, 이름이 다른 주소로
+옮겨 가면 다음 연결부터 따라갑니다. `address` 와 `service_address` 는 이 장비가 찾고,
+`target_address` 는 Host 가 찾습니다. IPv6 주소는 `2001:db8::1` 처럼 그대로 적고, 연결할 때
+필요한 대괄호는 쓰이는 자리에서 붙습니다. `fe80::1%eth0` 같은 영역(zone) 표기는 거부합니다.
 
-**활성(enabled) Host 의 할당 하나가 터널 하나입니다.** 서비스 포트 셋을 담당하는 Host 는 터널
+**이 세 항목은 v3.14.0 전에는 `ip`, `service_ip`, `target_ip` 였습니다.** 아직 옛 이름을
+보내는 요청은 그 항목을 말없이 버리는 대신 `400` 과 `request.field_renamed` 로 거부하고, 옛
+항목과 새 항목의 이름을 알려줍니다. 이전 릴리즈가 내보낸 파일은 그대로 가져올 수 있습니다.
+가져오기는 옛 이름도 읽습니다.
+
+**활성(enabled) Host 의 켜져 있는 할당 하나가 터널 하나입니다.** 서비스 포트 셋을 담당하는 Host 는 터널
 셋을 실행하고, 아무것도 담당하지 않는 Host 는 서비스 포트가 몇 개 저장돼 있든 터널을 하나도
 실행하지 않습니다. Host 를 등록하면 그 시점에 있는 서비스 포트 전부가 그 Host 에 할당되고,
 서비스 포트를 등록하면 그 시점에 있는 Host 전부가 그것을 받습니다. 요청이 따로 지정하지 않는
@@ -114,7 +122,7 @@ Tunnel Manager 는 어떠해야 하는지와 지금 어떠한지를 끊임없이
 
 | 상태 | 무엇인가 | 어디서 오나 |
 |------|----------|-------------|
-| 목표 상태 | 활성 Host 에 할당된 서비스 포트 전부 | `hosts`, `service_ports`, `host_service_ports` 행 |
+| 목표 상태 | 활성 Host 의 켜져 있는 할당 전부 | `hosts`, `service_ports`, `host_service_ports` 행 |
 | 실제 상태 | 지금 실행 중인 터널 | 프로세스 안의 매니저와 그것이 쓰는 `tunnels` 행 |
 
 **조정 패스(reconcile pass)** 는 둘을 비교해서 차이만 메웁니다. 목표에 있는데 실행 중이 아닌
@@ -130,7 +138,7 @@ POST /api/service-port
   201 Created          <- 터널을 기다리지 않고 바로 응답한다
 
 조정 루프
-  목표 = 활성 Host 의 할당
+  목표 = 활성 Host 의 켜져 있는 할당
   실제 = 실행 중인 터널
   목표에 있는데 실행 중이 아니다 -> 시작한다
   실행 중인데 목표에 없다        -> 중지한다
@@ -159,6 +167,7 @@ POST /api/service-port
 | Host 를 등록하면 | 그 시점에 저장돼 있는 서비스 포트를 전부 받습니다. 요청이 `assign_all_service_ports` 를 false 로 보내면 그러지 않습니다 |
 | 서비스 포트를 등록하면 | 그 시점에 저장돼 있는 Host 가 전부 그것을 받습니다. 요청이 `assign_to_all_hosts` 를 false 로 보내면 그러지 않습니다 |
 | Host 를 비활성으로 바꾸면 | 할당은 그대로 남습니다. 그 Host 의 터널만 멈추고, 다시 활성으로 바꾸면 다시 연결됩니다 |
+| 할당 하나를 끄면 | 할당은 범위와 함께 그대로 남습니다. 그 할당의 터널만 멈추고, 다시 켜면 다시 연결됩니다 |
 | Host 나 서비스 포트를 지우면 | 그것을 가리키는 할당도 같은 트랜잭션에서 지워집니다 |
 | 이 테이블이 생긴 버전으로 올린 뒤 첫 기동 | 모든 Host 가 모든 서비스 포트를 받습니다 |
 
@@ -254,11 +263,20 @@ Host 쪽 리스너가 정말 요청한 자리에 열리는지는 Host 의 SSH �
 모니터링 주기와 조정 주기는 다른 일을 합니다. 모니터는 이미 연결된 터널이 아직 응답하는지
 확인하고 끊겼으면 다시 연결합니다. 조정 루프는 동작해야 할 터널이 애초에 전부 있는지를 봅니다.
 
+**모니터는 keepalive 응답을 모니터링 주기만큼 기다리며, 3초보다 짧게 기다리지는 않습니다.** SSH
+서버는 그 연결이 나르던 트래픽 뒤에 keepalive 응답을 보내므로, 바쁜 회선에서는 살아 있는 서버도
+응답이 늦을 수 있습니다. 그 시간 안에 응답이 없으면 연결을 닫고 다시 만듭니다.
+
+**계속 실패하는 연결은 실패할 때마다 더 오래 기다립니다.** 다시 시도하기 전 첫 대기는 모니터링
+주기이고, 연속으로 실패할 때마다 다음 대기가 두 배가 되어 `reconnect_max_interval_sec`(기본
+60초)에서 멈춥니다. 연결이 서면 대기는 모니터링 주기로 돌아갑니다. 상한이 모니터링 주기보다
+작으면 대기는 모두 모니터링 주기입니다. 로컬 포워딩과 SOCKS5 프록시도 같습니다.
+
 ### 로컬 포워딩
 
 **로컬 포워딩은 터널과 방향이 반대입니다.** 터널은 Host 가 포트를 열고 거기로 온 것을 이
 장비가 닿는 서비스로 나릅니다. 로컬 포워딩은 **이 장비가** `local_port` 를 열고, 거기로 온
-연결을 Host 의 SSH 연결을 타고 Host 가 닿는 주소 `target_ip:target_port` 로 나릅니다.
+연결을 Host 의 SSH 연결을 타고 Host 가 닿는 주소 `target_address:target_port` 로 나릅니다.
 `ssh -L` 이 하는 일을 터널처럼 유지하는 것입니다.
 
 ```mermaid
@@ -271,7 +289,7 @@ flowchart LR
     subgraph host [Host - 등록한 SSH 서버]
         sshd[SSH 서버]
     end
-    target[("target_ip:target_port<br/>Host 가 접속할 수 있는 주소")]
+    target[("target_address:target_port<br/>Host 가 접속할 수 있는 주소")]
 
     tm ==>|"1. SSH 로 접속한 뒤 local_port 를 엶"| sshd
     client -->|"2. local_port 로 접속"| port
@@ -298,9 +316,10 @@ Hosts 화면에서 그 Host 행의 **Local forwards** 버튼이나 API 로 추�
 |------|----------|
 | `local_port` | 이 장비에 여는 포트. 1 ~ 65535 |
 | `bind_scope` | 이 장비의 어느 주소에 열지. 아래 참고 |
-| `target_ip` | Host 에서 연결해 나갈 곳. IPv4 나 IPv6 주소이며 이름은 받지 않음 |
+| `target_address` | Host 에서 연결해 나갈 곳. Host 가 찾는 호스트 이름이나 IPv4, IPv6 주소 |
 | `target_port` | 대상의 포트. 1 ~ 65535 |
 | `description` | 자유 텍스트 |
+| `allowed_sources` | `local_port` 에 접속할 수 있는 주소. 비우면 모든 주소를 받음. 생성에서 빼면 빈 값이 되고, 수정에서 빼면 저장된 값을 유지 |
 | `enabled` | 도는지 여부. 생성에서 빼면 도는 로컬 포워딩이 되고, 수정에서 빼면 저장된 값을 유지 |
 
 **여기서 `bind_scope` 는 Host 가 아니라 이 장비의 이야기입니다.** 할당과 같은 두 낱말을 받고
@@ -312,9 +331,18 @@ Hosts 화면에서 그 Host 행의 **Local forwards** 버튼이나 API 로 추�
 | `loopback` | `127.0.0.1` 과 `::1` |
 
 **와일드카드는 이 장비를 Host 쪽 망으로 들어가는 문으로 만듭니다.** 이 장비의 `local_port`
-에 닿는 사람이면 누구나 Host 에 로그인하지 않고 Host 가 보는 `target_ip:target_port` 에
+에 닿는 사람이면 누구나 Host 에 로그인하지 않고 Host 가 보는 `target_address:target_port` 에
 닿습니다. SSH 로그인은 tunnel-manager 가 이미 해 두었기 때문입니다. 이 장비 밖에서 쓸 일이
 없으면 `loopback` 을 고르고, 쓸 일이 있으면 그 포트 앞에 방화벽을 두십시오.
+
+**`allowed_sources` 는 와일드카드의 로컬 포워딩에 누가 접속할 수 있는지를 제한합니다.**
+[SOCKS5 프록시](#host-의-socks5-프록시)의 `socks_allowed_sources` 와 같은 것을 받습니다. IPv4,
+IPv6 주소와 CIDR 블록을 쉼표나 공백으로 나눠 `192.0.2.0/24, 198.51.100.7` 처럼 적고, 읽히지
+않는 값은 `400` 과 `local_forward.allowed_sources.invalid` 로 거부합니다. 비우면 모든 주소를
+받으며, 이 항목이 생기기 전에 저장된 로컬 포워딩이 모두 그렇습니다. 목록에 없는 주소의
+클라이언트는 그 클라이언트를 위해 아무것도 연결하기 전에 닫고, 거부는 로컬 포워딩마다 1분에
+한 번까지만 `tunnel.local_forward_source_refused` 로 로그에 남깁니다. 목록은 어느 범위에서든
+지키지만, 폼은 와일드카드일 때만 묻고 `loopback` 으로 저장하면 목록을 비웁니다.
 
 쌍의 두 주소를 각자의 주소 체계로 다 열어 보고 **하나만 열려도 진행합니다.** IPv6 가 없는
 장비는 IPv4 쪽만 엽니다. 둘 다 안 열리면, 예를 들어 다른 프로그램이 그 포트를 쥐고 있으면,
@@ -341,13 +369,14 @@ Hosts 화면에서 그 Host 행의 **Local forwards** 버튼이나 API 로 추�
 **로컬 포워딩은 자신이 켜져 있고 그 Host 가 활성일 때만 돕니다.** 끄면 다음 조정 때 멈춰서
 포트를 닫고 SSH 연결을 끊습니다. 조정 루프가 터널과 같은 방식으로 로컬
 포워딩을 띄우고 다시 만들고 멈춥니다. 행 하나가 자기 SSH 연결 하나이고, Host, 접속 정보,
-신뢰하는 호스트 키, 포트, 범위, 대상 중 무엇이 바뀌면 멈췄다가 다시 띄웁니다. 설명만 바꾸면
+신뢰하는 호스트 키, 포트, 범위, 대상, 허용 주소 중 무엇이 바뀌면 멈췄다가 다시 띄웁니다. 설명만 바꾸면
 아무것도 다시 만들지 않습니다.
 
 **`local_port` 는 SSH 연결이 서 있는 동안만 열려 있습니다.** 연결이 선 뒤에 열고 연결이
 끊기면 닫습니다. 그래서 실어 나를 Host 가 없는 동안 접속한 클라이언트는 받아졌다가 끊기는 것이
 아니라 곧바로 거부됩니다. 연결은 터널처럼 모니터링 주기마다 확인하고, 끊긴 연결은 같은 주기
-뒤에 다시 연결합니다.
+뒤에, 시도가 계속 실패하면 더 긴 대기 뒤에 다시 연결합니다. [터널 하나의 동작](#터널-하나의-동작)을
+보십시오.
 
 **로그인이 거부되거나 호스트 키가 거부되면 멈춥니다.** 같은 비밀번호나 키로 다시 해 봐야 똑같이
 실패하므로, 만들어진 재료가 바뀔 때까지 기다립니다. Host 에 새 접속 정보를 넣거나 키를
@@ -366,7 +395,7 @@ Hosts 화면에서 그 Host 행의 **Local forwards** 버튼이나 API 로 추�
 | `starting` | 첫 연결을 맺는 중입니다 |
 | `connected` | SSH 연결이 서 있고 `local_port` 가 열려 있습니다 |
 | `reconnecting` | 연결이 끊겼거나 시도가 실패해서 다시 연결하는 중입니다. `retry_count` 가 그 횟수입니다 |
-| `error` | 마지막 시도가 실패했고 `last_error` 에 이유가 있습니다. 로그인이 거부된 경우는 Host 를 고칠 때까지 여기 머물고, 그 밖에는 모니터링 주기 뒤에 다시 시도합니다 |
+| `error` | 마지막 시도가 실패했고 `last_error` 에 이유가 있습니다. 로그인이 거부된 경우는 Host 를 고칠 때까지 여기 머물고, 그 밖에는 모니터링 주기 뒤에 다시 시도하고, 연속으로 실패할 때마다 대기가 두 배가 되어 `reconnect_max_interval_sec` 까지 늘어납니다 |
 | `host_key_unapproved`, `host_key_mismatch` | 터널과 마찬가지로 호스트 키가 거부됐습니다. 키를 승인할 때까지 여기 머뭅니다 |
 
 **상태는 로컬 포워딩을 돌리는 프로세스의 메모리에 있고**, 로컬 포워딩 API 와
@@ -470,7 +499,8 @@ Host 에서의 연결에는 10 초를 주고, 클라이언트가 요청을 보�
 바뀌면 멈췄다가 다시 띄우며, 그 프록시를 지나던 연결도 같이 끊깁니다.
 
 **`socks_port` 는 SSH 연결이 서 있는 동안만 열려 있습니다.** `local_port` 와 같습니다. 연결이
-선 뒤에 열고 끊기면 닫으며, 모니터링 주기 뒤에 다시 연결합니다. 로그인이 거부되거나 호스트
+선 뒤에 열고 끊기면 닫으며, 모니터링 주기 뒤에 다시 연결하고 연속으로 실패하면 로컬
+포워딩처럼 더 오래 기다립니다. 로그인이 거부되거나 호스트
 키가 거부되면 만들어진 재료가 바뀔 때까지 멈춥니다. [호스트 키 승인](#호스트-키-승인)을
 보십시오.
 
@@ -1005,11 +1035,11 @@ curl -s -b cookies.txt -X PUT "$BASE/api/account" \
 
 | 화면 | 경로 | 무엇을 보여주고 무엇을 하나 |
 |------|------|------------------------------|
-| 상태 | `/ui/status` | 네 칸짜리 숫자(목표, 연결됨, 재시도 중, 에러. 넷 다 두 종류를 합쳐 셉니다)와 그 차이를 설명하는 한 줄, 그리고 두 종류의 행마다 한 줄씩 Host, 종류, 서비스 포트, 상태, 서버, 여는 곳, 닿는 곳, 포트 도달 여부, 재시도 횟수, 마지막 연결 시각. 로컬 포워딩 행의 서비스 포트 칸은 `-` 이고, 여는 곳과 닿는 곳 칸은 그 주소가 어느 장비의 것인지를 같이 적습니다. 두 종류가 포트를 여는 끝이 서로 반대이기 때문입니다. 포트 도달 여부 칸은 두 종류 모두 채워지고 묻는 것이 서로 다릅니다. 터널에서는 Host 에 열린 포트이고, 로컬 포워딩에서는 Host 에서 닿는 대상입니다. 무언가 잘못된 터널은 그 아래에 표 전체 폭으로 무엇이 잘못됐는지가 한 줄 붙고, 포워딩된 포트에 접속하지 못한 터널은 그 자리에 어느 SSH 서버에서 무엇을 고쳐야 하는지와 그 밖에 확인할 것이 붙습니다. 연결된 터널은 그 아래에 그 포워딩의 주소에 대해 아는 것이 붙는데, 요청한 것과 SSH 서버가 응답한 것과 여기서 연 연결로 확인한 것을 갈라서 적습니다. 포트가 열렸다고는 쓰지 않습니다. 행은 한 번에 한 페이지씩 나오고 처음에는 10줄이며, 표 위에서 페이지 크기와 페이지를 고릅니다. 숫자는 페이지가 아니라 설치본 전체를 셉니다. 5초마다 다시 조회하고, 보고 있던 페이지를 그대로 유지합니다. |
-| 호스트 | `/ui/hosts` | Host 마다 한 줄씩 ID, IP, 포트, 사용자, 설명, 활성 여부, SOCKS5 프록시, 수정 시각. 행은 한 번에 한 페이지씩 나오고 처음에는 10줄이며, 표 위에서 크기(10, 20, 30, 50, 100)와 페이지를 고릅니다. 고른 값은 이 화면만의 것으로 기억하고, 가장 작은 크기 한 페이지에 다 들어가는 목록에는 조작부가 아예 안 붙습니다. 추가, 수정, 활성·비활성 전환, 삭제를 합니다. 추가·수정 폼에는 개인키를 붙여 넣는 칸과 키 파일을 끌어다 놓는 영역, 그리고 키에 걸린 암호를 넣는 칸이 있고, 추가 폼에는 기본으로 켜져 있는 **Assign all service ports** 체크가 있어서 이 Host 가 처음에 무엇을 담당할지를 정합니다. 그 옆의 **Host 에서의 도달 범위** 목록이 그 체크로 만들어지는 할당 전부가 출발할 범위입니다. 행의 **Service ports** 를 누르면 서비스 포트 전부가 패널로 열리고 이 Host 가 담당하는 것에 체크가 켜져 있으며, 행마다 도달 범위가 옆에 붙습니다. 위에서 범위를 고른 뒤 체크한 것 전부에 적용하거나 한 행만 따로 바꿀 수 있고, 체크하지 않은 행은 건드리지 않습니다. 저장할 때 바뀐 것만 보내므로, 패널에서 체크 하나를 바꿔도 읽지 않은 페이지는 그대로 있습니다. 행의 **Local forwards** 를 누르면 그 Host 의 로컬 포워딩이 상태와 함께 한 페이지씩 패널로 열리고, 거기서 추가, 수정, 켜기·끄기, 삭제를 한 행씩 또는 체크한 행을 한꺼번에 합니다. [로컬 포워딩](#로컬-포워딩)을 보십시오. 추가·수정 폼에서는 Host 의 SOCKS5 프록시도 켜고, 그 칸에 포트와 상태가 나옵니다. [Host 의 SOCKS5 프록시](#host-의-socks5-프록시)를 보십시오. |
-| 서비스 포트 | `/ui/service-ports` | 서비스 포트마다 한 줄씩 ID, 서비스 IP, 서비스 포트, 로컬 포트, 설명, 수정 시각. 행은 호스트 화면과 같은 방식으로 한 페이지씩 나오며, 크기와 페이지를 따로 기억합니다. 추가, 수정, 삭제를 합니다. 추가 폼에는 기본으로 켜져 있는 **Assign to all hosts** 체크가 있어서 처음에 어느 Host 가 이것을 담당할지를 정하고, 그 옆의 **Host 에서의 도달 범위** 목록이 그 체크로 만들어지는 할당이 출발할 범위입니다. 그 뒤로 어느 Host 가 담당하는지와 그 할당마다 어디까지 닿는지를 바꾸는 자리는 호스트 화면입니다. |
+| 상태 | `/ui/status` | 네 칸짜리 숫자(목표, 연결됨, 재시도 중, 에러. 넷 다 두 종류를 합쳐 셉니다)와 그 차이를 설명하는 한 줄, 그리고 두 종류의 행마다 한 줄씩 Host, 종류, 서비스 포트, 상태, 서버, 여는 곳, 닿는 곳, 포트 도달 여부, 재시도 횟수, 마지막 연결 시각. 로컬 포워딩 행의 서비스 포트 칸은 `-` 이고, 여는 곳과 닿는 곳 칸은 그 주소가 어느 장비의 것인지를 같이 적습니다. 두 종류가 포트를 여는 끝이 서로 반대이기 때문입니다. 포트 도달 여부 칸은 두 종류 모두 채워지고 묻는 것이 서로 다릅니다. 터널에서는 Host 에 열린 포트이고, 로컬 포워딩에서는 Host 에서 닿는 대상입니다. 무언가 잘못된 터널은 그 아래에 표 전체 폭으로 무엇이 잘못됐는지가 한 줄 붙고, 포워딩된 포트에 접속하지 못한 터널은 그 자리에 어느 SSH 서버에서 무엇을 고쳐야 하는지와 그 밖에 확인할 것이 붙습니다. 연결된 터널은 그 아래에 그 포워딩의 주소에 대해 아는 것이 붙는데, 요청한 것과 SSH 서버가 응답한 것과 여기서 연 연결로 확인한 것을 갈라서 적습니다. 포트가 열렸다고는 쓰지 않습니다. 행은 한 번에 한 페이지씩 나오고 처음에는 10줄이며, 표 위에서 페이지 크기와 페이지를 고릅니다. 숫자는 페이지가 아니라 설치본 전체를 셉니다. 5초마다 다시 조회하고, 보고 있던 페이지를 그대로 유지합니다. 표 위의 검색 칸으로 행을 좁힙니다. [검색](#검색) 참고 |
+| 호스트 | `/ui/hosts` | Host 마다 한 줄씩 ID, 주소, 포트, 사용자, 설명, 활성 여부, SOCKS5 프록시, 수정 시각. 행은 한 번에 한 페이지씩 나오고 처음에는 10줄이며, 표 위에서 크기(10, 20, 30, 50, 100)와 페이지를 고릅니다. 고른 값은 이 화면만의 것으로 기억하고, 가장 작은 크기 한 페이지에 다 들어가는 목록에는 조작부가 아예 안 붙습니다. 추가, 수정, 활성·비활성 전환, 삭제를 합니다. 추가·수정 폼에는 개인키를 붙여 넣는 칸과 키 파일을 끌어다 놓는 영역, 그리고 키에 걸린 암호를 넣는 칸이 있고, 추가 폼에는 기본으로 켜져 있는 **Assign all service ports** 체크가 있어서 이 Host 가 처음에 무엇을 담당할지를 정합니다. 그 옆의 **Host 에서의 도달 범위** 목록이 그 체크로 만들어지는 할당 전부가 출발할 범위입니다. 행의 **Service ports** 를 누르면 서비스 포트 전부가 패널로 열리고 이 Host 가 담당하는 것에 체크가 켜져 있으며, 행마다 도달 범위가 옆에 붙습니다. 위에서 범위를 고른 뒤 체크한 것 전부에 적용하거나 한 행만 따로 바꿀 수 있고, 체크하지 않은 행은 건드리지 않습니다. 행마다 있는 **활성** 체크는 그 할당을 떼지 않고 터널만 멈춥니다. 저장할 때 바뀐 것만 보내므로, 패널에서 체크 하나를 바꿔도 읽지 않은 페이지는 그대로 있습니다. 행의 **Local forwards** 를 누르면 그 Host 의 로컬 포워딩이 상태와 함께 한 페이지씩 패널로 열리고, 거기서 추가, 수정, 켜기·끄기, 삭제를 한 행씩 또는 체크한 행을 한꺼번에 합니다. [로컬 포워딩](#로컬-포워딩)을 보십시오. 추가·수정 폼에서는 Host 의 SOCKS5 프록시도 켜고, 그 칸에 포트와 상태가 나옵니다. [Host 의 SOCKS5 프록시](#host-의-socks5-프록시)를 보십시오. |
+| 서비스 포트 | `/ui/service-ports` | 서비스 포트마다 한 줄씩 ID, 서비스 주소, 서비스 포트, 로컬 포트, 설명, 수정 시각. 행은 호스트 화면과 같은 방식으로 한 페이지씩 나오며, 크기와 페이지를 따로 기억합니다. 추가, 수정, 삭제를 합니다. 추가 폼에는 기본으로 켜져 있는 **Assign to all hosts** 체크가 있어서 처음에 어느 Host 가 이것을 담당할지를 정하고, 그 옆의 **Host 에서의 도달 범위** 목록이 그 체크로 만들어지는 할당이 출발할 범위입니다. 그 뒤로 어느 Host 가 담당하는지와 그 할당마다 어디까지 닿는지를 바꾸는 자리는 호스트 화면입니다. 호스트 화면과 서비스 포트 화면은 각자 표 위에 검색 칸이 있습니다. [검색](#검색) 참고 |
 | 로그 | `/ui/logs` | 로그 파일의 끝부분. 최신 줄이 아래입니다. 레벨 필터와 보여줄 줄 수를 고를 수 있고 5초마다 다시 읽습니다. 지금 쓰고 있는 파일만 읽고 회전된 파일은 안 보여줍니다. 줄은 화면의 언어로 보여주고 파일은 영어로 남습니다. [화면의 언어](#화면의-언어) 참조 |
-| 설정 | `/ui/settings` | 저장은 됐지만 아직 그 값으로 실행되고 있지 않은 항목과 그 카드 안에서 바로 누르는 재기동, 저장된 설정 전부와 저장이 무엇을 바꿨는지 (언어를 고르지 않은 브라우저에 이 설치본을 어느 언어로 보여줄지도 여기에 있습니다), 지금 서비스 중인 인증서와 갱신 버튼·수동 등록 칸, 이 계정의 아이디와 비밀번호, 터널 설정과 매니저 설정을 각각 암호화된 파일 하나로 내보내는 내보내기와 그 파일을 받아 들이는 가져오기, 서비스를 내렸다 다시 올리는 재기동, 그리고 맨 아래에 제거. [설정](#설정) 참조 |
+| 설정 | `/ui/settings` | 저장은 됐지만 아직 그 값으로 실행되고 있지 않은 항목과 그 카드 안에서 바로 누르는 재기동, 저장된 설정 전부와 저장이 무엇을 바꿨는지 (언어를 고르지 않은 브라우저에 이 설치본을 어느 언어로 보여줄지와, 시험 버튼이 각각 붙은 webhook·메일 알림도 여기에 있습니다. [알림](#알림) 참고), 지금 서비스 중인 인증서와 갱신 버튼·수동 등록 칸, 이 계정의 아이디와 비밀번호, 터널 설정과 매니저 설정을 각각 암호화된 파일 하나로 내보내는 내보내기와 그 파일을 받아 들이는 가져오기, 서비스를 내렸다 다시 올리는 재기동, 그리고 맨 아래에 제거. [설정](#설정) 참조 |
 | 업데이트 | `/ui/update` | 이 설치본이 무엇으로 돌고 있는지와 최신 릴리즈가 무엇인지, 그리고 그 둘을 다시 볼지 말지를 정하는 설정 둘입니다. 최신 릴리즈는 화면을 그릴 때가 아니라 주기적으로 읽어 두므로 화면을 열어도 릴리즈 API 에 부담이 없고, 지금 확인하려면 버튼을 누릅니다. 릴리즈가 더 새 것이고 이 프로세스가 서비스 등록으로 떠 있는 것이면 설치 버튼이 나오며, 계정 비밀번호를 받고 마지막에 서비스를 재기동합니다. [업데이트](#업데이트) 참조 |
 | 매뉴얼 | `/ui/manual` | 이 설치가 무엇으로 이루어져 있는지를 그림과 글로 한 화면에 담았습니다. 무엇을 하는 프로그램인지, 터널 하나가 끝에서 끝까지 어떻게 동작하는지, Host 와 서비스 포트와 그 사이의 할당, 포트에 접속하지 못했다는 것이 무슨 뜻인지, 두 가지 주기, 파일이 어디에 생기는지입니다. 서버에 아무것도 요청하지 않기 때문에 로그인 화면도 같은 내용을 보여줄 수 있습니다. |
 | 로그인 | `/ui/login` | 세션이 없는 클라이언트가 도착하는 화면. 첫 로그인에서는 사용자명을 비워 둡니다. 계정 설정이 아직이면 설정 화면으로 이어집니다. **Manual** 버튼을 누르면 매뉴얼이 이 화면 위에 패널로 열립니다. 세션이 없어도 열립니다. 매뉴얼이 가장 아쉬운 때가 아직 아무것도 안 되는 때이기 때문입니다. |
@@ -1030,8 +1060,8 @@ Tiếng Việt, ไทย 입니다. 아랍어는 오른쪽에서 왼쪽으로 �
 뒤집힙니다. 언어를 고르지 않은 브라우저에 무엇을 보여줄지는 설치본의 설정입니다. 그 설정과
 언어가 정해지는 순서는 [화면의 언어](#화면의-언어) 에 있습니다.
 
-폼은 보내기 전에 입력을 검사합니다. 포트는 숫자만 받고 1 에서 65535 사이여야 하며, IP 칸은
-주소를 이루는 문자만 받고 IPv4 나 IPv6 로 읽혀야 합니다. 무엇이 잘못됐는지는 그 칸 옆에 적히고,
+폼은 보내기 전에 입력을 검사합니다. 포트는 숫자만 받고 1 에서 65535 사이여야 하며, 주소 칸은
+영문자, 숫자, 하이픈, 점, 콜론만 받고 호스트 이름이나 IPv4, IPv6 주소로 읽혀야 합니다. 무엇이 잘못됐는지는 그 칸 옆에 적히고,
 맞을 때까지 브라우저 밖으로 아무것도 나가지 않습니다.
 
 **끌어다 놓은 키 파일은 브라우저 안에서 읽습니다.** 나가는 것은 붙여 넣었을 때와 똑같이 키의
@@ -1112,6 +1142,7 @@ UI 파일은 일부러 세션 없이 제공합니다. 누구에게나 같은 바
 | API port | `api_port` | `api.port` | `8888` | 다음 기동부터 |
 | Serve over HTTPS | `api_https_enabled` | `api.https_enabled` | `true` | 다음 기동부터 |
 | Monitoring interval (seconds) | `monitoring_interval_sec` | `monitoring.interval_sec` | `5` | 다음 기동부터 |
+| 재연결 최대 대기 (초) | `reconnect_max_interval_sec` | `monitoring.reconnect_max_interval_sec` | `60` | 다음 기동부터 |
 | Reconcile interval (seconds) | `reconcile_interval_sec` | `reconcile.interval_sec` | `5` | 다음 기동부터 |
 | Encryption key file | `security_key_file` | `security.key_file` | `keys/tunnel-manager.key` | 다음 기동부터 |
 | Log level | `logging_level` | `logging.level` | `info` | **저장하는 즉시** |
@@ -1125,8 +1156,19 @@ UI 파일은 일부러 세션 없이 제공합니다. 누구에게나 같은 바
 | 새 릴리즈를 확인 | `update_check_enabled` | `update.check_enabled` | `true` | **저장하는 즉시** |
 | 확인 주기 (시간) | `update_check_interval_hours` | `update.check_interval_hours` | `24` | **저장하는 즉시** |
 | 새 릴리즈를 묻지 않고 설치 | `update_auto_install` | `update.auto_install` | `false` | **저장하는 즉시** |
+| 알림까지 기다릴 시간 (초) | `alert_after_sec` | `alert.after_sec` | `300` | **저장하는 즉시** |
+| Webhook URL | `alert_webhook_url` | `alert.webhook_url` | 빈 값. webhook 꺼짐 | **저장하는 즉시** |
+| 메일 서버 | `smtp_host` | `alert.smtp.host` | 빈 값. 메일 꺼짐 | **저장하는 즉시** |
+| 메일 서버 포트 | `smtp_port` | `alert.smtp.port` | `587` | **저장하는 즉시** |
+| 연결 보안 | `smtp_security` | `alert.smtp.security` | `starttls` | **저장하는 즉시** |
+| 로그인 방식 | `smtp_auth` | `alert.smtp.auth` | `plain` | **저장하는 즉시** |
+| 사용자 이름 | `smtp_username` | `alert.smtp.username` | 빈 값 | **저장하는 즉시** |
+| 비밀번호 | `smtp_password` | `alert.smtp.password` | 없음 | **저장하는 즉시** |
+| 보내는 주소 | `smtp_from` | `alert.smtp.from` | 빈 값 | **저장하는 즉시** |
+| 받는 주소 | `smtp_to` | `alert.smtp.to` | 빈 값 | **저장하는 즉시** |
+| 메일 서버 인증서를 확인하지 않음 | `smtp_skip_verify` | `alert.smtp.skip_verify` | `false` | **저장하는 즉시** |
 
-**저장하는 즉시 반영되는 설정은 로그 레벨과 언어, 그리고 업데이트 설정 셋입니다.** 로그 레벨은 기동할 때 만들어진
+**저장하는 즉시 반영되는 설정은 로그 레벨과 언어, 업데이트 설정 셋, 그리고 알림 설정입니다.** 알림 설정은 검사할 때마다 새로 읽습니다. [알림](#알림)을 보십시오. 로그 레벨은 기동할 때 만들어진
 모든 로거에 반영되며, 데이터베이스가 질의를 찍는 로거도 포함됩니다. `debug` 를 켜는 이유의
 절반이 그 질의 로그입니다. 언어는 이 프로세스가 아예 읽지 않습니다. 저장 요청의 응답과 그
 뒤의 모든 조회에서 브라우저가 읽기 때문에, 재기동이 반영할 것이 없습니다. 빈 언어는 빈칸이
@@ -1141,12 +1183,19 @@ UI 파일은 일부러 세션 없이 제공합니다. 누구에게나 같은 바
 |------|------|
 | `api_port` | 1 에서 65535. 로컬 포워딩이나 SOCKS5 프록시가 여는 포트로 바꾸면 `409` 로 거부됨. [로컬 포워딩](#로컬-포워딩) 참조 |
 | `monitoring_interval_sec`, `reconcile_interval_sec` | 0 보다 커야 함 |
+| `reconnect_max_interval_sec` | 1 에서 3600 |
 | `security_key_file`, `logging_file_path` | 비어 있으면 안 되고, 데이터베이스 파일이 있는 디렉터리 아래의 경로여야 함. 절대 경로와 `..` 로 밖으로 나가는 경로는 거부됨. [파일이 어디에 생기나](#파일이-어디에-생기나) 참조 |
 | `logging_level` | `debug`, `info`, `warn`, `error`, `dpanic`, `panic`, `fatal` 중 하나 |
 | `logging_format` | `json` 또는 `console` |
 | `logging_file_max_size`, `logging_file_max_backups`, `logging_file_max_age` | 0 이상 |
 | `ui_default_language` | 비어 있거나, `en`, `ko`, `ja`, `zh`, `es`, `fr`, `de`, `pt-BR`, `ru`, `ar`, `hi`, `vi`, `th` 중 하나를 그대로 적은 것. `EN` 이나 `ko-KR` 은 거부됨 |
 | `update_check_interval_hours` | 1 에서 8760. 0 은 끔이 아니라 거부입니다. 0 이면 타이머가 다시 걸리는 속도만큼 요청을 보내게 되고 상대는 요청 수를 세는 API 입니다. 끄는 것은 `update_check_enabled` 입니다 |
+| `alert_after_sec` | 10 에서 86400 |
+| `alert_webhook_url` | 비어 있거나, 2048자 이하의 `http://` 또는 `https://` 주소 |
+| `smtp_port` | 1 에서 65535 |
+| `smtp_security` | `none`, `starttls`, `tls` 중 하나 |
+| `smtp_auth` | `none`, `plain`, `login` 중 하나 |
+| `smtp_from`, `smtp_to` | 메일 주소. `smtp_to` 는 쉼표로 나눠 여럿을 받음. `smtp_host` 가 있으면 둘 다 필수이고, `smtp_auth` 가 `none` 이 아니면 `smtp_username` 도 필수 |
 
 ```bash
 curl -s -b cookies.txt -X PUT "$BASE/api/settings" \
@@ -1207,6 +1256,86 @@ curl -s -b cookies.txt "$BASE/api/settings"
 포트부터 시도하고, 그때까지 `pending_restart` 에 `api.port` 가 실제로 쓰는 포트를 `running` 으로
 해서 나옵니다. Docker 가 포트를 번호로 게시하거나 방화벽이 번호로 열어 둔 곳에서는 대신 연
 포트가 밖에서 닿지 않을 수 있으니, 저장된 포트를 비우고 재기동하세요.
+
+### 알림
+
+**터널, 로컬 포워딩, SOCKS5 프록시가 `alert_after_sec`(기본 300초) 동안 연결 없이 있으면 알림을
+보내고, 다시 연결되면 한 번 더 보냅니다.** 설정은 설정 화면의 **알림** 카드에 있고, webhook 과
+메일은 따로 켭니다. webhook URL 을 저장하면 webhook 이 켜지고, 메일 서버를 적으면 메일이
+켜집니다. 둘 다 없으면 아무것도 지켜보지 않습니다.
+
+지켜보는 것은 돌고 있는 포워딩 전부이며, 상태 화면이 보여주는 것과 같은 상태를 5초마다
+읽습니다. `connected` 가 아닌 상태는 모두 끊긴 것으로 셉니다. `starting`, `reconnecting`,
+`error`, 거부된 호스트 키도 그렇습니다. 끊김 한 번에 `down` 하나와 `up` 하나입니다. 끄거나
+지우거나 Host 를 비활성으로 바꾼 포워딩은 끊김이 아니므로 `up` 없이 잊습니다. 무엇을 보냈는지는
+메모리에만 두므로 재기동하면 처음부터 다시 셉니다. 재기동 뒤에도 끊겨 있는 포워딩은 기다릴
+시간이 지나면 다시 알리고, 서비스가 내려가 있던 동안 돌아온 포워딩은 `up` 을 받지 못합니다.
+알림이 꺼져 있던 동안 시작된 끊김은 알림을 켠 때부터 셉니다.
+
+**webhook 에는 이 JSON 을** `Content-Type: application/json` 으로 POST 합니다. 2xx 밖의 응답은
+실패이고, POST 하나에 10초를 주며, 다시 보내지는 않습니다. 실패는 로그에 남습니다.
+
+```json
+{
+  "event": "down",
+  "kind": "service_port",
+  "host": "192.0.2.10",
+  "local_port": 18080,
+  "since": "2026-09-26T01:02:03Z",
+  "last_error": "<포워딩이 마지막으로 알린 오류>",
+  "installation": "<이 장비의 호스트 이름>"
+}
+```
+
+| 항목 | 무엇인가 |
+|------|----------|
+| `event` | `down`, `up`, 그리고 시험 버튼이 보내는 `test` |
+| `kind` | `service_port`, `local_forward`, `socks` 중 하나 |
+| `host` | 그 포워딩이 거쳐 가는 Host 의 주소 |
+| `local_port` | 그 포워딩이 여는 포트. 서비스 포트는 Host 에, 로컬 포워딩과 SOCKS5 프록시는 이 장비에 엽니다 |
+| `since` | 연결이 없는 것을 처음 본 시각. UTC 의 RFC 3339 이고, `up` 은 짝이 되는 `down` 과 같은 시각을 싣습니다 |
+| `last_error` | 끊겨 있는 동안 본 마지막 오류 |
+| `installation` | 이 장비의 호스트 이름. 여러 설치본이 한 곳으로 보낸 알림을 구분하게 해 줍니다 |
+
+**메일은 같은 항목을 담은 일반 텍스트 메시지입니다.** 제목은
+`[tunnel-manager <installation>] DOWN: <kind> <local_port> on <host>` 같은 모양입니다. 연결 보안은
+기본이 587 포트의 `starttls` 이고, 그 밖에 `tls`(465)와 `none` 이 있습니다. `starttls` 는 서버가
+제공하지 않으면 실패합니다. 로그인 방식은 기본이 `plain` 이고, 그 밖에 `login` 과 `none` 이
+있습니다. 메일 서버가 이 장비 자신이 아니면 TLS 가 없는 연결로는 비밀번호를 보내지 않습니다.
+서버 인증서는 `smtp_skip_verify` 를 켜지 않는 한 확인하며, 켜면 이 장비와 서버 사이에 있는
+누구든 비밀번호를 읽을 수 있습니다. 메시지 하나에 30초를 줍니다.
+
+**알림을 어디로 보내는지는 암호화해서 저장합니다.** 메일 비밀번호, 그리고 webhook URL 과 메일
+서버, 그 포트, 사용자 이름, 두 주소는 [암호화 키](#암호화-키)로 암호화한 뒤 저장합니다. 기다릴
+시간, 연결 보안, 로그인 방식, 인증서 확인 여부는 그대로 저장합니다.
+
+**webhook URL 과 메일 비밀번호는 쓰기만 됩니다.** `GET /api/settings` 는 값 대신
+`alert_webhook_url_set` 과 `smtp_password_set` 을 답하고, 저장 응답의 변경 목록도 암호화되는
+설정은 모두 가려서 보여줍니다. 저장에서 둘 중 하나를 빼거나 비워 보내면 저장된 값을 그대로
+두고, `alert_webhook_url_clear` 나 `smtp_password_clear` 를 true 로 보내면 지웁니다.
+
+**메일 보낼 곳을 바꾸면 비밀번호를 다시 받습니다.** 비밀번호가 저장돼 있는 동안
+`smtp_host`, `smtp_port`, `smtp_username`, `smtp_security` 를 바꾸거나 `smtp_skip_verify` 를 켜는
+저장이나 시험은 `smtp_password` 를 함께 보내야 하고, 그러지 않으면 `400` 과
+`settings.smtp_password.required` 로 거부합니다. 그렇지 않으면 요청 본문이 다른 서버를 적어
+저장된 비밀번호를 그리로 보내게 할 수 있습니다. 그런 본문이 로그인을 끄거나 비밀번호를 지우면
+저장된 비밀번호를 대신 지웁니다.
+
+**시험 버튼 둘은 `test` 알림을 바로 보냅니다.** `POST /api/settings/alert/test-webhook` 과
+`POST /api/settings/alert/test-smtp` 입니다. `PUT /api/settings` 와 같은 본문을 받아 저장된 설정
+위에 덮으므로, 화면에 있는 값을 저장하기 전에 시험할 수 있고, 아무것도 저장하지 않습니다.
+webhook 이나 메일 서버가 알림을 받지 않으면 `502` 로 답하고 이유를 `error_args.reason` 에
+싣습니다.
+
+```bash
+curl -s -b cookies.txt -X POST "$BASE/api/settings/alert/test-webhook" \
+  -H 'Content-Type: application/json' \
+  -H "X-CSRF-Token: $CSRF" \
+  -d '{"alert_webhook_url":"https://hooks.example.com/tunnel-manager"}'
+```
+
+설정 내보내기는 알림 설정을, webhook URL 과 메일 비밀번호까지 포함해 암호화된 파일 안에 평문으로
+담습니다. Host 의 비밀번호를 담는 것과 같습니다.
 
 ### 서비스 재기동
 
@@ -1445,12 +1574,12 @@ curl -s -b cookies.txt "$BASE/api/status"
 curl -s -b cookies.txt -X POST "$BASE/api/host" \
   -H 'Content-Type: application/json' \
   -H "X-CSRF-Token: $CSRF" \
-  -d '{"ip":"192.0.2.10","port":22,"user":"ubuntu","password":"<host-password>","description":"example"}'
+  -d '{"address":"192.0.2.10","port":22,"user":"ubuntu","password":"<host-password>","description":"example"}'
 
 curl -s -b cookies.txt -X POST "$BASE/api/service-port" \
   -H 'Content-Type: application/json' \
   -H "X-CSRF-Token: $CSRF" \
-  -d '{"service_ip":"198.51.100.20","service_port":8080,"local_port":18080}'
+  -d '{"service_address":"198.51.100.20","service_port":8080,"local_port":18080}'
 
 # 5. 스크립트가 끝나면 로그아웃한다.
 curl -s -b cookies.txt -X POST "$BASE/api/logout" -H "X-CSRF-Token: $CSRF"
@@ -1482,6 +1611,7 @@ curl -s -b cookies.txt -X POST "$BASE/api/setup" \
 | `403 The account setup is not finished...` | 계정에 아직 사용자명이 없습니다. `POST /api/setup` 을 먼저 부르십시오. |
 | `401 Invalid username or password` | 로그인이 거부됐습니다. 둘 중 무엇이 틀렸는지는 일부러 알려주지 않습니다. |
 | `400 The settings are refused: ...` | 설정이 위 규칙 중 하나를 어겼습니다. 아무것도 저장되지 않았습니다. |
+| `400 The field ip was renamed to address. Send address instead` | 본문이 v3.14.0 전의 이름(`ip`, `service_ip`, `target_ip`)으로 항목을 적었고, `error_code` 는 `request.field_renamed` 입니다. 아무것도 저장되지 않았습니다. |
 | `401 The password does not open this account` | 제거 요청의 비밀번호가 틀렸습니다. 아무것도 멈추지 않았고 아무것도 지워지지 않았습니다. |
 
 모든 응답은 같은 모양입니다. `{"success":true,"data":...}` 또는
@@ -1725,6 +1855,26 @@ curl -s -b cookies.txt "$BASE/api/host?page=2&size=20"
 curl -s -b cookies.txt "$BASE/api/status?page=99999&size=10"
 ```
 
+### 검색
+
+**`q` 는 같은 세 목록을 그 글자를 담은 행으로 좁힙니다.** `q` 가 없거나 비어 있으면 좁히지
+않습니다. ASCII 글자는 대소문자를 가리지 않고, 포트는 적힌 글자로 맞춰 보므로 `22` 는 `2222`
+포트의 Host 도 찾으며, `%` 와 `_` 는 와일드카드가 아니라 적힌 그대로입니다. Hosts, Service Ports,
+상태 화면의 표 위에 있는 검색 칸이 이것을 보냅니다.
+
+| 목록 | `q` 를 찾는 곳 |
+|------|----------------|
+| `GET /api/host` | 주소, 사용자, 설명, SSH 포트 |
+| `GET /api/service-port` | 서비스 주소, 서비스 포트, 로컬 포트, 설명 |
+| `GET /api/status` | Host 의 주소와 설명, 그리고 그 행의 여는 곳과 닿는 곳 주소 |
+
+페이지는 맞는 행에서 끊으므로 앞의 둘의 `total` 과 상태의 `total_rows` 는 맞는 행의 수입니다.
+`GET /api/status` 의 네 숫자는 여전히 설치본 전체를 셉니다.
+
+```bash
+curl -s -b cookies.txt "$BASE/api/host?q=example&page=1&size=20"
+```
+
 ### 계정
 
 | 메서드 | 경로 | 하는 일 |
@@ -1741,7 +1891,7 @@ curl -s -b cookies.txt "$BASE/api/status?page=99999&size=10"
 | 메서드 | 경로 | 하는 일 |
 |--------|------|---------|
 | `POST` | `/api/host` | Host 생성. `enabled` 는 선택이고, 안 보내면 활성으로 만듭니다. `bind_scope` 는 이 요청이 만드는 할당들을 어느 범위에 열지입니다 |
-| `GET` | `/api/host` | Host 한 페이지를 등록된 순서로 조회. `page` 와 `size` 를 받음, [페이징](#페이징) 참고 |
+| `GET` | `/api/host` | Host 한 페이지를 등록된 순서로 조회. `page` 와 `size` 를 받음, [페이징](#페이징) 참고. `q` 도 받음, [검색](#검색) 참고 |
 | `GET` | `/api/host/:id` | 특정 Host 조회 |
 | `PUT` | `/api/host/:id` | Host 수정. 모든 항목이 선택이며, `enabled` 를 false 로 하면 그 Host 의 터널이 멈춤 |
 | `DELETE` | `/api/host/:id` | Host 삭제. 그것을 가리키는 할당과 그 로컬 포워딩도 같이 지움 |
@@ -1754,7 +1904,7 @@ curl -s -b cookies.txt "$BASE/api/status?page=99999&size=10"
 
 | 항목 | 생성할 때 | 수정할 때 |
 |------|-----------|-----------|
-| `ip`, `port`, `user` | 필수 | 선택. 빠뜨린 것은 그대로 둡니다 |
+| `address`, `port`, `user` | 필수. `address` 는 호스트 이름이나 IP 주소 | 선택. 빠뜨린 것은 그대로 둡니다 |
 | `private_key` | PEM 개인키 파일의 내용. `password` 가 있으면 선택 | 비었거나 없으면 저장된 키를 그대로 둡니다. 키를 보내면 저장된 키와 그 키의 암호가 함께 바뀝니다 |
 | `key_passphrase` | 키에 암호가 걸린 경우에만 필수 | 키와 같이 보냅니다. `private_key` 없이 혼자 오면 거부합니다 |
 | `password` | `private_key` 가 있으면 선택 | 비었거나 없으면 저장된 비밀번호를 그대로 둡니다 |
@@ -1793,7 +1943,7 @@ Host 자신은 범위를 들고 있지 않으므로 `PUT /api/host/:id` 는 이 
 # 키로 접속하는 Host. 키는 파일 내용 그대로 보내므로 줄바꿈이 살아 있어야 한다.
 # 아래는 jq 로 파일을 읽어 본문을 만든다.
 jq -n --arg key "$(cat ~/.ssh/id_ed25519)" \
-  '{ip:"192.0.2.10",port:22,user:"ubuntu",private_key:$key,description:"example"}' |
+  '{address:"192.0.2.10",port:22,user:"ubuntu",private_key:$key,description:"example"}' |
 curl -s -b cookies.txt -X POST "$BASE/api/host" \
   -H 'Content-Type: application/json' \
   -H "X-CSRF-Token: $CSRF" \
@@ -1829,9 +1979,9 @@ curl -s -b cookies.txt -X PUT "$BASE/api/host/3" \
   "success": true,
   "data": {
     "items": [
-      { "id": 1, "service_ip": "198.51.100.20", "service_port": 8080,
+      { "id": 1, "service_address": "198.51.100.20", "service_port": 8080,
         "local_port": 18080, "description": "", "assigned": true,
-        "bind_scope": "wildcard" }
+        "bind_scope": "wildcard", "enabled": true }
     ],
     "total": 1,
     "page": 1,
@@ -1842,7 +1992,8 @@ curl -s -b cookies.txt -X PUT "$BASE/api/host/3" \
 
 행의 `bind_scope` 는 이 Host 의 그 할당이 어느 범위에 열리는지입니다. **이 Host 가 담당하지
 않는 행에서는 빈 값**입니다. 범위는 할당이 들고 있으므로 할당되지 않은 서비스 포트에는 범위가
-없고, 화면이 거기서 만들 행은 다른 것을 고르기 전까지 와일드카드에서 출발합니다.
+없고, 화면이 거기서 만들 행은 다른 것을 고르기 전까지 와일드카드에서 출발합니다. `enabled` 는 그
+할당의 터널이 도는지이며, 이 Host 가 담당하지 않는 행에서는 false 입니다.
 
 **`PUT /api/host/:id/service-port` 는 전체 집합이 아니라 변경분을 받습니다.** 목록은 한 번에
 한 페이지씩 나가므로 클라이언트는 한 페이지만 가지고 있고 읽지 않은 페이지의 행은 모릅니다.
@@ -1857,7 +2008,7 @@ curl -s -b cookies.txt -X PUT "$BASE/api/host/1/service-port" \
 ```
 
 ```json
-{ "success": true, "data": { "added": 2, "removed": 1, "rescoped": 1 } }
+{ "success": true, "data": { "added": 2, "removed": 1, "rescoped": 1, "switched": 0 } }
 ```
 
 | 항목 | 하는 일 |
@@ -1866,6 +2017,8 @@ curl -s -b cookies.txt -X PUT "$BASE/api/host/1/service-port" \
 | `remove` | 이 Host 에서 뗄 서비스 포트 |
 | `rescope` | `bind_scope` 로 옮길 할당. 같은 방식으로 id 를 적습니다. 이 Host 가 담당하지 않는 id 는 아무것도 옮기지 않습니다 |
 | `bind_scope` | `loopback` 또는 `wildcard` 이고, 빼면 와일드카드입니다. `add` 로 쓰이는 행이 출발하는 값이자 `rescope` 가 지목한 행이 옮겨 갈 값입니다 |
+| `switch` | `enabled` 로 바꿀 할당. 같은 방식으로 id 를 적습니다. 이 Host 가 담당하지 않는 id 는 아무것도 바꾸지 않고, `enabled` 를 뺀 요청도 아무것도 바꾸지 않습니다 |
+| `enabled` | `add` 로 쓰이는 행이 도는지, 그리고 `switch` 가 지목한 행을 무엇으로 바꿀지. 빼면 `add` 의 행은 돌고 아무것도 바꾸지 않습니다 |
 
 **이미 있는 할당은 `rescope` 가 지목하지 않는 한 지금 들고 있는 범위 그대로 남습니다.** 목록을
 둘로 가른 이유가 이것입니다. 반대로 하면, 이미 켜져 있던 체크를 다시 켠 클라이언트나 이 기능이
@@ -1874,10 +2027,23 @@ curl -s -b cookies.txt -X PUT "$BASE/api/host/1/service-port" \
 `add` 는 아무것도 넓히지 않습니다. 화면의 일괄 적용은 목록에 있는 것이 아니라 체크된 것으로
 `rescope` 를 채우므로, 체크하지 않은 행은 건드리지 않습니다.
 
-`added`, `removed`, `rescoped` 는 요청이 아니라 실제로 쓰인 행을 셉니다. 이미 할당된 서비스
-포트를 또 할당하라고 해도 행이 새로 써지지 않고, 할당돼 있지 않은 것을 해제하라고 해도 없어지는
-행이 없으며, 이 Host 가 담당하지 않는 할당을 `rescope` 에 적어도 옮겨지는 행이 없습니다. 세
-목록 모두 선택이고, 아무것도 바꾸지 않는 요청도 거부하지 않고 응답합니다.
+**할당은 떼지 않고 끌 수 있습니다.** 끈 할당은 범위와 함께 할당된 채로 남고 터널만 돌지 않으며,
+다시 켜면 같은 터널이 돌아옵니다. Host 의 **Service ports** 패널에서 행마다 있는 **활성**
+체크가 화면에서 같은 일을 합니다. 범위처럼 `switch` 가 지목한 행만 바뀌므로, 이미 켜져 있던
+체크를 다시 켜도 누군가 멈춰 둔 터널이 돌기 시작하지 않습니다.
+
+```bash
+# Host 1 에서 서비스 포트 3 을 떼지 않고 멈춥니다.
+curl -s -b cookies.txt -X PUT "$BASE/api/host/1/service-port" \
+  -H 'Content-Type: application/json' \
+  -H "X-CSRF-Token: $CSRF" \
+  -d '{"switch":[3],"enabled":false}'
+```
+
+`added`, `removed`, `rescoped`, `switched` 는 요청이 아니라 실제로 쓰인 행을 셉니다. 이미 할당된
+서비스 포트를 또 할당하라고 해도 행이 새로 써지지 않고, 할당돼 있지 않은 것을 해제하라고 해도
+없어지는 행이 없으며, 이 Host 가 담당하지 않는 할당을 `rescope` 나 `switch` 에 적어도 바뀌는 행이
+없습니다. 네 목록 모두 선택이고, 아무것도 바꾸지 않는 요청도 거부하지 않고 응답합니다.
 
 | 보낸 것 | 어떻게 되나 |
 |---------|-------------|
@@ -1926,7 +2092,7 @@ Host 를 담은 응답은 모두 `host_key_fingerprint` 와 `pending_host_key_fi
   "success": true,
   "data": {
     "items": [
-      { "host_id": 1, "ip": "192.0.2.10", "mismatch": true,
+      { "host_id": 1, "address": "192.0.2.10", "mismatch": true,
         "fingerprint": "SHA256:<서버가 내민 키>",
         "trusted_fingerprint": "SHA256:<이 Host 가 신뢰하는 키>" }
     ],
@@ -2028,7 +2194,7 @@ Host 는 **1000개**까지입니다. 요청의 모든 Host 를 트랜잭션 하�
 curl -s -b cookies.txt -X POST "$BASE/api/host/1/local-forward" \
   -H 'Content-Type: application/json' \
   -H "X-CSRF-Token: $CSRF" \
-  -d '{"local_port":15432,"bind_scope":"loopback","target_ip":"198.51.100.30","target_port":5432,"description":"database"}'
+  -d '{"local_port":15432,"bind_scope":"loopback","target_address":"db.example.com","target_port":5432,"description":"database"}'
 ```
 
 ```json
@@ -2037,8 +2203,8 @@ curl -s -b cookies.txt -X POST "$BASE/api/host/1/local-forward" \
   "data": {
     "items": [
       { "host_id": 1, "number": 1, "bind_scope": "loopback", "local_port": 15432,
-        "target_ip": "198.51.100.30", "target_port": 5432, "description": "database",
-        "enabled": true,
+        "target_address": "db.example.com", "target_port": 5432, "description": "database",
+        "enabled": true, "allowed_sources": "",
         "status": "connected", "last_error": "", "retry_count": 0,
         "last_connected_at": "<연결된 시각>",
         "created_at": "<...>", "updated_at": "<...>" }
@@ -2058,17 +2224,18 @@ curl -s -b cookies.txt -X POST "$BASE/api/host/1/local-forward" \
 **이 목록은 전에는 행 전부를 주었고 `data` 가 그 배열이었습니다.** 이제 페이징하고 `data` 는 위의
 객체이므로, `data[0]` 을 읽던 클라이언트는 `data.items[0]` 을 읽습니다.
 
-생성과 수정의 본문은 같은 항목을 받고, 수정은 전부를 받습니다. `local_port`, `target_ip`,
+생성과 수정의 본문은 같은 항목을 받고, 수정은 전부를 받습니다. `local_port`, `target_address`,
 `target_port` 는 둘 다에서 필수이고, **수정에서 `bind_scope` 를 빼면 와일드카드로 바뀝니다.**
-지금 범위를 유지하려면 그 범위를 보내십시오. `enabled` 는 수정에서 빼도 유지되는 유일한
-항목입니다. 빼면 켜져 있든 꺼져 있든 그대로 두고, 생성에서 빼면 도는 로컬 포워딩이 됩니다.
+지금 범위를 유지하려면 그 범위를 보내십시오. `enabled` 와 `allowed_sources` 는 수정에서
+빼도 유지되는 두 항목입니다. 빼면 켜져 있든 꺼져 있든 그대로 두고 목록도 그대로 두며, 생성에서
+빼면 모든 주소를 받는 도는 로컬 포워딩이 됩니다.
 
 ```bash
 # Host 1 의 1 번 로컬 포워딩을 끕니다. 수정은 항목 전부를 받으므로 유지할 값도 다시 보냅니다.
 curl -s -b cookies.txt -X PUT "$BASE/api/host/1/local-forward/1" \
   -H 'Content-Type: application/json' \
   -H "X-CSRF-Token: $CSRF" \
-  -d '{"local_port":15432,"bind_scope":"loopback","target_ip":"198.51.100.30","target_port":5432,"description":"database","enabled":false}'
+  -d '{"local_port":15432,"bind_scope":"loopback","target_address":"db.example.com","target_port":5432,"description":"database","enabled":false}'
 ```
 
 쓰기의 응답은 조정 루프가 그 행에 닿기 전에 만들어지므로, 응답의 상태는 로컬 포워딩이 뜨거나
@@ -2076,7 +2243,9 @@ curl -s -b cookies.txt -X PUT "$BASE/api/host/1/local-forward/1" \
 
 | 보낸 것 | 어떻게 되나 |
 |---------|-------------|
-| 1 ~ 65535 밖의 포트, IP 주소가 아닌 `target_ip`, `loopback` 도 `wildcard` 도 아닌 `bind_scope` | `400`. 아무것도 쓰지 않습니다 |
+| 1 ~ 65535 밖의 포트, 호스트 이름도 IP 주소도 아닌 `target_address`, `loopback` 도 `wildcard` 도 아닌 `bind_scope` | `400`. 아무것도 쓰지 않습니다 |
+| 읽히지 않는 `allowed_sources` | `400`, `local_forward.allowed_sources.invalid`. 아무것도 쓰지 않습니다 |
+| `target_address` 대신 `target_ip` | `400`, `request.field_renamed`. 아무것도 쓰지 않습니다 |
 | 다른 로컬 포워딩이 여는 `local_port` | `409`, 그 포트를 알려줍니다 |
 | 이 서버가 듣도록 저장된 포트와 같은 `local_port` | `409`, 그 포트를 알려줍니다 |
 | 저장돼 있지 않은 Host id, 또는 그 Host 에 없는 번호 | `404` |
@@ -2086,9 +2255,9 @@ curl -s -b cookies.txt -X PUT "$BASE/api/host/1/local-forward/1" \
 | 메서드 | 경로 | 하는 일 |
 |--------|------|---------|
 | `POST` | `/api/service-port` | 서비스 포트 생성. `assign_to_all_hosts` 는 선택이며, 안 보내면 저장돼 있는 Host 가 전부 그것을 받고 false 로 보내면 어느 Host 에도 할당되지 않은 상태로 등록됩니다. `bind_scope` 는 이 요청이 만드는 할당들을 어느 범위에 열지입니다 |
-| `GET` | `/api/service-port` | 서비스 포트 한 페이지를 등록된 순서로 조회. `page` 와 `size` 를 받음, [페이징](#페이징) 참고 |
+| `GET` | `/api/service-port` | 서비스 포트 한 페이지를 등록된 순서로 조회. `page` 와 `size` 를 받음, [페이징](#페이징) 참고. `q` 도 받음, [검색](#검색) 참고 |
 | `GET` | `/api/service-port/:id` | 특정 서비스 포트 조회 |
-| `PUT` | `/api/service-port/:id` | 서비스 포트 수정. `service_ip`, `service_port`, `local_port` 가 모두 필수 |
+| `PUT` | `/api/service-port/:id` | 서비스 포트 수정. `service_address`, `service_port`, `local_port` 가 모두 필수 |
 | `DELETE` | `/api/service-port/:id` | 서비스 포트 삭제. 그것을 가리키는 할당도 같이 지움 |
 
 생성의 `bind_scope` 는 `assign_to_all_hosts` 가 만드는 할당 일괄을 어느 범위에 열지이고,
@@ -2101,7 +2270,7 @@ Host 에 걸리는 일괄을 대표할 수 있는 것은 두 낱말이 어느 �
 
 | 메서드 | 경로 | 하는 일 |
 |--------|------|---------|
-| `GET` | `/api/status` | 설치본 전체의 숫자와 상태 행 한 페이지. 서비스 포트 터널과 로컬 포워딩이 각자 `kind` 를 달고 함께 실립니다. `page` 와 `size` 를 받음, [페이징](#페이징) 참고 |
+| `GET` | `/api/status` | 설치본 전체의 숫자와 상태 행 한 페이지. 서비스 포트 터널과 로컬 포워딩이 각자 `kind` 를 달고 함께 실립니다. `page` 와 `size` 를 받음, [페이징](#페이징) 참고. `q` 도 받음, [검색](#검색) 참고 |
 | `GET` | `/api/status/:hostId` | 그 Host 와 그 Host 의 터널. 페이징하지 않음. 한 Host 의 터널은 그 Host 가 담당하는 서비스 포트 수만큼입니다 |
 | `GET` | `/api/metrics` | 같은 상태를 Prometheus 텍스트 형식으로. [메트릭](#메트릭) 참고 |
 
@@ -2111,6 +2280,8 @@ Host 에 걸리는 일괄을 대표할 수 있는 것은 두 낱말이 어느 �
 |--------|------|---------|
 | `GET` | `/api/settings` | 저장된 설정과, 지금 프로세스가 실행 중인 값과 다른 항목(`pending_restart`) 조회 |
 | `PUT` | `/api/settings` | 본문의 설정을 저장된 값 위에 덮고, 무엇이 바뀌었는지와 재기동이 필요한지를 응답 |
+| `POST` | `/api/settings/alert/test-webhook` | 본문의 설정을 저장된 값 위에 덮어 webhook 으로 `test` 알림을 보냄. 아무것도 저장하지 않음, [알림](#알림) 참고 |
+| `POST` | `/api/settings/alert/test-smtp` | 같은 방식으로 `test` 알림을 메일로 보냄 |
 | `GET` | `/api/certificate` | 지금 서비스 중인 인증서. 지문, subject, 발급자, 포함된 이름들, 유효기간, 남은 일수 |
 | `POST` | `/api/certificate/renew` | 자체 서명 인증서를 새로 만들어 다음 연결부터 서비스 |
 | `PUT` | `/api/certificate` | `cert_pem` 과 `key_pem` 을 받아 저장하고 다음 연결부터 서비스 |
@@ -2189,13 +2360,19 @@ Host 의 모든 할당이 `loopback` 이 되고 그 밖의 답은 전부 와일�
 쓰는 규칙과 같습니다. 읽기만 하고 쓰지는 않으므로 가져오기가 누군가 좁혀 둔 것을 조용히
 되돌리지 못하며, 이 버전이 쓰는 파일에는 `bind_address` 가 아예 없습니다.
 
+**할당마다 도는지도 같이 갑니다.** Host 쪽 `assigned_enabled` 가 그것이고, 같은 로컬 포트를 키로
+씁니다. 꺼진 할당만 `false` 로 적히고 항목이 없는 할당은 돌므로, 할당을 끌 수 있기 전에 만든
+파일은 모든 할당을 켠 채로 가져옵니다.
+
 **Host 마다 그 로컬 포워딩도 같이 갑니다.** Host 의 `local_forwards` 가 그것이고, 내보내기
 응답의 `local_forwards` 는 그 개수입니다. `assigned_local_ports` 와 마찬가지로 이 목록은
 가져온 뒤에 그 Host 가 가질 전부이며, 항목이 없는 것과 빈 목록은 다른 답입니다.
 
 목록의 로컬 포워딩마다 `enabled` 가 실리고, 내보내기는 언제나 그것을 적습니다. `enabled` 가
 없는 로컬 포워딩, 곧 로컬 포워딩을 끌 수 있기 전에 만든 파일의 로컬 포워딩은 모두 켜진 채로
-저장됩니다. 그 파일을 만든 곳에서 전부 돌고 있었기 때문입니다.
+저장됩니다. 그 파일을 만든 곳에서 전부 돌고 있었기 때문입니다. 로컬 포워딩마다
+`allowed_sources` 도 실리고, 그것이 없는 로컬 포워딩은 이 항목이 생기기 전의 로컬 포워딩이
+모두 그랬듯 모든 주소를 받습니다.
 
 | 파일의 Host 에 있는 `local_forwards` | 그 Host 를 쓰는 가져오기가 하는 일 |
 |--------------------------------------|------------------------------------|
@@ -2578,7 +2755,8 @@ Host 자신의 주소에 열도록 요청한 것이고 그 시스템 바깥에�
 
 ## 암호화 키
 
-Host 의 SSH 비밀번호는 AES-256-GCM 으로 암호화해서 저장합니다. 키는 **Encryption key file**
+Host 의 SSH 비밀번호는 AES-256-GCM 으로 암호화해서 저장하고, 개인키와 그 암호, 인증서의 키, 메일
+비밀번호, 알림을 어디로 보낼지 정하는 설정([알림](#알림) 참고)도 마찬가지입니다. 키는 **Encryption key file**
 설정이 가리키는 파일에서 읽고 기본값은 `keys/tunnel-manager.key` 입니다. 그 파일이 없으면 첫
 기동이 32바이트 키를 만들어 권한 `0600` 으로 저장하고, 있으면 그대로 읽습니다.
 

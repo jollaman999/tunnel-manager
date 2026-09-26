@@ -14,7 +14,7 @@ serves a REST API, a browser UI and the tunnels themselves.
 The tunnels are **reverse** tunnels, which means the listening socket is opened
 on the Host and not on the machine Tunnel Manager runs on. A client that
 connects to `local_port` **on the Host** is carried through the SSH connection to
-Tunnel Manager, which then connects to `service_ip:service_port` and copies the
+Tunnel Manager, which then connects to `service_address:service_port` and copies the
 bytes in both directions. That is how a service only Tunnel Manager can reach is
 made reachable from the Host. A [local forward](#local-forwards) and the
 [SOCKS5 proxy of a Host](#a-socks5-proxy-on-a-host) are the two things that run
@@ -23,16 +23,27 @@ from the Host.
 
 | What you register | Fields | What it is |
 |-------------------|--------|------------|
-| Host | `ip`, `port`, `user`, `private_key`, `key_passphrase`, `password`, `description`, `enabled`, `socks_enabled`, `socks_port`, `socks_bind_scope`, `socks_allowed_sources` | An SSH server Tunnel Manager logs in to. It logs in with a private key, with a password, or with both; at least one of the two is required. The key, its passphrase and the password are all stored encrypted. The `socks_` fields are the [SOCKS5 proxy](#a-socks5-proxy-on-a-host) it may carry. |
-| Service port | `service_ip`, `service_port`, `local_port` | The service to publish, and the port opened on every Host that carries it. |
+| Host | `address`, `port`, `user`, `private_key`, `key_passphrase`, `password`, `description`, `enabled`, `socks_enabled`, `socks_port`, `socks_bind_scope`, `socks_allowed_sources` | An SSH server Tunnel Manager logs in to. It logs in with a private key, with a password, or with both; at least one of the two is required. The key, its passphrase and the password are all stored encrypted. The `socks_` fields are the [SOCKS5 proxy](#a-socks5-proxy-on-a-host) it may carry. |
+| Service port | `service_address`, `service_port`, `local_port` | The service to publish, and the port opened on every Host that carries it. |
 | Assignment | `host_id`, `sp_id`, `bind_scope` | One Host paired with one service port: this Host is to carry it. It is what a tunnel is built from, and it is made for you as a Host or a service port is registered. `bind_scope` is how far its forwarded port is asked to reach on the Host, `loopback` or `wildcard`, and the wildcard where it is not given. |
-| Local forward | `local_port`, `bind_scope`, `target_ip`, `target_port`, `description` | A port opened on this machine, whose connections are carried through the SSH connection of one Host to `target_ip:target_port` as the Host sees it. It belongs to that Host alone. |
+| Local forward | `local_port`, `bind_scope`, `target_address`, `target_port`, `description` | A port opened on this machine, whose connections are carried through the SSH connection of one Host to `target_address:target_port` as the Host sees it. It belongs to that Host alone. |
 
-Both `ip` and `service_ip` take an IPv4 or an IPv6 address. An IPv6 address is
-written plainly, as `2001:db8::1`, and the brackets a dialer needs are put on
-where the address is used. A zone, as in `fe80::1%eth0`, is refused.
+`address`, `service_address` and the `target_address` of a local forward take a
+host name or an IPv4 or IPv6 address. A name is looked up each time a
+connection is made and not when it is stored, so a name that moves to another
+address is followed from the next connection on. `address` and
+`service_address` are looked up by this machine, and `target_address` by the
+Host. An IPv6 address is written plainly, as `2001:db8::1`, and the brackets a
+dialer needs are put on where the address is used. A zone, as in
+`fe80::1%eth0`, is refused.
 
-**One assignment whose Host is enabled is one tunnel.** A Host that carries
+**These three fields were `ip`, `service_ip` and `target_ip` before v3.14.0.** A
+request that still sends an old name is refused with `400` under
+`request.field_renamed`, naming the old field and the new one, rather than
+having the field dropped without a word. A file exported by an earlier release
+still imports: the old names are read there.
+
+**One assignment that is switched on, on a Host that is enabled, is one tunnel.** A Host that carries
 three service ports runs three tunnels, and a Host that carries none runs none
 however many service ports are stored. Registering a Host assigns it every
 service port there is, and registering a service port assigns it to every Host
@@ -127,7 +138,7 @@ Tunnel Manager holds two pictures of the world and keeps comparing them.
 
 | Picture | What it is | Where it comes from |
 |---------|------------|---------------------|
-| Desired | Every service port assigned to a Host, on every Host that is enabled | The `hosts`, `service_ports` and `host_service_ports` rows |
+| Desired | Every assignment that is switched on, on every Host that is enabled | The `hosts`, `service_ports` and `host_service_ports` rows |
 | Actual | The tunnels that are running right now | The manager inside the process, and the `tunnels` rows it writes |
 
 A **reconcile pass** compares the two and closes the gap: what is desired but not
@@ -145,7 +156,7 @@ POST /api/service-port
   201 Created          <- the answer does not wait for any tunnel
 
 reconcile loop
-  desired = the assignments whose Host is enabled
+  desired = the assignments switched on whose Host is enabled
   actual  = the running tunnels
   desired but not running  -> start
   running but not desired  -> stop
@@ -176,6 +187,7 @@ same assignment twice.
 | A Host is registered | It is given every service port that is stored at that moment, unless the request sends `assign_all_service_ports` as false |
 | A service port is registered | Every Host that is stored at that moment is given it, unless the request sends `assign_to_all_hosts` as false |
 | A Host is disabled | They stay where they are. Its tunnels are stopped, and enabling it again brings them back |
+| One assignment is switched off | It stays, with its scope. Its tunnel alone is stopped, and switching it on again brings it back |
 | A Host or a service port is deleted | The assignments naming it go in the same transaction |
 | The first startup after the upgrade that added the table | Every Host is given every service port |
 
@@ -288,12 +300,25 @@ monitor asks a tunnel that is already up whether it is still alive and reconnect
 it when it is not. The reconcile loop asks whether the right set of tunnels
 exists at all.
 
+**The monitor waits as long as the monitoring interval for the keepalive
+reply**, and never less than 3 seconds. The SSH server answers the keepalive
+behind whatever traffic the connection is carrying, so a live server on a busy
+link can take a while. A reply that does not arrive in that time closes the
+connection and it is built again.
+
+**A connection that keeps failing waits longer each time.** The first wait
+before it is tried again is the monitoring interval, and every failure in a row
+doubles the next one up to `reconnect_max_interval_sec`, 60 seconds by default,
+where it stays. A connection that stands puts the wait back to the monitoring
+interval. A ceiling below the monitoring interval leaves every wait at the
+interval. The same holds for local forwards and SOCKS5 proxies.
+
 ### Local forwards
 
 **A local forward runs the other way from a tunnel.** A tunnel has the Host open
 a port and carries what arrives there to a service this machine reaches. A local
 forward has **this machine** open `local_port`, and carries every connection to
-it over the SSH connection of a Host to `target_ip:target_port`, an address the
+it over the SSH connection of a Host to `target_address:target_port`, an address the
 Host reaches. It is what `ssh -L` does, kept up the way a tunnel is.
 
 ```mermaid
@@ -306,7 +331,7 @@ flowchart LR
     subgraph host [Host - an SSH server you register]
         sshd[SSH server]
     end
-    target[("target_ip:target_port<br/>any address the Host can reach")]
+    target[("target_address:target_port<br/>any address the Host can reach")]
 
     tm ==>|"1. connects over SSH, then opens local_port"| sshd
     client -->|"2. connects to local_port"| port
@@ -337,9 +362,10 @@ rather than the row it was written about.
 |-------|------------|
 | `local_port` | The port opened on this machine, 1 to 65535 |
 | `bind_scope` | Which addresses of this machine it is opened on, see below |
-| `target_ip` | Where a connection goes from the Host. An IPv4 or an IPv6 address, not a name |
+| `target_address` | Where a connection goes from the Host: a host name, which the Host looks up, or an IPv4 or an IPv6 address |
 | `target_port` | The port of the target, 1 to 65535 |
 | `description` | Free text |
+| `allowed_sources` | The addresses a client may connect to `local_port` from. Empty lets every address in. A create that leaves it out makes it empty, and an update that leaves it out keeps what is stored |
 | `enabled` | Whether it runs. A create that leaves it out makes a forward that runs, and an update that leaves it out keeps what is stored |
 
 **`bind_scope` here is about this machine, not the Host.** It takes the same two
@@ -351,11 +377,23 @@ words an assignment does and names the same pairs of addresses.
 | `loopback` | `127.0.0.1` and `::1` |
 
 **The wildcard makes this machine a door into the network of the Host.** Anybody
-who can reach this machine on `local_port` reaches `target_ip:target_port` as the
+who can reach this machine on `local_port` reaches `target_address:target_port` as the
 Host sees it without logging in to the Host, because the SSH login is the one
 tunnel-manager made. Choose `loopback` unless something other than this
 machine is meant to use the forward, and put a firewall in front of the port if
 something is.
+
+**`allowed_sources` limits who may connect to a forward on the wildcard.** It
+takes what `socks_allowed_sources` of a
+[SOCKS5 proxy](#a-socks5-proxy-on-a-host) takes, IPv4 and IPv6 addresses and
+CIDR blocks separated by commas or spaces, as `192.0.2.0/24, 198.51.100.7`,
+and a value that does not read is refused with `400` under
+`local_forward.allowed_sources.invalid`. Empty lets every address in, which is
+what every forward stored before the field existed does. A client from an
+address that is not on the list is closed before anything is dialled for it,
+and the refusals are logged as `tunnel.local_forward_source_refused` at most
+once a minute for each forward. The list is held on either scope; the form asks
+for it only on the wildcard, and a save from the form on `loopback` empties it.
 
 Both addresses of the pair are tried, each in its own address family, and **one
 of them opening is enough**: a machine without IPv6 opens the IPv4 half alone.
@@ -392,15 +430,16 @@ no other Host. Switching it off stops it on the next reconcile pass: its port is
 closed and its SSH connection is dropped. The
 reconcile loop starts, rebuilds and stops local forwards the way it does tunnels:
 one row is one SSH connection of its own, and a forward whose Host, credentials,
-trusted host key, port, scope or target changed is stopped and started again. A
-change to the description alone rebuilds nothing.
+trusted host key, port, scope, target or allowed sources changed is stopped and
+started again. A change to the description alone rebuilds nothing.
 
 **`local_port` is open only while the SSH connection stands.** It is opened after
 the connection is made and closed whenever the connection drops, so a client
 that connects while there is no Host to carry it is refused outright rather than
 accepted and dropped. The connection is checked every monitoring interval, the
 way a tunnel is, and a forward whose connection dropped is connected again after
-that same interval.
+that same interval, or after a longer wait when the attempts keep failing, see
+[A single tunnel](#a-single-tunnel).
 
 **A refused login and a refused host key stop it.** Trying again with the same
 password or key would only fail the same way, so the forward waits until
@@ -421,7 +460,7 @@ direction; OpenSSH refuses it where `AllowTcpForwarding` is `no` or `remote`.
 | `starting` | The first connection is being made |
 | `connected` | The SSH connection stands and `local_port` is open |
 | `reconnecting` | The connection dropped or an attempt failed, and it is being made again. `retry_count` counts these |
-| `error` | The last attempt failed, and `last_error` says why. After a refused login it stays here until the Host is changed; otherwise it is tried again after the monitoring interval |
+| `error` | The last attempt failed, and `last_error` says why. After a refused login it stays here until the Host is changed; otherwise it is tried again after the monitoring interval, and each failure in a row doubles the wait up to `reconnect_max_interval_sec` |
 | `host_key_unapproved`, `host_key_mismatch` | The host key was refused, as on a tunnel. It stays here until the key is approved |
 
 **The status is kept in memory**, by the process that runs the forward, and is
@@ -548,7 +587,8 @@ end with it.
 
 **`socks_port` is open only while the SSH connection stands**, as `local_port`
 is: it is opened once the connection is made and closed when it drops, and the
-connection is made again after the monitoring interval. A refused login and a
+connection is made again after the monitoring interval, waiting longer after
+each failure in a row as a local forward does. A refused login and a
 refused host key stop it until something it is built from changes, see
 [Host keys](#host-keys).
 
@@ -1153,11 +1193,11 @@ no directory travels next to it and no path has to be configured.
 
 | Screen | Path | What it shows and does |
 |--------|------|------------------------|
-| Status | `/ui/status` | Four counts, each over both sorts of forward together (desired, connected, reconnecting, errors), a sentence about the difference between them, and one line per row of either sort: Host, kind, service port, status, server, opened, reaches, port reached, retries, last connected. The service port of a local forward is a dash, and the opened and the reaches cells name the machine the address is on, since the two sorts open their port at opposite ends. The port reached cell is filled on both sorts and does not ask the same thing on them: on a tunnel it is the port opened on the Host, and on a local forward the target reached from the Host. A tunnel with something wrong carries what went wrong on a line under it, across the whole table, and a tunnel whose forwarded port was not reached carries there what to change on the SSH server it named and what else to check. A tunnel that is up carries under it what is known about the addresses of its forward, kept in three: what was asked for, what the SSH server answered, and what a connection from here confirmed. It never says a port is open. The rows come a page at a time, ten to a page to begin with, with the size and the page chosen above the table; the counts stay counts of the whole installation and not of the page. It asks again every 5 seconds and comes back on the page being read. |
-| Hosts | `/ui/hosts` | One row per Host with ID, IP, port, user, description, enabled, SOCKS5 proxy and updated. The rows come a page at a time, ten to a page to begin with, with the size (10, 20, 30, 50 or 100) and the page chosen above the table. The choice is remembered for this screen on its own, and a list short enough to fit a page of the smallest size carries no controls at all. Add a Host, edit one, enable or disable one, delete one. The add and edit forms have a box to paste a private key into, an area to drop the key file onto, and a box for the passphrase of a key that has one, and the add form has an **Assign all service ports** tick, on by default, that says what the Host starts out carrying, with a **Reach on the Host** list beside it that every assignment that tick makes starts on. **Service ports** in a row opens a panel of every service port with a tick against the ones this Host carries, and a reach beside each row: pick a reach above and apply it to everything ticked, or set one row on its own, and a row that was not ticked is left alone. Only what was changed is sent when it is saved, so a tick made there leaves the pages that were not read alone. **Local forwards** in a row opens a panel of the local forwards of that Host with the status of each, a page at a time, where they are added, changed, switched off and on, and deleted, one row at a time or the ticked rows together; see [Local forwards](#local-forwards). The add and edit forms also switch on the SOCKS5 proxy of the Host, and its column shows the port and the status; see [A SOCKS5 proxy on a Host](#a-socks5-proxy-on-a-host). |
-| Service Ports | `/ui/service-ports` | One row per service port with ID, service IP, service port, local port, description and updated. The rows come a page at a time the same way the Hosts do, with a size and a page of their own. Add, edit and delete. The add form has an **Assign to all hosts** tick, on by default, that says which Hosts carry it from the start, with a **Reach on the Host** list beside it that the assignments that tick makes start on; which Hosts carry it after that, and what each of those assignments reaches, is changed from the Hosts screen. |
+| Status | `/ui/status` | Four counts, each over both sorts of forward together (desired, connected, reconnecting, errors), a sentence about the difference between them, and one line per row of either sort: Host, kind, service port, status, server, opened, reaches, port reached, retries, last connected. The service port of a local forward is a dash, and the opened and the reaches cells name the machine the address is on, since the two sorts open their port at opposite ends. The port reached cell is filled on both sorts and does not ask the same thing on them: on a tunnel it is the port opened on the Host, and on a local forward the target reached from the Host. A tunnel with something wrong carries what went wrong on a line under it, across the whole table, and a tunnel whose forwarded port was not reached carries there what to change on the SSH server it named and what else to check. A tunnel that is up carries under it what is known about the addresses of its forward, kept in three: what was asked for, what the SSH server answered, and what a connection from here confirmed. It never says a port is open. The rows come a page at a time, ten to a page to begin with, with the size and the page chosen above the table; the counts stay counts of the whole installation and not of the page. It asks again every 5 seconds and comes back on the page being read. A search box above the table narrows the rows, see [Searching](#searching). |
+| Hosts | `/ui/hosts` | One row per Host with ID, address, port, user, description, enabled, SOCKS5 proxy and updated. The rows come a page at a time, ten to a page to begin with, with the size (10, 20, 30, 50 or 100) and the page chosen above the table. The choice is remembered for this screen on its own, and a list short enough to fit a page of the smallest size carries no controls at all. Add a Host, edit one, enable or disable one, delete one. The add and edit forms have a box to paste a private key into, an area to drop the key file onto, and a box for the passphrase of a key that has one, and the add form has an **Assign all service ports** tick, on by default, that says what the Host starts out carrying, with a **Reach on the Host** list beside it that every assignment that tick makes starts on. **Service ports** in a row opens a panel of every service port with a tick against the ones this Host carries, and a reach beside each row: pick a reach above and apply it to everything ticked, or set one row on its own, and a row that was not ticked is left alone, with an **Enabled** box against each row that pauses the tunnel of that assignment without taking it away. Only what was changed is sent when it is saved, so a tick made there leaves the pages that were not read alone. **Local forwards** in a row opens a panel of the local forwards of that Host with the status of each, a page at a time, where they are added, changed, switched off and on, and deleted, one row at a time or the ticked rows together; see [Local forwards](#local-forwards). The add and edit forms also switch on the SOCKS5 proxy of the Host, and its column shows the port and the status; see [A SOCKS5 proxy on a Host](#a-socks5-proxy-on-a-host). |
+| Service Ports | `/ui/service-ports` | One row per service port with ID, service address, service port, local port, description and updated. The rows come a page at a time the same way the Hosts do, with a size and a page of their own. Add, edit and delete. The add form has an **Assign to all hosts** tick, on by default, that says which Hosts carry it from the start, with a **Reach on the Host** list beside it that the assignments that tick makes start on; which Hosts carry it after that, and what each of those assignments reaches, is changed from the Hosts screen. The Hosts and Service Ports screens each have a search box above the table, see [Searching](#searching). |
 | Logs | `/ui/logs` | The end of the log file, newest last, with a level filter and a count to show. It asks again every 5 seconds. It reads the file the process is writing now; rotated files are not shown. The lines are shown in the language of the screen while the file stays English; see [The language of the screens](#the-language-of-the-screens). |
-| Settings | `/ui/settings` | What is stored but not being run on yet, with a Restart in that card that puts it into place, every stored setting and what a save changed, among them the language this installation shows a browser that has picked none, the certificate being served with a button to renew it and boxes to register one of your own, the username and the password of this account, an export of the tunnel configuration and of the settings of this manager into one encrypted file each and an import that takes such a file back, a Restart that takes the service down and brings it back, and the Uninstall at the bottom. See [Settings](#settings). |
+| Settings | `/ui/settings` | What is stored but not being run on yet, with a Restart in that card that puts it into place, every stored setting and what a save changed, among them the language this installation shows a browser that has picked none and the alerts by webhook and mail with a test button for each (see [Alerts](#alerts)), the certificate being served with a button to renew it and boxes to register one of your own, the username and the password of this account, an export of the tunnel configuration and of the settings of this manager into one encrypted file each and an import that takes such a file back, a Restart that takes the service down and brings it back, and the Uninstall at the bottom. See [Settings](#settings). |
 | Update | `/ui/update` | What this installation is running beside what the newest release is, and the two settings that decide whether either is looked at again. The reading is taken on a timer rather than when the screen is drawn, so opening it costs the release API nothing; a press takes it now. Where the release is newer and this process is what a service registration starts, a press installs it, which takes the password of the account and ends with the service restarting. See [Updates](#updates). |
 | Manual | `/ui/manual` | What an installation is made of, drawn and said on one screen: what this does, one tunnel end to end, Hosts and service ports and the assignments between them, what an unreached port means, the two intervals, and where the files go. It asks the server for nothing, which is what lets the login screen show the same thing. |
 | Login | `/ui/login` | Where a client without a session lands. Leave the username empty on the first sign in. It leads to the setup screen while the account still needs one. A **Manual** button opens the manual as a panel over it, without a session, because the state it is most needed in is the one where nothing works yet. |
@@ -1184,8 +1224,9 @@ setting of the installation; see
 the order in which the language is settled.
 
 The forms check what is typed before anything is sent. A port takes digits only
-and has to be between 1 and 65535; an IP field takes only what an address is
-made of and has to read as an IPv4 or an IPv6 address. What is wrong is said
+and has to be between 1 and 65535; an address field takes only letters, digits,
+hyphens, dots and colons, and has to read as a host name, an IPv4 address or an
+IPv6 address. What is wrong is said
 next to the field it is wrong in, and nothing leaves the browser until it is
 right.
 
@@ -1282,6 +1323,7 @@ and `PUT /api/settings`.
 | API port | `api_port` | `api.port` | `8888` | At the next start |
 | Serve over HTTPS | `api_https_enabled` | `api.https_enabled` | `true` | At the next start |
 | Monitoring interval (seconds) | `monitoring_interval_sec` | `monitoring.interval_sec` | `5` | At the next start |
+| Longest wait before reconnecting (seconds) | `reconnect_max_interval_sec` | `monitoring.reconnect_max_interval_sec` | `60` | At the next start |
 | Reconcile interval (seconds) | `reconcile_interval_sec` | `reconcile.interval_sec` | `5` | At the next start |
 | Encryption key file | `security_key_file` | `security.key_file` | `keys/tunnel-manager.key` | At the next start |
 | Log level | `logging_level` | `logging.level` | `info` | **The moment it is saved** |
@@ -1295,9 +1337,21 @@ and `PUT /api/settings`.
 | Look for a newer release | `update_check_enabled` | `update.check_enabled` | `true` | **The moment it is saved** |
 | How often to look (hours) | `update_check_interval_hours` | `update.check_interval_hours` | `24` | **The moment it is saved** |
 | Install a newer release on its own | `update_auto_install` | `update.auto_install` | `false` | **The moment it is saved** |
+| Alert after (seconds) | `alert_after_sec` | `alert.after_sec` | `300` | **The moment it is saved** |
+| Webhook URL | `alert_webhook_url` | `alert.webhook_url` | empty, which is the webhook off | **The moment it is saved** |
+| Mail server | `smtp_host` | `alert.smtp.host` | empty, which is mail off | **The moment it is saved** |
+| Mail server port | `smtp_port` | `alert.smtp.port` | `587` | **The moment it is saved** |
+| Connection security | `smtp_security` | `alert.smtp.security` | `starttls` | **The moment it is saved** |
+| Login method | `smtp_auth` | `alert.smtp.auth` | `plain` | **The moment it is saved** |
+| User name | `smtp_username` | `alert.smtp.username` | empty | **The moment it is saved** |
+| Password | `smtp_password` | `alert.smtp.password` | none | **The moment it is saved** |
+| Sender address | `smtp_from` | `alert.smtp.from` | empty | **The moment it is saved** |
+| Recipient addresses | `smtp_to` | `alert.smtp.to` | empty | **The moment it is saved** |
+| Do not check the certificate of the mail server | `smtp_skip_verify` | `alert.smtp.skip_verify` | `false` | **The moment it is saved** |
 
-**The log level, the language and the three update settings take hold as they
-are saved.** The level reaches every logger that was handed out at startup, the
+**The log level, the language, the three update settings and the alert
+settings take hold as they are saved.** The alerts are read on every scan, see
+[Alerts](#alerts). The level reaches every logger that was handed out at startup, the
 one the database writes its statements through included, which is the half of
 `debug` it is usually turned on for. The language is never read by this process
 at all: the browser reads it, out of the answer to the save that stored it and
@@ -1314,12 +1368,19 @@ A save is refused before it is stored when a value would not hold:
 |---------|------|
 | `api_port` | 1 to 65535. A new port a local forward or a SOCKS5 proxy opens is refused with `409`, see [Local forwards](#local-forwards) |
 | `monitoring_interval_sec`, `reconcile_interval_sec` | Above zero |
+| `reconnect_max_interval_sec` | 1 to 3600 |
 | `security_key_file`, `logging_file_path` | Not empty, and a path under the directory the database file is in: an absolute path and one that climbs out with `..` are refused. See [Where the files go](#where-the-files-go) |
 | `logging_level` | `debug`, `info`, `warn`, `error`, `dpanic`, `panic` or `fatal` |
 | `logging_format` | `json` or `console` |
 | `logging_file_max_size`, `logging_file_max_backups`, `logging_file_max_age` | Zero or more |
 | `ui_default_language` | Empty, or one of `en`, `ko`, `ja`, `zh`, `es`, `fr`, `de`, `pt-BR`, `ru`, `ar`, `hi`, `vi` and `th`, written exactly so: `EN` and `ko-KR` are refused |
 | `update_check_interval_hours` | 1 to 8760. Zero is refused rather than read as off, because a zero would be a timer rearming as fast as it can against an API that counts requests; `update_check_enabled` is what turns it off |
+| `alert_after_sec` | 10 to 86400 |
+| `alert_webhook_url` | Empty, or an `http://` or `https://` address of at most 2048 characters |
+| `smtp_port` | 1 to 65535 |
+| `smtp_security` | `none`, `starttls` or `tls` |
+| `smtp_auth` | `none`, `plain` or `login` |
+| `smtp_from`, `smtp_to` | Mail addresses; `smtp_to` takes several separated by commas. While `smtp_host` is set, both are required, and so is `smtp_username` unless `smtp_auth` is `none` |
 
 ```bash
 curl -s -b cookies.txt -X PUT "$BASE/api/settings" \
@@ -1390,6 +1451,101 @@ That port is not stored: the next start tries the stored one again, and until
 then `pending_restart` lists `api.port` with the port in use as `running`. Where
 Docker publishes the port or a firewall opens it by number, the port picked
 instead may not be reachable from outside, so free the stored port and restart.
+
+### Alerts
+
+**An alert is sent when a tunnel, a local forward or a SOCKS5 proxy has been
+without a connection for `alert_after_sec`, 300 seconds by default, and once
+more when it is connected again.** The **Alerts** card of the Settings screen
+holds the settings, and the webhook and mail are turned on apart: a stored
+webhook URL turns the webhook on, and a mail server turns mail on. With neither,
+nothing is watched.
+
+What is watched is every forward that runs, read every 5 seconds from the same
+state the Status screen shows. Any status other than `connected` counts as
+down, `starting`, `reconnecting`, `error` and a refused host key among them.
+One outage is one `down` and one `up`. A forward that is switched off, removed
+or on a Host that was disabled is not an outage and is forgotten without an
+`up`. What was sent is kept in memory, so a restart counts again from the
+start: a forward still down after it is reported again once the delay has
+passed, and one that came back while the service was away is never reported
+as `up`. An outage that began while alerts were off is counted from the moment
+they are turned on.
+
+**The webhook is posted this JSON**, with `Content-Type: application/json`.
+An answer outside 2xx is a failure, the post is given 10 seconds, and nothing
+is sent again; the failure goes to the log.
+
+```json
+{
+  "event": "down",
+  "kind": "service_port",
+  "host": "192.0.2.10",
+  "local_port": 18080,
+  "since": "2026-09-26T01:02:03Z",
+  "last_error": "<the last error the forward reported>",
+  "installation": "<the host name of this system>"
+}
+```
+
+| Field | What it is |
+|-------|------------|
+| `event` | `down`, `up`, or `test` for the test button |
+| `kind` | `service_port`, `local_forward` or `socks` |
+| `host` | The address of the Host the forward goes through |
+| `local_port` | The port the forward opens: on the Host for a service port, on this system for a local forward and a SOCKS5 proxy |
+| `since` | When the forward was first seen without a connection, RFC 3339 in UTC. An `up` carries the same time as the `down` it answers |
+| `last_error` | The last error seen during the outage |
+| `installation` | The host name of this system, so that alerts from several installations sent to one place can be told apart |
+
+**Mail is a plain text message** with the same fields, under a subject such as
+`[tunnel-manager <installation>] DOWN: <kind> <local_port> on <host>`. The
+connection security is `starttls` on port 587 by default, and `tls` (465) and
+`none` are the others; `starttls` fails when the server does not offer it. The
+login is `plain` by default, and `login` and `none` are the others. A password
+is never sent over a connection without TLS unless the mail server is this
+system itself. The certificate of the server is checked unless
+`smtp_skip_verify` is on, and with it on anybody between this system and the
+server can read the password. One message is given 30 seconds.
+
+**Where an alert goes is stored encrypted.** The mail password, and the webhook
+URL together with the mail server, its port, the user name and the two
+addresses, are encrypted with the [encryption key](#encryption-key) before they
+are stored. The delay, the connection security, the login method and the
+certificate check are stored as they are.
+
+**The webhook URL and the mail password are write-only.** `GET /api/settings`
+answers `alert_webhook_url_set` and `smtp_password_set` in their place and
+never the values, and the changes a save answers with show every one of the
+encrypted settings masked. A save that leaves either out, or sends it empty,
+keeps what is stored; `alert_webhook_url_clear` and `smtp_password_clear` set to
+true remove it.
+
+**A changed mail target asks for the password again.** While a password is
+stored, a save or a test that changes `smtp_host`, `smtp_port`,
+`smtp_username` or `smtp_security`, or turns `smtp_skip_verify` on, has to carry
+`smtp_password`, or it is refused with `400` under
+`settings.smtp_password.required`. Without that, a body could name another
+server and have the stored password sent to it. Such a body that turns the login
+off or clears the password removes the stored one instead.
+
+**The two test buttons send a `test` alert at once**:
+`POST /api/settings/alert/test-webhook` and `POST /api/settings/alert/test-smtp`.
+They take the body `PUT /api/settings` takes, laid over the stored settings, so
+what is on the screen is tested before it is saved, and they store nothing. A
+webhook or mail server that did not take the alert is answered `502` with the
+reason in `error_args.reason`.
+
+```bash
+curl -s -b cookies.txt -X POST "$BASE/api/settings/alert/test-webhook" \
+  -H 'Content-Type: application/json' \
+  -H "X-CSRF-Token: $CSRF" \
+  -d '{"alert_webhook_url":"https://hooks.example.com/tunnel-manager"}'
+```
+
+A settings export carries the alert settings, the webhook URL and the mail
+password among them, in the clear inside the encrypted file, the way it carries
+the passwords of the Hosts.
 
 ### Restarting the service
 
@@ -1664,12 +1820,12 @@ curl -s -b cookies.txt "$BASE/api/status"
 curl -s -b cookies.txt -X POST "$BASE/api/host" \
   -H 'Content-Type: application/json' \
   -H "X-CSRF-Token: $CSRF" \
-  -d '{"ip":"192.0.2.10","port":22,"user":"ubuntu","password":"<host-password>","description":"example"}'
+  -d '{"address":"192.0.2.10","port":22,"user":"ubuntu","password":"<host-password>","description":"example"}'
 
 curl -s -b cookies.txt -X POST "$BASE/api/service-port" \
   -H 'Content-Type: application/json' \
   -H "X-CSRF-Token: $CSRF" \
-  -d '{"service_ip":"198.51.100.20","service_port":8080,"local_port":18080}'
+  -d '{"service_address":"198.51.100.20","service_port":8080,"local_port":18080}'
 
 # 5. Log out when the script is done.
 curl -s -b cookies.txt -X POST "$BASE/api/logout" -H "X-CSRF-Token: $CSRF"
@@ -1701,6 +1857,7 @@ What goes wrong, and what it looks like:
 | `403 The account setup is not finished...` | The account still has no username. Call `POST /api/setup` first. |
 | `401 Invalid username or password` | The login was refused. It does not say which of the two was wrong, on purpose. |
 | `400 The settings are refused: ...` | A setting broke one of the rules above. Nothing was stored. |
+| `400 The field ip was renamed to address. Send address instead` | The body still names a field by the name it had before v3.14.0 (`ip`, `service_ip` or `target_ip`), and `error_code` is `request.field_renamed`. Nothing was stored. |
 | `401 The password does not open this account` | The uninstall carried the wrong password. Nothing was stopped and nothing was removed. |
 
 Every answer has the same shape: `{"success":true,"data":...}` or
@@ -1964,6 +2121,28 @@ curl -s -b cookies.txt "$BASE/api/host?page=2&size=20"
 curl -s -b cookies.txt "$BASE/api/status?page=99999&size=10"
 ```
 
+### Searching
+
+**`q` narrows the same three lists to the rows that hold a text.** No `q`, or an
+empty one, narrows nothing. ASCII letters match in either case, a port is
+matched as the text it is written as, so `22` finds a Host on `2222`, and `%`
+and `_` are taken as written rather than as wildcards. The search boxes above
+the Hosts, Service Ports and Status screens send it.
+
+| List | What `q` is looked for in |
+|------|---------------------------|
+| `GET /api/host` | The address, the user, the description and the SSH port |
+| `GET /api/service-port` | The service address, the service port, the local port and the description |
+| `GET /api/status` | The address and the description of the Host, and the opened and reaches addresses of the row |
+
+The page is cut from the rows that match, so `total` on the first two and
+`total_rows` on the status are counts of what matched. The four counts of
+`GET /api/status` stay over the whole installation.
+
+```bash
+curl -s -b cookies.txt "$BASE/api/host?q=example&page=1&size=20"
+```
+
 ### Account
 
 | Method | Path | What it does |
@@ -1980,7 +2159,7 @@ curl -s -b cookies.txt "$BASE/api/status?page=99999&size=10"
 | Method | Path | What it does |
 |--------|------|--------------|
 | `POST` | `/api/host` | Creates a Host. `enabled` is optional and a Host that does not say is enabled, and `bind_scope` is what the assignments this request makes are opened to |
-| `GET` | `/api/host` | One page of the Hosts, oldest first. Takes `page` and `size`, see [Paging](#paging) |
+| `GET` | `/api/host` | One page of the Hosts, oldest first. Takes `page` and `size`, see [Paging](#paging), and `q`, see [Searching](#searching) |
 | `GET` | `/api/host/:id` | Reads one Host |
 | `PUT` | `/api/host/:id` | Updates a Host. Every field is optional; `enabled` false stops its tunnels |
 | `DELETE` | `/api/host/:id` | Deletes a Host, the assignments naming it and its local forwards |
@@ -1993,7 +2172,7 @@ The body of a create and of an update takes these fields.
 
 | Field | On create | On update |
 |-------|-----------|-----------|
-| `ip`, `port`, `user` | Required | Optional; what is left out stays as it is |
+| `address`, `port`, `user` | Required. `address` is a host name or an IP address | Optional; what is left out stays as it is |
 | `private_key` | The text of a PEM private key file. Optional if a `password` is given | An empty or missing value keeps the stored key. A key that is sent replaces the stored key and its passphrase together |
 | `key_passphrase` | Required only for a key that is protected by one | Sent with the key it belongs to. On its own, without `private_key`, it is refused |
 | `password` | Optional if a `private_key` is given | An empty or missing value keeps the stored password |
@@ -2037,7 +2216,7 @@ assignments of the same Host are left running.
 # A Host that is logged in to with a key. The key is sent as the text of the
 # file, so the newlines in it have to survive: this reads the file with jq.
 jq -n --arg key "$(cat ~/.ssh/id_ed25519)" \
-  '{ip:"192.0.2.10",port:22,user:"ubuntu",private_key:$key,description:"example"}' |
+  '{address:"192.0.2.10",port:22,user:"ubuntu",private_key:$key,description:"example"}' |
 curl -s -b cookies.txt -X POST "$BASE/api/host" \
   -H 'Content-Type: application/json' \
   -H "X-CSRF-Token: $CSRF" \
@@ -2077,9 +2256,9 @@ none looks like.
   "success": true,
   "data": {
     "items": [
-      { "id": 1, "service_ip": "198.51.100.20", "service_port": 8080,
+      { "id": 1, "service_address": "198.51.100.20", "service_port": 8080,
         "local_port": 18080, "description": "", "assigned": true,
-        "bind_scope": "wildcard" }
+        "bind_scope": "wildcard", "enabled": true }
     ],
     "total": 1,
     "page": 1,
@@ -2091,7 +2270,9 @@ none looks like.
 `bind_scope` on a row is what the assignment of this Host is opened to. It is
 **empty on a row this Host does not carry**: the scope is held by the assignment,
 so a service port that is not assigned has none, and the row the screen would
-make starts on the wildcard until something else is chosen.
+make starts on the wildcard until something else is chosen. `enabled` is whether
+the tunnel of the assignment runs, and is false on a row this Host does not
+carry.
 
 **`PUT /api/host/:id/service-port` takes a change and not the whole set.** The
 list is served a page at a time, so a client holds one page and knows nothing of
@@ -2107,7 +2288,7 @@ curl -s -b cookies.txt -X PUT "$BASE/api/host/1/service-port" \
 ```
 
 ```json
-{ "success": true, "data": { "added": 2, "removed": 1, "rescoped": 1 } }
+{ "success": true, "data": { "added": 2, "removed": 1, "rescoped": 1, "switched": 0 } }
 ```
 
 | Field | What it does |
@@ -2116,6 +2297,8 @@ curl -s -b cookies.txt -X PUT "$BASE/api/host/1/service-port" \
 | `remove` | The service ports to take away from it |
 | `rescope` | The assignments to move to `bind_scope`, named the same way. An id this Host does not carry moves nothing |
 | `bind_scope` | `loopback` or `wildcard`, and left out it is the wildcard. It is what the rows in `add` are written on and what the rows in `rescope` are moved to |
+| `switch` | The assignments to switch to `enabled`, named the same way. An id this Host does not carry switches nothing, and so does a request that leaves `enabled` out |
+| `enabled` | Whether the rows in `add` run, and what the rows in `switch` are switched to. Left out, the rows in `add` run and nothing is switched |
 
 **An assignment that is already there is left on the scope it holds unless
 `rescope` names it.** That is why the two are separate lists. Read the other way,
@@ -2125,11 +2308,27 @@ the loopback, and reach handed out by a request that did not mention it is the
 one thing this must not do. `add` widens nothing; the bulk apply on the screen
 fills `rescope` from what was ticked, so a row you did not tick is left alone.
 
-`added`, `removed` and `rescoped` count the rows and not the request: a service
-port that is already assigned is asked for again without a row being written,
-one that is not assigned is removed without a row going, and an id in `rescope`
-that names an assignment this Host does not carry moves nothing. All three lists
-are optional and a request that changes nothing is answered, not refused.
+**An assignment can be switched off without being taken away.** It stays
+assigned, with its scope, and runs no tunnel; switching it on again brings the
+same tunnel back. The **Enabled** box against each row of the **Service ports**
+panel of a Host is the same thing on the screen. Like the scope, it is changed
+only for the rows `switch` names, so ticking a box that was ticked already does
+not start a tunnel somebody paused.
+
+```bash
+# Pause service port 3 on Host 1 without taking it away.
+curl -s -b cookies.txt -X PUT "$BASE/api/host/1/service-port" \
+  -H 'Content-Type: application/json' \
+  -H "X-CSRF-Token: $CSRF" \
+  -d '{"switch":[3],"enabled":false}'
+```
+
+`added`, `removed`, `rescoped` and `switched` count the rows and not the
+request: a service port that is already assigned is asked for again without a
+row being written, one that is not assigned is removed without a row going, and
+an id in `rescope` or `switch` that names an assignment this Host does not carry
+changes nothing. All four lists are optional and a request that changes nothing
+is answered, not refused.
 
 | What was sent | What happens |
 |---------------|--------------|
@@ -2184,7 +2383,7 @@ are a hundred rows of what nobody is reading there.
   "success": true,
   "data": {
     "items": [
-      { "host_id": 1, "ip": "192.0.2.10", "mismatch": true,
+      { "host_id": 1, "address": "192.0.2.10", "mismatch": true,
         "fingerprint": "SHA256:<the key the server presented>",
         "trusted_fingerprint": "SHA256:<the key this Host is trusted on>" }
     ],
@@ -2294,7 +2493,7 @@ every Host, and a client on the old paths is answered `404` by the router.
 curl -s -b cookies.txt -X POST "$BASE/api/host/1/local-forward" \
   -H 'Content-Type: application/json' \
   -H "X-CSRF-Token: $CSRF" \
-  -d '{"local_port":15432,"bind_scope":"loopback","target_ip":"198.51.100.30","target_port":5432,"description":"database"}'
+  -d '{"local_port":15432,"bind_scope":"loopback","target_address":"db.example.com","target_port":5432,"description":"database"}'
 ```
 
 ```json
@@ -2303,8 +2502,8 @@ curl -s -b cookies.txt -X POST "$BASE/api/host/1/local-forward" \
   "data": {
     "items": [
       { "host_id": 1, "number": 1, "bind_scope": "loopback", "local_port": 15432,
-        "target_ip": "198.51.100.30", "target_port": 5432, "description": "database",
-        "enabled": true,
+        "target_address": "db.example.com", "target_port": 5432, "description": "database",
+        "enabled": true, "allowed_sources": "",
         "status": "connected", "last_error": "", "retry_count": 0,
         "last_connected_at": "<when the connection was made>",
         "created_at": "<...>", "updated_at": "<...>" }
@@ -2326,11 +2525,12 @@ paged now and `data` is the object above, so a client reading `data[0]` reads
 `data.items[0]`.
 
 The body of a create and of an update takes the same fields, and an update
-takes the whole of them: `local_port`, `target_ip` and `target_port` are
+takes the whole of them: `local_port`, `target_address` and `target_port` are
 required on both, and **an update that leaves `bind_scope` out puts the forward
-on the wildcard**, so send the scope it is on to keep it there. `enabled` is the
-one field an update can leave out and keep: left out, the forward stays on or
-off as it is, while a create that leaves it out makes a forward that runs.
+on the wildcard**, so send the scope it is on to keep it there. `enabled` and
+`allowed_sources` are the two fields an update can leave out and keep: left
+out, the forward stays on or off as it is and keeps its list, while a create
+that leaves them out makes a forward that runs and lets every address in.
 
 ```bash
 # Switch forward 1 of Host 1 off. The update takes the whole of the fields, so
@@ -2338,7 +2538,7 @@ off as it is, while a create that leaves it out makes a forward that runs.
 curl -s -b cookies.txt -X PUT "$BASE/api/host/1/local-forward/1" \
   -H 'Content-Type: application/json' \
   -H "X-CSRF-Token: $CSRF" \
-  -d '{"local_port":15432,"bind_scope":"loopback","target_ip":"198.51.100.30","target_port":5432,"description":"database","enabled":false}'
+  -d '{"local_port":15432,"bind_scope":"loopback","target_address":"db.example.com","target_port":5432,"description":"database","enabled":false}'
 ```
 
 The answer to a write is made before the reconcile loop has reached the row, so
@@ -2347,7 +2547,9 @@ list again to see what it did.
 
 | What was sent | What happens |
 |---------------|--------------|
-| A port outside 1 to 65535, a `target_ip` that is not an IP address, or a `bind_scope` that is neither `loopback` nor `wildcard` | `400`. Nothing is written |
+| A port outside 1 to 65535, a `target_address` that is neither a host name nor an IP address, or a `bind_scope` that is neither `loopback` nor `wildcard` | `400`. Nothing is written |
+| An `allowed_sources` that does not read | `400`, under `local_forward.allowed_sources.invalid`. Nothing is written |
+| `target_ip` in place of `target_address` | `400`, under `request.field_renamed`. Nothing is written |
 | A `local_port` another local forward opens | `409`, naming the port |
 | A `local_port` that is the port this server is stored to listen on | `409`, naming the port |
 | A Host id that is not stored, or a number that Host carries no forward on | `404` |
@@ -2357,9 +2559,9 @@ list again to see what it did.
 | Method | Path | What it does |
 |--------|------|--------------|
 | `POST` | `/api/service-port` | Creates a service port. `assign_to_all_hosts` is optional: left out, every stored Host is given it, and sent as false it is registered carried by none. `bind_scope` is what the assignments it makes are opened to |
-| `GET` | `/api/service-port` | One page of the service ports, oldest first. Takes `page` and `size`, see [Paging](#paging) |
+| `GET` | `/api/service-port` | One page of the service ports, oldest first. Takes `page` and `size`, see [Paging](#paging), and `q`, see [Searching](#searching) |
 | `GET` | `/api/service-port/:id` | Reads one service port |
-| `PUT` | `/api/service-port/:id` | Updates a service port. `service_ip`, `service_port` and `local_port` are all required |
+| `PUT` | `/api/service-port/:id` | Updates a service port. `service_address`, `service_port` and `local_port` are all required |
 | `DELETE` | `/api/service-port/:id` | Deletes a service port, and the assignments naming it |
 
 `bind_scope` on the create is what the batch of assignments `assign_to_all_hosts`
@@ -2374,7 +2576,7 @@ an address they do not have.
 
 | Method | Path | What it does |
 |--------|------|--------------|
-| `GET` | `/api/status` | The counts of the installation and one page of the status rows, the service port tunnels and the local forwards together with `kind` on each. Takes `page` and `size`, see [Paging](#paging) |
+| `GET` | `/api/status` | The counts of the installation and one page of the status rows, the service port tunnels and the local forwards together with `kind` on each. Takes `page` and `size`, see [Paging](#paging), and `q`, see [Searching](#searching) |
 | `GET` | `/api/status/:hostId` | The Host and the tunnels of that Host. Not paged: a Host holds one tunnel per service port it carries |
 | `GET` | `/api/metrics` | The same state in the Prometheus text format. See [Metrics](#metrics) |
 
@@ -2384,6 +2586,8 @@ an address they do not have.
 |--------|------|--------------|
 | `GET` | `/api/settings` | The stored settings, and in `pending_restart` the ones this process is not running on |
 | `PUT` | `/api/settings` | Stores the settings in the body over the stored ones, and answers with what changed and whether a restart is needed |
+| `POST` | `/api/settings/alert/test-webhook` | Posts a `test` alert to the webhook, with the settings in the body laid over the stored ones. Stores nothing; see [Alerts](#alerts) |
+| `POST` | `/api/settings/alert/test-smtp` | Sends a `test` alert by mail the same way |
 | `GET` | `/api/certificate` | The certificate being served: fingerprint, subject, issuer, the names it covers, the validity and the days left |
 | `POST` | `/api/certificate/renew` | Makes another self-signed certificate and serves it from the next connection on |
 | `PUT` | `/api/certificate` | Takes `cert_pem` and `key_pem`, stores them and serves them from the next connection on |
@@ -2480,6 +2684,11 @@ answer makes them the wildcard, by the same rule the upgrade uses. It is read
 and never written, so an import cannot quietly undo a narrowing somebody made,
 and a file this version writes carries no `bind_address` at all.
 
+**Whether each assignment runs travels with it**, in `assigned_enabled` on the
+Host, keyed by the same local port. Only an assignment that is switched off has
+an entry, `false`, and an assignment with no entry runs, so a file written
+before assignments could be switched off imports every assignment switched on.
+
 **The local forwards of each Host travel with it**, in `local_forwards` on the
 Host, and `local_forwards` in the answer of the export counts them. Like
 `assigned_local_ports`, the list is what the Host carries after the import, and
@@ -2488,7 +2697,9 @@ a missing field and an empty list are two different answers.
 Each forward in the list carries `enabled`, and the export always writes it. A
 forward with no `enabled`, which is every forward of a file written before a
 forward could be switched off, is stored switched on: each of them was running
-where the file came from.
+where the file came from. Each also carries `allowed_sources`, and a forward
+without it lets every address in, as every forward did before the field
+existed.
 
 | `local_forwards` on a Host in the file | What an import that writes that Host does |
 |----------------------------------------|-------------------------------------------|
@@ -2922,8 +3133,10 @@ tunnel of that Host.
 
 ## Encryption key
 
-The SSH password of a Host is encrypted with AES-256-GCM before it is stored. The
-key is read from the file the **Encryption key file** setting names,
+The SSH password of a Host is encrypted with AES-256-GCM before it is stored, and
+so are its private key and passphrase, the key of the certificate, the mail
+password and the settings that say where an alert goes (see [Alerts](#alerts)).
+The key is read from the file the **Encryption key file** setting names,
 `keys/tunnel-manager.key` by default. If that file does not exist, the first
 startup creates a 32 byte key with permission `0600`; if it does, it is read as
 it is.

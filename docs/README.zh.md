@@ -13,7 +13,7 @@
 什么需要配置。
 
 **服务端口：由 Host 打开端口。** 负责服务端口的每台 Host 各打开 `local_port`，tunnel-manager
-把到达那里的每个连接送到 `service_ip:service_port`。
+把到达那里的每个连接送到 `service_address:service_port`。
 
 ```mermaid
 flowchart LR
@@ -24,7 +24,7 @@ flowchart LR
     subgraph here ["tunnel-manager 所在的机器"]
         tm["tunnel-manager"]
     end
-    service[("service_ip:service_port<br/>tunnel-manager 能访问到的任意地址")]
+    service[("service_address:service_port<br/>tunnel-manager 能访问到的任意地址")]
 
     tm ==>|"1. 通过 SSH 连接并申请端口"| port
     client -->|"2. 连接 local_port"| port
@@ -33,7 +33,7 @@ flowchart LR
 ```
 
 **本地转发：由本机打开端口。** 方向相反，和 `ssh -L` 一样。tunnel-manager 在本机打开
-`local_port`，把连到它的每个连接通过 Host 的 SSH 连接送到 `target_ip:target_port`，也就是这台
+`local_port`，把连到它的每个连接通过 Host 的 SSH 连接送到 `target_address:target_port`，也就是这台
 Host 能访问到的地址。
 
 ```mermaid
@@ -46,7 +46,7 @@ flowchart LR
     subgraph host ["Host - 你注册的 SSH 服务器"]
         sshd["SSH 服务器"]
     end
-    target[("target_ip:target_port<br/>Host 能访问到的任意地址")]
+    target[("target_address:target_port<br/>Host 能访问到的任意地址")]
 
     tm ==>|"1. 通过 SSH 连接，然后打开 local_port"| sshd
     client -->|"2. 连接 local_port"| port
@@ -59,9 +59,9 @@ flowchart LR
 
 | 组成 | 是什么 |
 |------|--------|
-| Host | 要连接的 SSH 服务器：地址、端口、用户，以及私钥或密码 |
+| Host | 要连接的 SSH 服务器：地址或主机名、端口、用户，以及私钥或密码 |
 | 服务端口 | 要发布的服务，可以在本机能访问到的任意地址上，以及要在负责这个服务的每台 Host 上打开的端口 |
-| 分配关系 | 哪台 Host 负责哪个服务端口。一条分配关系，只要它的 Host 是启用的，就是一条隧道 |
+| 分配关系 | 哪台 Host 负责哪个服务端口。一条分配关系，只要它本身开着、它的 Host 是启用的，就是一条隧道 |
 | 本地转发 | 在本机打开的端口，进来的连接经由一台 Host 转发到这台 Host 能访问到的地址 |
 
 最后一行是可选的，就是上面的第二张图。本地转发属于创建它的那台 Host，在那台 Host 所在行的 **Local forwards** 按钮里添加。
@@ -78,6 +78,7 @@ flowchart LR
 - 把整套配置加密成一个文件，迁移到另一套安装。
 - 脚本可以用在设置页面创建的令牌调用 API，令牌只能访问创建时选定的权限范围。
 - 把隧道状态作为 Prometheus 指标输出，Prometheus 或 telegraf 用只读令牌即可采集。
+- 隧道、本地转发或 SOCKS5 代理断开超过你设定的时间时，通过 Webhook 或邮件发出告警，恢复连接后再发一次。
 - 页面有十三种语言，在浏览器角落选择，或者为本安装设置一个默认语言。日志文件还是英文。
 - 在 Linux、macOS 和 Windows 上都是单个可执行文件，不依赖 C 库，也不需要数据库服务器。
 
@@ -155,7 +156,7 @@ sudo ./tunnel-manager-linux-amd64 -install
 | [HTTPS 与证书](reference.zh.md#https-与证书) | 浏览器的警告、注册你自己的证书、更换证书、关闭 HTTPS |
 | [首次启动与账号](reference.zh.md#首次启动与账号) | 初始密码、初始化，以及之后怎么改凭据 |
 | [内置界面](reference.zh.md#内置界面) | 每个页面显示什么、能做什么，以及有哪些语言 |
-| [设置](reference.zh.md#设置) | 每一项设置、它什么时候生效，以及服务无法启动时的恢复办法 |
+| [设置](reference.zh.md#设置) | 每一项设置、它什么时候生效、告警，以及服务无法启动时的恢复办法 |
 | [API 接口](reference.zh.md#api-接口) | 每个调用，连同脚本需要的登录和 CSRF 令牌 |
 | [读懂隧道状态](reference.zh.md#读懂隧道状态) | 三个计数、每种状态的含义，以及转发端口是否可达 |
 | [加密密钥](reference.zh.md#加密密钥) | 它加密了什么，丢失后会怎样 |

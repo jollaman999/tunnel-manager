@@ -17,7 +17,7 @@ configure before the first start.
 
 **Service port: the Host opens the port.** Each Host that carries a service
 port opens `local_port`, and tunnel-manager carries every connection that
-arrives there to `service_ip:service_port`.
+arrives there to `service_address:service_port`.
 
 ```mermaid
 flowchart LR
@@ -28,7 +28,7 @@ flowchart LR
     subgraph here [The machine tunnel-manager runs on]
         tm[tunnel-manager]
     end
-    service[("service_ip:service_port<br/>any address tunnel-manager can reach")]
+    service[("service_address:service_port<br/>any address tunnel-manager can reach")]
 
     tm ==>|"1. connects over SSH and asks for the port"| port
     client -->|"2. connects to local_port"| port
@@ -39,7 +39,7 @@ flowchart LR
 **Local forward: this machine opens the port.** It runs the other way, the way
 `ssh -L` does. tunnel-manager opens `local_port` on this machine and carries
 every connection to it over the SSH connection of a Host to
-`target_ip:target_port`, an address that Host reaches.
+`target_address:target_port`, an address that Host reaches.
 
 ```mermaid
 flowchart LR
@@ -51,7 +51,7 @@ flowchart LR
     subgraph host [Host - an SSH server you register]
         sshd[SSH server]
     end
-    target[("target_ip:target_port<br/>any address the Host can reach")]
+    target[("target_address:target_port<br/>any address the Host can reach")]
 
     tm ==>|"1. connects over SSH, then opens local_port"| sshd
     client -->|"2. connects to local_port"| port
@@ -65,9 +65,9 @@ one assignment is what one tunnel is built from.
 
 | Part | What it is |
 |------|------------|
-| Host | An SSH server to connect to: address, port, user, and a private key or a password |
+| Host | An SSH server to connect to: address or host name, port, user, and a private key or a password |
 | Service port | The service to publish, at any address this machine can reach, and the port to open on the Hosts that carry it |
-| Assignment | Which Host carries which service port. One assignment whose Host is enabled is one tunnel |
+| Assignment | Which Host carries which service port. One assignment that is switched on, on a Host that is enabled, is one tunnel |
 | Local forward | A port opened on this machine, carried through one Host to an address that Host reaches |
 
 The last row is optional and is the second picture above. A local forward
@@ -95,6 +95,8 @@ in the row of that Host.
   to the scopes it was made with.
 - Serves the tunnel status as Prometheus metrics, for Prometheus or telegraf to
   scrape with a read token.
+- Sends an alert to a webhook or by mail when a tunnel, a local forward or a
+  SOCKS5 proxy stays down past a delay you set, and again when it comes back.
 - Shows the screens in thirteen languages, picked in the corner of the browser
   or set for the installation. The log file stays English.
 - Runs on Linux, macOS and Windows as a single binary, with no C library and no
@@ -184,7 +186,7 @@ well, and what `-purge` removes cannot be brought back.
 | [HTTPS and the certificate](docs/reference.md#https-and-the-certificate) | The browser warning, registering a certificate of your own, renewing, turning HTTPS off |
 | [First startup and the account](docs/reference.md#first-startup-and-the-account) | The initial password, the setup, changing the credentials |
 | [The built-in UI](docs/reference.md#the-built-in-ui) | What each screen shows and does, and the languages it comes in |
-| [Settings](docs/reference.md#settings) | Every setting, what it applies at, and the way back when the server will not start |
+| [Settings](docs/reference.md#settings) | Every setting, what it applies at, the alerts, and the way back when the server will not start |
 | [API endpoints](docs/reference.md#api-endpoints) | Every call, with the login and the CSRF token a script needs |
 | [Reading the tunnel status](docs/reference.md#reading-the-tunnel-status) | The three counts, what a status means, and whether the forwarded port was reached |
 | [Encryption key](docs/reference.md#encryption-key) | What it encrypts and what losing it costs |

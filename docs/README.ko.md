@@ -14,7 +14,7 @@
 설치할 것도, 처음 띄우기 전에 정해 둘 것도 없습니다.
 
 **서비스 포트: Host 가 포트를 엽니다.** 서비스 포트를 담당하는 Host 마다 `local_port` 를 열고,
-거기로 들어온 연결을 tunnel-manager 가 `service_ip:service_port` 로 전달합니다.
+거기로 들어온 연결을 tunnel-manager 가 `service_address:service_port` 로 전달합니다.
 
 ```mermaid
 flowchart LR
@@ -25,7 +25,7 @@ flowchart LR
     subgraph here [tunnel-manager 가 실행되는 장비]
         tm[tunnel-manager]
     end
-    service[("service_ip:service_port<br/>tunnel-manager 가 접속할 수 있는 주소")]
+    service[("service_address:service_port<br/>tunnel-manager 가 접속할 수 있는 주소")]
 
     tm ==>|"1. SSH 로 접속해 포트 요청"| port
     client -->|"2. local_port 로 접속"| port
@@ -35,7 +35,7 @@ flowchart LR
 
 **로컬 포워딩: 이 장비가 포트를 엽니다.** 방향이 반대이며 `ssh -L` 과 같습니다.
 tunnel-manager 가 이 장비에 `local_port` 를 열고, 거기로 온 연결을 Host 의 SSH 연결을 타고 그
-Host 가 닿는 주소 `target_ip:target_port` 로 나릅니다.
+Host 가 닿는 주소 `target_address:target_port` 로 나릅니다.
 
 ```mermaid
 flowchart LR
@@ -47,7 +47,7 @@ flowchart LR
     subgraph host [Host - 등록한 SSH 서버]
         sshd[SSH 서버]
     end
-    target[("target_ip:target_port<br/>Host 가 접속할 수 있는 주소")]
+    target[("target_address:target_port<br/>Host 가 접속할 수 있는 주소")]
 
     tm ==>|"1. SSH 로 접속한 뒤 local_port 를 엶"| sshd
     client -->|"2. local_port 로 접속"| port
@@ -60,9 +60,9 @@ flowchart LR
 
 | 구성 요소 | 무엇인가 |
 |-----------|----------|
-| Host | 접속할 SSH 서버. 주소, 포트, 사용자, 그리고 개인키나 비밀번호 |
+| Host | 접속할 SSH 서버. 주소나 호스트 이름, 포트, 사용자, 그리고 개인키나 비밀번호 |
 | 서비스 포트 | 내보낼 서비스(이 장비가 접속할 수 있는 주소면 됩니다)와, 이 서비스 포트를 담당하는 Host 에 열 포트 |
-| 할당 | 어느 Host 가 어느 서비스 포트를 담당하는지. 활성 Host 의 할당 하나가 터널 하나 |
+| 할당 | 어느 Host 가 어느 서비스 포트를 담당하는지. 활성 Host 의 켜져 있는 할당 하나가 터널 하나 |
 | 로컬 포워딩 | 이 장비에 여는 포트. 들어온 연결을 Host 하나를 거쳐 그 Host 가 닿는 주소로 보냄 |
 
 마지막 줄은 없어도 되고, 위의 두 번째 그림이 이것입니다. 로컬 포워딩은 만든 Host 에 딸리며, 그 Host 행의 **Local forwards** 버튼에서 추가합니다.
@@ -84,6 +84,8 @@ flowchart LR
   닿습니다.
 - 터널 상태를 Prometheus 메트릭으로 내보내, Prometheus 나 telegraf 가 읽기 토큰으로 수집할 수
   있습니다.
+- 터널, 로컬 포워딩, SOCKS5 프록시가 정해 둔 시간보다 오래 끊겨 있으면 웹훅이나 메일로 알리고,
+  다시 연결되면 한 번 더 알립니다.
 - 화면을 13개 언어로 보여줍니다. 브라우저 구석에서 고르거나 설치본에 정해 둡니다. 로그 파일은
   영어로 남습니다.
 - Linux, macOS, Windows 에서 단일 바이너리로 실행됩니다. C 라이브러리도, 따로 둘 데이터베이스
@@ -165,7 +167,7 @@ Windows 에서는 **관리자 권한으로 실행**한 PowerShell 이나 명령 
 | [HTTPS 와 인증서](reference.ko.md#https-와-인증서) | 브라우저 경고, 내 인증서 등록, 갱신, HTTPS 끄기 |
 | [첫 기동과 계정 설정](reference.ko.md#첫-기동과-계정-설정) | 임시 비밀번호, 계정 설정, 자격증명 바꾸기 |
 | [내장 UI](reference.ko.md#내장-ui) | 화면마다 무엇을 보여주고 무엇을 하는지, 그리고 어떤 언어로 나오는지 |
-| [설정](reference.ko.md#설정) | 설정 항목 전부와 언제 반영되는지, 서버가 안 뜰 때 빠져나오는 길 |
+| [설정](reference.ko.md#설정) | 설정 항목 전부와 언제 반영되는지, 알림, 서버가 안 뜰 때 빠져나오는 길 |
 | [API 엔드포인트](reference.ko.md#api-엔드포인트) | 호출 전부와, 스크립트에 필요한 로그인과 CSRF 토큰 |
 | [터널 상태 읽기](reference.ko.md#터널-상태-읽기) | 숫자 셋, 상태 값의 뜻, 포워딩된 포트에 접속되는지 |
 | [암호화 키](reference.ko.md#암호화-키) | 무엇이 그 키로 암호화되고, 잃어버리면 무엇을 잃는지 |

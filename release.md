@@ -1,3 +1,43 @@
+# v3.14.0
+
+## Add/fix features:
+
+- **An alert goes to a webhook or by mail when a forward stays down.** A tunnel, a local forward or a SOCKS5 proxy that has been without a connection for the delay on the Settings screen, 300 seconds to begin with, is reported once as down and once more when it is connected again. The webhook is posted a JSON object naming the event, the kind, the Host, the port, when the outage began, the last error and the host name of this system; the mail carries the same in plain text, over STARTTLS on 587 to begin with, logged in with PLAIN, the certificate of the server checked unless that is switched off. A button beside each sends a test with what is on the screen before anything is saved.
+  - The mail password, the webhook address and the mail server with its port, user and addresses are stored encrypted with the key file. A read of the settings says whether a webhook address and a password are stored and never what they are, and a save that changes where mail goes has to carry the password again.
+  - Nothing is sent until a webhook address or a mail server is set, so an upgrade sends nothing.
+- **A script can call the API with a token.** A token is made on the Settings screen with the scopes it may reach and a lifetime of 30, 90 or 365 days or none, and is sent as `Authorization: Bearer`, with no session cookie and no CSRF header. It is shown once and kept as its SHA-256. No token reaches the account or the tokens, and none can be turned into a session.
+- **`GET /api/metrics` answers in the Prometheus text format**: how many forwards are in each status, what should be running, whether each running forward is connected and how often it has retried, and how many Hosts wait for a host key. A token with the read scope scrapes it.
+- **A Host, a service and the target of a local forward can be a host name.** Each takes a name as well as an IPv4 or IPv6 address, and the name is looked up at every connection rather than when it is stored, so a name that moves is followed. The target of a local forward is looked up by the Host.
+- **The Hosts, the service ports and the status can be searched.** A box over each table narrows the rows to those that hold the text, and the API takes the same as `q` on `GET /api/host`, `GET /api/service-port` and `GET /api/status`. The pages and the number of rows are taken over what matched, and the four counts of the status stay over the whole installation. The Logs screen searches the lines it has read.
+- **A connection that keeps failing waits longer before each try.** The first wait is the monitoring interval and each failure in a row doubles it, up to the new setting Longest wait before reconnecting, 60 seconds to begin with and 1 to 3600, which takes hold at the next start. A connection that stands starts over at the interval. A Host that is down for an hour is no longer asked every five seconds by every tunnel, forward and proxy it carries, with a log line for each.
+- **The monitor waits as long as the monitoring interval for the SSH server**, never less than 3 seconds, both to reach it and for the keepalive reply. It waited half of that for the reply, with a deadline on the connection that could cut the traffic the forwards were carrying, while a live server on a busy link answers behind that traffic.
+- **A local forward can be limited to the client addresses you allow.** Allowed client addresses on a forward opened on every interface takes addresses and CIDR blocks the way the SOCKS5 proxy does, and a client from anywhere else is closed before anything is dialled for it. Empty lets anyone in, which is what every stored forward keeps.
+- **An assignment can be switched off without being taken away.** The Enabled box against a service port in the panel of a Host pauses that one tunnel and keeps the assignment and its reach, and `PUT /api/host/:id/service-port` takes `switch` and `enabled` for it. An export carries the ones that are off in `assigned_enabled`.
+- **A copy button stands beside the fingerprints, the ssh command of the SOCKS5 warning and the addresses** on the Status, Hosts and Settings screens.
+- **A delete, a new certificate and a restart are asked about in a dialog of the page** rather than in the confirm box of the browser.
+- **Tunnels are cleaned up where they were not.**
+  - An SSH connection whose forwarded port was refused is closed. It was left open, one more for every try.
+  - A tunnel whose row could not be deleted as it stopped is forgotten all the same, so the next pass starts it again rather than taking it for one that runs.
+  - A status written by a tunnel as it stopped no longer puts back the row the stop had just deleted.
+  - A dropped connection adds one to the retries of its row, where the monitor and the connection could add one each.
+  - The desired count of the status is the one the last reconcile pass worked towards, rather than a fresh read of the tables on every refresh, so it matches what the loop is starting. A change shows in it once the pass it wakes has run.
+- **The API holds up under what it did not.**
+  - A handler that panicked between opening a transaction and committing it left the one database connection taken, and every request after it waited for good. The transaction is rolled back.
+  - Logins sent at the same moment all passed the limit on failed logins before any of them was counted. A login waiting for its password check counts against the limit now.
+  - A chunked body past the body limit, 1,000,000 bytes and 32,000,000 for the imports, was read in full. It is cut off and answered 413, the answer a body whose length says it is too long already got.
+- **The screens stop doing what nobody asked.**
+  - A screen whose draw failed while the server was down drew itself again without end, and the line saying why never showed. The line goes up and the next refresh tries again.
+  - A refresh is not taken while the one before it is still waiting, or while the tab is hidden, and a read that has not answered in 15 seconds is given up. A tab that comes back into view refreshes at once.
+  - A panel left open when the screen changes, the back button included, is closed.
+- **The screens in every language count three settings where they counted two intervals**, in the Manual and in what a settings export carries.
+
+## Notes:
+
+- **The API fields that held an address are renamed**: `ip` on a Host is `address`, `service_ip` on a service port is `service_address`, and `target_ip` on a local forward is `target_address`, in what is sent and in what is answered, the host key list included. A request that still sends an old name is refused with 400 under `request.field_renamed`, naming both, rather than having the field dropped without a word. A file exported by an earlier release still imports.
+- **A database this release has started on cannot be opened by an earlier release.** The first start renames the columns and their indexes to the new names in one transaction, and an earlier release looks for the old ones. Keep a copy of the database file from before the upgrade if you may go back.
+- An assignment stored before this release runs, as it did. The first start switches on every assignment that has no answer.
+- The notes of v3.13.3 hold for an installation that comes from before it: a data directory from a release before v3.7.0 keeps the mode it has, and the rest of the upgrade note of v3.7.0 still holds.
+
 # v3.13.6
 
 ## Add/fix features:
