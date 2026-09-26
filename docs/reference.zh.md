@@ -1049,9 +1049,9 @@ Settings 页面。同样的值通过 `GET /api/settings` 和 `PUT /api/settings`
 | 告警等待时间（秒） | `alert_after_sec` | `alert.after_sec` | `300` | **保存的那一刻** |
 | Webhook URL | `alert_webhook_url` | `alert.webhook_url` | 空，即 webhook 关闭 | **保存的那一刻** |
 | 邮件服务器 | `smtp_host` | `alert.smtp.host` | 空，即邮件关闭 | **保存的那一刻** |
-| 邮件服务器端口 | `smtp_port` | `alert.smtp.port` | `587` | **保存的那一刻** |
-| 连接安全 | `smtp_security` | `alert.smtp.security` | `starttls` | **保存的那一刻** |
-| 登录方式 | `smtp_auth` | `alert.smtp.auth` | `plain` | **保存的那一刻** |
+| 邮件服务器端口 | `smtp_port` | `alert.smtp.port` | `465` | **保存的那一刻** |
+| 连接安全 | `smtp_security` | `alert.smtp.security` | `tls` | **保存的那一刻** |
+| 登录方式 | `smtp_auth` | `alert.smtp.auth` | `login` | **保存的那一刻** |
 | 用户名 | `smtp_username` | `alert.smtp.username` | 空 | **保存的那一刻** |
 | 密码 | `smtp_password` | `alert.smtp.password` | 无 | **保存的那一刻** |
 | 发件地址 | `smtp_from` | `alert.smtp.from` | 空 | **保存的那一刻** |
@@ -1180,9 +1180,10 @@ curl -s -b cookies.txt "$BASE/api/settings"
 | `installation` | 本机的主机名，用来区分多套安装发到同一处的告警 |
 
 **邮件是带同样字段的纯文本消息**，主题形如
-`[tunnel-manager <installation>] DOWN: <kind> <local_port> on <host>`。连接安全默认是 587 端口的
-`starttls`，另有 `tls`（465）和 `none`；服务器不提供 STARTTLS 时 `starttls` 会失败。登录方式默认是
-`plain`，另有 `login` 和 `none`。除非邮件服务器就是本机，否则不会在没有 TLS 的连接上发送密码。
+`[tunnel-manager <installation>] DOWN: <kind> <local_port> on <host>`。连接安全默认是 465 端口的
+`tls`，另有 `starttls`（587）和 `none`（25）；服务器不提供 STARTTLS 时 `starttls` 会失败。在界面上
+选一个会把它的端口填进端口框，保存卡片之前什么都不会保存。登录方式默认是 `login`，另有 `plain` 和
+`none`。除非邮件服务器就是本机，否则不会在没有 TLS 的连接上发送密码。
 除非打开 `smtp_skip_verify`，否则会检查服务器的证书；打开后，本机和服务器之间的任何人都能读到
 密码。每封邮件给 30 秒。
 

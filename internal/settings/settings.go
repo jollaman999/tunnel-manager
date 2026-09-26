@@ -167,14 +167,15 @@ type Settings struct {
 	SMTPHost string `gorm:"-" json:"smtp_host"`
 	SMTPPort int    `gorm:"-" json:"smtp_port"`
 	// SMTPSecurity is how the connection to the server is protected: "none",
-	// "starttls" or "tls". STARTTLS on 587 is what the submission port is for
-	// (RFC 8314 names it next to implicit TLS on 465), and it is the default
-	// because it is what a mail provider hands out as the settings to use.
-	SMTPSecurity string `gorm:"column:smtp_security;default:starttls" json:"smtp_security"`
+	// "starttls" or "tls". Implicit TLS on 465 is the default: RFC 8314 names
+	// it next to STARTTLS on 587 and prefers it, since no part of the
+	// conversation with the server is sent before TLS is up.
+	SMTPSecurity string `gorm:"column:smtp_security;default:tls" json:"smtp_security"`
 	// SMTPAuth is how this program logs in to the server: "none", "plain" or
 	// "login". Neither of the two that send a password does so over a
-	// connection that is not protected by TLS.
-	SMTPAuth     string `gorm:"column:smtp_auth;default:plain" json:"smtp_auth"`
+	// connection that is not protected by TLS. LOGIN is the default, and PLAIN
+	// is there for a server that does not offer it.
+	SMTPAuth     string `gorm:"column:smtp_auth;default:login" json:"smtp_auth"`
 	SMTPUsername string `gorm:"-" json:"smtp_username"`
 	// SMTPPassword is held sealed with the key of this installation, the way
 	// the password of a Host is. It is kept out of the JSON in both
@@ -273,9 +274,9 @@ func Defaults() Settings {
 		AlertAfterSec:   300,
 		AlertWebhookURL: "",
 		SMTPHost:        "",
-		SMTPPort:        587,
-		SMTPSecurity:    SMTPSecurityStartTLS,
-		SMTPAuth:        SMTPAuthPlain,
+		SMTPPort:        465,
+		SMTPSecurity:    SMTPSecurityTLS,
+		SMTPAuth:        SMTPAuthLogin,
 		SMTPSkipVerify:  false,
 	}
 }
@@ -697,7 +698,33 @@ func read(db *gorm.DB) (*Settings, error) {
 	// that reads the row before it has the key is not refused over them.
 	s.setAlertSecrets(defaultAlertSecrets())
 
+	// Nothing sealed is no mail server, so the modes are settled here. A
+	// sealed set is settled by Open, once the server it names is known.
+	if s.AlertSecrets == "" {
+		s.settleMailModes()
+	}
+
 	return &s, nil
+}
+
+// settleMailModes reads the connection security, the login and the port as
+// their defaults while no mail server is stored. They say how to reach a
+// server, and without one they are only what was stored before anybody set
+// mail up: the first startup of an older version stored the defaults it had,
+// STARTTLS and PLAIN, and those next to the port the defaults now give would
+// draw a card whose port does not fit its security. A stored server keeps
+// its modes as they are. Nothing is written here; the settled modes are
+// stored by the next save, and a save is compared against them, so it is not
+// reported as changing modes the operator did not touch.
+func (s *Settings) settleMailModes() {
+	if s.SMTPHost != "" {
+		return
+	}
+
+	d := Defaults()
+	s.SMTPPort = d.SMTPPort
+	s.SMTPSecurity = d.SMTPSecurity
+	s.SMTPAuth = d.SMTPAuth
 }
 
 // Load returns the stored settings, storing the defaults first when there is no
@@ -841,6 +868,7 @@ func (s *Settings) Open(cipher *crypto.Cipher) error {
 
 	s.setAlertSecrets(secrets)
 	s.AlertSecrets = ""
+	s.settleMailModes()
 
 	return nil
 }

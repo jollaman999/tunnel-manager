@@ -1160,9 +1160,9 @@ UI 파일은 일부러 세션 없이 제공합니다. 누구에게나 같은 바
 | 알림까지 기다릴 시간 (초) | `alert_after_sec` | `alert.after_sec` | `300` | **저장하는 즉시** |
 | Webhook URL | `alert_webhook_url` | `alert.webhook_url` | 빈 값. webhook 꺼짐 | **저장하는 즉시** |
 | 메일 서버 | `smtp_host` | `alert.smtp.host` | 빈 값. 메일 꺼짐 | **저장하는 즉시** |
-| 메일 서버 포트 | `smtp_port` | `alert.smtp.port` | `587` | **저장하는 즉시** |
-| 연결 보안 | `smtp_security` | `alert.smtp.security` | `starttls` | **저장하는 즉시** |
-| 로그인 방식 | `smtp_auth` | `alert.smtp.auth` | `plain` | **저장하는 즉시** |
+| 메일 서버 포트 | `smtp_port` | `alert.smtp.port` | `465` | **저장하는 즉시** |
+| 연결 보안 | `smtp_security` | `alert.smtp.security` | `tls` | **저장하는 즉시** |
+| 로그인 방식 | `smtp_auth` | `alert.smtp.auth` | `login` | **저장하는 즉시** |
 | 사용자 이름 | `smtp_username` | `alert.smtp.username` | 빈 값 | **저장하는 즉시** |
 | 비밀번호 | `smtp_password` | `alert.smtp.password` | 없음 | **저장하는 즉시** |
 | 보내는 주소 | `smtp_from` | `alert.smtp.from` | 빈 값 | **저장하는 즉시** |
@@ -1300,9 +1300,10 @@ curl -s -b cookies.txt "$BASE/api/settings"
 
 **메일은 같은 항목을 담은 일반 텍스트 메시지입니다.** 제목은
 `[tunnel-manager <installation>] DOWN: <kind> <local_port> on <host>` 같은 모양입니다. 연결 보안은
-기본이 587 포트의 `starttls` 이고, 그 밖에 `tls`(465)와 `none` 이 있습니다. `starttls` 는 서버가
-제공하지 않으면 실패합니다. 로그인 방식은 기본이 `plain` 이고, 그 밖에 `login` 과 `none` 이
-있습니다. 메일 서버가 이 장비 자신이 아니면 TLS 가 없는 연결로는 비밀번호를 보내지 않습니다.
+기본이 465 포트의 `tls` 이고, 그 밖에 `starttls`(587)와 `none`(25) 이 있습니다. `starttls` 는
+서버가 제공하지 않으면 실패합니다. 화면에서 하나를 고르면 그 포트가 포트 칸에 들어가고, 카드를
+저장하기 전에는 아무것도 저장되지 않습니다. 로그인 방식은 기본이 `login` 이고, 그 밖에 `plain` 과
+`none` 이 있습니다. 메일 서버가 이 장비 자신이 아니면 TLS 가 없는 연결로는 비밀번호를 보내지 않습니다.
 서버 인증서는 `smtp_skip_verify` 를 켜지 않는 한 확인하며, 켜면 이 장비와 서버 사이에 있는
 누구든 비밀번호를 읽을 수 있습니다. 메시지 하나에 30초를 줍니다.
 

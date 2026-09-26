@@ -4111,7 +4111,7 @@
                     "type": "string"
                 },
                 "smtp_auth": {
-                    "description": "SMTPAuth is how this program logs in to the server: \"none\", \"plain\" or\n\"login\". Neither of the two that send a password does so over a\nconnection that is not protected by TLS.",
+                    "description": "SMTPAuth is how this program logs in to the server: \"none\", \"plain\" or\n\"login\". Neither of the two that send a password does so over a\nconnection that is not protected by TLS. LOGIN is the default, and PLAIN\nis there for a server that does not offer it.",
                     "type": "string"
                 },
                 "smtp_from": {
@@ -4129,7 +4129,7 @@
                     "type": "integer"
                 },
                 "smtp_security": {
-                    "description": "SMTPSecurity is how the connection to the server is protected: \"none\",\n\"starttls\" or \"tls\". STARTTLS on 587 is what the submission port is for\n(RFC 8314 names it next to implicit TLS on 465), and it is the default\nbecause it is what a mail provider hands out as the settings to use.",
+                    "description": "SMTPSecurity is how the connection to the server is protected: \"none\",\n\"starttls\" or \"tls\". Implicit TLS on 465 is the default: RFC 8314 names\nit next to STARTTLS on 587 and prefers it, since no part of the\nconversation with the server is sent before TLS is up.",
                     "type": "string"
                 },
                 "smtp_skip_verify": {
@@ -4736,7 +4736,7 @@
                     "type": "string"
                 },
                 "smtp_auth": {
-                    "description": "SMTPAuth is how this program logs in to the server: \"none\", \"plain\" or\n\"login\". Neither of the two that send a password does so over a\nconnection that is not protected by TLS.",
+                    "description": "SMTPAuth is how this program logs in to the server: \"none\", \"plain\" or\n\"login\". Neither of the two that send a password does so over a\nconnection that is not protected by TLS. LOGIN is the default, and PLAIN\nis there for a server that does not offer it.",
                     "type": "string"
                 },
                 "smtp_from": {
@@ -4750,7 +4750,7 @@
                     "type": "integer"
                 },
                 "smtp_security": {
-                    "description": "SMTPSecurity is how the connection to the server is protected: \"none\",\n\"starttls\" or \"tls\". STARTTLS on 587 is what the submission port is for\n(RFC 8314 names it next to implicit TLS on 465), and it is the default\nbecause it is what a mail provider hands out as the settings to use.",
+                    "description": "SMTPSecurity is how the connection to the server is protected: \"none\",\n\"starttls\" or \"tls\". Implicit TLS on 465 is the default: RFC 8314 names\nit next to STARTTLS on 587 and prefers it, since no part of the\nconversation with the server is sent before TLS is up.",
                     "type": "string"
                 },
                 "smtp_skip_verify": {

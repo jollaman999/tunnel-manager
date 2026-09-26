@@ -7,7 +7,7 @@ import (
 
 // TestTheAlertDefaults holds what a fresh installation starts on: both ways of
 // being told off, five minutes of delay, and a mail setup that waits on what a
-// submission port expects, with the certificate checked.
+// port of implicit TLS expects, with the certificate checked.
 func TestTheAlertDefaults(t *testing.T) {
 	d := Defaults()
 
@@ -19,9 +19,9 @@ func TestTheAlertDefaults(t *testing.T) {
 		{"alert.after_sec", d.AlertAfterSec, 300},
 		{"alert.webhook_url", d.AlertWebhookURL, ""},
 		{"alert.smtp.host", d.SMTPHost, ""},
-		{"alert.smtp.port", d.SMTPPort, 587},
-		{"alert.smtp.security", d.SMTPSecurity, "starttls"},
-		{"alert.smtp.auth", d.SMTPAuth, "plain"},
+		{"alert.smtp.port", d.SMTPPort, 465},
+		{"alert.smtp.security", d.SMTPSecurity, "tls"},
+		{"alert.smtp.auth", d.SMTPAuth, "login"},
 		{"alert.smtp.skip_verify", d.SMTPSkipVerify, false},
 	}
 

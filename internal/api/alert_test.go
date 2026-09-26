@@ -613,9 +613,9 @@ func TestTheAlertSettingsTravelWithAnExport(t *testing.T) {
 	stored.AlertAfterSec = 120
 	stored.AlertWebhookURL = "https://hooks.example.com/tm"
 	stored.SMTPHost = "mail.example.com"
-	stored.SMTPPort = 465
-	stored.SMTPSecurity = settings.SMTPSecurityTLS
-	stored.SMTPAuth = settings.SMTPAuthLogin
+	stored.SMTPPort = 587
+	stored.SMTPSecurity = settings.SMTPSecurityStartTLS
+	stored.SMTPAuth = settings.SMTPAuthPlain
 	stored.SMTPUsername = "alerts"
 	stored.SMTPFrom = "tm@example.com"
 	stored.SMTPTo = "ops@example.com, oncall@example.net"
@@ -652,8 +652,8 @@ func TestTheAlertSettingsTravelWithAnExport(t *testing.T) {
 	after, _ := settings.LoadOpened(target.db, target.cipher)
 
 	if after.AlertAfterSec != 120 || after.AlertWebhookURL != stored.AlertWebhookURL ||
-		after.SMTPHost != stored.SMTPHost || after.SMTPPort != 465 || after.SMTPSecurity != "tls" ||
-		after.SMTPAuth != "login" || after.SMTPUsername != "alerts" || after.SMTPFrom != stored.SMTPFrom ||
+		after.SMTPHost != stored.SMTPHost || after.SMTPPort != 587 || after.SMTPSecurity != "starttls" ||
+		after.SMTPAuth != "plain" || after.SMTPUsername != "alerts" || after.SMTPFrom != stored.SMTPFrom ||
 		after.SMTPTo != stored.SMTPTo || !after.SMTPSkipVerify {
 		t.Fatalf("the alert settings arrived as %+v", after)
 	}
@@ -727,7 +727,7 @@ func requireNothingInTheClear(t *testing.T, row map[string]string, s *settings.S
 
 // sealedAlertBody is a save that names every one of the six sealed settings.
 const sealedAlertBody = `{"alert_webhook_url":"https://hooks.example.com/services/T000/secret-token",` +
-	`"smtp_host":"mail.example.com","smtp_port":465,"smtp_security":"tls","smtp_username":"alerts-sender",` +
+	`"smtp_host":"mail.example.com","smtp_port":587,"smtp_security":"starttls","smtp_username":"alerts-sender",` +
 	`"smtp_password":"sealed-mail-password","smtp_from":"tm@example.com","smtp_to":"ops@example.com"}` // hook:allow
 
 // TestTheAlertSettingsAreStoredSealedAndReadInTheClear saves the six, reads
@@ -745,7 +745,7 @@ func TestTheAlertSettingsAreStoredSealedAndReadInTheClear(t *testing.T) {
 	want := settings.Settings{
 		AlertWebhookURL: "https://hooks.example.com/services/T000/secret-token",
 		SMTPHost:        "mail.example.com",
-		SMTPPort:        465,
+		SMTPPort:        587,
 		SMTPUsername:    "alerts-sender",
 		SMTPFrom:        "tm@example.com",
 		SMTPTo:          "ops@example.com",
@@ -807,7 +807,7 @@ func TestTheAlertSettingsAreStoredSealedAndReadInTheClear(t *testing.T) {
 		"smtp_username":         want.SMTPUsername,
 		"smtp_from":             want.SMTPFrom,
 		"smtp_to":               want.SMTPTo,
-		"smtp_security":         "tls",
+		"smtp_security":         "starttls",
 	} {
 		if read.Data[name] != value {
 			t.Errorf("a read answers %s = %v, want %v", name, read.Data[name], value)
@@ -1149,7 +1149,7 @@ func TestTheStoredPasswordIsNotSentToAServerTheBodyNames(t *testing.T) {
 	// With the password typed again, the test goes to the server it names,
 	// and what it logs in with is what was typed.
 	rec := alertCall(t, h.TestAlertSMTP, `{"smtp_host":"127.0.0.1","smtp_port":`+port+
-		`,"smtp_security":"none","smtp_password":"typed-for-this-server"}`) // hook:allow
+		`,"smtp_security":"none","smtp_auth":"plain","smtp_password":"typed-for-this-server"}`) // hook:allow
 	if rec.Code != http.StatusOK {
 		t.Fatalf("a test with its own password answered %d: %s", rec.Code, rec.Body.String())
 	}
@@ -1282,5 +1282,132 @@ func TestAnImportThatMovesTheMailTargetWithoutAPasswordDropsIt(t *testing.T) {
 	after, _ := settings.LoadOpened(install.db, install.cipher)
 	if after.SMTPHost != "mail.example.net" || after.SMTPPassword != "" {
 		t.Fatalf("after the import the host is %q and a password is stored: %v", after.SMTPHost, after.SMTPPassword != "")
+	}
+}
+
+// storeOlderFirstStartModes leaves the row the way the first startup of
+// v3.14.0 left it: STARTTLS and PLAIN in their columns and nothing sealed.
+func storeOlderFirstStartModes(t *testing.T, db *gorm.DB) {
+	t.Helper()
+
+	_, err := settings.Load(db)
+	if err != nil {
+		t.Fatalf("failed to read the settings: %v", err)
+	}
+
+	err = db.Exec("UPDATE settings SET smtp_security = ?, smtp_auth = ?, alert_secrets = ? WHERE id = 1",
+		settings.SMTPSecurityStartTLS, settings.SMTPAuthPlain, "").Error
+	if err != nil {
+		t.Fatalf("failed to store the older modes: %v", err)
+	}
+}
+
+// requireNoModeChange fails on a change of a mail mode among changes.
+func requireNoModeChange(t *testing.T, what string, changes []settingsChange) {
+	t.Helper()
+
+	for _, change := range changes {
+		if change.Name == "alert.smtp.security" || change.Name == "alert.smtp.auth" || change.Name == "alert.smtp.port" {
+			t.Errorf("%s reports %s changing from %q to %q", what, change.Name, change.From, change.To)
+		}
+	}
+}
+
+// TestAFirstMailServerIsNotReportedAsChangingTheModes is an installation that
+// never set mail up. The screen reads the default modes, and a save that names
+// only the server stores them without listing them as changed: the operator
+// did not change them. One that does change them is listed.
+func TestAFirstMailServerIsNotReportedAsChangingTheModes(t *testing.T) {
+	db := newSettingsDB(t)
+	storeOlderFirstStartModes(t, db)
+
+	h, _, _, _ := newSettingsHandler(t, db)
+
+	var read struct {
+		Data map[string]interface{} `json:"data"`
+	}
+
+	err := json.Unmarshal(settingsRequest(t, h, "").Body.Bytes(), &read)
+	if err != nil {
+		t.Fatalf("failed to read the answer: %v", err)
+	}
+
+	if read.Data["smtp_security"] != "tls" || read.Data["smtp_auth"] != "login" || read.Data["smtp_port"] != float64(465) {
+		t.Fatalf("a read answers %v / %v / %v, want tls / login / 465",
+			read.Data["smtp_security"], read.Data["smtp_auth"], read.Data["smtp_port"])
+	}
+
+	rec := settingsRequest(t, h, `{"smtp_host":"mail.example.com","smtp_username":"alerts",`+
+		`"smtp_from":"tm@example.com","smtp_to":"ops@example.com"}`)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("the save answered %d: %s", rec.Code, rec.Body.String())
+	}
+
+	requireNoModeChange(t, "the save", decodeSaved(t, rec).Changes)
+
+	row := rawSettingsRow(t, db)
+	if row["smtp_security"] != "tls" || row["smtp_auth"] != "login" {
+		t.Errorf("the save stored %s / %s, want tls / login", row["smtp_security"], row["smtp_auth"])
+	}
+
+	stored, err := settings.LoadOpened(db, h.cipher)
+	if err != nil {
+		t.Fatalf("failed to read the settings: %v", err)
+	}
+
+	if stored.SMTPPort != 465 {
+		t.Errorf("the save stored port %d, want 465", stored.SMTPPort)
+	}
+
+	rec = settingsRequest(t, h, `{"smtp_security":"starttls","smtp_port":587}`)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("the save answered %d: %s", rec.Code, rec.Body.String())
+	}
+
+	changes := decodeSaved(t, rec).Changes
+	listed := false
+
+	for _, change := range changes {
+		if change.Name == "alert.smtp.security" && change.From == "tls" && change.To == "starttls" {
+			listed = true
+		}
+	}
+
+	if !listed {
+		t.Errorf("a save that changes the security does not report it: %+v", changes)
+	}
+}
+
+// TestAnExportOfAnInstallationWithoutMailCarriesTheDefaultModes moves the
+// settings of an installation that never set mail up to a fresh one. What
+// travels is what the screen read, so the import changes no mail mode.
+func TestAnExportOfAnInstallationWithoutMailCarriesTheDefaultModes(t *testing.T) {
+	source := newTransferInstall(t)
+	target := newTransferInstall(t)
+
+	storeOlderFirstStartModes(t, source.db)
+
+	_, err := settings.Load(target.db)
+	if err != nil {
+		t.Fatalf("failed to read the settings: %v", err)
+	}
+
+	file := source.exportSettings(t, testExportPassword)
+
+	rec := target.call(t, target.handler.ImportSettings,
+		`{"password":`+jsonString(t, testExportPassword)+`,"file":`+jsonString(t, file)+`}`) // hook:allow
+	if rec.Code != http.StatusOK {
+		t.Fatalf("the import answered %d: %s", rec.Code, rec.Body.String())
+	}
+
+	var imported importedSettings
+
+	decodeTransfer(t, rec).into(t, &imported)
+
+	requireNoModeChange(t, "the import", imported.Changes)
+
+	if imported.Settings.SMTPSecurity != "tls" || imported.Settings.SMTPAuth != "login" || imported.Settings.SMTPPort != 465 {
+		t.Errorf("the import stored %s / %s / %d", imported.Settings.SMTPSecurity, imported.Settings.SMTPAuth,
+			imported.Settings.SMTPPort)
 	}
 }

@@ -6997,6 +6997,21 @@ function alertsCard(set) {
     onSubmit: saveAlertSettings
   });
 
+  // Picking a connection security puts the port that goes with it in the box,
+  // so that SSL/TLS is not tried on the port STARTTLS is served on. It only
+  // fills the box: nothing is stored until the card is saved, and a port typed
+  // after the pick stays as it was typed.
+  const security = form.querySelector('[data-field="smtp_security"]');
+  const port = form.querySelector('[data-field="smtp_port"]');
+
+  security.addEventListener("change", function () {
+    const usual = smtpSecurityPorts[security.value];
+
+    if (usual !== undefined) {
+      port.value = String(usual);
+    }
+  });
+
   const buttons = form.querySelector("div.buttons");
 
   const webhook = actionButton(t("alerts.test-webhook.button"), "alerts-test-webhook", function () {
@@ -7017,6 +7032,15 @@ function alertsCard(set) {
 
   return form;
 }
+
+// smtpSecurityPorts is the port each connection security is served on: 25 for
+// a connection between mail servers, 587 for the submission port STARTTLS is
+// for and 465 for implicit TLS, the two RFC 8314 names.
+const smtpSecurityPorts = {
+  none: 25,
+  starttls: 587,
+  tls: 465
+};
 
 // checkAlertAfter holds the delay to what the server takes. Below ten seconds a
 // single missed check is already an outage, and past a day the alert comes after

@@ -1196,9 +1196,9 @@ UI のファイルはわざとセッションなしで提供しています。�
 | 通知までの時間 (秒) | `alert_after_sec` | `alert.after_sec` | `300` | **保存した時点で** |
 | Webhook URL | `alert_webhook_url` | `alert.webhook_url` | 空。webhook はオフ | **保存した時点で** |
 | メールサーバー | `smtp_host` | `alert.smtp.host` | 空。メールはオフ | **保存した時点で** |
-| メールサーバーのポート | `smtp_port` | `alert.smtp.port` | `587` | **保存した時点で** |
-| 接続のセキュリティ | `smtp_security` | `alert.smtp.security` | `starttls` | **保存した時点で** |
-| ログイン方式 | `smtp_auth` | `alert.smtp.auth` | `plain` | **保存した時点で** |
+| メールサーバーのポート | `smtp_port` | `alert.smtp.port` | `465` | **保存した時点で** |
+| 接続のセキュリティ | `smtp_security` | `alert.smtp.security` | `tls` | **保存した時点で** |
+| ログイン方式 | `smtp_auth` | `alert.smtp.auth` | `login` | **保存した時点で** |
 | ユーザー名 | `smtp_username` | `alert.smtp.username` | 空 | **保存した時点で** |
 | パスワード | `smtp_password` | `alert.smtp.password` | なし | **保存した時点で** |
 | 送信元アドレス | `smtp_from` | `alert.smtp.from` | 空 | **保存した時点で** |
@@ -1340,9 +1340,10 @@ webhook とメールは別々にオンにします。webhook URL を保存すれ
 
 **メールは同じ項目を載せたプレーンテキストのメッセージです。** 件名は
 `[tunnel-manager <installation>] DOWN: <kind> <local_port> on <host>` のような形です。接続の
-セキュリティは既定が 587 番ポートの `starttls` で、ほかに `tls` (465) と `none` があります。
-`starttls` はサーバーが提供していなければ失敗します。ログイン方式は既定が `plain` で、ほかに
-`login` と `none` があります。メールサーバーがこのマシン自身でない限り、TLS のない接続では
+セキュリティは既定が 465 番ポートの `tls` で、ほかに `starttls` (587) と `none` (25) があります。
+`starttls` はサーバーが提供していなければ失敗します。画面で 1 つを選ぶとそのポートがポートの欄に
+入り、カードを保存するまでは何も保存されません。ログイン方式は既定が `login` で、ほかに
+`plain` と `none` があります。メールサーバーがこのマシン自身でない限り、TLS のない接続では
 パスワードを送りません。サーバーの証明書は `smtp_skip_verify` をオンにしない限り確認し、オンに
 すると、このマシンとサーバーのあいだにいる誰でもパスワードを読めます。メッセージ 1 通に 30 秒を
 与えます。

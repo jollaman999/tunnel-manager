@@ -1342,9 +1342,9 @@ and `PUT /api/settings`.
 | Alert after (seconds) | `alert_after_sec` | `alert.after_sec` | `300` | **The moment it is saved** |
 | Webhook URL | `alert_webhook_url` | `alert.webhook_url` | empty, which is the webhook off | **The moment it is saved** |
 | Mail server | `smtp_host` | `alert.smtp.host` | empty, which is mail off | **The moment it is saved** |
-| Mail server port | `smtp_port` | `alert.smtp.port` | `587` | **The moment it is saved** |
-| Connection security | `smtp_security` | `alert.smtp.security` | `starttls` | **The moment it is saved** |
-| Login method | `smtp_auth` | `alert.smtp.auth` | `plain` | **The moment it is saved** |
+| Mail server port | `smtp_port` | `alert.smtp.port` | `465` | **The moment it is saved** |
+| Connection security | `smtp_security` | `alert.smtp.security` | `tls` | **The moment it is saved** |
+| Login method | `smtp_auth` | `alert.smtp.auth` | `login` | **The moment it is saved** |
 | User name | `smtp_username` | `alert.smtp.username` | empty | **The moment it is saved** |
 | Password | `smtp_password` | `alert.smtp.password` | none | **The moment it is saved** |
 | Sender address | `smtp_from` | `alert.smtp.from` | empty | **The moment it is saved** |
@@ -1502,9 +1502,11 @@ is sent again; the failure goes to the log.
 
 **Mail is a plain text message** with the same fields, under a subject such as
 `[tunnel-manager <installation>] DOWN: <kind> <local_port> on <host>`. The
-connection security is `starttls` on port 587 by default, and `tls` (465) and
-`none` are the others; `starttls` fails when the server does not offer it. The
-login is `plain` by default, and `login` and `none` are the others. A password
+connection security is `tls` on port 465 by default, and `starttls` (587) and
+`none` (25) are the others; `starttls` fails when the server does not offer it.
+Picking one on the screen puts its port in the port box, and nothing is stored
+until the card is saved. The login is `login` by default, and `plain` and
+`none` are the others. A password
 is never sent over a connection without TLS unless the mail server is this
 system itself. The certificate of the server is checked unless
 `smtp_skip_verify` is on, and with it on anybody between this system and the
