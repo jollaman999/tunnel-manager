@@ -1,3 +1,17 @@
+# v3.15.1
+
+## Add/fix features:
+
+- **The Settings screen is cut into tabs**: General, Logging, Alerts, HTTPS, Account, Manage settings, Update and Service. Only the open tab is underlined, so the row still reads as tabs where a narrow screen puts it on two lines. The tab that is open is kept after the `#` of the address, so a reload or a link comes back to it, and a press on a tab no longer sends you back to the first one. What is stored but not being run on yet, with its Restart button, stays above the tabs on every one of them.
+- **The log settings have a form and a Save of their own** on the Logging tab. Each of the two forms sends only its own fields, and the server keeps what a save leaves out, so neither writes over the other.
+- **The Update screen is the Update tab of Settings.** It is gone from the navigation, and `/ui/update` still opens it.
+- **The status and the local forwards of a Host say where a port is reached at.** A new Reachable at column stands beside where the port was opened, with a copy button at the right of each address. A port opened on every interface is the registered address of the Host with the port, or for a local forward the address this page was loaded from; a port opened on loopback is `127.0.0.1:port` and `[::1]:port`, one line each, and copying one says in a toast that it works only on the Host or on this machine. The Opened cell is the address alone, without Host or This machine in front of it, and it and the target of a local forward no longer carry a copy button.
+- **The buttons at the end of a row are no longer cut off at the edge.** The panel of the local forwards of a Host was narrower than its table even before the new column, most of all in the longer languages; it is widened, the headings and the scope may take two lines, and where the table is still wider than the screen the buttons of every row in the local forwards and in the Host list fold into one Actions menu. A narrow screen still scrolls the table sideways past that.
+- **The API tokens are readable on a narrower screen.** Below 1200 pixels their list is drawn one token to a block, each value after the heading of its column, with the revoke button on a line of its own at the right, and above that the name column keeps a width of its own; six columns squeezed the name and the scopes down to a letter a line and pushed the revoke button past the edge; and a new token, shown once, breaks onto a second line rather than running off a narrow panel.
+- **A loopback forward whose Host is this machine is measured.** Where the address the SSH connection was made to is a loopback address or an address of this machine, the Port reached column tries `127.0.0.1` at the port, or `[::1]` where only the IPv6 request went up, and reads reachable or unreachable. It read unknown before, as it still does for the loopback scope of a Host that is another machine. An unreachable row of this kind says under it that the port did not answer on this machine, rather than pointing at GatewayPorts and a firewall.
+- **Making an API token says plainly why it asks for the password**: a token can use every scope it was given, with no password, until it expires or is revoked.
+- **The scopes of a new API token are listed one to a line, in the colours of the theme**, rather than two to a line in the grey frame of the browser, where a long name broke under its own box; and **the PEM of the certificate has room under it** before the buttons.
+
 # v3.15.0
 
 ## Add/fix features:
