@@ -24,6 +24,14 @@ services:
     # inside the container would be gone with the next build, and every stored
     # password with it. A path set on the Settings screen has to stay under a
     # mounted directory for the same reason.
+    #
+    # The program runs as uid 10888 and gid 10888. Each start, the image hands
+    # ./_data and whatever in it is not already owned by 10888:10888 over to
+    # that owner on the host, so a directory docker created as root, or files
+    # an older root image left, need nothing done by hand. Giving this service
+    # a user: other than root skips that, and ./_data then has to belong to
+    # that user already. A user: of root still ends up running the program as
+    # 10888.
     volumes:
       - ./_data:/data
     environment:

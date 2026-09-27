@@ -755,6 +755,13 @@ The image starts the binary with `-db /data/tunnel-manager.db`, and the compose
 file binds `/data` to `./_data` on the host. That is what keeps the database,
 the key and the logs when the container is replaced.
 
+The program in the container runs as uid `10888`, gid `10888`, and not as root.
+Each start, before the program runs, the image changes the owner of `./_data`,
+and of whatever in it is not already owned by `10888:10888`, to that uid and
+gid. A directory docker made as root, and files an older image left owned by
+root, therefore need nothing done by hand, and they stay owned by `10888` on the
+host afterwards. See [Running as a non-root user](#running-as-a-non-root-user).
+
 The initial password file is written inside that directory, so it is readable
 from the host as well:
 
@@ -3215,12 +3222,24 @@ Group=tunnel-manager
 owner too. An existing key file has to be readable by that account as well, so
 change its owner and leave the permission at `0600`.
 
-The container runs as root, because `Dockerfile` ends with `USER root`. To run it
-as somebody else, give the service in docker-compose.yaml a `user: "<uid>:<gid>"`
-and make `./_data` on the host owned by that uid. If it ever ran as root, that
-directory is owned by root and has to be changed first. The file descriptor limit
-comes from `ulimits` in docker-compose.yaml and has nothing to do with the
-account inside the container.
+The container runs the program as `tm`, uid `10888` and gid `10888`. The image
+starts as root only to hand `/data` over: it makes `/data` if it is missing,
+changes the owner of `/data` and of every file in it that is not already
+`10888:10888`, and then drops to `tm` before starting the program. A new
+`./_data` that docker created as root and one an older image left owned by root
+both come up this way without anything done on the host, and a start after the
+first changes nothing. The permissions are left alone, so `keys/` and `logs/`
+stay at `0700` and the files the program writes stay at `0600`. To go back to an image
+that runs as root, nothing has to change, since root can read files owned by
+`10888`; to hand the files to another account on the host, `chown` them by hand.
+
+To run it as another account, give the service in docker-compose.yaml a
+`user: "<uid>:<gid>"` with a uid other than `0`. The image then does not change
+any owner and starts the program as that account, so `./_data` on the host has
+to be owned by that uid already. A `user:` of root (`"0:0"` or `root`) is the
+same as leaving it out: the owners are changed and the program runs as `tm`.
+The file descriptor limit comes from `ulimits` in docker-compose.yaml and has
+nothing to do with the account inside the container.
 
 ## License
 

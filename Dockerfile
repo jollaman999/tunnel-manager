@@ -33,22 +33,34 @@ WORKDIR /
 
 COPY --from=builder /go/src/github.com/jollaman999/tunnel-manager/tunnel-manager /tunnel-manager
 
-# root is kept on purpose. The container writes the database, the encryption
-# key and the log into /data, and /data is a host bind mount
-# (docker-compose.yaml). A bind mount keeps the ownership of the host
-# directory, and docker creates that directory as root when it is missing, so
-# any other user here fails to create the database on a first start. Moving off
-# root needs the host side to hand the directory over as well, which is a
-# change to the deployment, not to this file. The listening port is 8888, above
-# 1024, so it is not what holds root here.
-USER root
+# The program runs as tm, 10888:10888, and not as root. The number is one that
+# the usual first uids (1000, 10000, 10001) do not take, so it is unlikely to be
+# an account that already means something on the host. The listening port is
+# 8888, above 1024, so nothing here needs root once the program is running.
+#
+# The image still starts as root, because /data is a host bind mount
+# (docker-compose.yaml) and a bind mount keeps the ownership of the host
+# directory: docker creates it as root when it is missing, and an installation
+# from before this change left its database, key and log owned by root. The
+# entry script hands /data to tm and then drops to tm with su-exec, so a new
+# installation and an old one both come up without anything done by hand on the
+# host. A user: other than root given in docker-compose.yaml is honoured as it
+# is; a user: of root still ends up running the program as tm.
+RUN apk --no-cache add su-exec
+RUN addgroup -S -g 10888 tm && adduser -S -D -H -h /nonexistent -s /sbin/nologin -u 10888 -G tm tm
+
+COPY --chmod=0755 docker-entrypoint.sh /docker-entrypoint.sh
+
+ENTRYPOINT ["/docker-entrypoint.sh"]
 
 # -db is given here rather than left to the default. The default is worked out
-# from os.UserConfigDir, and docker sets HOME=/root, so a container started
-# without it would put the database at /root/.config/tunnel-manager inside the
-# writable layer: it would come up and work, and everything in it would be gone
-# the moment the container is replaced. /data is the path a deployment mounts
-# (docker-compose.yaml), so naming it here is what keeps the data.
+# from os.UserConfigDir, which is under HOME, and HOME is nowhere near /data. For
+# tm it is /nonexistent, which tm cannot create, so the startup would fail. For
+# root it is /root, so the database would go to /root/.config/tunnel-manager
+# inside the writable layer: it would come up and work, and everything in it
+# would be gone the moment the container is replaced. /data is the path a
+# deployment mounts (docker-compose.yaml), so naming it here is what keeps the
+# data.
 CMD ["/tunnel-manager", "-db", "/data/tunnel-manager.db"]
 
 EXPOSE 8888
