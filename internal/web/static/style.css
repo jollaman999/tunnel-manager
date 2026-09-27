@@ -881,6 +881,28 @@ fieldset.field > legend {
   padding: 0 0.35rem;
 }
 
+/* The scopes are a list and not a row of label and box, so they leave the grid
+   of the field and go one to a line. In the two columns of that grid the left
+   one is the width of a label, and a scope with a long name broke there under
+   its own box. */
+fieldset.field {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 0.45rem;
+}
+
+fieldset.field > label {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45rem;
+  color: var(--text);
+}
+
+fieldset.field > small {
+  margin-top: 0.15rem;
+}
+
 .field small {
   grid-column: 2;
   color: var(--text-dim);
