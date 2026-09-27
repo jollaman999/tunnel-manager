@@ -1085,9 +1085,11 @@ func (cv *CustomValidator) Validate(i interface{}) error {
 }
 
 // repairStoredPaths puts a stored log file or encryption key file that names a
-// place outside the installation directory back to its default, and says in
-// the log what it replaced. It runs before the settings are read, because the
-// read is what would otherwise refuse such a row.
+// place outside the installation directory, or a file the installation keeps
+// something else in, back to its default, and says in the log what it
+// replaced. It runs before the settings are read, because the read is what
+// would otherwise refuse such a row, and before the logger is opened, which is
+// what would write into the key or the database.
 //
 // The line is a warning and not an error: the process goes on, and it goes on
 // with the path the rule allows rather than the one that was stored. What is
@@ -1096,8 +1098,8 @@ func (cv *CustomValidator) Validate(i interface{}) error {
 // A write that fails is reported and left there. The read that follows holds
 // the row against the same rules and stops the startup naming -reset-settings,
 // which is the advice this could only repeat.
-func repairStoredPaths(db *gorm.DB, logger *zap.Logger) {
-	changes, err := settings.RepairPaths(db)
+func repairStoredPaths(db *gorm.DB, databaseFile string, logger *zap.Logger) {
+	changes, err := settings.RepairPaths(db, databaseFile)
 	if err != nil {
 		logger.Warn("failed to put a stored path setting back to its default",
 			logid.SettingsStoreFailed.Field(),
@@ -1108,7 +1110,8 @@ func repairStoredPaths(db *gorm.DB, logger *zap.Logger) {
 
 	for _, change := range changes {
 		logger.Warn("a stored path setting names a place outside the directory the database file "+
-			"is in, which is no longer allowed, and was put back to its default",
+			"is in or a file this installation keeps something else in, which is no longer allowed, "+
+			"and was put back to its default",
 			logid.SettingsSettingPutBackToDefault.Field(),
 			zap.String("setting", change.Name),
 			zap.String("from", change.From),
@@ -1666,7 +1669,7 @@ func serve() {
 	// A path stored while an absolute one was still accepted is put back to
 	// its default here, above the read that would refuse it. An installation
 	// that was working goes on working, on a path inside its own directory.
-	repairStoredPaths(db, logger)
+	repairStoredPaths(db, databaseFile, logger)
 
 	set, err := settings.Load(db)
 	if err != nil {
@@ -1968,7 +1971,7 @@ func serve() {
 	// send through the very sender the watcher below uses.
 	alertSender := alert.NewSender(logger, cipher)
 	settingsHandler := api.NewSettingsHandler(db, logger, logLevel, gormLevel, running, installDir,
-		cipher, alertSender)
+		databaseFile, cipher, alertSender)
 	// The log screen is handed the path this process resolved, the same one the
 	// logger above writes through. Worked out on the screen instead it would be
 	// a second place that knows what a relative logging.file.path is read
@@ -2005,7 +2008,7 @@ func serve() {
 	// The export and the import are handed the handler that serves the Hosts,
 	// because an imported Host has to be stored the way a created one is. The
 	// version goes into the file, so that a file found later says what wrote it.
-	transferHandler := api.NewTransferHandler(h, version)
+	transferHandler := api.NewTransferHandler(h, version, databaseFile)
 	// The forwarding headers are believed only where -trust-proxy-headers said
 	// so, and this is settled here, above the routes, so that nothing is
 	// serving while the answer is written.

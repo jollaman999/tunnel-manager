@@ -100,9 +100,14 @@ func newSettingsHandler(t *testing.T, db *gorm.DB) (*SettingsHandler, zap.Atomic
 	logger := zap.New(core)
 	cipher := newTestCipher(t)
 
-	return NewSettingsHandler(db, logger, level, gormLevel, *startup, t.TempDir(), cipher,
+	return NewSettingsHandler(db, logger, level, gormLevel, *startup, t.TempDir(), testDatabaseFile, cipher,
 		alert.NewSender(logger, cipher)), level, gormLevel, logs
 }
+
+// testDatabaseFile is the database file the handlers under test are told the
+// process was started with. Only its name is read, by the rule that keeps the
+// path settings off it.
+const testDatabaseFile = "tunnel-manager.db"
 
 // settingsRequest runs one call against the handler and hands back what it
 // wrote. A body of "" is a GET, anything else is a PUT carrying it.
@@ -1125,5 +1130,74 @@ func TestSaveSuggestsAPortClearOfTheRunningAPIPort(t *testing.T) {
 
 	if answer.Data.SuggestedPort != 15434 {
 		t.Errorf("suggested_port = %d, want 15434, past the running port 15433", answer.Data.SuggestedPort)
+	}
+}
+
+// TestSaveRefusesAPathOnAFileOfTheInstallation is the save that used to stop
+// the next startup: a log file on the key has the logger, which is opened
+// first, write into the key, and one on the database or its write-ahead log
+// writes into the database. It is refused under the code every other path
+// refusal is answered under, and nothing is stored.
+func TestSaveRefusesAPathOnAFileOfTheInstallation(t *testing.T) {
+	bodies := []string{
+		`{"logging_file_path":"keys/tunnel-manager.key"}`,
+		`{"logging_file_path":"./Keys/Tunnel-Manager.key"}`,
+		`{"logging_file_path":"tunnel-manager.db"}`,
+		`{"logging_file_path":"./TUNNEL-MANAGER.DB-wal"}`,
+		`{"logging_file_path":"tunnel-manager.db-shm"}`,
+		`{"logging_file_path":"tunnel-manager.db-journal"}`,
+		`{"logging_file_path":"initial-password"}`,
+		`{"security_key_file":"Tunnel-Manager.db"}`,
+		`{"security_key_file":"./initial-password"}`,
+		`{"security_key_file":"logs/tunnel-manager.log"}`,
+		`{"security_key_file":"x.key","logging_file_path":"./X.KEY"}`,
+	}
+
+	for _, body := range bodies {
+		t.Run(body, func(t *testing.T) {
+			db := newSettingsDB(t)
+			h, _, _, _ := newSettingsHandler(t, db)
+
+			before, err := settings.Load(db)
+			if err != nil {
+				t.Fatalf("failed to read the settings: %v", err)
+			}
+
+			rec := settingsRequest(t, h, body)
+			if rec.Code != http.StatusBadRequest {
+				t.Fatalf("status = %d, want %d, body: %s", rec.Code, http.StatusBadRequest, rec.Body.String())
+			}
+			if code := errorCodeOf(t, rec); code != errSettingsRefused {
+				t.Errorf("error_code = %q, want %q", code, errSettingsRefused)
+			}
+
+			after, err := settings.Load(db)
+			if err != nil {
+				t.Fatalf("failed to read the settings: %v", err)
+			}
+			if after.SecurityKeyFile != before.SecurityKeyFile || after.LoggingFilePath != before.LoggingFilePath {
+				t.Errorf("a refused save stored key %q and log %q", after.SecurityKeyFile, after.LoggingFilePath)
+			}
+		})
+	}
+}
+
+// TestSaveTakesPathsOfTheirOwn is the other half: a path that only looks like a
+// file of the installation is stored.
+func TestSaveTakesPathsOfTheirOwn(t *testing.T) {
+	db := newSettingsDB(t)
+	h, _, _, _ := newSettingsHandler(t, db)
+
+	rec := settingsRequest(t, h, `{"security_key_file":"secrets/tunnel-manager.db","logging_file_path":"logs/tunnel-manager.key"}`)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d, body: %s", rec.Code, http.StatusOK, rec.Body.String())
+	}
+
+	after, err := settings.Load(db)
+	if err != nil {
+		t.Fatalf("failed to read the settings: %v", err)
+	}
+	if after.SecurityKeyFile != "secrets/tunnel-manager.db" || after.LoggingFilePath != "logs/tunnel-manager.key" {
+		t.Errorf("stored key %q and log %q, want the paths the body named", after.SecurityKeyFile, after.LoggingFilePath)
 	}
 }

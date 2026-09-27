@@ -864,6 +864,147 @@ func TestTheAcceptedPathsAreTheOnesInsideTheInstallation(t *testing.T) {
 	}
 }
 
+// testDatabaseFile is the database file the path settings are held apart from.
+// It is not the file newDB opens: the rule reads only its name.
+const testDatabaseFile = "tunnel-manager.db"
+
+// TestValidateFilesRefusesAPathOnAFileOfTheInstallation is the log or the key
+// named as a file the installation keeps something else in. The spellings are
+// the ones that reach the same file: a different case, a leading ./ and a
+// doubled separator.
+func TestValidateFilesRefusesAPathOnAFileOfTheInstallation(t *testing.T) {
+	files := []string{
+		"tunnel-manager.db",
+		"tunnel-manager.db-wal",
+		"tunnel-manager.db-shm",
+		"tunnel-manager.db-journal",
+		"initial-password",
+		"Tunnel-Manager.DB",
+		"./tunnel-manager.db-wal",
+		"logs/../TUNNEL-MANAGER.db-shm",
+		"./Initial-Password",
+	}
+
+	for _, file := range files {
+		t.Run("key "+file, func(t *testing.T) {
+			s := Defaults()
+			s.SecurityKeyFile = file
+
+			if err := s.Validate(); err != nil {
+				t.Fatalf("Validate refused %q, so the case is not about the files: %v", file, err)
+			}
+			err := s.ValidateFiles(testDatabaseFile)
+			if err == nil || !strings.Contains(err.Error(), keyFileSetting) {
+				t.Errorf("ValidateFiles let security.key_file %q through: %v", file, err)
+			}
+		})
+
+		t.Run("log "+file, func(t *testing.T) {
+			s := Defaults()
+			s.LoggingFilePath = file
+
+			if err := s.Validate(); err != nil {
+				t.Fatalf("Validate refused %q, so the case is not about the files: %v", file, err)
+			}
+			err := s.ValidateFiles(testDatabaseFile)
+			if err == nil || !strings.Contains(err.Error(), logFileSetting) {
+				t.Errorf("ValidateFiles let logging.file.path %q through: %v", file, err)
+			}
+		})
+	}
+}
+
+// TestValidateFilesRefusesTheLogOnTheKey is the save the startup used to stop
+// on: the logger is opened before the key is read, so a log file that names the
+// key file writes its first lines into the key.
+func TestValidateFilesRefusesTheLogOnTheKey(t *testing.T) {
+	cases := []struct{ key, log string }{
+		{"keys/tunnel-manager.key", "keys/tunnel-manager.key"},
+		{"keys/tunnel-manager.key", "Keys/Tunnel-Manager.KEY"},
+		{"keys/tunnel-manager.key", "./keys/tunnel-manager.key"},
+		{"./logs/x.log", "logs//x.log"},
+		{"logs/tunnel-manager.log", "logs/tunnel-manager.log"},
+	}
+
+	for _, c := range cases {
+		t.Run(c.key+" "+c.log, func(t *testing.T) {
+			s := Defaults()
+			s.SecurityKeyFile = c.key
+			s.LoggingFilePath = c.log
+
+			if err := s.Validate(); err != nil {
+				t.Fatalf("Validate refused the set, so the case is not about the files: %v", err)
+			}
+			err := s.ValidateFiles(testDatabaseFile)
+			if err == nil || !strings.Contains(err.Error(), logFileSetting) {
+				t.Errorf("ValidateFiles let the log %q through onto the key %q: %v", c.log, c.key, err)
+			}
+		})
+	}
+}
+
+// TestValidateFilesAcceptsPathsOfTheirOwn is the other half. A name that only
+// starts like a file of the installation, or that sits in a directory of its
+// own, is a file nothing else is kept in.
+func TestValidateFilesAcceptsPathsOfTheirOwn(t *testing.T) {
+	cases := []struct{ key, log string }{
+		{"keys/tunnel-manager.key", "logs/tunnel-manager.log"},
+		{"secrets/x.key", "x.log"},
+		{"keys/tunnel-manager.key", "logs/tunnel-manager.db"},
+		{"tunnel-manager.db.key", "tunnel-manager.db-wal.log"},
+		{"keys/initial-password", "initial-password.log"},
+		{"keys/tunnel-manager.key", "keys/tunnel-manager.key.log"},
+	}
+
+	for _, c := range cases {
+		t.Run(c.key+" "+c.log, func(t *testing.T) {
+			s := Defaults()
+			s.SecurityKeyFile = c.key
+			s.LoggingFilePath = c.log
+
+			err := s.ValidateFiles(testDatabaseFile)
+			if err != nil {
+				t.Errorf("ValidateFiles refused key %q and log %q: %v", c.key, c.log, err)
+			}
+		})
+	}
+}
+
+// TestValidateFilesReadsTheNameOfTheDatabaseFile covers a -db that names a
+// file elsewhere and under a name of its own. The paths are read against the
+// directory it is in, so it is its base name that a setting would name it by,
+// and the default name is then a file like any other.
+func TestValidateFilesReadsTheNameOfTheDatabaseFile(t *testing.T) {
+	databaseFile := filepath.Join(t.TempDir(), "data", "other.sqlite")
+
+	s := Defaults()
+	s.LoggingFilePath = "OTHER.sqlite-wal"
+
+	err := s.ValidateFiles(databaseFile)
+	if err == nil {
+		t.Errorf("ValidateFiles let the log onto the write-ahead log of %s", databaseFile)
+	}
+
+	s.LoggingFilePath = "tunnel-manager.db"
+
+	err = s.ValidateFiles(databaseFile)
+	if err != nil {
+		t.Errorf("ValidateFiles refused tunnel-manager.db beside %s: %v", databaseFile, err)
+	}
+}
+
+// TestTheDefaultPathsPassTheFileRule holds the defaults to the rule the repair
+// puts a path back to them under. A default that failed it would be repaired
+// into a set the repair refuses again.
+func TestTheDefaultPathsPassTheFileRule(t *testing.T) {
+	d := Defaults()
+
+	err := d.ValidateFiles(testDatabaseFile)
+	if err != nil {
+		t.Fatalf("the defaults do not pass the file rule: %v", err)
+	}
+}
+
 // storeByHand writes columns straight into the settings row, which is how a
 // value that Save refuses today is put there. It stands for the installation
 // that stored it while it was still accepted.
@@ -897,7 +1038,7 @@ func TestRepairPathsPutsAStoredAbsolutePathBackToItsDefault(t *testing.T) {
 		"logging_file_path": logFile,
 	})
 
-	changes, err := RepairPaths(db)
+	changes, err := RepairPaths(db, testDatabaseFile)
 	if err != nil {
 		t.Fatalf("RepairPaths: %v", err)
 	}
@@ -961,7 +1102,7 @@ func TestRepairPathsRepairsOnlyThePathThatIsRefused(t *testing.T) {
 
 	storeByHand(t, db, map[string]interface{}{"logging_file_path": "../../var/log/x"})
 
-	changes, err := RepairPaths(db)
+	changes, err := RepairPaths(db, testDatabaseFile)
 	if err != nil {
 		t.Fatalf("RepairPaths: %v", err)
 	}
@@ -990,7 +1131,7 @@ func TestRepairPathsLeavesASetThatPassesAlone(t *testing.T) {
 		t.Fatalf("Load: %v", err)
 	}
 
-	changes, err := RepairPaths(db)
+	changes, err := RepairPaths(db, testDatabaseFile)
 	if err != nil {
 		t.Fatalf("RepairPaths: %v", err)
 	}
@@ -1008,13 +1149,123 @@ func TestRepairPathsLeavesASetThatPassesAlone(t *testing.T) {
 	}
 }
 
+// TestRepairPathsPutsAPathOnAFileOfTheInstallationBackToItsDefault is the row
+// stored before the two paths were held apart from the other files: the log on
+// the key, which stopped the startup, and the key on the database file.
+func TestRepairPathsPutsAPathOnAFileOfTheInstallationBackToItsDefault(t *testing.T) {
+	defaults := Defaults()
+
+	cases := []struct {
+		name     string
+		key, log string
+		want     map[string]Change
+	}{
+		{
+			name: "the log on the key",
+			key:  "keys/tunnel-manager.key",
+			log:  "Keys/./tunnel-manager.key",
+			want: map[string]Change{
+				"logging.file.path": {From: "Keys/./tunnel-manager.key", To: defaults.LoggingFilePath},
+			},
+		},
+		{
+			name: "the log on the write-ahead log",
+			key:  "secrets/x.key",
+			log:  "./tunnel-manager.db-WAL",
+			want: map[string]Change{
+				"logging.file.path": {From: "./tunnel-manager.db-WAL", To: defaults.LoggingFilePath},
+			},
+		},
+		{
+			name: "the key on the database file",
+			key:  "TUNNEL-MANAGER.DB",
+			log:  "x.log",
+			want: map[string]Change{
+				"security.key_file": {From: "TUNNEL-MANAGER.DB", To: defaults.SecurityKeyFile},
+			},
+		},
+		{
+			name: "the key on the initial password",
+			key:  "initial-password",
+			log:  "x.log",
+			want: map[string]Change{
+				"security.key_file": {From: "initial-password", To: defaults.SecurityKeyFile},
+			},
+		},
+		{
+			// The log is already on its default, which is the file the key
+			// is on, so it is the key that has to go back.
+			name: "both on the default log file",
+			key:  defaults.LoggingFilePath,
+			log:  defaults.LoggingFilePath,
+			want: map[string]Change{
+				"security.key_file": {From: defaults.LoggingFilePath, To: defaults.SecurityKeyFile},
+			},
+		},
+		{
+			name: "the log on the default key once the key is put back",
+			key:  platformAbsolutePath("/etc/x.key"),
+			log:  defaults.SecurityKeyFile,
+			want: map[string]Change{
+				"security.key_file": {From: platformAbsolutePath("/etc/x.key"), To: defaults.SecurityKeyFile},
+				"logging.file.path": {From: defaults.SecurityKeyFile, To: defaults.LoggingFilePath},
+			},
+		},
+	}
+
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			db := newDB(t)
+
+			_, err := Load(db)
+			if err != nil {
+				t.Fatalf("Load: %v", err)
+			}
+
+			storeByHand(t, db, map[string]interface{}{
+				"security_key_file": c.key,
+				"logging_file_path": c.log,
+			})
+
+			changes, err := RepairPaths(db, testDatabaseFile)
+			if err != nil {
+				t.Fatalf("RepairPaths: %v", err)
+			}
+
+			got := map[string]Change{}
+			for _, change := range changes {
+				got[change.Name] = Change{From: change.From, To: change.To}
+			}
+
+			if len(got) != len(c.want) {
+				t.Fatalf("RepairPaths reported %+v, want %+v", changes, c.want)
+			}
+			for name, want := range c.want {
+				if got[name] != want {
+					t.Errorf("%s was reported as %+v, want %+v", name, got[name], want)
+				}
+			}
+
+			reloaded, err := Load(db)
+			if err != nil {
+				t.Fatalf("Load after the repair: %v", err)
+			}
+
+			err = reloaded.ValidateFiles(testDatabaseFile)
+			if err != nil {
+				t.Errorf("the repaired set is still refused: %v", err)
+			}
+		})
+	}
+}
+
 // TestRepairPathsHasNothingToDoBeforeAFirstStartup covers the empty database.
 // The repair runs above the read that stores the defaults, so the row it looks
 // for is not there yet on a first startup.
 func TestRepairPathsHasNothingToDoBeforeAFirstStartup(t *testing.T) {
 	db := newDB(t)
 
-	changes, err := RepairPaths(db)
+	changes, err := RepairPaths(db, testDatabaseFile)
 	if err != nil {
 		t.Fatalf("RepairPaths: %v", err)
 	}

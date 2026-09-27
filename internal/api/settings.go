@@ -57,6 +57,10 @@ type SettingsHandler struct {
 	// installDir is the directory the database file is in, which is what a
 	// stored path that is not absolute is read against.
 	installDir string
+	// databaseFile is the database file the process was started with. A save
+	// is held against its name, so that neither path setting names it or a
+	// file SQLite keeps beside it.
+	databaseFile string
 	// cipher seals the password of the mail server as it is stored, with the
 	// key the passwords of the Hosts are sealed with, and seals and opens the
 	// webhook address and the mail settings the settings keep sealed.
@@ -68,17 +72,18 @@ type SettingsHandler struct {
 }
 
 func NewSettingsHandler(db *gorm.DB, logger *zap.Logger, logLevel zap.AtomicLevel,
-	gormLevel databaseLogLevel, startup settings.Settings, installDir string,
+	gormLevel databaseLogLevel, startup settings.Settings, installDir string, databaseFile string,
 	cipher *crypto.Cipher, alerts *alert.Sender) *SettingsHandler {
 	return &SettingsHandler{
-		db:         db,
-		logger:     logger,
-		logLevel:   logLevel,
-		gormLevel:  gormLevel,
-		startup:    startup,
-		installDir: installDir,
-		cipher:     cipher,
-		alerts:     alerts,
+		db:           db,
+		logger:       logger,
+		logLevel:     logLevel,
+		gormLevel:    gormLevel,
+		startup:      startup,
+		installDir:   installDir,
+		databaseFile: databaseFile,
+		cipher:       cipher,
+		alerts:       alerts,
 	}
 }
 
@@ -512,6 +517,11 @@ func (h *SettingsHandler) UpdateSettings(c echo.Context) error {
 	// to stays a 500. Save reports the two as one error, and the client can act
 	// on only one of them.
 	err = updated.Validate()
+	if err != nil {
+		return settingsRefusal(err, &updated, errSettingsRefused).answer(c)
+	}
+
+	err = updated.ValidateFiles(h.databaseFile)
 	if err != nil {
 		return settingsRefusal(err, &updated, errSettingsRefused).answer(c)
 	}

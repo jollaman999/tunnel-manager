@@ -784,12 +784,17 @@ type importedSettings struct {
 type TransferHandler struct {
 	hosts   *Handler
 	version string
+	// databaseFile is the database file the process was started with, which
+	// imported settings are held against for the reason SettingsHandler holds
+	// a save against it.
+	databaseFile string
 }
 
-func NewTransferHandler(hosts *Handler, version string) *TransferHandler {
+func NewTransferHandler(hosts *Handler, version string, databaseFile string) *TransferHandler {
 	return &TransferHandler{
-		hosts:   hosts,
-		version: version,
+		hosts:        hosts,
+		version:      version,
+		databaseFile: databaseFile,
 	}
 }
 
@@ -2385,6 +2390,14 @@ func (h *TransferHandler) ImportSettings(c echo.Context) error {
 	// refuse is answered as a bad request while a database that could not be
 	// written to stays a 500. It is the same split UpdateSettings makes.
 	err = updated.Validate()
+	if err != nil {
+		return failure(c, http.StatusBadRequest, errImportSettingsRefused, errorArgs{"reason": err.Error()})
+	}
+
+	// Refused rather than dropped to the default like a path outside the
+	// installation: a file that names the key as the log was not written by
+	// an installation that ran on it, so there is no older rule it followed.
+	err = updated.ValidateFiles(h.databaseFile)
 	if err != nil {
 		return failure(c, http.StatusBadRequest, errImportSettingsRefused, errorArgs{"reason": err.Error()})
 	}

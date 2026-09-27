@@ -706,12 +706,23 @@ path that climbs out with `..` are refused when they are saved. The process
 creates the log file and appends to it, and the Logs screen reads its tail
 back, so a path that could leave the installation made the setting a way to
 have this process write into any file on the machine and read any file it can
-open. An installation that stored such a path while it was still accepted comes
-up on the default instead and says what it replaced:
+open.
+
+**Neither may name a file the installation keeps something else in:** the
+database file, its `-wal`, `-shm` and `-journal`, `initial-password`, or the
+other of the two. The comparison ignores case and reads `./x` and `x` as the
+same file, and the database file is named by the file `-db` names, not by the
+default. The logger is opened before the key is read, so a log file on the key
+file writes into the key and the next start stops on a key it cannot read.
+
+An installation that stored such a path while it was still accepted comes up on
+the default instead and says what it replaced. When the log file names the key
+file it is the log file that is put back:
 
 ```text
-warn  a stored path setting names a place outside the directory the database file is in,
-      which is no longer allowed, and was put back to its default
+warn  a stored path setting names a place outside the directory the database file is in
+      or a file this installation keeps something else in, which is no longer allowed,
+      and was put back to its default
       {"setting": "logging.file.path", "from": "/var/log/tunnel-manager/x.log",
        "to": "logs/tunnel-manager.log"}
 ```
@@ -1388,7 +1399,7 @@ A save is refused before it is stored when a value would not hold:
 | `api_port` | 1 to 65535. A new port a local forward or a SOCKS5 proxy opens is refused with `409`, see [Local forwards](#local-forwards) |
 | `monitoring_interval_sec`, `reconcile_interval_sec` | Above zero |
 | `reconnect_max_interval_sec` | 1 to 3600 |
-| `security_key_file`, `logging_file_path` | Not empty, and a path under the directory the database file is in: an absolute path and one that climbs out with `..` are refused. See [Where the files go](#where-the-files-go) |
+| `security_key_file`, `logging_file_path` | Not empty, and a path under the directory the database file is in: an absolute path and one that climbs out with `..` are refused. Neither may name the database file, its `-wal`, `-shm` or `-journal`, `initial-password`, or the other one, with the case ignored. See [Where the files go](#where-the-files-go) |
 | `logging_level` | `debug`, `info`, `warn`, `error`, `dpanic`, `panic` or `fatal` |
 | `logging_format` | `json` or `console` |
 | `logging_file_max_size`, `logging_file_max_backups`, `logging_file_max_age` | Zero or more |

@@ -120,7 +120,7 @@ func newTransferInstall(t *testing.T) *transferInstall {
 	return &transferInstall{
 		db:      db,
 		cipher:  cipher,
-		handler: NewTransferHandler(NewHandler(db, manager, logger, cipher), "0.0.0-test"),
+		handler: NewTransferHandler(NewHandler(db, manager, logger, cipher), "0.0.0-test", testDatabaseFile),
 		manager: manager,
 		logs:    logs,
 	}
@@ -1282,6 +1282,56 @@ func TestASettingTheFileDoesNotNameIsLeftAsItIs(t *testing.T) {
 
 	if after.APIPort != 8888 || after.LoggingLevel != "info" {
 		t.Errorf("a setting the file did not name was overwritten: %+v", after)
+	}
+}
+
+// TestAnImportThatPutsTheLogOnTheKeyIsRefused holds an imported file to the
+// rule a save is held to. Unlike a path outside the installation it is not
+// dropped to the default: no version stored it, so no installation ran on it.
+func TestAnImportThatPutsTheLogOnTheKeyIsRefused(t *testing.T) {
+	cases := []struct{ key, log string }{
+		{"keys/tunnel-manager.key", "./Keys/tunnel-manager.KEY"},
+		{"keys/tunnel-manager.key", "tunnel-manager.db-wal"},
+		{"initial-password", "logs/tunnel-manager.log"},
+	}
+
+	for _, c := range cases {
+		t.Run(c.key+" "+c.log, func(t *testing.T) {
+			source := newTransferInstall(t)
+			target := newTransferInstall(t)
+
+			stored, err := settings.Load(source.db)
+			if err != nil {
+				t.Fatalf("failed to read the settings: %v", err)
+			}
+
+			content := settingsOf(stored)
+			content.SecurityKeyFile = c.key
+			content.LoggingFilePath = c.log
+			content.MonitoringIntervalSec = 47
+
+			file, err := source.handler.seal(transferKindSettings, content, testExportPassword, time.Now())
+			if err != nil {
+				t.Fatalf("failed to seal a file: %v", err)
+			}
+
+			rec := target.call(t, target.handler.ImportSettings,
+				`{"password":`+jsonString(t, testExportPassword)+`,"file":`+jsonString(t, file)+`}`) // hook:allow
+			if rec.Code != http.StatusBadRequest {
+				t.Fatalf("the import answered %d, want %d: %s", rec.Code, http.StatusBadRequest, rec.Body.String())
+			}
+			if code := errorCodeOf(t, rec); code != errImportSettingsRefused {
+				t.Errorf("error_code = %q, want %q", code, errImportSettingsRefused)
+			}
+
+			after, err := settings.Load(target.db)
+			if err != nil {
+				t.Fatalf("failed to read the settings: %v", err)
+			}
+			if after.MonitoringIntervalSec == 47 {
+				t.Errorf("a refused import stored the rest of the file")
+			}
+		})
 	}
 }
 

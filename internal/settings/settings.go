@@ -385,6 +385,95 @@ func validateDataPath(setting string, path string) error {
 	return nil
 }
 
+// initialPasswordFileName is the name the first startup writes the initial
+// password under, beside the database file. It is the name internal/auth
+// writes it under, spelled again here because that one is unexported and the
+// settings are not where the password is written.
+const initialPasswordFileName = "initial-password"
+
+// installFile is a file this installation keeps beside the database file under
+// a name no setting chooses, together with the words it is named by in a
+// refusal.
+type installFile struct {
+	name string
+	what string
+}
+
+// installFiles lists the files beside the database file that a path setting
+// may not name. The three that SQLite adds to the name of the database file are
+// here as well as the file itself, because a log appended to the write-ahead
+// log or the journal breaks the database as surely as one appended to it.
+func installFiles(databaseFile string) []installFile {
+	base := filepath.Base(databaseFile)
+
+	return []installFile{
+		{name: base, what: "the database file"},
+		{name: base + "-wal", what: "the write-ahead log of the database file"},
+		{name: base + "-shm", what: "the shared memory file of the database file"},
+		{name: base + "-journal", what: "the rollback journal of the database file"},
+		{name: initialPasswordFileName, what: "the initial password file"},
+	}
+}
+
+// samePath says whether two paths read against the same directory name the
+// same file. The case is ignored: on the file systems of Windows and macOS two
+// spellings that differ only in case are one file, and a path that differs
+// from another only in case is a mistake rather than a choice on any of them.
+func samePath(a, b string) bool {
+	return strings.EqualFold(filepath.Clean(a), filepath.Clean(b))
+}
+
+// installFileNamed returns the file of the installation the path names, or nil
+// when it names none of them.
+func installFileNamed(path string, databaseFile string) *installFile {
+	for _, file := range installFiles(databaseFile) {
+		if samePath(path, file.name) {
+			return &file
+		}
+	}
+
+	return nil
+}
+
+// ValidateFiles holds the two path settings apart from each other and from the
+// files the installation keeps beside the database file.
+//
+// validateDataPath keeps both inside the installation directory, and inside it
+// is where everything else this installation owns is kept. A log file that
+// names the key file, the database file or one of the files SQLite keeps with
+// it has the logger append to that file, and the logger is opened first: the
+// startup that follows the save writes its lines into the key and then stops
+// on a key it cannot read, or into the database and then serves a broken one.
+// A key file that names one of them has the startup read, and on a fresh key
+// write, a file that is something else.
+//
+// It is apart from Validate because the name of the database file is not a
+// setting: it is the -db the process was started with, so only the caller that
+// knows it can ask. The paths are read against the directory the database file
+// is in, which is what makes its base name the path a setting would name it by.
+//
+// It expects both paths to have passed Validate.
+func (s *Settings) ValidateFiles(databaseFile string) error {
+	file := installFileNamed(s.SecurityKeyFile, databaseFile)
+	if file != nil {
+		return fmt.Errorf("invalid %s path: %s. It names %s, which the key would be read from "+
+			"and written into", keyFileSetting, s.SecurityKeyFile, file.what)
+	}
+
+	file = installFileNamed(s.LoggingFilePath, databaseFile)
+	if file != nil {
+		return fmt.Errorf("invalid %s path: %s. It names %s, which the log would be written into",
+			logFileSetting, s.LoggingFilePath, file.what)
+	}
+
+	if samePath(s.LoggingFilePath, s.SecurityKeyFile) {
+		return fmt.Errorf("invalid %s path: %s. It names the %s, which the log would be written into",
+			logFileSetting, s.LoggingFilePath, keyFileSetting)
+	}
+
+	return nil
+}
+
 // ErrLanguageUnsupported is what a ui.default_language that names no catalog is
 // refused with. It is a value rather than a sentence built on the spot, so that
 // the API can tell this refusal from every other thing Validate says no to and
@@ -1039,8 +1128,10 @@ func SealLegacyAlertColumns(db *gorm.DB, cipher *crypto.Cipher) (bool, error) {
 }
 
 // RepairPaths puts a stored path that names a place outside the installation
-// directory back to its default, and reports what it changed so the caller can
-// log it. It is run by the startup, before the settings are read.
+// directory, or one that ValidateFiles refuses against databaseFile, back to
+// its default, and reports what it changed so the caller can log it. It is run
+// by the startup, before the settings are read and before the logger the
+// settings describe is opened, which is what would write into the file.
 //
 // It is here rather than left to Load refusing the row, because the rule the
 // two paths are held to is newer than the installations it applies to. A path
@@ -1063,7 +1154,7 @@ func SealLegacyAlertColumns(db *gorm.DB, cipher *crypto.Cipher) (bool, error) {
 // shows the path the server is running on. Only the columns that were repaired
 // are written, so a row that is refused for some other reason is left for Load
 // to report rather than being half repaired here.
-func RepairPaths(db *gorm.DB) ([]Change, error) {
+func RepairPaths(db *gorm.DB, databaseFile string) ([]Change, error) {
 	stored, err := read(db)
 	if err != nil {
 		return nil, err
@@ -1075,26 +1166,45 @@ func RepairPaths(db *gorm.DB) ([]Change, error) {
 
 	defaults := Defaults()
 
+	keyFile := stored.SecurityKeyFile
+	if validateDataPath(keyFileSetting, keyFile) != nil || installFileNamed(keyFile, databaseFile) != nil {
+		keyFile = defaults.SecurityKeyFile
+	}
+
+	// A log file that names the key file is the one put back, since it is the
+	// log that writes into the key and not the other way round. The key is put
+	// back as well only when it sits on the default log file, which is the one
+	// place the log can be put back to; the two defaults name different files.
+	logFile := stored.LoggingFilePath
+	if validateDataPath(logFileSetting, logFile) != nil || installFileNamed(logFile, databaseFile) != nil ||
+		samePath(logFile, keyFile) {
+		logFile = defaults.LoggingFilePath
+	}
+
+	if samePath(logFile, keyFile) {
+		keyFile = defaults.SecurityKeyFile
+	}
+
 	var changes []Change
 
 	repaired := map[string]interface{}{}
 
-	if validateDataPath(keyFileSetting, stored.SecurityKeyFile) != nil {
+	if keyFile != stored.SecurityKeyFile {
 		changes = append(changes, Change{
 			Name: "security.key_file",
 			From: stored.SecurityKeyFile,
-			To:   defaults.SecurityKeyFile,
+			To:   keyFile,
 		})
-		repaired["security_key_file"] = defaults.SecurityKeyFile
+		repaired["security_key_file"] = keyFile
 	}
 
-	if validateDataPath(logFileSetting, stored.LoggingFilePath) != nil {
+	if logFile != stored.LoggingFilePath {
 		changes = append(changes, Change{
 			Name: "logging.file.path",
 			From: stored.LoggingFilePath,
-			To:   defaults.LoggingFilePath,
+			To:   logFile,
 		})
-		repaired["logging_file_path"] = defaults.LoggingFilePath
+		repaired["logging_file_path"] = logFile
 	}
 
 	if len(repaired) == 0 {

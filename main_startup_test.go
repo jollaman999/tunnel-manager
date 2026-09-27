@@ -1189,7 +1189,7 @@ func TestTheStartupPutsAStoredPathOutsideTheInstallationBackToItsDefault(t *test
 
 	core, logs := observer.New(zapcore.DebugLevel)
 
-	repairStoredPaths(db, zap.New(core))
+	repairStoredPaths(db, databaseFileName, zap.New(core))
 
 	if !loggedAtLeast(logs, zapcore.WarnLevel, "was put back to its default") {
 		t.Errorf("the repair was not reported as a warning, what was logged is %v", logs.All())
@@ -1241,7 +1241,7 @@ func TestTheStartupSaysNothingAboutPathsItDoesNotRepair(t *testing.T) {
 
 	core, logs := observer.New(zapcore.DebugLevel)
 
-	repairStoredPaths(db, zap.New(core))
+	repairStoredPaths(db, databaseFileName, zap.New(core))
 
 	if logs.Len() != 0 {
 		t.Fatalf("a startup with nothing to repair logged %v", logs.All())
