@@ -2796,14 +2796,14 @@ func TestRecordForwardReachDropsAReadingOfAnOlderConnection(t *testing.T) {
 	older, _, olderCleanup := dialTestSSHClient(t, serverAddr)
 	defer olderCleanup()
 
-	tun.recordForwardReach(m, tunnel, older, forwardProbe{address: closedPort(t), silence: forwardUnreachable})
+	tun.recordForwardReach(m, tunnel, older, reachProbe{primary: forwardProbe{address: closedPort(t), silence: forwardUnreachable}, primaryV4: true})
 
 	if _, reach := readTunnelReach(tun, tunnel); reach != forwardReachUnknown {
 		t.Fatalf("forward reach = %q, want %q, the reading of a connection that is gone was written "+
 			"to the row of the one that replaced it", reach, forwardReachUnknown)
 	}
 
-	tun.recordForwardReach(m, tunnel, current, forwardProbe{address: closedPort(t), silence: forwardUnreachable})
+	tun.recordForwardReach(m, tunnel, current, reachProbe{primary: forwardProbe{address: closedPort(t), silence: forwardUnreachable}, primaryV4: true})
 
 	if _, reach := readTunnelReach(tun, tunnel); reach != forwardUnreachable {
 		t.Fatalf("forward reach = %q, want %q, the reading of the current connection was dropped",

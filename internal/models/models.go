@@ -260,6 +260,15 @@ type Tunnel struct {
 	// the same to a connection that does not arrive, so the two cannot be told
 	// apart from here and neither may be reported as the cause.
 	ForwardReach string `json:"forward_reach"`
+	// ForwardReachV4 and ForwardReachV6 are the same reading taken for each
+	// address family on its own, in the same three words. A Host that answers
+	// on one family and not on the other is what they are there to show, which
+	// ForwardReach, taken over the family the SSH connection was made on, does
+	// not. A family that did not open, or whose address on the Host is not
+	// known here, reads "unknown". They carry no "not null" for the reason
+	// ServerBanner carries none, and an empty value reads as "unknown".
+	ForwardReachV4 string `json:"forward_reach_v4"`
+	ForwardReachV6 string `json:"forward_reach_v6"`
 	// ErrorKind names what sort of failure LastError is, for the one sort the
 	// screen has something to say about: "forward_denied" is the SSH server
 	// refusing to open the forwarded port, and an empty value is every other

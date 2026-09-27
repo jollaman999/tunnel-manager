@@ -2519,6 +2519,7 @@ address"，把 `no` 写作 "force ... available to the local host only"。**两�
 | `server_banner` | SSH 服务器在握手时发送的版本标识，比如 `SSH-2.0-OpenSSH_10.5p1 Ubuntu-1ubuntu2`。它告诉你面前是哪一种服务器，而要在上面改什么，各家不一样 |
 | `open_reach` | 两次请求里 SSH 服务器答应了哪一次：`both`；只收下 IPv4 而拒绝 IPv6 时是 `ipv4`，反过来是 `ipv6`；还什么都没测过时是空值。两次都被拒绝的连接不是只到一半的隧道，而是失败的隧道，和其他失败一样记在 `status` 和 `last_error` 上 |
 | `forward_reach` | tunnel-manager 是否连接上了转发端口，方法是向 Host 上打开的那个本地端口发起一条 TCP 连接：`reachable`、`unreachable`；什么都没测过以及根本测不了时是 `unknown` |
+| `forward_reach_v4`、`forward_reach_v6` | 同一项测量按地址族分开得到的值，取值也相同。`forward_reach` 是在 SSH 连接所用的地址族上测的，这两个说的是该端口在 IPv4 和 IPv6 上各自是否应答。另一个地址族只在它的请求成功、并且有地址可试时才测：Host 是本机时用回环地址，Host 以名称登记时用该名称解析出的该地址族的第一个地址。以地址登记的 Host，以及另一台机器上的 Host 的 `loopback` 范围，另一个地址族为 `unknown`。状态页面只在一个应答、另一个不应答时才把两者分开显示 |
 | `listen_addresses` | **Host 自己回答的**该端口正在哪些地址上等待连接，以逗号分隔，例如 `0.0.0.0,::`。转发打开之后，通过同一条 SSH 连接询问一次。即使服务器忽略了所选范围，这也是唯一还能说明问题的读数 - `GatewayPorts yes` 的 Host 对第二个请求回答否，却会在这里回答两个地址族。**空表示没有得到回答，而不是表示没有任何东西在监听。**没有 shell 的账户、既没有 `ss` 也没有本程序能读的 `netstat` 的 Host、以及尚未询问过的连接，都会让它为空 |
 
 四者都在隧道建立时测一次，此后每次重连再测一次，而不是每读一次状态就测：决定这件事的是 SSH

@@ -1,6 +1,7 @@
 package tunnel
 
 import (
+	"context"
 	"net"
 	"strconv"
 	"testing"
@@ -250,6 +251,117 @@ func TestTheProbeDialsLoopbackOnlyOnThisMachine(t *testing.T) {
 			got := newForwardProbe(local, resolveTestTCPAddr(t, tt.server), tt.reach, 8086)
 			if got != tt.want {
 				t.Fatalf("newForwardProbe = %+v, want %+v", got, tt.want)
+			}
+		})
+	}
+}
+
+// TestEachFamilyOfALoopbackForwardOnThisMachineIsMeasured holds the two
+// readings apart. The port answers on the IPv4 loopback and nothing listens on
+// the IPv6 one, which is the Host that answers on one family and not on the
+// other, and the row says so family by family.
+func TestEachFamilyOfALoopbackForwardOnThisMachineIsMeasured(t *testing.T) {
+	if l, err := net.Listen("tcp6", "[::1]:0"); err != nil {
+		t.Skip("this machine has no IPv6 loopback")
+	} else {
+		_ = l.Close()
+	}
+
+	m := newSSHTestManager(t, 1)
+	serverAddr, _ := startScopedForwardSSHServer(t, func(string) bool { return true })
+
+	port := freeLocalPort(t)
+	listener, err := net.Listen("tcp4", net.JoinHostPort(loopbackBindAddressV4, strconv.Itoa(port)))
+	if err != nil {
+		t.Fatalf("failed to listen on the port of the forward: %v", err)
+	}
+	t.Cleanup(func() { _ = listener.Close() })
+
+	tun, tunnel := newScopedSSHTestTunnel(t, serverAddr,
+		net.JoinHostPort(loopbackBindAddressV4, strconv.Itoa(port)),
+		net.JoinHostPort(loopbackBindAddressV6, strconv.Itoa(port)))
+
+	errc := make(chan error, 1)
+	go func() {
+		errc <- tun.establishConnection(m, tunnel)
+	}()
+
+	waitTunnelClient(t, tun, 10*time.Second)
+	reading := waitTunnelReach(t, tun, tunnel, 30*time.Second)
+
+	tun.tunnelMu.Lock()
+	v4, v6 := tunnel.ForwardReachV4, tunnel.ForwardReachV6
+	tun.tunnelMu.Unlock()
+
+	closeTunnelClient(t, tun)
+
+	select {
+	case <-errc:
+	case <-time.After(5 * time.Second):
+		t.Fatal("establishConnection did not return after the connection was closed")
+	}
+
+	if reading != forwardReachable || v4 != forwardReachable || v6 != forwardUnreachable {
+		t.Fatalf("forward reach = %q, v4 = %q, v6 = %q, want %q, %q, %q",
+			reading, v4, v6, forwardReachable, forwardReachable, forwardUnreachable)
+	}
+}
+
+// TestTheOtherFamilyIsTriedWhereThereIsAnAddressForIt holds where the probe of
+// the family the SSH connection was not made on goes, and where it goes nowhere.
+func TestTheOtherFamilyIsTriedWhereThereIsAnAddressForIt(t *testing.T) {
+	heldAddrs, heldLookup := interfaceAddrs, lookupIPAddr
+	t.Cleanup(func() { interfaceAddrs, lookupIPAddr = heldAddrs, heldLookup })
+
+	interfaceAddrs = func() ([]net.Addr, error) {
+		return []net.Addr{&net.IPNet{IP: net.ParseIP("198.51.100.100"), Mask: net.CIDRMask(32, 32)}}, nil
+	}
+	lookupIPAddr = func(_ context.Context, host string) ([]net.IPAddr, error) {
+		if host != "db.example.com" {
+			return nil, &net.DNSError{Err: "no such host", Name: host, IsNotFound: true}
+		}
+
+		return []net.IPAddr{{IP: net.ParseIP("192.0.2.10")}, {IP: net.ParseIP("2001:db8::10")}}, nil
+	}
+
+	tests := []struct {
+		name    string
+		localV4 string
+		localV6 string
+		server  string
+		host    string
+		reach   string
+		want    string
+	}{
+		{"loopback on this machine", "127.0.0.1:8086", "[::1]:8086",
+			"198.51.100.100:22", "198.51.100.100", openReachBoth, "[::1]:8086"},
+		{"every interface on this machine", "0.0.0.0:8086", "[::]:8086",
+			"198.51.100.100:22", "198.51.100.100", openReachBoth, "[::1]:8086"},
+		{"a Host registered by name", "0.0.0.0:8086", "[::]:8086",
+			"192.0.2.10:22", "db.example.com", openReachBoth, "[2001:db8::10]:8086"},
+		{"a Host registered by an address", "0.0.0.0:8086", "[::]:8086",
+			"192.0.2.10:22", "192.0.2.10", openReachBoth, ""},
+		{"loopback on another machine", "127.0.0.1:8086", "[::1]:8086",
+			"192.0.2.10:22", "db.example.com", openReachBoth, ""},
+		{"the other family did not open", "0.0.0.0:8086", "[::]:8086",
+			"192.0.2.10:22", "db.example.com", openReachV4, ""},
+		{"a name that does not resolve", "0.0.0.0:8086", "[::]:8086",
+			"192.0.2.10:22", "gone.example.com", openReachBoth, ""},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			local := localPair{v4: resolveTestTCPAddr(t, tt.localV4), v6: resolveTestTCPAddr(t, tt.localV6)}
+
+			probes := newReachProbe(local, resolveTestTCPAddr(t, tt.server), tt.host, tt.reach, 8086)
+
+			got := ""
+			if probes.other != nil {
+				got = probes.other.address
+			}
+
+			if got != tt.want || !probes.primaryV4 {
+				t.Fatalf("other family probe = %q (primaryV4 %v), want %q", got, probes.primaryV4, tt.want)
 			}
 		})
 	}

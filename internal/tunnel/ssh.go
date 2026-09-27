@@ -1,6 +1,7 @@
 package tunnel
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"github.com/jollaman999/tunnel-manager/internal/logid"
@@ -466,6 +467,85 @@ func hostIsThisMachine(ip net.IP) bool {
 	return false
 }
 
+// reachProbe is the probes of one connection: the one over the address family
+// the SSH connection was made on, which is what ForwardReach has always been,
+// and the one over the other family where there is an address to try it at.
+type reachProbe struct {
+	primary   forwardProbe
+	primaryV4 bool
+	other     *forwardProbe
+}
+
+// lookupIPAddr is where the addresses of a Host known by name are looked up. It
+// is a variable so that a test can say what a name resolves to.
+var lookupIPAddr = net.DefaultResolver.LookupIPAddr
+
+// hostLookupTimeout bounds the lookup of the other family of a Host known by
+// name. A resolver that does not answer leaves that family unknown.
+const hostLookupTimeout = 5 * time.Second
+
+// newReachProbe builds the probes of one connection. The one over the family
+// the connection was made on is newForwardProbe, unchanged. The other family is
+// tried only where its request went up and there is an address of the Host in
+// it: on this machine that is its loopback address, and on a Host registered by
+// name it is the first address the name has in that family. A Host registered
+// by an address, and a port asked for on the loopback of another machine,
+// leave the other family unknown.
+func newReachProbe(local localPair, server *net.TCPAddr, host, reach string, port int) reachProbe {
+	primaryV4 := server.IP.To4() != nil
+	probes := reachProbe{primary: newForwardProbe(local, server, reach, port), primaryV4: primaryV4}
+
+	wantV4 := !primaryV4
+	opened := reach == openReachBoth || (wantV4 && reach == openReachV4) || (!wantV4 && reach == openReachV6)
+	if !opened {
+		return probes
+	}
+
+	if hostIsThisMachine(server.IP) {
+		ip := net.IPv6loopback
+		if wantV4 {
+			ip = net.IPv4(127, 0, 0, 1)
+		}
+
+		probes.other = &forwardProbe{
+			address: net.JoinHostPort(ip.String(), strconv.Itoa(port)),
+			silence: forwardUnreachable,
+			here:    true,
+		}
+
+		return probes
+	}
+
+	if local.v4 != nil && local.v4.IP.IsLoopback() {
+		return probes
+	}
+
+	if net.ParseIP(host) != nil {
+		return probes
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), hostLookupTimeout)
+	defer cancel()
+
+	addrs, err := lookupIPAddr(ctx, host)
+	if err != nil {
+		return probes
+	}
+
+	for _, addr := range addrs {
+		if (addr.IP.To4() != nil) == wantV4 {
+			probes.other = &forwardProbe{
+				address: net.JoinHostPort(addr.IP.String(), strconv.Itoa(port)),
+				silence: forwardUnreachable,
+			}
+
+			break
+		}
+	}
+
+	return probes
+}
+
 // newForwardProbe is what the reachability probe of one connection dials and
 // what a silence from it is worth.
 //
@@ -559,8 +639,22 @@ func forwardProbeSilence(local localPair, server *net.TCPAddr, reach string) str
 // The tunnel reconnected while the probe was waiting, a probe of its own is
 // running for the new connection, and writing here would put the reading of a
 // connection that is gone on the row of the one that replaced it.
-func (t *SSHTunnel) recordForwardReach(m *Manager, tunnel *models.Tunnel, measured *ssh.Client, probe forwardProbe) {
+func (t *SSHTunnel) recordForwardReach(m *Manager, tunnel *models.Tunnel, measured *ssh.Client, probes reachProbe) {
+	probe := probes.primary
+
+	// The other family is tried beside the one the connection was made on, so
+	// the two waits overlap rather than add up.
+	other := make(chan string, 1)
+	if probes.other != nil {
+		go func() {
+			other <- probeForwardReach(probes.other.address, forwardProbeTimeout, probes.other.silence)
+		}()
+	} else {
+		other <- forwardReachUnknown
+	}
+
 	reach := probeForwardReach(probe.address, forwardProbeTimeout, probe.silence)
+	otherReach := <-other
 
 	t.clientMu.RLock()
 	current := t.client
@@ -575,6 +669,11 @@ func (t *SSHTunnel) recordForwardReach(m *Manager, tunnel *models.Tunnel, measur
 	// banner of the connection that came next.
 	t.tunnelMu.Lock()
 	tunnel.ForwardReach = reach
+	if probes.primaryV4 {
+		tunnel.ForwardReachV4, tunnel.ForwardReachV6 = reach, otherReach
+	} else {
+		tunnel.ForwardReachV4, tunnel.ForwardReachV6 = otherReach, reach
+	}
 	banner := tunnel.ServerBanner
 	t.saveTunnelStatus(m, tunnel)
 	t.tunnelMu.Unlock()
@@ -877,6 +976,8 @@ func (t *SSHTunnel) establishConnection(m *Manager, tunnel *models.Tunnel) error
 	// be to a server that was reconfigured in between, so the reading goes back
 	// to unknown until the probe below answers for the connection that is up.
 	tunnel.ForwardReach = forwardReachUnknown
+	tunnel.ForwardReachV4 = forwardReachUnknown
+	tunnel.ForwardReachV6 = forwardReachUnknown
 	// Which halves of the pair opened is a fact about this connection for the
 	// same reason, and it was settled a moment ago for this one.
 	tunnel.OpenReach = opened.reach
@@ -900,7 +1001,13 @@ func (t *SSHTunnel) establishConnection(m *Manager, tunnel *models.Tunnel) error
 	// connection per tunnel per reader.
 	server, isTCP := clientConn.RemoteAddr().(*net.TCPAddr)
 	if isTCP {
-		go t.recordForwardReach(m, tunnel, client, newForwardProbe(t.Local, server, opened.reach, boundPort))
+		// The probes are built on the goroutine as well, because building the
+		// one for the other family can wait on a name lookup.
+		reach := opened.reach
+		go func() {
+			t.recordForwardReach(m, tunnel, client, newReachProbe(t.Local, server, serverHost(t.Server),
+				reach, boundPort))
+		}()
 	}
 
 	// Asked here and not on every pass for the same reason, and on a goroutine

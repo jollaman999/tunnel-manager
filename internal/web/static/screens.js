@@ -710,7 +710,7 @@ async function drawStatus() {
         // nothing in either cell to tell them apart. What dates the reading is
         // the Status cell next to it, which is the pairing a service port row
         // has always been read with.
-        reachBadge(tunnel.forward_reach),
+        reachCell(tunnel),
         tunnel.retry_count,
         timeCell(tunnel.last_connected_at)
       ];
@@ -1000,6 +1000,38 @@ function statusBadge(status) {
   badge.dataset.status = text;
 
   return badge;
+}
+
+// reachCell is the Port reached column of a row. Where both address families
+// were measured and one answered while the other did not, it is a line for
+// each, so a Host that is up on one family and not on the other is not read as
+// wholly one or the other. Everywhere else it is the one reading it always was.
+function reachCell(row) {
+  const v4 = row.forward_reach_v4;
+  const v6 = row.forward_reach_v6;
+  const measured = function (word) {
+    return word === "reachable" || word === "unreachable";
+  };
+
+  if (!measured(v4) || !measured(v6) || v4 === v6) {
+    return reachBadge(row.forward_reach);
+  }
+
+  const cell = document.createElement("div");
+
+  cell.className = "reach-split";
+
+  for (const pair of [["IPv4", v4], ["IPv6", v6]]) {
+    const line = document.createElement("span");
+    const family = element("span", pair[0]);
+
+    family.className = "reach-family";
+    line.appendChild(family);
+    line.appendChild(reachBadge(pair[1]));
+    cell.appendChild(line);
+  }
+
+  return cell;
 }
 
 // reachBadge is whether the forwarded port answered a connection opened by
