@@ -965,10 +965,15 @@ func accountPasswordRefused(c echo.Context, db *gorm.DB, logger *zap.Logger, pas
 	// bcrypt runs, for the reason the login looks at them first: the compare is
 	// the expensive half, and a refusal written ahead of it bounds both the
 	// rate of the guessing and the CPU it spends.
-	refused := limiter.passwordHeld(c, userID)
+	//
+	// The place is reserved rather than only looked at, for the reason begin
+	// gives: calls sent at once would otherwise all find the counters where
+	// the first one found them and all reach bcrypt.
+	attempt, refused := limiter.passwordBegin(c, userID)
 	if refused != nil {
 		return refused
 	}
+	defer attempt.release()
 
 	var user models.User
 
@@ -980,12 +985,12 @@ func accountPasswordRefused(c echo.Context, db *gorm.DB, logger *zap.Logger, pas
 	}
 
 	if !auth.CheckPassword(user.PasswordHash, password) {
-		limiter.passwordFailed(c, userID)
+		attempt.failed()
 
 		return refuse(http.StatusUnauthorized, wrong)
 	}
 
-	limiter.passwordSucceeded(c, userID)
+	attempt.succeeded()
 
 	return nil
 }

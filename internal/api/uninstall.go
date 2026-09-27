@@ -177,11 +177,13 @@ func (h *UninstallHandler) Uninstall(c echo.Context) error {
 	// is counted on the same counters and refused once there have been too many
 	// of them. Of the calls that ask for the password again this is the one
 	// nothing can be taken back of, and the refusal is written before the row
-	// is read and before bcrypt runs.
-	refused := limiter.passwordHeld(c, userID)
+	// is read and before bcrypt runs. The place is reserved rather than only
+	// looked at, so that calls sent at once do not all reach bcrypt.
+	attempt, refused := limiter.passwordBegin(c, userID)
 	if refused != nil {
 		return refused.answer(c)
 	}
+	defer attempt.release()
 
 	var user models.User
 
@@ -192,7 +194,7 @@ func (h *UninstallHandler) Uninstall(c echo.Context) error {
 	}
 
 	if !auth.CheckPassword(user.PasswordHash, req.Password) {
-		limiter.passwordFailed(c, userID)
+		attempt.failed()
 
 		// Nothing has been touched at this point, and the log says so: an
 		// operator reading it later has to be able to tell an uninstall that
@@ -204,7 +206,7 @@ func (h *UninstallHandler) Uninstall(c echo.Context) error {
 		return failure(c, http.StatusUnauthorized, errUninstallPasswordWrong)
 	}
 
-	limiter.passwordSucceeded(c, userID)
+	attempt.succeeded()
 
 	h.logger.Warn("the uninstall was asked for and the password opens the account. The tunnels are "+
 		"stopped, the files of this installation are removed and the process ends",

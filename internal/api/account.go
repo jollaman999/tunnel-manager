@@ -186,11 +186,13 @@ func (h *AuthHandler) ChangeAccount(c echo.Context) error {
 	// been too many. It is looked at before the row is read and before bcrypt
 	// runs, which is what the refusal is protecting. The limiter is this
 	// handler's own: it serves the login as well, so there is nothing to look
-	// up here.
-	refused := h.passwordHeld(c, userID)
+	// up here. The place is reserved rather than only looked at, so that
+	// changes sent at once do not all reach bcrypt.
+	attempt, refused := h.passwordBegin(c, userID)
 	if refused != nil {
 		return refused.answer(c)
 	}
+	defer attempt.release()
 
 	user, err := h.readUser(userID)
 	if err != nil {
@@ -199,7 +201,7 @@ func (h *AuthHandler) ChangeAccount(c echo.Context) error {
 	}
 
 	if !auth.CheckPassword(user.PasswordHash, req.CurrentPassword) {
-		h.passwordFailed(c, userID)
+		attempt.failed()
 
 		// Nothing has been touched at this point and the log says so, the way
 		// the uninstall says it: a refusal has to be told from a change that
@@ -213,7 +215,7 @@ func (h *AuthHandler) ChangeAccount(c echo.Context) error {
 		return failure(c, http.StatusUnauthorized, errAccountPasswordWrong)
 	}
 
-	h.passwordSucceeded(c, userID)
+	attempt.succeeded()
 
 	// A value that is already the stored one is refused rather than stored
 	// again. What this call does past the write is end every other session, on

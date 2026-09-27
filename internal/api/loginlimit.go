@@ -565,13 +565,10 @@ func retryAfterSeconds(wait time.Duration) int {
 // single object and no call can end up counting against an address the login
 // does not count against.
 type accountPasswordLimiter interface {
-	// passwordHeld returns what to answer a call whose password is not being
-	// checked, or nil when it is to be checked.
-	passwordHeld(c echo.Context, accountID uint) *refusal
-	// passwordFailed records one password that did not open the account.
-	passwordFailed(c echo.Context, accountID uint)
-	// passwordSucceeded forgets what was counted against one that did.
-	passwordSucceeded(c echo.Context, accountID uint)
+	// passwordBegin reserves a place for one password check the way begin
+	// does for a login. It returns the attempt to end, or what to answer a
+	// call whose password is not being checked.
+	passwordBegin(c echo.Context, accountID uint) (*loginAttempt, *refusal)
 }
 
 // contextPasswordLimiterKey is where the session middleware leaves the limiter,
@@ -597,39 +594,35 @@ func sessionOnContext(c echo.Context) (uint, accountPasswordLimiter, bool) {
 	return userID, limiter, haveUser && haveLimiter
 }
 
-// passwordHeld answers a call that asks for the account password again while
-// the address it came from, or the account itself, is already held.
+// passwordBegin is begin for a call that asks for the account password again.
+// It reserves the place rather than only looking at the failures recorded, for
+// the reason begin gives: calls sent at once would otherwise all pass before
+// any of them is counted, and a session is all it takes to send them.
 //
-// It carries Retry-After for the reason refuseHeldLogin does, and it is a
-// refusal rather than an answer written out here because the callers hold one
-// until they have rolled back whatever they had open.
+// The attempt returned is nil when the refusal is not, and otherwise the caller
+// defers its release and ends it with failed or succeeded. A success forgets
+// both counters the way a successful login does and for the same reason: an
+// operator who mistyped on the way to the right password is back at nothing,
+// and an attacker who reaches it already has the password.
+//
+// A held call is answered with Retry-After for the reason refuseHeldLogin does,
+// and it is a refusal rather than an answer written out here because the
+// callers hold one until they have rolled back whatever they had open.
 //
 // The code is its own, and not the login's. The hold is the same hold and the
 // number is the same number, but whoever meets this is logged in already and
 // was asked for their password on the way to something else; a sentence that
 // told them signing in was blocked would name a thing they are not doing.
-func (h *AuthHandler) passwordHeld(c echo.Context, accountID uint) *refusal {
-	wait, held := h.logins.retryAfter(h.loginAddress(c), accountID)
+func (h *AuthHandler) passwordBegin(c echo.Context, accountID uint) (*loginAttempt, *refusal) {
+	attempt, wait, held := h.logins.begin(h.loginAddress(c), accountID)
 	if !held {
-		return nil
+		return attempt, nil
 	}
 
 	seconds := retryAfterSeconds(wait)
 
 	c.Response().Header().Set(echo.HeaderRetryAfter, strconv.Itoa(seconds))
 
-	return refuse(http.StatusTooManyRequests, errAuthPasswordTooManyAttempts,
+	return nil, refuse(http.StatusTooManyRequests, errAuthPasswordTooManyAttempts,
 		errorArgs{"retry_after": strconv.Itoa(seconds)})
-}
-
-func (h *AuthHandler) passwordFailed(c echo.Context, accountID uint) {
-	h.logins.failed(h.loginAddress(c), accountID)
-}
-
-// passwordSucceeded forgets both counters of a password that opened the
-// account, the way a successful login does and for the same reason: an operator
-// who mistyped on the way to the right password is back at nothing, and an
-// attacker who reaches this already has the password.
-func (h *AuthHandler) passwordSucceeded(c echo.Context, accountID uint) {
-	h.logins.succeeded(h.loginAddress(c), accountID)
 }

@@ -647,7 +647,8 @@ func TestTheLimiterDoesNotGrowWithoutBound(t *testing.T) {
 // clearLogsPath is the one of the six that is exercised here through
 // accountPasswordRefused, the shared function the log, the update and the two
 // host key approvals go through. accountPath, next to the tests of the change
-// itself, is the one that compares the password where it stands.
+// itself, is one of the two that reserve their place through passwordBegin
+// where they stand; the uninstall, tested beside itself, is the other.
 const clearLogsPath = "/api/logs/clear"
 
 // newPasswordCheckServer returns the server, the handler whose counters the
@@ -943,10 +944,141 @@ func TestAPasswordThatOpensTheAccountForgetsTheFailuresBeforeIt(t *testing.T) {
 		loginAddressFailureLimit-1, loginAddressFailureLimit-1)
 }
 
+// sendAtOnce runs send sent times, every one of them let go at the same
+// moment, and returns the status each was answered with.
+func sendAtOnce(sent int, send func() int) []int {
+	codes := make([]int, sent)
+
+	var (
+		ready sync.WaitGroup
+		done  sync.WaitGroup
+	)
+
+	start := make(chan struct{})
+
+	for i := 0; i < sent; i++ {
+		ready.Add(1)
+		done.Add(1)
+
+		go func(i int) {
+			defer done.Done()
+
+			ready.Done()
+			<-start
+
+			codes[i] = send()
+		}(i)
+	}
+
+	ready.Wait()
+	close(start)
+	done.Wait()
+
+	return codes
+}
+
+// checkedAtOnce fails the test when more of the wrong passwords answered with
+// codes reached the compare than the limit of one address allows, or when
+// none did, or when the limiter still holds a place for any of them. A 401 is
+// a password that was compared and a 429 one that was not.
+func checkedAtOnce(t *testing.T, limiter *loginLimiter, call string, codes []int) {
+	t.Helper()
+
+	checked, refused := 0, 0
+
+	for i, code := range codes {
+		switch code {
+		case http.StatusUnauthorized:
+			checked++
+		case http.StatusTooManyRequests:
+			refused++
+		default:
+			t.Errorf("attempt %d: status = %d, want %d or %d",
+				i+1, code, http.StatusUnauthorized, http.StatusTooManyRequests)
+		}
+	}
+
+	t.Logf("%d wrong passwords sent at once at %s: %d had the password checked, %d were refused as held",
+		len(codes), call, checked, refused)
+
+	if checked > loginAddressFailureLimit {
+		t.Errorf("%d of %d wrong passwords sent at once had the password checked, want no more than %d",
+			checked, len(codes), loginAddressFailureLimit)
+	}
+
+	if checked == 0 {
+		t.Errorf("none of %d wrong passwords had the password checked, want at least one", len(codes))
+	}
+
+	limiter.mu.Lock()
+	inFlight := len(limiter.inFlight)
+	limiter.mu.Unlock()
+
+	if inFlight != 0 {
+		t.Errorf("the limiter still counts %d keys in flight after every call came back, want 0", inFlight)
+	}
+}
+
+// TestWrongPasswordsSentAtOnceOnACallThatAsksAgainAreCountedAsTheyAreLetThrough
+// is TestWrongLoginsSentAtOnceAreCountedAsTheyAreLetThrough for the calls
+// behind a session. Whoever holds a session can send the log's button as many
+// times at once as the network carries, and were the failures counted only
+// once bcrypt has answered, every one of those would find the counter where
+// the first did and every one would reach the compare.
+func TestWrongPasswordsSentAtOnceOnACallThatAsksAgainAreCountedAsTheyAreLetThrough(t *testing.T) {
+	e, h, logPath := newPasswordCheckServer(t)
+
+	const guesser = "198.51.100.36"
+
+	cookies := signInFrom(t, e, guesser)
+
+	codes := sendAtOnce(8*loginAddressFailureLimit, func() int {
+		return clearLogsWith(e, guesser, mistypedPassword, cookies).Code
+	})
+
+	checkedAtOnce(t, h.logins, clearLogsPath, codes)
+
+	info, err := os.Stat(logPath)
+	if err != nil {
+		t.Fatalf("failed to stat the log file: %v", err)
+	}
+
+	if info.Size() == 0 {
+		t.Error("the log was emptied by a wrong password")
+	}
+}
+
+// TestWrongPasswordsSentAtOnceOnTheAccountChangeAreCountedAsTheyAreLetThrough
+// is the same for the account change, which compares the password where it
+// stands rather than through accountPasswordRefused and so reserves its place
+// on its own.
+func TestWrongPasswordsSentAtOnceOnTheAccountChangeAreCountedAsTheyAreLetThrough(t *testing.T) {
+	e, h, _ := newPasswordCheckServer(t)
+
+	const guesser = "198.51.100.37"
+
+	cookies := signInFrom(t, e, guesser)
+
+	codes := sendAtOnce(8*loginAddressFailureLimit, func() int {
+		return changeAccountWith(e, guesser, mistypedPassword, cookies).Code
+	})
+
+	checkedAtOnce(t, h.logins, accountPath, codes)
+
+	user, err := h.readUser()
+	if err != nil {
+		t.Fatalf("failed to read the account: %v", err)
+	}
+
+	if user.Username == "someone-else" {
+		t.Error("the account was renamed by a wrong password")
+	}
+}
+
 // TestTheAccountChangeIsHeldByTheSameCounter covers the other half of the six
-// calls: the ones that do not go through accountPasswordRefused but compare the
-// password where they stand. The account change is one of those, and the
-// uninstall is the other.
+// calls: the ones that do not go through accountPasswordRefused but reserve
+// their place and compare the password where they stand. The account change is
+// one of those, and the uninstall is the other.
 func TestTheAccountChangeIsHeldByTheSameCounter(t *testing.T) {
 	e, _, _ := newPasswordCheckServer(t)
 

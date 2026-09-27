@@ -330,6 +330,50 @@ func TestUninstallRefusesAPasswordThatDoesNotOpenTheAccount(t *testing.T) {
 	}
 }
 
+// TestWrongPasswordsSentAtOnceOnTheUninstallAreCountedAsTheyAreLetThrough is
+// TestWrongPasswordsSentAtOnceOnACallThatAsksAgainAreCountedAsTheyAreLetThrough
+// for the uninstall, which compares the password where it stands. Every call
+// carries a wrong password, so nothing is removed whichever way it goes, and
+// they all share the one limiter a session would hand them.
+func TestWrongPasswordsSentAtOnceOnTheUninstallAreCountedAsTheyAreLetThrough(t *testing.T) {
+	inst := newInstallation(t)
+	h, steps, _, _ := newUninstallHandler(t, inst)
+
+	limiter := NewAuthHandler(nil, zap.NewNop(), "")
+	e := echo.New()
+
+	codes := sendAtOnce(8*loginAddressFailureLimit, func() int {
+		req := httptest.NewRequest(http.MethodPost, "/api/uninstall",
+			strings.NewReader(`{"password":"not the password"}`)) // hook:allow
+		req.Header.Set(echo.HeaderContentType, echo.MIMEApplicationJSON)
+
+		rec := httptest.NewRecorder()
+		c := e.NewContext(req, rec)
+		c.Set(contextUserIDKey, uint(1))
+		c.Set(contextPasswordLimiterKey, accountPasswordLimiter(limiter))
+
+		err := h.Uninstall(c)
+		if err != nil {
+			return 0
+		}
+
+		return rec.Code
+	})
+
+	checkedAtOnce(t, limiter.logins, "/api/uninstall", codes)
+
+	for _, path := range inst.installedFilePaths() {
+		if !exists(t, path) {
+			t.Fatalf("%s was removed by an uninstall with a wrong password", path)
+		}
+	}
+
+	names, _ := steps.taken()
+	if len(names) != 0 {
+		t.Fatalf("uninstalls with a wrong password took these steps: %v", names)
+	}
+}
+
 // TestUninstallRemovesTheFilesOfTheInstallation covers the -wal and the -shm
 // files as well, which are the two that are easy to leave behind: they are not
 // named anywhere, they are worked out from the name of the database file.
