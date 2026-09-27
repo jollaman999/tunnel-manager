@@ -1,7 +1,6 @@
 package tunnel
 
 import (
-	"context"
 	"errors"
 	"fmt"
 	"github.com/jollaman999/tunnel-manager/internal/logid"
@@ -399,321 +398,6 @@ func listenErrorKind(err error) string {
 // answer.
 const forwardProbeTimeout = 10 * time.Second
 
-// probeForwardReach reports whether the forwarded port answers a TCP
-// connection opened from this process, and writes down a silence as the caller
-// says a silence is worth here.
-//
-// An answer is the one piece of evidence this end can hold: the port carried a
-// connection, so it is open at the address that was dialled. Nothing else here
-// is evidence of anything. The reply to a tcpip-forward request carries a port
-// and no address, so the SSH server never says which address it bound, and
-// there is no shell on the far side to ask.
-//
-// What comes back is where the port was reached from, never why it was not.
-// A server that bound the port to loopback alone and a firewall that drops the
-// packet are the same silence seen from here, and reporting either as the cause
-// would send the operator to fix a machine that is not the one at fault.
-//
-// The connection is closed as soon as it stands. The handshake is the whole
-// measurement, and a probe left open is a socket held for the life of the
-// tunnel, one more on every reconnect.
-func probeForwardReach(address string, timeout time.Duration, silence string) string {
-	conn, err := net.DialTimeout("tcp", address, timeout)
-	if err != nil {
-		return silence
-	}
-	_ = conn.Close()
-
-	return forwardReachable
-}
-
-// forwardProbe is what the reachability probe of one connection dials and what
-// its silence is worth. The two travel together because they are one decision:
-// there is a single address this end can try, and whether nothing coming back
-// from it says anything about the port depends on what was asked for there.
-type forwardProbe struct {
-	address string
-	silence string
-	// here is set where the probe dials this machine's own loopback address
-	// because the Host is this machine, which changes what a silence means and
-	// so what is logged for one.
-	here bool
-}
-
-// interfaceAddrs is where the addresses of this machine are read from. It is a
-// variable so that a test can say which addresses the machine has.
-var interfaceAddrs = net.InterfaceAddrs
-
-// hostIsThisMachine says whether an address the SSH connection was made to is
-// one of this machine's own: a loopback address, or one held by any of its
-// interfaces. An address that cannot be checked is taken as another machine,
-// which is what every Host was before this was asked.
-func hostIsThisMachine(ip net.IP) bool {
-	if ip.IsLoopback() {
-		return true
-	}
-
-	addrs, err := interfaceAddrs()
-	if err != nil {
-		return false
-	}
-
-	for _, addr := range addrs {
-		if held, ok := addr.(*net.IPNet); ok && held.IP.Equal(ip) {
-			return true
-		}
-	}
-
-	return false
-}
-
-// reachProbe is the probes of one connection: the one over the address family
-// the SSH connection was made on, which is what ForwardReach has always been,
-// and the one over the other family where there is an address to try it at.
-type reachProbe struct {
-	primary   forwardProbe
-	primaryV4 bool
-	other     *forwardProbe
-}
-
-// lookupIPAddr is where the addresses of a Host known by name are looked up. It
-// is a variable so that a test can say what a name resolves to.
-var lookupIPAddr = net.DefaultResolver.LookupIPAddr
-
-// hostLookupTimeout bounds the lookup of the other family of a Host known by
-// name. A resolver that does not answer leaves that family unknown.
-const hostLookupTimeout = 5 * time.Second
-
-// newReachProbe builds the probes of one connection. The one over the family
-// the connection was made on is newForwardProbe, unchanged. The other family is
-// tried only where its request went up and there is an address of the Host in
-// it: on this machine that is its loopback address, and on a Host registered by
-// name it is the first address the name has in that family. A Host registered
-// by an address, and a port asked for on the loopback of another machine,
-// leave the other family unknown.
-func newReachProbe(local localPair, server *net.TCPAddr, host, reach string, port int) reachProbe {
-	primaryV4 := server.IP.To4() != nil
-	probes := reachProbe{primary: newForwardProbe(local, server, reach, port), primaryV4: primaryV4}
-
-	wantV4 := !primaryV4
-	opened := reach == openReachBoth || (wantV4 && reach == openReachV4) || (!wantV4 && reach == openReachV6)
-	if !opened {
-		return probes
-	}
-
-	if hostIsThisMachine(server.IP) {
-		ip := net.IPv6loopback
-		if wantV4 {
-			ip = net.IPv4(127, 0, 0, 1)
-		}
-
-		probes.other = &forwardProbe{
-			address: net.JoinHostPort(ip.String(), strconv.Itoa(port)),
-			silence: forwardUnreachable,
-			here:    true,
-		}
-
-		return probes
-	}
-
-	if local.v4 != nil && local.v4.IP.IsLoopback() {
-		return probes
-	}
-
-	if net.ParseIP(host) != nil {
-		return probes
-	}
-
-	ctx, cancel := context.WithTimeout(context.Background(), hostLookupTimeout)
-	defer cancel()
-
-	addrs, err := lookupIPAddr(ctx, host)
-	if err != nil {
-		return probes
-	}
-
-	for _, addr := range addrs {
-		if (addr.IP.To4() != nil) == wantV4 {
-			probes.other = &forwardProbe{
-				address: net.JoinHostPort(addr.IP.String(), strconv.Itoa(port)),
-				silence: forwardUnreachable,
-			}
-
-			break
-		}
-	}
-
-	return probes
-}
-
-// newForwardProbe is what the reachability probe of one connection dials and
-// what a silence from it is worth.
-//
-// A port asked for on the loopback addresses of the Host is one nothing outside
-// that machine can reach, so the probe dials the Host and writes a silence down
-// as unknown. The one exception is a Host that is this machine. Its loopback
-// addresses are this machine's too, so the probe dials the loopback address of
-// the family that went up, where an answer is to be expected, and a silence
-// there is a port that is not open.
-func newForwardProbe(local localPair, server *net.TCPAddr, reach string, port int) forwardProbe {
-	if local.v4 != nil && local.v4.IP.IsLoopback() && hostIsThisMachine(server.IP) {
-		ip := local.v4.IP
-		if reach == openReachV6 && local.v6 != nil {
-			ip = local.v6.IP
-		}
-
-		return forwardProbe{
-			address: net.JoinHostPort(ip.String(), strconv.Itoa(port)),
-			silence: forwardUnreachable,
-			here:    true,
-		}
-	}
-
-	return forwardProbe{
-		address: forwardProbeAddress(server, port),
-		silence: forwardProbeSilence(local, server, reach),
-	}
-}
-
-// forwardProbeAddress is where the forwarded port is tried from here: the
-// machine the SSH server runs on, at the port the server confirmed for the
-// forward.
-//
-// It is not the address the listener reports. That one is the address that was
-// asked for, a wildcard or a loopback address, and neither is an address to
-// dial from here: the wildcard is no address at all and the loopback one is
-// this machine rather than the Host.
-//
-// It is the address the SSH connection was made to, so it carries one address
-// family. The other family of the Host is not known here, and a port that was
-// asked for on it cannot be tried at all.
-func forwardProbeAddress(server *net.TCPAddr, port int) string {
-	return net.JoinHostPort(server.IP.String(), strconv.Itoa(port))
-}
-
-// forwardProbeSilence is the reading a probe that gets no answer is written
-// down as.
-//
-// A silence is a measurement only where an answer was to be expected. It says
-// the forwarded port is not reachable at the address of the Host this program
-// holds, which is what an operator has to be told about a tunnel that reads as
-// connected. Where an answer was not to be expected it says nothing at all, and
-// writing it down as a port that cannot be reached would put a failure on a
-// tunnel that is doing what was asked of it.
-//
-// Two things make a silence worth nothing. The probe can only dial the address
-// family the SSH connection was made over, so a scope whose request for that family was
-// turned down was never confirmed for the family being tried. And a scope that
-// asks for the loopback addresses asks for them on the Host, which nothing here
-// can reach, however well the port is carrying traffic on that machine.
-//
-// The probe is run in both cases all the same, because an answer is evidence
-// and a request that was turned down is not evidence of a port that is closed:
-// an SSH server told to bind every interface opens both families on the first
-// request and turns the second one down, and it binds every interface for a
-// request that named the loopback address too.
-func forwardProbeSilence(local localPair, server *net.TCPAddr, reach string) string {
-	asked := local.v6
-	answered := reach == openReachBoth || reach == openReachV6
-
-	if server.IP.To4() != nil {
-		asked = local.v4
-		answered = reach == openReachBoth || reach == openReachV4
-	}
-
-	if !answered || asked.IP.IsLoopback() {
-		return forwardReachUnknown
-	}
-
-	return forwardUnreachable
-}
-
-// recordForwardReach measures the forwarded port and writes the reading to the
-// tunnel row.
-//
-// It runs beside the accept loop rather than in it. The probe waits out its
-// whole timeout against an address that drops the packet, and the loop it would
-// hold is the one that carries the forwarded traffic.
-//
-// A reading taken on a connection that is no longer the current one is dropped.
-// The tunnel reconnected while the probe was waiting, a probe of its own is
-// running for the new connection, and writing here would put the reading of a
-// connection that is gone on the row of the one that replaced it.
-func (t *SSHTunnel) recordForwardReach(m *Manager, tunnel *models.Tunnel, measured *ssh.Client, probes reachProbe) {
-	probe := probes.primary
-
-	// The other family is tried beside the one the connection was made on, so
-	// the two waits overlap rather than add up.
-	other := make(chan string, 1)
-	if probes.other != nil {
-		go func() {
-			other <- probeForwardReach(probes.other.address, forwardProbeTimeout, probes.other.silence)
-		}()
-	} else {
-		other <- forwardReachUnknown
-	}
-
-	reach := probeForwardReach(probe.address, forwardProbeTimeout, probe.silence)
-	otherReach := <-other
-
-	t.clientMu.RLock()
-	current := t.client
-	t.clientMu.RUnlock()
-
-	if current != measured {
-		return
-	}
-
-	// The banner is taken under the same lock the reading is written under.
-	// Read after it, it would be read while the Start loop may be writing the
-	// banner of the connection that came next.
-	t.tunnelMu.Lock()
-	tunnel.ForwardReach = reach
-	if probes.primaryV4 {
-		tunnel.ForwardReachV4, tunnel.ForwardReachV6 = reach, otherReach
-	} else {
-		tunnel.ForwardReachV4, tunnel.ForwardReachV6 = otherReach, reach
-	}
-	banner := tunnel.ServerBanner
-	t.saveTunnelStatus(m, tunnel)
-	t.tunnelMu.Unlock()
-
-	if reach != forwardUnreachable {
-		return
-	}
-
-	// The Host is this machine and the port was asked for on loopback, so
-	// neither GatewayPorts nor a firewall on the way stands between the probe
-	// and the port. What did not answer is the port itself.
-	if probe.here {
-		t.logger.Warn("the forwarded port did not answer on the loopback address of this machine, which is "+
-			"the Host of this tunnel, so the tunnel is connected but carries nothing to that address. Check "+
-			"that the SSH server opened the port and that nothing else holds it",
-			logid.TunnelForwardUnreachableHere.Field(),
-			zap.String("probed", probe.address),
-			zap.String("server_banner", banner),
-			zap.String("local", t.Local.String()),
-			zap.String("server", t.Server),
-			zap.String("remote", t.Remote))
-
-		return
-	}
-
-	t.logger.Warn("the forwarded port did not answer a connection from here, so the tunnel is connected "+
-		"but may not be usable. The SSH server may have bound the port to loopback alone, or something "+
-		"on the way may be dropping it, and the two cannot be told apart from here, so check both. On the "+
-		"SSH server it is the setting that opens a forwarded port to addresses other than loopback, "+
-		"GatewayPorts in sshd_config for OpenSSH and the -a flag on the command line for Dropbear, and the "+
-		"server has to be restarted for a change to it. Between here and the Host it is the firewall that "+
-		"the port has to be open through",
-		logid.TunnelForwardUnreachable.Field(),
-		zap.String("probed", probe.address),
-		zap.String("server_banner", banner),
-		zap.String("local", t.Local.String()),
-		zap.String("server", t.Server),
-		zap.String("remote", t.Remote))
-}
-
 // countingReader counts what was read from src, which is how forward tells a
 // connection that is idle from one that is merely slow. The count only has to
 // change while bytes flow, so a plain atomic add is enough.
@@ -902,7 +586,7 @@ func connectFailureStatus(err error) string {
 }
 
 func (t *SSHTunnel) establishConnection(m *Manager, tunnel *models.Tunnel) error {
-	client, clientConn, err := t.dialSSH()
+	client, _, err := t.dialSSH()
 	if err != nil {
 		m.logger.Error("failed to establish SSH connection",
 			logid.TunnelSshConnectFailed.Field(),
@@ -972,12 +656,6 @@ func (t *SSHTunnel) establishConnection(m *Manager, tunnel *models.Tunnel) error
 	tunnel.ErrorKind = ""
 	tunnel.LastConnectedAt = time.Now()
 	tunnel.ServerBanner = string(client.ServerVersion())
-	// What the last connection measured says nothing about this one, which may
-	// be to a server that was reconfigured in between, so the reading goes back
-	// to unknown until the probe below answers for the connection that is up.
-	tunnel.ForwardReach = forwardReachUnknown
-	tunnel.ForwardReachV4 = forwardReachUnknown
-	tunnel.ForwardReachV6 = forwardReachUnknown
 	// Which halves of the pair opened is a fact about this connection for the
 	// same reason, and it was settled a moment ago for this one.
 	tunnel.OpenReach = opened.reach
@@ -995,25 +673,9 @@ func (t *SSHTunnel) establishConnection(m *Manager, tunnel *models.Tunnel) error
 		zap.String("server", t.Server),
 		zap.String("remote", t.Remote))
 
-	// Measured here and not on every pass. What decides it is the
-	// configuration of the SSH server, which does not change under a
-	// connection that stands, while a probe per status read would be one
-	// connection per tunnel per reader.
-	server, isTCP := clientConn.RemoteAddr().(*net.TCPAddr)
-	if isTCP {
-		// The probes are built on the goroutine as well, because building the
-		// one for the other family can wait on a name lookup.
-		reach := opened.reach
-		go func() {
-			t.recordForwardReach(m, tunnel, client, newReachProbe(t.Local, server, serverHost(t.Server),
-				reach, boundPort))
-		}()
-	}
-
-	// Asked here and not on every pass for the same reason, and on a goroutine
-	// of its own rather than after the probe so that neither waits out the
-	// bound of the other. What the two write is a field each, under the lock
-	// the row is written under.
+	// Asked here and not on every pass: what decides it is the configuration of
+	// the SSH server, which does not change under a connection that stands. It
+	// is asked on a goroutine of its own so that accepting does not wait on it.
 	go t.recordListenAddresses(m, tunnel, client, boundPort)
 
 	return t.acceptForwards(m, tunnel, client, opened)

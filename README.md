@@ -96,11 +96,12 @@ Tunnel Manager keeps the forwards as records and runs what the records say.
   stored ones and builds a dropped one again, doubling the wait after each
   failure in a row up to a ceiling. One status screen shows how many should be
   running, how many are connected and how many are in error.
-- **Reach chosen per forward, then measured.** Each assignment and each local
-  forward opens its port on every interface or on loopback alone. For a tunnel
-  on every interface, tunnel-manager connects to the forwarded port once it is
-  up and shows whether it answered, since the SSH server has the last word on
-  the bind (`GatewayPorts` on OpenSSH). A SOCKS5 proxy opens on loopback unless
+- **Reach chosen per forward, and shown where it landed.** Each assignment and
+  each local forward opens its port on every interface or on loopback alone.
+  For a tunnel, the status shows what the SSH server answered and what the Host
+  has listening, since that server has the last word on the bind (`GatewayPorts`
+  on OpenSSH); for a local forward, the Host tries the target and the local
+  forwards of the Host show whether it answered. A SOCKS5 proxy opens on loopback unless
   you pick every interface, and the proxy and the local forwards can be limited
   to a list of client addresses.
 - **Alerts.** A webhook or a mail when a tunnel, a local forward or a proxy
@@ -227,7 +228,7 @@ well, and what `-purge` removes cannot be brought back.
 | [The built-in UI](docs/reference.md#the-built-in-ui) | What each screen shows and does, and the languages it comes in |
 | [Settings](docs/reference.md#settings) | Every setting, what it applies at, the alerts, and the way back when the server will not start |
 | [API endpoints](docs/reference.md#api-endpoints) | Every call, with the login and the CSRF token a script needs |
-| [Reading the tunnel status](docs/reference.md#reading-the-tunnel-status) | The three counts, what a status means, and whether the forwarded port was reached |
+| [Reading the tunnel status](docs/reference.md#reading-the-tunnel-status) | The four counts, what a status means, and where the forwarded port is opened |
 | [Encryption key](docs/reference.md#encryption-key) | What it encrypts and what losing it costs |
 | [Running as a non-root user](docs/reference.md#running-as-a-non-root-user) | The file descriptor limit, the ports, the ownership of the files |
 

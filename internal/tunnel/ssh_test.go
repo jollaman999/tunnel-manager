@@ -2344,128 +2344,6 @@ func closedPort(t *testing.T) string {
 	return addr
 }
 
-func TestProbeForwardReachAnswersFromTheHandshake(t *testing.T) {
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatalf("failed to listen: %v", err)
-	}
-	defer func() {
-		_ = ln.Close()
-	}()
-
-	go func() {
-		for {
-			conn, err := ln.Accept()
-			if err != nil {
-				return
-			}
-			_ = conn.Close()
-		}
-	}()
-
-	reach := probeForwardReach(ln.Addr().String(), forwardProbeTimeout, forwardUnreachable)
-	if reach != forwardReachable {
-		t.Fatalf("reach = %q, want %q, the port answered the handshake", reach, forwardReachable)
-	}
-
-	reach = probeForwardReach(closedPort(t), forwardProbeTimeout, forwardUnreachable)
-	if reach != forwardUnreachable {
-		t.Fatalf("reach = %q, want %q, nothing listens on that port", reach, forwardUnreachable)
-	}
-}
-
-// TestProbeForwardReachClosesWhatItOpened is what keeps the probe from being a
-// socket leak of its own. It runs on the same address many times over, and a
-// probe that held what it opened would leave one connection per run on both
-// ends of it.
-func TestProbeForwardReachClosesWhatItOpened(t *testing.T) {
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatalf("failed to listen: %v", err)
-	}
-	defer func() {
-		_ = ln.Close()
-	}()
-
-	var mu sync.Mutex
-	var open int
-	var peak int
-	// done counts the connections the listener has finished with. The probe
-	// returns before its close reaches the far side, so the return is not a
-	// point at which the listener is known to have seen anything. Counting
-	// what it has finished gives the test such a point.
-	var done int
-
-	go func() {
-		for {
-			conn, err := ln.Accept()
-			if err != nil {
-				return
-			}
-
-			go func(conn net.Conn) {
-				defer func() {
-					_ = conn.Close()
-				}()
-
-				mu.Lock()
-				open++
-				if open > peak {
-					peak = open
-				}
-				mu.Unlock()
-
-				// The probe closes as soon as the handshake stands, so this
-				// read ends at once. A probe that held the connection would
-				// sit here instead and the count would climb.
-				_, _ = conn.Read(make([]byte, 1))
-
-				mu.Lock()
-				open--
-				done++
-				mu.Unlock()
-			}(conn)
-		}
-	}()
-
-	// The probes are run one at a time, and the next one waits for the side
-	// that accepted the last to have let go of it.
-	//
-	// The count is kept by the listener, and it is lowered when the read ends,
-	// which is when the close of the probe arrives. That arrival is not the
-	// return of probeForwardReach: the probe has already returned by the time
-	// the FIN is delivered. Started back to back, a probe would be counted
-	// while the one before it was still being let go of, and the peak would
-	// read as two without a single socket having been held.
-	//
-	// Waiting here is what makes a peak above one mean what it says. A probe
-	// that kept its connection leaves the read of the listener blocked, the
-	// listener never finishes with it, and the wait below runs out and says so.
-	for i := 0; i < 20; i++ {
-		reach := probeForwardReach(ln.Addr().String(), forwardProbeTimeout, forwardUnreachable)
-		if reach != forwardReachable {
-			t.Fatalf("probe %d: reach = %q, want %q", i, reach, forwardReachable)
-		}
-
-		if !waitForFinished(&mu, &done, i+1, 5*time.Second) {
-			t.Fatalf("probe %d returned, but the listener had not finished with the connection it "+
-				"opened five seconds later, so the probe does not close what it opens", i)
-		}
-	}
-
-	mu.Lock()
-	left := open
-	highest := peak
-	mu.Unlock()
-
-	if left != 0 {
-		t.Fatalf("%d of the 20 probes are still open, so every probe leaves a socket behind", left)
-	}
-	if highest > 1 {
-		t.Fatalf("%d probes were open at once, so a probe outlives the one that follows it", highest)
-	}
-}
-
 // waitForFinished waits for the counter to reach want and says whether it did
 // inside the time given. The counter is read under the lock it is written
 // under, and the wait is bounded so that a connection the listener never
@@ -2489,38 +2367,6 @@ func waitForFinished(mu *sync.Mutex, done *int, want int, within time.Duration) 
 	}
 }
 
-// TestProbeForwardReachGivesUpOnAPortThatNeverAnswers pins the bound itself.
-// Without one, a port whose SYN is dropped rather than refused is waited on
-// until the kernel stops retransmitting, which is around two minutes on Linux,
-// and the goroutine and the socket of the probe are held for all of it. It is
-// the same reason forwardDialTimeout is bounded, one level up.
-func TestProbeForwardReachGivesUpOnAPortThatNeverAnswers(t *testing.T) {
-	if runtime.GOOS != "linux" {
-		t.Skip("the silent address is a listening socket whose accept queue is full, and what a full " +
-			"queue does with a SYN is the kernel's own behaviour")
-	}
-
-	addr := startBlackholeListener(t)
-
-	const timeout = 500 * time.Millisecond
-
-	start := time.Now()
-	reach := probeForwardReach(addr, timeout, forwardUnreachable)
-	held := time.Since(start)
-
-	if reach != forwardUnreachable {
-		t.Fatalf("reach = %q, want %q, the port never answered", reach, forwardUnreachable)
-	}
-	if held < timeout {
-		t.Fatalf("the probe returned after %v, inside its timeout of %v, so the address answered "+
-			"and the test measured nothing", held, timeout)
-	}
-	if held > 4*timeout {
-		t.Fatalf("the probe held for %v with a timeout of %v, so a port that drops the packet is "+
-			"waited on for as long as the kernel retries", held, timeout)
-	}
-}
-
 // TestForwardProbeTimeoutMatchesTheForwardDial keeps the two bounds one number.
 // They are the same kind of wait against the same kind of peer, and two numbers
 // to reason about is one more than there is reason for.
@@ -2531,73 +2377,6 @@ func TestForwardProbeTimeoutMatchesTheForwardDial(t *testing.T) {
 	}
 	if forwardProbeTimeout <= 0 {
 		t.Fatalf("forwardProbeTimeout = %v, so the probe is dialed with no bound at all", forwardProbeTimeout)
-	}
-}
-
-func TestForwardProbeAddressIsTheServerAtTheConfirmedPort(t *testing.T) {
-	tests := []struct {
-		name   string
-		server string
-		port   int
-		want   string
-	}{
-		{name: "IPv4", server: "192.0.2.10:22", port: 18080, want: "192.0.2.10:18080"},
-		{name: "IPv6 is bracketed", server: "[2001:db8::1]:22", port: 18080, want: "[2001:db8::1]:18080"},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			got := forwardProbeAddress(resolveTestTCPAddr(t, tt.server), tt.port)
-			if got != tt.want {
-				t.Fatalf("forwardProbeAddress = %q, want %q", got, tt.want)
-			}
-		})
-	}
-}
-
-// TestASilenceIsAReadingOnlyWhereAnAnswerWasExpected holds the probe to what it
-// can measure. There is one address of the Host here and it carries one address
-// family, so a port asked for on the other family cannot be tried at all, and a
-// port asked for on the loopback addresses is on the Host where nothing here
-// reaches it. Silence from either is not a port that cannot be reached, and
-// written down as one it puts a failure on a tunnel that is carrying traffic.
-func TestASilenceIsAReadingOnlyWhereAnAnswerWasExpected(t *testing.T) {
-	tests := []struct {
-		name    string
-		localV4 string
-		localV6 string
-		server  string
-		reach   string
-		want    string
-	}{
-		{"both were answered and the Host is dialled over IPv4", "0.0.0.0:80", "[::]:80",
-			"192.0.2.10:22", openReachBoth, forwardUnreachable},
-		{"both were answered and the Host is dialled over IPv6", "0.0.0.0:80", "[::]:80",
-			"[2001:db8::1]:22", openReachBoth, forwardUnreachable},
-		{"the family being dialled was answered", "0.0.0.0:80", "[::]:80",
-			"192.0.2.10:22", openReachV4, forwardUnreachable},
-		{"the IPv6 request was the one answered, and the Host is dialled over IPv4",
-			"0.0.0.0:80", "[::]:80", "192.0.2.10:22", openReachV6, forwardReachUnknown},
-		{"the IPv4 request was the one answered, and the Host is dialled over IPv6",
-			"0.0.0.0:80", "[::]:80", "[2001:db8::1]:22", openReachV4, forwardReachUnknown},
-		{"the ports were asked for on the loopback of the Host", "127.0.0.1:80", "[::1]:80",
-			"192.0.2.10:22", openReachBoth, forwardReachUnknown},
-		{"the loopback of the Host over IPv6", "127.0.0.1:80", "[::1]:80",
-			"[2001:db8::1]:22", openReachBoth, forwardReachUnknown},
-		{"nothing is known of what the server answered", "0.0.0.0:80", "[::]:80",
-			"192.0.2.10:22", "", forwardReachUnknown},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			local := localPair{v4: resolveTestTCPAddr(t, tt.localV4), v6: resolveTestTCPAddr(t, tt.localV6)}
-			server := resolveTestTCPAddr(t, tt.server)
-
-			got := forwardProbeSilence(local, server, tt.reach)
-			if got != tt.want {
-				t.Fatalf("forwardProbeSilence = %q, want %q", got, tt.want)
-			}
-		})
 	}
 }
 
@@ -2614,46 +2393,23 @@ func resolveTestTCPAddr(t *testing.T, address string) *net.TCPAddr {
 	return net.TCPAddrFromAddrPort(addr)
 }
 
-// readTunnelReach reads the two readings the way the probe writes them, under
-// the lock the tunnel row is written with, so the test is not a race of its own.
-func readTunnelReach(tun *SSHTunnel, tunnel *models.Tunnel) (string, string) {
+// readTunnelBanner reads the banner under the lock the tunnel row is written
+// with, so the test is not a race of its own.
+func readTunnelBanner(tun *SSHTunnel, tunnel *models.Tunnel) string {
 	tun.tunnelMu.Lock()
 	defer tun.tunnelMu.Unlock()
 
-	return tunnel.ServerBanner, tunnel.ForwardReach
-}
-
-// waitTunnelReach waits until the probe has written a reading for the
-// connection that is up.
-func waitTunnelReach(t *testing.T, tun *SSHTunnel, tunnel *models.Tunnel, timeout time.Duration) string {
-	t.Helper()
-
-	deadline := time.Now().Add(timeout)
-	for time.Now().Before(deadline) {
-		_, reach := readTunnelReach(tun, tunnel)
-		if reach != forwardReachUnknown {
-			return reach
-		}
-		time.Sleep(10 * time.Millisecond)
-	}
-
-	t.Fatal("the forwarded port was never measured")
-
-	return ""
+	return tunnel.ServerBanner
 }
 
 // waitTunnelBanner waits until the connection has written what the server
 // called itself on the row, and returns it.
-//
-// The banner is waited for rather than the reading of the probe, which is what
-// the tunnel is up by a moment earlier. A probe can end on a reading of unknown,
-// which is what the row already holds, so there is no value to wait for there.
 func waitTunnelBanner(t *testing.T, tun *SSHTunnel, tunnel *models.Tunnel, timeout time.Duration) string {
 	t.Helper()
 
 	deadline := time.Now().Add(timeout)
 	for time.Now().Before(deadline) {
-		if banner, _ := readTunnelReach(tun, tunnel); banner != "" {
+		if banner := readTunnelBanner(tun, tunnel); banner != "" {
 			return banner
 		}
 		time.Sleep(10 * time.Millisecond)
@@ -2690,124 +2446,6 @@ func TestEstablishConnectionRecordsWhatTheServerSaid(t *testing.T) {
 
 	if !strings.HasPrefix(banner, "SSH-2.0-") {
 		t.Fatalf("the recorded banner is %q, want what the server sent on the handshake", banner)
-	}
-}
-
-// TestEstablishConnectionMeasuresTheForwardedPort runs the two readings against
-// a port that answers and one that does not. The tunnel is connected either
-// way, which is the whole point: the reading is what tells a tunnel that can be
-// used from one that cannot.
-func TestEstablishConnectionMeasuresTheForwardedPort(t *testing.T) {
-	answering, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatalf("failed to listen: %v", err)
-	}
-	defer func() {
-		_ = answering.Close()
-	}()
-
-	go func() {
-		for {
-			conn, err := answering.Accept()
-			if err != nil {
-				return
-			}
-			_ = conn.Close()
-		}
-	}()
-
-	_, answeringPort, err := net.SplitHostPort(answering.Addr().String())
-	if err != nil {
-		t.Fatalf("failed to read the port that answers: %v", err)
-	}
-
-	_, silentPort, err := net.SplitHostPort(closedPort(t))
-	if err != nil {
-		t.Fatalf("failed to read the port that does not answer: %v", err)
-	}
-
-	tests := []struct {
-		name string
-		port string
-		want string
-	}{
-		{name: "the forwarded port answers", port: answeringPort, want: forwardReachable},
-		{name: "the forwarded port does not", port: silentPort, want: forwardUnreachable},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			port, err := strconv.ParseUint(tt.port, 10, 32)
-			if err != nil {
-				t.Fatalf("failed to read the port: %v", err)
-			}
-
-			m := newSSHTestManager(t, 1)
-			serverAddr, _ := startForwardingSSHServerConfirming(t, uint32(port))
-			// On the wildcard pair, because that is the scope a silence is a
-			// reading of. Ports asked for on the loopback addresses are on the
-			// Host and nothing here can dial them, so a probe that gets
-			// nothing back from one of those measured nothing.
-			tun, tunnel := newScopedSSHTestTunnel(t, serverAddr, "0.0.0.0:0", "[::]:0")
-
-			errc := make(chan error, 1)
-			go func() {
-				errc <- tun.establishConnection(m, tunnel)
-			}()
-
-			waitTunnelClient(t, tun, 10*time.Second)
-			got := waitTunnelReach(t, tun, tunnel, 30*time.Second)
-
-			closeTunnelClient(t, tun)
-
-			select {
-			case <-errc:
-			case <-time.After(5 * time.Second):
-				t.Fatal("establishConnection did not return after the connection was closed")
-			}
-
-			if got != tt.want {
-				t.Fatalf("forward reach = %q, want %q, probed at the port the server confirmed", got, tt.want)
-			}
-		})
-	}
-}
-
-// TestRecordForwardReachDropsAReadingOfAnOlderConnection pins what keeps a slow
-// probe from writing over a tunnel that reconnected under it. The probe waits
-// out its timeout, and the connection it measured may be gone by then, with a
-// probe of its own running for the one that replaced it.
-func TestRecordForwardReachDropsAReadingOfAnOlderConnection(t *testing.T) {
-	m := newSSHTestManager(t, 1)
-	serverAddr, _ := startForwardingSSHServer(t)
-	tun, tunnel := newSSHTestTunnel(t, serverAddr)
-
-	current, _, cleanup := dialTestSSHClient(t, serverAddr)
-	defer cleanup()
-
-	tun.clientMu.Lock()
-	tun.client = current
-	tun.clientMu.Unlock()
-
-	tunnel.ForwardReach = forwardReachUnknown
-
-	// A client that is not the one the tunnel holds, which is what an older
-	// connection is by the time its probe answers.
-	older, _, olderCleanup := dialTestSSHClient(t, serverAddr)
-	defer olderCleanup()
-
-	tun.recordForwardReach(m, tunnel, older, reachProbe{primary: forwardProbe{address: closedPort(t), silence: forwardUnreachable}, primaryV4: true})
-
-	if _, reach := readTunnelReach(tun, tunnel); reach != forwardReachUnknown {
-		t.Fatalf("forward reach = %q, want %q, the reading of a connection that is gone was written "+
-			"to the row of the one that replaced it", reach, forwardReachUnknown)
-	}
-
-	tun.recordForwardReach(m, tunnel, current, reachProbe{primary: forwardProbe{address: closedPort(t), silence: forwardUnreachable}, primaryV4: true})
-
-	if _, reach := readTunnelReach(tun, tunnel); reach != forwardUnreachable {
-		t.Fatalf("forward reach = %q, want %q, the reading of the current connection was dropped",
-			reach, forwardUnreachable)
 	}
 }
 

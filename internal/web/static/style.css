@@ -1134,7 +1134,7 @@ button.copy {
 
 /* The address a local forward goes to is one value, and broken over two lines
    it reads as two. A narrow screen scrolls the table sideways instead. */
-.assign-list[data-list="local-forwards"] td:nth-last-child(4) {
+.assign-list[data-list="local-forwards"] td:nth-last-child(5) {
   white-space: nowrap;
 }
 
@@ -1165,27 +1165,6 @@ button.copy {
   display: flex;
   flex-wrap: nowrap;
   justify-content: space-between;
-}
-
-/* A Port reached cell that differs by family is a line per family, the name
-   of the family in front of its reading. */
-.reach-split {
-  display: flex;
-  flex-direction: column;
-  gap: 0.25rem;
-  white-space: nowrap;
-}
-
-.reach-split > span {
-  display: flex;
-  align-items: center;
-  gap: 0.4rem;
-}
-
-.reach-family {
-  min-width: 2.2rem;
-  color: var(--text-muted);
-  font-size: 12px;
 }
 
 /* The scroller keeps a wide table inside its own box. Without it the table

@@ -667,12 +667,6 @@ func (m *Manager) StartTunnel(host *models.Host, sp *models.ServicePort, bindSco
 		Local:  localV4,
 		Server: server,
 		Remote: remote,
-		// Nothing has been measured on a tunnel that is only being started,
-		// and the row says so rather than leaving the field empty: an empty
-		// reading and one that was taken must not read alike.
-		ForwardReach:   forwardReachUnknown,
-		ForwardReachV4: forwardReachUnknown,
-		ForwardReachV6: forwardReachUnknown,
 		// OpenReach is left empty for the same reason, except that for it the
 		// empty value is the one that says nothing has been measured. Nothing
 		// has been asked of the far side yet, so there is no half of the pair

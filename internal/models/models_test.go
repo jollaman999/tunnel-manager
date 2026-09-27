@@ -235,13 +235,11 @@ func TestTunnelMigrationKeepsTheRowsThatWereThere(t *testing.T) {
 		t.Fatalf("the migration changed the row that was there: %+v", after)
 	}
 
-	if after.ServerBanner != "" || after.ForwardReach != "" {
-		t.Fatalf("a row written before the readings carries one: banner=%q reach=%q",
-			after.ServerBanner, after.ForwardReach)
+	if after.ServerBanner != "" {
+		t.Fatalf("a row written before the banner carries one: banner=%q", after.ServerBanner)
 	}
 
 	after.ServerBanner = "SSH-2.0-OpenSSH_10.5p1"
-	after.ForwardReach = "unreachable"
 
 	err = db.Save(&after).Error
 	if err != nil {
@@ -254,9 +252,8 @@ func TestTunnelMigrationKeepsTheRowsThatWereThere(t *testing.T) {
 		t.Fatalf("failed to read the migrated row back: %v", err)
 	}
 
-	if stored.ServerBanner != after.ServerBanner || stored.ForwardReach != after.ForwardReach {
-		t.Fatalf("the readings did not survive being stored: banner=%q reach=%q",
-			stored.ServerBanner, stored.ForwardReach)
+	if stored.ServerBanner != after.ServerBanner {
+		t.Fatalf("the banner did not survive being stored: banner=%q", stored.ServerBanner)
 	}
 }
 
@@ -451,16 +448,15 @@ func TestABindScopeThatIsNeitherIsRefused(t *testing.T) {
 	}
 }
 
-// TestTunnelSerializesTheForwardedPortReadings pins the two names the API
-// answers with. The status screen reads them off the tunnel rows of
-// GET /api/status, so a rename here is a screen that shows nothing.
-func TestTunnelSerializesTheForwardedPortReadings(t *testing.T) {
+// TestTunnelSerializesTheBanner pins the name the API answers with. The status
+// screen reads it off the tunnel rows of GET /api/status, so a rename here is a
+// screen that shows nothing.
+func TestTunnelSerializesTheBanner(t *testing.T) {
 	encoded, err := json.Marshal(Tunnel{
 		HostID:       1,
 		SPID:         2,
 		Status:       "connected",
 		ServerBanner: "SSH-2.0-OpenSSH_10.5p1 Ubuntu-1ubuntu2",
-		ForwardReach: "unreachable",
 	})
 	if err != nil {
 		t.Fatalf("failed to serialize: %v", err)
@@ -470,7 +466,6 @@ func TestTunnelSerializesTheForwardedPortReadings(t *testing.T) {
 
 	for _, want := range []string{
 		`"server_banner":"SSH-2.0-OpenSSH_10.5p1 Ubuntu-1ubuntu2"`,
-		`"forward_reach":"unreachable"`,
 	} {
 		if !strings.Contains(body, want) {
 			t.Fatalf("the serialized Tunnel is missing %s: %s", want, body)

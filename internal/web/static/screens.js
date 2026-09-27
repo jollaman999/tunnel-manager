@@ -696,21 +696,6 @@ async function drawStatus() {
         openedCell(tunnel),
         reachableCell(tunnel),
         tunnel.remote,
-        // Both sorts are measured now and both are drawn the same way. What
-        // the reading is of differs with the sort - a service port row asks
-        // whether the port opened on the Host answered a connection from here,
-        // a local forward row whether the target answered one dialled from the
-        // Host - and the Opened column beside it is what says which way round
-        // the row runs.
-        //
-        // A row that is reconnecting carries the reading the connection that
-        // dropped left, on either sort, and it is shown rather than hidden. The
-        // cell would otherwise mean two things in the one column: unmeasured on
-        // a service port row and measured-but-withheld on a forward, with
-        // nothing in either cell to tell them apart. What dates the reading is
-        // the Status cell next to it, which is the pairing a service port row
-        // has always been read with.
-        reachCell(tunnel),
         tunnel.retry_count,
         timeCell(tunnel.last_connected_at)
       ];
@@ -720,10 +705,6 @@ async function drawStatus() {
       // what is left for a column holding a sentence was measured at 144px
       // against a row that stood 183px tall. Under the row it has the width of
       // the table, and a tunnel with nothing wrong carries no line at all.
-      //
-      // What is said about a forwarded port that did not answer goes there for
-      // the same reason and is longer still, so the two share the space under
-      // the row when a tunnel has both.
       const under = [];
 
       // Nothing is said under a tunnel the host key check refused, which is
@@ -739,11 +720,6 @@ async function drawStatus() {
 
         said.className = "last-error";
         under.push(said);
-      }
-
-      const advice = reachAdvice(tunnel);
-      if (advice !== null) {
-        under.push(advice);
       }
 
       const denied = forwardAdvice(tunnel);
@@ -785,10 +761,10 @@ async function drawStatus() {
     nodes.push(buildTable(
       [t("status.host.column"), t("status.kind.column"), t("status.service-port.column"),
         t("status.status.column"), t("status.server.column"), t("status.opened.column"),
-        t("status.reachable.column"), t("status.reaches.column"), t("status.port-reached.column"),
+        t("status.reachable.column"), t("status.reaches.column"),
         t("status.retries.column"), t("status.last-connected.column")],
       rows,
-      [0, 2, 9]
+      [0, 2, 8]
     ));
   }
 
@@ -1002,38 +978,6 @@ function statusBadge(status) {
   return badge;
 }
 
-// reachCell is the Port reached column of a row. Where both address families
-// were measured and one answered while the other did not, it is a line for
-// each, so a Host that is up on one family and not on the other is not read as
-// wholly one or the other. Everywhere else it is the one reading it always was.
-function reachCell(row) {
-  const v4 = row.forward_reach_v4;
-  const v6 = row.forward_reach_v6;
-  const measured = function (word) {
-    return word === "reachable" || word === "unreachable";
-  };
-
-  if (!measured(v4) || !measured(v6) || v4 === v6) {
-    return reachBadge(row.forward_reach);
-  }
-
-  const cell = document.createElement("div");
-
-  cell.className = "reach-split";
-
-  for (const pair of [["IPv4", v4], ["IPv6", v6]]) {
-    const line = document.createElement("span");
-    const family = element("span", pair[0]);
-
-    family.className = "reach-family";
-    line.appendChild(family);
-    line.appendChild(reachBadge(pair[1]));
-    cell.appendChild(line);
-  }
-
-  return cell;
-}
-
 // reachBadge is whether the forwarded port answered a connection opened by
 // tunnel-manager. A reading the server is known to send is drawn in the language
 // of the page and one added later as the server sent it, the way the status
@@ -1099,109 +1043,8 @@ function sshServerKind(banner) {
   return "other";
 }
 
-// probedAddress is where the forwarded port was tried from here: the machine
-// the SSH server runs on, at the port that was forwarded. The host comes out of
-// the server column and the port out of the local column, which is the pair the
-// server itself dials. Both are cut at their last colon, which is what
-// separates a port from an address that has colons of its own. A value that
-// cannot be cut that way gives nothing back, and the sentence is written
-// without an address rather than with a wrong one.
-function probedAddress(server, local) {
-  const host = server === null || server === undefined ? "" : String(server);
-  const bound = local === null || local === undefined ? "" : String(local);
-  const hostEnd = host.lastIndexOf(":");
-  const portStart = bound.lastIndexOf(":");
-
-  if (hostEnd < 1 || portStart < 0 || portStart === bound.length - 1) {
-    return "";
-  }
-
-  return host.slice(0, hostEnd) + ":" + bound.slice(portStart + 1);
-}
-
-// reachAdvice is what is said under a tunnel whose forwarded port did not
-// answer. It is drawn only for a tunnel that is connected, because that is the
-// one state the reading adds anything to: a tunnel that is not connected has
-// nothing forwarded to reach, and its own column already says so.
-//
-// It names no cause. A port the SSH server bound to loopback alone and a port a
-// firewall drops are the same silence seen from here, and saying it is the one
-// sends the operator to change a machine that may not be at fault. What is said
-// is where the port was not reached from, followed by the things to check, in
-// the order of what the server called itself.
-function reachAdvice(tunnel) {
-  if (tunnel.status !== "connected" || tunnel.forward_reach !== "unreachable") {
-    return null;
-  }
-
-  // Not under a local forward, whose reading this says nothing true about.
-  // Every line below is about a port the SSH server was asked to open on the
-  // Host, and a local forward asks for no such port: its port is opened here,
-  // and what did not answer is the target the Host dialled. Telling that
-  // operator to look at GatewayPorts is sending them to change a setting that
-  // has nothing to do with what they are looking at.
-  if (isLocalForward(tunnel)) {
-    return null;
-  }
-
-  // A port asked for on loopback is measured only where the Host is this
-  // machine, and then it was tried at the loopback address here. Neither the
-  // setting of the SSH server that opens a port to other addresses nor a
-  // firewall on the way stands between the two, so what is said is the port.
-  if (requestedScope(tunnel.local) === bindScopeLoopback) {
-    const here = document.createElement("div");
-
-    here.className = "reach-advice";
-    here.dataset.reachAdvice = "here";
-    here.appendChild(element("strong", t("status.reach-here.text", { address: String(tunnel.local) })));
-    here.appendChild(element("p", t("status.reach-here-cause.text")));
-
-    return here;
-  }
-
-  const banner = typeof tunnel.server_banner === "string" ? tunnel.server_banner : "";
-  const kind = sshServerKind(banner);
-  const tried = probedAddress(tunnel.server, tunnel.local);
-  const box = document.createElement("div");
-
-  box.className = "reach-advice";
-  box.dataset.reachAdvice = kind;
-
-  box.appendChild(element("strong", tried === ""
-    ? t("status.reach-anywhere.text")
-    : t("status.reach-address.text", { address: tried })));
-
-  box.appendChild(element("p", t("status.reach-cause.text")));
-
-  box.appendChild(element("p", banner === ""
-    ? t("status.reach-no-banner.text")
-    : t("status.reach-banner.text", { banner: banner })));
-
-  if (kind === "openssh") {
-    box.appendChild(element("p", t("status.reach-openssh.text")));
-    box.appendChild(bulletList([
-      t("status.reach-openssh-order.text"),
-      t("status.reach-openssh-restart.text")
-    ]));
-  } else if (kind === "dropbear") {
-    box.appendChild(element("p", t("status.reach-dropbear.text")));
-    box.appendChild(bulletList([
-      t("status.reach-dropbear-flag.text"),
-      t("status.reach-dropbear-all.text")
-    ]));
-  } else {
-    box.appendChild(element("p", t("status.reach-other.text")));
-  }
-
-  box.appendChild(element("p", t("status.reach-firewall.text")));
-
-  return box;
-}
-
 // forwardAdvice is what is said under a tunnel whose forwarded port the SSH
-// server would not open. It is the other half of reachAdvice above: that one is
-// for a port that was opened and cannot be reached, this one for a port that
-// was never opened.
+// server would not open.
 //
 // It names no cause. The refusal carries no reason, and the several settings
 // that produce it look identical from here, so what is offered is the list of
@@ -1242,23 +1085,18 @@ function forwardAdvice(tunnel) {
 }
 
 // forwardAddresses is what is said under a connected tunnel about the addresses
-// of its forwarded port: the ones that were asked for, the one that answered a
-// connection opened from here, the ones the Host itself named, and nothing
-// else.
+// of its forwarded port: the ones that were asked for, what the SSH server
+// answered, the ones the Host itself named, and nothing else.
 //
 // It is drawn as a note and not as a warning. None of it is something to go and
-// fix: a tunnel whose ports were asked for on the Host itself has no address
-// this machine can try, and that is the scope doing what it was picked for. The
-// one thing on this screen that is a warning about reach is what reachAdvice
-// draws, for a port that was tried and gave nothing back.
+// fix on its own.
 //
 // What the reading of the requests is not is a list of what is open. It is what
 // the SSH server answered to each tcpip-forward request, and an answer is not a
 // binding: a server set to bind every interface takes both families on the
 // first request and says no to the second, and it does that for a request that
-// named the loopback address too. So the line says what was asked, what was
-// answered and what was confirmed by a connection, and it never calls an answer
-// an open address.
+// named the loopback address too. So the line says what was asked and what was
+// answered, and it never calls an answer an open address.
 //
 // The one thing here that does say which addresses are open is the last line,
 // and it is there because the Host was asked and answered. It is drawn only
@@ -1286,9 +1124,9 @@ function forwardAddresses(tunnel) {
 
   // Nothing is drawn where nothing came out other than what was asked for.
   //
-  // The box is four sentences, and on a forward that went up the way it was
+  // The box is three sentences, and on a forward that went up the way it was
   // asked to every one of them says so: this was asked for, the server agreed,
-  // a connection from here arrived, the Host is listening on those addresses.
+  // the Host is listening on those addresses.
   // An operator reading a screen of tunnels does not need that under each of
   // them, and a box that is always there is one nobody reads on the row where
   // it says something.
@@ -1312,8 +1150,6 @@ function forwardAddresses(tunnel) {
     box.appendChild(element("p", t("status.addresses-answer-no-proof.text")));
   }
 
-  box.appendChild(element("p", confirmedSentence(tunnel)));
-
   const listening = listeningSentence(tunnel.listen_addresses);
   if (listening !== null) {
     box.appendChild(element("p", listening));
@@ -1325,12 +1161,11 @@ function forwardAddresses(tunnel) {
 // nothingCameOutOfTheOrdinary says whether the forward is open exactly as it
 // was asked to be, with nothing about it left to tell.
 //
-// Three things could differ and none of them does here. The SSH server said yes
-// to both of the addresses that were asked for. The Host, asked what it has
-// open on that port, named those same addresses. And the port answered a
-// connection opened from here, or was never one this end could dial.
+// Two things could differ and neither does here. The SSH server said yes to
+// both of the addresses that were asked for, and the Host, asked what it has
+// open on that port, named those same addresses.
 //
-// The middle one is the one worth drawing when it differs, and it differs more
+// The second one is the one worth drawing when it differs, and it differs more
 // often than it sounds: a server set to bind every interface ignores a request
 // for the loopback and opens the port to its whole network, which is the
 // opposite of what was chosen and is not visible anywhere else.
@@ -1348,10 +1183,6 @@ function forwardAddresses(tunnel) {
 // the Host has already answered. A Host that named nothing leaves the no
 // standing, and the box stays.
 function nothingCameOutOfTheOrdinary(tunnel, reach) {
-  if (tunnel.forward_reach === "unreachable") {
-    return false;
-  }
-
   if (reach !== "both") {
     const named = typeof tunnel.listen_addresses === "string" && tunnel.listen_addresses !== "";
 
@@ -1454,32 +1285,6 @@ function answeredSentence(reach) {
   }
 
   return t("status.addresses-answered-both.text");
-}
-
-// confirmedSentence is what was confirmed by a connection opened from here,
-// which is the one evidence this end can hold that a port is up.
-//
-// A forward asked for on the Host itself has nothing here that can be tried, so
-// the empty answer for one of those is what it is meant to be rather than
-// something missing: the sentence says so, so that a scope doing what it was
-// picked for does not read as a tunnel with something wrong with it.
-function confirmedSentence(tunnel) {
-  if (tunnel.forward_reach === "reachable") {
-    const answered = probedAddress(tunnel.server, tunnel.local);
-
-    // Where the two columns cannot be cut into a host and a port, the address
-    // is left out rather than written wrong, which is what reachAdvice does
-    // with the same pair of columns.
-    return answered === ""
-      ? t("status.addresses-confirmed-plain.text")
-      : t("status.addresses-confirmed.text", { address: answered });
-  }
-
-  if (requestedScope(tunnel.local) === bindScopeLoopback) {
-    return t("status.addresses-host-only.text");
-  }
-
-  return t("status.addresses-confirmed-none.text");
 }
 
 // requestedHost is the address out of the local column, without the port. An
@@ -4644,7 +4449,8 @@ async function openHostLocalForwards(host) {
       [t("local-forwards.number.column"), t("local-forwards.local-port.column"),
         t("local-forwards.scope.column"), t("local-forwards.reachable.column"),
         t("local-forwards.target.column"),
-        t("local-forwards.description.column"), t("local-forwards.status.column"), ""],
+        t("local-forwards.description.column"), t("local-forwards.status.column"),
+        t("local-forwards.reach.column"), ""],
       shown.map(function (item) {
         const row = localForwardRow(item, openForm, flipOne, remove);
 
@@ -5058,6 +4864,11 @@ function localForwardRow(item, edit, flip, remove) {
       target,
       description,
       statusBadge(item.status),
+      // Whether the target answered a connection the Host dialled, which is
+      // measured of a forward that is running and of no other. A forward that
+      // is off or stopped carries no reading, and its cell is a dash rather
+      // than a blank for the reason the Service port column of the status is.
+      typeof item.forward_reach === "string" && item.forward_reach !== "" ? reachBadge(item.forward_reach) : "-",
       buttons
     ]
   };
@@ -10349,8 +10160,7 @@ function manualSocks() {
 function manualReach() {
   return manualCard("reach", t("manual.reach.title"), [
     t("manual.reach-listener.text"),
-    t("manual.reach-column.text"),
-    t("manual.reach-unreachable.text")
+    t("manual.reach-column.text")
   ]);
 }
 

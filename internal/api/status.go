@@ -37,8 +37,7 @@ const (
 // embedded so that a service port row carries exactly the fields it always
 // carried, down to a column added to models.Tunnel later, and a local forward
 // fills the few of them that mean something for it: status, last_error,
-// retry_count, last_connected_at and forward_reach from what the forward
-// reports, and server, local and remote from where it listens and what it
+// retry_count and last_connected_at from what the forward reports, and server, local and remote from where it listens and what it
 // reaches. The rest stay at their zero values, because nothing measures those
 // for a local forward.
 //
@@ -262,17 +261,6 @@ func localForwardStatusRow(lf models.LocalForward, host *models.Host,
 	view := localForwardViewOf(lf, host != nil && host.Enabled, states)
 	number := lf.Number
 
-	// The reading of the probe is carried beside the rest of what the forward
-	// reports, and only where the row reports anything at all: a row whose
-	// status came from localForwardViewOf rather than from a running forward
-	// is one that nothing has measured, and the last reading of a forward that
-	// has since been switched off would read as a measurement of now.
-	reach := ""
-	if state, running := states[tunnel.LocalForwardKey{HostID: lf.HostID, Number: lf.Number}]; running &&
-		view.Status == state.Status {
-		reach = state.ForwardReach
-	}
-
 	return statusPageRow{
 		ref: statusRef{HostID: lf.HostID, Kind: statusKindLocalForward, Ref: lf.Number},
 		row: statusRow{
@@ -285,7 +273,6 @@ func localForwardStatusRow(lf models.LocalForward, host *models.Host,
 				Server:          server,
 				Local:           listenV4,
 				Remote:          target,
-				ForwardReach:    reach,
 			},
 			Kind:   statusKindLocalForward,
 			Number: &number,

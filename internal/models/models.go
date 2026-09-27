@@ -127,10 +127,9 @@ type HostServicePort struct {
 	// asked to be opened: BindScopeLoopback asks for the loopback addresses
 	// and BindScopeWildcard for the wildcards.
 	//
-	// It is called a scope rather than a reach because Tunnel.ForwardReach is
-	// already the other half of the question. That one is what a connection
-	// found afterwards, measured; this one is what was asked for before
-	// anything was measured, and the two want names that are not read as one.
+	// It is called a scope rather than a reach because a reach is what a
+	// connection finds afterwards, and this is what was asked for before
+	// anything was tried. The two want names that are not read as one.
 	//
 	// It sits on the assignment because the Host and the service port both
 	// have a say in it. One Host carries several service ports, and one of
@@ -239,36 +238,6 @@ type Tunnel struct {
 	// rows were written before it existed, and AutoMigrate fills those with
 	// NULL.
 	ServerBanner string `json:"server_banner"`
-	// ForwardReach is whether the forwarded port answered a TCP connection
-	// from this process, measured once per connection: "reachable",
-	// "unreachable", or "unknown" where nothing has been measured. Anything
-	// else, an empty value on a row from before the column among them, means
-	// the same as "unknown".
-	//
-	// "reachable" is the one reading that is evidence: the port carried a
-	// connection opened from here. "unreachable" is the measurement that a
-	// port which was asked for on an address of the Host this program can dial
-	// gave nothing back. "unknown" is everything that was not measured and
-	// everything that cannot be: a tunnel whose ports were asked for on the
-	// loopback addresses of a Host that is another machine is one nothing here
-	// can dial, and a silence from it is not a reading. Where the Host is this
-	// machine its loopback addresses are dialled here, and a silence from them
-	// is "unreachable".
-	//
-	// It says where the port was not reached from and never why. A server that
-	// bound the port to loopback alone and a firewall on the way look exactly
-	// the same to a connection that does not arrive, so the two cannot be told
-	// apart from here and neither may be reported as the cause.
-	ForwardReach string `json:"forward_reach"`
-	// ForwardReachV4 and ForwardReachV6 are the same reading taken for each
-	// address family on its own, in the same three words. A Host that answers
-	// on one family and not on the other is what they are there to show, which
-	// ForwardReach, taken over the family the SSH connection was made on, does
-	// not. A family that did not open, or whose address on the Host is not
-	// known here, reads "unknown". They carry no "not null" for the reason
-	// ServerBanner carries none, and an empty value reads as "unknown".
-	ForwardReachV4 string `json:"forward_reach_v4"`
-	ForwardReachV6 string `json:"forward_reach_v6"`
 	// ErrorKind names what sort of failure LastError is, for the one sort the
 	// screen has something to say about: "forward_denied" is the SSH server
 	// refusing to open the forwarded port, and an empty value is every other
@@ -280,7 +249,7 @@ type Tunnel struct {
 	// matched once, in the one place that makes the call, and what travels is
 	// this.
 	//
-	// Like ForwardReach it says what happened and not why. The server refuses
+	// It says what happened and not why. The server refuses
 	// without giving a reason, and the several settings that make it refuse
 	// look identical from here, so none of them may be reported as the cause.
 	ErrorKind string `json:"error_kind"`
@@ -303,7 +272,7 @@ type Tunnel struct {
 	// about how far it reaches, and it is reported the way every other failure
 	// is, on Status, LastError and ErrorKind.
 	//
-	// Like ForwardReach it says what happened and not why. A server that
+	// It says what happened and not why. A server that
 	// refuses the second request because it already bound both families on the
 	// first and one that has no IPv6 at all answer identically, so neither may
 	// be reported as the cause.

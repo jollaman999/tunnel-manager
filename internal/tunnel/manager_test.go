@@ -1720,10 +1720,6 @@ func TestStartTunnelWritesARowThatSaysNothingWasMeasured(t *testing.T) {
 		_ = m.StopTunnel(host.ID, sp.ID)
 	})
 
-	if created.ForwardReach != forwardReachUnknown {
-		t.Fatalf("the created row says forward reach %q, want %q, nothing has been measured yet",
-			created.ForwardReach, forwardReachUnknown)
-	}
 	if created.ServerBanner != "" {
 		t.Fatalf("the created row carries a banner %q before a handshake happened", created.ServerBanner)
 	}

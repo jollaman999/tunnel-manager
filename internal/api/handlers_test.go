@@ -3707,18 +3707,16 @@ func TestCreateHostStoresTheEnabledItWasGiven(t *testing.T) {
 	}
 }
 
-// TestGetStatusCarriesWhatWasMeasuredOfTheForwardedPort pins the two readings
-// on the tunnel rows of the status answer. A tunnel that says connected while
-// its forwarded port answers nobody is the case they are there for, and the
-// status screen reads them off this answer by these names.
-func TestGetStatusCarriesWhatWasMeasuredOfTheForwardedPort(t *testing.T) {
+// TestGetStatusCarriesTheBannerAndNoReach pins the tunnel rows of the status
+// answer: they carry what the SSH server called itself, which the status screen
+// reads off this answer, and no forward_reach, which is measured of a local
+// forward alone and read off the local forwards of its Host.
+func TestGetStatusCarriesTheBannerAndNoReach(t *testing.T) {
 	reachable := statusTunnel(1, 1, "connected")
 	reachable.ServerBanner = "SSH-2.0-OpenSSH_10.5p1 Ubuntu-1ubuntu2"
-	reachable.ForwardReach = "reachable"
 
 	unreachable := statusTunnel(1, 2, "connected")
 	unreachable.ServerBanner = "SSH-2.0-dropbear_2022.83"
-	unreachable.ForwardReach = "unreachable"
 
 	cipher := newTestCipher(t)
 	db := newRowsDB(t,
@@ -3749,10 +3747,10 @@ func TestGetStatusCarriesWhatWasMeasuredOfTheForwardedPort(t *testing.T) {
 	var resp struct {
 		Data struct {
 			Tunnels []struct {
-				HostID       uint   `json:"host_id"`
-				SPID         uint   `json:"sp_id"`
-				ServerBanner string `json:"server_banner"`
-				ForwardReach string `json:"forward_reach"`
+				HostID       uint    `json:"host_id"`
+				SPID         uint    `json:"sp_id"`
+				ServerBanner string  `json:"server_banner"`
+				ForwardReach *string `json:"forward_reach"`
 			} `json:"tunnels"`
 		} `json:"data"`
 	}
@@ -3779,9 +3777,8 @@ func TestGetStatusCarriesWhatWasMeasuredOfTheForwardedPort(t *testing.T) {
 				t.Fatalf("tunnel %d-%d carries the banner %q, want %q",
 					want.HostID, want.SPID, got.ServerBanner, want.ServerBanner)
 			}
-			if got.ForwardReach != want.ForwardReach {
-				t.Fatalf("tunnel %d-%d carries the reading %q, want %q",
-					want.HostID, want.SPID, got.ForwardReach, want.ForwardReach)
+			if got.ForwardReach != nil {
+				t.Fatalf("tunnel %d-%d carries forward_reach %q, want none", want.HostID, want.SPID, *got.ForwardReach)
 			}
 		}
 

@@ -40,6 +40,14 @@ type localForwardView struct {
 	LastError       string    `json:"last_error"`
 	RetryCount      int       `json:"retry_count"`
 	LastConnectedAt time.Time `json:"last_connected_at"`
+	// ForwardReach is whether the target answered a connection dialled from
+	// the Host over the connection the forward stands on: "reachable",
+	// "unreachable", or "unknown" where it has not been measured yet. It is
+	// here and on no other answer, because the local forwards of a Host are
+	// where it is read, and it is left out of a forward that is not running:
+	// the last reading of one that has since been switched off would read as
+	// a measurement of now.
+	ForwardReach string `json:"forward_reach,omitempty"`
 }
 
 // localForwardViewOf builds the view of one row. The scope goes out as a word
@@ -66,6 +74,7 @@ func localForwardViewOf(lf models.LocalForward, hostEnabled bool,
 		view.LastError = state.LastError
 		view.RetryCount = state.RetryCount
 		view.LastConnectedAt = state.LastConnectedAt
+		view.ForwardReach = state.ForwardReach
 	}
 
 	return view

@@ -305,10 +305,9 @@ somebody chose.
 Whether a listener on the Host really opens where it was asked for is up to the
 SSH server on the Host. When its `GatewayPorts` is off, the listeners are bound
 to the loopback addresses whatever was asked for, and when it is on they are
-bound to every interface even where the loopback scope was chosen. Once the
-tunnel is up, tunnel-manager tries the forwarded port itself and reports what it
-found, see
-[Whether the forwarded port can be reached](#whether-the-forwarded-port-can-be-reached).
+bound to every interface even where the loopback scope was chosen. What the
+server answered and what the Host has listening are on the status, see
+[Where the forwarded port is opened](#where-the-forwarded-port-is-opened).
 
 The monitoring interval and the reconcile interval are two different jobs. The
 monitor asks a tunnel that is already up whether it is still alive and reconnects
@@ -1259,7 +1258,7 @@ no directory travels next to it and no path has to be configured.
 
 | Screen | Path | What it shows and does |
 |--------|------|------------------------|
-| Status | `/ui/status` | Four counts, each over both sorts of forward together (desired, connected, reconnecting, errors), a sentence about the difference between them, and one line per row of either sort: Host, kind, service port, status, server, opened, reaches, port reached, retries, last connected. The service port of a local forward is a dash, and the opened and the reaches cells name the machine the address is on, since the two sorts open their port at opposite ends. The port reached cell is filled on both sorts and does not ask the same thing on them: on a tunnel it is the port opened on the Host, and on a local forward the target reached from the Host. A tunnel with something wrong carries what went wrong on a line under it, across the whole table, and a tunnel whose forwarded port was not reached carries there what to change on the SSH server it named and what else to check. A tunnel that is up carries under it what is known about the addresses of its forward, kept in three: what was asked for, what the SSH server answered, and what a connection from here confirmed. It never says a port is open. The rows come a page at a time, ten to a page to begin with, with the size and the page chosen above the table; the counts stay counts of the whole installation and not of the page. It asks again every 5 seconds and comes back on the page being read. A search box above the table narrows the rows, see [Searching](#searching). |
+| Status | `/ui/status` | Four counts, each over both sorts of forward together (desired, connected, reconnecting, errors), a sentence about the difference between them, and one line per row of either sort: Host, kind, service port, status, server, opened, reachable at, reaches, retries, last connected. The service port of a local forward is a dash. Opened is the address the port was opened on, and Reachable at is where a client connects to it, with a copy button on each address: the registered address of the Host with the port for a port opened on every interface, the address this page was loaded from for a local forward, and `127.0.0.1` and `[::1]` for a port opened on loopback, whose copy says that it works only on that machine. A tunnel with something wrong carries what went wrong on a line under it, across the whole table. A tunnel that is up carries under it what is known about the addresses of its forward where something differs from what was asked: what was asked for, what the SSH server answered, and what the Host has listening. It never says a port is open, and it does not try the port; whether the target of a local forward answers is on the local forwards of its Host. The rows come a page at a time, ten to a page to begin with, with the size and the page chosen above the table; the counts stay counts of the whole installation and not of the page. It asks again every 5 seconds and comes back on the page being read. A search box above the table narrows the rows, see [Searching](#searching). |
 | Hosts | `/ui/hosts` | One row per Host with ID, address, port, user, description, enabled, SOCKS5 proxy and updated. The rows come a page at a time, ten to a page to begin with, with the size (10, 20, 30, 50 or 100) and the page chosen above the table. The choice is remembered for this screen on its own, and a list short enough to fit a page of the smallest size carries no controls at all. Add a Host, edit one, enable or disable one, delete one. The add and edit forms have a box to paste a private key into, an area to drop the key file onto, and a box for the passphrase of a key that has one, and the add form has an **Assign all service ports** tick, on by default, that says what the Host starts out carrying, with a **Reach on the Host** list beside it that every assignment that tick makes starts on. **Service ports** in a row opens a panel of every service port with a tick against the ones this Host carries, and a reach beside each row: pick a reach above and apply it to everything ticked, or set one row on its own, and a row that was not ticked is left alone, with an **Enabled** box against each row that pauses the tunnel of that assignment without taking it away. Only what was changed is sent when it is saved, so a tick made there leaves the pages that were not read alone. **Local forwards** in a row opens a panel of the local forwards of that Host with the status of each, a page at a time, where they are added, changed, switched off and on, and deleted, one row at a time or the ticked rows together; see [Local forwards](#local-forwards). The add and edit forms also switch on the SOCKS5 proxy of the Host, and its column shows the port and the status; see [A SOCKS5 proxy on a Host](#a-socks5-proxy-on-a-host). |
 | Service Ports | `/ui/service-ports` | One row per service port with ID, service address, service port, local port, description and updated. The rows come a page at a time the same way the Hosts do, with a size and a page of their own. Add, edit and delete. The add form has an **Assign to all hosts** tick, on by default, that says which Hosts carry it from the start, with a **Reach on the Host** list beside it that the assignments that tick makes start on; which Hosts carry it after that, and what each of those assignments reaches, is changed from the Hosts screen. The Hosts and Service Ports screens each have a search box above the table, see [Searching](#searching). |
 | Logs | `/ui/logs` | The end of the log file, newest last, with a level filter and a count to show. It asks again every 5 seconds. It reads the file the process is writing now; rotated files are not shown. The lines are shown in the language of the screen while the file stays English; see [The language of the screens](#the-language-of-the-screens). |
@@ -2592,7 +2591,7 @@ curl -s -b cookies.txt -X POST "$BASE/api/host/1/local-forward" \
         "target_address": "db.example.com", "target_port": 5432, "description": "database",
         "enabled": true, "allowed_sources": "",
         "status": "connected", "last_error": "", "retry_count": 0,
-        "last_connected_at": "<when the connection was made>",
+        "last_connected_at": "<when the connection was made>", "forward_reach": "reachable",
         "created_at": "<...>", "updated_at": "<...>" }
     ],
     "total": 1,
@@ -2605,7 +2604,9 @@ curl -s -b cookies.txt -X POST "$BASE/api/host/1/local-forward" \
 That is what `GET /api/host/1/local-forward` answers afterwards: one page, in
 the shape every paged list is answered in, see [Paging](#paging). A create, a
 read and an update answer with one object like those in `items`. `bind_scope` in
-an answer is always `loopback` or `wildcard`, never empty.
+an answer is always `loopback` or `wildcard`, never empty. `forward_reach` is
+whether the target answered, and a forward that is not running leaves it out,
+see [Whether a local forward reaches its target](#whether-a-local-forward-reaches-its-target).
 
 **This list used to answer every row, with `data` the array of them.** It is
 paged now and `data` is the object above, so a client reading `data[0]` reads
@@ -2935,7 +2936,6 @@ curl -s -b cookies.txt https://127.0.0.1:8888/api/status
         "local": "0.0.0.0:8080",
         "remote": "198.51.100.20:18080",
         "server_banner": "SSH-2.0-OpenSSH_9.9",
-        "forward_reach": "reachable",
         "error_kind": "",
         "open_reach": "ipv4",
         "listen_addresses": "0.0.0.0,::",
@@ -2952,7 +2952,6 @@ curl -s -b cookies.txt https://127.0.0.1:8888/api/status
         "local": "127.0.0.1:15432",
         "remote": "198.51.100.30:80",
         "server_banner": "",
-        "forward_reach": "reachable",
         "error_kind": "",
         "open_reach": "",
         "listen_addresses": "",
@@ -2989,8 +2988,8 @@ which is what names it in
 [The local forwards of a Host](#the-local-forwards-of-a-host). A tunnel row
 carries no `number` at all: the field is left out of it rather than sent as
 zero, so `host_id` with `number` names a local forward row and `host_id` with
-`sp_id` names a tunnel. `forward_reach` is on both sorts and does not ask the
-same thing on them, which is
+`sp_id` names a tunnel. Whether the target of a local forward answers is not on
+this answer but on the local forwards of its Host, see
 [below](#whether-a-local-forward-reaches-its-target). `server_banner`,
 `error_kind`, `open_reach` and `listen_addresses` are filled on service port
 rows alone and stay empty on a local forward, which opens no port on the Host
@@ -3089,10 +3088,10 @@ they are in [Local forwards](#local-forwards).
 `error_kind` names what sort of failure `last_error` is, for the one sort there
 is somewhere to send you: `forward_denied` is the SSH server refusing to open
 the forwarded port. Every other failure, and every row that is not in error,
-leave it empty. Like `forward_reach` it says what happened and never why, since
+leave it empty. It says what happened and never why, since
 the several settings that make a server refuse look identical from here.
 
-### Whether the forwarded port can be reached
+### Where the forwarded port is opened
 
 A tunnel that says `connected` is one the SSH connection stands for. It does not
 mean the forwarded port can be reached: the listeners are opened by the **SSH
@@ -3121,113 +3120,44 @@ refusal is not a closed port either: a server that bound both families on the
 first request refuses the second, and so does a server with no IPv6 at all, and
 the two are the same answer seen from here.
 
-Four fields on every tunnel row say what is known about it.
+Three fields on every tunnel row say what is known about it.
 
 | Field | What it holds |
 |-------|---------------|
 | `server_banner` | What the SSH server called itself on the handshake, for example `SSH-2.0-OpenSSH_10.5p1 Ubuntu-1ubuntu2`. It is what says which server is in front of you, and what to change on it differs by server |
 | `open_reach` | Which of the two requests the SSH server said yes to: `both`, `ipv4` where it took the IPv4 address and refused the IPv6 one, `ipv6` the other way round, and empty where nothing has been measured yet. A connection on which it refused both is a tunnel that failed rather than one that reaches half, and it is reported on `status` and `last_error` like every other failure |
-| `forward_reach` | Whether tunnel-manager reached the forwarded port by opening a TCP connection to the Host at that port: `reachable`, `unreachable`, or `unknown` where nothing has been measured and where nothing can be |
-| `forward_reach_v4`, `forward_reach_v6` | The same reading for each address family on its own, in the same three words. `forward_reach` is taken over the family the SSH connection was made on; these two say whether the port answered over IPv4 and over IPv6. The other family is tried where its request went up and there is an address for it: the loopback address where the Host is this machine, and the first address of that family a Host registered by name resolves to. A Host registered by an address, and the loopback scope of a Host that is another machine, leave the other family `unknown`. The Status screen shows the two apart only where one answered and the other did not |
 | `listen_addresses` | The addresses the Host itself answered that the port is listening at, comma separated, for example `0.0.0.0,::`. It is asked over the same SSH connection once the forwards are open, and it is the only reading that survives a server ignoring the scope: a Host with `GatewayPorts yes` says no to the second request and still answers here with both families. **Empty means the question was not answered, never that nothing is listening.** An account with no shell, a Host with neither `ss` nor a `netstat` this program reads, and a connection on which nothing was asked yet all leave it empty |
 
-All four are taken once when the tunnel comes up and again on every reconnect,
-not
-on every status read: what decides them is the configuration of the SSH server,
-which does not change under a connection that stands.
+All three are taken once when the tunnel comes up and again on every reconnect,
+not on every status read: what decides them is the configuration of the SSH
+server, which does not change under a connection that stands.
 
-**The status screen keeps three things apart, and so should you.**
-
-| What is said | What it rests on |
-|--------------|------------------|
-| What was **asked for** | The two addresses of the scope on the assignment. This end chose them, so they are known |
-| What was **confirmed** | An address that answered a TCP connection opened from here, which is `forward_reach` reading `reachable`. It is the one piece of evidence this end holds |
-| What is **not known** | Everything else, `open_reach` included. A yes to a request is not a port that is up, and a no is not a port that is down |
-
-It never says a port is open. A port that answered a connection from here is
-open at the address that was dialled and that is all that can be said.
-
-> **`unreachable` says where the port was not reached from, not why.** A server
-> that bound the port to loopback alone and a firewall that drops the connection
-> on the way look exactly the same from here, and a connection that never
-> arrives cannot tell them apart. Check both before changing either.
-
-**An assignment on the `loopback` scope cannot be confirmed from here unless the
-Host is this machine, and that is not a fault.** Its ports are asked for on the addresses of the Host
-itself, which nothing outside that machine reaches, so no connection opened here
-could ever arrive however well the port is carrying traffic over there. The
-silence is written down as `unknown` rather than as `unreachable` for that
-reason: a tunnel doing exactly what was asked of it must not be drawn as one
-that failed. The same holds for an address family the server refused, and for
-the IPv6 half of any Host this installation knows by an IPv4 address, which is
-the only address of a Host it holds.
-
-**A Host that is this machine is the exception.** Where the address the SSH
-connection was made to is a loopback address or one held by an interface of this
-machine, the loopback addresses of the Host are this machine's too, so the probe
-dials `127.0.0.1` at the port, or `[::1]` where only the IPv6 request went up.
-There an answer is to be expected, and a silence is written down as
-`unreachable`: nothing stands between this program and that address, so what did
-not answer is the port itself.
+**tunnel-manager does not try the forwarded port itself.** A port the SSH server
+would not open is a tunnel in error, with `error_kind` `forward_denied`, and
+where the port was opened is what `listen_addresses` says. What was asked for is
+the scope of the assignment, and a yes or a no from the server to a request is
+not a port that is up or down, so the status screen never says a port is open.
 
 ### Whether a local forward reaches its target
 
-`forward_reach` is on a local forward row as well, and **the two sorts are not
-asking the same question**. A service port row asks whether the port the Host
-opened answers a connection from here. A local forward row asks whether the
-target answers a connection dialled **from the Host**, which is the thing every
-client of that forward asks the Host to do.
-
-| | A service port row | A local forward row |
-|---|--------------------|---------------------|
-| What is asked | Does the port opened on the Host answer a connection from here | Does the target answer a connection dialled from the Host |
-| Who dials | This process, from the machine it runs on, which is neither end of the forward | The Host, over the SSH connection that forward carries its traffic on |
-| What a silence is written down as | `unknown` where this end was in no position to see an answer, `unreachable` where it was | `unreachable` |
-
-**A local forward writes a silence down as `unreachable`, where a tunnel writes
-one down as `unknown`.** The reading is taken by asking the Host to dial the
-target over the connection the clients of that forward are carried on, so what
-comes back is what a client would be told a moment later, and there is nothing
-else a silence could mean. A tunnel is measured from a third place, this
-machine, which is neither end of the forward and cannot try every address the
-port may have been opened at, so a silence there may be this end not being in a
-position to see an answer. The two are kept apart for that reason.
-
-`connected` on a local forward says the SSH connection stands and the local port
-is open, and says nothing about the target. `forward_reach` is what answers for
-the target, and a row that is `connected` and `unreachable` is a forward that
-carries nothing: the port is open here and the Host closes every connection that
-arrives at it.
-
-```json
-{
-  "host_id": 2,
-  "status": "connected",
-  "last_error": "",
-  "retry_count": 0,
-  "last_connected_at": "2026-09-24T23:19:43.888989884+09:00",
-  "server": "192.0.2.11:2222",
-  "local": "127.0.0.1:15433",
-  "remote": "198.51.100.31:5432",
-  "server_banner": "",
-  "forward_reach": "unreachable",
-  "error_kind": "",
-  "open_reach": "",
-  "listen_addresses": "",
-  "kind": "local_forward",
-  "sp_id": null,
-  "number": 1
-}
-```
+A local forward is the one sort whose target is tried. `connected` on a local
+forward says the SSH connection stands and the local port is open, and says
+nothing about the target, so once it is up the Host is asked to dial the target
+over the connection the clients of that forward are carried on. What comes back
+is what a client would be told a moment later: `forward_reach` on the forward in
+`GET /api/host/:id/local-forward` reads `reachable` or `unreachable`, and the
+Local forwards panel of the Host shows it under Target reached. A forward that
+is `connected` and `unreachable` carries nothing: the port is open here and the
+Host closes every connection that arrives at it.
 
 The reading is taken once, when the forward connects, and again on every
-reconnect, the way a tunnel's is. A connection that stands puts it back to
-`unknown` until that connection has been measured, so `unknown` is a forward
-that has just connected and not one that was measured. A forward that dropped
-and is being tried again carries what its last connection measured until the
-next one stands. A row nothing is running for carries no reading at all: a
-forward switched off and one whose Host is disabled are empty here, rather than
-showing what they read while they were up.
+reconnect. A connection that stands puts it back to `unknown` until that
+connection has been measured, so `unknown` is a forward that has just connected
+and not one that was measured. A forward that dropped and is being tried again
+carries what its last connection measured until the next one stands. A forward
+nothing is running for carries no reading at all: one switched off and one
+whose Host is disabled leave `forward_reach` out, rather than showing what they
+read while they were up.
 
 `GET /api/status/:hostId` answers with `total_tunnels` and `connected_tunnels`
 over that Host, plus the Host itself. Both are over the tunnels of that Host and

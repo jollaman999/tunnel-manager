@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"strings"
 	"testing"
 
 	"github.com/jollaman999/tunnel-manager/internal/models"
@@ -206,12 +207,17 @@ func TestGetStatusCarriesBothSortsOfForward(t *testing.T) {
 			{"server", "192.0.2.1:22"},
 			{"local", "0.0.0.0:19000"},
 			{"remote", "198.51.100.20:3306"},
-			{"forward_reach", ""},
 		}
 		for _, address := range addresses {
 			if row[address.field] != address.want {
 				t.Errorf("the local forward row carries %s %v, want %q", address.field, row[address.field], address.want)
 			}
+		}
+
+		// Whether the target answers is on the local forwards of the Host,
+		// not on the status answer.
+		if reach, carried := row["forward_reach"]; carried {
+			t.Errorf("the local forward row carries forward_reach %v, want none", reach)
 		}
 
 		// Nothing runs over this database, so the forward reports what
@@ -570,9 +576,10 @@ func TestGetStatusCountsTheSortsUnderNoNamesOfTheirOwn(t *testing.T) {
 	}
 }
 
-// TestGetStatusCarriesWhatALocalForwardMeasured pins that the reading of the
-// probe reaches the row, and that a row nothing is running for carries none.
-func TestGetStatusCarriesWhatALocalForwardMeasured(t *testing.T) {
+// TestALocalForwardViewCarriesWhatItMeasured pins that the reading of the
+// probe reaches the local forwards of a Host, which is where it is read, and
+// that a forward nothing is running for carries none.
+func TestALocalForwardViewCarriesWhatItMeasured(t *testing.T) {
 	tests := []struct {
 		name   string
 		states map[tunnel.LocalForwardKey]tunnel.LocalForwardState
@@ -608,20 +615,20 @@ func TestGetStatusCarriesWhatALocalForwardMeasured(t *testing.T) {
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			db := newRowsDB(t, []models.Host{statusHost(1, true)}, nil, nil)
+			view := localForwardViewOf(statusLocalForward(1, 1, 19000, models.BindScopeWildcard, true), true, tc.states)
 
-			storeLocalForwards(t, db, []models.LocalForward{
-				statusLocalForward(1, 1, 19000, models.BindScopeWildcard, true),
-			})
-
-			rows, _ := statusRowsWithStates(t, db, "/api/status", tc.states)
-
-			if len(rows) != 1 {
-				t.Fatalf("the page carries %d rows, want 1: %v", len(rows), rows)
+			if view.ForwardReach != tc.want {
+				t.Errorf("the local forward carries forward_reach %q, want %q", view.ForwardReach, tc.want)
 			}
-			if rows[0]["forward_reach"] != tc.want {
-				t.Errorf("the local forward row carries forward_reach %v, want %q",
-					rows[0]["forward_reach"], tc.want)
+
+			encoded, err := json.Marshal(view)
+			if err != nil {
+				t.Fatalf("failed to serialize: %v", err)
+			}
+
+			carried := strings.Contains(string(encoded), `"forward_reach"`)
+			if carried != (tc.want != "") {
+				t.Errorf("forward_reach carried = %v in %s, want %v", carried, encoded, tc.want != "")
 			}
 		})
 	}
