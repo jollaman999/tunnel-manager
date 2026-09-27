@@ -53,7 +53,7 @@
                         "CSRFToken": []
                     }
                 ],
-                "description": "Takes current_password and username, new_password or both, changes them and signs out every other session.",
+                "description": "Takes current_password and username, new_password or both, changes them, signs out every other session and revokes every API token. The answer says how many of each in sessions_ended and tokens_revoked.",
                 "consumes": [
                     "application/json"
                 ],
@@ -2610,7 +2610,7 @@
                         "CSRFToken": []
                     }
                 ],
-                "description": "Takes name, scopes and expires_in_days, and answers with the token in data.token. Save it: it is not shown again.\nThe scopes are read, hosts, tunnels, host-keys, settings, transfer and operations. expires_in_days is 30, 90 or 365, or 0 for a token that never runs out, and is 90 when it is left out.\nSend the token as Authorization: Bearer \u003ctoken\u003e. A request that does needs no session and no X-CSRF-Token.\nOnly a session reaches this; a token does not.",
+                "description": "Takes name, scopes, expires_in_days and account_password, and answers with the token in data.token. Save it: it is not shown again.\nThe scopes are read, hosts, tunnels, host-keys, settings, transfer and operations. expires_in_days is 30, 90 or 365, or 0 for a token that never runs out, and is 90 when it is left out.\naccount_password is the password of the account, asked for again. An empty one is refused with 400, one that does not open the account with 401, and too many of those with 429, on the counters the login uses.\nSend the token as Authorization: Bearer \u003ctoken\u003e. A request that does needs no session and no X-CSRF-Token. A change of the username or the password of the account revokes every token.\nOnly a session reaches this; a token does not.",
                 "consumes": [
                     "application/json"
                 ],
@@ -2623,7 +2623,7 @@
                 "summary": "Make an API token",
                 "parameters": [
                     {
-                        "description": "The name, the scopes and how long the token lives",
+                        "description": "The name, the scopes, how long the token lives, and the password of the account",
                         "name": "body",
                         "in": "body",
                         "required": true,
@@ -2652,13 +2652,25 @@
                         }
                     },
                     "400": {
-                        "description": "The name, a scope or the lifetime is refused",
+                        "description": "The name, a scope or the lifetime is refused, or account_password is empty",
+                        "schema": {
+                            "$ref": "#/definitions/api.errorBody"
+                        }
+                    },
+                    "401": {
+                        "description": "account_password does not open this account",
                         "schema": {
                             "$ref": "#/definitions/api.errorBody"
                         }
                     },
                     "409": {
                         "description": "There is a token of that name already",
+                        "schema": {
+                            "$ref": "#/definitions/api.errorBody"
+                        }
+                    },
+                    "429": {
+                        "description": "Too many passwords that do not open this account were tried. Retry-After says when to try again",
                         "schema": {
                             "$ref": "#/definitions/api.errorBody"
                         }
@@ -2906,6 +2918,9 @@
                 "sessions_ended": {
                     "type": "integer"
                 },
+                "tokens_revoked": {
+                    "type": "integer"
+                },
                 "username": {
                     "type": "string"
                 },
@@ -3125,6 +3140,8 @@
                 "auth.token.scope_missing",
                 "token.read_failed",
                 "token.request.invalid",
+                "token.account_password.required",
+                "token.account_password.wrong",
                 "token.name.empty",
                 "token.name.too_long",
                 "token.name.taken",
@@ -3320,6 +3337,8 @@
                 "errAuthTokenScopeMissing",
                 "errTokenReadFailed",
                 "errTokenRequestInvalid",
+                "errTokenAccountPasswordRequired",
+                "errTokenAccountPasswordWrong",
                 "errTokenNameEmpty",
                 "errTokenNameTooLong",
                 "errTokenNameTaken",
@@ -4282,6 +4301,9 @@
         "api.tokenRequest": {
             "type": "object",
             "properties": {
+                "account_password": {
+                    "type": "string"
+                },
                 "expires_in_days": {
                     "type": "integer"
                 },

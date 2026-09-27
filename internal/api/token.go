@@ -438,10 +438,16 @@ type tokenCreated struct {
 // out. It is a pointer so that a request that leaves it out gets the default
 // rather than a token that lives forever: 0 is the one value that has to be
 // asked for.
+//
+// AccountPassword is the password of the account, asked for again. A token
+// opens what its scopes open with no password in front of it, for as long as
+// it lives, so a session left open on a screen is not to be all it takes to
+// hand one out.
 type tokenRequest struct {
-	Name          string   `json:"name"`
-	Scopes        []string `json:"scopes"`
-	ExpiresInDays *int     `json:"expires_in_days"`
+	Name            string   `json:"name"`
+	Scopes          []string `json:"scopes"`
+	ExpiresInDays   *int     `json:"expires_in_days"`
+	AccountPassword string   `json:"account_password"`
 }
 
 // viewOfToken is the stored row as it is listed.
@@ -489,18 +495,21 @@ func (h *AuthHandler) ListTokens(c echo.Context) error {
 // token is ever in: what is stored is its hash.
 //
 // @Summary      Make an API token
-// @Description  Takes name, scopes and expires_in_days, and answers with the token in data.token. Save it: it is not shown again.
+// @Description  Takes name, scopes, expires_in_days and account_password, and answers with the token in data.token. Save it: it is not shown again.
 // @Description  The scopes are read, hosts, tunnels, host-keys, settings, transfer and operations. expires_in_days is 30, 90 or 365, or 0 for a token that never runs out, and is 90 when it is left out.
-// @Description  Send the token as Authorization: Bearer <token>. A request that does needs no session and no X-CSRF-Token.
+// @Description  account_password is the password of the account, asked for again. An empty one is refused with 400, one that does not open the account with 401, and too many of those with 429, on the counters the login uses.
+// @Description  Send the token as Authorization: Bearer <token>. A request that does needs no session and no X-CSRF-Token. A change of the username or the password of the account revokes every token.
 // @Description  Only a session reaches this; a token does not.
 // @Tags         account
 // @Accept   json
 // @Produce  json
 // @Security  CSRFToken
-// @Param   body  body  api.tokenRequest  true  "The name, the scopes and how long the token lives"
+// @Param   body  body  api.tokenRequest  true  "The name, the scopes, how long the token lives, and the password of the account"
 // @Success  201  {object}  models.Response{data=api.tokenCreated}
-// @Failure  400  {object}  api.errorBody  "The name, a scope or the lifetime is refused"
+// @Failure  400  {object}  api.errorBody  "The name, a scope or the lifetime is refused, or account_password is empty"
+// @Failure  401  {object}  api.errorBody  "account_password does not open this account"
 // @Failure  409  {object}  api.errorBody  "There is a token of that name already"
+// @Failure  429  {object}  api.errorBody  "Too many passwords that do not open this account were tried. Retry-After says when to try again"
 // @Router       /token [post]
 func (h *AuthHandler) CreateToken(c echo.Context) error {
 	var req tokenRequest
@@ -508,6 +517,27 @@ func (h *AuthHandler) CreateToken(c echo.Context) error {
 	err := c.Bind(&req)
 	if err != nil {
 		return failure(c, http.StatusBadRequest, errTokenRequestInvalid)
+	}
+
+	// The password is checked before anything else of the request is looked
+	// at, the way the exports check it, and before the transaction below is
+	// opened: accountPasswordRefused reads through the handle and would wait
+	// behind the one connection a transaction holds. An empty box is refused
+	// ahead of the check, so that a press with nothing typed is not counted
+	// as a guess.
+	if req.AccountPassword == "" {
+		return failure(c, http.StatusBadRequest, errTokenAccountPasswordRequired)
+	}
+
+	refused := accountPasswordRefused(c, h.db, h.logger, req.AccountPassword, errTokenAccountPasswordWrong)
+	if refused != nil {
+		if refused.code == errTokenAccountPasswordWrong {
+			h.logger.Warn("an API token was asked for with a password that does not open the account. "+
+				"No token was made",
+				logid.TokenCreateAccountPasswordWrong.Field())
+		}
+
+		return refused.answer(c)
 	}
 
 	name := strings.TrimSpace(req.Name)

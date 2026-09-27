@@ -12,7 +12,7 @@ import (
 	"time"
 
 	"github.com/glebarez/sqlite"
-	"github.com/jollaman999/tunnel-manager/internal/auth"
+	"github.com/jollaman999/tunnel-manager/internal/logid"
 	"github.com/jollaman999/tunnel-manager/internal/models"
 	"github.com/labstack/echo/v4"
 	"go.uber.org/zap"
@@ -82,12 +82,14 @@ func newTokenFixture(t *testing.T) *tokenFixture {
 		t.Fatalf("failed to migrate the database: %v", err)
 	}
 
-	hash, err := auth.HashPassword(testPassword)
+	// The hash is made at the lowest cost for the reason transferAccountHash
+	// gives: every creation compares the account password against it now.
+	hash, err := transferAccountHash()
 	if err != nil {
 		t.Fatalf("failed to hash the password: %v", err)
 	}
 
-	err = db.Create(&models.User{Username: testUsername, PasswordHash: hash}).Error
+	err = db.Create(&models.User{Username: testUsername, PasswordHash: string(hash)}).Error
 	if err != nil {
 		t.Fatalf("failed to write the account: %v", err)
 	}
@@ -155,12 +157,39 @@ func (f *tokenFixture) signIn(t *testing.T) []*http.Cookie {
 	return csrfLoginCookies(t, f.e, loginBody(t, testUsername, testPassword))
 }
 
+// withAccountPassword adds the password of the account to a creation body
+// that does not carry one, so that the tests of what a token is made with are
+// not all tests of the password as well.
+func withAccountPassword(t *testing.T, body string) string {
+	t.Helper()
+
+	var fields map[string]interface{}
+
+	err := json.Unmarshal([]byte(body), &fields)
+	if err != nil {
+		t.Fatalf("failed to read the creation body %q: %v", body, err)
+	}
+
+	_, sent := fields["account_password"]
+	if !sent {
+		fields["account_password"] = testPassword
+	}
+
+	out, err := json.Marshal(fields)
+	if err != nil {
+		t.Fatalf("failed to build the creation body: %v", err)
+	}
+
+	return string(out)
+}
+
 // create makes a token with the session given and returns what the answer
-// carried.
+// carried. The password of the account is added to the body when it does not
+// carry one.
 func (f *tokenFixture) create(t *testing.T, cookies []*http.Cookie, body string) tokenCreated {
 	t.Helper()
 
-	rec := do(f.e, http.MethodPost, tokenListPath, body, cookies...)
+	rec := do(f.e, http.MethodPost, tokenListPath, withAccountPassword(t, body), cookies...)
 	if rec.Code != http.StatusCreated {
 		t.Fatalf("the creation answered %d, want 201: %s", rec.Code, rec.Body.String())
 	}
@@ -308,7 +337,12 @@ func TestTheCreationRefusesWhatItCannotStore(t *testing.T) {
 		{`{"name":"taken","scopes":["read"]}`, http.StatusConflict, errTokenNameTaken},
 		{`not json`, http.StatusBadRequest, errTokenRequestInvalid},
 	} {
-		rec := do(f.e, http.MethodPost, tokenListPath, tc.body, cookies...)
+		body := tc.body
+		if tc.want != errTokenRequestInvalid {
+			body = withAccountPassword(t, body)
+		}
+
+		rec := do(f.e, http.MethodPost, tokenListPath, body, cookies...)
 		if rec.Code != tc.code || decodeTokenAnswer(t, rec).ErrorCode != string(tc.want) {
 			t.Errorf("%s answered %d %s, want %d %s", tc.body, rec.Code, rec.Body.String(), tc.code, tc.want)
 		}
@@ -712,21 +746,159 @@ func TestAChangeWithATokenIsLoggedUnderItsName(t *testing.T) {
 	}
 }
 
-// TestAPasswordChangeLeavesTheTokensAlone covers the decision that the tokens
-// outlive a change of the account password, which ends every other session.
-func TestAPasswordChangeLeavesTheTokensAlone(t *testing.T) {
+// TestTheCreationAsksForTheAccountPassword covers the password a token is made
+// with. A token opens what its scopes open with no password in front of it, so
+// a session left open is not to be all it takes to hand one out.
+func TestTheCreationAsksForTheAccountPassword(t *testing.T) {
 	f := newTokenFixture(t)
 	cookies := f.signIn(t)
-	created := f.create(t, cookies, `{"name":"monitoring","scopes":["read"]}`)
 
-	rec := do(f.e, http.MethodPut, "/api/account", accountBody(t, testPassword, "", testNewPassword), cookies...)
-	if rec.Code != http.StatusOK {
-		t.Fatalf("the password change answered %d: %s", rec.Code, rec.Body.String())
+	for _, tc := range []struct {
+		name string
+		body string
+		code int
+		want errorCode
+	}{
+		{"left out", `{"name":"a","scopes":["read"]}`, http.StatusBadRequest, errTokenAccountPasswordRequired},
+		{"empty", `{"name":"a","scopes":["read"],"account_password":""}`, // hook:allow
+			http.StatusBadRequest, errTokenAccountPasswordRequired},
+		{"wrong", `{"name":"a","scopes":["read"],"account_password":"not the password"}`, // hook:allow
+			http.StatusUnauthorized, errTokenAccountPasswordWrong},
+	} {
+		rec := do(f.e, http.MethodPost, tokenListPath, tc.body, cookies...)
+		if rec.Code != tc.code || decodeTokenAnswer(t, rec).ErrorCode != string(tc.want) {
+			t.Errorf("%s: answered %d %s, want %d %s", tc.name, rec.Code, rec.Body.String(), tc.code, tc.want)
+		}
 	}
 
-	rec = f.withBearer(http.MethodGet, tokenReadPath, "", created.Token, "")
-	if rec.Code != http.StatusOK {
-		t.Fatalf("the token answered %d after the password change, want 200", rec.Code)
+	if views := f.list(t, cookies); len(views) != 0 {
+		t.Fatalf("the refused creations left the tokens %+v", views)
+	}
+
+	wrong := f.logs.FilterField(logid.TokenCreateAccountPasswordWrong.Field()).All()
+	if len(wrong) != 1 || wrong[0].Level != zap.WarnLevel {
+		t.Fatalf("the wrong password was logged %d times, want once as a warning: %v", len(wrong), wrong)
+	}
+
+	for _, line := range f.logs.All() {
+		for _, value := range line.ContextMap() {
+			text, ok := value.(string)
+			if ok && strings.Contains(text, "not the password") {
+				t.Fatalf("the line %q carries the password that was typed", line.Message)
+			}
+		}
+	}
+
+	rec := do(f.e, http.MethodPost, tokenListPath,
+		`{"name":"a","scopes":["read"],"account_password":"`+testPassword+`"}`, cookies...) // hook:allow
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("the right password answered %d, want 201: %s", rec.Code, rec.Body.String())
+	}
+
+	if views := f.list(t, cookies); len(views) != 1 {
+		t.Fatalf("the list after the creation is %+v, want one token", views)
+	}
+}
+
+// changeAccountAnswer is what a change of the account answers with, as a
+// client reads it.
+type changeAccountAnswer struct {
+	SessionsEnded int `json:"sessions_ended"`
+	TokensRevoked int `json:"tokens_revoked"`
+}
+
+// TestACredentialsChangeRevokesEveryToken covers the decision that a change of
+// either credential takes every token with it, the one that never runs out
+// included, the way it takes every other session.
+func TestACredentialsChangeRevokesEveryToken(t *testing.T) {
+	for _, tc := range []struct {
+		name        string
+		username    string
+		newPassword string
+	}{
+		{"the password", "", testNewPassword},
+		{"the username", "someone-else", ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f := newTokenFixture(t)
+			cookies := f.signIn(t)
+			monitoring := f.create(t, cookies, `{"name":"monitoring","scopes":["read"]}`)
+			forever := f.create(t, cookies, `{"name":"forever","scopes":["read"],"expires_in_days":0}`)
+
+			rec := do(f.e, http.MethodPut, "/api/account",
+				accountBody(t, testPassword, tc.username, tc.newPassword), cookies...)
+			if rec.Code != http.StatusOK {
+				t.Fatalf("the change answered %d: %s", rec.Code, rec.Body.String())
+			}
+
+			var changed changeAccountAnswer
+
+			err := json.Unmarshal(decodeTokenAnswer(t, rec).Data, &changed)
+			if err != nil {
+				t.Fatalf("failed to read the answer: %v", err)
+			}
+
+			if changed.TokensRevoked != 2 {
+				t.Errorf("the answer says %d tokens were revoked, want 2: %s", changed.TokensRevoked, rec.Body.String())
+			}
+
+			if views := f.list(t, cookies); len(views) != 0 {
+				t.Errorf("the list after the change is %+v, want none", views)
+			}
+
+			for _, token := range []string{monitoring.Token, forever.Token} {
+				rec = f.withBearer(http.MethodGet, tokenReadPath, "", token, "")
+				if rec.Code != http.StatusUnauthorized || decodeTokenAnswer(t, rec).ErrorCode != string(errAuthTokenInvalid) {
+					t.Errorf("a token made before the change answered %d %s, want 401 %s",
+						rec.Code, rec.Body.String(), errAuthTokenInvalid)
+				}
+			}
+
+			lines := f.logs.FilterField(logid.AccountCredentialsChanged.Field()).All()
+			if len(lines) != 1 || lines[0].ContextMap()["tokens_revoked"] != int64(2) {
+				t.Fatalf("the change was logged as %v, want one line with tokens_revoked 2", lines)
+			}
+		})
+	}
+}
+
+// TestARefusedChangeLeavesTheTokens covers the other side of it: a change that
+// did not store anything revokes nothing, whether it was refused for the
+// password or for asking for what the account already has.
+func TestARefusedChangeLeavesTheTokens(t *testing.T) {
+	for _, tc := range []struct {
+		name        string
+		current     string
+		username    string
+		newPassword string
+		code        int
+		want        errorCode
+	}{
+		{"the same username", testPassword, testUsername, "", http.StatusBadRequest, errAccountUsernameUnchanged},
+		{"the same password", testPassword, "", testPassword, http.StatusBadRequest, errAccountPasswordUnchanged},
+		{"a wrong password", "not the password", "someone-else", "", // hook:allow
+			http.StatusUnauthorized, errAccountPasswordWrong},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f := newTokenFixture(t)
+			cookies := f.signIn(t)
+			created := f.create(t, cookies, `{"name":"monitoring","scopes":["read"]}`)
+
+			rec := do(f.e, http.MethodPut, "/api/account",
+				accountBody(t, tc.current, tc.username, tc.newPassword), cookies...)
+			if rec.Code != tc.code || decodeTokenAnswer(t, rec).ErrorCode != string(tc.want) {
+				t.Fatalf("the change answered %d %s, want %d %s", rec.Code, rec.Body.String(), tc.code, tc.want)
+			}
+
+			if views := f.list(t, cookies); len(views) != 1 {
+				t.Errorf("the list after the refusal is %+v, want the one token", views)
+			}
+
+			rec = f.withBearer(http.MethodGet, tokenReadPath, "", created.Token, "")
+			if rec.Code != http.StatusOK {
+				t.Errorf("the token answered %d after the refusal, want 200", rec.Code)
+			}
+		})
 	}
 }
 

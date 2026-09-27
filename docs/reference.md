@@ -1199,15 +1199,25 @@ setup holds it to.
 account included. That is what tells a change apart from a session left open on
 an unattended screen, and it is the same reason the setup cannot be run twice.
 
-**Every other session is signed out, this one excepted.** It happens whichever of
-the two was changed, the rename included: sessions point at the account rather
-than at its name, so a rename that left them alone would change what you sign in
-with and leave whoever is already signed in exactly where they were. Half the
-reason to change credentials is that somebody else may know them, so the rule is
-one rule: the credentials changed, therefore every session but the one that
-changed them is gone. The session that made the change keeps working, including
-the CSRF token it already holds, so the screen that asked for it can show what
-happened. The answer says how many other clients were signed out.
+**Every other session is signed out, this one excepted, and every API token is
+revoked.** It happens whichever of the two was changed, the rename included:
+sessions point at the account rather than at its name, so a rename that left them
+alone would change what you sign in with and leave whoever is already signed in
+exactly where they were. Half the reason to change credentials is that somebody
+else may know them, and whoever knew them could have made a token as well, so the
+rule is one rule: the credentials changed, therefore every session but the one
+that changed them is gone, and so is every token, the ones that never run out
+included. The session that made the change keeps working, including the CSRF
+token it already holds, so the screen that asked for it can show what happened.
+The answer says how many other clients were signed out in `sessions_ended` and
+how many tokens were revoked in `tokens_revoked`.
+
+**A script that uses a token stops working when the credentials change.** Its next
+request is answered `401`, the way a revoked token is, until it is given a token
+made after the change. The account row and the tokens are written together: a
+change that fails to store revokes nothing, and a change that is refused, for a
+wrong current password or for a value the account already has, leaves every token
+as it was.
 
 A wrong current password answers `401` and changes nothing. The screen asks for
 the new password twice; the second copy never leaves the browser, because a
@@ -1226,7 +1236,8 @@ curl -s -b cookies.txt -X PUT "$BASE/api/account" \
     "username": "operator",
     "username_changed": true,
     "password_changed": false,
-    "sessions_ended": 1
+    "sessions_ended": 1,
+    "tokens_revoked": 2
   }
 }
 ```
@@ -1958,9 +1969,11 @@ No scope opens `GET` and `PUT /api/account`, `/api/token`, `POST /api/setup` or
 token or turn itself into a session. The calls that ask for the account password again,
 the uninstall among them, still ask for it with a token.
 
-A token lives 30, 90 or 365 days, or never runs out; 90 is the default. Changing
-the account password does not revoke the tokens. A change made with a token is
-logged under its name.
+A token lives 30, 90 or 365 days, or never runs out; 90 is the default. **Changing
+the username or the password of the account revokes every token**, see
+[Changing the username and the password](#changing-the-username-and-the-password),
+so a script needs a new token after either. A change made with a token is logged
+under its name.
 
 ```bash
 TOKEN=tm_...
@@ -1976,7 +1989,20 @@ curl -s -X POST "$BASE/api/host" \
 ```
 
 The tokens are made, listed and revoked with `POST`, `GET` and
-`DELETE /api/token` as well, by a session.
+`DELETE /api/token` as well, by a session. `POST /api/token` takes `name`,
+`scopes`, `expires_in_days` and `account_password`, the password of the account
+asked for again: a token opens what its scopes open with no password in front of
+it for as long as it lives, so an open session alone is not enough to make one.
+An empty `account_password` is refused with `400`, one that does not open the
+account with `401`, and too many of those with `429`, the same counters the login
+uses.
+
+```bash
+curl -s -b cookies.txt -X POST "$BASE/api/token" \
+  -H "X-CSRF-Token: $CSRF" -H 'Content-Type: application/json' \
+  -d '{"name":"monitoring","scopes":["read"],"expires_in_days":90,"account_password":"<the password of your account>"}' |
+jq -r '.data.token'
+```
 
 | Answer | What it means |
 |--------|---------------|
@@ -2204,7 +2230,7 @@ curl -s -b cookies.txt "$BASE/api/host?q=example&page=1&size=20"
 | `GET` | `/api/setup` | Says whether the account still needs its username and password. Answers without a session, for the login screen |
 | `POST` | `/api/setup` | Sets the username and the password once, on the account that still needs them |
 | `GET` | `/api/account` | What the account is called |
-| `PUT` | `/api/account` | Takes `current_password` and `username`, `new_password` or both, changes them and signs out every other session |
+| `PUT` | `/api/account` | Takes `current_password` and `username`, `new_password` or both, changes them, signs out every other session and revokes every API token |
 
 ### Hosts
 

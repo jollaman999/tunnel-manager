@@ -68,7 +68,7 @@ func newAccountFixture(t *testing.T) *accountFixture {
 		}
 	})
 
-	err = db.AutoMigrate(&models.User{})
+	err = db.AutoMigrate(&models.User{}, &models.APIToken{})
 	if err != nil {
 		t.Fatalf("failed to migrate the database: %v", err)
 	}
@@ -388,6 +388,35 @@ func TestAccountChangeEndsEveryOtherSession(t *testing.T) {
 					resp.Data.PasswordChanged, tt.newPassword != "")
 			}
 		})
+	}
+}
+
+// TestAccountChangeThatCannotRevokeTheTokensChangesNothing covers the change
+// whose revocation of the API tokens fails. The row and the tokens are written
+// together, so the answer is a failure to store, the name is the one it was,
+// and no other session was ended for a change that did not happen.
+func TestAccountChangeThatCannotRevokeTheTokensChangesNothing(t *testing.T) {
+	f := newAccountFixture(t)
+
+	mine := f.signIn(t, testUsername, testPassword)
+	other := f.signIn(t, testUsername, testPassword)
+
+	err := f.db.Migrator().DropTable(&models.APIToken{})
+	if err != nil {
+		t.Fatalf("failed to drop the table of the tokens: %v", err)
+	}
+
+	rec := f.changeAccount(t, mine, testPassword, accountNewUsername, "")
+	if rec.Code != http.StatusInternalServerError || !strings.Contains(rec.Body.String(), string(errAccountStoreFailed)) {
+		t.Fatalf("the change answered %d %s, want 500 %s", rec.Code, rec.Body.String(), errAccountStoreFailed)
+	}
+
+	if name := f.storedUsername(t); name != testUsername {
+		t.Errorf("the account is called %q, want %q as it was", name, testUsername)
+	}
+
+	if code := f.reachable(other); code != http.StatusOK {
+		t.Errorf("the other session: status = %d, want %d", code, http.StatusOK)
 	}
 }
 

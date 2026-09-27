@@ -8039,6 +8039,16 @@ function accountOutcome(data) {
       { count: ended }));
   }
 
+  // The tokens are said only when there were some. A line about tokens on an
+  // installation that never made one would be about a thing the operator has
+  // not met.
+  const revoked = data.tokens_revoked;
+
+  if (revoked !== null && revoked !== undefined && revoked !== 0) {
+    said.push(t(plural(revoked, "account.tokens-revoked-one.notice", "account.tokens-revoked-many.notice"),
+      { count: revoked }));
+  }
+
   return said.join(" ");
 }
 
@@ -8229,6 +8239,13 @@ async function openTokenCreatePanel() {
 
   scopes.appendChild(element("small", t("tokens.scopes.hint")));
 
+  // The password of the account is asked for again, for the reason the
+  // exports ask for it: a token opens what its scopes open with no password
+  // in front of it, and a session left open on a screen is not to be all it
+  // takes to hand one out.
+  const password = accountPasswordField("token-account-password",
+    t("tokens.account-password.label"), t("tokens.account-password.hint"));
+
   let created = null;
 
   await openModal({
@@ -8239,14 +8256,15 @@ async function openTokenCreatePanel() {
       problem,
       nameRow,
       expiryRow,
-      scopes
+      scopes,
+      password.row
     ],
     buttons: [
       {
         label: t("tokens.create-confirm.button"),
         name: "create",
         press: function (node, close) {
-          return sendTokenCreate(name, expiry, boxes, node, close, problem, function (data) {
+          return sendTokenCreate(name, expiry, boxes, password, node, close, problem, function (data) {
             created = data;
           });
         }
@@ -8271,7 +8289,7 @@ async function openTokenCreatePanel() {
 // sendTokenCreate is the press at the bottom of that panel. A refusal is shown
 // inside the panel and the panel stays up with what was entered, the way the
 // panel that empties the log does it.
-async function sendTokenCreate(name, expiry, boxes, button, close, problem, done) {
+async function sendTokenCreate(name, expiry, boxes, password, button, close, problem, done) {
   const scopes = boxes.filter(function (box) {
     return box.checked;
   }).map(function (box) {
@@ -8293,6 +8311,16 @@ async function sendTokenCreate(name, expiry, boxes, button, close, problem, done
     return;
   }
 
+  // An empty box is answered here rather than by a round trip, the way the
+  // panel that empties the log answers it.
+  if (password.input.value === "") {
+    password.input.classList.add("bad");
+    showPanelProblem(problem, t("tokens.account-password.error"));
+
+    return;
+  }
+
+  password.input.classList.remove("bad");
   problem.hidden = true;
   button.disabled = true;
 
@@ -8302,7 +8330,8 @@ async function sendTokenCreate(name, expiry, boxes, button, close, problem, done
     data = await apiCall("POST", apiTokenPath, {
       name: name.value.trim(),
       scopes: scopes,
-      expires_in_days: Number(expiry.value)
+      expires_in_days: Number(expiry.value),
+      account_password: password.input.value
     });
   } catch (error) {
     if (error instanceof Redirected) {

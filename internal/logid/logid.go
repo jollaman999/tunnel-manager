@@ -221,6 +221,7 @@ const (
 	AccountChangePasswordWrong             ID = "account.change_password_wrong"
 	AccountStoreFailed                     ID = "account.store_failed"
 	AccountCredentialsChanged              ID = "account.credentials_changed"
+	AccountTokensRevokeFailed              ID = "account.tokens_revoke_failed"
 )
 
 // token: the API tokens a script sends in place of a session.
@@ -232,6 +233,10 @@ const (
 	TokenCreateFailed        ID = "token.create_failed"
 	TokenRevoked             ID = "token.revoked"
 	TokenRevokeFailed        ID = "token.revoke_failed"
+	// A token asked for with a password that does not open the account. What
+	// it would have handed out opens its scopes with no password in front of
+	// it, so the attempt is written down.
+	TokenCreateAccountPasswordWrong ID = "token.create_account_password_wrong"
 )
 
 // settings: the stored settings, read as the process comes up and changed on the Settings screen.

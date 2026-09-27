@@ -98,18 +98,20 @@ const (
 	errAuthTokenRouteRefused       errorCode = "auth.token.route_refused"
 	errAuthTokenScopeMissing       errorCode = "auth.token.scope_missing"
 
-	errTokenReadFailed        errorCode = "token.read_failed"
-	errTokenRequestInvalid    errorCode = "token.request.invalid"
-	errTokenNameEmpty         errorCode = "token.name.empty"
-	errTokenNameTooLong       errorCode = "token.name.too_long"
-	errTokenNameTaken         errorCode = "token.name.taken"
-	errTokenScopesEmpty       errorCode = "token.scopes.empty"
-	errTokenScopeUnknown      errorCode = "token.scope.unknown"
-	errTokenExpiryUnsupported errorCode = "token.expiry.unsupported"
-	errTokenCreateFailed      errorCode = "token.create_failed"
-	errTokenIDInvalid         errorCode = "token.id.invalid"
-	errTokenNotFound          errorCode = "token.not_found"
-	errTokenDeleteFailed      errorCode = "token.delete_failed"
+	errTokenReadFailed              errorCode = "token.read_failed"
+	errTokenRequestInvalid          errorCode = "token.request.invalid"
+	errTokenAccountPasswordRequired errorCode = "token.account_password.required"
+	errTokenAccountPasswordWrong    errorCode = "token.account_password.wrong"
+	errTokenNameEmpty               errorCode = "token.name.empty"
+	errTokenNameTooLong             errorCode = "token.name.too_long"
+	errTokenNameTaken               errorCode = "token.name.taken"
+	errTokenScopesEmpty             errorCode = "token.scopes.empty"
+	errTokenScopeUnknown            errorCode = "token.scope.unknown"
+	errTokenExpiryUnsupported       errorCode = "token.expiry.unsupported"
+	errTokenCreateFailed            errorCode = "token.create_failed"
+	errTokenIDInvalid               errorCode = "token.id.invalid"
+	errTokenNotFound                errorCode = "token.not_found"
+	errTokenDeleteFailed            errorCode = "token.delete_failed"
 
 	errAccountReadFailed        errorCode = "account.read_failed"
 	errAccountStoreFailed       errorCode = "account.store_failed"
@@ -364,18 +366,20 @@ var errorMessages = map[errorCode]string{
 	errAuthTokenScopeMissing: "The API token was not made with the {scope} scope, which {method} {path} needs",
 
 	// The API tokens themselves, as the Settings screen makes and revokes them.
-	errTokenReadFailed:        "Failed to read the API tokens",
-	errTokenRequestInvalid:    "Invalid request body. Send a JSON object with name, scopes and expires_in_days",
-	errTokenNameEmpty:         "Name the token",
-	errTokenNameTooLong:       "The name of a token must be at most {max} characters long",
-	errTokenNameTaken:         "There is a token named {name} already",
-	errTokenScopesEmpty:       "Give the token at least one scope",
-	errTokenScopeUnknown:      "{scope} is not a scope. Use one of {scopes}",
-	errTokenExpiryUnsupported: "expires_in_days must be one of {days}, and not {value}",
-	errTokenCreateFailed:      "Failed to create the API token",
-	errTokenIDInvalid:         "Invalid token ID: {reason}",
-	errTokenNotFound:          "API token not found",
-	errTokenDeleteFailed:      "Failed to revoke the API token",
+	errTokenReadFailed:              "Failed to read the API tokens",
+	errTokenRequestInvalid:          "Invalid request body. Send a JSON object with name, scopes and expires_in_days",
+	errTokenAccountPasswordRequired: "Enter the password of your account to make a token. A token opens what its scopes open without a password",
+	errTokenAccountPasswordWrong:    "That is not the password of this account. No token was made",
+	errTokenNameEmpty:               "Name the token",
+	errTokenNameTooLong:             "The name of a token must be at most {max} characters long",
+	errTokenNameTaken:               "There is a token named {name} already",
+	errTokenScopesEmpty:             "Give the token at least one scope",
+	errTokenScopeUnknown:            "{scope} is not a scope. Use one of {scopes}",
+	errTokenExpiryUnsupported:       "expires_in_days must be one of {days}, and not {value}",
+	errTokenCreateFailed:            "Failed to create the API token",
+	errTokenIDInvalid:               "Invalid token ID: {reason}",
+	errTokenNotFound:                "API token not found",
+	errTokenDeleteFailed:            "Failed to revoke the API token",
 
 	// The one account this API is served behind.
 	errAccountReadFailed:        "Failed to read the account",

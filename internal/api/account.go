@@ -66,11 +66,15 @@ type accountView struct {
 // Every other session is gone, on this browser and on any other, and a screen
 // that did not say so would leave them to find out at the next device they pick
 // up.
+//
+// TokensRevoked is the same for the scripts: every API token is gone with the
+// change, and a script that holds one is refused from its next request on.
 type accountChanged struct {
 	Username        string `json:"username"`
 	UsernameChanged bool   `json:"username_changed"`
 	PasswordChanged bool   `json:"password_changed"`
 	SessionsEnded   int    `json:"sessions_ended"`
+	TokensRevoked   int    `json:"tokens_revoked"`
 }
 
 // GetAccount answers with what the account is called now.
@@ -108,17 +112,17 @@ func (h *AuthHandler) GetAccount(c echo.Context) error {
 	})
 }
 
-// ChangeAccount replaces the username, the password or both, and ends every
-// session but the one that asked for it.
+// ChangeAccount replaces the username, the password or both, ends every
+// session but the one that asked for it, and revokes every API token.
 //
 // The order is what this is made of. Nothing about the account is read before
 // the shape of the request has been looked at, nothing the account holds is
 // compared against before the current password has been proved, and no session
-// is dropped before the row has been written: a change that failed to store
-// must not be one that logged everybody out.
+// is dropped nor token revoked before the row has been written: a change that
+// failed to store must not be one that logged everybody out.
 //
 // @Summary      Change the username, the password or both
-// @Description  Takes current_password and username, new_password or both, changes them and signs out every other session.
+// @Description  Takes current_password and username, new_password or both, changes them, signs out every other session and revokes every API token. The answer says how many of each in sessions_ended and tokens_revoked.
 // @Tags         account
 // @Accept   json
 // @Produce  json
@@ -249,24 +253,64 @@ func (h *AuthHandler) ChangeAccount(c echo.Context) error {
 		user.PasswordHash = hash
 	}
 
-	err = h.db.Save(user).Error
+	// The row and the API tokens are written in one transaction, so that the
+	// credentials are never changed with the tokens left behind. A revocation
+	// that ran after the row was stored could fail with the change already
+	// made, and neither answer would be right then: a 500 would tell the
+	// operator that a change that happened did not, and a 200 would leave
+	// every token opening what it opened under credentials that were changed
+	// so that it would not. In one transaction a failure of either half is a
+	// change that did not happen, which is what the 500 says, and it can be
+	// asked for again.
+	tx := h.db.Begin()
+	err = tx.Error
 	if err != nil {
+		h.logger.Error("failed to start the transaction", logid.DatabaseTransactionStartFailed.Field(), zap.Error(err))
+		return failure(c, http.StatusInternalServerError, errTransactionBeginFailed)
+	}
+	defer rollbackUnlessDone(tx)
+
+	err = tx.Save(user).Error
+	if err != nil {
+		tx.Rollback()
 		h.logger.Error("failed to store the changed account", logid.AccountStoreFailed.Field(), zap.Error(err))
 		return failure(c, http.StatusInternalServerError, errAccountStoreFailed)
 	}
+
+	revoked := tx.Where("1 = 1").Delete(&models.APIToken{})
+	if revoked.Error != nil {
+		tx.Rollback()
+		h.logger.Error("failed to revoke the API tokens along with the change of the account, so nothing "+
+			"was changed", logid.AccountTokensRevokeFailed.Field(), zap.Error(revoked.Error))
+		return failure(c, http.StatusInternalServerError, errAccountStoreFailed)
+	}
+
+	err = tx.Commit().Error
+	if err != nil {
+		h.logger.Error("failed to commit the transaction", logid.DatabaseTransactionCommitFailed.Field(), zap.Error(err))
+		return failure(c, http.StatusInternalServerError, errTransactionCommitFailed)
+	}
+
+	tokensRevoked := int(revoked.RowsAffected)
 
 	// Everything below this point runs only because the row has been written.
 	// Sessions dropped ahead of a write that then failed would be sessions
 	// ended for a change that never happened.
 	token := cookieValue(c, sessionCookieName)
 
-	// Every other session goes, and the one that asked for this stays. That is
-	// one rule for both values rather than one for the password and another for
-	// the name: half the reason to change either is that somebody else may know
-	// them, and a session that is already open is held by whoever is holding it
-	// whatever the account is called now. Keeping this one protects nothing to
-	// take away: it belongs to the operator who just chose the new credentials,
-	// and throwing them out would leave them unable to read what happened.
+	// Every other session goes, and the one that asked for this stays, and
+	// every API token went with the row above. That is one rule for both
+	// values, and for sessions and tokens alike, rather than one for the
+	// password and another for the name: half the reason to change either is
+	// that somebody else may know them, and a session that is already open, or
+	// a token that was made with it, is held by whoever is holding it whatever
+	// the account is called now. A token could have been made by whoever held
+	// the credentials, and nothing on the list tells it from one the operator
+	// made. Keeping this session protects nothing to take away: it belongs to
+	// the operator who just chose the new credentials, and throwing them out
+	// would leave them unable to read what happened. No token is kept on the
+	// same grounds, because no token is the one that asked for this: the route
+	// is refused to every one of them.
 	//
 	// The session that stays keeps its tokens, the CSRF one included. That
 	// token is not a credential on its own: it is only taken next to the
@@ -280,11 +324,13 @@ func (h *AuthHandler) ChangeAccount(c echo.Context) error {
 	// kept out for the reason above; the username is kept out because it is one
 	// half of what opens this account, which is why the login refuses to say
 	// which half of a guess was right.
-	h.logger.Info("the credentials of the account were changed, so every other session was ended",
+	h.logger.Info("the credentials of the account were changed, so every other session was ended "+
+		"and every API token was revoked",
 		logid.AccountCredentialsChanged.Field(),
 		zap.Bool("username_changed", changeUsername),
 		zap.Bool("password_changed", changePassword),
-		zap.Int("sessions_ended", ended))
+		zap.Int("sessions_ended", ended),
+		zap.Int("tokens_revoked", tokensRevoked))
 
 	return c.JSON(http.StatusOK, models.Response{
 		Success: true,
@@ -293,6 +339,7 @@ func (h *AuthHandler) ChangeAccount(c echo.Context) error {
 			UsernameChanged: changeUsername,
 			PasswordChanged: changePassword,
 			SessionsEnded:   ended,
+			TokensRevoked:   tokensRevoked,
 		},
 	})
 }

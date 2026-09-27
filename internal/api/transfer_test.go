@@ -3994,7 +3994,7 @@ func (i *transferInstall) transferServer(t *testing.T) (*echo.Echo, string) {
 	cookies := csrfLoginCookies(t, e, loginBody(t, testUsername, testPassword))
 
 	rec := do(e, http.MethodPost, "/api/token",
-		`{"name":"backup","scopes":["`+TokenScopeTransfer+`"]}`, cookies...)
+		`{"name":"backup","scopes":["`+TokenScopeTransfer+`"],"account_password":"`+testPassword+`"}`, cookies...) // hook:allow
 	if rec.Code != http.StatusCreated {
 		t.Fatalf("the creation of the token answered %d, want 201: %s", rec.Code, rec.Body.String())
 	}
