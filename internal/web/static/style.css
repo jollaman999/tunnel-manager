@@ -1167,6 +1167,37 @@ button.copy {
   justify-content: space-between;
 }
 
+/* The status table may put a heading and a status on two lines. Held to one,
+   the longer languages made the table wider than a desktop screen: in German
+   a host key that waits for approval reads Hostschlüssel nicht bestätigt, and
+   that one badge was most of what did not fit. */
+.status-list th,
+.status-list td .badge,
+.assign-list[data-list="local-forwards"] td .badge {
+  white-space: normal;
+  word-break: keep-all;
+}
+
+/* The line under a row takes the width of the table and gives it none: it is
+   laid out at whatever width the columns come to. Left to count, a long error
+   made the table as wide as the sentence, and the columns that may wrap were
+   squeezed onto two lines on a screen that had the room for them on one. */
+tr.under > td > * {
+  contain: inline-size;
+}
+
+/* The Kind of a row may take two lines as well, but on a wide screen only, and
+   only because it has to: a table on a desktop has the room for every other
+   column once it wraps, where in Russian Локальная переадресация held on one
+   line was what still did not fit. On a phone the table scrolls sideways and
+   the word stays whole, which is what .kind is there for. */
+@media (min-width: 60rem) {
+  .status-list .kind {
+    white-space: normal;
+    word-break: keep-all;
+  }
+}
+
 /* The scroller keeps a wide table inside its own box. Without it the table
    pushes the page wider than the screen and everything scrolls sideways. */
 .table-scroll {
