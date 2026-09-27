@@ -1151,8 +1151,12 @@ button.copy {
   white-space: nowrap;
 }
 
+/* Each line spans the cell and the copy button is pushed to the end of it, so
+   the buttons of a cell with two addresses stand one over the other. */
 .reachable .copyable {
+  display: flex;
   flex-wrap: nowrap;
+  justify-content: space-between;
 }
 
 /* The scroller keeps a wide table inside its own box. Without it the table
