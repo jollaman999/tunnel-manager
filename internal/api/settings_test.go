@@ -335,7 +335,7 @@ func TestSaveReportsWhatWaitsForARestart(t *testing.T) {
 
 // TestTheUpdateSettingsTakeHoldWithoutARestart saves each of the three on its
 // own. The update loop reads them on every pass, so a save that called any of
-// them waiting would leave the Update screen saying the next start is owed for
+// them waiting would leave the Update tab saying the next start is owed for
 // a change that is already in place.
 func TestTheUpdateSettingsTakeHoldWithoutARestart(t *testing.T) {
 	cases := []struct {

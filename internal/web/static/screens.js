@@ -20,7 +20,9 @@ const screens = {
   },
   logs: { label: "nav.logs.link", nav: true, draw: drawLogs, enter: enterLogs },
   settings: { label: "nav.settings.link", nav: true, draw: drawSettings, enter: enterSettings },
-  update: { label: "nav.update.link", nav: true, draw: drawUpdate },
+  // The Update screen is a tab of Settings now. Its path is kept, so a link or
+  // a bookmark to it still lands on what it used to show.
+  update: { draw: enterUpdate },
   // The manual is the other screen that asks the server for nothing. What is on
   // it is true of every installation, so there is nothing to fetch, and that is
   // what lets the login put the same thing in a panel for somebody who has no
@@ -6246,6 +6248,11 @@ function logSummary(answer, read, shown) {
 }
 
 function enterSettings() {
+  const asked = settingsTabFromURL();
+  if (asked !== null) {
+    settingsTab = asked;
+  }
+
   certificateDraft = { certPEM: "", keyPEM: "" };
   certificateProblem = "";
   certificateReplaceResult = null;
@@ -6258,17 +6265,15 @@ function enterSettings() {
   return drawSettings();
 }
 
-// drawUpdate is the Update screen: what is running, what the newest release is,
-// and the two settings that decide whether either of those is looked at again.
+// updateTabNodes is the Update tab of Settings: what is running, what the newest
+// release is, and the two settings that decide whether either of those is
+// looked at again.
 //
 // It does not look while it is being drawn. What it shows is what the timer in
 // the server last found, so opening the screen costs nothing on the far side
 // and two people opening it do not make two requests of GitHub. The press is
 // there for somebody who wants the answer now.
-async function drawUpdate() {
-  const update = await apiCall("GET", "/api/update");
-  const set = await apiCall("GET", "/api/settings");
-
+function updateTabNodes(update, set) {
   const versions = updateVersions(update);
 
   // The presses and what is said about them go inside the card they are about.
@@ -6301,15 +6306,22 @@ async function drawUpdate() {
     versions.appendChild(statusLine(t("update.not-installable.notice"), "warning"));
   }
 
-  render(t("update.screen.title"), [
+  return [
     element("p", t("update.screen.text")),
     versions,
     updateSettingsCard(set)
-  ]);
+  ];
 }
 
-// updateSettingsCard is the two switches and the interval, on the screen they
-// are about rather than among the twenty settings on the other one.
+// enterUpdate is what the old path of the Update screen is answered with: the
+// Settings screen, opened on the tab the screen became.
+function enterUpdate() {
+  settingsTab = "update";
+  navigate("settings", null, true);
+}
+
+// updateSettingsCard is the two switches and the interval, on the tab they are
+// about rather than among the settings on the other tabs.
 //
 // They are saved through the same call the Settings screen saves through, so
 // there is one place that writes settings and one place that refuses a value.
@@ -6388,7 +6400,7 @@ async function saveUpdateSettings(set, values) {
 
   saySettingsSaved(data, "update.settings-saved.notice", "settings.saved-next-start.notice");
 
-  return drawUpdate();
+  return drawSettings();
 }
 
 // updateVersions is the pair of versions and the sentence about them.
@@ -6466,7 +6478,7 @@ async function submitUpdateCheck(button) {
 
     // The screen is drawn again even though the check failed, because what the
     // server now holds is that failure and the screen is where it is said.
-    await drawUpdate();
+    await drawSettings();
 
     throw error;
   }
@@ -6475,7 +6487,7 @@ async function submitUpdateCheck(button) {
     return t("update.checked.notice");
   });
 
-  return drawUpdate();
+  return drawSettings();
 }
 
 // updateInstallPanel asks before the executable is replaced.
@@ -6560,7 +6572,7 @@ async function waitOutTheInstall() {
     // The operator went somewhere else. What is drawn there is theirs, and a
     // page that reloaded out from under them would take away whatever they
     // were in the middle of.
-    if (currentScreen !== "update") {
+    if (currentScreen !== "settings") {
       return;
     }
 
@@ -6571,7 +6583,7 @@ async function waitOutTheInstall() {
     }
   }
 
-  if (currentScreen !== "update") {
+  if (currentScreen !== "settings") {
     return;
   }
 
@@ -6696,13 +6708,14 @@ async function drawSettings() {
   const account = await readAccount();
   const tokens = await readTokens();
   const restart = await readRestart();
+  const update = await readUpdate();
 
   const nodes = [];
 
-  // What is stored but not being run on sits above the form, because it is
-  // what has to be acted on before anything below it takes hold. It comes from
-  // the read rather than from the last save, so it is here whenever the screen
-  // is opened and by whoever opens it.
+  // What is stored but not being run on sits above the tabs, because it is
+  // what has to be acted on before anything below it takes hold, whichever tab
+  // is open. It comes from the read rather than from the last save, so it is
+  // here whenever the screen is opened and by whoever opens it.
   // The address the service comes back at is worked out once and handed to
   // both cards that offer the restart, so the two cannot say different things
   // about where this page goes afterwards.
@@ -6713,22 +6726,140 @@ async function drawSettings() {
     nodes.push(pending);
   }
 
-  nodes.push(settingsForm(set));
-  nodes.push(alertsCard(set));
-  nodes.push(certificateCard(set, certificate));
-  nodes.push(certificateForm());
-  nodes.push(accountCard(account));
-  nodes.push(tokensCard(tokens));
-  nodes.push(transferCard());
-  nodes.push(exportTunnelsForm());
-  nodes.push(importTunnelsForm());
-  nodes.push(exportSettingsForm());
-  nodes.push(importSettingsForm());
-  nodes.push(settingsRescue());
-  nodes.push(settingsRestart(restart, newAddress));
-  nodes.push(settingsDangerZone());
+  const panels = {
+    general: [settingsForm(set)],
+    logging: [loggingForm(set)],
+    alerts: [alertsCard(set)],
+    https: [certificateCard(set, certificate), certificateForm()],
+    account: [accountCard(account), tokensCard(tokens)],
+    transfer: [transferCard(), exportTunnelsForm(), importTunnelsForm(),
+      exportSettingsForm(), importSettingsForm()],
+    update: update.view === null
+      ? [statusLine(update.problem, "warning")]
+      : updateTabNodes(update.view, set),
+    service: [settingsRescue(), settingsRestart(restart, newAddress), settingsDangerZone()]
+  };
+
+  nodes.push(settingsTabBar());
+
+  for (const name of settingsTabs) {
+    const panel = document.createElement("div");
+
+    panel.className = "settings-panel";
+    panel.id = "settings-panel-" + name;
+    panel.dataset.settingsTab = name;
+    panel.setAttribute("role", "tabpanel");
+    panel.setAttribute("aria-labelledby", "settings-tab-" + name);
+    panel.hidden = name !== settingsTab;
+
+    for (const node of panels[name]) {
+      panel.appendChild(node);
+    }
+
+    nodes.push(panel);
+  }
+
+  keepSettingsTabInURL();
 
   render(t("settings.screen.title"), nodes);
+}
+
+// settingsTabs are the tabs the Settings screen is cut into, in the order they
+// are drawn. Each name is also what follows the # in the address, so a reload
+// or a link comes back to the tab it was taken on.
+const settingsTabs = ["general", "logging", "alerts", "https", "account", "transfer", "update", "service"];
+
+// settingsTab is the tab that is open. It lives outside the draw because the
+// screen is drawn again after nearly every press on it, and a press is not to
+// send the operator back to the first tab.
+let settingsTab = "general";
+
+// settingsTabLabel is the word on a tab.
+function settingsTabLabel(name) {
+  switch (name) {
+    case "general":
+      return t("settings.tab-general.label");
+    case "logging":
+      return t("settings.tab-logging.label");
+    case "alerts":
+      return t("settings.tab-alerts.label");
+    case "https":
+      return t("settings.tab-https.label");
+    case "account":
+      return t("settings.tab-account.label");
+    case "transfer":
+      return t("settings.tab-transfer.label");
+    case "update":
+      return t("settings.tab-update.label");
+    default:
+      return t("settings.tab-service.label");
+  }
+}
+
+// settingsTabBar is the row of tabs over the panels. A press shows its panel
+// and hides the others without drawing the screen again: everything on every
+// tab was read for this draw, and a fetch per press would be the same answers
+// asked for again.
+function settingsTabBar() {
+  const bar = document.createElement("div");
+
+  bar.className = "subtabs";
+  bar.setAttribute("role", "tablist");
+  bar.setAttribute("aria-label", t("settings.tabs.aria"));
+
+  for (const name of settingsTabs) {
+    const tab = document.createElement("button");
+
+    tab.type = "button";
+    tab.className = "subtab";
+    tab.id = "settings-tab-" + name;
+    tab.dataset.tab = name;
+    tab.textContent = settingsTabLabel(name);
+    tab.setAttribute("role", "tab");
+    tab.setAttribute("aria-controls", "settings-panel-" + name);
+    tab.setAttribute("aria-selected", name === settingsTab ? "true" : "false");
+    tab.addEventListener("click", function () {
+      openSettingsTab(name);
+    });
+
+    bar.appendChild(tab);
+  }
+
+  return bar;
+}
+
+// openSettingsTab shows the panel of one tab and hides the rest.
+function openSettingsTab(name) {
+  settingsTab = name;
+
+  for (const tab of document.querySelectorAll(".subtab")) {
+    tab.setAttribute("aria-selected", tab.dataset.tab === name ? "true" : "false");
+  }
+
+  for (const panel of document.querySelectorAll(".settings-panel")) {
+    panel.hidden = panel.dataset.settingsTab !== name;
+  }
+
+  keepSettingsTabInURL();
+}
+
+// keepSettingsTabInURL writes the open tab after the # of the address. It is
+// replaced rather than pushed: a tab is a place on this screen, and the back
+// button is for the screen that was before it.
+function keepSettingsTabInURL() {
+  if (currentScreen !== "settings") {
+    return;
+  }
+
+  window.history.replaceState(null, "", screenPath("settings") + "#" + settingsTab);
+}
+
+// settingsTabFromURL is the tab the address asks for, or null where it names
+// none this screen has.
+function settingsTabFromURL() {
+  const asked = window.location.hash.slice(1);
+
+  return settingsTabs.indexOf(asked) === -1 ? null : asked;
 }
 
 // readCertificate fetches what is being served over TLS, and turns a refusal
@@ -6741,6 +6872,21 @@ async function drawSettings() {
 async function readCertificate() {
   try {
     return { view: await apiCall("GET", "/api/certificate"), problem: "" };
+  } catch (error) {
+    if (error instanceof Redirected) {
+      throw error;
+    }
+
+    return { view: null, problem: error.message };
+  }
+}
+
+// readUpdate asks what the newest release is. A refusal is turned into
+// something to show on the Update tab alone, for the reason the calls around it
+// do it: the other tabs have nothing to do with it.
+async function readUpdate() {
+  try {
+    return { view: await apiCall("GET", "/api/update"), problem: "" };
   } catch (error) {
     if (error instanceof Redirected) {
       throw error;
@@ -6846,6 +6992,28 @@ function settingsForm(set) {
         note: pathNote(set, t("settings.key-file.hint"))
       },
       {
+        name: "ui_default_language",
+        label: t("settings.ui-language.label"),
+        value: set.ui_default_language,
+        options: languageOptions(),
+        note: t("settings.ui-language.hint")
+      }
+    ],
+    onSubmit: saveSettings
+  });
+}
+
+// loggingForm is where the log is written and how much of it is kept. It is a
+// form of its own on a tab of its own, and what it sends is its own fields
+// alone: the server keeps every setting a save leaves out, so the two forms of
+// the stored settings do not write over each other.
+function loggingForm(set) {
+  return buildForm({
+    name: "logging",
+    legend: t("settings.logging-form.title"),
+    submitLabel: t("common.save.button"),
+    fields: [
+      {
         name: "logging_level",
         label: t("settings.log-level.label"),
         value: set.logging_level,
@@ -6876,16 +7044,9 @@ function settingsForm(set) {
         type: "checkbox",
         value: set.logging_file_compress,
         note: t("settings.next-start.hint")
-      },
-      {
-        name: "ui_default_language",
-        label: t("settings.ui-language.label"),
-        value: set.ui_default_language,
-        options: languageOptions(),
-        note: t("settings.ui-language.hint")
       }
     ],
-    onSubmit: saveSettings
+    onSubmit: saveLogging
   });
 }
 
@@ -7259,14 +7420,24 @@ async function saveSettings(values) {
     reconnect_max_interval_sec: asNumber(values.reconnect_max_interval_sec),
     reconcile_interval_sec: asNumber(values.reconcile_interval_sec),
     security_key_file: values.security_key_file.trim(),
+    ui_default_language: values.ui_default_language
+  };
+
+  return sendSettings(body);
+}
+
+// saveLogging is the press on the log form. It goes through sendSettings like
+// the other half of the stored settings, which is what says a save is taken
+// on the next start and redraws the screen.
+async function saveLogging(values) {
+  const body = {
     logging_level: values.logging_level,
     logging_format: values.logging_format,
     logging_file_path: values.logging_file_path.trim(),
     logging_file_max_size: asNumber(values.logging_file_max_size),
     logging_file_max_backups: asNumber(values.logging_file_max_backups),
     logging_file_max_age: asNumber(values.logging_file_max_age),
-    logging_file_compress: values.logging_file_compress,
-    ui_default_language: values.ui_default_language
+    logging_file_compress: values.logging_file_compress
   };
 
   return sendSettings(body);

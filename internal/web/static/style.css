@@ -607,6 +607,42 @@ nav a.current {
   font-weight: 600;
 }
 
+/* The tabs of the Settings screen. They are drawn as tabs, underlined on a
+   rule of their own, and not as the pills of the navigation above them: a row
+   of pills under a row of pills reads as a second set of screens. */
+.subtabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.25rem;
+  margin: 0 0 1rem;
+  border-bottom: 1px solid var(--border);
+}
+
+button.subtab {
+  margin-bottom: -1px;
+  padding: 0.5rem 0.9rem;
+  color: var(--text-dim);
+  background: transparent;
+  border: 0;
+  border-bottom: 2px solid transparent;
+  border-radius: var(--radius-control) var(--radius-control) 0 0;
+}
+
+button.subtab:hover {
+  color: var(--text);
+  background: var(--control);
+}
+
+button.subtab:active {
+  background: var(--control-hover);
+}
+
+button.subtab[aria-selected="true"] {
+  color: var(--accent);
+  font-weight: 600;
+  border-bottom-color: var(--accent);
+}
+
 /* The logout sits apart from the screens, because it is not one of them. */
 nav a.logout {
   margin-inline-start: auto;

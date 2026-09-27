@@ -30,7 +30,7 @@ type checkResult struct {
 	Problem    string
 }
 
-// UpdateHandler serves the Update screen.
+// UpdateHandler serves the Update tab of Settings.
 //
 // It holds no policy of its own. Whether to look and whether to install are
 // settings, and the loop in main is what reads them; this answers what is known
@@ -255,7 +255,7 @@ func (h *UpdateHandler) InstallUpdate(c echo.Context) error {
 		return refused.answer(c)
 	}
 
-	h.logger.Warn("an update was asked for on the Update screen. The newest release is being "+
+	h.logger.Warn("an update was asked for on the Update tab of Settings. The newest release is being "+
 		"installed and this service is restarted at the end of it, which takes every tunnel down",
 		logid.UpdateInstallAsked.Field(), zap.String("running", h.version))
 
