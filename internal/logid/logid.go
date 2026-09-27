@@ -73,6 +73,7 @@ const (
 	TunnelConnected                   ID = "tunnel.connected"
 	TunnelConnectionClosed            ID = "tunnel.connection_closed"
 	TunnelListenerAcceptFailed        ID = "tunnel.listener_accept_failed"
+	TunnelConnectionLimitReached      ID = "tunnel.connection_limit_reached"
 	TunnelStarting                    ID = "tunnel.starting"
 	TunnelConnectFailedGivingUp       ID = "tunnel.connect_failed_giving_up"
 	TunnelConnectFailedRetrying       ID = "tunnel.connect_failed_retrying"

@@ -691,6 +691,7 @@
   "log.tunnel.connect_failed_retrying.text": "connection failed, retrying in {retry_in_sec} seconds",
   "log.tunnel.connected.text": "tunnel connected successfully",
   "log.tunnel.connection_closed.text": "connection closed",
+  "log.tunnel.connection_limit_reached.text": "closed a connection from {source} because the forwarded connections reached their limit of {limit} ({closed} closed since the last such line)",
   "log.tunnel.forward_copy_failed.text": "copy error",
   "log.tunnel.forward_unreachable.text": "the forwarded port did not answer a connection from here, so the tunnel is connected but may not be usable. The SSH server may have bound the port to loopback alone, or something on the way may be dropping it, and the two cannot be told apart from here, so check both. On the SSH server it is the setting that opens a forwarded port to addresses other than loopback, GatewayPorts in sshd_config for OpenSSH and the -a flag on the command line for Dropbear, and the server has to be restarted for a change to it. Between here and the Host it is the firewall that the port has to be open through",
   "log.tunnel.host_key_unreadable.text": "the stored private key of the Host cannot be read",

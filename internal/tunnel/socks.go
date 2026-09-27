@@ -316,6 +316,11 @@ type socksTunnel struct {
 	refusedLogged time.Time
 	refusedSince  int
 
+	// conns and overLimit are localTunnel.conns and localTunnel.overLimit for
+	// the proxy port.
+	conns     *connLimit
+	overLimit connLimitLog
+
 	done     chan struct{}
 	stopOnce sync.Once
 	// listening is localTunnel.listening for the proxy port.
@@ -490,6 +495,7 @@ func (p *socksTunnel) establish() error {
 
 	listeners := opened.listeners()
 	ends := make(chan error, len(listeners))
+	closing := make(chan struct{})
 
 	var accepting sync.WaitGroup
 	for _, listener := range listeners {
@@ -498,7 +504,7 @@ func (p *socksTunnel) establish() error {
 		go func(listener net.Listener) {
 			defer accepting.Done()
 
-			ends <- p.accept(listener, client)
+			ends <- p.accept(listener, client, closing)
 		}(listener)
 	}
 
@@ -514,6 +520,7 @@ func (p *socksTunnel) establish() error {
 	case acceptErr = <-ends:
 	}
 
+	close(closing)
 	opened.close()
 	accepting.Wait()
 
@@ -549,26 +556,48 @@ func (p *socksTunnel) establish() error {
 }
 
 // accept serves what one listener accepts and returns what ended it. A
-// listener that establish closed itself ends with nil.
-func (p *socksTunnel) accept(listener net.Listener, client *ssh.Client) error {
-	for {
-		conn, err := listener.Accept()
-		if err != nil {
-			if errors.Is(err, net.ErrClosed) {
-				return nil
+// listener that establish closed itself ends with nil, and so does a wait
+// after an Accept error that closing or Stop cut short.
+func (p *socksTunnel) accept(listener net.Listener, client *ssh.Client, closing <-chan struct{}) error {
+	err := acceptLoop{
+		passes:  acceptErrorPasses,
+		closing: closing,
+		done:    p.done,
+		admit: func(conn net.Conn) bool {
+			if sourceAllowed(p.allowed, conn.RemoteAddr()) {
+				return true
 			}
 
-			return err
-		}
-
-		if !sourceAllowed(p.allowed, conn.RemoteAddr()) {
 			_ = conn.Close()
 			p.refused(conn.RemoteAddr())
-			continue
-		}
-
-		go p.serve(conn, client, forwardIdleTimeout)
+			return false
+		},
+		limit: p.conns.orShared(),
+		over:  p.closedOverLimit,
+		serve: func(conn net.Conn) {
+			p.serve(conn, client, forwardIdleTimeout)
+		},
+	}.run(listener)
+	if errors.Is(err, net.ErrClosed) {
+		return nil
 	}
+
+	return err
+}
+
+// closedOverLimit logs a connection closed because the process carries as
+// many forwarded connections as it has descriptors for, at most once every
+// connLimitLogInterval, with the number closed since the last line.
+func (p *socksTunnel) closedOverLimit(source net.Addr) {
+	count, due := p.overLimit.note()
+	if !due {
+		return
+	}
+
+	p.logger.Warn("closed a connection because the forwarded connections reached their limit",
+		append([]zap.Field{logid.TunnelConnectionLimitReached.Field()},
+			p.fields(zap.String("source", source.String()), zap.Int("closed", count),
+				zap.Int64("limit", p.conns.orShared().ceiling()))...)...)
 }
 
 // refused logs a connection from a source that is not allowed, at most once

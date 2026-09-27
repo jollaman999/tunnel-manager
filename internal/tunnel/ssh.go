@@ -72,6 +72,10 @@ type SSHTunnel struct {
 	isStopped bool
 	stopMu    sync.Mutex
 	logger    *zap.Logger
+	// conns and overLimit are localTunnel.conns and localTunnel.overLimit for
+	// the service port.
+	conns     *connLimit
+	overLimit connLimitLog
 }
 
 // NewSSHTunnel builds the tunnel of one assignment. It takes two local
@@ -1015,15 +1019,40 @@ func (t *SSHTunnel) acceptForwards(m *Manager, tunnel *models.Tunnel, client *ss
 
 // acceptForward carries the connections one forward accepts and returns what
 // ended it.
+//
+// No Accept error is waited out here, the way one is on a local port. The
+// listener is the remote end of the SSH connection (tcpListener in
+// golang.org/x/crypto/ssh): its Accept opens no descriptor on this machine, and
+// fails only with io.EOF once the connection has closed its forwards, or with
+// the error of writing the confirmation of the channel, which the transport
+// keeps and returns for every write after it (handshakeTransport.writeError).
+// Both are the connection gone, and returning them is what starts the
+// reconnect.
 func (t *SSHTunnel) acceptForward(listener net.Listener) error {
-	for {
-		conn, err := listener.Accept()
-		if err != nil {
-			return err
-		}
+	return acceptLoop{
+		limit: t.conns.orShared(),
+		over:  t.closedOverLimit,
+		serve: func(conn net.Conn) {
+			t.forward(conn, forwardIdleTimeout)
+		},
+	}.run(listener)
+}
 
-		go t.forward(conn, forwardIdleTimeout)
+// closedOverLimit is socksTunnel.closedOverLimit for the service port.
+func (t *SSHTunnel) closedOverLimit(source net.Addr) {
+	count, due := t.overLimit.note()
+	if !due {
+		return
 	}
+
+	t.logger.Warn("closed a connection because the forwarded connections reached their limit",
+		logid.TunnelConnectionLimitReached.Field(),
+		zap.String("local", t.Local.String()),
+		zap.String("server", t.Server),
+		zap.String("remote", t.Remote),
+		zap.String("source", source.String()),
+		zap.Int("closed", count),
+		zap.Int64("limit", t.conns.orShared().ceiling()))
 }
 
 // authFailureMessage is what golang.org/x/crypto/ssh reports when the server

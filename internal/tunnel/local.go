@@ -102,6 +102,12 @@ type localTunnel struct {
 	refusedLogged time.Time
 	refusedSince  int
 
+	// conns is the count of forwarded connections this forward takes a place
+	// in. Nil is the one the whole process shares; a test gives its own.
+	conns *connLimit
+	// overLimit is what connections closed over the limit have been logged.
+	overLimit connLimitLog
+
 	done     chan struct{}
 	stopOnce sync.Once
 	// listening counts the listener pairs that are open, so Stop can wait for
@@ -304,6 +310,7 @@ func (f *localTunnel) establish() error {
 
 	listeners := opened.listeners()
 	ends := make(chan error, len(listeners))
+	closing := make(chan struct{})
 
 	var accepting sync.WaitGroup
 	for _, listener := range listeners {
@@ -312,7 +319,7 @@ func (f *localTunnel) establish() error {
 		go func(listener net.Listener) {
 			defer accepting.Done()
 
-			ends <- f.accept(listener, client)
+			ends <- f.accept(listener, client, closing)
 		}(listener)
 	}
 
@@ -330,6 +337,7 @@ func (f *localTunnel) establish() error {
 	case acceptErr = <-ends:
 	}
 
+	close(closing)
 	opened.close()
 	accepting.Wait()
 
@@ -365,26 +373,46 @@ func (f *localTunnel) establish() error {
 }
 
 // accept carries what one listener accepts and returns what ended it. A
-// listener that establish closed itself ends with nil.
-func (f *localTunnel) accept(listener net.Listener, client *ssh.Client) error {
-	for {
-		conn, err := listener.Accept()
-		if err != nil {
-			if errors.Is(err, net.ErrClosed) {
-				return nil
+// listener that establish closed itself ends with nil, and so does a wait
+// after an Accept error that closing or Stop cut short.
+func (f *localTunnel) accept(listener net.Listener, client *ssh.Client, closing <-chan struct{}) error {
+	err := acceptLoop{
+		passes:  acceptErrorPasses,
+		closing: closing,
+		done:    f.done,
+		admit: func(conn net.Conn) bool {
+			if sourceAllowed(f.allowed, conn.RemoteAddr()) {
+				return true
 			}
 
-			return err
-		}
-
-		if !sourceAllowed(f.allowed, conn.RemoteAddr()) {
 			_ = conn.Close()
 			f.refused(conn.RemoteAddr())
-			continue
-		}
-
-		go f.forward(conn, client, forwardIdleTimeout)
+			return false
+		},
+		limit: f.conns.orShared(),
+		over:  f.closedOverLimit,
+		serve: func(conn net.Conn) {
+			f.forward(conn, client, forwardIdleTimeout)
+		},
+	}.run(listener)
+	if errors.Is(err, net.ErrClosed) {
+		return nil
 	}
+
+	return err
+}
+
+// closedOverLimit is socksTunnel.closedOverLimit for a local forward.
+func (f *localTunnel) closedOverLimit(source net.Addr) {
+	count, due := f.overLimit.note()
+	if !due {
+		return
+	}
+
+	f.logger.Warn("closed a connection because the forwarded connections reached their limit",
+		append([]zap.Field{logid.TunnelConnectionLimitReached.Field()},
+			f.fields(zap.String("source", source.String()), zap.Int("closed", count),
+				zap.Int64("limit", f.conns.orShared().ceiling()))...)...)
 }
 
 // refused is socksTunnel.refused for a local forward: a connection from a

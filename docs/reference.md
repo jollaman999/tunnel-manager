@@ -124,6 +124,16 @@ On Unix the process raises its own limit on open file descriptors at startup,
 because every tunnel holds several of them. Windows has no such per process
 limit to raise, so that step does nothing there. Nothing else differs.
 
+The connections carried by every local forward, SOCKS5 proxy and service port
+together are held to that soft limit less 256, and never fewer than 64; on
+Windows the ceiling is 65279. The 256 are left to the database, the log, the
+listeners and the SSH connections. A connection that arrives over the ceiling is
+closed as soon as it is accepted, and is logged as
+`tunnel.connection_limit_reached` at most once a minute for each forward, with
+the number closed since the line before. When the process or the system runs
+out of descriptors anyway, a local port or a proxy waits and accepts again, from
+5ms doubling up to a second, rather than dropping the forwards of the Host.
+
 The bundled systemd unit is for Linux. On the other platforms the process has to
 be kept running by whatever that system uses.
 
