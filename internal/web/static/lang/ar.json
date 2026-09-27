@@ -467,6 +467,7 @@
   "list.page.aria": "الصفحة {page}",
   "list.pick-all.aria": "اختيار كل صفوف هذه الصفحة",
   "list.picked-actions.button": "مع المعلَّمة",
+  "list.row-actions.button": "إجراءات",
   "list.previous.button": "السابق",
   "list.where.text": "الصفحة {page} من {last}، الصفوف من {from} إلى {to} من أصل {total}",
   "local-forwards.add.title": "إضافة توجيه محلي",

@@ -2111,6 +2111,127 @@ function fitBarActions(bar) {
   }
 }
 
+// rowFit decides again whether the buttons at the end of the rows of a list
+// fit, when the box the table scrolls in changes width. A table taken off the
+// page is let go of here, and a menu one of its rows opened with it.
+const rowFit = typeof ResizeObserver === "function"
+  ? new ResizeObserver(function (entries) {
+    for (const entry of entries) {
+      const scroller = entry.target;
+
+      if (!scroller.isConnected) {
+        rowFit.unobserve(scroller);
+
+        if (actionMenu !== null && scroller.contains(actionMenu.owner)) {
+          closeActionMenu(false);
+        }
+
+        continue;
+      }
+
+      fitRowActions(scroller);
+    }
+  })
+  : null;
+
+// foldingRows lets the buttons at the end of each row of a list fold into one
+// menu button where the table is wider than the box it scrolls in.
+//
+// It is the table and not the row of buttons that is measured. A cell grows
+// with what is in it, so the buttons of a row never overflow their own cell:
+// what overflows is the table, and the buttons at the end of it are what is
+// then left past the edge. The rows fold together, so the column holds one
+// kind of thing from top to bottom.
+//
+// The buttons stay where they are and are only hidden, which keeps every
+// data-action on the page for whatever presses a row by it. Where the browser
+// cannot say when a width changes the rows are left as they were.
+function foldingRows(scroller) {
+  if (rowFit === null) {
+    return scroller;
+  }
+
+  for (const bar of scroller.querySelectorAll("td .buttons")) {
+    const trigger = document.createElement("button");
+
+    trigger.type = "button";
+    trigger.className = "bar-menu";
+    trigger.textContent = t("list.row-actions.button");
+    trigger.setAttribute("aria-haspopup", "menu");
+    trigger.setAttribute("aria-expanded", "false");
+
+    trigger.addEventListener("click", function () {
+      if (actionMenu !== null && actionMenu.trigger === trigger) {
+        closeActionMenu(false);
+
+        return;
+      }
+
+      openActionMenu(bar, trigger, barActions(bar), 0);
+    });
+
+    trigger.addEventListener("keydown", function (event) {
+      if (event.key === "ArrowDown" || event.key === "ArrowUp") {
+        event.preventDefault();
+
+        openActionMenu(bar, trigger, barActions(bar), event.key === "ArrowDown" ? 0 : -1);
+      }
+    });
+
+    bar.classList.add("row-folding");
+    bar.appendChild(trigger);
+  }
+
+  rowFit.observe(scroller);
+
+  return scroller;
+}
+
+// fitRowActions folds the buttons of every row of a table into their menu
+// buttons, or lays them out again. It is decided with the buttons laid out,
+// whichever way the rows are now, for the reason fitBarActions is: a width
+// that holds the menu buttons and not the buttons must not fold and unfold
+// them by turns.
+function fitRowActions(scroller) {
+  if (scroller.querySelector(".row-folding") === null) {
+    return;
+  }
+
+  const folded = scroller.classList.contains("rows-folded");
+
+  if (folded) {
+    scroller.classList.remove("rows-folded");
+  }
+
+  const fits = scroller.scrollWidth <= scroller.clientWidth;
+
+  if (fits === !folded) {
+    if (folded) {
+      scroller.classList.add("rows-folded");
+    }
+
+    return;
+  }
+
+  if (fits) {
+    if (actionMenu !== null && scroller.contains(actionMenu.owner)) {
+      closeActionMenu(false);
+    }
+
+    return;
+  }
+
+  const focused = document.activeElement;
+  const bar = focused !== null && focused.parentElement !== null &&
+    focused.parentElement.classList.contains("row-folding") ? focused.parentElement : null;
+
+  scroller.classList.add("rows-folded");
+
+  if (bar !== null) {
+    barMenuButton(bar).focus({ preventScroll: true });
+  }
+}
+
 // openActionMenu puts buttons up as a list beside the menu button they are
 // folded into. An entry presses the button it stands for, so what a button
 // does is not written twice. The ones that cannot be taken back go last, away

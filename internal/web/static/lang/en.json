@@ -467,6 +467,7 @@
   "list.page.aria": "Page {page}",
   "list.pick-all.aria": "Check every row on this page",
   "list.picked-actions.button": "With the checked",
+  "list.row-actions.button": "Actions",
   "list.previous.button": "Previous",
   "list.where.text": "Page {page} of {last}, rows {from} to {to} of {total}",
   "local-forwards.add.title": "Add a local forward",

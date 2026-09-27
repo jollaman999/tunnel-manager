@@ -467,6 +467,7 @@
   "list.page.aria": "Страница {page}",
   "list.pick-all.aria": "Выбрать все строки этой страницы",
   "list.picked-actions.button": "С отмеченными",
+  "list.row-actions.button": "Действия",
   "list.previous.button": "Назад",
   "list.where.text": "Страница {page} из {last}, строки с {from} по {to} из {total}",
   "local-forwards.add.title": "Добавить локальную переадресацию",

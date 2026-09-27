@@ -467,6 +467,7 @@
   "list.page.aria": "{page} 페이지",
   "list.pick-all.aria": "이 페이지의 모든 행 고르기",
   "list.picked-actions.button": "체크한 항목",
+  "list.row-actions.button": "작업",
   "list.previous.button": "이전",
   "list.where.text": "전체 {last} 페이지 가운데 {page} 페이지, 전체 {total} 행 가운데 {from} 부터 {to} 까지",
   "local-forwards.add.title": "로컬 포워딩 추가",

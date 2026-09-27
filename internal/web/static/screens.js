@@ -2897,6 +2897,7 @@ async function drawHosts() {
       picks.head
     );
     table.dataset.list = "hosts";
+    foldingRows(table);
 
     // The press that acts on the ticks goes under the controls that turn the
     // page and over the rows it acts on, which are the rows of this page: a
@@ -4608,6 +4609,8 @@ async function openHostLocalForwards(host) {
       picks.head
     );
 
+    foldingRows(table);
+
     const bar = deletePickedBar({
       name: "local-forwards",
       items: shown,
@@ -4996,7 +4999,7 @@ function localForwardRow(item, edit, flip, remove) {
     cells: [
       item.number,
       item.local_port,
-      localForwardScopeText(item.bind_scope),
+      localForwardScopeCell(item.bind_scope),
       reachableAddresses({
         scope: bindScopeStored(item.bind_scope),
         port: String(item.local_port),
@@ -5038,6 +5041,31 @@ function localForwardScopeText(value) {
   });
 
   return option.text;
+}
+
+// localForwardScopeCell is the scope in the table, in two pieces that may go
+// onto two lines: the name of the scope and the addresses in brackets after it.
+// Each piece stays whole, so what breaks is the space between them and never
+// the middle of a name or of an address. Every language writes the addresses
+// in brackets after the name, Chinese in the full-width ones.
+function localForwardScopeCell(value) {
+  const text = localForwardScopeText(value);
+  const at = text.search(/[(\uff08]/);
+  const cell = document.createElement("span");
+
+  cell.className = "scope-text";
+
+  if (at <= 0) {
+    cell.appendChild(element("span", text));
+
+    return cell;
+  }
+
+  cell.appendChild(element("span", text.slice(0, at).trim()));
+  cell.appendChild(document.createTextNode(" "));
+  cell.appendChild(element("span", text.slice(at)));
+
+  return cell;
 }
 
 // localForwardForm is the add form when item is null and the edit form of item

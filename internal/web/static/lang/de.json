@@ -467,6 +467,7 @@
   "list.page.aria": "Seite {page}",
   "list.pick-all.aria": "Alle Zeilen dieser Seite auswählen",
   "list.picked-actions.button": "Mit den angehakten",
+  "list.row-actions.button": "Aktionen",
   "list.previous.button": "Zurück",
   "list.where.text": "Seite {page} von {last}, Zeilen {from} bis {to} von {total}",
   "local-forwards.add.title": "Lokale Weiterleitung hinzufügen",

@@ -467,6 +467,7 @@
   "list.page.aria": "Página {page}",
   "list.pick-all.aria": "Selecionar todas as linhas desta página",
   "list.picked-actions.button": "Com os marcados",
+  "list.row-actions.button": "Ações",
   "list.previous.button": "Anterior",
   "list.where.text": "Página {page} de {last}, linhas {from} a {to} de {total}",
   "local-forwards.add.title": "Adicionar um encaminhamento local",

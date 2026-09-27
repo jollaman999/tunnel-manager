@@ -1125,11 +1125,15 @@ button.copy {
   margin: 0 0 0.5rem;
 }
 
-/* Where a local forward is opened and the address it goes to are each one
-   value, and broken over two lines they read as two. A narrow screen scrolls
-   the table sideways instead. */
-.assign-list[data-list="local-forwards"] td:nth-last-child(6),
+/* The address a local forward goes to is one value, and broken over two lines
+   it reads as two. A narrow screen scrolls the table sideways instead. */
 .assign-list[data-list="local-forwards"] td:nth-last-child(4) {
+  white-space: nowrap;
+}
+
+/* The scope may take two lines, the name on one and the addresses on the
+   next, and neither of the two is broken inside. */
+.scope-text > span {
   white-space: nowrap;
 }
 
@@ -1827,6 +1831,13 @@ input.list-search:focus {
   display: none;
 }
 
+/* The buttons at the end of the rows of a list fold the same way, all rows
+   of the table together, where the table is wider than the box it scrolls in. */
+.table-scroll.rows-folded .row-folding > button:not(.bar-menu),
+.table-scroll:not(.rows-folded) .row-folding > .bar-menu {
+  display: none;
+}
+
 .bar-menu {
   white-space: nowrap;
 }
@@ -2437,10 +2448,17 @@ body.modal-open {
 /* The local forwards are a table of eight columns, which the width of a panel
    that asks one question squeezes into a column of single words. It is as wide
    as the table with its buttons, so that the buttons at the end of a row are
-   not left past the edge on a screen that has the room; a narrower screen
-   still scrolls the table sideways. */
+   not left past the edge on a screen that has the room; on a narrower one the
+   buttons fold into a menu, and past that the table scrolls sideways. */
 .modal-panel[data-modal-panel="local-forwards"] {
-  max-width: 72rem;
+  max-width: 90rem;
+}
+
+/* The headings of that table may take two lines. A heading such as the Russian
+   for Reachable at is wider than any address under it, and held to one line
+   it was what pushed the table past the panel. */
+.assign-list[data-list="local-forwards"] th {
+  white-space: normal;
 }
 
 .modal-panel:focus-visible {
