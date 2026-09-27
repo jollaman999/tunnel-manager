@@ -2478,7 +2478,7 @@
         },
         "/status": {
             "get": {
-                "description": "tunnels carries both sorts of forward: kind is service_port or local_forward, and sp_id is null on a local forward, which is carried by no service port. On a local forward row, local is the address opened on this machine and remote the target reached from the Host, which is the mirror of what they hold on a service port row. forward_reach is on a local forward row alone and says whether the target answered a connection dialled from the Host; a service port row leaves it out.\nThe counts are over every row and not over the page: they say what the installation is doing, not what is on the page being looked at. There are four, and each counts the service port tunnels and the local forwards together: desired_tunnels is what should be running as of the last reconcile pass, which a change wakes, and connected_tunnels, reconnecting_tunnels and error_tunnels are how many rows are in each of those statuses. A row that is starting or held up at a host key is in none of the three. total_rows is the rows of both sorts, which is what the pages are cut from.\nq narrows the rows and total_rows with them, and leaves the four counts over every row.",
+                "description": "tunnels carries both sorts of forward: kind is service_port or local_forward, and sp_id is null on a local forward, which is carried by no service port. On a local forward row, local is the address opened on this machine and remote the target reached from the Host, which is the mirror of what they hold on a service port row. Whether the target of a local forward answers is on the local forwards of its Host (forward_reach), not here.\nThe counts are over every row and not over the page: they say what the installation is doing, not what is on the page being looked at. There are four, and each counts the service port tunnels and the local forwards together: desired_tunnels is what should be running as of the last reconcile pass, which a change wakes, and connected_tunnels, reconnecting_tunnels and error_tunnels are how many rows are in each of those statuses. A row that is starting or held up at a host key is in none of the three. total_rows is the rows of both sorts, which is what the pages are cut from.\nq narrows the rows and total_rows with them, and leaves the four counts over every row.",
                 "produces": [
                     "application/json"
                 ],
@@ -3917,6 +3917,10 @@
                 "enabled": {
                     "description": "Enabled is whether this forward runs. One that is off opens no port and\nmakes no SSH connection, and still holds LocalPort. It carries no\ndatabase default for the reason Host.Enabled carries none.",
                     "type": "boolean"
+                },
+                "forward_reach": {
+                    "description": "ForwardReach is whether the target answered a connection dialled from\nthe Host over the connection the forward stands on: \"reachable\",\n\"unreachable\", or \"unknown\" where it has not been measured yet. It is\nhere and on no other answer, because the local forwards of a Host are\nwhere it is read, and it is left out of a forward that is not running:\nthe last reading of one that has since been switched off would read as\na measurement of now.",
+                    "type": "string"
                 },
                 "host_id": {
                     "type": "integer"
