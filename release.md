@@ -1,3 +1,14 @@
+# v3.15.2
+
+## Add/fix features:
+
+- **The Port reached column measures IPv4 and IPv6 apart.** A tunnel whose two requests both went up is tried over the family the SSH connection was made on, as before, and over the other family where there is an address for it: the loopback address where the Host is this machine, and the first address of that family a Host registered by name resolves to. Where one family answered and the other did not, the Status screen shows a line for each, IPv4 and IPv6; where they agree it shows the one reading it always did. The status answer carries the two as `forward_reach_v4` and `forward_reach_v6`, and `forward_reach` keeps its meaning.
+
+## Notes:
+
+- A Host registered by an address, and the loopback scope of a Host that is another machine, have no address in the other family to try, so that family reads `unknown` and the column shows one reading.
+- Two columns are added to the tunnels table when this release starts. An earlier release opens the database all the same and leaves them alone.
+
 # v3.15.1
 
 ## Add/fix features:
