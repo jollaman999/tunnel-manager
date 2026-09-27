@@ -830,6 +830,21 @@ h3 {
   justify-self: start;
 }
 
+/* The scopes of a new token are the one group of boxes drawn in a fieldset,
+   and the frame the browser gives one is a grey groove that belongs to no theme
+   here. It is tinted the way a press that is not the main one is. */
+fieldset.field {
+  margin: 0;
+  padding: 0.6rem 0.9rem 0.75rem;
+  background: var(--control);
+  border: 1px solid var(--control-edge);
+  border-radius: var(--radius-control);
+}
+
+fieldset.field > legend {
+  padding: 0 0.35rem;
+}
+
 .field small {
   grid-column: 2;
   color: var(--text-dim);
