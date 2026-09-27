@@ -1105,21 +1105,29 @@ button.copy {
 
 /* Where a local forward is opened and the address it goes to are each one
    value, and broken over two lines they read as two. A narrow screen scrolls
-   the table sideways instead, and the copy button stays beside the address. */
-.assign-list[data-list="local-forwards"] td:nth-last-child(5),
+   the table sideways instead. */
+.assign-list[data-list="local-forwards"] td:nth-last-child(6),
 .assign-list[data-list="local-forwards"] td:nth-last-child(4) {
   white-space: nowrap;
 }
 
-.assign-list[data-list="local-forwards"] td:nth-last-child(4) .copyable {
-  flex-wrap: nowrap;
+/* The Opened column of the status table is held to one line the same way. */
+.opened {
+  white-space: nowrap;
 }
 
-/* The Opened column of the status table is held to one line the same way: the
-   machine, the address and the copy button read as one value. */
-.copyable.opened {
-  flex-wrap: nowrap;
+/* Where a port is reached at: an address per line, each with its copy button
+   beside it. A port open on loopback for both families is two lines, one per
+   address, and never one line broken in the middle of an address. */
+.reachable {
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
   white-space: nowrap;
+}
+
+.reachable .copyable {
+  flex-wrap: nowrap;
 }
 
 /* The scroller keeps a wide table inside its own box. Without it the table

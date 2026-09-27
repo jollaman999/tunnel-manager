@@ -1773,6 +1773,10 @@ function copyButton(value, label) {
 
   node.addEventListener("click", function () {
     clipboard.writeText(String(value)).then(function () {
+      // Said to whoever put the button somewhere that has more to say once
+      // the value is on the clipboard.
+      node.dispatchEvent(new CustomEvent("copied"));
+
       if (timer !== null) {
         window.clearTimeout(timer);
       }

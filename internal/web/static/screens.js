@@ -694,6 +694,7 @@ async function drawStatus() {
         statusBadge(tunnel.status),
         tunnel.server,
         openedCell(tunnel),
+        reachableCell(tunnel),
         tunnel.remote,
         // Both sorts are measured now and both are drawn the same way. What
         // the reading is of differs with the sort - a service port row asks
@@ -784,10 +785,10 @@ async function drawStatus() {
     nodes.push(buildTable(
       [t("status.host.column"), t("status.kind.column"), t("status.service-port.column"),
         t("status.status.column"), t("status.server.column"), t("status.opened.column"),
-        t("status.reaches.column"), t("status.port-reached.column"),
+        t("status.reachable.column"), t("status.reaches.column"), t("status.port-reached.column"),
         t("status.retries.column"), t("status.last-connected.column")],
       rows,
-      [0, 2, 8]
+      [0, 2, 9]
     ));
   }
 
@@ -815,39 +816,151 @@ function kindCell(forward) {
   return node;
 }
 
-// openedCell is the address in the Opened column, with the machine the port is
-// open on written beside it.
-//
-// The machine is in the cell and not in the heading because the two sorts of
-// row open their port on different machines: a service port tunnel opens it on
-// the Host and a local forward opens it here. Both addresses are written the
-// same way, 0.0.0.0:9000 and the like, so a column headed Local held one of
-// each and nothing said which was which. The column next to it is the mirror
-// of this one - a tunnel reaches its service from here, a forward reaches its
-// target from the Host - and it carries no machine of its own, because a row
-// that says where it was opened has said which way round it runs.
+// openedCell is the address in the Opened column, the address the port was
+// asked to be opened on and nothing else. Where to connect to it is the column
+// beside it, which is also where the copy buttons are: the address a port is
+// opened on, 0.0.0.0:9000 and the like, is not one a client can be pointed at.
 function openedCell(row) {
   const address = row.local === null || row.local === undefined ? "" : String(row.local);
 
-  // A row with no address carries none. There is nothing to say a machine
-  // about, and a cell reading "Host" alone would name a port that is not there.
   if (address === "") {
     return "";
   }
 
-  const said = isLocalForward(row)
-    ? t("status.opened-here.text", { address: address })
-    : t("status.opened-host.text", { address: address });
+  const cell = element("span", address);
 
-  // The copy button copies the address alone. The machine written beside it is
-  // for reading, and what is pasted into a client is the address.
-  const cell = copyable(element("span", said), address,
-    t("status.copy-address.aria", { address: address }));
-
-  // One line, the way the local forwards of a Host keep theirs.
-  cell.classList.add("opened");
+  cell.className = "opened";
 
   return cell;
+}
+
+// reachableCell is the Reachable at column of a status row: where a client
+// connects to reach the port the row opened.
+//
+// A service port row opens its port on the Host, so a port opened on every
+// interface is reached at the address the Host is registered under, and one
+// opened on loopback only from inside the Host. A local forward opens its port
+// here, on the machine this page was loaded from, so the address that stands
+// for this machine is the one the browser used to get to it.
+function reachableCell(row) {
+  const local = row.local === null || row.local === undefined ? "" : String(row.local);
+  const pair = bindScopePairOf(local);
+
+  if (pair === null) {
+    return "";
+  }
+
+  const forward = isLocalForward(row);
+  const reach = typeof row.open_reach === "string" ? row.open_reach : "";
+
+  return reachableAddresses({
+    scope: pair.scope,
+    port: addressPort(local),
+    host: forward ? pageHost() : requestedHost(String(row.server === null || row.server === undefined ? "" : row.server)),
+    // A service port row says which of the two addresses went up. A row that
+    // says neither, one not measured yet or a local forward, is drawn with the
+    // two the scope asked for.
+    v4: forward || reach !== "ipv6",
+    v6: forward || reach !== "ipv4",
+    here: forward
+  });
+}
+
+// reachableAddresses is the lines of a Reachable at cell, each an address and
+// a button that copies it.
+//
+// A port opened on every interface is one line, the registered address with the
+// port. A port opened on loopback is a line per family that went up, 127.0.0.1
+// and [::1], and copying one of those says in a toast that it only works on the
+// machine the port is open on: an address a client pastes somewhere else and
+// cannot connect to is the mistake the toast is there to head off.
+//
+// here says the port is open on this machine rather than on a Host, which is
+// all that changes in what the toast says.
+function reachableAddresses(spec) {
+  if (spec.port === "") {
+    return "";
+  }
+
+  const lines = [];
+
+  if (spec.scope === bindScopeLoopback) {
+    const notice = spec.here ? "status.loopback-here-copied.notice" : "status.loopback-host-copied.notice";
+
+    if (spec.v4) {
+      lines.push({ address: "127.0.0.1:" + spec.port, notice: notice });
+    }
+
+    if (spec.v6) {
+      lines.push({ address: "[::1]:" + spec.port, notice: notice });
+    }
+  } else if (spec.host !== "") {
+    lines.push({ address: joinAddress(spec.host, spec.port), notice: "" });
+  }
+
+  if (lines.length === 0) {
+    return "";
+  }
+
+  const cell = document.createElement("div");
+
+  cell.className = "reachable";
+
+  for (const line of lines) {
+    const button = copyButton(line.address, t("status.copy-address.aria", { address: line.address }));
+    const said = element("span", line.address);
+
+    if (button === null) {
+      cell.appendChild(said);
+
+      continue;
+    }
+
+    // What is said once the address is on the clipboard, for an address that
+    // does not work from anywhere but the one machine.
+    if (line.notice !== "") {
+      const key = line.notice;
+
+      button.addEventListener("copied", function () {
+        showToast(function () {
+          return t(key);
+        }, "info");
+      });
+    }
+
+    const box = document.createElement("span");
+
+    box.className = "copyable";
+    box.appendChild(said);
+    box.appendChild(button);
+    cell.appendChild(box);
+  }
+
+  return cell;
+}
+
+// addressPort is the port at the end of an address written host:port or
+// [host]:port, and the empty string where there is none.
+function addressPort(address) {
+  const at = address.lastIndexOf(":");
+
+  return at < 0 ? "" : address.slice(at + 1);
+}
+
+// joinAddress writes a host and a port the way a client takes them. An IPv6
+// address carries colons of its own and goes in brackets, for the reason the
+// server joins its addresses with net.JoinHostPort.
+function joinAddress(host, port) {
+  return host.indexOf(":") >= 0 ? "[" + host + "]:" + port : host + ":" + port;
+}
+
+// pageHost is the address this page was loaded from, without the brackets a
+// URL puts around an IPv6 one. It is the address of this machine that is known
+// to reach it from where the operator is sitting.
+function pageHost() {
+  const host = window.location.hostname;
+
+  return host.startsWith("[") && host.endsWith("]") ? host.slice(1, -1) : host;
 }
 
 // statusBadge is what a tunnel is, drawn so that the one row that is not
@@ -4481,7 +4594,8 @@ async function openHostLocalForwards(host) {
     // first and the values it stands for follow it.
     const table = buildTable(
       [t("local-forwards.number.column"), t("local-forwards.local-port.column"),
-        t("local-forwards.scope.column"), t("local-forwards.target.column"),
+        t("local-forwards.scope.column"), t("local-forwards.reachable.column"),
+        t("local-forwards.target.column"),
         t("local-forwards.description.column"), t("local-forwards.status.column"), ""],
       shown.map(function (item) {
         const row = localForwardRow(item, openForm, flipOne, remove);
@@ -4883,7 +4997,15 @@ function localForwardRow(item, edit, flip, remove) {
       item.number,
       item.local_port,
       localForwardScopeText(item.bind_scope),
-      copyable(element("span", target), target, t("local-forwards.copy-target.aria", { address: target })),
+      reachableAddresses({
+        scope: bindScopeStored(item.bind_scope),
+        port: String(item.local_port),
+        host: pageHost(),
+        v4: true,
+        v6: true,
+        here: true
+      }),
+      target,
       description,
       statusBadge(item.status),
       buttons
