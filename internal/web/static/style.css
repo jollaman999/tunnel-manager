@@ -2288,7 +2288,7 @@ input.list-search:focus {
 /* The certificate as PEM. It is folded away because it is read once, when the
    certificate is taken into a trust store, and never after that. */
 .pem-box {
-  margin-top: 1rem;
+  margin: 1rem 0;
 }
 
 .pem-box > summary {
