@@ -758,17 +758,14 @@ async function drawStatus() {
       nodes.push(controls);
     }
 
-    const statusTable = buildTable(
+    nodes.push(buildTable(
       [t("status.host.column"), t("status.kind.column"), t("status.service-port.column"),
         t("status.status.column"), t("status.server.column"), t("status.opened.column"),
         t("status.reachable.column"), t("status.reaches.column"),
         t("status.retries.column"), t("status.last-connected.column")],
       rows,
       [0, 2, 8]
-    );
-
-    statusTable.classList.add("status-list");
-    nodes.push(statusTable);
+    ));
   }
 
   render(t("status.screen.title"), nodes);
