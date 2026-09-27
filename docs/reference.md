@@ -134,6 +134,11 @@ the number closed since the line before. When the process or the system runs
 out of descriptors anyway, a local port or a proxy waits and accepts again, from
 5ms doubling up to a second, rather than dropping the forwards of the Host.
 
+The ceiling comes from the limit of the process alone. On a system whose own
+limit, `fs.file-max`, is close to the `LimitNOFILE=65535` of the systemd unit or
+the `nofile` of docker-compose.yaml, tunnel-manager filling up to its ceiling can
+leave other processes unable to open a file. Lower `LimitNOFILE` there.
+
 The bundled systemd unit is for Linux. On the other platforms the process has to
 be kept running by whatever that system uses.
 
@@ -1605,6 +1610,10 @@ curl -s -b cookies.txt -X POST "$BASE/api/settings/alert/test-webhook" \
   -H "X-CSRF-Token: $CSRF" \
   -d '{"alert_webhook_url":"https://hooks.example.com/tunnel-manager"}'
 ```
+
+**Give a `settings` token only to automation you trust.** A test connects from
+this server to the address in the body and answers with the reason it failed, so
+that token can tell which ports are open on the networks this server reaches.
 
 A settings export carries the alert settings, the webhook URL and the mail
 password among them, in the clear inside the encrypted file, the way it carries

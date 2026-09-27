@@ -96,6 +96,16 @@ SQLite 驱动是纯 Go 写的（`github.com/glebarez/sqlite` 架在 `modernc.org
 在 Unix 上，进程启动时会自行提高可打开文件描述符的上限，因为每条隧道都要占用好几个。Windows
 没有这种按进程计算的上限可提高，那一步在那里什么也不做。除此之外没有别的差别。
 
+所有本地转发、SOCKS5 代理和服务端口承载的连接，合起来被限制在那个软上限减去 256 以内，而且不会少于
+64；在 Windows 上这个上限是 65279。那 256 个留给数据库、日志、监听器和 SSH 连接。超过上限到达的
+连接一被接受就关闭，并以 `tunnel.connection_limit_reached` 记入日志，每个转发每分钟最多一次，附上
+自上一行以来关闭的个数。即便如此，进程或系统的描述符还是用完时，本地端口或代理不会断开 Host 的
+转发，而是从 5ms 起翻倍、最多到一秒地等待，然后再接受。
+
+这个上限只看进程自己的限制。在系统总上限 `fs.file-max` 接近 systemd unit 的 `LimitNOFILE=65535`
+或 docker-compose.yaml 的 `nofile` 的系统上，tunnel-manager 占满上限时，其他进程可能打不开文件。
+这种地方请调低 `LimitNOFILE`。
+
 随附的 systemd unit 是给 Linux 用的。在其他平台上，需要用那个系统自己的方式让进程持续运行。
 
 实际运行过的只有 Linux 的可执行文件。其余几个只是用对应平台的编译器和 vet 工具构建并检查过，
@@ -508,7 +518,7 @@ chmod +x tunnel-manager-linux-amd64
 | `-bin` | `-install` 把可执行文件放到哪里，以及注册已经没有了的机器上 `-uninstall` 到哪里去找可执行文件。不给的话就是这个平台放管理员所装程序的地方。它和 `-install` 或 `-uninstall` 一起用 |
 | `-purge` | 和 `-uninstall` 一起用时，连数据目录一起删掉。它删掉的东西拿不回来 |
 | `-reset-settings` | 把每一项设置都还原成默认值，打印改了什么然后退出。注册的 Host、服务端口、账号和证书都原样留着。见[服务起不来的时候](#服务起不来的时候) |
-| `-trust-proxy-headers` | 信任这台服务器前面那个东西加的 `X-Forwarded-Proto` 头，这样明文到达本进程的连接上，会话 cookie 也会标上 `Secure`。不给就是关的。见[放在反向代理后面](#放在反向代理后面) |
+| `-trust-proxy-headers` | 信任这台服务器前面那个东西加的 `X-Forwarded-Proto` 和 `X-Forwarded-For` 头。`X-Forwarded-Proto` 让明文到达本进程的连接上的会话 cookie 也标上 `Secure`，`X-Forwarded-For` 最右边的一项就是登录限制计数所按的地址，也是日志里写的地址。不给就是关的，这时地址就是连接的地址。见[放在反向代理后面](#放在反向代理后面) |
 | `-version` | 打印版本号后退出 |
 | `-help` | 打印参数后退出 |
 
@@ -534,12 +544,20 @@ chmod +x tunnel-manager-linux-amd64
 **两者都必须留在那个目录底下。** 它们收的是相对路径，`logs/a/b/x.log` 或 `x.log` 就是能写的
 全部；绝对路径和用 `..` 爬出去的路径，在保存的时候就被拒绝。日志文件由进程创建并往后追加，
 Logs 页面又把它的末尾读回来，所以一个能离开这套安装的路径，会让这项设置变成让本进程往机器上
-任何一个文件里写、并读取它能打开的任何一个文件的通道。在还接受这种路径的时候存过一个的安装，
-改用默认值启动，并说明它把什么换成了什么：
+任何一个文件里写、并读取它能打开的任何一个文件的通道。
+
+**两者都不能指向这套安装用来存放别的东西的文件：** 数据库文件，它的 `-wal`、`-shm` 和
+`-journal`，`initial-password`，或者两者中的另一个。比较时忽略大小写，并把 `./x` 和 `x` 当作同一个
+文件；数据库文件指的是 `-db` 给的那个文件，不是默认值。日志器在读取密钥之前就打开了，所以指向密钥
+文件的日志文件会写进密钥里，下次启动就会停在一个读不了的密钥上。
+
+在还接受这种路径的时候存过一个的安装，改用默认值启动，并说明它把什么换成了什么。日志文件指向
+密钥文件时，被换回去的是日志文件：
 
 ```text
-warn  a stored path setting names a place outside the directory the database file is in,
-      which is no longer allowed, and was put back to its default
+warn  a stored path setting names a place outside the directory the database file is in
+      or a file this installation keeps something else in, which is no longer allowed,
+      and was put back to its default
       {"setting": "logging.file.path", "from": "/var/log/tunnel-manager/x.log",
        "to": "logs/tunnel-manager.log"}
 ```
@@ -585,6 +603,11 @@ docker-compose up -d
 
 镜像用 `-db /data/tunnel-manager.db` 启动这个可执行文件，compose 文件把 `/data` 绑到宿主机
 的 `./_data`。容器被替换时，数据库、密钥和日志靠它保留下来。
+
+容器里的程序以 uid `10888`、gid `10888` 运行，不是 root。每次启动时，在程序运行之前，镜像会把
+`./_data` 以及其中还不归 `10888:10888` 所有的东西的属主改成这个 uid 和 gid。所以 docker 以 root
+创建的目录，以及旧镜像留下的归 root 所有的文件，都不需要手动处理，之后在宿主机上它们归 `10888`
+所有。见[以非 root 用户运行](#以非-root-用户运行)。
 
 初始密码文件就写在那个目录里，所以从宿主机也读得到：
 
@@ -854,16 +877,31 @@ Settings 页面上的 **Serve over HTTPS**，在 API 里是 `api_https_enabled`�
 会话 cookie 只有在 TLS 的连接上才会标上 `Secure`。这样一来，浏览器从头到尾都在 HTTPS 上，
 cookie 却是不带这个标志跑的。
 
+服务器能看到的地址也只有代理一个，所以每次登录都会记在同一个地址上，每行日志写的都是代理。
+
 `-trust-proxy-headers` 就是用来说明情况不是这样的。加上它，带着 `X-Forwarded-Proto: https`
-的请求就被当作从 TLS 上过来的，那两个会话 cookie 会标上 `Secure`。
+的请求就被当作从 TLS 上过来的，那两个会话 cookie 会标上 `Secure`。请求的地址是
+`X-Forwarded-For` 最右边的一项：登录限制按它计数，访问日志（`remote_ip`）和 API 写的日志行写的
+都是它。这个头缺失或最右边一项不是 IP 地址时，用连接的地址。在 API 前面写的日志行，也就是明文
+HTTP 请求的重定向以及端口上区分 TLS 和明文 HTTP 的那部分写的行，不管给没给这个参数，写的都是
+连接（`remote_addr`）。
 
 ```bash
 ./tunnel-manager -db /var/lib/tunnel-manager/tunnel-manager.db -trust-proxy-headers
 ```
 
-**不给就是关的，而且它不决定别的任何事情。** 这个头任何客户端都能发，所以只有在运维自己跑的
-代理是唯一能连到这台服务器的东西的地方，它才值得读。直接暴露在外的服务器就照原样留着：在那里
-打开它，等于让客户端把自己的连接标成安全的。
+最右边的一项是前面那个代理追加的，所以这假定前面只有一个代理，而且那个代理必须把连到它的地址
+追加到这个头上，而不是把客户端发来的原样转交。在 nginx 里是：
+
+```nginx
+proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+proxy_set_header X-Forwarded-Proto $scheme;
+```
+
+**不给就是关的，而且它不决定别的任何事情。** 这两个头任何客户端都能发，所以只有在运维自己跑的
+代理是唯一能连到这台服务器的东西的地方，它们才值得读。直接暴露在外的服务器就照原样留着：在那里
+打开它，等于让客户端把自己的连接标成安全的，并自己挑选登录失败记在哪个地址上。不给这个参数时，
+不管 `X-Forwarded-For` 怎么写，地址永远是连接的地址。
 
 它是命令行参数而不是设置，因为它描述的是这个进程周围的部署方式，不是运行期间要改的东西；而且
 做成设置，就会把这个问题摆到前面什么都没有的那套安装的 Settings 页面上。
@@ -904,11 +942,16 @@ Settings 页面上两个都能改，从脚本上做同一件事是 `PUT /api/acc
 **每一次都要当前密码**，只改名字的那次也要。要求它，是为了区分本人在修改和有人利用无人看管的
 屏幕上留下的会话这两种情况；初始化不能做第二次也是同一个道理。
 
-**其他会话全部下线，只留这一个。** 不管改的是哪一项，改名也一样：会话指向的是账号而不是账号
-的名字，改名却不处理它们，等于换了登录凭据，已经登录的人却仍然留在里面。想改
-凭据，一半的理由就是别人可能已经知道了，所以规则就一条：凭据变了，那么除了执行这次修改的会话
-以外，全部作废。做这次修改的会话继续能用，它的 CSRF 令牌也继续有效，这样发起请求的那个
-页面才能把结果显示出来。响应里会说明有多少个其他客户端被下线了。
+**其他会话全部下线，只留这一个，并且每个 API 令牌都被吊销。** 不管改的是哪一项，改名也一样：
+会话指向的是账号而不是账号的名字，改名却不处理它们，等于换了登录凭据，已经登录的人却仍然留在
+里面。想改凭据，一半的理由就是别人可能已经知道了，而知道的人也可能已经建了令牌，所以规则就一条：
+凭据变了，那么除了执行这次修改的会话以外，全部作废，每个令牌也一样，包括永不过期的。做这次修改
+的会话继续能用，它的 CSRF 令牌也继续有效，这样发起请求的那个页面才能把结果显示出来。响应里
+`sessions_ended` 说明有多少个其他客户端被下线了，`tokens_revoked` 说明吊销了多少个令牌。
+
+**用令牌的脚本在凭据变了之后就不能用了。** 在给它一个修改之后创建的令牌之前，它的下一个请求会
+像被吊销的令牌那样得到 `401`。账号那一行和令牌是一起写入的：保存失败的修改什么也不吊销；因当前
+密码不对或者值和账号已有的相同而被拒绝的修改，让所有令牌保持原样。
 
 当前密码不对返回 `401`，什么都不改。页面会让你把新密码输两遍；第二遍从不离开浏览器，因为同一个
 字符串发给服务器两次，服务器从第二次里得不到任何新信息。
@@ -926,7 +969,8 @@ curl -s -b cookies.txt -X PUT "$BASE/api/account" \
     "username": "operator",
     "username_changed": true,
     "password_changed": false,
-    "sessions_ended": 1
+    "sessions_ended": 1,
+    "tokens_revoked": 2
   }
 }
 ```
@@ -1072,7 +1116,7 @@ Settings 页面。同样的值通过 `GET /api/settings` 和 `PUT /api/settings`
 | `api_port` | 1 到 65535。改成某个本地转发或 SOCKS5 代理打开的端口会被 `409` 拒绝，见[本地转发](#本地转发) |
 | `monitoring_interval_sec`、`reconcile_interval_sec` | 大于零 |
 | `reconnect_max_interval_sec` | 1 到 3600 |
-| `security_key_file`、`logging_file_path` | 不能为空，而且要是数据库文件所在的目录底下的路径：绝对路径和用 `..` 爬出去的路径都会被拒绝。见[文件放在哪里](#文件放在哪里) |
+| `security_key_file`、`logging_file_path` | 不能为空，而且要是数据库文件所在的目录底下的路径：绝对路径和用 `..` 爬出去的路径都会被拒绝。两者都不能指向数据库文件、它的 `-wal`、`-shm` 或 `-journal`、`initial-password`，或者另一个，比较时忽略大小写。见[文件放在哪里](#文件放在哪里) |
 | `logging_level` | `debug`、`info`、`warn`、`error`、`dpanic`、`panic` 或 `fatal` |
 | `logging_format` | `json` 或 `console` |
 | `logging_file_max_size`、`logging_file_max_backups`、`logging_file_max_age` | 零或更大 |
@@ -1213,6 +1257,9 @@ curl -s -b cookies.txt -X POST "$BASE/api/settings/alert/test-webhook" \
   -H "X-CSRF-Token: $CSRF" \
   -d '{"alert_webhook_url":"https://hooks.example.com/tunnel-manager"}'
 ```
+
+**`settings` 令牌只给你信任的自动化。** 测试从这台服务器直接连到请求体里的地址，并返回失败的原因，
+所以用这个令牌能探出这台服务器能到达的网络上哪些端口是开着的。
 
 设置导出会把告警设置，包括 webhook URL 和邮件密码，以明文放进加密的文件里，和放 Host 的密码一样。
 
@@ -1509,8 +1556,9 @@ curl -s -b cookies.txt -X POST "$BASE/api/setup" \
 令牌不能读取或修改账号信息，不能再创建令牌，也不能换成会话。像卸载这样需要再次输入账号密码的调用，
 用令牌调用时仍然要输入密码。
 
-令牌的有效期是 30、90、365 天或永不过期，默认 90 天。修改账号密码不会吊销令牌。用令牌做的修改
-会以令牌名称记入日志。
+令牌的有效期是 30、90、365 天或永不过期，默认 90 天。**修改账号的用户名或密码会吊销每个令牌**，
+见[修改用户名和密码](#修改用户名和密码)，所以改了其中任何一个之后，脚本都需要一个新令牌。用令牌
+做的修改会以令牌名称记入日志。
 
 ```bash
 TOKEN=tm_...
@@ -1525,7 +1573,18 @@ curl -s -X POST "$BASE/api/host" \
   -d '{"address":"192.0.2.10","port":22,"user":"ubuntu","password":"<host-password>"}'
 ```
 
-也可以用会话调用 `POST`、`GET`、`DELETE /api/token` 来创建、列出和吊销令牌。
+也可以用会话调用 `POST`、`GET`、`DELETE /api/token` 来创建、列出和吊销令牌。`POST /api/token`
+收 `name`、`scopes`、`expires_in_days` 和 `account_password`，也就是再问一次的账号密码：令牌在有效
+期内不用密码就能打开它的权限范围所打开的东西，所以只有一个打开的会话不足以创建令牌。空的
+`account_password` 以 `400` 拒绝，打不开账号的以 `401` 拒绝，这种情况太多则以 `429` 拒绝，用的是和
+登录相同的计数器。
+
+```bash
+curl -s -b cookies.txt -X POST "$BASE/api/token" \
+  -H "X-CSRF-Token: $CSRF" -H 'Content-Type: application/json' \
+  -d '{"name":"monitoring","scopes":["read"],"expires_in_days":90,"account_password":"<the password of your account>"}' |
+jq -r '.data.token'
+```
 
 | 响应 | 含义 |
 |------|------|
@@ -1724,7 +1783,7 @@ curl -s -b cookies.txt "$BASE/api/host?q=example&page=1&size=20"
 | `GET` | `/api/setup` | 说明账号是否还没有用户名和密码。登录页要用，所以不需要会话也会响应 |
 | `POST` | `/api/setup` | 给还没有用户名和密码的账号设置一次用户名和密码 |
 | `GET` | `/api/account` | 这个账号叫什么 |
-| `PUT` | `/api/account` | 收 `current_password`，以及 `username`、`new_password` 或两者，修改它们并让其他会话全部下线 |
+| `PUT` | `/api/account` | 收 `current_password`，以及 `username`、`new_password` 或两者，修改它们，让其他会话全部下线并吊销每个 API 令牌 |
 
 ### Host
 
@@ -2136,13 +2195,18 @@ Host 的分配关系，是因为这两个词在任何一台系统上的意思都
 
 | 方法 | 路径 | 做什么 |
 |------|------|--------|
-| `POST` | `/api/export/tunnels` | 收 `password`，把每台 Host（连同它的本地转发）和每个服务端口加密成一个文件返回 |
-| `POST` | `/api/import/tunnels` | 收 `password`、`file` 和 `overwrite`，把文件里的内容写进来 |
-| `POST` | `/api/export/settings` | 收 `password`，把已保存的设置加密成一个文件返回 |
+| `POST` | `/api/export/tunnels` | 收 `password` 和 `account_password`，把每台 Host（连同它的本地转发）和每个服务端口加密成一个文件返回 |
+| `POST` | `/api/import/tunnels` | 收 `password`、`file`、`overwrite` 和 `account_password`，把文件里的内容写进来 |
+| `POST` | `/api/export/settings` | 收 `password` 和 `account_password`，把已保存的设置加密成一个文件返回 |
 | `POST` | `/api/import/settings` | 收 `password` 和 `file`，保存文件里的设置 |
 
 这四个接口把配置从一套安装迁移到另一套。导出生成一个文件，导入接收一个文件，所以文件放在哪里、
 保留多久由你决定，两套安装之间也不需要互相访问。
+
+`password` 是文件的密码，`account_password` 是再问一次的账号密码。两个导出和隧道导入要收它，
+是因为导出以明文带出数据库加密保存的东西，而带 `overwrite` 的导入会替换信任 Host 所用的主机密钥，
+所以两者都不能只靠一个打开的会话或一个令牌。用令牌的请求也要发它。空的以 `400` 拒绝，打不开账号的
+以 `401` 拒绝，这种情况太多则以 `429` 拒绝，用的是和登录相同的计数器。设置导入不收它。
 
 **导出生成的是一行文本。** 开头是 `tmpwenc:v1:` 这个标记，后面全是 base64，所以整个文件都是
 ASCII，粘到输入框、消息或者工单里也不会因为换行而损坏。里面包含派生密钥时用的参数、盐、
@@ -2237,12 +2301,12 @@ id，所以那台 Host 的隧道是重连而不是重建。文件里的每一行
 # 导出，文件请存放在保管机密的地方。
 curl -s -b cookies.txt -X POST "$BASE/api/export/tunnels" \
   -H "X-CSRF-Token: $CSRF" -H 'Content-Type: application/json' \
-  -d '{"password":"<the password that encrypts the file>"}' |
+  -d '{"password":"<the password that encrypts the file>","account_password":"<the password of your account>"}' |
 jq -r '.data.file' > tunnels.tmexport
 
 # 在另一套安装上导入它。
 jq -n --arg file "$(cat tunnels.tmexport)" \
-  '{password:"<the same password>",file:$file,overwrite:false}' |
+  '{password:"<the same password>",file:$file,overwrite:false,account_password:"<the password of your account>"}' |
 curl -s -b cookies.txt -X POST "$BASE/api/import/tunnels" \
   -H "X-CSRF-Token: $CSRF" -H 'Content-Type: application/json' \
   --data-binary @-
@@ -2592,9 +2656,16 @@ Group=tunnel-manager
 本来就在那里、属于 root 的目录也会跟着换主。已有的密钥文件也得让那个账号读得到，所以请改它的
 属主，权限还留在 `0600`。
 
-容器以 root 运行，因为 `Dockerfile` 最后是 `USER root`。想换个身份运行的话，给
-docker-compose.yaml 里的服务加上 `user: "<uid>:<gid>"`，并把宿主机上的 `./_data` 改成归那个
-uid 所有。如果它曾经以 root 运行过，那个目录属于 root，得先改过来。文件描述符上限来自
+容器以 `tm`（uid `10888`、gid `10888`）运行程序。镜像以 root 启动只是为了交出 `/data`：`/data`
+不存在就创建它，把 `/data` 以及其中还不是 `10888:10888` 的每个文件的属主改掉，然后在启动程序之前
+切换到 `tm`。docker 以 root 创建的新 `./_data`，和旧镜像留下的归 root 所有的目录，都这样起来，
+宿主机上什么都不用做，第一次之后的启动什么也不改。权限不动，所以 `keys/` 和 `logs/` 仍是
+`0700`，程序写的文件仍是 `0600`。要回到以 root 运行的镜像，什么都不用改，因为 root 能读归
+`10888` 所有的文件；要把文件交给宿主机上的另一个账号，请手动 `chown`。
+
+想以另一个账号运行，给 docker-compose.yaml 里的服务加上 uid 不是 `0` 的 `user: "<uid>:<gid>"`。
+这时镜像不改任何属主，直接以那个账号启动程序，所以宿主机上的 `./_data` 必须已经归那个 uid 所有。
+root 的 `user:`（`"0:0"` 或 `root`）和不写一样：属主会被改掉，程序以 `tm` 运行。文件描述符上限来自
 docker-compose.yaml 里的 `ulimits`，和容器里用哪个账号没有关系。
 
 ## 许可证

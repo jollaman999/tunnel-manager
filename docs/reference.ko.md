@@ -108,6 +108,18 @@ SQLite 드라이버가 순수 Go 구현(`modernc.org/sqlite` 위의 `github.com/
 여러 개를 쓰기 때문입니다. Windows 에는 프로세스마다 걸리는 그런 한도가 없어서 이 단계가 아무것도
 하지 않습니다. 그 밖에 다른 점은 없습니다.
 
+모든 로컬 포워딩, SOCKS5 프록시, 서비스 포트가 나르는 연결은 합쳐서 그 소프트 리밋에서 256 을
+뺀 수까지로 묶이고, 64 보다 적어지지는 않습니다. Windows 에서는 상한이 65279 입니다. 256 개는
+데이터베이스, 로그, 리스너, SSH 연결 몫으로 남겨 둡니다. 상한을 넘어 들어온 연결은 받자마자
+닫고, 포워딩마다 1분에 한 번까지 `tunnel.connection_limit_reached` 로, 직전 줄 이후 닫은 수와
+함께 로그에 남깁니다. 그래도 프로세스나 시스템의 디스크립터가 바닥나면, 로컬 포트나 프록시는
+Host 의 포워딩을 내려 버리지 않고 5ms 부터 두 배씩 1초까지 기다렸다가 다시 받습니다.
+
+상한은 프로세스의 한도만 보고 정합니다. 시스템 전체 한도 `fs.file-max` 가 systemd 유닛의
+`LimitNOFILE=65535` 나 docker-compose.yaml 의 `nofile` 에 가까운 시스템에서는 tunnel-manager 가
+상한까지 차면 다른 프로세스가 파일을 열지 못할 수 있습니다. 그런 곳에서는 `LimitNOFILE` 을
+낮추십시오.
+
 같이 들어 있는 systemd 유닛은 Linux 용입니다. 다른 플랫폼에서는 그 시스템이 쓰는 방법으로 프로세스를
 계속 띄워 두어야 합니다.
 
@@ -560,7 +572,7 @@ chmod +x tunnel-manager-linux-amd64
 | `-bin` | `-install` 이 실행 파일을 놓을 자리이자, 등록이 남아 있지 않은 장비에서 `-uninstall` 이 실행 파일을 찾을 자리입니다. 지정하지 않으면 그 플랫폼이 관리자가 설치한 프로그램을 두는 자리입니다. `-install` 이나 `-uninstall` 과 같이 씁니다 |
 | `-purge` | `-uninstall` 과 같이 쓰면 데이터 디렉터리까지 지웁니다. 이것으로 지운 것은 되돌릴 수 없습니다 |
 | `-reset-settings` | 저장된 설정을 전부 기본값으로 되돌리고, 무엇이 바뀌었는지 찍고 종료합니다. 등록한 호스트, 서비스 포트, 계정, 인증서는 그대로 둡니다. [서버가 안 뜰 때](#서버가-안-뜰-때) 참조 |
-| `-trust-proxy-headers` | 이 서버 앞에 있는 것이 붙인 `X-Forwarded-Proto` 헤더를 믿습니다. 이 프로세스까지 평문으로 들어온 연결에서도 세션 쿠키에 `Secure` 가 붙습니다. 주지 않으면 꺼져 있습니다. [리버스 프록시 뒤에 둘 때](#리버스-프록시-뒤에-둘-때) 참조 |
+| `-trust-proxy-headers` | 이 서버 앞에 있는 것이 붙인 `X-Forwarded-Proto` 와 `X-Forwarded-For` 헤더를 믿습니다. `X-Forwarded-Proto` 는 이 프로세스까지 평문으로 들어온 연결에서도 세션 쿠키에 `Secure` 를 붙이고, `X-Forwarded-For` 의 맨 오른쪽 값은 로그인 제한이 세는 주소이자 로그에 적히는 주소가 됩니다. 주지 않으면 꺼져 있고, 그때 주소는 연결의 주소입니다. [리버스 프록시 뒤에 둘 때](#리버스-프록시-뒤에-둘-때) 참조 |
 | `-version` | 버전을 찍고 종료합니다 |
 | `-help` | 플래그를 찍고 종료합니다 |
 
@@ -588,12 +600,21 @@ chmod +x tunnel-manager-linux-amd64
 `x.log` 까지가 허용되는 전부입니다. 절대 경로와 `..` 로 밖으로 나가는 경로는 저장할 때
 거부합니다. 로그 파일은 프로세스가 만들어 뒤에 붙여 쓰고 로그 화면이 그 끝을 읽어 오므로,
 설치본 밖으로 나갈 수 있는 경로는 이 프로세스가 장비의 아무 파일에나 쓰고, 열 수 있는 아무
-파일이나 읽게 하는 통로가 됩니다. 아직 허용되던 때 그런 경로를 저장해 둔 설치본은 그 대신
-기본값으로 올라오고, 무엇을 무엇으로 되돌렸는지 알립니다.
+파일이나 읽게 하는 통로가 됩니다.
+
+**둘 다 설치본이 다른 것을 담아 두는 파일을 가리킬 수 없습니다.** 데이터베이스 파일, 그
+`-wal`, `-shm`, `-journal`, `initial-password`, 그리고 둘 중 다른 쪽입니다. 비교는 대소문자를
+무시하고 `./x` 와 `x` 를 같은 파일로 읽으며, 데이터베이스 파일은 기본값이 아니라 `-db` 가
+가리키는 파일입니다. 로거는 키를 읽기 전에 열리므로, 로그 파일이 키 파일을 가리키면 로그가
+키에 써지고 다음 기동은 읽을 수 없는 키에서 멈춥니다.
+
+아직 허용되던 때 그런 경로를 저장해 둔 설치본은 그 대신 기본값으로 올라오고, 무엇을 무엇으로
+되돌렸는지 알립니다. 로그 파일이 키 파일을 가리키면 되돌리는 쪽은 로그 파일입니다.
 
 ```text
-warn  a stored path setting names a place outside the directory the database file is in,
-      which is no longer allowed, and was put back to its default
+warn  a stored path setting names a place outside the directory the database file is in
+      or a file this installation keeps something else in, which is no longer allowed,
+      and was put back to its default
       {"setting": "logging.file.path", "from": "/var/log/tunnel-manager/x.log",
        "to": "logs/tunnel-manager.log"}
 ```
@@ -643,6 +664,12 @@ docker-compose up -d
 이미지는 바이너리를 `-db /data/tunnel-manager.db` 로 띄우고, compose 파일이 `/data` 를
 호스트의 `./_data` 에 연결합니다. 컨테이너를 지웠다 다시 만들어도 데이터베이스와 키와
 로그가 남는 이유가 이것입니다.
+
+컨테이너 안의 프로그램은 root 가 아니라 uid `10888`, gid `10888` 로 실행됩니다. 이미지는
+기동할 때마다 프로그램을 띄우기 전에 `./_data` 와, 그 안에서 아직 `10888:10888` 소유가 아닌
+것의 소유자를 그 uid 와 gid 로 바꿉니다. 그래서 docker 가 root 로 만든 디렉터리도, 예전
+이미지가 root 소유로 남긴 파일도 손으로 할 일이 없고, 그 뒤로 호스트에서는 `10888` 소유로
+남습니다. [비root로 실행하는 경우](#비root로-실행하는-경우) 참조.
 
 임시 비밀번호 파일도 그 디렉터리에 써지므로 호스트에서도 읽을 수 있습니다.
 
@@ -933,18 +960,35 @@ TLS 를 끝내고 이 서버까지는 평문으로 연결하는 프록시를 앞
 HTTP 연결입니다. 그런데 세션 쿠키에 `Secure` 가 붙는 것은 TLS 인 연결에서뿐이라, 브라우저는
 처음부터 끝까지 HTTPS 인데도 쿠키는 그 표시 없이 오가게 됩니다.
 
+서버가 보는 주소도 프록시 하나뿐이라, 모든 로그인이 한 주소로 세어지고 모든 로그 줄이
+프록시를 적게 됩니다.
+
 `-trust-proxy-headers` 가 그렇지 않다고 알려주는 것입니다. 이 플래그를 주면
 `X-Forwarded-Proto: https` 를 달고 온 요청은 TLS 로 들어온 것으로 보고, 세션 쿠키 둘에
-`Secure` 를 붙입니다.
+`Secure` 를 붙입니다. 요청의 주소는 `X-Forwarded-For` 의 맨 오른쪽 값입니다. 로그인 제한이 그
+주소로 세고, 접근 로그(`remote_ip`)와 API 가 쓰는 로그 줄이 그 주소를 적습니다. 그 헤더가
+없거나 맨 오른쪽 값이 IP 주소가 아니면 연결의 주소를 씁니다. API 앞에서 쓰는 로그 줄, 곧
+평문 HTTP 요청의 리다이렉트와 포트에서 TLS 와 평문 HTTP 를 가르는 쪽이 쓰는 줄은 플래그와
+상관없이 연결(`remote_addr`)을 적습니다.
 
 ```bash
 ./tunnel-manager -db /var/lib/tunnel-manager/tunnel-manager.db -trust-proxy-headers
 ```
 
-**주지 않으면 꺼져 있고, 이것 말고 정하는 것은 없습니다.** 이 헤더는 아무 클라이언트나 보낼
-수 있어서, 운영자가 띄운 프록시만이 이 서버에 닿을 수 있는 곳에서만 읽을 값어치가 있습니다.
-직접 노출된 서버는 그대로 두십시오. 거기서 이것을 켜면 클라이언트가 자기 연결을 안전한
-것으로 표시할 수 있게 됩니다.
+맨 오른쪽 값은 앞에 있는 프록시가 덧붙인 값이므로, 이것은 앞에 프록시가 하나 있다고
+가정합니다. 그리고 그 프록시는 클라이언트가 보낸 값을 그대로 넘기지 말고, 자기에게 들어온
+주소를 헤더에 덧붙여야 합니다. nginx 에서는 이렇습니다.
+
+```nginx
+proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+proxy_set_header X-Forwarded-Proto $scheme;
+```
+
+**주지 않으면 꺼져 있고, 이것 말고 정하는 것은 없습니다.** 두 헤더 모두 아무 클라이언트나
+보낼 수 있어서, 운영자가 띄운 프록시만이 이 서버에 닿을 수 있는 곳에서만 읽을 값어치가
+있습니다. 직접 노출된 서버는 그대로 두십시오. 거기서 이것을 켜면 클라이언트가 자기 연결을
+안전한 것으로 표시하고, 로그인 실패가 세어질 주소를 스스로 고를 수 있게 됩니다. 플래그가
+없으면 `X-Forwarded-For` 가 무엇이라고 하든 주소는 언제나 연결의 주소입니다.
 
 설정이 아니라 플래그인 이유는, 이것이 프로세스가 도는 동안 바꿀 무엇이 아니라 이 프로세스를
 둘러싼 배치를 서술하는 것이기 때문이고, 설정으로 두면 앞에 아무것도 없는 설치본의 Settings
@@ -995,13 +1039,20 @@ Settings 화면에서 둘 다 바꿉니다. 스크립트에서는 `PUT /api/acco
 자리를 비운 사이 열려 있는 화면을 가르는 것이고, 설정을 두 번 못 돌게 막아 둔 이유와
 같습니다.
 
-**이 세션만 남고 다른 세션은 전부 끊깁니다.** 둘 중 무엇을 바꿨든 그렇습니다. 이름만
-바꿔도 그렇습니다. 세션은 이름이 아니라 계정을 가리키므로, 이름만 바꾸고 세션을 두면
-로그인할 때 입력하는 값만 바뀌고 이미 들어와 있는 쪽은 그대로 남습니다. 자격증명을 바꾸는
-이유의 절반은 누가 알고 있을지도 모른다는 것이라서, 규칙을 하나로 둡니다. 자격증명이
-바뀌었으니 그것을 바꾼 세션만 남고 전부 끊깁니다. 바꾼 세션은 이미 가지고 있는 CSRF 토큰을
-포함해 그대로 쓰므로, 요청을 보낸 화면이 무슨 일이 일어났는지 표시할 수 있습니다. 응답에
-다른 클라이언트가 몇 개 끊겼는지 실립니다.
+**이 세션만 남고 다른 세션은 전부 끊기며, API 토큰은 전부 폐기됩니다.** 둘 중 무엇을
+바꿨든 그렇습니다. 이름만 바꿔도 그렇습니다. 세션은 이름이 아니라 계정을 가리키므로, 이름만
+바꾸고 세션을 두면 로그인할 때 입력하는 값만 바뀌고 이미 들어와 있는 쪽은 그대로 남습니다.
+자격증명을 바꾸는 이유의 절반은 누가 알고 있을지도 모른다는 것이고, 그것을 알던 사람은
+토큰도 만들 수 있었으므로, 규칙을 하나로 둡니다. 자격증명이 바뀌었으니 그것을 바꾼 세션만
+남고 전부 끊기며, 무기한 토큰을 포함해 토큰도 전부 사라집니다. 바꾼 세션은 이미 가지고 있는
+CSRF 토큰을 포함해 그대로 쓰므로, 요청을 보낸 화면이 무슨 일이 일어났는지 표시할 수
+있습니다. 응답의 `sessions_ended` 에 다른 클라이언트가 몇 개 끊겼는지, `tokens_revoked` 에
+토큰이 몇 개 폐기됐는지 실립니다.
+
+**토큰을 쓰는 스크립트는 자격증명이 바뀌면 멈춥니다.** 바뀐 뒤에 만든 토큰을 줄 때까지 그
+다음 요청은 폐기된 토큰처럼 `401` 을 받습니다. 계정 행과 토큰은 함께 기록됩니다. 저장에
+실패한 변경은 아무것도 폐기하지 않고, 현재 비밀번호가 틀렸거나 계정이 이미 가진 값이라
+거부된 변경은 토큰을 모두 그대로 둡니다.
 
 현재 비밀번호가 틀리면 `401` 로 응답하고 아무것도 바꾸지 않습니다. 화면은 새 비밀번호를
 두 번 받는데, 두 번째 값은 브라우저 밖으로 나가지 않습니다. 같은 값을 두 번 받은 서버는
@@ -1020,7 +1071,8 @@ curl -s -b cookies.txt -X PUT "$BASE/api/account" \
     "username": "operator",
     "username_changed": true,
     "password_changed": false,
-    "sessions_ended": 1
+    "sessions_ended": 1,
+    "tokens_revoked": 2
   }
 }
 ```
@@ -1185,7 +1237,7 @@ UI 파일은 일부러 세션 없이 제공합니다. 누구에게나 같은 바
 | `api_port` | 1 에서 65535. 로컬 포워딩이나 SOCKS5 프록시가 여는 포트로 바꾸면 `409` 로 거부됨. [로컬 포워딩](#로컬-포워딩) 참조 |
 | `monitoring_interval_sec`, `reconcile_interval_sec` | 0 보다 커야 함 |
 | `reconnect_max_interval_sec` | 1 에서 3600 |
-| `security_key_file`, `logging_file_path` | 비어 있으면 안 되고, 데이터베이스 파일이 있는 디렉터리 아래의 경로여야 함. 절대 경로와 `..` 로 밖으로 나가는 경로는 거부됨. [파일이 어디에 생기나](#파일이-어디에-생기나) 참조 |
+| `security_key_file`, `logging_file_path` | 비어 있으면 안 되고, 데이터베이스 파일이 있는 디렉터리 아래의 경로여야 함. 절대 경로와 `..` 로 밖으로 나가는 경로는 거부됨. 대소문자를 무시하고, 데이터베이스 파일, 그 `-wal`, `-shm`, `-journal`, `initial-password`, 또는 다른 쪽을 가리킬 수 없음. [파일이 어디에 생기나](#파일이-어디에-생기나) 참조 |
 | `logging_level` | `debug`, `info`, `warn`, `error`, `dpanic`, `panic`, `fatal` 중 하나 |
 | `logging_format` | `json` 또는 `console` |
 | `logging_file_max_size`, `logging_file_max_backups`, `logging_file_max_age` | 0 이상 |
@@ -1335,6 +1387,10 @@ curl -s -b cookies.txt -X POST "$BASE/api/settings/alert/test-webhook" \
   -H "X-CSRF-Token: $CSRF" \
   -d '{"alert_webhook_url":"https://hooks.example.com/tunnel-manager"}'
 ```
+
+**`settings` 토큰은 믿는 자동화에만 주십시오.** 시험은 이 시스템에서 본문의 주소로 직접
+연결하고 실패한 이유를 돌려주므로, 그 토큰으로 이 시스템이 닿는 네트워크에서 어느 포트가
+열려 있는지 알아낼 수 있습니다.
 
 설정 내보내기는 알림 설정을, webhook URL 과 메일 비밀번호까지 포함해 암호화된 파일 안에 평문으로
 담습니다. Host 의 비밀번호를 담는 것과 같습니다.
@@ -1657,8 +1713,10 @@ curl -s -b cookies.txt -X POST "$BASE/api/setup" \
 열리지 않습니다. 토큰으로 계정 정보를 읽거나 바꾸거나, 토큰을 더 만들거나, 세션을 얻을 수 없습니다.
 제거처럼 계정 비밀번호를 다시 묻는 호출은 토큰으로 불러도 비밀번호를 묻습니다.
 
-토큰의 유효기간은 30, 90, 365일 또는 무기한이고 기본은 90일입니다. 계정 비밀번호를 바꿔도
-토큰은 폐기되지 않습니다. 토큰으로 바꾼 것은 토큰 이름으로 로그에 남습니다.
+토큰의 유효기간은 30, 90, 365일 또는 무기한이고 기본은 90일입니다. **계정의 사용자명이나
+비밀번호를 바꾸면 토큰이 전부 폐기되므로**([사용자명과 비밀번호 바꾸기](#사용자명과-비밀번호-바꾸기)
+참조), 둘 중 무엇을 바꾸든 스크립트에는 새 토큰이 필요합니다. 토큰으로 바꾼 것은 토큰 이름으로
+로그에 남습니다.
 
 ```bash
 TOKEN=tm_...
@@ -1674,7 +1732,17 @@ curl -s -X POST "$BASE/api/host" \
 ```
 
 토큰은 세션으로 `POST`, `GET`, `DELETE /api/token` 을 불러 만들고, 나열하고, 폐기할 수도
-있습니다.
+있습니다. `POST /api/token` 은 `name`, `scopes`, `expires_in_days` 와 다시 묻는 계정 비밀번호
+`account_password` 를 받습니다. 토큰은 살아 있는 동안 비밀번호 없이 그 권한이 여는 것을 열기
+때문에, 열린 세션만으로는 만들 수 없습니다. `account_password` 가 비어 있으면 `400`, 계정이
+열리지 않으면 `401`, 그런 시도가 너무 많으면 `429` 로 거부하며, 로그인과 같은 카운터를 씁니다.
+
+```bash
+curl -s -b cookies.txt -X POST "$BASE/api/token" \
+  -H "X-CSRF-Token: $CSRF" -H 'Content-Type: application/json' \
+  -d '{"name":"monitoring","scopes":["read"],"expires_in_days":90,"account_password":"<계정 비밀번호>"}' |
+jq -r '.data.token'
+```
 
 | 응답 | 뜻 |
 |------|-----|
@@ -1886,7 +1954,7 @@ curl -s -b cookies.txt "$BASE/api/host?q=example&page=1&size=20"
 | `GET` | `/api/setup` | 계정에 아직 사용자명과 비밀번호가 없는지 알려 줌. 로그인 화면이 쓰므로 세션 없이 답함 |
 | `POST` | `/api/setup` | 아직 설정이 필요한 계정에 사용자명과 비밀번호를 한 번 정함 |
 | `GET` | `/api/account` | 계정의 사용자명 조회 |
-| `PUT` | `/api/account` | `current_password` 와 `username`·`new_password` 중 하나 또는 둘을 받아 바꾸고, 다른 세션을 전부 끊음 |
+| `PUT` | `/api/account` | `current_password` 와 `username`·`new_password` 중 하나 또는 둘을 받아 바꾸고, 다른 세션을 전부 끊고 API 토큰을 전부 폐기함 |
 
 ### Host 관리
 
@@ -2324,14 +2392,21 @@ Host 에 걸리는 일괄을 대표할 수 있는 것은 두 낱말이 어느 �
 
 | 메서드 | 경로 | 하는 일 |
 |--------|------|---------|
-| `POST` | `/api/export/tunnels` | `password` 를 받아 Host 전부(그 로컬 포워딩 포함)와 서비스 포트 전부를 암호화한 파일 하나로 응답 |
-| `POST` | `/api/import/tunnels` | `password`, `file`, `overwrite` 를 받아 파일에 든 것을 저장 |
-| `POST` | `/api/export/settings` | `password` 를 받아 저장된 설정을 암호화한 파일 하나로 응답 |
+| `POST` | `/api/export/tunnels` | `password` 와 `account_password` 를 받아 Host 전부(그 로컬 포워딩 포함)와 서비스 포트 전부를 암호화한 파일 하나로 응답 |
+| `POST` | `/api/import/tunnels` | `password`, `file`, `overwrite`, `account_password` 를 받아 파일에 든 것을 저장 |
+| `POST` | `/api/export/settings` | `password` 와 `account_password` 를 받아 저장된 설정을 암호화한 파일 하나로 응답 |
 | `POST` | `/api/import/settings` | `password` 와 `file` 을 받아 파일에 든 설정을 저장 |
 
 이 넷은 설정을 한 설치에서 다른 설치로 옮깁니다. 내보내기는 파일을 생성하고 가져오기는 그 파일을
 받으므로, 파일을 어디에 얼마나 두는지는 운영자가 정하고 두 설치가 서로 통신할 필요가
 없습니다.
+
+`password` 는 파일의 비밀번호이고, `account_password` 는 다시 묻는 계정 비밀번호입니다. 두
+내보내기와 터널 가져오기가 이것을 받는 이유는, 내보내기는 데이터베이스가 암호화해 두는 것을
+평문으로 담고, `overwrite` 가져오기는 Host 를 믿는 기준인 호스트 키를 바꾸기 때문입니다. 그래서
+둘 다 열린 세션이나 토큰만으로는 부족합니다. 토큰으로 보내는 요청도 이것을 보냅니다. 비어
+있으면 `400`, 계정이 열리지 않으면 `401`, 그런 시도가 너무 많으면 `429` 로 거부하며, 로그인과
+같은 카운터를 씁니다. 설정 가져오기는 이것을 받지 않습니다.
 
 **내보내기가 생성하는 것은 한 줄짜리 텍스트입니다.** `tmpwenc:v1:` 이라는 표시로 시작하고 그
 뒤는 전부 base64 라서, 파일 전체가 ASCII 이고 입력칸이나 메시지, 티켓에 붙여 넣어도 줄바꿈
@@ -2439,12 +2514,12 @@ Host 의 모든 할당이 `loopback` 이 되고 그 밖의 답은 전부 와일�
 # 내보내고, 나온 파일은 비밀을 두는 곳에 둔다.
 curl -s -b cookies.txt -X POST "$BASE/api/export/tunnels" \
   -H "X-CSRF-Token: $CSRF" -H 'Content-Type: application/json' \
-  -d '{"password":"<파일을 암호화할 비밀번호>"}' |
+  -d '{"password":"<파일을 암호화할 비밀번호>","account_password":"<계정 비밀번호>"}' |
 jq -r '.data.file' > tunnels.tmexport
 
 # 다른 설치에서 가져온다.
 jq -n --arg file "$(cat tunnels.tmexport)" \
-  '{password:"<같은 비밀번호>",file:$file,overwrite:false}' |
+  '{password:"<같은 비밀번호>",file:$file,overwrite:false,account_password:"<계정 비밀번호>"}' |
 curl -s -b cookies.txt -X POST "$BASE/api/import/tunnels" \
   -H "X-CSRF-Token: $CSRF" -H 'Content-Type: application/json' \
   --data-binary @-
@@ -2824,11 +2899,21 @@ Group=tunnel-manager
 만들어 주고, 이미 root 소유로 있던 디렉터리도 소유자가 바뀝니다. 이미 만들어져 있는 키
 파일도 그 계정이 읽을 수 있어야 하니 소유자를 바꾸고 권한은 `0600` 으로 둡니다.
 
-컨테이너는 `Dockerfile` 이 `USER root` 로 끝나서 root 로 실행됩니다. 비root 로 실행하려면
-docker-compose.yaml 의 서비스에 `user: "<uid>:<gid>"` 를 주고, 호스트의 `./_data` 를 그
-uid 소유로 만들어 두어야 합니다. root 로 한 번 띄운 뒤라면 그 디렉터리가 root 소유로 남아
-있으니 소유자부터 바꿔야 합니다. 파일 디스크립터 한도는 docker-compose.yaml 의 `ulimits`
-가 정하므로 컨테이너 안의 계정과는 상관이 없습니다.
+컨테이너는 프로그램을 uid `10888`, gid `10888` 인 `tm` 으로 실행합니다. 이미지가 root 로
+시작하는 것은 `/data` 를 넘겨주기 위해서뿐입니다. `/data` 가 없으면 만들고, `/data` 와 그 안에서
+아직 `10888:10888` 이 아닌 모든 파일의 소유자를 바꾼 다음, 프로그램을 띄우기 전에 `tm` 으로
+내려갑니다. docker 가 root 로 만든 새 `./_data` 도, 예전 이미지가 root 소유로 남긴 것도 이렇게
+호스트에서 아무것도 하지 않고 올라오고, 첫 기동 뒤의 기동은 아무것도 바꾸지 않습니다. 권한은
+건드리지 않으므로 `keys/` 와 `logs/` 는 `0700`, 프로그램이 쓰는 파일은 `0600` 으로 남습니다.
+root 로 도는 이미지로 돌아가려면 root 가 `10888` 소유 파일을 읽을 수 있으니 바꿀 것이 없고,
+호스트의 다른 계정에 파일을 넘기려면 손으로 `chown` 하십시오.
+
+다른 계정으로 실행하려면 docker-compose.yaml 의 서비스에 `0` 이 아닌 uid 로
+`user: "<uid>:<gid>"` 를 주십시오. 그러면 이미지는 소유자를 하나도 바꾸지 않고 그 계정으로
+프로그램을 띄우므로, 호스트의 `./_data` 가 미리 그 uid 소유여야 합니다. root 인 `user:`
+(`"0:0"` 이나 `root`)는 빼 둔 것과 같습니다. 소유자를 바꾸고 프로그램은 `tm` 으로 돕니다.
+파일 디스크립터 한도는 docker-compose.yaml 의 `ulimits` 가 정하므로 컨테이너 안의 계정과는
+상관이 없습니다.
 
 ## 라이선스
 
