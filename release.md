@@ -1,3 +1,22 @@
+# v3.15.0
+
+## Add/fix features:
+
+- **An export and an import of the tunnels ask for the password of the account.** Exporting the tunnels or the settings, and importing the tunnels, take `account_password` beside the password of the file, on the Settings screen and in the API, from a session and from a token alike. The file carries every Host password, private key and passphrase, the mail password and the webhook address, so a stolen session or a `transfer` token no longer hands them out on its own, and an import can no longer put a different trusted host key in place without the password that replacing one asks for. A wrong password is answered with 401 and does not sign the screen out. The import of the settings is left as it was.
+- **Making an API token asks for the password of the account**, and **changing the username or the password revokes every token**, the ones that never run out included, in the same transaction as the change. The answer says how many went in `tokens_revoked`, and the screen says so beside the sessions it signed out. A change that is refused leaves the tokens where they were.
+- **Every call that asks for the password again is held to the limit of the login when the attempts come at once.** Clearing the logs, installing an update, approving a host key, the uninstall and the account change let every one of many requests sent together reach the password check; now at most the number the limit allows are checked and the rest are answered with 429.
+- **The client address comes from the connection unless `-trust-proxy-headers` is given.** Without the flag, `X-Forwarded-For` is believed nowhere: not by the login limit, not by the access log. With it, the rightmost entry of `X-Forwarded-For`, the one the proxy in front appended, is the address the login limit counts and the access log and the API write, so a client that writes its own header in front no longer steps past the limit. The reference shows the nginx line that appends it.
+- **A tunnel no longer drops because the process ran out of file descriptors.** A SOCKS5 proxy, a local forward or a service port that meets an accept error such as too many open files waits, from 5 ms up to a second, and goes on accepting, and the connections it already carries stay up. The connections forwarded at once are held below the file descriptor limit of the process, 256 short of it, so the API, the database and the log still have descriptors to open; a connection over that is closed as it arrives and counted in a log line once a minute.
+- **A log or key file path that names another file of the installation is refused.** The log file on the key file, either of them on the database or its `-wal`, `-shm` or `-journal`, or on the initial password file, is refused on save and on a settings import, compared after cleaning the path and without regard to case, and one already stored is put back to its default at the start with a warning. Before, a log path on the key file wrote the log into the key and the next start stopped.
+- **The container runs as `tm`, uid and gid 10888, and not as root.** The image still starts as root to hand `/data` over: whatever in it is not owned by 10888 is changed to it, and the program is then started as `tm` with su-exec. A `user:` other than root in docker-compose.yaml is honoured as it is.
+- **The reference says to give a `settings` token only to automation you trust**, since the test of an alert connects from this server to the address it is sent and answers with why it failed, and that where `fs.file-max` is close to the file descriptor limit of the service, the limit should be lowered.
+
+## Notes:
+
+- **A script that exports or imports the tunnels, or makes a token, has to send `account_password`.** Without it the call is refused with 400 under `export.account_password.required`, `import.account_password.required` or `token.account_password.required`.
+- **Changing the username or the password now revokes every API token.** A script that uses one needs a new token after the change.
+- **The container changes the owner of `./_data` to 10888 on the first start** of this image and runs the program as that uid. On the host the files stay owned by 10888; to go back to an image that runs as root nothing has to be changed, since root reads them.
+
 # v3.14.1
 
 ## Add/fix features:
