@@ -2412,10 +2412,13 @@ body.modal-open {
   box-shadow: 0 8px 24px var(--shadow);
 }
 
-/* The local forwards are a table of seven columns, which the width of a panel
-   that asks one question squeezes into a column of single words. */
+/* The local forwards are a table of eight columns, which the width of a panel
+   that asks one question squeezes into a column of single words. It is as wide
+   as the table with its buttons, so that the buttons at the end of a row are
+   not left past the edge on a screen that has the room; a narrower screen
+   still scrolls the table sideways. */
 .modal-panel[data-modal-panel="local-forwards"] {
-  max-width: 56rem;
+  max-width: 72rem;
 }
 
 .modal-panel:focus-visible {
