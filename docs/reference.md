@@ -3151,8 +3151,8 @@ open at the address that was dialled and that is all that can be said.
 > on the way look exactly the same from here, and a connection that never
 > arrives cannot tell them apart. Check both before changing either.
 
-**An assignment on the `loopback` scope can never be confirmed from here, and
-that is not a fault.** Its ports are asked for on the addresses of the Host
+**An assignment on the `loopback` scope cannot be confirmed from here unless the
+Host is this machine, and that is not a fault.** Its ports are asked for on the addresses of the Host
 itself, which nothing outside that machine reaches, so no connection opened here
 could ever arrive however well the port is carrying traffic over there. The
 silence is written down as `unknown` rather than as `unreachable` for that
@@ -3160,6 +3160,14 @@ reason: a tunnel doing exactly what was asked of it must not be drawn as one
 that failed. The same holds for an address family the server refused, and for
 the IPv6 half of any Host this installation knows by an IPv4 address, which is
 the only address of a Host it holds.
+
+**A Host that is this machine is the exception.** Where the address the SSH
+connection was made to is a loopback address or one held by an interface of this
+machine, the loopback addresses of the Host are this machine's too, so the probe
+dials `127.0.0.1` at the port, or `[::1]` where only the IPv6 request went up.
+There an answer is to be expected, and a silence is written down as
+`unreachable`: nothing stands between this program and that address, so what did
+not answer is the port itself.
 
 ### Whether a local forward reaches its target
 

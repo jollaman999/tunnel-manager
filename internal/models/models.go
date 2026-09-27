@@ -250,8 +250,10 @@ type Tunnel struct {
 	// port which was asked for on an address of the Host this program can dial
 	// gave nothing back. "unknown" is everything that was not measured and
 	// everything that cannot be: a tunnel whose ports were asked for on the
-	// loopback addresses of the Host is one nothing here can dial, and a
-	// silence from it is not a reading.
+	// loopback addresses of a Host that is another machine is one nothing here
+	// can dial, and a silence from it is not a reading. Where the Host is this
+	// machine its loopback addresses are dialled here, and a silence from them
+	// is "unreachable".
 	//
 	// It says where the port was not reached from and never why. A server that
 	// bound the port to loopback alone and a firewall on the way look exactly

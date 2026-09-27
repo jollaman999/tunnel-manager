@@ -433,6 +433,66 @@ func probeForwardReach(address string, timeout time.Duration, silence string) st
 type forwardProbe struct {
 	address string
 	silence string
+	// here is set where the probe dials this machine's own loopback address
+	// because the Host is this machine, which changes what a silence means and
+	// so what is logged for one.
+	here bool
+}
+
+// interfaceAddrs is where the addresses of this machine are read from. It is a
+// variable so that a test can say which addresses the machine has.
+var interfaceAddrs = net.InterfaceAddrs
+
+// hostIsThisMachine says whether an address the SSH connection was made to is
+// one of this machine's own: a loopback address, or one held by any of its
+// interfaces. An address that cannot be checked is taken as another machine,
+// which is what every Host was before this was asked.
+func hostIsThisMachine(ip net.IP) bool {
+	if ip.IsLoopback() {
+		return true
+	}
+
+	addrs, err := interfaceAddrs()
+	if err != nil {
+		return false
+	}
+
+	for _, addr := range addrs {
+		if held, ok := addr.(*net.IPNet); ok && held.IP.Equal(ip) {
+			return true
+		}
+	}
+
+	return false
+}
+
+// newForwardProbe is what the reachability probe of one connection dials and
+// what a silence from it is worth.
+//
+// A port asked for on the loopback addresses of the Host is one nothing outside
+// that machine can reach, so the probe dials the Host and writes a silence down
+// as unknown. The one exception is a Host that is this machine. Its loopback
+// addresses are this machine's too, so the probe dials the loopback address of
+// the family that went up, where an answer is to be expected, and a silence
+// there is a port that is not open.
+func newForwardProbe(local localPair, server *net.TCPAddr, reach string, port int) forwardProbe {
+	if local.v4 != nil && local.v4.IP.IsLoopback() && hostIsThisMachine(server.IP) {
+		ip := local.v4.IP
+		if reach == openReachV6 && local.v6 != nil {
+			ip = local.v6.IP
+		}
+
+		return forwardProbe{
+			address: net.JoinHostPort(ip.String(), strconv.Itoa(port)),
+			silence: forwardUnreachable,
+			here:    true,
+		}
+	}
+
+	return forwardProbe{
+		address: forwardProbeAddress(server, port),
+		silence: forwardProbeSilence(local, server, reach),
+	}
 }
 
 // forwardProbeAddress is where the forwarded port is tried from here: the
@@ -520,6 +580,23 @@ func (t *SSHTunnel) recordForwardReach(m *Manager, tunnel *models.Tunnel, measur
 	t.tunnelMu.Unlock()
 
 	if reach != forwardUnreachable {
+		return
+	}
+
+	// The Host is this machine and the port was asked for on loopback, so
+	// neither GatewayPorts nor a firewall on the way stands between the probe
+	// and the port. What did not answer is the port itself.
+	if probe.here {
+		t.logger.Warn("the forwarded port did not answer on the loopback address of this machine, which is "+
+			"the Host of this tunnel, so the tunnel is connected but carries nothing to that address. Check "+
+			"that the SSH server opened the port and that nothing else holds it",
+			logid.TunnelForwardUnreachableHere.Field(),
+			zap.String("probed", probe.address),
+			zap.String("server_banner", banner),
+			zap.String("local", t.Local.String()),
+			zap.String("server", t.Server),
+			zap.String("remote", t.Remote))
+
 		return
 	}
 
@@ -823,10 +900,7 @@ func (t *SSHTunnel) establishConnection(m *Manager, tunnel *models.Tunnel) error
 	// connection per tunnel per reader.
 	server, isTCP := clientConn.RemoteAddr().(*net.TCPAddr)
 	if isTCP {
-		go t.recordForwardReach(m, tunnel, client, forwardProbe{
-			address: forwardProbeAddress(server, boundPort),
-			silence: forwardProbeSilence(t.Local, server, opened.reach),
-		})
+		go t.recordForwardReach(m, tunnel, client, newForwardProbe(t.Local, server, opened.reach, boundPort))
 	}
 
 	// Asked here and not on every pass for the same reason, and on a goroutine

@@ -66,6 +66,7 @@ const (
 	TunnelServerUnreachable           ID = "tunnel.server_unreachable"
 	TunnelKeepaliveFailed             ID = "tunnel.keepalive_failed"
 	TunnelForwardUnreachable          ID = "tunnel.forward_unreachable"
+	TunnelForwardUnreachableHere      ID = "tunnel.forward_unreachable_here"
 	TunnelRemoteDialFailed            ID = "tunnel.remote_dial_failed"
 	TunnelForwardCopyFailed           ID = "tunnel.forward_copy_failed"
 	TunnelSshConnectFailed            ID = "tunnel.ssh_connect_failed"

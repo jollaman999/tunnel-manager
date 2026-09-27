@@ -1112,6 +1112,21 @@ function reachAdvice(tunnel) {
     return null;
   }
 
+  // A port asked for on loopback is measured only where the Host is this
+  // machine, and then it was tried at the loopback address here. Neither the
+  // setting of the SSH server that opens a port to other addresses nor a
+  // firewall on the way stands between the two, so what is said is the port.
+  if (requestedScope(tunnel.local) === bindScopeLoopback) {
+    const here = document.createElement("div");
+
+    here.className = "reach-advice";
+    here.dataset.reachAdvice = "here";
+    here.appendChild(element("strong", t("status.reach-here.text", { address: String(tunnel.local) })));
+    here.appendChild(element("p", t("status.reach-here-cause.text")));
+
+    return here;
+  }
+
   const banner = typeof tunnel.server_banner === "string" ? tunnel.server_banner : "";
   const kind = sshServerKind(banner);
   const tried = probedAddress(tunnel.server, tunnel.local);
