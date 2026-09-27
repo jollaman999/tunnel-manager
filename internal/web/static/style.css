@@ -625,16 +625,15 @@ button.subtab {
   background: transparent;
   border: 0;
   border-bottom: 2px solid transparent;
-  border-radius: var(--radius-control) var(--radius-control) 0 0;
+  border-radius: 0;
 }
 
-button.subtab:hover {
-  color: var(--text);
-  background: var(--control);
-}
-
+/* A tab under the pointer or being pressed takes no fill either, so the open
+   one is never marked by anything but its line, wherever the pointer is. */
+button.subtab:hover,
 button.subtab:active {
-  background: var(--control-hover);
+  color: var(--text);
+  background: transparent;
 }
 
 button.subtab[aria-selected="true"] {
