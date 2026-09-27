@@ -1167,11 +1167,11 @@ button.copy {
   justify-content: space-between;
 }
 
-/* The status table may put a heading and a status on two lines. Held to one,
-   the longer languages made the table wider than a desktop screen: in German
-   a host key that waits for approval reads Hostschlüssel nicht bestätigt, and
-   that one badge was most of what did not fit. */
-.status-list th,
+/* A status badge in the status table and in the local forwards may take two
+   lines. Held to one, the longer languages made the table wider than a desktop
+   screen: in German a host key that waits for approval reads Hostschlüssel
+   nicht bestätigt, and that one badge was most of what did not fit. The
+   headings stay on one line. */
 .status-list td .badge,
 .assign-list[data-list="local-forwards"] td .badge {
   white-space: normal;
@@ -2565,13 +2565,6 @@ body.modal-open {
    buttons fold into a menu, and past that the table scrolls sideways. */
 .modal-panel[data-modal-panel="local-forwards"] {
   max-width: 90rem;
-}
-
-/* The headings of that table may take two lines. A heading such as the Russian
-   for Reachable at is wider than any address under it, and held to one line
-   it was what pushed the table past the panel. */
-.assign-list[data-list="local-forwards"] th {
-  white-space: normal;
 }
 
 .modal-panel:focus-visible {
