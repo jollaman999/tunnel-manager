@@ -2292,6 +2292,18 @@ input.list-search:focus {
   .stack-list td:nth-child(2) {
     grid-column: 1 / -1;
   }
+
+  /* The button of a row has a line of its own at the end of the block, at the
+     right edge. Left to the grid it took whichever cell came fourth, so where
+     it stood moved with the width of the screen. */
+  .stack-list td:last-child {
+    grid-column: 1 / -1;
+    justify-self: end;
+  }
+
+  .stack-list td:last-child::before {
+    content: none;
+  }
 }
 
 /* A phone held upright is around 390px wide, which is under 24rem once the
