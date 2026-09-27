@@ -607,19 +607,19 @@ nav a.current {
   font-weight: 600;
 }
 
-/* The tabs of the Settings screen. They are drawn as tabs, underlined on a
-   rule of their own, and not as the pills of the navigation above them: a row
-   of pills under a row of pills reads as a second set of screens. */
+/* The tabs of the Settings screen. The open one is underlined and nothing
+   else is, rather than drawn as the pills of the navigation above them: a row
+   of pills under a row of pills reads as a second set of screens. There is no
+   rule under the row, because on a narrow screen the tabs take two lines and a
+   rule under both reads as a box around them rather than as tabs. */
 .subtabs {
   display: flex;
   flex-wrap: wrap;
   gap: 0.25rem;
   margin: 0 0 1rem;
-  border-bottom: 1px solid var(--border);
 }
 
 button.subtab {
-  margin-bottom: -1px;
   padding: 0.5rem 0.9rem;
   color: var(--text-dim);
   background: transparent;
