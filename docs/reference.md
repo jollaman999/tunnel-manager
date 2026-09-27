@@ -673,7 +673,7 @@ The flags are all of them:
 | `-bin` | Where `-install` puts the executable, and where `-uninstall` looks for one on a machine that has no registration left. Left out, it is the place this platform keeps programs an administrator installed. It goes with `-install` or with `-uninstall` |
 | `-purge` | With `-uninstall`, removes the data directory as well. What it removes cannot be brought back |
 | `-reset-settings` | Puts every stored setting back to its default, prints what it changed and exits. The registered hosts, the service ports, the account and the certificate are left as they are. See [If the server will not start](#if-the-server-will-not-start) |
-| `-trust-proxy-headers` | Believes the `X-Forwarded-Proto` header of whatever is in front of this server, which marks the session cookies `Secure` on a connection that reaches this process in the clear. Off unless it is given. See [Behind a reverse proxy](#behind-a-reverse-proxy) |
+| `-trust-proxy-headers` | Believes the `X-Forwarded-Proto` and `X-Forwarded-For` headers of whatever is in front of this server. `X-Forwarded-Proto` marks the session cookies `Secure` on a connection that reaches this process in the clear, and the rightmost `X-Forwarded-For` entry is the address the login limit counts by and the logs write. Off unless it is given, and then the address is the one of the connection. See [Behind a reverse proxy](#behind-a-reverse-proxy) |
 | `-version` | Prints the version and exits |
 | `-help` | Prints the flags and exits |
 
@@ -1104,19 +1104,39 @@ server looking at a plain HTTP connection, and the session cookies are marked
 `Secure` only on a connection that is TLS. The cookies would then travel
 without that flag although the browser is on HTTPS throughout.
 
+The proxy is also the only address the server sees, so every login would be
+counted against one address and every log line would name the proxy.
+
 `-trust-proxy-headers` is what says otherwise. With it, a request that carries
 `X-Forwarded-Proto: https` is treated as having arrived over TLS, and the two
-session cookies are marked `Secure`.
+session cookies are marked `Secure`. The address of the request is the
+rightmost `X-Forwarded-For` entry: the login limit counts by it, and the access
+log (`remote_ip`) and the log lines the API writes name it. Where that header is
+missing or its rightmost entry is not an IP address, the address of the
+connection is used. The log lines written in front of the API, by the redirect
+of a plain HTTP request and by the split between TLS and plain HTTP on the
+port, name the connection (`remote_addr`) whether the flag is given or not.
 
 ```bash
 ./tunnel-manager -db /var/lib/tunnel-manager/tunnel-manager.db -trust-proxy-headers
 ```
 
-**It is off unless it is given, and it decides nothing else.** That header is
-one any client can send, so it is worth reading only where a proxy the operator
-runs is the only thing that can reach this server. A server that is exposed
-directly is left as it is: turning this on there would let a client mark its
-own connection as secure.
+The rightmost entry is the one the proxy in front appended, so this takes one
+proxy in front, and that proxy has to append the address it was reached from
+to the header rather than pass on what the client sent. In nginx that is:
+
+```nginx
+proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+proxy_set_header X-Forwarded-Proto $scheme;
+```
+
+**It is off unless it is given, and it decides nothing else.** Both headers
+are ones any client can send, so they are worth reading only where a proxy the
+operator runs is the only thing that can reach this server. A server that is
+exposed directly is left as it is: turning this on there would let a client
+mark its own connection as secure and pick the address its failed logins are
+counted against. Without the flag the address is always the one of the
+connection, whatever `X-Forwarded-For` says.
 
 It is a flag and not a setting because it describes the deployment around this
 process rather than something to change while it runs, and because a setting

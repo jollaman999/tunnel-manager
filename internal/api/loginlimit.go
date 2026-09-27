@@ -1,7 +1,6 @@
 package api
 
 import (
-	"net"
 	"net/http"
 	"sort"
 	"strconv"
@@ -475,27 +474,16 @@ func (l *loginLimiter) prune(now time.Time) {
 
 // loginAddress returns what the login attempt is counted against.
 //
-// It is the address the connection came from, and it is read from the socket
-// rather than from a header. echo's RealIP believes X-Forwarded-For, which is a
-// header any client can put anything in: counting by it unasked would make the
+// It is RealIP, which is read by the rule the server was given as its
+// IPExtractor (ClientAddress): the socket address, or the rightmost
+// X-Forwarded-For entry where the operator has said that a proxy they run is in
+// front. Counting by the address a client writes into a header would make the
 // per address limit a line an attacker steps over by writing a different number
 // on every request, and it would also let them pin the failures on somebody
-// else's address. The forwarding headers are read only where the operator has
-// said that a proxy they run is the only thing that can set them, which is the
-// same switch and the same reasoning as cookieIsSecure in auth.go.
+// else's address. Reading it through echo rather than here keeps the counter,
+// the access log and every other log line on one address.
 func (h *AuthHandler) loginAddress(c echo.Context) string {
-	if h.trustProxyHeaders {
-		return c.RealIP()
-	}
-
-	// RemoteAddr is host:port and the port is a different one on every
-	// connection, so only the host half is the counter's name.
-	host, _, err := net.SplitHostPort(c.Request().RemoteAddr)
-	if err != nil {
-		return c.Request().RemoteAddr
-	}
-
-	return host
+	return c.RealIP()
 }
 
 // refuseHeldLogin is the answer to a login that is not being checked.
@@ -558,12 +546,10 @@ func retryAfterSeconds(wait time.Duration) int {
 // accountPasswordLimiter is what such a call counts an attempt against.
 //
 // It is an interface, and the handler that serves the login is what implements
-// it, because the address a failure is counted against is not read the same way
-// everywhere: loginAddress reads it from the socket unless the operator has
-// said a proxy of theirs is in front. The one place that knows which it is is
-// that handler, so the counters and the flag that names an address stay in a
-// single object and no call can end up counting against an address the login
-// does not count against.
+// it, because the address a failure is counted against has to be the one the
+// login counts against. The counters and loginAddress stay in a single object,
+// so no call can end up counting against an address the login does not count
+// against.
 type accountPasswordLimiter interface {
 	// passwordBegin reserves a place for one password check the way begin
 	// does for a login. It returns the attempt to end, or what to answer a

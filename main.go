@@ -772,11 +772,18 @@ type proxyTrustSetter interface {
 	TrustProxyHeaders(trust bool)
 }
 
-// applyProxyTrust turns the flag on where it is on and says nothing where it
-// is not. It calls nothing for the flag that was left out rather than passing
-// false, so that off is the state the handler was built in: what is in front
-// of this server is believed only where the operator said something is.
-func applyProxyTrust(setter proxyTrustSetter, trust bool) {
+// applyProxyTrust puts the flag on the two places that read what is in front
+// of this server: the address every request is named by, and the handler that
+// decides the Secure flag of the cookies.
+//
+// The address rule is set either way, because echo left without one believes
+// the leftmost X-Forwarded-For entry, which the client writes. The handler is
+// called only for the flag that was given rather than passed false, so that
+// off is the state it was built in: what is in front of this server is
+// believed only where the operator said something is.
+func applyProxyTrust(e *echo.Echo, setter proxyTrustSetter, trust bool) {
+	e.IPExtractor = api.ClientAddress(trust)
+
 	if !trust {
 		return
 	}
@@ -1583,10 +1590,16 @@ func serve() {
 			"credential in it go with it.\n"+
 			"Without this an uninstall leaves the data where it is and says where that is.")
 	trustProxyHeaders := flag.Bool("trust-proxy-headers", false,
-		"believe the X-Forwarded-Proto header of whatever is in front of this server. Turn\n"+
-			"it on when a reverse proxy terminates TLS and reaches this server in the clear:\n"+
-			"the session cookies are then marked Secure, which the connection this process\n"+
-			"sees would not ask for.\n"+
+		"believe the X-Forwarded-Proto and X-Forwarded-For headers of whatever is in front\n"+
+			"of this server. Turn it on when a reverse proxy terminates TLS and reaches this\n"+
+			"server in the clear: the session cookies are then marked Secure, which the\n"+
+			"connection this process sees would not ask for, and the address the login limit\n"+
+			"counts by, the access log writes and the API writes on its log lines is the\n"+
+			"rightmost X-Forwarded-For entry, the one the proxy appended. The lines of the\n"+
+			"redirect of plain HTTP and of the TLS split in front of the API still name the\n"+
+			"connection. One proxy in front is assumed, and it has to append to that\n"+
+			"header rather than pass on what the client sent. Without the flag the address is\n"+
+			"the one of the connection.\n"+
 			"It is a flag and not a setting because it describes the deployment around this\n"+
 			"process rather than something to change while it runs. Leave it out when\n"+
 			"nothing is in front, since the header is one any client can send.")
@@ -2012,7 +2025,7 @@ func serve() {
 	// The forwarding headers are believed only where -trust-proxy-headers said
 	// so, and this is settled here, above the routes, so that nothing is
 	// serving while the answer is written.
-	applyProxyTrust(authHandler, *trustProxyHeaders)
+	applyProxyTrust(e, authHandler, *trustProxyHeaders)
 	g := e.Group(apiPrefix)
 
 	// The session check is put on the group before any route is added to it.

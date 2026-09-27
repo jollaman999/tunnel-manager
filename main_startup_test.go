@@ -1262,21 +1262,40 @@ func (r *proxyTrustRecorder) TrustProxyHeaders(trust bool) {
 // flag. The header it turns on is one any client can send, so a deployment
 // that has nothing in front of it has to be left exactly as it was: the
 // handler is not called at all, and off stays the state it was built in.
+//
+// The address rule is pinned by what it answers a request whose
+// X-Forwarded-For names somebody else on both ends: the socket without the
+// flag, and the rightmost entry with it. An echo given no rule at all would
+// answer the leftmost one in both cases.
 func TestTheProxyHeadersAreTrustedOnlyWhenTheFlagIsGiven(t *testing.T) {
 	cases := []struct {
-		name string
-		flag bool
-		want []bool
+		name        string
+		flag        bool
+		want        []bool
+		wantAddress string
 	}{
-		{"the flag was left out", false, nil},
-		{"the flag was given", true, []bool{true}},
+		{"the flag was left out", false, nil, "192.0.2.10"},
+		{"the flag was given", true, []bool{true}, "203.0.113.9"},
 	}
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			recorder := &proxyTrustRecorder{}
+			e := echo.New()
 
-			applyProxyTrust(recorder, tc.flag)
+			applyProxyTrust(e, recorder, tc.flag)
+
+			if e.IPExtractor == nil {
+				t.Fatalf("no address rule was set on the server")
+			}
+
+			req := httptest.NewRequest(http.MethodGet, "/", nil)
+			req.RemoteAddr = "192.0.2.10:54321"
+			req.Header.Set(echo.HeaderXForwardedFor, "198.51.100.1, 203.0.113.9")
+
+			if got := e.NewContext(req, httptest.NewRecorder()).RealIP(); got != tc.wantAddress {
+				t.Errorf("RealIP = %q, want %q", got, tc.wantAddress)
+			}
 
 			if len(recorder.calls) != len(tc.want) {
 				t.Fatalf("the handler was told %v, want %v", recorder.calls, tc.want)
