@@ -8467,14 +8467,30 @@ function tokensCard(tokens) {
       ];
     });
 
-    card.appendChild(buildTable([
+    const headers = [
       t("tokens.name.label"),
       t("tokens.scopes.label"),
       t("tokens.created.column"),
       t("tokens.expires.column"),
       t("tokens.last-used.column"),
       ""
-    ], rows));
+    ];
+    const list = buildTable(headers, rows);
+
+    // Each cell carries the heading of its column, which is what a phone draws
+    // beside the value once the rows are stacked. Six columns do not fit across
+    // one, and held in a table there the three times kept their width and the
+    // name and the scopes were squeezed down to a letter a line while the
+    // revoke button went past the edge.
+    list.classList.add("stack-list");
+
+    for (const row of list.querySelectorAll("tbody tr")) {
+      Array.prototype.forEach.call(row.children, function (cell, at) {
+        cell.dataset.label = headers[at];
+      });
+    }
+
+    card.appendChild(list);
   }
 
   const buttons = document.createElement("div");

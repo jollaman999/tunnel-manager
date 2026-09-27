@@ -1086,6 +1086,14 @@ button[type="submit"].danger:active {
   overflow-wrap: anywhere;
 }
 
+/* A new token is shown once, as one string with nothing in it to break at, and
+   on a phone narrower than it the end went past the edge of the panel. It may
+   break anywhere; the copy button beside it copies it whole either way. */
+code[data-shown-once] {
+  overflow-wrap: anywhere;
+  word-break: break-all;
+}
+
 /* The button that copies a value sits beside the value and is smaller than the
    buttons that act on a row, so that it reads as belonging to the value and not
    as one more thing the row can do. The colours are the ones every button
@@ -2253,6 +2261,44 @@ input.list-search:focus {
 
   .field small {
     grid-column: 1;
+  }
+
+  /* A list marked to stack is drawn a row to a block, each value on a line of
+     its own after the heading of its column, rather than as a table wider than
+     the screen. The headings go, since every value carries its own. */
+  .stack-list table,
+  .stack-list tbody,
+  .stack-list tr,
+  .stack-list td {
+    display: block;
+  }
+
+  .stack-list thead {
+    display: none;
+  }
+
+  .stack-list tbody tr {
+    padding: 0.5rem 0;
+    border-bottom: 1px solid var(--border-soft);
+  }
+
+  .stack-list tbody tr:last-child {
+    border-bottom: 0;
+  }
+
+  .stack-list td {
+    display: flex;
+    gap: 0.75rem;
+    padding: 0.2rem 0.6rem;
+    border-bottom: 0;
+    overflow-wrap: anywhere;
+  }
+
+  .stack-list td::before {
+    content: attr(data-label);
+    flex: 0 0 6.5rem;
+    color: var(--text-muted);
+    font-weight: 600;
   }
 
   /* Three counts side by side do not fit. They share the row two at a time. */
