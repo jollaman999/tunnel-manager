@@ -1,3 +1,17 @@
+# v3.16.0
+
+## Add/fix features:
+
+- **The Port reached column and its probe are gone.** tunnel-manager no longer connects to the port a tunnel opens on the Host. That probe was made from this machine, which is not where the clients of a tunnel connect from, and it said nothing about the service behind the port. A port the SSH server would not open is still a tunnel in error, and the box under a row still says what was asked for, what the server answered and what the Host has listening. The advice under a row about `GatewayPorts` and a firewall, which rested on the probe, goes with it.
+- **Whether the target of a local forward answers is shown in the local forwards of its Host**, under Target reached. The Host dials the target over the connection the clients of the forward use, once the forward connects and on every reconnect, as before; a forward that is not running shows a dash.
+- **Every cell of the status and of the local forwards of a Host stays on one line**, the headings included; a table wider than the screen scrolls sideways, as it did. The Russian headings that were longest are shorter.
+- The reference, the manual and the READMEs say what the status shows and where the reach of a local forward is.
+
+## Notes:
+
+- **The status answer no longer carries `forward_reach`, `forward_reach_v4` or `forward_reach_v6`**, on either sort of row. The reach of a local forward is `forward_reach` on the forwards in `GET /api/host/:id/local-forward`, and it is left out of a forward that is not running.
+- The columns earlier releases wrote the readings to stay in the tunnels table, so an earlier release opens the database as it did.
+
 # v3.15.2
 
 ## Add/fix features:
