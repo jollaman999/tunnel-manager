@@ -1147,7 +1147,7 @@
   "theme.light.label": "Sáng",
   "theme.switch.aria": "Chuyển sang giao diện {theme}",
   "tokens.account-password.error": "Hãy nhập mật khẩu tài khoản của bạn.",
-  "tokens.account-password.hint": "Nó được hỏi vì token, chừng nào còn hiệu lực, mở những gì phạm vi của nó mở ra mà không cần mật khẩu.",
+  "tokens.account-password.hint": "Token có thể dùng mọi phạm vi được cấp mà không cần mật khẩu cho đến khi hết hạn hoặc bị thu hồi. Vì vậy mật khẩu tài khoản được yêu cầu ở đây.",
   "tokens.account-password.label": "Mật khẩu tài khoản của bạn",
   "tokens.card.text": "Một script có thể dùng token API thay cho đăng nhập. Script gửi token trong header Authorization, dưới dạng Bearer rồi đến token, và chỉ tới được những gì phạm vi của token mở ra. Không token nào có thể thay đổi tài khoản hay các token. Đổi tên người dùng hoặc mật khẩu tài khoản sẽ thu hồi mọi token, nên sau đó script cần một token mới.",
   "tokens.card.title": "Token API",

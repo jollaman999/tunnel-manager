@@ -1147,7 +1147,7 @@
   "theme.light.label": "Hell",
   "theme.switch.aria": "Design wechseln: {theme}",
   "tokens.account-password.error": "Geben Sie das Passwort Ihres Kontos ein.",
-  "tokens.account-password.hint": "Es wird verlangt, weil das Token, solange es gilt, ohne Passwort öffnet, was seine Bereiche öffnen.",
+  "tokens.account-password.hint": "Ein Token kann alle ihm erteilten Bereiche ohne Passwort nutzen, bis es abläuft oder widerrufen wird. Deshalb wird hier Ihr Passwort abgefragt.",
   "tokens.account-password.label": "Passwort Ihres Kontos",
   "tokens.card.text": "Ein Skript kann statt einer Anmeldung ein API-Token verwenden. Es sendet das Token im Header Authorization, als Bearer gefolgt vom Token, und erreicht nur, was die Bereiche des Tokens öffnen. Kein Token kann das Konto oder die Tokens ändern. Eine Änderung des Benutzernamens oder des Passworts des Kontos widerruft alle Tokens, danach braucht ein Skript also ein neues Token.",
   "tokens.card.title": "API-Tokens",

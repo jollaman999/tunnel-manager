@@ -1147,7 +1147,7 @@
   "theme.light.label": "Claro",
   "theme.switch.aria": "Cambiar de tema: {theme}",
   "tokens.account-password.error": "Escriba la contraseña de su cuenta.",
-  "tokens.account-password.hint": "Se pide porque el token abre sin contraseña lo que abren sus ámbitos, mientras siga vigente.",
+  "tokens.account-password.hint": "Un token puede usar todos los ámbitos que se le concedieron, sin contraseña, hasta que caduque o se revoque. Por eso se le pide aquí su contraseña.",
   "tokens.account-password.label": "Contraseña de su cuenta",
   "tokens.card.text": "Un script puede usar un token de API en lugar de iniciar sesión. Envía el token en la cabecera Authorization, como Bearer seguido del token, y solo llega a lo que abren los ámbitos del token. Ningún token puede cambiar la cuenta ni los tokens. Cambiar el nombre de usuario o la contraseña de la cuenta revoca todos los tokens, así que después un script necesita un token nuevo.",
   "tokens.card.title": "Tokens de API",

@@ -1147,7 +1147,7 @@
   "theme.light.label": "Clair",
   "theme.switch.aria": "Changer de thème : {theme}",
   "tokens.account-password.error": "Saisissez le mot de passe de votre compte.",
-  "tokens.account-password.hint": "Il est demandé parce que le jeton ouvre sans mot de passe ce que ses portées ouvrent, tant qu'il est valide.",
+  "tokens.account-password.hint": "Un jeton peut utiliser toutes les portées qui lui ont été accordées, sans mot de passe, jusqu'à son expiration ou sa révocation. C'est pourquoi votre mot de passe est demandé ici.",
   "tokens.account-password.label": "Mot de passe de votre compte",
   "tokens.card.text": "Un script peut utiliser un jeton d'API au lieu de se connecter. Il envoie le jeton dans l'en-tête Authorization, sous la forme Bearer suivi du jeton, et n'atteint que ce que les portées du jeton ouvrent. Aucun jeton ne peut modifier le compte ni les jetons. Changer le nom d'utilisateur ou le mot de passe du compte révoque tous les jetons : un script a ensuite besoin d'un nouveau jeton.",
   "tokens.card.title": "Jetons d'API",

@@ -1147,7 +1147,7 @@
   "theme.light.label": "浅色",
   "theme.switch.aria": "切换到{theme}主题",
   "tokens.account-password.error": "请输入你的账号密码。",
-  "tokens.account-password.hint": "之所以要输入，是因为令牌在有效期内无需密码即可访问其权限范围所开放的内容。",
+  "tokens.account-password.hint": "令牌在过期或被吊销之前，无需密码即可使用授予它的全部权限范围。因此创建时需要验证账户密码。",
   "tokens.account-password.label": "你的账号密码",
   "tokens.card.text": "脚本可以用 API 令牌代替登录。它在 Authorization 请求头中发送 Bearer 加上令牌，只能访问令牌的权限范围所开放的内容。任何令牌都不能修改账号或令牌。修改账号的用户名或密码会吊销所有令牌，之后脚本需要新的令牌。",
   "tokens.card.title": "API 令牌",

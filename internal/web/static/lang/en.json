@@ -1147,7 +1147,7 @@
   "theme.light.label": "Light",
   "theme.switch.aria": "Switch to the {theme} theme",
   "tokens.account-password.error": "Enter the password of your account.",
-  "tokens.account-password.hint": "It is asked for because the token opens what its scopes open without a password, for as long as it lives.",
+  "tokens.account-password.hint": "A token can use every scope it was given, with no password, until it expires or is revoked. That is why your password is asked for here.",
   "tokens.account-password.label": "Password of your account",
   "tokens.card.text": "A script can use an API token instead of signing in. It sends the token in the Authorization header, as Bearer followed by the token, and reaches only what the scopes of the token open. No token can change the account or the tokens. Changing the username or the password of the account revokes every token, so a script needs a new token afterwards.",
   "tokens.card.title": "API tokens",
