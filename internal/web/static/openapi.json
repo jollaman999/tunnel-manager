@@ -271,7 +271,7 @@
                 "summary": "The stored settings, encrypted into one file",
                 "parameters": [
                     {
-                        "description": "The password that encrypts the file",
+                        "description": "The password that encrypts the file, and the password of the account",
                         "name": "body",
                         "in": "body",
                         "required": true,
@@ -300,7 +300,19 @@
                         }
                     },
                     "400": {
-                        "description": "The password is refused",
+                        "description": "The password is refused, or account_password is empty",
+                        "schema": {
+                            "$ref": "#/definitions/api.errorBody"
+                        }
+                    },
+                    "401": {
+                        "description": "account_password does not open this account",
+                        "schema": {
+                            "$ref": "#/definitions/api.errorBody"
+                        }
+                    },
+                    "429": {
+                        "description": "Too many passwords that do not open this account were tried. Retry-After says when to try again",
                         "schema": {
                             "$ref": "#/definitions/api.errorBody"
                         }
@@ -328,7 +340,7 @@
                 "summary": "Every Host and every service port, encrypted into one file",
                 "parameters": [
                     {
-                        "description": "The password that encrypts the file",
+                        "description": "The password that encrypts the file, and the password of the account",
                         "name": "body",
                         "in": "body",
                         "required": true,
@@ -357,7 +369,19 @@
                         }
                     },
                     "400": {
-                        "description": "The password is refused",
+                        "description": "The password is refused, or account_password is empty",
+                        "schema": {
+                            "$ref": "#/definitions/api.errorBody"
+                        }
+                    },
+                    "401": {
+                        "description": "account_password does not open this account",
+                        "schema": {
+                            "$ref": "#/definitions/api.errorBody"
+                        }
+                    },
+                    "429": {
+                        "description": "Too many passwords that do not open this account were tried. Retry-After says when to try again",
                         "schema": {
                             "$ref": "#/definitions/api.errorBody"
                         }
@@ -1488,12 +1512,12 @@
                 "summary": "Write what an exported tunnels file holds",
                 "parameters": [
                     {
-                        "description": "The password, the file and whether to overwrite",
+                        "description": "The password, the file, whether to overwrite, and the password of the account",
                         "name": "body",
                         "in": "body",
                         "required": true,
                         "schema": {
-                            "$ref": "#/definitions/api.importRequest"
+                            "$ref": "#/definitions/api.importTunnelsRequest"
                         }
                     }
                 ],
@@ -1517,13 +1541,25 @@
                         }
                     },
                     "400": {
-                        "description": "The password is wrong, the file is damaged, it is not a file this program wrote, or it holds the other kind",
+                        "description": "The password is wrong, the file is damaged, it is not a file this program wrote, it holds the other kind, or account_password is empty",
+                        "schema": {
+                            "$ref": "#/definitions/api.errorBody"
+                        }
+                    },
+                    "401": {
+                        "description": "account_password does not open this account",
                         "schema": {
                             "$ref": "#/definitions/api.errorBody"
                         }
                     },
                     "409": {
                         "description": "A local forward or a SOCKS5 proxy of the file opens a port this installation opens already. Nothing was stored",
+                        "schema": {
+                            "$ref": "#/definitions/api.errorBody"
+                        }
+                    },
+                    "429": {
+                        "description": "Too many passwords that do not open this account were tried. Retry-After says when to try again",
                         "schema": {
                             "$ref": "#/definitions/api.errorBody"
                         }
@@ -3202,6 +3238,8 @@
                 "export.password.required",
                 "export.password.too_short",
                 "export.password.too_long",
+                "export.account_password.required",
+                "export.account_password.wrong",
                 "export.hosts.read_failed",
                 "export.service_ports.read_failed",
                 "export.assignments.read_failed",
@@ -3210,6 +3248,8 @@
                 "export.seal_failed",
                 "import.file.missing",
                 "import.password.required",
+                "import.account_password.required",
+                "import.account_password.wrong",
                 "import.file.not_an_export",
                 "import.file.damaged",
                 "import.password.wrong",
@@ -3393,6 +3433,8 @@
                 "errExportPasswordRequired",
                 "errExportPasswordTooShort",
                 "errExportPasswordTooLong",
+                "errExportAccountPasswordRequired",
+                "errExportAccountPasswordWrong",
                 "errExportHostsReadFailed",
                 "errExportServicePortsRead",
                 "errExportAssignmentsRead",
@@ -3401,6 +3443,8 @@
                 "errExportSealFailed",
                 "errImportFileMissing",
                 "errImportPasswordRequired",
+                "errImportAccountPasswordRequired",
+                "errImportAccountPasswordWrong",
                 "errImportFileNotAnExport",
                 "errImportFileDamaged",
                 "errImportPasswordWrong",
@@ -3449,6 +3493,9 @@
         "api.exportRequest": {
             "type": "object",
             "properties": {
+                "account_password": {
+                    "type": "string"
+                },
                 "password": {
                     "type": "string"
                 }
@@ -3745,6 +3792,23 @@
         "api.importRequest": {
             "type": "object",
             "properties": {
+                "file": {
+                    "type": "string"
+                },
+                "overwrite": {
+                    "type": "boolean"
+                },
+                "password": {
+                    "type": "string"
+                }
+            }
+        },
+        "api.importTunnelsRequest": {
+            "type": "object",
+            "properties": {
+                "account_password": {
+                    "type": "string"
+                },
                 "file": {
                     "type": "string"
                 },

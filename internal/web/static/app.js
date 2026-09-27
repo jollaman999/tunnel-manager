@@ -96,11 +96,15 @@ const apiAccountPath = "/api/account";
 const hostKeyPasswordWrongCode = "host.host_key.password_wrong";
 const logsClearPasswordWrongCode = "logs.clear.password_wrong";
 const updatePasswordWrongCode = "update.password_wrong";
+const exportAccountPasswordWrongCode = "export.account_password.wrong";
+const importAccountPasswordWrongCode = "import.account_password.wrong";
 
 const passwordWrongCodes = [
   hostKeyPasswordWrongCode,
   logsClearPasswordWrongCode,
-  updatePasswordWrongCode
+  updatePasswordWrongCode,
+  exportAccountPasswordWrongCode,
+  importAccountPasswordWrongCode
 ];
 
 // The refusal of an api_port that a local forward opens, from a save on the

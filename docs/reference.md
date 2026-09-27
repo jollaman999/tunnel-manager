@@ -2689,14 +2689,23 @@ shown as it was written.
 
 | Method | Path | What it does |
 |--------|------|--------------|
-| `POST` | `/api/export/tunnels` | Takes `password`, answers with every Host, its local forwards included, and every service port encrypted into one file |
-| `POST` | `/api/import/tunnels` | Takes `password`, `file` and `overwrite`, and writes what the file holds |
-| `POST` | `/api/export/settings` | Takes `password`, answers with the stored settings encrypted into one file |
+| `POST` | `/api/export/tunnels` | Takes `password` and `account_password`, answers with every Host, its local forwards included, and every service port encrypted into one file |
+| `POST` | `/api/import/tunnels` | Takes `password`, `file`, `overwrite` and `account_password`, and writes what the file holds |
+| `POST` | `/api/export/settings` | Takes `password` and `account_password`, answers with the stored settings encrypted into one file |
 | `POST` | `/api/import/settings` | Takes `password` and `file`, and stores the settings the file holds |
 
 These four carry a configuration from one installation to another. An export
 hands out a file and an import takes one back, so you decide where the file is
 kept and for how long, and neither installation has to reach the other.
+
+`password` is the password of the file, and `account_password` is the password
+of the account, asked for again. The two exports and the import of the tunnels
+take it because an export carries in plain text what the database keeps
+encrypted, and an import with `overwrite` replaces the host key a Host is
+trusted with, so an open session or a token alone is not enough for either. A
+request with a token sends it too. An empty one is refused with `400`, one that
+does not open the account with `401`, and too many of those with `429`, the
+same counters the login uses. The import of the settings does not take it.
 
 **What an export hands out is one line of text.** It opens with the marker
 `tmpwenc:v1:` and everything after it is base64, so the whole file is ASCII and
@@ -2831,12 +2840,12 @@ it is not a file this program wrote, it is damaged, or it holds the other kind.
 # Export, and keep the file where you keep secrets.
 curl -s -b cookies.txt -X POST "$BASE/api/export/tunnels" \
   -H "X-CSRF-Token: $CSRF" -H 'Content-Type: application/json' \
-  -d '{"password":"<the password that encrypts the file>"}' |
+  -d '{"password":"<the password that encrypts the file>","account_password":"<the password of your account>"}' |
 jq -r '.data.file' > tunnels.tmexport
 
 # Import it on the other installation.
 jq -n --arg file "$(cat tunnels.tmexport)" \
-  '{password:"<the same password>",file:$file,overwrite:false}' |
+  '{password:"<the same password>",file:$file,overwrite:false,account_password:"<the password of your account>"}' |
 curl -s -b cookies.txt -X POST "$BASE/api/import/tunnels" \
   -H "X-CSRF-Token: $CSRF" -H 'Content-Type: application/json' \
   --data-binary @-

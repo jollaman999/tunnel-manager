@@ -400,6 +400,11 @@ const (
 	TransferSettingsImported                  ID = "transfer.settings_imported"
 	TransferSettingsSecretDoesNotOpen         ID = "transfer.settings_secret_does_not_open"
 	TransferSettingsSecretSealFailed          ID = "transfer.settings_secret_seal_failed"
+	// The two below are an export, and an import of the tunnels, asked for
+	// with a password that does not open the account. What either would have
+	// moved is the credentials of every Host, so the attempt is written down.
+	TransferExportAccountPasswordWrong ID = "transfer.export_account_password_wrong"
+	TransferImportAccountPasswordWrong ID = "transfer.import_account_password_wrong"
 )
 
 // uninstall: the uninstall that stops the tunnels and removes what was installed.

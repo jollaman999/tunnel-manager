@@ -24,6 +24,7 @@ import (
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
 	"go.uber.org/zap/zaptest/observer"
+	"golang.org/x/crypto/bcrypt"
 	"gorm.io/gorm"
 	gormlogger "gorm.io/gorm/logger"
 )
@@ -87,7 +88,19 @@ type transferInstall struct {
 	handler *TransferHandler
 	manager *transferWakes
 	logs    *observer.ObservedLogs
+	// account is the one account of the installation, whose password is
+	// testPassword. The export and the import of the tunnels ask for it.
+	account uint
 }
+
+// transferAccountHash is the hash of testPassword every transferInstall
+// stores. It is made once and at the lowest cost bcrypt takes, because every
+// export and every import of the tunnels compares against it and this package
+// has a great many of them: at the default cost the comparisons alone would
+// add minutes to a run under the race detector.
+var transferAccountHash = sync.OnceValues(func() ([]byte, error) {
+	return bcrypt.GenerateFromPassword([]byte(testPassword), bcrypt.MinCost)
+})
 
 func newTransferInstall(t *testing.T) *transferInstall {
 	t.Helper()
@@ -107,9 +120,21 @@ func newTransferInstall(t *testing.T) *transferInstall {
 	})
 
 	err = db.AutoMigrate(&models.Host{}, &models.ServicePort{}, &models.HostServicePort{},
-		&models.LocalForward{}, &settings.Settings{})
+		&models.LocalForward{}, &settings.Settings{}, &models.User{}, &models.APIToken{})
 	if err != nil {
 		t.Fatalf("failed to migrate the database: %v", err)
+	}
+
+	hash, err := transferAccountHash()
+	if err != nil {
+		t.Fatalf("failed to hash the password: %v", err)
+	}
+
+	account := models.User{Username: testUsername, PasswordHash: string(hash)}
+
+	err = db.Create(&account).Error
+	if err != nil {
+		t.Fatalf("failed to create the account: %v", err)
 	}
 
 	core, logs := observer.New(zapcore.DebugLevel)
@@ -123,6 +148,7 @@ func newTransferInstall(t *testing.T) *transferInstall {
 		handler: NewTransferHandler(NewHandler(db, manager, logger, cipher), "0.0.0-test", testDatabaseFile),
 		manager: manager,
 		logs:    logs,
+		account: account.ID,
 	}
 }
 
@@ -153,7 +179,9 @@ func (i *transferInstall) count(t *testing.T, model interface{}) int64 {
 }
 
 // call runs one of the four handlers with the body given and hands back what it
-// wrote.
+// wrote. The account and the limiter are left on the context the way the
+// session middleware leaves them, since three of the four ask for the password
+// of the account.
 func (i *transferInstall) call(t *testing.T, handler func(echo.Context) error, body string) *httptest.ResponseRecorder {
 	t.Helper()
 
@@ -163,8 +191,11 @@ func (i *transferInstall) call(t *testing.T, handler func(echo.Context) error, b
 	req := httptest.NewRequest(http.MethodPost, "/api/transfer", strings.NewReader(body))
 	req.Header.Set(echo.HeaderContentType, echo.MIMEApplicationJSON)
 	rec := httptest.NewRecorder()
+	c := e.NewContext(req, rec)
 
-	err := handler(e.NewContext(req, rec))
+	leaveSessionOnContext(c, i.account)
+
+	err := handler(c)
 	if err != nil {
 		t.Fatalf("the handler returned error: %v", err)
 	}
@@ -258,11 +289,19 @@ func (i *transferInstall) registerServicePort(t *testing.T, sp servicePortConten
 	}
 }
 
+// exportBody is what an export is asked for with: the password the file is
+// sealed with, and the password of the account the export is made under.
+func exportBody(t *testing.T, password string) string {
+	t.Helper()
+
+	return `{"password":` + jsonString(t, password) + `,"account_password":` + jsonString(t, testPassword) + `}`
+}
+
 // exportTunnels runs the export and hands back the sealed file.
 func (i *transferInstall) exportTunnels(t *testing.T, password string) string {
 	t.Helper()
 
-	rec := i.call(t, i.handler.ExportTunnels, `{"password":`+jsonString(t, password)+`}`)
+	rec := i.call(t, i.handler.ExportTunnels, exportBody(t, password))
 	if rec.Code != http.StatusOK {
 		t.Fatalf("the export answered %d: %s", rec.Code, rec.Body.String())
 	}
@@ -279,8 +318,8 @@ func (i *transferInstall) importTunnels(t *testing.T, file string, password stri
 	overwrite bool) *httptest.ResponseRecorder {
 	t.Helper()
 
-	body := `{"password":` + jsonString(t, password) + `,"file":` + jsonString(t, file) +
-		`,"overwrite":` + map[bool]string{true: "true", false: "false"}[overwrite] + `}`
+	body := `{"password":` + jsonString(t, password) + `,"account_password":` + jsonString(t, testPassword) +
+		`,"file":` + jsonString(t, file) + `,"overwrite":` + map[bool]string{true: "true", false: "false"}[overwrite] + `}`
 
 	return i.call(t, i.handler.ImportTunnels, body)
 }
@@ -464,7 +503,7 @@ func TestAnExportIsRefusedWithoutAPasswordThatHolds(t *testing.T) {
 	source := newTransferInstall(t)
 
 	for _, password := range []string{"", "short", strings.Repeat("a", maxPasswordBytes+1)} {
-		rec := source.call(t, source.handler.ExportTunnels, `{"password":`+jsonString(t, password)+`}`)
+		rec := source.call(t, source.handler.ExportTunnels, exportBody(t, password))
 		if rec.Code != http.StatusBadRequest {
 			t.Fatalf("the export of a %d byte password answered %d, want %d",
 				len(password), rec.Code, http.StatusBadRequest)
@@ -1081,7 +1120,7 @@ func TestAnUnknownKindCarriesTheKind(t *testing.T) {
 func (i *transferInstall) exportSettings(t *testing.T, password string) string {
 	t.Helper()
 
-	rec := i.call(t, i.handler.ExportSettings, `{"password":`+jsonString(t, password)+`}`)
+	rec := i.call(t, i.handler.ExportSettings, exportBody(t, password))
 	if rec.Code != http.StatusOK {
 		t.Fatalf("the export answered %d: %s", rec.Code, rec.Body.String())
 	}
@@ -1555,6 +1594,7 @@ func TestNoSecretIsWrittenToTheLogOrTheAnswer(t *testing.T) {
 		"the private key":      strings.Split(strings.TrimSpace(withKey.PrivateKey), "\n")[1],
 		"the key passphrase":   withKey.KeyPassphrase,
 		"the sealing password": testExportPassword,
+		"the account password": testPassword,
 	}
 
 	// The answer of the import says what was written and nothing of what is in
@@ -1563,7 +1603,7 @@ func TestNoSecretIsWrittenToTheLogOrTheAnswer(t *testing.T) {
 	answers := map[string]string{
 		"the answer of the import": rec.Body.String(),
 		"the answer of the export": source.call(t, source.handler.ExportTunnels,
-			`{"password":`+jsonString(t, testExportPassword)+`}`).Body.String(),
+			exportBody(t, testExportPassword)).Body.String(),
 	}
 
 	for where, text := range answers {
@@ -2710,7 +2750,7 @@ func TestTheLocalForwardsOfAHostCrossToAnotherInstallation(t *testing.T) {
 	source.forward(t, "192.0.2.11", localForwardContent{
 		LocalPort: 18443, TargetAddress: "192.0.2.31", TargetPort: 443, Description: "no scope"})
 
-	rec := source.call(t, source.handler.ExportTunnels, `{"password":`+jsonString(t, testExportPassword)+`}`)
+	rec := source.call(t, source.handler.ExportTunnels, exportBody(t, testExportPassword))
 	if rec.Code != http.StatusOK {
 		t.Fatalf("the export answered %d: %s", rec.Code, rec.Body.String())
 	}
@@ -3767,4 +3807,271 @@ func TestTheAllowedSourcesOfALocalForwardCrossWithIt(t *testing.T) {
 	if got := sources(fromOlder); !reflect.DeepEqual(got, []string{""}) {
 		t.Fatalf("the installation that took the older file in holds %q, want one empty list", got)
 	}
+}
+
+// accountPasswordCase is one of the three calls that ask for the password of
+// the account, with what it answers under when that password is missing and
+// when it is wrong.
+type accountPasswordCase struct {
+	name     string
+	path     string
+	handler  func(*transferInstall) func(echo.Context) error
+	body     func(t *testing.T, i *transferInstall, accountPassword *string) string
+	required string
+	wrong    string
+	logID    string
+}
+
+// transferBody writes the body of an export or of an import of the tunnels,
+// with account_password left out where accountPassword is nil. file is empty
+// for an export.
+func transferBody(t *testing.T, file string, accountPassword *string) string {
+	t.Helper()
+
+	body := map[string]interface{}{"password": testExportPassword}
+
+	if file != "" {
+		body["file"] = file
+	}
+
+	if accountPassword != nil {
+		body["account_password"] = *accountPassword
+	}
+
+	encoded, err := json.Marshal(body)
+	if err != nil {
+		t.Fatalf("failed to write the body: %v", err)
+	}
+
+	return string(encoded)
+}
+
+func accountPasswordCases() []accountPasswordCase {
+	return []accountPasswordCase{
+		{
+			name: "the export of the tunnels",
+			path: "/api/export/tunnels",
+			handler: func(i *transferInstall) func(echo.Context) error {
+				return i.handler.ExportTunnels
+			},
+			body: func(t *testing.T, _ *transferInstall, accountPassword *string) string {
+				return transferBody(t, "", accountPassword)
+			},
+			required: "export.account_password.required",
+			wrong:    "export.account_password.wrong",
+			logID:    "transfer.export_account_password_wrong",
+		},
+		{
+			name: "the export of the settings",
+			path: "/api/export/settings",
+			handler: func(i *transferInstall) func(echo.Context) error {
+				return i.handler.ExportSettings
+			},
+			body: func(t *testing.T, _ *transferInstall, accountPassword *string) string {
+				return transferBody(t, "", accountPassword)
+			},
+			required: "export.account_password.required",
+			wrong:    "export.account_password.wrong",
+			logID:    "transfer.export_account_password_wrong",
+		},
+		{
+			name: "the import of the tunnels",
+			path: "/api/import/tunnels",
+			handler: func(i *transferInstall) func(echo.Context) error {
+				return i.handler.ImportTunnels
+			},
+			body: func(t *testing.T, i *transferInstall, accountPassword *string) string {
+				return transferBody(t, i.exportTunnels(t, testExportPassword), accountPassword)
+			},
+			required: "import.account_password.required",
+			wrong:    "import.account_password.wrong",
+			logID:    "transfer.import_account_password_wrong",
+		},
+	}
+}
+
+// TestTheTransfersOfSecretsAskForTheAccountPassword holds the two exports and
+// the import of the tunnels to the password of the account. A file of either
+// export carries the credentials of every Host or the secrets of the settings
+// in the clear under a password the caller picks, and the import of the tunnels
+// replaces the host keys the approval on the Status screen asks the password
+// for. A session left open is not to be enough for any of the three.
+func TestTheTransfersOfSecretsAskForTheAccountPassword(t *testing.T) {
+	wrong := "not the password of the account"
+	right := testPassword
+
+	for _, tc := range accountPasswordCases() {
+		t.Run(tc.name, func(t *testing.T) {
+			install := newTransferInstall(t)
+			withKey, withPassword := twoHosts(t)
+			install.registerHost(t, withKey)
+			install.registerHost(t, withPassword)
+
+			rec := install.call(t, tc.handler(install), tc.body(t, install, nil))
+			if rec.Code != http.StatusBadRequest {
+				t.Fatalf("with no account_password it answered %d, want 400: %s", rec.Code, rec.Body.String())
+			}
+
+			if code := refusalCode(t, rec); code != tc.required {
+				t.Errorf("with no account_password error_code = %q, want %q", code, tc.required)
+			}
+
+			rec = install.call(t, tc.handler(install), tc.body(t, install, &wrong))
+			if rec.Code != http.StatusUnauthorized {
+				t.Fatalf("with the wrong account_password it answered %d, want 401: %s",
+					rec.Code, rec.Body.String())
+			}
+
+			// The screen reads this name to keep the operator on the form
+			// rather than sending them to the login.
+			if code := refusalCode(t, rec); code != tc.wrong {
+				t.Errorf("with the wrong account_password error_code = %q, want %q", code, tc.wrong)
+			}
+
+			written := install.logs.FilterField(zap.String(logid.FieldKey, tc.logID)).Len()
+			if written != 1 {
+				t.Errorf("the wrong password was written down %d times, want 1", written)
+			}
+
+			for _, line := range install.logs.All() {
+				if strings.Contains(line.Message, wrong) {
+					t.Errorf("a log line carries what was typed: %s", line.Message)
+				}
+
+				for _, field := range line.Context {
+					if strings.Contains(field.String, wrong) {
+						t.Errorf("a log field carries what was typed: %s=%s", field.Key, field.String)
+					}
+				}
+			}
+
+			rec = install.call(t, tc.handler(install), tc.body(t, install, &right))
+			if rec.Code != http.StatusOK {
+				t.Fatalf("with the account_password it answered %d, want 200: %s", rec.Code, rec.Body.String())
+			}
+		})
+	}
+}
+
+// TestTheImportOfTheSettingsDoesNotAskForTheAccountPassword is the one of the
+// four that is left as it was: the settings file carries no credential of a
+// Host and no host key, and what it stores is what the Settings screen stores
+// with the same session and no password.
+func TestTheImportOfTheSettingsDoesNotAskForTheAccountPassword(t *testing.T) {
+	install := newTransferInstall(t)
+	file := install.exportSettings(t, testExportPassword)
+
+	rec := install.call(t, install.handler.ImportSettings,
+		`{"password":`+jsonString(t, testExportPassword)+`,"file":`+jsonString(t, file)+`}`) // hook:allow
+	if rec.Code != http.StatusOK {
+		t.Fatalf("the import of the settings with no account_password answered %d, want 200: %s",
+			rec.Code, rec.Body.String())
+	}
+}
+
+// transferServer is the installation served the way main serves it, behind the
+// session middleware, with a token that carries the transfer scope. It is what
+// holds a token to the same answers a session gets: the middleware leaves the
+// account and the limiter on the context for either, and the password is
+// asked for all the same.
+func (i *transferInstall) transferServer(t *testing.T) (*echo.Echo, string) {
+	t.Helper()
+
+	e := echo.New()
+	e.Validator = &testValidator{validator: validator.New()}
+
+	authHandler := NewAuthHandler(i.db, zap.NewNop(), "")
+
+	g := e.Group("/api")
+	g.Use(authHandler.RequireSession())
+	g.POST("/login", authHandler.Login)
+	g.POST("/token", authHandler.CreateToken)
+	g.POST("/export/tunnels", i.handler.ExportTunnels)
+	g.POST("/import/tunnels", i.handler.ImportTunnels)
+	g.POST("/export/settings", i.handler.ExportSettings)
+	g.POST("/import/settings", i.handler.ImportSettings)
+
+	cookies := csrfLoginCookies(t, e, loginBody(t, testUsername, testPassword))
+
+	rec := do(e, http.MethodPost, "/api/token",
+		`{"name":"backup","scopes":["`+TokenScopeTransfer+`"]}`, cookies...)
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("the creation of the token answered %d, want 201: %s", rec.Code, rec.Body.String())
+	}
+
+	var created tokenCreated
+
+	err := json.Unmarshal(decodeTokenAnswer(t, rec).Data, &created)
+	if err != nil {
+		t.Fatalf("failed to read the created token: %v", err)
+	}
+
+	return e, created.Token
+}
+
+// TestATokenIsAskedForTheAccountPasswordToo holds a request made with a token
+// to the answers a session gets. A token with the transfer scope is otherwise
+// a way to take every credential out of the installation that no password
+// stands in front of.
+func TestATokenIsAskedForTheAccountPasswordToo(t *testing.T) {
+	wrong := "not the password of the account"
+	right := testPassword
+
+	for _, tc := range accountPasswordCases() {
+		t.Run(tc.name, func(t *testing.T) {
+			install := newTransferInstall(t)
+			withKey, withPassword := twoHosts(t)
+			install.registerHost(t, withKey)
+			install.registerHost(t, withPassword)
+
+			e, token := install.transferServer(t)
+
+			send := func(accountPassword *string) *httptest.ResponseRecorder {
+				req := httptest.NewRequest(http.MethodPost, tc.path,
+					strings.NewReader(tc.body(t, install, accountPassword)))
+				req.Header.Set(echo.HeaderContentType, echo.MIMEApplicationJSON)
+				req.Header.Set(echo.HeaderAuthorization, "Bearer "+token)
+
+				rec := httptest.NewRecorder()
+				e.ServeHTTP(rec, req)
+
+				return rec
+			}
+
+			rec := send(nil)
+			if rec.Code != http.StatusBadRequest || refusalCode(t, rec) != tc.required {
+				t.Fatalf("with no account_password it answered %d, want 400 %s: %s",
+					rec.Code, tc.required, rec.Body.String())
+			}
+
+			rec = send(&wrong)
+			if rec.Code != http.StatusUnauthorized || refusalCode(t, rec) != tc.wrong {
+				t.Fatalf("with the wrong account_password it answered %d, want 401 %s: %s",
+					rec.Code, tc.wrong, rec.Body.String())
+			}
+
+			rec = send(&right)
+			if rec.Code != http.StatusOK {
+				t.Fatalf("with the account_password it answered %d, want 200: %s", rec.Code, rec.Body.String())
+			}
+		})
+	}
+
+	t.Run("the import of the settings", func(t *testing.T) {
+		install := newTransferInstall(t)
+		file := install.exportSettings(t, testExportPassword)
+		e, token := install.transferServer(t)
+
+		req := httptest.NewRequest(http.MethodPost, "/api/import/settings",
+			strings.NewReader(`{"password":`+jsonString(t, testExportPassword)+`,"file":`+jsonString(t, file)+`}`)) // hook:allow
+		req.Header.Set(echo.HeaderContentType, echo.MIMEApplicationJSON)
+		req.Header.Set(echo.HeaderAuthorization, "Bearer "+token)
+
+		rec := httptest.NewRecorder()
+		e.ServeHTTP(rec, req)
+
+		if rec.Code != http.StatusOK {
+			t.Fatalf("with no account_password it answered %d, want 200: %s", rec.Code, rec.Body.String())
+		}
+	})
 }

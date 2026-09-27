@@ -482,8 +482,14 @@ func (content *settingsContent) applyTo(s *settings.Settings) {
 // exportRequest is what an export is asked for. The password seals the file and
 // is the only thing that opens it again: it is not stored anywhere, so a
 // forgotten one leaves the file unreadable.
+//
+// AccountPassword is the password of the account, asked for again. The file
+// carries in the clear what the database keeps sealed, and a session left open
+// on a screen, or a token, is not to be all it takes to carry that away under a
+// password the caller picks.
 type exportRequest struct {
-	Password string `json:"password"`
+	Password        string `json:"password"`
+	AccountPassword string `json:"account_password"`
 }
 
 // importRequest is what an import is given: the file as the export handed it
@@ -493,6 +499,16 @@ type importRequest struct {
 	Password  string `json:"password"`
 	File      string `json:"file"`
 	Overwrite bool   `json:"overwrite"`
+}
+
+// importTunnelsRequest is what the import of the tunnels is given: what every
+// import is given, and the password of the account. An overwrite puts the host
+// key of the file in place of the one trusted here, which is what the approval
+// on the Status screen asks the password for, so the import asks for it too.
+// The import of the settings is left without it and takes importRequest.
+type importTunnelsRequest struct {
+	importRequest
+	AccountPassword string `json:"account_password"`
 }
 
 // exportedTunnels is the answer to an export of the tunnel configuration. The
@@ -796,6 +812,50 @@ func NewTransferHandler(hosts *Handler, version string, databaseFile string) *Tr
 		version:      version,
 		databaseFile: databaseFile,
 	}
+}
+
+// accountPasswordRefused checks the password of the account an export or an
+// import of the tunnels is asked for with, and returns what to answer with when
+// it does not open the account.
+//
+// It is called before anything else of the call runs. The file is not read,
+// sealed or opened for a caller who has not shown the password, and scrypt,
+// which the sealing and the opening run, is not to be something such a caller
+// can make the server spend its CPU on.
+//
+// An empty box is refused before the check, so that a press with nothing typed
+// is not answered as a password that is wrong nor counted as a guess.
+//
+// importing tells the import of the tunnels from the two exports, which are
+// refused under codes of their own so that the screen says what was not done.
+// kind is what the call moves, for the log line.
+func (h *TransferHandler) accountPasswordRefused(c echo.Context, password string, importing bool,
+	kind string) *refusal {
+	required, wrong := errExportAccountPasswordRequired, errExportAccountPasswordWrong
+	if importing {
+		required, wrong = errImportAccountPasswordRequired, errImportAccountPasswordWrong
+	}
+
+	if password == "" {
+		return refuse(http.StatusBadRequest, required)
+	}
+
+	refused := accountPasswordRefused(c, h.hosts.db, h.hosts.logger, password, wrong)
+	if refused == nil || refused.code != wrong {
+		return refused
+	}
+
+	if importing {
+		h.hosts.logger.Warn("an import was asked for with a password that does not open the account. "+
+			"Nothing was read or written",
+			logid.TransferImportAccountPasswordWrong.Field(), zap.String("kind", kind))
+	} else {
+		h.hosts.logger.Warn("an export was asked for with a password that does not open the account. "+
+			"No file was made",
+			logid.TransferExportAccountPasswordWrong.Field(), zap.String("kind", kind))
+	}
+
+	return refused
 }
 
 // checkExportPassword holds the password that seals a file to the length the
@@ -1138,9 +1198,11 @@ func localForwardsByHost(db *gorm.DB) (map[uint][]localForwardContent, error) {
 // @Accept   json
 // @Produce  json
 // @Security  CSRFToken
-// @Param   body  body  api.exportRequest  true  "The password that encrypts the file"
+// @Param   body  body  api.exportRequest  true  "The password that encrypts the file, and the password of the account"
 // @Success  200  {object}  models.Response{data=api.exportedTunnels}
-// @Failure  400  {object}  api.errorBody  "The password is refused"
+// @Failure  400  {object}  api.errorBody  "The password is refused, or account_password is empty"
+// @Failure  401  {object}  api.errorBody  "account_password does not open this account"
+// @Failure  429  {object}  api.errorBody  "Too many passwords that do not open this account were tried. Retry-After says when to try again"
 // @Router       /export/tunnels [post]
 func (h *TransferHandler) ExportTunnels(c echo.Context) error {
 	var req exportRequest
@@ -1150,7 +1212,12 @@ func (h *TransferHandler) ExportTunnels(c echo.Context) error {
 		return unreadableBody(err).answer(c)
 	}
 
-	refused := checkExportPassword(req.Password)
+	refused := h.accountPasswordRefused(c, req.AccountPassword, false, transferKindTunnels)
+	if refused != nil {
+		return refused.answer(c)
+	}
+
+	refused = checkExportPassword(req.Password)
 	if refused != nil {
 		return refused.answer(c)
 	}
@@ -1296,17 +1363,24 @@ func (h *TransferHandler) ExportTunnels(c echo.Context) error {
 // @Accept   json
 // @Produce  json
 // @Security  CSRFToken
-// @Param   body  body  api.importRequest  true  "The password, the file and whether to overwrite"
+// @Param   body  body  api.importTunnelsRequest  true  "The password, the file, whether to overwrite, and the password of the account"
 // @Success  200  {object}  models.Response{data=api.importedTunnels}
-// @Failure  400  {object}  api.errorBody  "The password is wrong, the file is damaged, it is not a file this program wrote, or it holds the other kind"
+// @Failure  400  {object}  api.errorBody  "The password is wrong, the file is damaged, it is not a file this program wrote, it holds the other kind, or account_password is empty"
+// @Failure  401  {object}  api.errorBody  "account_password does not open this account"
+// @Failure  429  {object}  api.errorBody  "Too many passwords that do not open this account were tried. Retry-After says when to try again"
 // @Failure  409  {object}  api.errorBody  "A local forward or a SOCKS5 proxy of the file opens a port this installation opens already. Nothing was stored"
 // @Router       /import/tunnels [post]
 func (h *TransferHandler) ImportTunnels(c echo.Context) error {
-	var req importRequest
+	var req importTunnelsRequest
 
 	err := c.Bind(&req)
 	if err != nil {
 		return unreadableBody(err).answer(c)
+	}
+
+	refused := h.accountPasswordRefused(c, req.AccountPassword, true, transferKindTunnels)
+	if refused != nil {
+		return refused.answer(c)
 	}
 
 	file, refused := h.open(req.File, req.Password, transferKindTunnels)
@@ -2244,9 +2318,11 @@ func (h *TransferHandler) importLocalForwards(tx *gorm.DB, written []hostContent
 // @Accept   json
 // @Produce  json
 // @Security  CSRFToken
-// @Param   body  body  api.exportRequest  true  "The password that encrypts the file"
+// @Param   body  body  api.exportRequest  true  "The password that encrypts the file, and the password of the account"
 // @Success  200  {object}  models.Response{data=api.exportedSettings}
-// @Failure  400  {object}  api.errorBody  "The password is refused"
+// @Failure  400  {object}  api.errorBody  "The password is refused, or account_password is empty"
+// @Failure  401  {object}  api.errorBody  "account_password does not open this account"
+// @Failure  429  {object}  api.errorBody  "Too many passwords that do not open this account were tried. Retry-After says when to try again"
 // @Router       /export/settings [post]
 func (h *TransferHandler) ExportSettings(c echo.Context) error {
 	var req exportRequest
@@ -2256,7 +2332,12 @@ func (h *TransferHandler) ExportSettings(c echo.Context) error {
 		return unreadableBody(err).answer(c)
 	}
 
-	refused := checkExportPassword(req.Password)
+	refused := h.accountPasswordRefused(c, req.AccountPassword, false, transferKindSettings)
+	if refused != nil {
+		return refused.answer(c)
+	}
+
+	refused = checkExportPassword(req.Password)
 	if refused != nil {
 		return refused.answer(c)
 	}

@@ -329,6 +329,29 @@ let transferDraft = { tunnels: "", settings: "" };
 // of it stopped the write.
 let transferProblem = { tunnels: "", settings: "" };
 
+// transferAccountProblem is why the last export, or the last import of the
+// tunnels, was refused over the password of the account, by the name of the
+// form it was typed into. It is drawn under that box rather than on the form, the way the
+// panels that ask for the password again show it beside the box, because the
+// box is the one thing to correct. It is kept as what says it, so that a change
+// of language draws it again in the new one.
+let transferAccountProblem = {};
+
+// The refusals of the password of the account an export or an import of the
+// tunnels is answered with: the box left empty, a password that does not open
+// the account, and too many of those. A 401 from these calls is only ever the
+// second, since api reads it by its code and does not send the operator to the
+// login for it.
+const transferAccountPasswordRequiredCodes = [
+  "export.account_password.required",
+  "import.account_password.required"
+];
+
+function refusesAccountPassword(error) {
+  return error.status === 401 || error.status === 429 ||
+    transferAccountPasswordRequiredCodes.indexOf(error.code) !== -1;
+}
+
 // transferResult is what the last import of a tunnel configuration did with
 // every row of the file. It is kept because the screen is drawn again from the
 // server right afterwards, and that answer says nothing about what was skipped
@@ -6228,6 +6251,7 @@ function enterSettings() {
   certificateReplaceResult = null;
   transferDraft = { tunnels: "", settings: "" };
   transferProblem = { tunnels: "", settings: "" };
+  transferAccountProblem = {};
   transferResult = null;
   settingsImportResult = null;
 
@@ -8422,6 +8446,63 @@ function transferFileField(value) {
   };
 }
 
+// transferAccountPasswordField is the box the password of the account is typed
+// into on the forms whose file carries, or puts in place, the credentials of
+// the Hosts. The server asks for it again for the reason the panels on the
+// Status screen do: a session left open on a screen is not to be all it takes.
+function transferAccountPasswordField(note) {
+  return {
+    name: "account_password",
+    label: t("transfer.account-password.label"),
+    type: "password",
+    check: function (value) {
+      return String(value) === "" ? t("transfer.account-password.error") : "";
+    },
+    note: note
+  };
+}
+
+// showTransferAccountProblem writes the refusal of the password of the account
+// the last press of a form was answered with under the box it is about.
+function showTransferAccountProblem(form, name) {
+  const say = transferAccountProblem[name];
+
+  if (say === undefined || say === null) {
+    return form;
+  }
+
+  const problem = form.querySelector('[data-problem="account_password"]');
+  const input = form.querySelector('[data-field="account_password"]');
+
+  if (problem !== null) {
+    problem.textContent = say();
+    problem.hidden = false;
+  }
+
+  if (input !== null) {
+    input.classList.add("bad");
+  }
+
+  return form;
+}
+
+// sendTransfer sends an export or an import of the tunnels and keeps a refusal
+// of the password of the account for the form it came from to draw. Whatever
+// else was refused is left to the caller, which shows it where it always has.
+async function sendTransfer(name, path, body) {
+  transferAccountProblem[name] = null;
+
+  try {
+    return await apiCall("POST", path, body);
+  } catch (error) {
+    if (!(error instanceof Redirected) && refusesAccountPassword(error)) {
+      transferAccountProblem[name] = sayOf(error);
+    }
+
+    throw error;
+  }
+}
+
 // transferFilePasswordField is the password of a file that is being imported.
 // There is no second box to type it into: the password is not being chosen
 // here, and whether it is the right one is something the server answers in a
@@ -8439,7 +8520,7 @@ function transferFilePasswordField() {
 }
 
 function exportTunnelsForm() {
-  return buildForm({
+  return showTransferAccountProblem(buildForm({
     name: "export-tunnels",
     legend: t("transfer.export-tunnels.title"),
     submitLabel: t("transfer.export.button"),
@@ -8450,14 +8531,15 @@ function exportTunnelsForm() {
     fields: [
       transferPasswordField(t("transfer.password.hint")),
       passwordConfirmationField("password_confirmation", t("transfer.password-again.label"),
-        "password", t("transfer.password-again.hint"))
+        "password", t("transfer.password-again.hint")),
+      transferAccountPasswordField(t("transfer.account-password.hint"))
     ],
     onSubmit: exportTunnels
-  });
+  }), "export-tunnels");
 }
 
 function exportSettingsForm() {
-  return buildForm({
+  return showTransferAccountProblem(buildForm({
     name: "export-settings",
     legend: t("transfer.export-settings.title"),
     submitLabel: t("transfer.export.button"),
@@ -8468,10 +8550,11 @@ function exportSettingsForm() {
     fields: [
       transferPasswordField(t("transfer.password.hint")),
       passwordConfirmationField("password_confirmation", t("transfer.password-again.label"),
-        "password", t("transfer.password-again.hint"))
+        "password", t("transfer.password-again.hint")),
+      transferAccountPasswordField(t("transfer.account-password.hint"))
     ],
     onSubmit: exportSettings
-  });
+  }), "export-settings");
 }
 
 function importTunnelsForm() {
@@ -8490,7 +8573,7 @@ function importTunnelsForm() {
     intro.push(transferItemsTable(transferResult));
   }
 
-  return buildForm({
+  return showTransferAccountProblem(buildForm({
     name: "import-tunnels",
     legend: t("transfer.import-tunnels.title"),
     submitLabel: t("transfer.import.button"),
@@ -8504,10 +8587,11 @@ function importTunnelsForm() {
         type: "checkbox",
         value: false,
         note: t("transfer.overwrite.hint")
-      }
+      },
+      transferAccountPasswordField(t("transfer.account-password-import.hint"))
     ],
     onSubmit: importTunnels
-  });
+  }), "import-tunnels");
 }
 
 function importSettingsForm() {
@@ -8538,7 +8622,10 @@ function importSettingsForm() {
 }
 
 async function exportTunnels(values) {
-  const data = await apiCall("POST", "/api/export/tunnels", { password: values.password });
+  const data = await sendTransfer("export-tunnels", "/api/export/tunnels", {
+    password: values.password,
+    account_password: values.account_password
+  });
   const name = handTheFileOut(data, "tunnels");
   const hosts = countOf(data, "hosts");
   const ports = countOf(data, "service_ports");
@@ -8569,7 +8656,10 @@ async function exportTunnels(values) {
 }
 
 async function exportSettings(values) {
-  const data = await apiCall("POST", "/api/export/settings", { password: values.password });
+  const data = await sendTransfer("export-settings", "/api/export/settings", {
+    password: values.password,
+    account_password: values.account_password
+  });
   const name = handTheFileOut(data, "settings");
 
   setToast(function () {
@@ -8642,17 +8732,20 @@ async function importTunnels(values) {
   let answer;
 
   try {
-    answer = await apiCall("POST", "/api/import/tunnels", {
+    answer = await sendTransfer("import-tunnels", "/api/import/tunnels", {
       file: values.file,
       password: values.password,
-      overwrite: values.overwrite
+      overwrite: values.overwrite,
+      account_password: values.account_password
     });
   } catch (error) {
     if (error instanceof Redirected) {
       throw error;
     }
 
-    transferProblem.tunnels = error.message;
+    // A refusal of the password of the account is drawn under its box, and
+    // is not a word about the file.
+    transferProblem.tunnels = refusesAccountPassword(error) ? "" : error.message;
     transferResult = null;
     setFailure(sayOf(error));
 

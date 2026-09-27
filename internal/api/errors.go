@@ -222,27 +222,31 @@ const (
 	errUpdatePasswordWrong   errorCode = "update.password_wrong"
 	errUpdateInstallFailed   errorCode = "update.install_failed"
 
-	errExportPasswordRequired  errorCode = "export.password.required"
-	errExportPasswordTooShort  errorCode = "export.password.too_short"
-	errExportPasswordTooLong   errorCode = "export.password.too_long"
-	errExportHostsReadFailed   errorCode = "export.hosts.read_failed"
-	errExportServicePortsRead  errorCode = "export.service_ports.read_failed"
-	errExportAssignmentsRead   errorCode = "export.assignments.read_failed"
-	errExportLocalForwardsRead errorCode = "export.local_forwards.read_failed"
-	errExportHostSecretsSealed errorCode = "export.host.secrets_unreadable"
-	errExportSealFailed        errorCode = "export.seal_failed"
+	errExportPasswordRequired        errorCode = "export.password.required"
+	errExportPasswordTooShort        errorCode = "export.password.too_short"
+	errExportPasswordTooLong         errorCode = "export.password.too_long"
+	errExportAccountPasswordRequired errorCode = "export.account_password.required"
+	errExportAccountPasswordWrong    errorCode = "export.account_password.wrong"
+	errExportHostsReadFailed         errorCode = "export.hosts.read_failed"
+	errExportServicePortsRead        errorCode = "export.service_ports.read_failed"
+	errExportAssignmentsRead         errorCode = "export.assignments.read_failed"
+	errExportLocalForwardsRead       errorCode = "export.local_forwards.read_failed"
+	errExportHostSecretsSealed       errorCode = "export.host.secrets_unreadable"
+	errExportSealFailed              errorCode = "export.seal_failed"
 
-	errImportFileMissing       errorCode = "import.file.missing"
-	errImportPasswordRequired  errorCode = "import.password.required"
-	errImportFileNotAnExport   errorCode = "import.file.not_an_export"
-	errImportFileDamaged       errorCode = "import.file.damaged"
-	errImportPasswordWrong     errorCode = "import.password.wrong"
-	errImportFileOpenFailed    errorCode = "import.file.open_failed"
-	errImportFileNotOurs       errorCode = "import.file.not_ours"
-	errImportFileWrongKind     errorCode = "import.file.wrong_kind"
-	errImportFileNewerFormat   errorCode = "import.file.newer_format"
-	errImportFileNewerFormatBy errorCode = "import.file.newer_format_by"
-	errImportFileEmpty         errorCode = "import.file.empty"
+	errImportFileMissing             errorCode = "import.file.missing"
+	errImportPasswordRequired        errorCode = "import.password.required"
+	errImportAccountPasswordRequired errorCode = "import.account_password.required"
+	errImportAccountPasswordWrong    errorCode = "import.account_password.wrong"
+	errImportFileNotAnExport         errorCode = "import.file.not_an_export"
+	errImportFileDamaged             errorCode = "import.file.damaged"
+	errImportPasswordWrong           errorCode = "import.password.wrong"
+	errImportFileOpenFailed          errorCode = "import.file.open_failed"
+	errImportFileNotOurs             errorCode = "import.file.not_ours"
+	errImportFileWrongKind           errorCode = "import.file.wrong_kind"
+	errImportFileNewerFormat         errorCode = "import.file.newer_format"
+	errImportFileNewerFormatBy       errorCode = "import.file.newer_format_by"
+	errImportFileEmpty               errorCode = "import.file.empty"
 
 	errImportTunnelsUnreadable      errorCode = "import.tunnels.unreadable"
 	errImportHostRefused            errorCode = "import.host.refused"
@@ -523,26 +527,30 @@ var errorMessages = map[errorCode]string{
 	errUpdateInstallFailed:   "The install could not be started: {reason}",
 
 	// The export half of the transfer screens.
-	errExportPasswordRequired:  "A password is required. It is what encrypts the file, and the file cannot be opened without it",
-	errExportPasswordTooShort:  "The password must be at least {min} bytes long",
-	errExportPasswordTooLong:   "The password must be at most {max} bytes long",
-	errExportHostsReadFailed:   "Failed to read the Hosts",
-	errExportServicePortsRead:  "Failed to read the service ports",
-	errExportAssignmentsRead:   "Failed to read the service port assignments",
-	errExportLocalForwardsRead: "Failed to read the local forwards",
-	errExportHostSecretsSealed: "No export was made: the stored secrets of the Host {host} do not open with the encryption key of this installation",
-	errExportSealFailed:        "Failed to encrypt the file",
+	errExportPasswordRequired:        "A password is required. It is what encrypts the file, and the file cannot be opened without it",
+	errExportPasswordTooShort:        "The password must be at least {min} bytes long",
+	errExportPasswordTooLong:         "The password must be at most {max} bytes long",
+	errExportAccountPasswordRequired: "Enter the password of your account to export. The file carries secrets in plain text",
+	errExportAccountPasswordWrong:    "That is not the password of this account. No file was made",
+	errExportHostsReadFailed:         "Failed to read the Hosts",
+	errExportServicePortsRead:        "Failed to read the service ports",
+	errExportAssignmentsRead:         "Failed to read the service port assignments",
+	errExportLocalForwardsRead:       "Failed to read the local forwards",
+	errExportHostSecretsSealed:       "No export was made: the stored secrets of the Host {host} do not open with the encryption key of this installation",
+	errExportSealFailed:              "Failed to encrypt the file",
 
 	// Opening the file an import was sent.
-	errImportFileMissing:      "No file was sent. Send the text an export answered with in the 'file' field",
-	errImportPasswordRequired: "A password is required. It is the one the file was encrypted with at the installation it came from",
-	errImportFileNotAnExport:  "This is not a file tunnel-manager exported. An exported file is one line of text that starts with a marker naming the format, and this one does not",
-	errImportFileDamaged:      "The file is damaged. It carries the marker of an exported file, but the text after it was cut or altered, so no password opens it. Export it again",
-	errImportPasswordWrong:    "The password does not open this file. It is the password that was typed at the export, not the password of this account",
-	errImportFileOpenFailed:   "Failed to open the file",
-	errImportFileNotOurs:      "The file opened with this password but does not hold what an export writes. It was encrypted with the password of this program by something else",
-	errImportFileWrongKind:    "This file holds {found}, and this call takes {wanted}. Send it to the other import",
-	errImportFileNewerFormat:  "The file is in format version {version} and this version of tunnel-manager reads up to {supported}. It was written by a newer version",
+	errImportFileMissing:             "No file was sent. Send the text an export answered with in the 'file' field",
+	errImportPasswordRequired:        "A password is required. It is the one the file was encrypted with at the installation it came from",
+	errImportAccountPasswordRequired: "Enter the password of your account to import the tunnels",
+	errImportAccountPasswordWrong:    "That is not the password of this account. Nothing was imported",
+	errImportFileNotAnExport:         "This is not a file tunnel-manager exported. An exported file is one line of text that starts with a marker naming the format, and this one does not",
+	errImportFileDamaged:             "The file is damaged. It carries the marker of an exported file, but the text after it was cut or altered, so no password opens it. Export it again",
+	errImportPasswordWrong:           "The password does not open this file. It is the password that was typed at the export, not the password of this account",
+	errImportFileOpenFailed:          "Failed to open the file",
+	errImportFileNotOurs:             "The file opened with this password but does not hold what an export writes. It was encrypted with the password of this program by something else",
+	errImportFileWrongKind:           "This file holds {found}, and this call takes {wanted}. Send it to the other import",
+	errImportFileNewerFormat:         "The file is in format version {version} and this version of tunnel-manager reads up to {supported}. It was written by a newer version",
 	// The same refusal from a file that says which version wrote it. It is a
 	// code of its own rather than the one above with an empty value, because a
 	// sentence with a hole where the version should be is not one a translator
