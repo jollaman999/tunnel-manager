@@ -2721,6 +2721,30 @@ function buildForm(spec) {
 
     rows[field.name] = row;
 
+    // A field may be a block the screen builds itself rather than a box. It
+    // holds no value of the form: what it shows is sent by its own presses.
+    if (field.node !== undefined) {
+      const heading = element("span", field.label);
+
+      heading.className = "field-label";
+      heading.id = spec.name + "-" + field.name + "-label";
+      field.node.setAttribute("role", "group");
+      field.node.setAttribute("aria-labelledby", heading.id);
+
+      row.classList.add("field-node");
+      row.dataset.row = field.name;
+      row.appendChild(heading);
+      row.appendChild(field.node);
+
+      if (field.note !== undefined) {
+        row.appendChild(element("small", field.note));
+      }
+
+      form.appendChild(row);
+
+      continue;
+    }
+
     const id = spec.name + "-" + field.name;
     const label = element("label", field.label);
     label.htmlFor = id;
@@ -2886,6 +2910,10 @@ function buildForm(spec) {
     let sound = true;
 
     for (const field of spec.fields) {
+      if (field.node !== undefined) {
+        continue;
+      }
+
       // The check is handed the whole form as well as its own value, because
       // one of them is about a pair: a new password and the box it is typed
       // into a second time are only wrong together.

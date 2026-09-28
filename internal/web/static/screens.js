@@ -91,6 +91,19 @@ const updateWaitLimitSec = 180;
 let editingHostID = null;
 let editingServicePortID = null;
 
+// editingHostAway is the Host whose edit form was opened from the jump route
+// panel. It may be on no page the list is showing, so it is read on its own.
+let editingHostAway = null;
+
+// hostCreateJumps is the jump route picked on the add form. It is sent with the
+// Host when the Host is added, and is held here because the form is drawn again
+// every time the list is.
+let hostCreateJumps = [];
+
+// jumpRouteMaxHops is the most Hosts a jump route may pass through, the limit
+// the server holds a route to.
+const jumpRouteMaxHops = 8;
+
 // pickedFlipRefusals are the Hosts the last press on one of the two flips could
 // not change, each with what the server said about that one. It is held out
 // here because the press ends by drawing the list again, and a run of a hundred
@@ -722,6 +735,11 @@ async function drawStatus() {
         under.push(said);
       }
 
+      const hop = jumpKeyNote(tunnel);
+      if (hop !== null) {
+        under.push(hop);
+      }
+
       const denied = forwardAdvice(tunnel);
       if (denied !== null) {
         under.push(denied);
@@ -769,6 +787,32 @@ async function drawStatus() {
   }
 
   render(t("status.screen.title"), nodes);
+}
+
+// jumpFailure is how the server begins the error of a connection that failed
+// at a Host on the jump route: which hop, and which Host it is.
+const jumpFailure = /^jump ([0-9]+) \(host #([0-9]+) ([^)]*)\):/;
+
+// jumpKeyNote says, under a row held up at a host key, that the key is the one
+// of a Host on the jump route and not of the Host of the row. The key waits on
+// that Host, which is where it is approved.
+function jumpKeyNote(tunnel) {
+  if (hostKeyState(tunnel.status) === null || typeof tunnel.last_error !== "string") {
+    return null;
+  }
+
+  const said = jumpFailure.exec(tunnel.last_error);
+
+  if (said === null) {
+    return null;
+  }
+
+  const note = element("p", t("status.jump-host-key.notice", { step: said[1], id: said[2], address: said[3] }));
+
+  note.className = "jump-key-note";
+  note.dataset.jumpHost = said[2];
+
+  return note;
 }
 
 // isLocalForward is which of the two sorts a status row is. The server says it
@@ -946,8 +990,9 @@ function pageHost() {
 // known are coloured. data-status carries the word as the server said it in
 // every case, since that is what the styles and the recorder pick a row by.
 function statusBadge(status) {
-  const known = { connected: "ok", error: "bad", reconnecting: "waiting" };
+  const known = { connected: "ok", error: "bad", reconnecting: "waiting", jump_host_disabled: "waiting" };
   const words = {
+    jump_host_disabled: "status.state-jump-host-disabled.text",
     starting: "status.state-starting.text",
     connected: "status.state-connected.text",
     reconnecting: "status.state-reconnecting.text",
@@ -2659,11 +2704,28 @@ function pageControls(name, page, total, draw) {
 
 function enterHosts() {
   editingHostID = null;
+  editingHostAway = null;
+  hostCreateJumps = [];
 
-  return drawHosts();
+  return drawHostsAnew();
 }
 
+// drawHosts draws the Host screen again with what was typed into the Host form
+// still in it. Every press on the screen ends in a draw, and a Host form that
+// lost what was typed into it on a press beside it, a search or a crossing of
+// the narrow width is a form to type again. Only what was changed since the
+// form was drawn is put back, so a value the press itself changed on the server
+// is drawn as the server has it.
 async function drawHosts() {
+  const kept = typedHostForm();
+
+  await drawHostsAnew();
+
+  putBackHostForm(kept);
+}
+
+// drawHostsAnew draws the Host screen from the answer alone.
+async function drawHostsAnew() {
   const page = listPages.hosts;
 
   // Taken before the fetch, so that a press that is made while this one is in
@@ -2697,19 +2759,41 @@ async function drawHosts() {
 
   // The row being edited may have been deleted from somewhere else. The form
   // is dropped rather than left holding a host that no longer exists.
-  const editing = hosts.find(function (host) {
+  let editing = hosts.find(function (host) {
     return host.id === editingHostID;
   });
 
+  if (editing === undefined && editingHostID !== null && editingHostID === editingHostAway) {
+    const away = await readHostOrNull(editingHostID);
+
+    editing = away === null ? undefined : away;
+  }
+
   if (editing === undefined) {
     editingHostID = null;
+  }
+
+  // The Hosts the jump routes on this page pass through, named by the pill of
+  // each row and by the steps of the form.
+  const wanted = [].concat(hostCreateJumps);
+
+  for (const host of editing === undefined ? hosts : hosts.concat([editing])) {
+    for (const id of jumpIDs(host)) {
+      wanted.push(id);
+    }
+  }
+
+  const known = await readHostsByID(wanted, hosts.concat(editing === undefined ? [] : [editing]));
+
+  if (currentScreen !== "hosts") {
+    return;
   }
 
   // And the same for what is ticked, for the same reason and one more: the
   // rows of this page are the rows a tick may be held for at all.
   keepPicksOnPage("hosts", hosts);
 
-  const nodes = [editing === undefined ? hostCreateForm() : hostEditForm(editing)];
+  const nodes = [editing === undefined ? hostCreateForm(known) : hostEditForm(editing, known)];
 
   if (listSearchShown("hosts", total)) {
     nodes.push(listSearchBox("hosts", t("hosts.search.hint"), t("hosts.search.aria"), drawHosts));
@@ -2726,10 +2810,10 @@ async function drawHosts() {
 
     const table = buildTable(
       [t("hosts.id.column"), t("hosts.address.column"), t("hosts.port.column"),
-        t("hosts.user.column"), t("hosts.description.column"),
+        t("hosts.jump.column"), t("hosts.user.column"), t("hosts.description.column"),
         t("hosts.enabled.column"), t("hosts.socks.column"), t("hosts.updated.column"), ""],
       hosts.map(function (host) {
-        const row = { cells: hostRow(host), pick: picks.box(host.id) };
+        const row = { cells: hostRow(host, known), pick: picks.box(host.id) };
         const failure = host.socks_enabled && typeof host.socks_last_error === "string"
           ? host.socks_last_error : "";
 
@@ -2936,7 +3020,7 @@ async function flipPickedHosts(hosts, on) {
   return drawHosts();
 }
 
-function hostRow(host) {
+function hostRow(host, known) {
   const buttons = document.createElement("div");
 
   buttons.className = "buttons";
@@ -2966,6 +3050,7 @@ function hostRow(host) {
     host.id,
     host.address,
     host.port,
+    jumpRouteCell(host, known),
     host.user,
     host.description,
     host.enabled ? t("common.yes.text") : t("common.no.text"),
@@ -2988,6 +3073,1404 @@ function socksCell(host) {
   cell.appendChild(statusBadge(host.socks_status));
 
   return cell;
+}
+
+// jumpIDs is the jump route of a Host as the answer carries it, in the order it
+// is passed through, and no route for an answer that carries none.
+function jumpIDs(host) {
+  if (host === null || host === undefined || !Array.isArray(host.jump_host_ids)) {
+    return [];
+  }
+
+  return host.jump_host_ids.filter(function (id) {
+    return typeof id === "number";
+  });
+}
+
+// readHostOrNull reads one Host, and null for one that is not stored.
+async function readHostOrNull(id) {
+  try {
+    return await apiCall("GET", "/api/host/" + id);
+  } catch (error) {
+    if (error instanceof ApiError && error.status === 404) {
+      return null;
+    }
+
+    throw error;
+  }
+}
+
+// jumpReadsAtMost is how many Hosts a draw reads one by one to name the Hosts
+// its routes pass through. Past it the first page of the list is read once,
+// and a Host that is still not found is named by its id alone, so a draw costs
+// the same few requests however many Hosts there are.
+const jumpReadsAtMost = 16;
+
+// readHostsByID is the Hosts named in ids, keyed by id, with the ones in have
+// taken as they are.
+async function readHostsByID(ids, have) {
+  const found = {};
+
+  for (const host of have) {
+    found[String(host.id)] = host;
+  }
+
+  const unread = function () {
+    const left = [];
+
+    for (const id of ids) {
+      if (!Object.prototype.hasOwnProperty.call(found, String(id)) && left.indexOf(id) === -1) {
+        left.push(id);
+      }
+    }
+
+    return left;
+  };
+
+  if (unread().length > jumpReadsAtMost) {
+    const answer = await apiCall("GET", "/api/host?" +
+      pageQuery({ number: 1, size: listSizes[listSizes.length - 1] }));
+
+    for (const host of answer === null || !Array.isArray(answer.items) ? [] : answer.items) {
+      found[String(host.id)] = host;
+    }
+  }
+
+  const read = await Promise.all(unread().slice(0, jumpReadsAtMost).map(readHostOrNull));
+
+  for (const host of read) {
+    if (host !== null) {
+      found[String(host.id)] = host;
+    }
+  }
+
+  return found;
+}
+
+// jumpHostOf is a Host a route names, out of the Hosts read for it. A Host that
+// could not be read is named by its id alone.
+function jumpHostOf(known, id) {
+  if (Object.prototype.hasOwnProperty.call(known, String(id))) {
+    return known[String(id)];
+  }
+
+  return {
+    id: id,
+    address: "",
+    port: 0,
+    user: "",
+    description: t("hosts.jump-host.text", { id: id }),
+    enabled: true,
+    unread: true
+  };
+}
+
+// jumpHostName is what a Host is called on a route: its description, or its
+// address where it has none.
+function jumpHostName(host) {
+  const description = typeof host.description === "string" ? host.description.trim() : "";
+
+  return description !== "" ? description : String(host.address);
+}
+
+// jumpHostLogin is where a Host is logged in to, the way ssh takes it.
+function jumpHostLogin(host) {
+  if (host.unread === true) {
+    return "";
+  }
+
+  const user = typeof host.user === "string" && host.user !== "" ? host.user : "-";
+
+  return user + "@" + joinAddress(String(host.address), String(host.port));
+}
+
+// jumpTrouble is why a Host on a route stops the route, or null. A Host that is
+// switched off and one whose host key waits for an answer are the two the
+// server can say of a Host.
+function jumpTrouble(host) {
+  if (host.enabled === false) {
+    return { name: "off", word: t("hosts.jump-state-off.text"), paint: "unknown" };
+  }
+
+  if (typeof host.pending_host_key_fingerprint === "string" && host.pending_host_key_fingerprint !== "") {
+    return { name: "key", word: t("hosts.jump-state-key.text"), paint: "waiting" };
+  }
+
+  return null;
+}
+
+// jumpFirstTrouble is the first Host on a route that stops it, with why.
+function jumpFirstTrouble(ids, known) {
+  for (const id of ids) {
+    const host = jumpHostOf(known, id);
+    const trouble = jumpTrouble(host);
+
+    if (trouble !== null) {
+      return { host: host, trouble: trouble };
+    }
+  }
+
+  return null;
+}
+
+// jumpTroubleBadge is that reason drawn the way a state is.
+function jumpTroubleBadge(trouble) {
+  const badge = element("span", trouble.word);
+
+  badge.className = "badge " + trouble.paint;
+  badge.dataset.jumpTrouble = trouble.name;
+
+  return badge;
+}
+
+// jumpStepsText is how many Hosts a route passes through, as the pill says it.
+function jumpStepsText(count) {
+  if (count === 0) {
+    return t("hosts.jump-none.text");
+  }
+
+  return t(plural(count, "hosts.jump-steps-one.text", "hosts.jump-steps-many.text"), { count: count });
+}
+
+// jumpRoutePill is the route in one of three shapes: none, through Hosts, and
+// through Hosts one of which stops it. The three are built the same way so that
+// they are the same width in a column.
+function jumpRoutePill(ids, known, tag) {
+  const pill = document.createElement(tag);
+  const trouble = jumpFirstTrouble(ids, known);
+  const kind = ids.length === 0 ? "direct" : trouble === null ? "via" : "warn";
+  const icon = element("span", ids.length === 0 ? "→" : trouble === null ? "⤷" : "!");
+  const text = element("span", jumpStepsText(ids.length));
+
+  pill.className = "jump-pill " + kind;
+  pill.dataset.jump = kind;
+  icon.className = "jump-pill-icon";
+  icon.setAttribute("aria-hidden", "true");
+  text.className = "jump-pill-text";
+
+  pill.appendChild(icon);
+  pill.appendChild(text);
+
+  return pill;
+}
+
+// jumpRouteCell is the pill in the row of a Host. It opens the route.
+function jumpRouteCell(host, known) {
+  const ids = jumpIDs(host);
+  const pill = jumpRoutePill(ids, known, "button");
+  const trouble = jumpFirstTrouble(ids, known);
+  const names = [t("hosts.jump-self.text")];
+
+  for (const id of ids) {
+    names.push(jumpHostName(jumpHostOf(known, id)));
+  }
+
+  names.push(jumpHostName(host));
+
+  pill.type = "button";
+  pill.dataset.action = "host-jump-" + host.id;
+
+  if (ids.length === 0) {
+    pill.title = t("hosts.jump-none-tip.text");
+    pill.setAttribute("aria-label", t("hosts.jump-none.aria", { id: host.id }));
+  } else {
+    const tip = trouble === null
+      ? ""
+      : t("hosts.jump-trouble.text", { name: jumpHostName(trouble.host), state: trouble.trouble.word });
+
+    pill.title = tip === "" ? names.join(" → ") : names.join(" → ") + "\n" + tip;
+    pill.setAttribute("aria-label", trouble === null
+      ? t("hosts.jump-via.aria", { id: host.id, steps: jumpStepsText(ids.length) })
+      : t("hosts.jump-trouble.aria", { id: host.id, steps: jumpStepsText(ids.length) }));
+  }
+
+  pill.addEventListener("click", function () {
+    run(function () {
+      return openJumpRoute({ target: host, ids: ids, known: known, save: jumpRouteSaver(host) });
+    });
+  });
+
+  return pill;
+}
+
+// jumpRouteSaver stores the route of a stored Host at once, apart from the rest
+// of its edit form.
+function jumpRouteSaver(host) {
+  return async function (ids) {
+    await apiCall("PUT", "/api/host/" + host.id, { jump_host_ids: ids });
+
+    setToast(function () {
+      return t(ids.length === 0 ? "hosts.jump-saved-direct.notice" : "hosts.jump-saved.notice",
+        { id: host.id });
+    });
+  };
+}
+
+// keepCreateJumps holds the route picked for the Host being added until it is
+// added.
+function keepCreateJumps(ids) {
+  hostCreateJumps = ids.slice();
+
+  setToast(function () {
+    return t("hosts.jump-create-saved.notice");
+  });
+}
+
+// clearJumpRoute takes the route off, from the form. A stored Host is changed at
+// once, the way the panel saves it.
+async function clearJumpRoute(host) {
+  if (host === null) {
+    hostCreateJumps = [];
+  } else {
+    await apiCall("PUT", "/api/host/" + host.id, { jump_host_ids: [] });
+
+    setToast(function () {
+      return t("hosts.jump-saved-direct.notice", { id: host.id });
+    });
+  }
+
+  return drawHosts();
+}
+
+// typedHost is the Host the add form holds so far, as the route panel names it.
+function typedHost(form) {
+  const value = function (name) {
+    const input = form === null ? null : form.querySelector("[data-field=\"" + name + "\"]");
+
+    return input === null ? "" : input.value.trim();
+  };
+  const port = asNumber(value("port"));
+
+  return {
+    id: null,
+    address: value("address") === "" ? t("hosts.jump-no-address.text") : value("address"),
+    port: port === null ? 22 : port,
+    user: value("user"),
+    description: value("description") === "" ? t("hosts.jump-this-host.text") : value("description"),
+    enabled: true
+  };
+}
+
+// jumpStep is one line of the route under the form.
+function jumpStep(kind, mark, name, login, trouble) {
+  const line = document.createElement("li");
+  const badge = element("span", mark);
+  const called = element("span", name);
+  const at = element("span", login);
+
+  line.className = "jump-step " + kind + (trouble === null ? "" : " warn");
+  badge.className = "jump-step-mark";
+  badge.setAttribute("aria-hidden", "true");
+  called.className = "jump-step-name";
+  at.className = "jump-step-login";
+  at.dir = "ltr";
+
+  line.appendChild(badge);
+  line.appendChild(called);
+  line.appendChild(at);
+
+  if (trouble !== null) {
+    line.appendChild(jumpTroubleBadge(trouble));
+  }
+
+  return line;
+}
+
+// jumpRouteField is the jump route on a Host form: the pill, what it means, the
+// presses that change it, and the steps it passes through. host is null on the
+// add form. The last step follows the address, the port and the user as they
+// are typed, which is what follow hooks up once the form is built.
+function jumpRouteField(host, ids, known) {
+  const box = document.createElement("div");
+  const head = document.createElement("div");
+  const said = element("span", ids.length === 0
+    ? t("hosts.jump-direct.text")
+    : t(plural(ids.length, "hosts.jump-through-one.text", "hosts.jump-through-many.text"),
+      { count: ids.length }));
+  const buttons = document.createElement("div");
+
+  box.className = "jump-field";
+  box.dataset.jumpField = host === null ? "new" : String(host.id);
+  head.className = "jump-field-head";
+  said.className = "jump-field-said";
+  buttons.className = "buttons";
+
+  buttons.appendChild(actionButton(ids.length === 0 ? t("hosts.jump-set.button") : t("hosts.jump-edit.button"),
+    "jump-route-open", function () {
+      return openJumpRoute({
+        target: host === null ? typedHost(box.closest("form")) : host,
+        ids: ids,
+        known: known,
+        save: host === null ? keepCreateJumps : jumpRouteSaver(host)
+      });
+    }, "primary"));
+
+  if (ids.length > 0) {
+    buttons.appendChild(actionButton(t("hosts.jump-clear.button"), "jump-route-clear", function () {
+      return clearJumpRoute(host);
+    }));
+  }
+
+  head.appendChild(jumpRoutePill(ids, known, "span"));
+  head.appendChild(said);
+  head.appendChild(buttons);
+  box.appendChild(head);
+
+  let last = null;
+
+  if (ids.length > 0) {
+    const steps = document.createElement("ol");
+
+    steps.className = "jump-steps";
+    steps.appendChild(jumpStep("self", "⌂", t("hosts.jump-self.text"), "", null));
+
+    ids.forEach(function (id, at) {
+      const hop = jumpHostOf(known, id);
+
+      steps.appendChild(jumpStep("hop", String(at + 1), jumpHostName(hop), jumpHostLogin(hop), jumpTrouble(hop)));
+    });
+
+    const target = jumpStep("target", "◎",
+      host === null ? t("hosts.jump-this-host.text") : jumpHostName(host), "", null);
+
+    last = target.querySelector(".jump-step-login");
+    steps.appendChild(target);
+    box.appendChild(steps);
+
+    const stopped = jumpFirstTrouble(ids, known);
+
+    if (stopped !== null) {
+      const warn = element("p", t("hosts.jump-stopped.notice",
+        { name: jumpHostName(stopped.host), state: stopped.trouble.word }));
+
+      warn.className = "jump-warn";
+      box.appendChild(warn);
+    }
+  }
+
+  return {
+    field: { name: "jump_route", label: t("hosts.jump.label"), node: box, note: t("hosts.jump.hint") },
+    follow: function (form) {
+      if (last === null) {
+        return;
+      }
+
+      const say = function () {
+        const typed = typedHost(form);
+
+        last.textContent = jumpHostLogin(typed);
+      };
+
+      form.addEventListener("input", say);
+      say();
+    }
+  };
+}
+
+// hostFormsDrawnWith is what each Host form held when it was drawn, which is
+// what tells a value that was typed from one that was drawn.
+const hostFormsDrawnWith = new WeakMap();
+
+function hostFormValues(form) {
+  const values = {};
+
+  for (const input of form.querySelectorAll("input[data-field], textarea[data-field], select[data-field]")) {
+    values[input.dataset.field] = input.type === "checkbox" ? input.checked : input.value;
+  }
+
+  return values;
+}
+
+function holdHostForm(form, id) {
+  hostFormsDrawnWith.set(form, { id: id, values: hostFormValues(form) });
+
+  return form;
+}
+
+// typedHostForm is what was changed in the Host form on the screen since it
+// was drawn, and putBackHostForm writes it into the form drawn in its place.
+function typedHostForm() {
+  const form = document.querySelector("#app form[data-form=\"host-create\"], #app form[data-form=\"host-edit\"]");
+
+  if (form === null) {
+    return null;
+  }
+
+  const drawn = hostFormsDrawnWith.get(form);
+
+  if (drawn === undefined) {
+    return null;
+  }
+
+  const now = hostFormValues(form);
+  const values = {};
+
+  for (const name of Object.keys(now)) {
+    if (now[name] !== drawn.values[name]) {
+      values[name] = now[name];
+    }
+  }
+
+  return { form: form.dataset.form, id: drawn.id, values: values };
+}
+
+function putBackHostForm(kept) {
+  if (kept === null) {
+    return;
+  }
+
+  const form = document.querySelector("#app form[data-form=\"" + kept.form + "\"]");
+  const drawn = form === null ? undefined : hostFormsDrawnWith.get(form);
+
+  if (drawn === undefined || drawn.id !== kept.id) {
+    return;
+  }
+
+  for (const input of form.querySelectorAll("input[data-field], textarea[data-field], select[data-field]")) {
+    const name = input.dataset.field;
+
+    if (!Object.prototype.hasOwnProperty.call(kept.values, name)) {
+      continue;
+    }
+
+    if (input.type === "checkbox") {
+      input.checked = kept.values[name];
+    } else {
+      input.value = kept.values[name];
+    }
+
+    input.dispatchEvent(new Event("input", { bubbles: true }));
+    input.dispatchEvent(new Event("change", { bubbles: true }));
+  }
+}
+
+// openHostFormFromPanel takes the panel down and puts the form it asked for in
+// front of the operator, with the keyboard in its first box.
+async function openHostFormFromPanel(close, id) {
+  close(null);
+
+  if (id === null) {
+    if (editingHostID !== null) {
+      editingHostID = null;
+
+      await drawHosts();
+    }
+  } else {
+    editingHostID = id;
+    editingHostAway = id;
+
+    await drawHosts();
+  }
+
+  const form = document.querySelector("#app form[data-form=\"" + (id === null ? "host-create" : "host-edit") + "\"]");
+
+  if (form === null) {
+    return;
+  }
+
+  const address = form.querySelector("[data-field=\"address\"]");
+
+  form.scrollIntoView({ block: "start", behavior: "smooth" });
+
+  if (address !== null) {
+    address.focus({ preventScroll: true });
+  }
+}
+
+// jumpSSHHop is one Host on the way as ssh -J takes it.
+function jumpSSHHop(host) {
+  const address = String(host.address);
+  const bare = address.indexOf(":") >= 0 ? "[" + address + "]" : address;
+
+  return (host.user === "" ? "" : host.user + "@") + bare + (host.port === 22 ? "" : ":" + host.port);
+}
+
+// jumpSSHCommand is the ssh command that goes the way the route does.
+function jumpSSHCommand(target, hops) {
+  let command = "ssh";
+
+  if (hops.length > 0) {
+    command += " -J " + hops.map(jumpSSHHop).join(",");
+  }
+
+  if (target.port !== 22) {
+    command += " -p " + target.port;
+  }
+
+  return command + " " + (target.user === "" ? "" : target.user + "@") + target.address;
+}
+
+// openJumpRoute is the panel a jump route is set in: the Hosts to pass through,
+// the route from this machine to the target, and the way the tunnels of the
+// target run along it. What is changed here is a draft until Save, and Save
+// hands it to spec.save.
+async function openJumpRoute(spec) {
+  const cache = {};
+
+  for (const id of Object.keys(spec.known)) {
+    cache[id] = spec.known[id];
+  }
+
+  let target = spec.target;
+  const stored = typeof target.id === "number";
+
+  if (stored) {
+    cache[String(target.id)] = target;
+  }
+
+  let draft = spec.ids.slice();
+  let picked = null;
+  let flowAt = 0;
+  let query = "";
+  let dragging = null;
+  let closePanel = null;
+  const palette = { items: [], total: 0 };
+  const tunnels = [];
+
+  const problem = element("p", "");
+
+  problem.className = "notice error";
+  problem.dataset.problem = "jump-route";
+  problem.hidden = true;
+
+  function nameOf(id) {
+    return jumpHostName(jumpHostOf(cache, id));
+  }
+
+  // The Hosts on the draft and the Hosts their own routes pass through, which
+  // the note about a usual route names.
+  async function learnMissing() {
+    const have = Object.keys(cache).map(function (id) {
+      return cache[id];
+    });
+    const wanted = function () {
+      const ids = draft.slice();
+
+      for (const id of draft) {
+        if (Object.prototype.hasOwnProperty.call(cache, String(id))) {
+          for (const own of jumpIDs(cache[String(id)])) {
+            ids.push(own);
+          }
+        }
+      }
+
+      return ids;
+    };
+
+    const first = await readHostsByID(wanted(), have);
+
+    for (const id of Object.keys(first)) {
+      cache[id] = first[id];
+    }
+
+    const second = await readHostsByID(wanted(), have.concat(Object.keys(first).map(function (id) {
+      return first[id];
+    })));
+
+    for (const id of Object.keys(second)) {
+      cache[id] = second[id];
+    }
+  }
+
+  async function readPalette() {
+    const text = searchText(query);
+    const answer = await apiCall("GET", "/api/host?" +
+      pageQuery({ number: 1, size: listSizes[listSizes.length - 1] }) +
+      (text === "" ? "" : "&q=" + encodeURIComponent(text)));
+
+    palette.items = answer === null || !Array.isArray(answer.items) ? [] : answer.items;
+    palette.total = answer === null || typeof answer.total !== "number" ? palette.items.length : answer.total;
+
+    for (const host of palette.items) {
+      cache[String(host.id)] = host;
+    }
+  }
+
+  async function readTunnels() {
+    if (!stored) {
+      return;
+    }
+
+    const page = pageQuery({ number: 1, size: listSizes[listSizes.length - 1] });
+    const ports = await apiCall("GET", "/api/host/" + target.id + "/service-port?" + page);
+    const forwards = await apiCall("GET", "/api/host/" + target.id + "/local-forward?" + page);
+
+    for (const port of ports === null || !Array.isArray(ports.items) ? [] : ports.items) {
+      if (port.assigned) {
+        tunnels.push({ kind: "remote", item: port });
+      }
+    }
+
+    for (const forward of forwards === null || !Array.isArray(forwards.items) ? [] : forwards.items) {
+      tunnels.push({ kind: "local", item: forward });
+    }
+  }
+
+  async function refreshHost(id) {
+    const host = await readHostOrNull(id);
+
+    if (host === null) {
+      return;
+    }
+
+    cache[String(id)] = host;
+
+    if (stored && id === target.id) {
+      target = host;
+    }
+
+    palette.items = palette.items.map(function (one) {
+      return one.id === id ? host : one;
+    });
+  }
+
+  // inPanel runs a press of the panel and says in the panel what went wrong
+  // with it: the line over the screen is behind the backdrop.
+  async function inPanel(press) {
+    problem.hidden = true;
+
+    try {
+      await press();
+    } catch (error) {
+      if (error instanceof Redirected) {
+        if (closePanel !== null) {
+          closePanel(null);
+        }
+
+        throw error;
+      }
+
+      showPanelProblem(problem, error.message);
+    }
+  }
+
+  async function insertAt(position, id) {
+    let at = position;
+    const was = draft.indexOf(id);
+
+    if (was === -1 && draft.length >= jumpRouteMaxHops) {
+      showPanelProblem(problem, t("hosts.jump-full.notice", { max: jumpRouteMaxHops }));
+
+      return;
+    }
+
+    if (was !== -1) {
+      draft.splice(was, 1);
+
+      if (was < at) {
+        at -= 1;
+      }
+    }
+
+    draft.splice(at, 0, id);
+    picked = null;
+
+    await learnMissing();
+    paint();
+
+    setToast(function () {
+      return t("hosts.jump-inserted.notice", { name: nameOf(id), step: at + 1 });
+    });
+  }
+
+  const grid = document.createElement("div");
+
+  grid.className = "jump-route";
+
+  function card(title, hint) {
+    const section = document.createElement("section");
+
+    section.className = "jump-card";
+    section.appendChild(element("h3", title));
+
+    if (hint !== null) {
+      hint.classList.add("jump-hint");
+      section.appendChild(hint);
+    }
+
+    grid.appendChild(section);
+
+    return section;
+  }
+
+  function wideAndNarrow(wide, narrow) {
+    const line = document.createElement("p");
+    const one = element("span", wide);
+    const other = element("span", narrow);
+
+    one.className = "jump-wide";
+    other.className = "jump-narrow";
+    line.appendChild(one);
+    line.appendChild(other);
+
+    return line;
+  }
+
+  const pickHint = element("p", t("hosts.jump-pick.text"));
+  const dragHint = element("span", " " + t("hosts.jump-pick-drag.text"));
+
+  dragHint.className = "jump-wide";
+  pickHint.appendChild(dragHint);
+
+  const pickCard = card(t("hosts.jump-pick.title"), pickHint);
+  const search = searchBox("jump-route", "", t("hosts.search.hint"), t("hosts.jump-search.aria"),
+    function (value) {
+      query = value;
+    },
+    function () {
+      return inPanel(async function () {
+        await readPalette();
+        paint();
+      });
+    });
+
+  const blocks = document.createElement("div");
+  const more = element("p", "");
+  const addBar = document.createElement("div");
+  const what = element("span", "");
+  const add = actionButton(t("hosts.jump-add.button"), "jump-route-add", function () {
+    if (picked === null) {
+      return;
+    }
+
+    return inPanel(function () {
+      return insertAt(draft.length, picked);
+    });
+  }, "primary");
+  const full = element("p", t("hosts.jump-full.notice", { max: jumpRouteMaxHops }));
+  const notListed = document.createElement("div");
+
+  blocks.className = "jump-palette";
+  more.className = "jump-more";
+  addBar.className = "jump-add-bar";
+  what.className = "jump-what";
+  full.className = "jump-full";
+  notListed.className = "jump-not-listed";
+
+  addBar.appendChild(what);
+  addBar.appendChild(add);
+  notListed.appendChild(element("span", t("hosts.jump-not-listed.text")));
+  notListed.appendChild(actionButton(t("hosts.jump-go-add.button"), "jump-route-go-add", function () {
+    return openHostFormFromPanel(closePanel, null).then(function () {
+      setToast(function () {
+        return t("hosts.jump-go-add.notice");
+      });
+    });
+  }));
+
+  pickCard.appendChild(search);
+  pickCard.appendChild(blocks);
+  pickCard.appendChild(more);
+  pickCard.appendChild(addBar);
+  pickCard.appendChild(full);
+  pickCard.appendChild(notListed);
+
+  const chainCard = card(t("hosts.jump-chain.title"),
+    wideAndNarrow(t("hosts.jump-chain-wide.text"), t("hosts.jump-chain-narrow.text")));
+  const chain = document.createElement("div");
+  const broken = element("p", "");
+  const summary = document.createElement("div");
+
+  chain.className = "jump-chain";
+  broken.className = "jump-broken";
+  summary.className = "jump-summary";
+
+  chainCard.appendChild(chain);
+  chainCard.appendChild(broken);
+  chainCard.appendChild(summary);
+
+  const flowCard = card(t("hosts.jump-flow.title"), element("p", t("hosts.jump-flow.text")));
+  const flow = document.createElement("div");
+
+  flow.className = "jump-flow";
+  flowCard.appendChild(flow);
+
+  function pickBlock(host, used) {
+    const block = actionButton("", "jump-pick-" + host.id, function () {
+      picked = picked === host.id ? null : host.id;
+      paint();
+    });
+    const name = document.createElement("span");
+    const trouble = jumpTrouble(host);
+    const login = element("small", t("hosts.jump-host.text", { id: host.id }) + " · " + jumpHostLogin(host));
+
+    block.textContent = "";
+    block.className = "jump-block" + (used ? " used" : "") + (picked === host.id ? " picked" : "");
+    block.disabled = used;
+    block.setAttribute("aria-pressed", picked === host.id ? "true" : "false");
+    name.className = "jump-block-name";
+    name.appendChild(element("span", jumpHostName(host)));
+
+    if (trouble !== null) {
+      name.appendChild(jumpTroubleBadge(trouble));
+    }
+
+    login.className = "jump-block-login";
+    block.appendChild(name);
+    block.appendChild(login);
+
+    if (!used) {
+      block.draggable = true;
+      block.addEventListener("dragstart", function (event) {
+        dragging = { host: host.id };
+        grid.classList.add("jump-dragging");
+        event.dataTransfer.setData("text/plain", String(host.id));
+      });
+      block.addEventListener("dragend", function () {
+        dragging = null;
+        grid.classList.remove("jump-dragging");
+      });
+    }
+
+    return block;
+  }
+
+  function slot(position, cut) {
+    const line = document.createElement("div");
+    const press = actionButton(t("hosts.jump-slot.button"), "jump-slot-" + position, function () {
+      if (picked === null) {
+        setToast(function () {
+          return t("hosts.jump-slot-pick.notice");
+        });
+
+        return;
+      }
+
+      return inPanel(function () {
+        return insertAt(position, picked);
+      });
+    });
+    const arrow = element("span", "▼");
+
+    line.className = "jump-link" + (cut ? " broken" : "");
+    line.dataset.slot = String(position);
+    press.className = "jump-slot";
+    press.setAttribute("aria-label", t("hosts.jump-slot.aria", { step: position + 1 }));
+    arrow.className = "jump-arrow";
+    arrow.setAttribute("aria-hidden", "true");
+
+    line.addEventListener("dragover", function (event) {
+      event.preventDefault();
+      line.classList.add("over");
+    });
+    line.addEventListener("dragleave", function () {
+      line.classList.remove("over");
+    });
+    line.addEventListener("drop", function (event) {
+      event.preventDefault();
+      grid.classList.remove("jump-dragging");
+
+      const held = dragging;
+
+      dragging = null;
+
+      if (held === null) {
+        return;
+      }
+
+      run(function () {
+        return inPanel(function () {
+          return insertAt(position, held.host !== undefined ? held.host : draft[held.hop]);
+        });
+      });
+    });
+
+    line.appendChild(press);
+    line.appendChild(arrow);
+
+    return line;
+  }
+
+  function hostOps(host) {
+    const ops = document.createElement("div");
+    const id = host.id;
+
+    ops.className = "buttons jump-ops";
+
+    if (typeof host.pending_host_key_fingerprint === "string" && host.pending_host_key_fingerprint !== "") {
+      ops.appendChild(actionButton(t("hosts.jump-approve.button"), "jump-approve-" + id, function () {
+        return inPanel(async function () {
+          const approved = await openHostKeyPanel(id);
+
+          if (approved) {
+            await refreshHost(id);
+            paint();
+            await drawHosts();
+          }
+        });
+      }, "primary"));
+    }
+
+    ops.appendChild(actionButton(host.enabled ? t("hosts.disable.button") : t("hosts.enable.button"),
+      "jump-toggle-" + id, function () {
+        return inPanel(async function () {
+          const was = host.enabled;
+
+          await apiCall("PUT", "/api/host/" + id, { enabled: !was });
+
+          setToast(function () {
+            return t(was ? "hosts.now-disabled.notice" : "hosts.now-enabled.notice", { id: id });
+          });
+
+          await refreshHost(id);
+          paint();
+          await drawHosts();
+        });
+      }));
+
+    ops.appendChild(actionButton(t("common.edit.button"), "jump-edit-" + id, function () {
+      return openHostFormFromPanel(closePanel, id);
+    }));
+
+    return ops;
+  }
+
+  function usualNote(id, at) {
+    const own = jumpIDs(jumpHostOf(cache, id));
+    const usualBefore = own.length === 0 ? null : own[own.length - 1];
+    const before = at === 0 ? null : draft[at - 1];
+
+    if (usualBefore === before) {
+      return null;
+    }
+
+    const note = document.createElement("div");
+    const missing = own.filter(function (one) {
+      return draft.indexOf(one) === -1 && !(stored && one === target.id);
+    });
+
+    note.className = "jump-usual";
+    note.appendChild(element("span", t("hosts.jump-usual.text", {
+      usual: own.length === 0
+        ? t("hosts.jump-usual-direct.text")
+        : t("hosts.jump-usual-via.text", { path: own.map(nameOf).join(" → ") }),
+      here: before === null
+        ? t("hosts.jump-here-direct.text")
+        : t("hosts.jump-here-from.text", { name: nameOf(before) })
+    })));
+
+    if (missing.length > 0) {
+      note.appendChild(actionButton(t("hosts.jump-usual-insert.button",
+        { path: missing.map(nameOf).join(" → ") }), "jump-usual-" + id, function () {
+        return inPanel(async function () {
+          if (draft.length + missing.length > jumpRouteMaxHops) {
+            showPanelProblem(problem, t("hosts.jump-full.notice", { max: jumpRouteMaxHops }));
+
+            return;
+          }
+
+          draft.splice.apply(draft, [draft.indexOf(id), 0].concat(missing));
+
+          await learnMissing();
+          paint();
+
+          setToast(function () {
+            return t("hosts.jump-usual-inserted.notice", { names: missing.map(nameOf).join(", ") });
+          });
+        });
+      }));
+    }
+
+    return note;
+  }
+
+  function tunnelChips() {
+    const box = document.createElement("div");
+    const chips = document.createElement("div");
+
+    box.className = "jump-tunnels";
+    chips.className = "jump-chips";
+
+    box.appendChild(element("small", tunnels.length === 0
+      ? t(stored ? "hosts.jump-flow-none.text" : "hosts.jump-flow-new.text")
+      : t("hosts.jump-tunnels.text")));
+
+    tunnels.forEach(function (tunnel, at) {
+      const chip = actionButton("", "jump-flow-" + at, function () {
+        flowAt = at;
+        paint();
+      });
+      const kind = element("b", tunnel.kind === "remote"
+        ? t("hosts.jump-flow-remote.text")
+        : t("status.kind-local-forward.text"));
+      const where = element("span", tunnel.kind === "remote"
+        ? String(tunnel.item.service_port) + " → :" + tunnel.item.local_port
+        : ":" + tunnel.item.local_port);
+
+      chip.textContent = "";
+      chip.className = "jump-chip" + (at === flowAt ? " on" : "");
+      chip.setAttribute("aria-pressed", at === flowAt ? "true" : "false");
+      where.dir = "ltr";
+      chip.appendChild(kind);
+      chip.appendChild(where);
+      chips.appendChild(chip);
+    });
+
+    box.appendChild(chips);
+
+    return box;
+  }
+
+  function node(id, at, last) {
+    const host = last ? target : jumpHostOf(cache, id);
+    const box = document.createElement("div");
+    const line = document.createElement("div");
+    const badge = element("span", last ? "◎" : String(at + 1));
+    const main = document.createElement("div");
+    const side = document.createElement("div");
+    const trouble = jumpTrouble(host);
+    const before = at === 0 ? null : draft[at - 1];
+
+    box.className = "jump-node-box";
+    line.className = "jump-node " + (last ? "target" : "hop");
+    badge.className = "jump-badge";
+    badge.setAttribute("aria-hidden", "true");
+    side.className = "jump-side";
+
+    const role = element("small", t("hosts.jump-role.text", {
+      role: last ? t("hosts.jump-target-role.text") : t("hosts.jump-hop-role.text", { step: at + 1 }),
+      from: before === null ? t("hosts.jump-from-self.text") : t("hosts.jump-from.text", { name: nameOf(before) })
+    }));
+    const name = element("strong", jumpHostName(host));
+    const login = element("span", jumpHostLogin(host));
+
+    role.className = "jump-role";
+    login.className = "jump-login";
+    login.dir = "ltr";
+    main.appendChild(role);
+    main.appendChild(name);
+    main.appendChild(login);
+
+    if (trouble !== null) {
+      side.appendChild(jumpTroubleBadge(trouble));
+    }
+
+    if (!last) {
+      const hopName = jumpHostName(host);
+      const up = actionButton("↑", "jump-up-" + at, function () {
+        draft[at] = draft[at - 1];
+        draft[at - 1] = id;
+        paint();
+      });
+      const down = actionButton("↓", "jump-down-" + at, function () {
+        draft[at] = draft[at + 1];
+        draft[at + 1] = id;
+        paint();
+      });
+      const remove = actionButton("✕", "jump-remove-" + at, function () {
+        draft.splice(at, 1);
+        paint();
+      });
+
+      up.disabled = at === 0;
+      down.disabled = at === draft.length - 1;
+
+      for (const one of [{ press: up, label: "hosts.jump-up.aria" },
+        { press: down, label: "hosts.jump-down.aria" },
+        { press: remove, label: "hosts.jump-remove.aria" }]) {
+        one.press.className = "jump-icon";
+        one.press.title = t(one.label, { name: hopName });
+        one.press.setAttribute("aria-label", t(one.label, { name: hopName }));
+        side.appendChild(one.press);
+      }
+
+      line.draggable = true;
+      line.addEventListener("dragstart", function (event) {
+        dragging = { hop: at };
+        line.classList.add("dragging");
+        grid.classList.add("jump-dragging");
+        event.dataTransfer.setData("text/plain", String(id));
+      });
+      line.addEventListener("dragend", function () {
+        dragging = null;
+        line.classList.remove("dragging");
+        grid.classList.remove("jump-dragging");
+      });
+    }
+
+    line.appendChild(badge);
+    line.appendChild(main);
+    line.appendChild(side);
+
+    if (typeof host.id === "number" && host.unread !== true) {
+      line.appendChild(hostOps(host));
+    }
+
+    if (!last) {
+      const usual = usualNote(id, at);
+
+      if (usual !== null) {
+        line.appendChild(usual);
+      }
+    }
+
+    box.appendChild(line);
+
+    if (last) {
+      box.appendChild(tunnelChips());
+    }
+
+    return box;
+  }
+
+  function flowStep(title, text, passing) {
+    const step = document.createElement("div");
+    const dot = document.createElement("span");
+    const body = document.createElement("div");
+
+    step.className = "jump-fstep";
+    dot.className = "jump-fdot" + (passing ? " passing" : "");
+    dot.setAttribute("aria-hidden", "true");
+    body.appendChild(element("strong", title));
+    body.appendChild(element("span", text));
+    step.appendChild(dot);
+    step.appendChild(body);
+
+    return step;
+  }
+
+  function paintFlow(stop) {
+    flow.textContent = "";
+
+    if (tunnels.length === 0) {
+      flow.appendChild(element("p", t(stored ? "hosts.jump-flow-none.text" : "hosts.jump-flow-new.text")));
+
+      return;
+    }
+
+    if (flowAt >= tunnels.length) {
+      flowAt = 0;
+    }
+
+    const tunnel = tunnels[flowAt];
+    const item = tunnel.item;
+    const targetName = jumpHostName(target);
+    const passing = draft.map(function (id) {
+      return flowStep(nameOf(id), t("hosts.jump-flow-pass.text"), true);
+    });
+    const heading = document.createElement("div");
+    const way = element("span", tunnel.kind === "remote"
+      ? t("hosts.jump-flow-remote-way.text")
+      : t("hosts.jump-flow-local-way.text"));
+    const steps = document.createElement("div");
+    let parts;
+
+    heading.className = "jump-flow-heading";
+    way.className = "jump-way";
+    steps.className = "jump-fsteps";
+
+    if (tunnel.kind === "remote") {
+      heading.appendChild(element("strong", t("hosts.jump-flow-remote.text")));
+      parts = [flowStep(t("hosts.jump-flow-remote-open.text", { name: targetName, port: item.local_port }),
+        t("hosts.jump-flow-remote-client.text"), false)]
+        .concat(passing.reverse())
+        .concat([flowStep(t("hosts.jump-self.text"), t("hosts.jump-flow-remote-service.text",
+          { address: joinAddress(String(item.service_address), String(item.service_port)) }), false)]);
+    } else {
+      const listen = bindScopeStored(item.bind_scope) === bindScopeLoopback ? "127.0.0.1" : "0.0.0.0";
+
+      heading.appendChild(element("strong", t("status.kind-local-forward.text")));
+      parts = [flowStep(t("hosts.jump-flow-local-open.text",
+        { address: joinAddress(listen, String(item.local_port)) }), t("hosts.jump-flow-local-client.text"), false)]
+        .concat(passing)
+        .concat([flowStep(targetName, t("hosts.jump-flow-local-target.text",
+          { address: joinAddress(String(item.target_address), String(item.target_port)) }), false)]);
+    }
+
+    heading.appendChild(way);
+
+    for (const part of parts) {
+      steps.appendChild(part);
+    }
+
+    const note = element("p", tunnel.kind === "remote"
+      ? t("hosts.jump-flow-remote.notice")
+      : t("hosts.jump-flow-local.notice", { name: targetName }));
+
+    note.className = "jump-flow-note";
+
+    flow.appendChild(heading);
+    flow.appendChild(steps);
+    flow.appendChild(note);
+
+    if (stop !== null) {
+      const cut = element("p", t("hosts.jump-flow-broken.notice", { name: jumpHostName(stop.host) }));
+
+      cut.className = "jump-broken";
+      flow.appendChild(cut);
+    }
+  }
+
+  function paint() {
+    const panel = grid.closest(".modal-panel");
+    const had = document.activeElement !== null && grid.contains(document.activeElement)
+      ? document.activeElement.dataset.action
+      : undefined;
+
+    // The palette.
+    const used = {};
+
+    for (const id of draft) {
+      used[String(id)] = true;
+    }
+
+    if (picked !== null && used[String(picked)]) {
+      picked = null;
+    }
+
+    blocks.textContent = "";
+
+    const others = palette.items.filter(function (host) {
+      return !(stored && host.id === target.id);
+    });
+
+    if (others.length === 0) {
+      blocks.appendChild(statusLine(searchText(query) === ""
+        ? t("hosts.jump-pick-none.empty")
+        : t("list.no-match.empty"), "empty"));
+    }
+
+    for (const host of others) {
+      blocks.appendChild(pickBlock(host, used[String(host.id)] === true));
+    }
+
+    more.textContent = t("hosts.jump-pick-more.text", { shown: palette.items.length, total: palette.total });
+    more.hidden = palette.total <= palette.items.length;
+    what.textContent = picked === null
+      ? t("hosts.jump-picked-none.text")
+      : t("hosts.jump-picked.text", { name: nameOf(picked) });
+    add.disabled = picked === null || draft.length >= jumpRouteMaxHops;
+    full.hidden = draft.length < jumpRouteMaxHops;
+    grid.classList.toggle("jump-picked", picked !== null);
+
+    // The route.
+    chain.textContent = "";
+
+    const home = document.createElement("div");
+    const selfMain = document.createElement("div");
+    const selfBadge = element("span", "⌂");
+
+    home.className = "jump-node self";
+    selfBadge.className = "jump-badge";
+    selfBadge.setAttribute("aria-hidden", "true");
+    selfMain.appendChild(element("small", t("hosts.jump-self-role.text")));
+    selfMain.appendChild(element("strong", t("hosts.jump-self.text")));
+    home.appendChild(selfBadge);
+    home.appendChild(selfMain);
+    chain.appendChild(home);
+
+    const all = draft.concat([stored ? target.id : null]);
+
+    all.forEach(function (id, at) {
+      const cut = at > 0 && jumpTrouble(jumpHostOf(cache, draft[at - 1])) !== null;
+
+      chain.appendChild(slot(at, cut));
+      chain.appendChild(node(id, at, at === all.length - 1));
+    });
+
+    const stop = jumpFirstTrouble(draft, cache);
+
+    broken.hidden = stop === null;
+    broken.textContent = stop === null ? "" : t("hosts.jump-broken.notice",
+      { name: jumpHostName(stop.host), state: stop.trouble.word });
+
+    summary.textContent = "";
+
+    const command = jumpSSHCommand(target, draft.map(function (id) {
+      return jumpHostOf(cache, id);
+    }));
+    const code = element("code", command);
+
+    code.dir = "ltr";
+    summary.appendChild(code);
+
+    const copy = copyButton(command, t("hosts.jump-copy-command.aria"));
+
+    if (copy !== null) {
+      summary.appendChild(copy);
+    }
+
+    paintFlow(stop);
+
+    if (panel !== null) {
+      const direct = panel.querySelector("[data-action=\"jump-route-direct\"]");
+
+      if (direct !== null) {
+        direct.disabled = draft.length === 0;
+      }
+    }
+
+    if (had !== undefined) {
+      const again = grid.querySelector("[data-action=\"" + had + "\"]");
+
+      if (again !== null && !again.disabled) {
+        again.focus({ preventScroll: true });
+      }
+    }
+  }
+
+  // Everything the panel names is read before it goes up, so a refusal is
+  // answered by the line over the screen rather than by an empty panel.
+  await learnMissing();
+  await readPalette();
+  await readTunnels();
+
+  paint();
+
+  const outcome = openModal({
+    name: "jump-route",
+    title: stored
+      ? t("hosts.jump-route.title", { id: target.id, address: joinAddress(String(target.address), String(target.port)) })
+      : t("hosts.jump-route-new.title", { address: joinAddress(String(target.address), String(target.port)) }),
+    body: [problem, grid],
+    buttons: [
+      {
+        label: t("hosts.jump-direct.button"),
+        name: "direct",
+        press: function () {
+          draft = [];
+          paint();
+        }
+      },
+      { label: t("common.cancel.button"), name: "cancel" },
+      {
+        label: t("common.save.button"),
+        name: "save",
+        variant: "primary",
+        press: async function (button, close) {
+          button.disabled = true;
+          problem.hidden = true;
+
+          try {
+            await spec.save(draft.slice());
+          } catch (error) {
+            if (error instanceof Redirected) {
+              close(null);
+
+              throw error;
+            }
+
+            showPanelProblem(problem, error.message);
+
+            return;
+          } finally {
+            button.disabled = false;
+          }
+
+          close("saved");
+
+          await drawHosts();
+        }
+      }
+    ],
+    opened: function (close) {
+      closePanel = close;
+    }
+  });
+
+  paint();
+
+  return outcome;
 }
 
 // deletePickedBar is the row over a list that carries the press acting on what
@@ -3418,8 +4901,9 @@ function checkPrivateKeyBlock(value) {
   return "";
 }
 
-function hostCreateForm() {
-  return buildForm({
+function hostCreateForm(known) {
+  const route = jumpRouteField(null, hostCreateJumps, known);
+  const form = buildForm({
     name: "host-create",
     legend: t("hosts.add.title"),
     submitLabel: t("common.add.button"),
@@ -3427,6 +4911,7 @@ function hostCreateForm() {
       addressField("address", t("hosts.address.label")),
       portField("port", t("hosts.ssh-port.label"), 22),
       { name: "user", label: t("hosts.user.label") },
+      route.field,
       privateKeyField(t("hosts.key-add.hint")),
       keyPassphraseField(),
       {
@@ -3457,10 +4942,15 @@ function hostCreateForm() {
     ].concat(socksFields({})),
     onSubmit: createHost
   });
+
+  route.follow(form);
+
+  return holdHostForm(form, null);
 }
 
-function hostEditForm(host) {
-  return buildForm({
+function hostEditForm(host, known) {
+  const route = jumpRouteField(host, jumpIDs(host), known);
+  const form = buildForm({
     name: "host-edit",
     legend: t("hosts.edit.title", { id: host.id }),
     submitLabel: t("common.save.button"),
@@ -3468,6 +4958,7 @@ function hostEditForm(host) {
       addressField("address", t("hosts.address.label"), host.address),
       portField("port", t("hosts.ssh-port.label"), host.port),
       { name: "user", label: t("hosts.user.label"), value: host.user },
+      route.field,
       privateKeyField(t("hosts.key-edit.hint")),
       keyPassphraseField(),
       {
@@ -3493,6 +4984,10 @@ function hostEditForm(host) {
       return drawHosts();
     }
   });
+
+  route.follow(form);
+
+  return holdHostForm(form, host.id);
 }
 
 const socksDefaultPort = 1080;
@@ -3601,13 +5096,19 @@ async function createHost(values) {
     body.key_passphrase = values.key_passphrase;
   }
 
+  if (hostCreateJumps.length > 0) {
+    body.jump_host_ids = hostCreateJumps.slice();
+  }
+
   await apiCall("POST", "/api/host", body);
+
+  hostCreateJumps = [];
 
   setToast(function () {
     return t("hosts.added.notice", { ip: body.address });
   });
 
-  return drawHosts();
+  return drawHostsAnew();
 }
 
 async function updateHost(host, values) {
