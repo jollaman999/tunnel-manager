@@ -6,6 +6,7 @@ import (
 	"database/sql"
 	"encoding/hex"
 	"errors"
+	"fmt"
 	"io"
 	"net"
 	"net/netip"
@@ -29,10 +30,14 @@ import (
 // channel it is asked for, which is what a Host passed through does for the
 // next one, and opens every port tcpip-forward asks for, carrying what that
 // port accepts back as forwarded-tcpip channels, which is what the Host of a
-// tunnel does.
+// tunnel does. With prohibit set it refuses every direct-tcpip channel as
+// administratively prohibited instead, which is what sshd does for a login
+// that AllowTcpForwarding is off for.
 type jumpTestServer struct {
 	addr string
 	key  ssh.PublicKey
+
+	prohibit atomic.Bool
 
 	mu     sync.Mutex
 	dialed []string
@@ -199,6 +204,11 @@ func (s *jumpTestServer) serve(conn net.Conn, config *ssh.ServerConfig) {
 		s.mu.Lock()
 		s.dialed = append(s.dialed, address)
 		s.mu.Unlock()
+
+		if s.prohibit.Load() {
+			_ = newChan.Reject(ssh.Prohibited, "port forwarding is disabled")
+			continue
+		}
 
 		upstream, err := net.DialTimeout("tcp", address, localTestTimeout)
 		if err != nil {
@@ -958,6 +968,113 @@ func TestAFailureAtAJumpIsGivenItsReason(t *testing.T) {
 
 	if got := jumpFailureOf(nil); got != (jumpFailure{}) {
 		t.Fatalf("no error reads as %+v, want nothing", got)
+	}
+}
+
+// TestAProhibitedChannelNamesTheHostThatRefusedIt is a Host passed through
+// that is not allowed to open channels at all. The failure is one of that Host,
+// which is where it is put right, and not of the Host the channel was for, even
+// when that is the Host at the end. A channel the Host passed through tried and
+// failed to open is still one of the Host it was for.
+func TestAProhibitedChannelNamesTheHostThatRefusedIt(t *testing.T) {
+	first := startJumpTestServer(t)
+	middle := startJumpTestServer(t)
+	prohibiting := startJumpTestServer(t)
+	prohibiting.prohibit.Store(true)
+	after := startJumpTestServer(t)
+	target := startJumpTestServer(t)
+
+	closed, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("failed to listen: %v", err)
+	}
+	closedAddr := closed.Addr().String()
+	_ = closed.Close()
+
+	config := testClientConfig(localTestTimeout)
+
+	cases := []struct {
+		name    string
+		route   []sshHop
+		want    jumpFailure
+		address string
+	}{
+		{"by a step in the middle", []sshHop{
+			{hostID: 2, addr: first.addr, config: config},
+			{hostID: 3, addr: prohibiting.addr, config: config},
+			{hostID: 4, addr: after.addr, config: config},
+			{hostID: 1, addr: target.addr, config: config},
+		}, jumpFailure{seq: 2, hostID: 3, reason: JumpReasonDial}, prohibiting.addr},
+		{"by the last step, to the Host at the end", []sshHop{
+			{hostID: 2, addr: first.addr, config: config},
+			{hostID: 3, addr: prohibiting.addr, config: config},
+			{hostID: 1, addr: target.addr, config: config},
+		}, jumpFailure{seq: 2, hostID: 3, reason: JumpReasonDial}, prohibiting.addr},
+		{"tried and not reached by the last step", []sshHop{
+			{hostID: 2, addr: first.addr, config: config},
+			{hostID: 3, addr: middle.addr, config: config},
+			{hostID: 1, addr: closedAddr, config: config},
+		}, jumpFailure{}, ""},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			client, _, err := dialSSHClient(tc.route)
+			if err == nil {
+				_ = client.Close()
+				t.Fatal("the route was connected over")
+			}
+
+			if got := jumpFailureOf(err); got != tc.want {
+				t.Fatalf("the error %v reads as %+v, want %+v", err, got, tc.want)
+			}
+
+			if tc.address == "" {
+				var jumpErr *JumpError
+				if errors.As(err, &jumpErr) {
+					t.Fatalf("the error %v names a step of the route", err)
+				}
+				return
+			}
+
+			want := fmt.Sprintf("jump %d (host #%d %s): ", tc.want.seq, tc.want.hostID, tc.address)
+			if !strings.HasPrefix(err.Error(), want) {
+				t.Fatalf("the error is %q, want it to start with %q", err, want)
+			}
+		})
+	}
+
+	if after.handshakes.Load() != 0 || target.handshakes.Load() != 0 {
+		t.Fatal("a Host behind a step that refused the channel was reached")
+	}
+}
+
+// TestATunnelNamesTheJumpHostThatIsProhibitedFromOpeningTheChannel is the
+// remote tunnel of a Host reached through a Host that refuses the channel to
+// it as administratively prohibited. The row names the Host passed through and
+// not the Host at the end.
+func TestATunnelNamesTheJumpHostThatIsProhibitedFromOpeningTheChannel(t *testing.T) {
+	f := newJumpFixture(t, nil)
+	f.jump.prohibit.Store(true)
+	f.addTunnel(t, "127.0.0.1", 1, freeDualStackPort(t))
+
+	f.reconcile(t)
+
+	row := f.waitTunnelRow(t, "the tunnel to fail", func(row models.Tunnel) bool {
+		return row.LastError != ""
+	})
+	if !strings.HasPrefix(row.LastError, f.jumpPrefix()+": ") {
+		t.Fatalf("the tunnel says %q, want it to start with %q", row.LastError, f.jumpPrefix())
+	}
+	if row.Status != localStatusError && row.Status != localStatusReconnecting {
+		t.Fatalf("the tunnel status is %q, want error or reconnecting", row.Status)
+	}
+	assertJumpFailure(t, "the tunnel", row.JumpSeq, row.JumpHostID, row.JumpReason,
+		jumpFailure{seq: 1, hostID: 2, reason: JumpReasonDial})
+
+	assertOnlyDialed(t, f.jump, f.target.addr)
+	if f.target.handshakes.Load() != 0 {
+		t.Fatal("the Host at the end was reached behind a refused channel")
 	}
 }
 

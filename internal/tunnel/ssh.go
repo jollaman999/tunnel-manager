@@ -583,7 +583,8 @@ func (e *JumpError) Unwrap() error {
 //	disabled - the Host passed through is disabled, and nothing was dialled
 //	dial     - the Host passed through was not reached: the TCP connection
 //	           or the channel to it did not open, or its handshake did not
-//	           finish in time
+//	           finish in time; or it refused outright to open the channel to
+//	           the Host after it
 //	auth     - the Host passed through refused the login
 //	host_key - the key the Host passed through presented is not the one it
 //	           is trusted on, or it is trusted on none
@@ -720,7 +721,8 @@ func firstServer(jumps []sshHop, server string) string {
 // A hop that fails closes everything opened before it. A failure at a hop
 // before the last is a JumpError naming which one; a failure at the last is
 // returned as it is, so a Host with no jump route fails with what it always
-// failed with.
+// failed with. A channel the Host before a hop is prohibited from opening is a
+// JumpError naming that Host instead, the last hop included (prohibitedChannel).
 func dialSSHClient(route []sshHop) (*ssh.Client, net.Conn, error) {
 	var (
 		client *ssh.Client
@@ -734,6 +736,11 @@ func dialSSHClient(route []sshHop) (*ssh.Client, net.Conn, error) {
 				_ = client.Close()
 			}
 
+			if i > 0 && prohibitedChannel(err) {
+				from := route[i-1]
+				return nil, nil, &JumpError{Seq: i, HostID: from.hostID, Address: from.addr, Err: err}
+			}
+
 			if i < len(route)-1 {
 				return nil, nil, &JumpError{Seq: i + 1, HostID: hop.hostID, Address: hop.addr, Err: err}
 			}
@@ -745,6 +752,20 @@ func dialSSHClient(route []sshHop) (*ssh.Client, net.Conn, error) {
 	}
 
 	return client, conn, nil
+}
+
+// prohibitedChannel is whether err is the Host before a hop refusing to open
+// the channel to it at all, as sshd does when AllowTcpForwarding is off for the
+// login (RFC 4254, 5.1: SSH_OPEN_ADMINISTRATIVELY_PROHIBITED). That is put
+// right on the Host that refused, so the failure is one of that Host and not of
+// the hop the channel was for. Any other refusal of the channel, such as a
+// connection failed, is the Host before it trying and not reaching the hop, so
+// that one stays a failure of the hop, the way a refused TCP connection to the
+// first hop is one of the first hop.
+func prohibitedChannel(err error) bool {
+	var openErr *ssh.OpenChannelError
+
+	return errors.As(err, &openErr) && openErr.Reason == ssh.Prohibited
 }
 
 // dialHop connects to one hop, from here when through is nil and over a
