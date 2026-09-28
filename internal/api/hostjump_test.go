@@ -295,11 +295,6 @@ func TestADeletedHostTakesItsRouteWithIt(t *testing.T) {
 	f := newHostFixture(t)
 	registerJumpHosts(t, f, 3)
 
-	err := f.db.AutoMigrate(&models.LocalForward{})
-	if err != nil {
-		t.Fatalf("failed to migrate the database: %v", err)
-	}
-
 	for _, update := range []struct{ id, route string }{{"2", "[1]"}, {"3", "[1]"}} {
 		rec := f.updateHost(t, update.id, `{"jump_host_ids":`+update.route+`}`)
 		if rec.Code != http.StatusOK {

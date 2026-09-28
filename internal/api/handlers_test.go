@@ -2810,8 +2810,10 @@ func newHostFixture(t *testing.T) *hostFixture {
 
 	// The service ports and the assignments are built as well, because
 	// registering a Host assigns it the service ports that are stored and so
-	// reads one table and writes the other.
-	err = db.AutoMigrate(&models.Host{}, &models.HostJump{}, &models.ServicePort{}, &models.HostServicePort{})
+	// reads one table and writes the other. The local forwards are, because
+	// deleting a Host deletes its local forwards with it.
+	err = db.AutoMigrate(&models.Host{}, &models.HostJump{}, &models.ServicePort{}, &models.HostServicePort{},
+		&models.LocalForward{})
 	if err != nil {
 		t.Fatalf("failed to migrate the database: %v", err)
 	}
