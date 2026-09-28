@@ -309,19 +309,39 @@ func wantsAssignments(asked *bool) bool {
 // Keys are matched without regard to case, because that is how encoding/json
 // matched them to the old field.
 func renamedFieldRefused(c echo.Context, old string, current string) *refusal {
+	key, refused := bodyFieldKey(c, old)
+	if refused != nil {
+		return refused
+	}
+
+	if key != "" {
+		return refuse(http.StatusBadRequest, errRequestFieldRenamed, errorArgs{"old": key, "new": current})
+	}
+
+	return nil
+}
+
+// bodyFieldKey is the key under which a JSON body carries the field name, or
+// "" when it does not carry it. The key is there whatever its value is, null
+// included, which a pointer field the body is decoded into cannot tell from a
+// key that is left out.
+//
+// It reads the body the way renamedFieldRefused says: once and put back, only a
+// JSON object under application/json, and keys matched without regard to case.
+func bodyFieldKey(c echo.Context, name string) (string, *refusal) {
 	request := c.Request()
 	if request.Body == nil || request.ContentLength == 0 {
-		return nil
+		return "", nil
 	}
 
 	base, _, _ := strings.Cut(request.Header.Get(echo.HeaderContentType), ";")
 	if strings.TrimSpace(base) != echo.MIMEApplicationJSON {
-		return nil
+		return "", nil
 	}
 
 	body, err := io.ReadAll(request.Body)
 	if err != nil {
-		return unreadableBody(err)
+		return "", unreadableBody(err)
 	}
 
 	request.Body = io.NopCloser(bytes.NewReader(body))
@@ -330,16 +350,16 @@ func renamedFieldRefused(c echo.Context, old string, current string) *refusal {
 
 	err = json.Unmarshal(body, &fields)
 	if err != nil {
-		return nil
+		return "", nil
 	}
 
 	for key := range fields {
-		if strings.EqualFold(key, old) {
-			return refuse(http.StatusBadRequest, errRequestFieldRenamed, errorArgs{"old": key, "new": current})
+		if strings.EqualFold(key, name) {
+			return key, nil
 		}
 	}
 
-	return nil
+	return "", nil
 }
 
 // nextHostID is the number the next Host is registered under.
