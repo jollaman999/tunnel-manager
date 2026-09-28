@@ -1031,6 +1031,13 @@ button.primary:active {
   background: var(--accent-fill-active);
 }
 
+button.primary:disabled {
+  color: var(--text-disabled);
+  background: var(--bg-sunken);
+  border-color: var(--border);
+  box-shadow: none;
+}
+
 /* Delete is the one button in a row that cannot be taken back with another
    click, so it does not look like the two next to it. */
 button.danger {
