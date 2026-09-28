@@ -1668,14 +1668,15 @@ func (h *TransferHandler) planImport(c echo.Context, withIDs bool, content tunne
 				errorArgs{"service_port": name, "reason": err.Error()}).named(nameCodes, named.values)
 		}
 
+		serviceKey := net.JoinHostPort(hostAddressKey(sp.ServiceAddress), strconv.Itoa(sp.ServicePort))
 		_, localPortHeld := spIDOfLocalPort[sp.LocalPort]
-		if heldServices[serviceAddress] || localPortHeld {
+		if heldServices[serviceKey] || localPortHeld {
 			return plan, refuse(http.StatusBadRequest, errImportServicePortDuplicate,
 				errorArgs{"service_port": name}).named(nameCodes, named.values)
 		}
 
 		heldSPIDs[id] = true
-		heldServices[serviceAddress] = true
+		heldServices[serviceKey] = true
 		spIDOfLocalPort[sp.LocalPort] = id
 
 		stored := models.ServicePort{

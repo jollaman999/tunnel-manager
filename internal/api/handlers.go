@@ -1223,6 +1223,30 @@ func (h *Handler) DeleteHost(c echo.Context) error {
 	})
 }
 
+// servicePortAddressHolder is the service port other than self that names the
+// service address and service port already, or zero for none. The addresses are
+// compared as hostAddressKey writes them, which the unique index of the two
+// columns does not, so every service port on the port is read and compared
+// here. One found is answered as the write that fails on the index is.
+func servicePortAddressHolder(tx *gorm.DB, self uint, address string, port int) (uint, error) {
+	var onPort []models.ServicePort
+
+	err := tx.Select("id", "service_address").Where("service_port = ? AND id <> ?", port, self).
+		Order("id").Find(&onPort).Error
+	if err != nil {
+		return 0, err
+	}
+
+	key := hostAddressKey(address)
+	for _, holder := range onPort {
+		if hostAddressKey(holder.ServiceAddress) == key {
+			return holder.ID, nil
+		}
+	}
+
+	return 0, nil
+}
+
 // @Summary      Register a service port
 // @Description  assign_to_all_hosts is optional: left out, every stored Host is given it, and sent as false it is registered carried by none.
 // @Description  bind_scope is what the assignments it makes are opened to: loopback, wildcard, or left out for the wildcard.
@@ -1265,6 +1289,19 @@ func (h *Handler) CreateServicePort(c echo.Context) error {
 		return failure(c, http.StatusInternalServerError, errTransactionBeginFailed)
 	}
 	defer rollbackUnlessDone(tx)
+
+	holder, err := servicePortAddressHolder(tx, 0, sp.ServiceAddress, sp.ServicePort)
+	if err != nil {
+		tx.Rollback()
+		h.logger.Error("failed to fetch service ports", logid.ServicePortListFetchFailed.Field(), zap.Error(err))
+		return failure(c, http.StatusInternalServerError, errServicePortCreateFailed)
+	}
+	if holder != 0 {
+		tx.Rollback()
+		h.logger.Error("failed to create service port", logid.ServicePortCreateFailed.Field(),
+			zap.Uint("held_by", holder))
+		return failure(c, http.StatusInternalServerError, errServicePortCreateFailed)
+	}
 
 	err = tx.Create(sp).Error
 	if err != nil {
@@ -1466,6 +1503,19 @@ func (h *Handler) UpdateServicePort(c echo.Context) error {
 	sp.ServicePort = req.ServicePort
 	sp.LocalPort = req.LocalPort
 	sp.Description = req.Description
+
+	holder, err := servicePortAddressHolder(tx, sp.ID, sp.ServiceAddress, sp.ServicePort)
+	if err != nil {
+		tx.Rollback()
+		h.logger.Error("failed to fetch service ports", logid.ServicePortListFetchFailed.Field(), zap.Error(err))
+		return failure(c, http.StatusInternalServerError, errServicePortUpdateFailed)
+	}
+	if holder != 0 {
+		tx.Rollback()
+		h.logger.Error("failed to update service port", logid.ServicePortUpdateFailed.Field(),
+			zap.Uint("held_by", holder))
+		return failure(c, http.StatusInternalServerError, errServicePortUpdateFailed)
+	}
 
 	err = tx.Save(&sp).Error
 	if err != nil {

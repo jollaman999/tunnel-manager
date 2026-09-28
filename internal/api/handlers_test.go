@@ -464,8 +464,8 @@ func TestCreateServicePortDoesNotWakeTheLoopOnRollback(t *testing.T) {
 
 // newReconcileStubDB returns a gorm DB that answers both the write of
 // CreateServicePort and the reads of a reconcile pass from memory. The service
-// port row is created with spID, and the tunnel row a pass would write is
-// reported as already stored.
+// port row is created with spID, the service ports are read as none until it
+// is, and the tunnel row a pass would write is reported as already stored.
 func newReconcileStubDB(t *testing.T, hosts []models.Host, sps []models.ServicePort, spID uint) (*gorm.DB, *txConnPool) {
 	t.Helper()
 
@@ -480,12 +480,17 @@ func newReconcileStubDB(t *testing.T, hosts []models.Host, sps []models.ServiceP
 		}
 	}
 
+	created := false
+
 	err := db.Callback().Query().Replace("gorm:query", func(tx *gorm.DB) {
 		switch dest := tx.Statement.Dest.(type) {
 		case *[]models.Host:
 			*dest = hosts
 			tx.RowsAffected = int64(len(hosts))
 		case *[]models.ServicePort:
+			if !created {
+				return
+			}
 			*dest = sps
 			tx.RowsAffected = int64(len(sps))
 		case *[]models.HostServicePort:
@@ -502,6 +507,7 @@ func newReconcileStubDB(t *testing.T, hosts []models.Host, sps []models.ServiceP
 	err = db.Callback().Create().Replace("gorm:create", func(tx *gorm.DB) {
 		if dest, ok := tx.Statement.Dest.(*models.ServicePort); ok {
 			dest.ID = spID
+			created = true
 		}
 		tx.RowsAffected = 1
 	})
@@ -808,7 +814,10 @@ func TestCreateHandlersReadOnlyWhatTheyAssign(t *testing.T) {
 			body:     `{"service_address":"192.0.2.2","service_port":80,"local_port":8080}`,
 			assigned: "hosts",
 			own:      "service_ports",
-			call:     (*Handler).CreateServicePort,
+			ownReads: []string{
+				"SELECT `id`,`service_address` FROM `service_ports` WHERE service_port = ? AND id <> ? ORDER BY id",
+			},
+			call: (*Handler).CreateServicePort,
 		},
 	}
 
@@ -2484,6 +2493,76 @@ func TestTheBindScopeOfANewServicePortIsCarriedOntoItsAssignments(t *testing.T) 
 	if rec.Code != http.StatusBadRequest {
 		t.Fatalf("a scope that is neither was answered %d, want %d, body: %s",
 			rec.Code, http.StatusBadRequest, rec.Body.String())
+	}
+}
+
+// TestAServiceAddressWrittenAnotherWayIsTheSameService pins that the service
+// address of a service port is compared the way hostAddressKey writes it, with
+// the answer a service address written as it is stored already gets, while
+// what is stored stays as it was typed.
+func TestAServiceAddressWrittenAnotherWayIsTheSameService(t *testing.T) {
+	for _, tt := range []struct {
+		name  string
+		held  string
+		asked string
+	}{
+		{"the same address", "192.0.2.20", "192.0.2.20"},
+		{"a host name in another case", "Web-A.example", "web-a.example"},
+		{"an IPv6 address written short and in full", "2001:db8::20", "2001:0db8:0::20"},
+		{"an IPv6 address in capitals", "2001:db8::a", "2001:DB8::A"},
+		{"an IPv4 address in the IPv4-mapped IPv6 form", "192.0.2.20", "::ffff:192.0.2.20"},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			f := newHostFixture(t)
+
+			rec := f.createServicePort(t, fmt.Sprintf(`{"service_address":%q,"service_port":80,"local_port":18080}`, tt.held))
+			if rec.Code != http.StatusCreated {
+				t.Fatalf("registering %s: status = %d, want %d, body: %s", tt.held, rec.Code, http.StatusCreated, rec.Body.String())
+			}
+
+			rec = f.createServicePort(t, fmt.Sprintf(`{"service_address":%q,"service_port":80,"local_port":18081}`, tt.asked))
+			if rec.Code != http.StatusInternalServerError || errorCodeOf(t, rec) != errServicePortCreateFailed {
+				t.Fatalf("%s on the same port: status = %d, want %d %s, body: %s",
+					tt.asked, rec.Code, http.StatusInternalServerError, errServicePortCreateFailed, rec.Body.String())
+			}
+
+			rec = f.createServicePort(t, fmt.Sprintf(`{"service_address":%q,"service_port":81,"local_port":18081}`, tt.asked))
+			if rec.Code != http.StatusCreated {
+				t.Fatalf("%s on another port: status = %d, want %d, body: %s", tt.asked, rec.Code, http.StatusCreated, rec.Body.String())
+			}
+
+			update := func(id, body string) *httptest.ResponseRecorder {
+				return f.call(t, http.MethodPut, "/api/service-port/"+id, body, "id", id, f.h.UpdateServicePort)
+			}
+
+			rec = update("2", fmt.Sprintf(`{"service_address":%q,"service_port":80,"local_port":18081}`, tt.asked))
+			if rec.Code != http.StatusInternalServerError || errorCodeOf(t, rec) != errServicePortUpdateFailed {
+				t.Fatalf("service port 2 moved onto %s:80: status = %d, want %d %s, body: %s",
+					tt.asked, rec.Code, http.StatusInternalServerError, errServicePortUpdateFailed, rec.Body.String())
+			}
+
+			rec = update("1", fmt.Sprintf(`{"service_address":%q,"service_port":80,"local_port":18080}`, tt.asked))
+			if rec.Code != http.StatusOK {
+				t.Fatalf("service port 1 written as %s: status = %d, want %d, body: %s", tt.asked, rec.Code, http.StatusOK, rec.Body.String())
+			}
+
+			var stored []models.ServicePort
+
+			err := f.db.Order("id").Find(&stored).Error
+			if err != nil {
+				t.Fatalf("failed to read the service ports: %v", err)
+			}
+
+			got := make([]string, 0, len(stored))
+			for _, sp := range stored {
+				got = append(got, fmt.Sprintf("%d=%s:%d", sp.ID, sp.ServiceAddress, sp.ServicePort))
+			}
+
+			want := "1=" + tt.asked + ":80,2=" + tt.asked + ":81"
+			if strings.Join(got, ",") != want {
+				t.Fatalf("the service ports are %v, want %v", got, want)
+			}
+		})
 	}
 }
 

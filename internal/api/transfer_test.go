@@ -863,6 +863,51 @@ func TestAServicePortTheFileHoldsTwiceIsRefused(t *testing.T) {
 	}
 }
 
+// TestAServicePortTheFileHoldsTwiceUnderAnotherSpellingIsRefused is a file
+// whose two service ports name one service port of one service whose addresses
+// differ only in how they are written: they are one service held twice, the
+// refusal a file that repeats the address as it is gets.
+func TestAServicePortTheFileHoldsTwiceUnderAnotherSpellingIsRefused(t *testing.T) {
+	for _, tt := range []struct {
+		name   string
+		first  string
+		second string
+	}{
+		{"a host name in another case", "Web-A.example", "web-a.example"},
+		{"an IPv6 address written another way", "2001:db8::20", "2001:0DB8:0::20"},
+		{"an IPv4 address in the IPv4-mapped IPv6 form", "192.0.2.20", "::ffff:192.0.2.20"},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			source := newTransferInstall(t)
+			target := newTransferInstall(t)
+
+			target.registerServicePort(t, servicePortContent{ServiceAddress: "192.0.2.30", ServicePort: 80, LocalPort: 18090})
+
+			before := target.configuration(t)
+
+			file := sealedTunnelsFile(t, source, tunnelsContent{
+				ServicePorts: []servicePortContent{
+					{ServiceAddress: tt.first, ServicePort: 80, LocalPort: 18080},
+					{ServiceAddress: tt.second, ServicePort: 80, LocalPort: 18081},
+				},
+			}, testExportPassword)
+
+			rec := target.importTunnels(t, file, testExportPassword)
+			if rec.Code != http.StatusBadRequest {
+				t.Fatalf("the import answered %d, want %d: %s", rec.Code, http.StatusBadRequest, rec.Body.String())
+			}
+
+			if errorCodeOf(t, rec) != errImportServicePortDuplicate {
+				t.Errorf("the import was refused under %s, want %s", errorCodeOf(t, rec), errImportServicePortDuplicate)
+			}
+
+			if !reflect.DeepEqual(target.configuration(t), before) {
+				t.Fatalf("a refused import changed what is stored")
+			}
+		})
+	}
+}
+
 // TestARefusedServicePortIsNamedByCode reads the refusal of a service port the
 // file carries with a value no service port may have. The name of the service
 // port is the server's own English, so it is carried with a code beside it and
