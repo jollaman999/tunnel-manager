@@ -527,7 +527,7 @@
                         }
                     },
                     "409": {
-                        "description": "socks_port is the port of this server, of the SOCKS5 proxy of another Host or of a local forward",
+                        "description": "Another Host is registered on the address and SSH port, or socks_port is the port of this server, of the SOCKS5 proxy of another Host or of a local forward",
                         "schema": {
                             "$ref": "#/definitions/api.errorBody"
                         }
@@ -782,7 +782,7 @@
                         }
                     },
                     "409": {
-                        "description": "The SOCKS5 proxy is switched on or moved to the port of this server, of the SOCKS5 proxy of another Host or of a local forward",
+                        "description": "The address or the SSH port is changed to the two another Host is registered on, or the SOCKS5 proxy is switched on or moved to the port of this server, of the SOCKS5 proxy of another Host or of a local forward",
                         "schema": {
                             "$ref": "#/definitions/api.errorBody"
                         }
@@ -3220,6 +3220,7 @@
                 "host.jump.repeated",
                 "host.jump.too_many",
                 "host.delete.used_as_jump",
+                "host.address.taken",
                 "service_port.id.invalid",
                 "service_port.not_found",
                 "service_port.fetch_failed",
@@ -3423,6 +3424,7 @@
                 "errHostJumpRepeated",
                 "errHostJumpTooMany",
                 "errHostDeleteUsedAsJump",
+                "errHostAddressTaken",
                 "errServicePortIDInvalid",
                 "errServicePortNotFound",
                 "errServicePortFetchFailed",

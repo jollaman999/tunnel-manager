@@ -192,6 +192,7 @@
   "error.export.password.too_short.error": "パスワードは {min} バイト以上にしてください",
   "error.export.seal_failed.error": "ファイルを暗号化できませんでした",
   "error.export.service_ports.read_failed.error": "サービスポートを読めませんでした",
+  "error.host.address.taken.error": "アドレス {address}、SSH ポート {port} は、すでに Host {host_id} として登録されています",
   "error.host.create.key_refused.error": "Host は作られませんでした: {reason}",
   "error.host.create.no_login.error": "Host は作られませんでした。ログインする手段がありません。秘密鍵かパスワード、またはその両方を指定してください",
   "error.host.create.service_ports_read_failed.error": "Host は作られませんでした。サービスポートを読めませんでした",

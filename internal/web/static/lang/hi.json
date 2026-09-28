@@ -192,6 +192,7 @@
   "error.export.password.too_short.error": "पासवर्ड कम से कम {min} बाइट का होना चाहिए",
   "error.export.seal_failed.error": "फ़ाइल एन्क्रिप्ट नहीं की जा सकी",
   "error.export.service_ports.read_failed.error": "सर्विस पोर्ट पढ़े नहीं जा सके",
+  "error.host.address.taken.error": "पता {address} और SSH पोर्ट {port} पहले से Host {host_id} के रूप में जुड़ा हुआ है",
   "error.host.create.key_refused.error": "Host नहीं बनाया गया: {reason}",
   "error.host.create.no_login.error": "Host नहीं बनाया गया: इसमें लॉगिन का कोई तरीका नहीं है। निजी कुंजी दें, पासवर्ड दें, या दोनों",
   "error.host.create.service_ports_read_failed.error": "Host नहीं बनाया गया: सर्विस पोर्ट पढ़े नहीं जा सके",

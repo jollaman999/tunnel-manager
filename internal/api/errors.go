@@ -154,6 +154,7 @@ const (
 	errHostJumpRepeated            errorCode = "host.jump.repeated"
 	errHostJumpTooMany             errorCode = "host.jump.too_many"
 	errHostDeleteUsedAsJump        errorCode = "host.delete.used_as_jump"
+	errHostAddressTaken            errorCode = "host.address.taken"
 
 	errServicePortIDInvalid        errorCode = "service_port.id.invalid"
 	errServicePortNotFound         errorCode = "service_port.not_found"
@@ -438,6 +439,7 @@ var errorMessages = map[errorCode]string{
 	errHostJumpRepeated:          "The jump route is refused: the Host {host_id} is on it twice",
 	errHostJumpTooMany:           "The jump route is refused: it goes through more than {max} Hosts",
 	errHostDeleteUsedAsJump:      "The Host was not deleted: the Hosts {hosts} (id {host_ids}) go through it on their jump route. Take it off those routes first",
+	errHostAddressTaken:          "The address {address} with the SSH port {port} is already registered as the Host {host_id}",
 
 	// The service ports.
 	errServicePortIDInvalid:        "Invalid service port ID: {reason}",

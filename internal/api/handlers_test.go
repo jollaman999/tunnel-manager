@@ -12,6 +12,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -761,8 +762,8 @@ func TestWriteHandlersReadTheirRowInsideTheTransaction(t *testing.T) {
 }
 
 // TestCreateHandlersReadOnlyWhatTheyAssign pins down the other side of it: a
-// create does not look its own row up, since it has none yet and the unique
-// indexes are what keep a duplicate out. What it reads is the other table,
+// create does not look its own row up, since it has none yet. What it reads is
+// the other table,
 // where the assignments the new row is written with come from, and it reads on
 // the transaction that writes them with the commit still ahead. Read outside
 // it, a Host deleted in between would be assigned a service port after it was
@@ -773,7 +774,9 @@ func TestWriteHandlersReadTheirRowInsideTheTransaction(t *testing.T) {
 // that one a deleted Host gave up is handed out again. It is a read of the one
 // column and the one row, on the same transaction, and it is named here so that
 // a create which started scanning its own table for something else would still
-// be caught.
+// be caught. It reads it for the Host on the address and SSH port it is given
+// as well, so that the refusal can name that Host rather than the write fail
+// on the unique index of the two.
 func TestCreateHandlersReadOnlyWhatTheyAssign(t *testing.T) {
 	tests := []struct {
 		name     string
@@ -781,11 +784,11 @@ func TestCreateHandlersReadOnlyWhatTheyAssign(t *testing.T) {
 		body     string
 		assigned string
 		own      string
-		// ownRead is the read of the create's own table that belongs there, or
-		// empty where none does. It is matched on the whole statement, so a
-		// read of that table which is not this one fails the case.
-		ownRead string
-		call    func(*Handler, echo.Context) error
+		// ownReads are the reads of the create's own table that belong there.
+		// They are matched on the whole statement, so a read of that table
+		// which is not one of these fails the case.
+		ownReads []string
+		call     func(*Handler, echo.Context) error
 	}{
 		{
 			name:     "create host",
@@ -793,8 +796,11 @@ func TestCreateHandlersReadOnlyWhatTheyAssign(t *testing.T) {
 			body:     `{"address":"192.0.2.1","port":22,"user":"root","password":"fake-value-1"}`, // hook:allow
 			assigned: "service_ports",
 			own:      "hosts",
-			ownRead:  "SELECT `id` FROM `hosts` ORDER BY id desc LIMIT 1",
-			call:     (*Handler).CreateHost,
+			ownReads: []string{
+				"SELECT `id` FROM `hosts` ORDER BY id desc LIMIT 1",
+				"SELECT `id` FROM `hosts` WHERE address = ? AND port = ? AND id <> ? LIMIT 1",
+			},
+			call: (*Handler).CreateHost,
 		},
 		{
 			name:     "create service port",
@@ -830,22 +836,19 @@ func TestCreateHandlersReadOnlyWhatTheyAssign(t *testing.T) {
 
 			all := reads.all()
 
-			want := 1
-			if tt.ownRead != "" {
-				want = 2
-			}
+			want := 1 + len(tt.ownReads)
 
 			if len(all) != want {
 				t.Fatalf("reads = %d, want %d: %v", len(all), want, all)
 			}
 
 			assigned := false
-			ownRead := false
+			ownRead := make(map[string]bool)
 
 			for _, read := range all {
 				switch {
-				case read.sql == tt.ownRead:
-					ownRead = true
+				case slices.Contains(tt.ownReads, read.sql):
+					ownRead[read.sql] = true
 				case strings.Contains(read.sql, "`"+tt.own+"`"):
 					t.Errorf("the create reads the table it writes to: %s", read.sql)
 				case strings.Contains(read.sql, "`"+tt.assigned+"`"):
@@ -868,8 +871,10 @@ func TestCreateHandlersReadOnlyWhatTheyAssign(t *testing.T) {
 			if !assigned {
 				t.Errorf("the create does not read %s: %v", tt.assigned, all)
 			}
-			if tt.ownRead != "" && !ownRead {
-				t.Errorf("the create does not read the number to take: %v", all)
+			for _, want := range tt.ownReads {
+				if !ownRead[want] {
+					t.Errorf("the create does not make the read %s: %v", want, all)
+				}
 			}
 		})
 	}

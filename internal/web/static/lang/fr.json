@@ -192,6 +192,7 @@
   "error.export.password.too_short.error": "Le mot de passe doit faire au moins {min} octets",
   "error.export.seal_failed.error": "Le chiffrement du fichier a échoué",
   "error.export.service_ports.read_failed.error": "La lecture des ports de service a échoué",
+  "error.host.address.taken.error": "L'adresse {address} avec le port SSH {port} est déjà enregistrée comme Host {host_id}",
   "error.host.create.key_refused.error": "Le Host n'a pas été créé : {reason}",
   "error.host.create.no_login.error": "Le Host n'a pas été créé : il n'a aucun moyen de connexion. Fournissez une clé privée, un mot de passe, ou les deux",
   "error.host.create.service_ports_read_failed.error": "Le Host n'a pas été créé : la lecture des ports de service a échoué",

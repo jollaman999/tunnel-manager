@@ -376,6 +376,52 @@ func nextHostID(tx *gorm.DB) (uint, error) {
 	return last.ID + 1, nil
 }
 
+// hostAddressRefused refuses the address and SSH port a Host is being given
+// when another Host is registered on the two already. self is the Host being
+// updated, and zero for one being registered. The two columns are one unique
+// index, so what this turns into a refusal naming the Host that holds them is
+// what the write would otherwise fail on as a database error.
+//
+// A non-nil error is a failed read, as it is for socksPortRefused.
+func hostAddressRefused(tx *gorm.DB, self uint, address string, port int) (*refusal, error) {
+	var holders []models.Host
+
+	err := tx.Select("id").Where("address = ? AND port = ? AND id <> ?", address, port, self).
+		Limit(1).Find(&holders).Error
+	if err != nil {
+		return nil, err
+	}
+	if len(holders) == 0 {
+		return nil, nil
+	}
+
+	return refuse(http.StatusConflict, errHostAddressTaken, errorArgs{
+		"address": address,
+		"port":    strconv.Itoa(port),
+		"host_id": strconv.FormatUint(uint64(holders[0].ID), 10),
+	}), nil
+}
+
+// hostWriteRefused turns a write of a Host that failed on the unique index of
+// its address and SSH port into the refusal hostAddressRefused gives, which is
+// what a Host stored by another request between that check and the write comes
+// to. The driver is what says which failure it was, so no error text is read.
+// Any other failure, or one after which no Host holds the two, is handed back
+// as nil for the caller to answer as the failed write it is.
+func hostWriteRefused(tx *gorm.DB, writeErr error, self uint, address string, port int) *refusal {
+	translator, ok := tx.Dialector.(gorm.ErrorTranslator)
+	if !ok || !errors.Is(translator.Translate(writeErr), gorm.ErrDuplicatedKey) {
+		return nil
+	}
+
+	refused, err := hostAddressRefused(tx, self, address, port)
+	if err != nil {
+		return nil
+	}
+
+	return refused
+}
+
 // @Summary      Register a Host
 // @Description  address is a host name or an IP address. A name is resolved each time the Host is connected to.
 // @Description  enabled is optional and a Host that does not say is enabled.
@@ -389,7 +435,7 @@ func nextHostID(tx *gorm.DB) (uint, error) {
 // @Param   body  body  models.CreateHostRequest  true  "The Host to register"
 // @Success  200  {object}  models.Response{data=api.hostView}
 // @Failure  400  {object}  api.errorBody  "The body is refused, carries the old name ip in place of address, the private key cannot be read, the SOCKS5 proxy is switched on without a port or with allowed sources that do not read, or the jump route names a Host that is not registered, names one twice or is longer than 8"
-// @Failure  409  {object}  api.errorBody  "socks_port is the port of this server, of the SOCKS5 proxy of another Host or of a local forward"
+// @Failure  409  {object}  api.errorBody  "Another Host is registered on the address and SSH port, or socks_port is the port of this server, of the SOCKS5 proxy of another Host or of a local forward"
 // @Router       /host [post]
 func (h *Handler) CreateHost(c echo.Context) error {
 	refusedField := renamedFieldRefused(c, "ip", "address")
@@ -532,9 +578,24 @@ func (h *Handler) CreateHost(c echo.Context) error {
 		return refused.answer(c)
 	}
 
-	err = tx.Create(host).Error
+	refused, err = hostAddressRefused(tx, 0, host.Address, host.Port)
 	if err != nil {
 		tx.Rollback()
+		h.logger.Error("failed to fetch Hosts", logid.HostListFetchFailed.Field(), zap.Error(err))
+		return failure(c, http.StatusInternalServerError, errHostCreateFailed)
+	}
+	if refused != nil {
+		tx.Rollback()
+		return refused.answer(c)
+	}
+
+	err = tx.Create(host).Error
+	if err != nil {
+		refused = hostWriteRefused(tx, err, 0, host.Address, host.Port)
+		tx.Rollback()
+		if refused != nil {
+			return refused.answer(c)
+		}
 		h.logger.Error("failed to create Host", logid.HostCreateFailed.Field(), zap.Error(err))
 		return failure(c, http.StatusInternalServerError, errHostCreateFailed)
 	}
@@ -804,7 +865,7 @@ func (h *Handler) GetHost(c echo.Context) error {
 // @Success  200  {object}  models.Response{data=api.hostView}
 // @Failure  400  {object}  api.errorBody  "The body is refused, carries the old name ip in place of address, or the jump route names a Host that is not registered, the Host itself, one Host twice or is longer than 8"
 // @Failure  404  {object}  api.errorBody  "No such Host"
-// @Failure  409  {object}  api.errorBody  "The SOCKS5 proxy is switched on or moved to the port of this server, of the SOCKS5 proxy of another Host or of a local forward"
+// @Failure  409  {object}  api.errorBody  "The address or the SSH port is changed to the two another Host is registered on, or the SOCKS5 proxy is switched on or moved to the port of this server, of the SOCKS5 proxy of another Host or of a local forward"
 // @Router       /host/{id} [put]
 func (h *Handler) UpdateHost(c echo.Context) error {
 	id, err := strconv.ParseUint(c.Param("id"), 10, 32)
@@ -964,9 +1025,24 @@ func (h *Handler) UpdateHost(c echo.Context) error {
 		}
 	}
 
-	err = tx.Save(&host).Error
+	refused, err = hostAddressRefused(tx, host.ID, host.Address, host.Port)
 	if err != nil {
 		tx.Rollback()
+		h.logger.Error("failed to fetch Hosts", logid.HostListFetchFailed.Field(), zap.Error(err))
+		return failure(c, http.StatusInternalServerError, errHostUpdateFailed)
+	}
+	if refused != nil {
+		tx.Rollback()
+		return refused.answer(c)
+	}
+
+	err = tx.Save(&host).Error
+	if err != nil {
+		refused = hostWriteRefused(tx, err, host.ID, host.Address, host.Port)
+		tx.Rollback()
+		if refused != nil {
+			return refused.answer(c)
+		}
 		h.logger.Error("failed to update Host", logid.HostUpdateFailed.Field(), zap.Error(err))
 		return failure(c, http.StatusInternalServerError, errHostUpdateFailed)
 	}

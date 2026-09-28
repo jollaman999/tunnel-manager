@@ -319,3 +319,120 @@ func TestADeletedHostTakesItsRouteWithIt(t *testing.T) {
 		t.Fatalf("the route of another Host is %v, want [1]", got)
 	}
 }
+
+// storedHostAddresses is every Host as address:port, keyed by id.
+func storedHostAddresses(t *testing.T, f *hostFixture) map[uint]string {
+	t.Helper()
+
+	var hosts []models.Host
+
+	err := f.db.Order("id").Find(&hosts).Error
+	if err != nil {
+		t.Fatalf("failed to read the Hosts: %v", err)
+	}
+
+	stored := make(map[uint]string, len(hosts))
+	for _, host := range hosts {
+		stored[host.ID] = fmt.Sprintf("%s:%d", host.Address, host.Port)
+	}
+
+	return stored
+}
+
+// wantAddressTaken checks that rec is the refusal of an address and SSH port
+// the Host holderID is registered on.
+func wantAddressTaken(t *testing.T, rec *httptest.ResponseRecorder, address, port, holderID string) {
+	t.Helper()
+
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("status = %d, want %d, body: %s", rec.Code, http.StatusConflict, rec.Body.String())
+	}
+
+	refusal := jumpRefusalOf(t, rec.Body.Bytes())
+	if refusal.Code != errHostAddressTaken {
+		t.Errorf("code = %q, want %q", refusal.Code, errHostAddressTaken)
+	}
+
+	want := errorArgs{"address": address, "port": port, "host_id": holderID}
+	if !reflect.DeepEqual(refusal.Args, want) {
+		t.Errorf("args = %v, want %v", refusal.Args, want)
+	}
+}
+
+// TestAHostOnTheAddressAndPortOfAnotherIsRefused pins that a Host is not
+// registered on, or moved onto, the address and SSH port another Host is on:
+// the answer is a refusal naming that Host rather than a failed write, and
+// nothing is stored. The same address on another port is another Host.
+func TestAHostOnTheAddressAndPortOfAnotherIsRefused(t *testing.T) {
+	f := newHostFixture(t)
+	registerJumpHosts(t, f, 2)
+
+	before := storedHostAddresses(t, f)
+
+	rec := f.createHost(t, `{"address":"192.0.2.1","port":22,"user":"other","password":"secret"}`)
+	wantAddressTaken(t, rec, "192.0.2.1", "22", "1")
+
+	rec = f.call(t, http.MethodPut, "/api/host/2", `{"address":"192.0.2.1"}`, "id", "2", f.h.UpdateHost)
+	wantAddressTaken(t, rec, "192.0.2.1", "22", "1")
+
+	if got := storedHostAddresses(t, f); !reflect.DeepEqual(got, before) {
+		t.Fatalf("the Hosts after the refusals are %v, want %v", got, before)
+	}
+
+	rec = f.call(t, http.MethodPut, "/api/host/2", `{"address":"192.0.2.1","port":2222}`, "id", "2", f.h.UpdateHost)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("moving onto another port: status = %d, want %d, body: %s", rec.Code, http.StatusOK, rec.Body.String())
+	}
+
+	rec = f.call(t, http.MethodPut, "/api/host/2", `{"port":22}`, "id", "2", f.h.UpdateHost)
+	wantAddressTaken(t, rec, "192.0.2.1", "22", "1")
+
+	// A Host saved on the address and port it already has is not in the way
+	// of itself.
+	rec = f.call(t, http.MethodPut, "/api/host/1", `{"address":"192.0.2.1","port":22,"description":"kept"}`, "id", "1", f.h.UpdateHost)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("saving a Host on its own address: status = %d, want %d, body: %s", rec.Code, http.StatusOK, rec.Body.String())
+	}
+
+	rec = f.createHost(t, `{"address":"192.0.2.1","port":2200,"user":"other","password":"secret"}`)
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("the same address on another port: status = %d, want %d, body: %s", rec.Code, http.StatusCreated, rec.Body.String())
+	}
+
+	want := map[uint]string{1: "192.0.2.1:22", 2: "192.0.2.1:2222", 3: "192.0.2.1:2200"}
+	if got := storedHostAddresses(t, f); !reflect.DeepEqual(got, want) {
+		t.Fatalf("the Hosts are %v, want %v", got, want)
+	}
+}
+
+// TestAWriteThatFailsOnTheAddressIndexIsTheSameRefusal pins what a Host stored
+// by another request between the check and the write comes to: the write
+// fails on the unique index, and that failure, as the driver reports it, is
+// answered with the refusal the check gives. Any other failed write is not.
+func TestAWriteThatFailsOnTheAddressIndexIsTheSameRefusal(t *testing.T) {
+	f := newHostFixture(t)
+	registerJumpHosts(t, f, 1)
+
+	tx := f.db.Begin()
+	defer tx.Rollback()
+
+	writeErr := tx.Create(&models.Host{ID: 9, Address: "192.0.2.1", Port: 22, User: "other"}).Error
+	if writeErr == nil {
+		t.Fatal("a second Host on the address and port was stored, want the unique index to refuse it")
+	}
+
+	refused := hostWriteRefused(tx, writeErr, 0, "192.0.2.1", 22)
+	if refused == nil {
+		t.Fatalf("the failure %v is not taken as the address being taken", writeErr)
+	}
+	if refused.status != http.StatusConflict || refused.code != errHostAddressTaken {
+		t.Errorf("the refusal is %d %q, want %d %q", refused.status, refused.code, http.StatusConflict, errHostAddressTaken)
+	}
+	if refused.args["host_id"] != "1" {
+		t.Errorf("the refusal names Host %q, want 1", refused.args["host_id"])
+	}
+
+	if refused := hostWriteRefused(tx, errQueryFailed, 0, "192.0.2.1", 22); refused != nil {
+		t.Errorf("a failure that is not the index is taken as %q", refused.code)
+	}
+}

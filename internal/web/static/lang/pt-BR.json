@@ -192,6 +192,7 @@
   "error.export.password.too_short.error": "A senha deve ter pelo menos {min} bytes",
   "error.export.seal_failed.error": "Falha ao criptografar o arquivo",
   "error.export.service_ports.read_failed.error": "Falha ao ler as portas de serviço",
+  "error.host.address.taken.error": "O endereço {address} com a porta SSH {port} já está cadastrado como o Host {host_id}",
   "error.host.create.key_refused.error": "O Host não foi criado: {reason}",
   "error.host.create.no_login.error": "O Host não foi criado: ele não tem como se autenticar. Informe uma chave privada, uma senha, ou as duas",
   "error.host.create.service_ports_read_failed.error": "O Host não foi criado: falha ao ler as portas de serviço",

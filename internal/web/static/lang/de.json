@@ -192,6 +192,7 @@
   "error.export.password.too_short.error": "Das Passwort muss mindestens {min} Bytes lang sein",
   "error.export.seal_failed.error": "Die Datei konnte nicht verschlüsselt werden",
   "error.export.service_ports.read_failed.error": "Die Service-Ports konnten nicht gelesen werden",
+  "error.host.address.taken.error": "Die Adresse {address} mit dem SSH-Port {port} ist bereits als Host {host_id} angelegt",
   "error.host.create.key_refused.error": "Der Host wurde nicht angelegt: {reason}",
   "error.host.create.no_login.error": "Der Host wurde nicht angelegt: Er enthält keine Zugangsdaten. Geben Sie einen privaten Schlüssel, ein Passwort oder beides an",
   "error.host.create.service_ports_read_failed.error": "Der Host wurde nicht angelegt: Die Service-Ports konnten nicht gelesen werden",

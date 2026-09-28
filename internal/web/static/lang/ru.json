@@ -192,6 +192,7 @@
   "error.export.password.too_short.error": "Пароль должен быть не короче {min} байт",
   "error.export.seal_failed.error": "Не удалось зашифровать файл",
   "error.export.service_ports.read_failed.error": "Не удалось прочитать сервисные порты",
+  "error.host.address.taken.error": "Адрес {address} с SSH-портом {port} уже добавлен как Host {host_id}",
   "error.host.create.key_refused.error": "Host не создан: {reason}",
   "error.host.create.no_login.error": "Host не создан: не задан способ аутентификации. Укажите закрытый ключ, пароль или и то и другое",
   "error.host.create.service_ports_read_failed.error": "Host не создан: не удалось прочитать сервисные порты",

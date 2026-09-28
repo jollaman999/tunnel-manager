@@ -192,6 +192,7 @@
   "error.export.password.too_short.error": "密码至少要有 {min} 个字节",
   "error.export.seal_failed.error": "加密文件失败",
   "error.export.service_ports.read_failed.error": "读取服务端口失败",
+  "error.host.address.taken.error": "地址 {address} 与 SSH 端口 {port} 已登记为 Host {host_id}",
   "error.host.create.key_refused.error": "Host 未创建：{reason}",
   "error.host.create.no_login.error": "Host 未创建：没有可用于登录的凭据。请提供私钥、密码，或者两者都提供",
   "error.host.create.service_ports_read_failed.error": "Host 未创建：读取服务端口失败",

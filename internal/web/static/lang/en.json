@@ -192,6 +192,7 @@
   "error.export.password.too_short.error": "The password must be at least {min} bytes long",
   "error.export.seal_failed.error": "Failed to encrypt the file",
   "error.export.service_ports.read_failed.error": "Failed to read the service ports",
+  "error.host.address.taken.error": "The address {address} with the SSH port {port} is already registered as the Host {host_id}",
   "error.host.create.key_refused.error": "The Host was not created: {reason}",
   "error.host.create.no_login.error": "The Host was not created: it carries no way to log in. Give a private key, a password, or both",
   "error.host.create.service_ports_read_failed.error": "The Host was not created: failed to read the service ports",

@@ -192,6 +192,7 @@
   "error.export.password.too_short.error": "비밀번호는 {min} 바이트 이상이어야 합니다",
   "error.export.seal_failed.error": "파일을 암호화하지 못했습니다",
   "error.export.service_ports.read_failed.error": "서비스 포트를 읽지 못했습니다",
+  "error.host.address.taken.error": "주소 {address}, SSH 포트 {port} 번은 이미 Host {host_id} 로 등록되어 있습니다",
   "error.host.create.key_refused.error": "Host 를 만들지 않았습니다: {reason}",
   "error.host.create.no_login.error": "Host 를 만들지 않았습니다. SSH 로 접속할 인증 수단이 없습니다. 개인키나 비밀번호, 또는 둘 다를 주십시오",
   "error.host.create.service_ports_read_failed.error": "Host 를 만들지 않았습니다. 서비스 포트를 읽지 못했습니다",

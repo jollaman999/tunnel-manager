@@ -192,6 +192,7 @@
   "error.export.password.too_short.error": "Mật khẩu phải dài ít nhất {min} byte",
   "error.export.seal_failed.error": "Không mã hóa được tệp",
   "error.export.service_ports.read_failed.error": "Không đọc được các cổng dịch vụ",
+  "error.host.address.taken.error": "Địa chỉ {address} với cổng SSH {port} đã được thêm dưới dạng Host {host_id}",
   "error.host.create.key_refused.error": "Không tạo Host: {reason}",
   "error.host.create.no_login.error": "Không tạo Host: nó không có cách nào để xác thực. Hãy cung cấp một khóa riêng, một mật khẩu, hoặc cả hai",
   "error.host.create.service_ports_read_failed.error": "Không tạo Host: không đọc được các cổng dịch vụ",

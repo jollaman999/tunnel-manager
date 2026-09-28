@@ -192,6 +192,7 @@
   "error.export.password.too_short.error": "รหัสผ่านต้องยาวอย่างน้อย {min} ไบต์",
   "error.export.seal_failed.error": "เข้ารหัสไฟล์ไม่สำเร็จ",
   "error.export.service_ports.read_failed.error": "อ่านพอร์ตบริการไม่สำเร็จ",
+  "error.host.address.taken.error": "ที่อยู่ {address} กับพอร์ต SSH {port} ถูกเพิ่มไว้แล้วเป็น Host {host_id}",
   "error.host.create.key_refused.error": "ไม่ได้สร้าง Host นี้: {reason}",
   "error.host.create.no_login.error": "ไม่ได้สร้าง Host นี้ เพราะไม่มีข้อมูลสำหรับยืนยันตัวตน ใส่คีย์ส่วนตัว รหัสผ่าน หรือทั้งสองอย่าง",
   "error.host.create.service_ports_read_failed.error": "ไม่ได้สร้าง Host นี้ เพราะอ่านพอร์ตบริการไม่สำเร็จ",

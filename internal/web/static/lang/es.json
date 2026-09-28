@@ -192,6 +192,7 @@
   "error.export.password.too_short.error": "La contraseña tiene que tener al menos {min} bytes",
   "error.export.seal_failed.error": "No se pudo cifrar el archivo",
   "error.export.service_ports.read_failed.error": "No se pudieron leer los puertos de servicio",
+  "error.host.address.taken.error": "La dirección {address} con el puerto SSH {port} ya está registrada como el Host {host_id}",
   "error.host.create.key_refused.error": "El Host no se creó: {reason}",
   "error.host.create.no_login.error": "El Host no se creó: no tiene ninguna credencial para autenticarse. Indique una clave privada, una contraseña o ambas",
   "error.host.create.service_ports_read_failed.error": "El Host no se creó: no se pudieron leer los puertos de servicio",
