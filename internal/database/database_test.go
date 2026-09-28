@@ -480,7 +480,7 @@ func TestNewDatabaseBuildsTheFileUnderADirectoryThatIsNotThereYet(t *testing.T) 
 		t.Fatalf("the database file at %s is empty", path)
 	}
 
-	want := []string{"api_tokens", "host_service_ports", "hosts", "local_forwards", "service_ports", "settings", "tls_certificates", "tunnels", "user"}
+	want := []string{"api_tokens", "host_jumps", "host_service_ports", "hosts", "local_forwards", "service_ports", "settings", "tls_certificates", "tunnels", "user"}
 	got := tableNames(t, db)
 
 	if strings.Join(got, ",") != strings.Join(want, ",") {
@@ -2028,7 +2028,8 @@ func openForTest(t *testing.T, path string) *gorm.DB {
 // TestTheUpgradeMovesTheAddressesOntoTheirNewNames is the upgrade from v3.13.6.
 // Every address comes back under the name the model reads it by, the unique
 // indexes are renamed rather than doubled and still refuse a second Host at
-// the same address, and a second startup leaves the file as the first one did.
+// the same address and port, and a second startup leaves the file as the first
+// one did.
 func TestTheUpgradeMovesTheAddressesOntoTheirNewNames(t *testing.T) {
 	path := newDatabaseFromTheIPColumns(t)
 
@@ -2084,9 +2085,9 @@ func TestTheUpgradeMovesTheAddressesOntoTheirNewNames(t *testing.T) {
 		t.Fatalf("the indexes are %v, want %s", indexes, want)
 	}
 
-	err = db.Create(&models.Host{Address: "192.0.2.10", Port: 2200, User: "other", Enabled: true}).Error
+	err = db.Create(&models.Host{Address: "192.0.2.10", Port: 22, User: "other", Enabled: true}).Error
 	if err == nil || !strings.Contains(err.Error(), "UNIQUE") {
-		t.Fatalf("a second Host at the same address was not refused by the index: %v", err)
+		t.Fatalf("a second Host at the same address and port was not refused by the index: %v", err)
 	}
 
 	err = db.Create(&models.ServicePort{ServiceAddress: "198.51.100.20", ServicePort: 80, LocalPort: 18081}).Error
@@ -2690,4 +2691,128 @@ func TestADirectoryThisProgramMakesIsClosedToTheRestOfTheMachine(t *testing.T) {
 
 	requireMode(t, filepath.Dir(path), databaseDirMode)
 	requireMode(t, path, databaseFileMode)
+}
+
+// newDatabaseWithTheAddressIndexAlone writes a database whose Hosts are unique
+// on the address alone, which is the shape every release before the port was
+// put into the index left, with one Host in it, and returns its path.
+func newDatabaseWithTheAddressIndexAlone(t *testing.T) string {
+	t.Helper()
+
+	path := filepath.Join(t.TempDir(), "tunnel-manager.db")
+
+	db, err := gorm.Open(sqlite.Open(sqliteDSN(path)), &gorm.Config{Logger: gormlogger.Discard})
+	if err != nil {
+		t.Fatalf("failed to open the database: %v", err)
+	}
+
+	err = db.AutoMigrate(&models.Host{})
+	if err != nil {
+		t.Fatalf("failed to migrate: %v", err)
+	}
+
+	for _, statement := range []string{
+		"DROP INDEX `idx_hosts_address`",
+		"CREATE UNIQUE INDEX `idx_hosts_address` ON `hosts`(`address`)",
+	} {
+		err = db.Exec(statement).Error
+		if err != nil {
+			t.Fatalf("failed to run %q: %v", statement, err)
+		}
+	}
+
+	err = db.Create(&models.Host{Address: "192.0.2.10", Port: 22, User: "operator", Enabled: true}).Error
+	if err != nil {
+		t.Fatalf("failed to store the Host: %v", err)
+	}
+
+	sqlDB, err := db.DB()
+	if err != nil {
+		t.Fatalf("failed to reach the connection pool: %v", err)
+	}
+	_ = sqlDB.Close()
+
+	return path
+}
+
+// hostAddressIndexSQL is what the database holds the unique index over where a
+// Host is reached as.
+func hostAddressIndexSQL(t *testing.T, db *gorm.DB) string {
+	t.Helper()
+
+	var statement string
+	err := db.Raw("SELECT sql FROM sqlite_master WHERE type = 'index' AND name = ?", hostAddressIndex).
+		Scan(&statement).Error
+	if err != nil {
+		t.Fatalf("failed to read the index: %v", err)
+	}
+
+	return statement
+}
+
+// TestTheUpgradePutsThePortIntoTheAddressIndex covers an installation whose
+// Hosts are unique on the address alone. AutoMigrate finds the index by its
+// name and leaves it, so the startup has to widen it itself: afterwards it
+// covers the address and the port, a second Host at the same address on
+// another port is stored, and one on the same port is still refused. A second
+// startup leaves the index as the first one made it.
+func TestTheUpgradePutsThePortIntoTheAddressIndex(t *testing.T) {
+	path := newDatabaseWithTheAddressIndexAlone(t)
+
+	db := openForTest(t, path)
+
+	columns, err := hostAddressIndexColumns(db)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Join(columns, ",") != "address,port" {
+		t.Fatalf("the index covers %v, want address and port", columns)
+	}
+
+	err = db.Create(&models.Host{Address: "192.0.2.10", Port: 2222, User: "other", Enabled: true}).Error
+	if err != nil {
+		t.Fatalf("a second Host at the same address on another port was refused: %v", err)
+	}
+
+	err = db.Create(&models.Host{Address: "192.0.2.10", Port: 22, User: "third", Enabled: true}).Error
+	if err == nil || !strings.Contains(err.Error(), "UNIQUE") {
+		t.Fatalf("a Host at the same address and port was not refused by the index: %v", err)
+	}
+
+	first := hostAddressIndexSQL(t, db)
+
+	sqlDB, err := db.DB()
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = sqlDB.Close()
+
+	again := openForTest(t, path)
+
+	if second := hostAddressIndexSQL(t, again); second != first {
+		t.Fatalf("the second startup changed the index from %q to %q", first, second)
+	}
+
+	var count int64
+	err = again.Model(&models.Host{}).Count(&count).Error
+	if err != nil {
+		t.Fatalf("failed to count the Hosts: %v", err)
+	}
+	if count != 2 {
+		t.Fatalf("%d Hosts are stored after the second startup, want 2", count)
+	}
+}
+
+// TestANewDatabaseHasThePortInTheAddressIndex covers a first startup, which
+// builds the index from the model and has nothing to widen.
+func TestANewDatabaseHasThePortInTheAddressIndex(t *testing.T) {
+	db, _ := newTestDatabase(t)
+
+	columns, err := hostAddressIndexColumns(db)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Join(columns, ",") != "address,port" {
+		t.Fatalf("the index covers %v, want address and port", columns)
+	}
 }

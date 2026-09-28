@@ -1,6 +1,7 @@
 package tunnel
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"github.com/jollaman999/tunnel-manager/internal/logid"
@@ -53,6 +54,13 @@ type SSHTunnel struct {
 	Server string
 	Remote string
 	Config *ssh.ClientConfig
+	// jumps is the Hosts of the jump route the connection is made through, in
+	// the order they are passed through, and empty for a Host connected to
+	// directly. refusal is set instead when the route is one not to dial, and
+	// the tunnel then reports it and makes no attempt. Both are written before
+	// the tunnel is registered and never again, the way connFP is.
+	jumps   []sshHop
+	refusal *routeRefusal
 	// connFP is the fingerprint of the connection settings this tunnel was
 	// built from. A reconcile pass compares it with the fingerprint of the
 	// settings the tunnel should have. It is written before the tunnel is
@@ -273,7 +281,7 @@ func (t *SSHTunnel) checkConnection(m *Manager, tunnel *models.Tunnel, timeout t
 		return
 	}
 
-	conn, err := net.DialTimeout("tcp", t.Server, timeout)
+	conn, err := net.DialTimeout("tcp", t.probeServer(), timeout)
 	if err != nil {
 		t.logger.Warn("SSH connection lost, attempting reconnection",
 			logid.TunnelServerUnreachable.Field(),
@@ -530,19 +538,197 @@ func joinConns(localConn, remoteConn net.Conn, idleTimeout time.Duration, logger
 	}
 }
 
+// sshHop is one SSH server a connection to a Host is made through, or the Host
+// itself as the last of them: the Host it is, the address it is dialled at, and
+// what the connection to it is made with. Each carries its own configuration
+// because each is a Host of its own, with its own user, credentials and trusted
+// host key.
+type sshHop struct {
+	hostID uint
+	addr   string
+	config *ssh.ClientConfig
+}
+
+// JumpError is a connection that failed at a Host of the jump route rather than
+// at the Host the connection is for. It names which step of the route and which
+// Host it was, because the row that reports the failure is the one of the Host
+// at the end of the route, and a refusal read there without this would be taken
+// for one of that Host.
+//
+// It wraps what the step failed with, so a host key refusal or a refused login
+// inside it is still recognised as one by hostKeyRefusal and isAuthFailure.
+type JumpError struct {
+	// Seq is the step of the route, counted from 1 at the Host this machine
+	// connects to directly, the way models.HostJump.Seq is.
+	Seq     int
+	HostID  uint
+	Address string
+	Err     error
+}
+
+func (e *JumpError) Error() string {
+	return fmt.Sprintf("jump %d (host #%d %s): %v", e.Seq, e.HostID, e.Address, e.Err)
+}
+
+func (e *JumpError) Unwrap() error {
+	return e.Err
+}
+
 // dialSSH connects to the SSH server and hands back the net.Conn the client was
 // built on, which ssh.Dial does not expose. It does what ssh.Dial does
 // (ssh/client.go, Dial): dial with the timeout from the configuration, run the
 // handshake, and wrap the result. NewClientConn closes the connection itself
 // when the handshake fails, so a failure here leaves nothing open.
 func (t *SSHTunnel) dialSSH() (*ssh.Client, net.Conn, error) {
-	return dialSSHClient(t.Server, t.Config)
+	return dialSSHClient(t.route())
 }
 
-// dialSSHClient is dialSSH for any server and configuration, so the local
-// forwards connect the same way the tunnels do.
-func dialSSHClient(addr string, config *ssh.ClientConfig) (*ssh.Client, net.Conn, error) {
-	conn, err := net.DialTimeout("tcp", addr, config.Timeout)
+// route is the SSH servers the tunnel connects through, ending at its Host.
+func (t *SSHTunnel) route() []sshHop {
+	var hostID uint
+	if t.HostID != nil {
+		hostID = *t.HostID
+	}
+
+	return withTarget(t.jumps, hostID, t.Server, t.Config)
+}
+
+// probeServer is the address the monitor dials to see that the way to the SSH
+// server is still there. It is the first server of the route, because that is
+// the only one this machine reaches on its own: a Host behind a jump route is
+// reached through the connection, and a dial of its address from here fails
+// whether the connection stands or not.
+func (t *SSHTunnel) probeServer() string {
+	return firstServer(t.jumps, t.Server)
+}
+
+// withTarget is the route of jumps with the Host at its end.
+func withTarget(jumps []sshHop, hostID uint, addr string, config *ssh.ClientConfig) []sshHop {
+	route := make([]sshHop, 0, len(jumps)+1)
+	route = append(route, jumps...)
+
+	return append(route, sshHop{hostID: hostID, addr: addr, config: config})
+}
+
+// firstServer is the address the route of jumps ending at server is entered
+// by.
+func firstServer(jumps []sshHop, server string) string {
+	if len(jumps) > 0 {
+		return jumps[0].addr
+	}
+
+	return server
+}
+
+// dialSSHClient is dialSSH for any route, so the local forwards and the SOCKS5
+// proxies connect the same way the tunnels do. The last hop of the route is the
+// Host the connection is for, and every hop before it is a Host of its jump
+// route.
+//
+// The first hop is dialled from here. Every hop after it is dialled by the one
+// before it, over a direct-tcpip channel of that connection, and the SSH
+// connection to it is run over that channel, which is what ssh -J does. A Host
+// passed through is asked to open nothing but that channel.
+//
+// The client handed back is the one to the last hop, and closing it closes
+// every connection it was made through, the last first. The connection each
+// hop runs over is what closes the one before it, so the same happens when the
+// far end drops it: the library closes the connection a client ran over once
+// that client ends (x/crypto/ssh, mux.loop). A hop that drops ends every hop
+// after it, since the channels they run over go with it.
+//
+// A hop that fails closes everything opened before it. A failure at a hop
+// before the last is a JumpError naming which one; a failure at the last is
+// returned as it is, so a Host with no jump route fails with what it always
+// failed with.
+func dialSSHClient(route []sshHop) (*ssh.Client, net.Conn, error) {
+	var (
+		client *ssh.Client
+		conn   net.Conn
+	)
+
+	for i, hop := range route {
+		next, over, err := dialHop(client, hop)
+		if err != nil {
+			if client != nil {
+				_ = client.Close()
+			}
+
+			if i < len(route)-1 {
+				return nil, nil, &JumpError{Seq: i + 1, HostID: hop.hostID, Address: hop.addr, Err: err}
+			}
+
+			return nil, nil, err
+		}
+
+		client, conn = next, over
+	}
+
+	return client, conn, nil
+}
+
+// dialHop connects to one hop, from here when through is nil and over a
+// channel of through when it is not, and hands back the client and the
+// connection it runs over. A failure closes whatever was opened for this hop,
+// and leaves through to the caller.
+func dialHop(through *ssh.Client, hop sshHop) (*ssh.Client, net.Conn, error) {
+	if through == nil {
+		return dialFirstHop(hop)
+	}
+
+	ctx := context.Background()
+	if hop.config.Timeout > 0 {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, hop.config.Timeout)
+		defer cancel()
+	}
+
+	channel, err := through.DialContext(ctx, "tcp", hop.addr)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	conn := &chainedConn{Conn: channel, through: through}
+
+	// A channel takes no deadline (x/crypto/ssh, chanConn.SetReadDeadline), so
+	// the handshake is bounded by closing the channel under it once the
+	// timeout passes. The bound is there for the reason dialFirstHop sets a
+	// deadline.
+	var timer *time.Timer
+	if hop.config.Timeout > 0 {
+		timer = time.AfterFunc(hop.config.Timeout, func() {
+			_ = channel.Close()
+		})
+	}
+
+	c, chans, reqs, err := ssh.NewClientConn(conn, hop.addr, hop.config)
+
+	// Stop reports false once the timer has fired, which is a channel that was
+	// closed under the handshake, whether the handshake noticed or not.
+	timedOut := timer != nil && !timer.Stop()
+	if timedOut {
+		if err == nil {
+			_ = c.Close()
+			err = errors.New("the channel was closed")
+		}
+
+		err = fmt.Errorf("the SSH handshake did not finish within %v: %w", hop.config.Timeout, err)
+	}
+
+	if err != nil {
+		// NewClientConn closed conn, which is the channel alone: the
+		// connection it was opened on is the caller's.
+		return nil, nil, err
+	}
+
+	conn.owned.Store(true)
+
+	return ssh.NewClient(c, chans, reqs), conn, nil
+}
+
+// dialFirstHop connects to the hop this machine reaches on its own.
+func dialFirstHop(hop sshHop) (*ssh.Client, net.Conn, error) {
+	conn, err := net.DialTimeout("tcp", hop.addr, hop.config.Timeout)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -550,14 +736,14 @@ func dialSSHClient(addr string, config *ssh.ClientConfig) (*ssh.Client, net.Conn
 	// ClientConfig.Timeout bounds only the TCP connect (ssh/client.go, Dial),
 	// so a server that accepts and never sends its banner would hold the
 	// handshake, and with it the retries of the tunnel, forever.
-	if config.Timeout > 0 {
-		if err := conn.SetDeadline(time.Now().Add(config.Timeout)); err != nil {
+	if hop.config.Timeout > 0 {
+		if err := conn.SetDeadline(time.Now().Add(hop.config.Timeout)); err != nil {
 			_ = conn.Close()
 			return nil, nil, err
 		}
 	}
 
-	c, chans, reqs, err := ssh.NewClientConn(conn, addr, config)
+	c, chans, reqs, err := ssh.NewClientConn(conn, hop.addr, hop.config)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -570,6 +756,33 @@ func dialSSHClient(addr string, config *ssh.ClientConfig) (*ssh.Client, net.Conn
 	}
 
 	return ssh.NewClient(c, chans, reqs), conn, nil
+}
+
+// chainedConn is the channel a hop after the first runs over. Closing it
+// closes the connection the channel was opened on as well, once the hop it
+// carries stands, which is what makes closing the client at the end of a route
+// close the whole of it.
+//
+// Until then the connection underneath is left alone. A hop that fails is
+// closed by the library through this same Close (x/crypto/ssh, NewClientConn),
+// and dialSSHClient closes what came before it itself.
+type chainedConn struct {
+	net.Conn
+	through *ssh.Client
+	owned   atomic.Bool
+	once    sync.Once
+}
+
+func (c *chainedConn) Close() error {
+	err := c.Conn.Close()
+
+	if c.owned.Load() {
+		c.once.Do(func() {
+			_ = c.through.Close()
+		})
+	}
+
+	return err
 }
 
 // connectFailureStatus is the status a connection that was not made leaves on
@@ -935,6 +1148,29 @@ func (t *SSHTunnel) Start(m *Manager, tunnel *models.Tunnel) {
 		zap.String("local", t.Local.String()),
 		zap.String("server", t.Server),
 		zap.String("remote", t.Remote))
+
+	// A route that is not to be dialled is reported and waited out rather
+	// than retried, for the reason a refused host key is: nothing changes by
+	// trying again, and what does change it, a Host passed through being
+	// enabled or the route being put right, changes the fingerprint, so a
+	// reconcile pass builds the tunnel again.
+	if t.refusal != nil {
+		t.logger.Error("connection failed",
+			logid.TunnelConnectFailedGivingUp.Field(),
+			zap.String("local", t.Local.String()),
+			zap.String("server", t.Server),
+			zap.String("remote", t.Remote),
+			zap.Error(t.refusal))
+
+		t.tunnelMu.Lock()
+		tunnel.Status = t.refusal.status
+		tunnel.LastError = t.refusal.reason
+		tunnel.ErrorKind = ""
+		t.saveTunnelStatus(m, tunnel)
+		t.tunnelMu.Unlock()
+
+		return
+	}
 
 	stopMonitor := make(chan struct{})
 	var monitorWg sync.WaitGroup

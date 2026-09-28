@@ -79,17 +79,22 @@ type connFingerprint [sha256.Size]byte
 // has no connection left to bring down: it would stay down until the process
 // was restarted.
 //
+// The jump route is in here because every Host it passes through is part of
+// the way the connection is made. What each of them puts in, and why a Host
+// with no route puts in nothing, is at jumpFingerprintValues.
+//
 // Every value is written with its length in front, so that two different sets
 // of settings cannot produce the same input to the hash.
-func connectionFingerprint(host *models.Host, sp *models.ServicePort, bindScope string, creds hostCreds) connFingerprint {
+func connectionFingerprint(host *models.Host, sp *models.ServicePort, bindScope string, creds hostCreds,
+	jumps []jumpHop) connFingerprint {
 	localV4, localV6, server, remote := tunnelAddresses(host, sp, bindScope)
 
 	h := sha256.New()
-	for _, value := range []string{
+	for _, value := range append([]string{
 		server, remote, localV4, localV6, host.User,
 		creds.password, creds.privateKey, creds.passphrase,
 		host.HostKey,
-	} {
+	}, jumpFingerprintValues(jumps)...) {
 		_, _ = fmt.Fprintf(h, "%d:%s", len(value), value)
 	}
 
@@ -253,13 +258,13 @@ func (m *Manager) runningTunnelFingerprints() map[string]connFingerprint {
 // fails leaves the tunnel as it is, and a start that fails leaves nothing
 // running under the key. Either way the next pass sees the difference again
 // and tries again.
-func (m *Manager) restartTunnel(want desiredTunnel) error {
+func (m *Manager) restartTunnel(want desiredTunnel, jumps []jumpHop) error {
 	err := m.StopTunnel(want.host.ID, want.sp.ID)
 	if err != nil && !errors.Is(err, ErrTunnelNotExist) {
 		return err
 	}
 
-	return m.StartTunnel(want.host, want.sp, want.bindScope)
+	return m.StartTunnel(want.host, want.sp, want.bindScope, jumps)
 }
 
 // Reconcile brings the running tunnels in line with the ones that should be
@@ -273,6 +278,12 @@ func (m *Manager) restartTunnel(want desiredTunnel) error {
 // counted in the same result. Their rows are read before anything is changed,
 // with the rest of the desired state. The SOCKS5 proxies follow last; they are
 // read off the Hosts, which the pass has already.
+//
+// The jump routes are read once for the pass as well, and every Host that has
+// one has it opened once, which is what all three of them are started and
+// compared with. A route whose credentials do not open is answered the way a
+// Host whose own credentials do not open is: what runs keeps running, and
+// nothing is started on it.
 //
 // A pass that completes keeps how many tunnels and local forwards it wanted,
 // which is what DesiredTunnelCount and DesiredLocalForwardCount answer. A pass
@@ -296,12 +307,23 @@ func (m *Manager) Reconcile() (ReconcileResult, error) {
 		return result, err
 	}
 
+	stored, err := m.jumpRoutes()
+	if err != nil {
+		return result, err
+	}
+
+	routes := m.hostRoutesOf(hostByID, stored)
+
 	running := m.runningTunnelFingerprints()
 
 	for key, want := range desired {
+		route := routes[want.host.ID]
 		current, isRunning := running[key]
 		if !isRunning {
-			err := m.StartTunnel(want.host, want.sp, want.bindScope)
+			err := route.err
+			if err == nil {
+				err = m.StartTunnel(want.host, want.sp, want.bindScope, route.hops)
+			}
 			if err != nil {
 				m.logger.Error("failed to start tunnel",
 					logid.TunnelStartFailed.Field(),
@@ -316,20 +338,21 @@ func (m *Manager) Reconcile() (ReconcileResult, error) {
 			continue
 		}
 
-		// A credential that does not decrypt says nothing about whether the
-		// settings changed, and a tunnel restarted on it could not be started
-		// again. It keeps running on what it has. hostCredentials logs why.
+		// A credential that does not decrypt, of the Host or of a Host its
+		// route passes through, says nothing about whether the settings
+		// changed, and a tunnel restarted on it could not be started again. It
+		// keeps running on what it has. hostCredentials logs why.
 		creds, err := m.hostCredentials(want.host)
-		if err != nil {
+		if err != nil || route.err != nil {
 			result.Failed++
 			continue
 		}
 
-		if connectionFingerprint(want.host, want.sp, want.bindScope, creds) == current {
+		if connectionFingerprint(want.host, want.sp, want.bindScope, creds, route.hops) == current {
 			continue
 		}
 
-		err = m.restartTunnel(want)
+		err = m.restartTunnel(want, route.hops)
 		if err != nil {
 			m.logger.Error("failed to restart a tunnel whose connection settings changed",
 				logid.TunnelRestartFailed.Field(),
@@ -377,8 +400,8 @@ func (m *Manager) Reconcile() (ReconcileResult, error) {
 		result.Stopped++
 	}
 
-	m.reconcileLocalForwards(desiredLocal, &result)
-	m.reconcileSocks(desiredSocksOf(hostByID), &result)
+	m.reconcileLocalForwards(desiredLocal, routes, &result)
+	m.reconcileSocks(desiredSocksOf(hostByID), routes, &result)
 
 	m.keepDesiredCounts(desiredCounts{tunnels: len(desired), localForwards: len(desiredLocal)})
 

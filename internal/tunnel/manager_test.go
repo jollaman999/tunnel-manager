@@ -142,7 +142,7 @@ func TestStartTunnelSkipsDisabledHost(t *testing.T) {
 	host := models.Host{ID: 1, Address: "127.0.0.1", Port: 22, User: "user", Password: "pass", Enabled: false}
 	sp := models.ServicePort{ID: 2, ServiceAddress: "127.0.0.1", ServicePort: 3306, LocalPort: 13306}
 
-	err = m.StartTunnel(&host, &sp, models.BindScopeWildcard)
+	err = m.StartTunnel(&host, &sp, models.BindScopeWildcard, nil)
 	if err != nil {
 		t.Fatalf("StartTunnel on disabled Host returned an error: %v", err)
 	}
@@ -170,7 +170,7 @@ func TestStartTunnelProceedsForEnabledHost(t *testing.T) {
 
 	// The failing database stops StartTunnel at the tunnel row, which it only
 	// reaches for a Host that is not skipped, so no SSH connection is attempted.
-	err = m.StartTunnel(&host, &sp, models.BindScopeWildcard)
+	err = m.StartTunnel(&host, &sp, models.BindScopeWildcard, nil)
 	if err == nil {
 		t.Fatal("StartTunnel with a failing database returned no error")
 	}
@@ -190,7 +190,7 @@ func TestStartTunnelLeavesNoTunnelWhenTheRowCannotBeCreated(t *testing.T) {
 	host := models.Host{ID: 1, Address: "127.0.0.1", Port: 22, User: "user", Password: "pass", Enabled: true}
 	sp := models.ServicePort{ID: 2, ServiceAddress: "127.0.0.1", ServicePort: 3306, LocalPort: 13306}
 
-	err = m.StartTunnel(&host, &sp, models.BindScopeWildcard)
+	err = m.StartTunnel(&host, &sp, models.BindScopeWildcard, nil)
 	if err == nil {
 		t.Fatal("StartTunnel with a failing tunnel row returned no error")
 	}
@@ -205,7 +205,7 @@ func TestStartTunnelLeavesNoTunnelWhenTheRowCannotBeCreated(t *testing.T) {
 
 	// The key has to be free again, otherwise the combination can never be
 	// started once the database answers.
-	err = m.StartTunnel(&host, &sp, models.BindScopeWildcard)
+	err = m.StartTunnel(&host, &sp, models.BindScopeWildcard, nil)
 	if err == nil {
 		t.Fatal("StartTunnel with a failing tunnel row returned no error")
 	}
@@ -447,7 +447,7 @@ func TestStartTunnelFailsWhenTheKeyIsWrong(t *testing.T) {
 	host := models.Host{ID: 1, Address: "127.0.0.1", Port: 22, User: "user", Password: stored, Enabled: true}
 	sp := models.ServicePort{ID: 2, ServiceAddress: "127.0.0.1", ServicePort: 3306, LocalPort: 13306}
 
-	err = m.StartTunnel(&host, &sp, models.BindScopeWildcard)
+	err = m.StartTunnel(&host, &sp, models.BindScopeWildcard, nil)
 	if !errors.Is(err, crypto.ErrWrongKey) {
 		t.Fatalf("StartTunnel did not report a wrong key: %v", err)
 	}
@@ -1712,7 +1712,7 @@ func TestStartTunnelWritesARowThatSaysNothingWasMeasured(t *testing.T) {
 	host := models.Host{ID: 1, Address: "127.0.0.1", Port: hostPort, User: "user", Password: "pass", Enabled: true}
 	sp := models.ServicePort{ID: 2, ServiceAddress: "127.0.0.1", ServicePort: 3306, LocalPort: 13306}
 
-	err = m.StartTunnel(&host, &sp, models.BindScopeWildcard)
+	err = m.StartTunnel(&host, &sp, models.BindScopeWildcard, nil)
 	if err != nil {
 		t.Fatalf("StartTunnel returned an error: %v", err)
 	}

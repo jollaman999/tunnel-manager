@@ -2859,7 +2859,7 @@ func TestDialSSHClientGivesUpOnASilentServer(t *testing.T) {
 	done := make(chan result, 1)
 	start := time.Now()
 	go func() {
-		client, _, err := dialSSHClient(addr, config)
+		client, _, err := dialSSHClient([]sshHop{{addr: addr, config: config}})
 		done <- result{client: client, err: err}
 	}()
 
@@ -2888,7 +2888,7 @@ func TestDialSSHClientKeepsTheConnectionPastTheTimeout(t *testing.T) {
 		Timeout:         300 * time.Millisecond,
 	}
 
-	client, _, err := dialSSHClient(addr, config)
+	client, _, err := dialSSHClient([]sshHop{{addr: addr, config: config}})
 	if err != nil {
 		t.Fatalf("dialSSHClient failed: %v", err)
 	}
@@ -3013,7 +3013,7 @@ func TestAHostNameThatDoesNotResolveLeavesATunnelRowThatRetries(t *testing.T) {
 	host := models.Host{ID: 1, Address: name, Port: 22, User: "user", Password: "pass", Enabled: true}
 	sp := models.ServicePort{ID: 2, ServiceAddress: "127.0.0.1", ServicePort: 3306, LocalPort: 13306}
 
-	err = m.StartTunnel(&host, &sp, models.BindScopeWildcard)
+	err = m.StartTunnel(&host, &sp, models.BindScopeWildcard, nil)
 	if err != nil {
 		t.Fatalf("StartTunnel returned an error for a name that does not resolve: %v", err)
 	}

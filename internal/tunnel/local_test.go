@@ -902,14 +902,14 @@ func TestTheLocalForwardFingerprintCarriesTheAllowedSources(t *testing.T) {
 		}
 	}
 
-	open := localForwardFingerprint(host, forward(""), creds)
-	listed := localForwardFingerprint(host, forward("192.0.2.0/24"), creds)
-	other := localForwardFingerprint(host, forward("198.51.100.0/24"), creds)
+	open := localForwardFingerprint(host, forward(""), creds, nil)
+	listed := localForwardFingerprint(host, forward("192.0.2.0/24"), creds, nil)
+	other := localForwardFingerprint(host, forward("198.51.100.0/24"), creds, nil)
 
 	if open == listed || listed == other {
 		t.Fatal("a change of the allowed sources left the fingerprint as it was")
 	}
-	if again := localForwardFingerprint(host, forward("192.0.2.0/24"), creds); again != listed {
+	if again := localForwardFingerprint(host, forward("192.0.2.0/24"), creds, nil); again != listed {
 		t.Fatal("the same allowed sources gave two fingerprints")
 	}
 }

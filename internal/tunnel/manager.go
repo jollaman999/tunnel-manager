@@ -617,13 +617,260 @@ func (m *Manager) hostKeyCallback(host *models.Host) ssh.HostKeyCallback {
 	}
 }
 
+// MaxJumps is the most Hosts a jump route may pass through on its way to the
+// Host it is for. Every step waits out the connection timeout on its own when
+// it does not answer, so a route this long already takes the better part of a
+// minute and a half to give up on.
+const MaxJumps = 8
+
+// StatusJumpHostDisabled is a tunnel, a local forward or a SOCKS5 proxy whose
+// Host is reached through a Host that is disabled. Nothing is dialled for it:
+// a disabled Host is one nobody is to connect to, and passing through it is
+// connecting to it. The route is kept, so enabling the Host passed through
+// brings the connection back.
+//
+// It is exported because the screens and the API name it, the way they name
+// the host key refusals.
+const StatusJumpHostDisabled = "jump_host_disabled"
+
+// jumpHop is one step of the jump route of a Host as a pass read it: the ID
+// the row names, the Host of that ID, and the credentials opened out of it.
+// host is nil when no Host carries the ID, which is a route left naming a Host
+// that was removed.
+type jumpHop struct {
+	id    uint
+	host  *models.Host
+	creds hostCreds
+}
+
+// jumpRoutes reads every jump route, keyed by the Host each is for, with the
+// Hosts of each in the order they are passed through. It is one statement for
+// the whole installation, for the reason desiredTunnels reads each table once.
+func (m *Manager) jumpRoutes() (map[uint][]uint, error) {
+	var rows []models.HostJump
+
+	err := m.db.Order("host_id, seq").Find(&rows).Error
+	if err != nil {
+		return nil, fmt.Errorf("failed to fetch jump routes: %w", err)
+	}
+
+	routes := make(map[uint][]uint)
+	for _, row := range rows {
+		routes[row.HostID] = append(routes[row.HostID], row.JumpHostID)
+	}
+
+	return routes, nil
+}
+
+// hostRoute is the jump route of one Host as a pass read it, or why it could
+// not be read. err is a credential of a Host passed through that does not open,
+// which is answered the way one of the Host itself is: what runs keeps running
+// and nothing new is started on it.
+type hostRoute struct {
+	hops []jumpHop
+	err  error
+}
+
+// hostRoutesOf opens the jump route of every Host that has one. It is taken
+// once per pass rather than per tunnel, because every tunnel, local forward
+// and proxy of a Host shares the route, and each step opens the credentials of
+// a Host.
+func (m *Manager) hostRoutesOf(hostByID map[uint]*models.Host, routes map[uint][]uint) map[uint]hostRoute {
+	opened := make(map[uint]hostRoute, len(routes))
+
+	for hostID, ids := range routes {
+		if _, ok := hostByID[hostID]; !ok {
+			continue
+		}
+
+		hops, err := m.jumpHopsOf(ids, hostByID)
+		opened[hostID] = hostRoute{hops: hops, err: err}
+	}
+
+	return opened
+}
+
+// jumpHopsOf opens the steps of one stored route. An ID no Host carries is
+// kept as a step with no Host, so that the route is refused where it is
+// started, with a reason, rather than passed over here without one.
+func (m *Manager) jumpHopsOf(ids []uint, hostByID map[uint]*models.Host) ([]jumpHop, error) {
+	hops := make([]jumpHop, 0, len(ids))
+
+	for i, id := range ids {
+		host, ok := hostByID[id]
+		if !ok {
+			hops = append(hops, jumpHop{id: id})
+			continue
+		}
+
+		creds, err := m.hostCredentials(host)
+		if err != nil {
+			return nil, &JumpError{Seq: i + 1, HostID: host.ID, Address: hostServer(host), Err: err}
+		}
+
+		hops = append(hops, jumpHop{id: id, host: host, creds: creds})
+	}
+
+	return hops, nil
+}
+
+// hostServer is the address the SSH server of a Host is dialled at.
+func hostServer(host *models.Host) string {
+	return dialAddress(net.JoinHostPort(host.Address, strconv.Itoa(host.Port)))
+}
+
+// routeRefusal is a jump route that is not dialled at all, and the status and
+// the reason what it was for is left in. It is decided before anything is
+// dialled, from what is stored, so that no attempt is made that could only
+// fail or that would connect to a Host nobody is to connect to.
+type routeRefusal struct {
+	status string
+	reason string
+}
+
+func (r *routeRefusal) Error() string {
+	return r.reason
+}
+
+// checkJumpRoute refuses a route that cannot be dialled as it is stored. The
+// API refuses these where a route is written, and this is what stands where
+// one was written some other way, into the table by hand or by a release that
+// did not ask.
+//
+// A route longer than MaxJumps, one naming a Host that is not there, one that
+// passes through the Host it is for and one that passes through a Host twice
+// are errors in what is stored, and are checked first over the whole route. A
+// route that passes through itself goes round in a circle, and passing through
+// a Host twice is a longer way to the same place with a second login on it. A
+// Host passed through that is disabled comes after those, since it is a route
+// that is right and waits for the Host to be enabled.
+func checkJumpRoute(host *models.Host, hops []jumpHop) *routeRefusal {
+	if len(hops) > MaxJumps {
+		return &routeRefusal{status: localStatusError, reason: fmt.Sprintf(
+			"the jump route of this Host passes through %d Hosts, and a route may pass through %d at most",
+			len(hops), MaxJumps)}
+	}
+
+	seen := make(map[uint]int, len(hops))
+	for i, hop := range hops {
+		if hop.host == nil {
+			return &routeRefusal{status: localStatusError, reason: fmt.Sprintf(
+				"jump %d names host #%d, which is not registered", i+1, hop.id)}
+		}
+
+		if hop.id == host.ID {
+			return &routeRefusal{status: localStatusError, reason: fmt.Sprintf(
+				"jump %d (host #%d %s) is this Host itself", i+1, hop.id, hostServer(hop.host))}
+		}
+
+		if first, ok := seen[hop.id]; ok {
+			return &routeRefusal{status: localStatusError, reason: fmt.Sprintf(
+				"jump %d (host #%d %s) is jump %d as well", i+1, hop.id, hostServer(hop.host), first)}
+		}
+		seen[hop.id] = i + 1
+	}
+
+	for i, hop := range hops {
+		if !hop.host.Enabled {
+			return &routeRefusal{status: StatusJumpHostDisabled, reason: fmt.Sprintf(
+				"jump %d (host #%d %s) is disabled, so the route to this Host is not dialled",
+				i+1, hop.id, hostServer(hop.host))}
+		}
+	}
+
+	return nil
+}
+
+// jumpRoute builds what the connection to host is made through: one hop per
+// Host of its jump route, each with the user, the credentials and the trusted
+// host key of that Host. A host key that is refused on a hop is written to the
+// row of the Host passed through, which is the one that presented it and the
+// one an approval has to be given to.
+//
+// A route that is not to be dialled comes back as a refusal and no hops. A
+// Host passed through that has nothing to log in with is an error, the way
+// one the connection is for is at StartTunnel.
+func (m *Manager) jumpRoute(host *models.Host, hops []jumpHop) ([]sshHop, *routeRefusal, error) {
+	if len(hops) == 0 {
+		return nil, nil, nil
+	}
+
+	if refusal := checkJumpRoute(host, hops); refusal != nil {
+		return nil, refusal, nil
+	}
+
+	route := make([]sshHop, 0, len(hops))
+	for i, hop := range hops {
+		auth, _, err := m.hostAuth(hop.host)
+		if err != nil {
+			return nil, nil, &JumpError{Seq: i + 1, HostID: hop.id, Address: hostServer(hop.host), Err: err}
+		}
+
+		route = append(route, sshHop{
+			hostID: hop.id,
+			addr:   hostServer(hop.host),
+			config: m.clientConfig(hop.host, auth),
+		})
+	}
+
+	return route, nil, nil
+}
+
+// clientConfig is what a connection to one Host is made with. The tunnels, the
+// local forwards, the SOCKS5 proxies and every Host a jump route passes through
+// are connected to with it, so each of them is checked against the key its own
+// Host is trusted on.
+func (m *Manager) clientConfig(host *models.Host, auth []ssh.AuthMethod) *ssh.ClientConfig {
+	return &ssh.ClientConfig{
+		User:            host.User,
+		Auth:            auth,
+		HostKeyCallback: m.hostKeyCallback(host),
+		Timeout:         time.Second * 10,
+	}
+}
+
+// jumpFingerprintValues is what the jump route of a Host puts into the
+// fingerprint of a connection to it: for every Host passed through, where it
+// is, who logs in there and with what, the key it is trusted on and whether it
+// is enabled. Those are what the connection is made through, so a change to
+// any of them has to reach the connection the way a change to the Host itself
+// does, and enabling a Host passed through is what brings back the connections
+// that were waiting on it.
+//
+// A Host with no route puts nothing in, so its fingerprint is the one it had
+// before routes existed and an upgrade does not rebuild every connection.
+func jumpFingerprintValues(hops []jumpHop) []string {
+	if len(hops) == 0 {
+		return nil
+	}
+
+	values := []string{"jumps", strconv.Itoa(len(hops))}
+	for _, hop := range hops {
+		values = append(values, strconv.FormatUint(uint64(hop.id), 10))
+
+		if hop.host == nil {
+			values = append(values, "missing")
+			continue
+		}
+
+		values = append(values, "present",
+			hop.host.Address, strconv.Itoa(hop.host.Port), hop.host.User,
+			hop.creds.password, hop.creds.privateKey, hop.creds.passphrase,
+			hop.host.HostKey, strconv.FormatBool(hop.host.Enabled))
+	}
+
+	return values
+}
+
 // StartTunnel builds and starts the tunnel for one assignment. bindScope is
 // what that assignment stored, models.HostServicePort.BindScope, and it decides
 // the pair of addresses the forwarded port is asked to be opened on. It is
 // passed in rather than read here because the reconcile pass has already read
 // every assignment row, and reading it again would put a statement per tunnel
-// onto the database every few seconds.
-func (m *Manager) StartTunnel(host *models.Host, sp *models.ServicePort, bindScope string) error {
+// onto the database every few seconds. jumps is the jump route of the Host,
+// read by the pass for the same reason, and empty for a Host that is connected
+// to directly.
+func (m *Manager) StartTunnel(host *models.Host, sp *models.ServicePort, bindScope string, jumps []jumpHop) error {
 	if !host.Enabled {
 		m.logger.Info("skipped starting tunnel for disabled Host",
 			logid.TunnelStartSkippedHostDisabled.Field(),
@@ -646,12 +893,12 @@ func (m *Manager) StartTunnel(host *models.Host, sp *models.ServicePort, bindSco
 		return err
 	}
 
-	sshConfig := &ssh.ClientConfig{
-		User:            host.User,
-		Auth:            auth,
-		HostKeyCallback: m.hostKeyCallback(host),
-		Timeout:         time.Second * 10,
+	route, refusal, err := m.jumpRoute(host, jumps)
+	if err != nil {
+		return err
 	}
+
+	sshConfig := m.clientConfig(host, auth)
 
 	localV4, localV6, server, remote := tunnelAddresses(host, sp, bindScope)
 
@@ -688,9 +935,12 @@ func (m *Manager) StartTunnel(host *models.Host, sp *models.ServicePort, bindSco
 		return fmt.Errorf("failed to create tunnel: %w", err)
 	}
 
+	t.jumps = route
+	t.refusal = refusal
+
 	// The settings this tunnel is connecting with, so a later pass can tell
 	// whether the ones it should have are still the same.
-	t.connFP = connectionFingerprint(host, sp, bindScope, creds)
+	t.connFP = connectionFingerprint(host, sp, bindScope, creds, jumps)
 
 	err = m.db.Where("host_id = ? AND sp_id = ?", host.ID, sp.ID).
 		Attrs(tunnel).

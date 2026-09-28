@@ -167,7 +167,7 @@ func TestReconcileLeavesRunningTunnelsAlone(t *testing.T) {
 	// The tunnel runs with the settings the desired state holds, which is what
 	// the pass reads from its fingerprint. The stored password is plaintext, so
 	// it is the password itself.
-	tun.connFP = connectionFingerprint(&hosts[0], &sps[0], "", hostCreds{password: hosts[0].Password})
+	tun.connFP = connectionFingerprint(&hosts[0], &sps[0], "", hostCreds{password: hosts[0].Password}, nil)
 
 	result, err := m.Reconcile()
 	if err != nil {
@@ -603,7 +603,7 @@ func TestReconcileKeepsTheFingerprintOutOfTheLogs(t *testing.T) {
 	// anywhere in what was logged, in any of the forms it can be written in.
 	secrets := []string{"fake-value-1", "fake-value-2"}                 // hook:allow
 	for _, password := range []string{"fake-value-1", "fake-value-2"} { // hook:allow
-		fp := connectionFingerprint(&hosts[0], &sps[0], "", hostCreds{password: password})
+		fp := connectionFingerprint(&hosts[0], &sps[0], "", hostCreds{password: password}, nil)
 		secrets = append(secrets,
 			hex.EncodeToString(fp[:]),
 			fmt.Sprint(fp),
@@ -1119,7 +1119,7 @@ func TestReconcileRebuildsATunnelWhenItsHostKeyIsApproved(t *testing.T) {
 	t.Cleanup(m.StopAllTunnels)
 
 	tun := registerStoppedTunnel(t, m, 1, 2)
-	tun.connFP = connectionFingerprint(&hosts[0], &sps[0], "", hostCreds{password: hosts[0].Password})
+	tun.connFP = connectionFingerprint(&hosts[0], &sps[0], "", hostCreds{password: hosts[0].Password}, nil)
 
 	result, err := m.Reconcile()
 	if err != nil {
@@ -1154,8 +1154,8 @@ func TestChangingTheBindScopeChangesTheFingerprint(t *testing.T) {
 	sp := &models.ServicePort{ServiceAddress: "203.0.113.5", ServicePort: 5432, LocalPort: 15432}
 	creds := hostCreds{password: "secret"} // hook:allow
 
-	wildcard := connectionFingerprint(host, sp, models.BindScopeWildcard, creds)
-	loopback := connectionFingerprint(host, sp, models.BindScopeLoopback, creds)
+	wildcard := connectionFingerprint(host, sp, models.BindScopeWildcard, creds, nil)
+	loopback := connectionFingerprint(host, sp, models.BindScopeLoopback, creds, nil)
 
 	if wildcard == loopback {
 		t.Fatal("the two scopes give the same fingerprint, so a tunnel would keep the addresses it was built with")
@@ -1164,7 +1164,7 @@ func TestChangingTheBindScopeChangesTheFingerprint(t *testing.T) {
 	// The empty value is the wildcard, so the pass must not read a row that
 	// has never been given a scope as a change and restart its tunnel on
 	// every startup.
-	if empty := connectionFingerprint(host, sp, "", creds); empty != wildcard {
+	if empty := connectionFingerprint(host, sp, "", creds, nil); empty != wildcard {
 		t.Error("the empty scope and the wildcard give different fingerprints, so an upgraded row restarts for nothing")
 	}
 }

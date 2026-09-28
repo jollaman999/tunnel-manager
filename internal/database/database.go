@@ -781,6 +781,73 @@ func quoteIdentifier(name string) string {
 	return `"` + strings.ReplaceAll(name, `"`, `""`) + `"`
 }
 
+// hostAddressIndex is the unique index over where a Host is reached. It
+// covered the address alone until the port was put beside it, and it kept its
+// name through that, so the name says nothing about which of the two shapes a
+// database holds. What it covers is asked of the index itself.
+const hostAddressIndex = "idx_hosts_address"
+
+// hostAddressIndexColumns is the columns the unique index over where a Host is
+// reached covers, in the order it holds them, and none when there is no such
+// index.
+func hostAddressIndexColumns(tx *gorm.DB) ([]string, error) {
+	var names []string
+
+	err := tx.Raw("SELECT name FROM pragma_index_info(?) ORDER BY seqno", hostAddressIndex).Scan(&names).Error
+	if err != nil {
+		return nil, fmt.Errorf("failed to read the columns of the index %s: %w", hostAddressIndex, err)
+	}
+
+	return names, nil
+}
+
+// widenHostAddressIndex puts the port into the unique index over the address
+// of a Host, which is what lets two Hosts share an address on different
+// ports. Why they have to is at models.Host.
+//
+// It cannot be left to AutoMigrate. AutoMigrate asks for an index by its name
+// and nothing else (gorm.io/gorm migrator.go, Migrator.AutoMigrate), and the
+// index kept its name, so against a database from before this it finds the
+// index there and leaves it covering the address alone. The index is dropped
+// and built again from the model instead, which keeps what it covers in the
+// tag rather than in DDL written out a second time here.
+//
+// It runs after AutoMigrate, so that every column the model names is on the
+// table by then whatever release the database comes from. The drop and the
+// build are one transaction, so a failure leaves the index that went in rather
+// than a table with no rule on its addresses at all. Every address was unique
+// on its own until now, so no pair of rows can stop the wider index from being
+// built.
+//
+// It asks first what the index covers, and does nothing unless that is the
+// address alone. A database that has been through this, or one that was
+// created with the wider index, is left as it is, so running the program twice
+// over one file widens it once.
+func widenHostAddressIndex(db *gorm.DB) error {
+	columns, err := hostAddressIndexColumns(db)
+	if err != nil {
+		return err
+	}
+
+	if len(columns) != 1 || columns[0] != "address" {
+		return nil
+	}
+
+	return db.Transaction(func(tx *gorm.DB) error {
+		err := tx.Exec(fmt.Sprintf("DROP INDEX %s", quoteIdentifier(hostAddressIndex))).Error
+		if err != nil {
+			return fmt.Errorf("failed to drop the index over the address of the hosts: %w", err)
+		}
+
+		err = tx.Migrator().CreateIndex(&models.Host{}, hostAddressIndex)
+		if err != nil {
+			return fmt.Errorf("failed to build the index over the address and the port of the hosts: %w", err)
+		}
+
+		return nil
+	})
+}
+
 // NewDatabase opens the database file and hands back the handle its logger
 // follows along with it. The caller holds that handle so that the level can be
 // put right once the stored settings are read, which is after this returns:
@@ -923,6 +990,7 @@ func NewDatabase(path string, logger *zap.Logger, logLevel string) (*gorm.DB, *L
 
 	err = db.AutoMigrate(
 		&models.Host{},
+		&models.HostJump{},
 		&models.ServicePort{},
 		&models.HostServicePort{},
 		&models.LocalForward{},
@@ -934,6 +1002,14 @@ func NewDatabase(path string, logger *zap.Logger, logLevel string) (*gorm.DB, *L
 	)
 	if err != nil {
 		return nil, nil, fmt.Errorf("failed to migrate database: %w", err)
+	}
+
+	// The index over the address of a Host kept its name when the port was
+	// put into it, which is why AutoMigrate leaves it as it was. What is done
+	// about it instead is at widenHostAddressIndex.
+	err = widenHostAddressIndex(db)
+	if err != nil {
+		return nil, nil, err
 	}
 
 	// The mode is set once the migration has run, so that the write-ahead log

@@ -19,7 +19,8 @@ import (
 
 // The statuses a local forward reports. The two host key refusals are the
 // exported StatusHostKeyUnapproved and StatusHostKeyMismatch, which a failed
-// connection leaves through connectFailureStatus the way it does on a tunnel.
+// connection leaves through connectFailureStatus the way it does on a tunnel,
+// and a route through a disabled Host is the exported StatusJumpHostDisabled.
 const (
 	localStatusStarting     = "starting"
 	localStatusConnected    = "connected"
@@ -80,6 +81,10 @@ type localTunnel struct {
 	// the SOCKS5 proxy closes one.
 	allowed []netip.Prefix
 	config  *ssh.ClientConfig
+	// jumps and refusal are SSHTunnel.jumps and SSHTunnel.refusal for a
+	// local forward.
+	jumps   []sshHop
+	refusal *routeRefusal
 	// connFP is written before the forward is registered and never again,
 	// the way SSHTunnel.connFP is.
 	connFP   connFingerprint
@@ -138,20 +143,22 @@ func LocalForwardAddresses(host *models.Host, lf *models.LocalForward) (listenV4
 }
 
 // localForwardFingerprint is connectionFingerprint for a local forward: the
-// server, the user, every credential, the trusted host key, the listen pair
-// and the target, each with its length in front. The reasons each of them is
-// in there are the ones given at connectionFingerprint. The allowed sources
-// are in there for the reason socksFingerprint carries them: a list that was
-// changed has to reach the forward, and it is read where the forward is built.
-func localForwardFingerprint(host *models.Host, lf *models.LocalForward, creds hostCreds) connFingerprint {
+// server, the user, every credential, the trusted host key, the listen pair,
+// the target and the jump route, each with its length in front. The reasons
+// each of them is in there are the ones given at connectionFingerprint. The
+// allowed sources are in there for the reason socksFingerprint carries them: a
+// list that was changed has to reach the forward, and it is read where the
+// forward is built.
+func localForwardFingerprint(host *models.Host, lf *models.LocalForward, creds hostCreds,
+	jumps []jumpHop) connFingerprint {
 	listenV4, listenV6, server, target := LocalForwardAddresses(host, lf)
 
 	h := sha256.New()
-	for _, value := range []string{
+	for _, value := range append([]string{
 		server, target, listenV4, listenV6, host.User,
 		creds.password, creds.privateKey, creds.passphrase,
 		host.HostKey, lf.AllowedSources,
-	} {
+	}, jumpFingerprintValues(jumps)...) {
 		_, _ = fmt.Fprintf(h, "%d:%s", len(value), value)
 	}
 
@@ -233,7 +240,7 @@ var errLocalForwardStopped = errors.New("local forward stopped")
 // establish connects, opens the local port and carries what it accepts until
 // the SSH connection or a listener ends.
 func (f *localTunnel) establish() error {
-	client, _, err := dialSSHClient(f.server, f.config)
+	client, _, err := dialSSHClient(withTarget(f.jumps, f.hostID, f.server, f.config))
 	if err != nil {
 		f.logger.Error("failed to establish SSH connection",
 			append([]zap.Field{logid.TunnelSshConnectFailed.Field()}, f.fields(zap.Error(err))...)...)
@@ -536,7 +543,7 @@ func (f *localTunnel) recordForwardReach(measured *ssh.Client) {
 // Closing it is all it does: establish sees the connection end and takes the
 // forward down to be connected again.
 func (f *localTunnel) monitor(stop <-chan struct{}) {
-	watchSSHConnection(stop, f.interval, f.server, f.currentClient, f.logger, f.fields)
+	watchSSHConnection(stop, f.interval, firstServer(f.jumps, f.server), f.currentClient, f.logger, f.fields)
 }
 
 func (f *localTunnel) currentClient() *ssh.Client {
@@ -549,8 +556,9 @@ func (f *localTunnel) currentClient() *ssh.Client {
 // watchSSHConnection is the loop of monitor, shared with the SOCKS5 proxies,
 // which hold their connection the same way. current returns the connection
 // that stands, or a nil client while there is none, and fields are what every
-// line about the owner carries. It waits on a timer set again after each check
-// for the reason SSHTunnel.monitorConnection does.
+// line about the owner carries. server is the address the route to the Host is
+// entered by, for the reason SSHTunnel.probeServer gives. It waits on a timer
+// set again after each check for the reason SSHTunnel.monitorConnection does.
 func watchSSHConnection(stop <-chan struct{}, interval time.Duration, server string,
 	current func() *ssh.Client, logger *zap.Logger, fields func(extra ...zap.Field) []zap.Field) {
 	timer := time.NewTimer(interval)
@@ -622,6 +630,21 @@ func (f *localTunnel) Start() {
 	f.logger.Info("attempting to start tunnel",
 		append([]zap.Field{logid.TunnelStarting.Field()}, f.fields()...)...)
 
+	// A route that is not to be dialled is reported and waited out, for the
+	// reason SSHTunnel.Start gives.
+	if f.refusal != nil {
+		f.logger.Error("local forward connection failed and will not be retried until its settings change",
+			append([]zap.Field{logid.TunnelLocalForwardConnectFailedGivingUp.Field()},
+				f.fields(zap.Error(f.refusal))...)...)
+
+		f.setState(func(state *LocalForwardState) {
+			state.Status = f.refusal.status
+			state.LastError = f.refusal.reason
+		})
+
+		return
+	}
+
 	stopMonitor := make(chan struct{})
 	var monitorWg sync.WaitGroup
 
@@ -691,8 +714,9 @@ func (f *localTunnel) Stop() {
 }
 
 // startLocalForward builds and starts the forward of one row. The caller has
-// read the Host already, and a Host that is not enabled is not asked for.
-func (m *Manager) startLocalForward(host *models.Host, lf *models.LocalForward) error {
+// read the Host and its jump route already, and a Host that is not enabled is
+// not asked for.
+func (m *Manager) startLocalForward(host *models.Host, lf *models.LocalForward, jumps []jumpHop) error {
 	m.localMu.Lock()
 	defer m.localMu.Unlock()
 
@@ -705,19 +729,21 @@ func (m *Manager) startLocalForward(host *models.Host, lf *models.LocalForward) 
 		return err
 	}
 
-	config := &ssh.ClientConfig{
-		User:            host.User,
-		Auth:            auth,
-		HostKeyCallback: m.hostKeyCallback(host),
-		Timeout:         time.Second * 10,
+	route, refusal, err := m.jumpRoute(host, jumps)
+	if err != nil {
+		return err
 	}
+
+	config := m.clientConfig(host, auth)
 
 	f, err := newLocalTunnel(lf, host, config, time.Duration(m.monitoringIntervalSec)*time.Second, m.logger)
 	if err != nil {
 		return fmt.Errorf("failed to create local forward: %w", err)
 	}
 
-	f.connFP = localForwardFingerprint(host, lf, creds)
+	f.jumps = route
+	f.refusal = refusal
+	f.connFP = localForwardFingerprint(host, lf, creds, jumps)
 	f.maxInterval = time.Duration(m.reconnectMaxIntervalSec) * time.Second
 
 	m.localForwards[localForwardKeyOf(lf)] = f
@@ -857,13 +883,18 @@ func (m *Manager) DesiredLocalForwardCount() (int, error) {
 // reconcileLocalForwards is the local forward half of a pass, with the rules
 // Reconcile applies to the tunnels: start what is missing, rebuild what runs
 // on settings it should no longer have, stop what is not wanted.
-func (m *Manager) reconcileLocalForwards(desired map[LocalForwardKey]desiredLocalForward, result *ReconcileResult) {
+func (m *Manager) reconcileLocalForwards(desired map[LocalForwardKey]desiredLocalForward,
+	routes map[uint]hostRoute, result *ReconcileResult) {
 	running := m.runningLocalForwardFingerprints()
 
 	for key, want := range desired {
+		route := routes[want.host.ID]
 		current, isRunning := running[key]
 		if !isRunning {
-			err := m.startLocalForward(want.host, want.lf)
+			err := route.err
+			if err == nil {
+				err = m.startLocalForward(want.host, want.lf, route.hops)
+			}
 			if err != nil {
 				m.logger.Error("failed to start tunnel",
 					logid.TunnelStartFailed.Field(),
@@ -880,12 +911,12 @@ func (m *Manager) reconcileLocalForwards(desired map[LocalForwardKey]desiredLoca
 		}
 
 		creds, err := m.hostCredentials(want.host)
-		if err != nil {
+		if err != nil || route.err != nil {
 			result.Failed++
 			continue
 		}
 
-		if localForwardFingerprint(want.host, want.lf, creds) == current {
+		if localForwardFingerprint(want.host, want.lf, creds, route.hops) == current {
 			continue
 		}
 
@@ -895,7 +926,7 @@ func (m *Manager) reconcileLocalForwards(desired map[LocalForwardKey]desiredLoca
 		// changed has let go of the old one before the new one is opened.
 		_ = m.stopLocalForward(key)
 
-		err = m.startLocalForward(want.host, want.lf)
+		err = m.startLocalForward(want.host, want.lf, route.hops)
 		if err != nil {
 			m.logger.Error("failed to restart a tunnel whose connection settings changed",
 				logid.TunnelRestartFailed.Field(),

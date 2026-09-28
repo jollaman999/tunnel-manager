@@ -297,6 +297,10 @@ type socksTunnel struct {
 	server  string
 	allowed []netip.Prefix
 	config  *ssh.ClientConfig
+	// jumps and refusal are SSHTunnel.jumps and SSHTunnel.refusal for a
+	// proxy.
+	jumps   []sshHop
+	refusal *routeRefusal
 	// connFP is written before the proxy is registered and never again, the
 	// way localTunnel.connFP is.
 	connFP   connFingerprint
@@ -341,16 +345,17 @@ func socksAddresses(host *models.Host) (listenV4, listenV6, server string) {
 
 // socksFingerprint is localForwardFingerprint for the proxy of a Host, with
 // the allowed sources in place of the target: a list that was changed has to
-// reach the proxy, and it is read where the proxy is built.
-func socksFingerprint(host *models.Host, creds hostCreds) connFingerprint {
+// reach the proxy, and it is read where the proxy is built. The jump route is
+// in there as it is for a local forward.
+func socksFingerprint(host *models.Host, creds hostCreds, jumps []jumpHop) connFingerprint {
 	listenV4, listenV6, server := socksAddresses(host)
 
 	h := sha256.New()
-	for _, value := range []string{
+	for _, value := range append([]string{
 		server, listenV4, listenV6, host.User,
 		creds.password, creds.privateKey, creds.passphrase,
 		host.HostKey, host.SocksAllowedSources,
-	} {
+	}, jumpFingerprintValues(jumps)...) {
 		_, _ = fmt.Fprintf(h, "%d:%s", len(value), value)
 	}
 
@@ -435,7 +440,7 @@ var errSocksStopped = errors.New("SOCKS5 proxy stopped")
 // the SSH connection or a listener ends. It is localTunnel.establish with the
 // lines of a proxy.
 func (p *socksTunnel) establish() error {
-	client, _, err := dialSSHClient(p.server, p.config)
+	client, _, err := dialSSHClient(withTarget(p.jumps, p.hostID, p.server, p.config))
 	if err != nil {
 		p.logger.Error("failed to establish SSH connection",
 			append([]zap.Field{logid.TunnelSshConnectFailed.Field()}, p.fields(zap.Error(err))...)...)
@@ -676,13 +681,27 @@ func (p *socksTunnel) Start() {
 	p.logger.Info("attempting to start tunnel",
 		append([]zap.Field{logid.TunnelStarting.Field()}, p.fields()...)...)
 
+	// A route that is not to be dialled is reported and waited out, for the
+	// reason SSHTunnel.Start gives.
+	if p.refusal != nil {
+		p.logger.Error("SOCKS5 proxy connection failed and will not be retried until its settings change",
+			append([]zap.Field{logid.TunnelSocksConnectFailedGivingUp.Field()}, p.fields(zap.Error(p.refusal))...)...)
+
+		p.setState(func(state *SocksState) {
+			state.Status = p.refusal.status
+			state.LastError = p.refusal.reason
+		})
+
+		return
+	}
+
 	stopMonitor := make(chan struct{})
 	var monitorWg sync.WaitGroup
 
 	monitorWg.Add(1)
 	go func() {
 		defer monitorWg.Done()
-		watchSSHConnection(stopMonitor, p.interval, p.server, p.currentClient, p.logger, p.fields)
+		watchSSHConnection(stopMonitor, p.interval, firstServer(p.jumps, p.server), p.currentClient, p.logger, p.fields)
 	}()
 
 	defer func() {
@@ -743,8 +762,8 @@ func (p *socksTunnel) Stop() {
 }
 
 // startSocks builds and starts the proxy of one Host. The caller has checked
-// that the Host is enabled and asks for one.
-func (m *Manager) startSocks(host *models.Host) error {
+// that the Host is enabled and asks for one, and has read its jump route.
+func (m *Manager) startSocks(host *models.Host, jumps []jumpHop) error {
 	m.socksMu.Lock()
 	defer m.socksMu.Unlock()
 
@@ -757,19 +776,21 @@ func (m *Manager) startSocks(host *models.Host) error {
 		return err
 	}
 
-	config := &ssh.ClientConfig{
-		User:            host.User,
-		Auth:            auth,
-		HostKeyCallback: m.hostKeyCallback(host),
-		Timeout:         time.Second * 10,
+	route, refusal, err := m.jumpRoute(host, jumps)
+	if err != nil {
+		return err
 	}
+
+	config := m.clientConfig(host, auth)
 
 	p, err := newSocksTunnel(host, config, time.Duration(m.monitoringIntervalSec)*time.Second, m.logger)
 	if err != nil {
 		return fmt.Errorf("failed to create SOCKS5 proxy: %w", err)
 	}
 
-	p.connFP = socksFingerprint(host, creds)
+	p.jumps = route
+	p.refusal = refusal
+	p.connFP = socksFingerprint(host, creds, jumps)
 	p.maxInterval = time.Duration(m.reconnectMaxIntervalSec) * time.Second
 
 	m.socksProxies[host.ID] = p
@@ -860,13 +881,17 @@ func desiredSocksOf(hostByID map[uint]*models.Host) map[uint]*models.Host {
 
 // reconcileSocks is the SOCKS5 half of a pass, with the rules
 // reconcileLocalForwards applies.
-func (m *Manager) reconcileSocks(desired map[uint]*models.Host, result *ReconcileResult) {
+func (m *Manager) reconcileSocks(desired map[uint]*models.Host, routes map[uint]hostRoute, result *ReconcileResult) {
 	running := m.runningSocksFingerprints()
 
 	for id, host := range desired {
+		route := routes[id]
 		current, isRunning := running[id]
 		if !isRunning {
-			err := m.startSocks(host)
+			err := route.err
+			if err == nil {
+				err = m.startSocks(host, route.hops)
+			}
 			if err != nil {
 				m.logger.Error("failed to start tunnel",
 					logid.TunnelStartFailed.Field(),
@@ -883,19 +908,19 @@ func (m *Manager) reconcileSocks(desired map[uint]*models.Host, result *Reconcil
 		}
 
 		creds, err := m.hostCredentials(host)
-		if err != nil {
+		if err != nil || route.err != nil {
 			result.Failed++
 			continue
 		}
 
-		if socksFingerprint(host, creds) == current {
+		if socksFingerprint(host, creds, route.hops) == current {
 			continue
 		}
 
 		// The only error stopping returns is a proxy that is already gone.
 		_ = m.stopSocks(id)
 
-		err = m.startSocks(host)
+		err = m.startSocks(host, route.hops)
 		if err != nil {
 			m.logger.Error("failed to restart a tunnel whose connection settings changed",
 				logid.TunnelRestartFailed.Field(),

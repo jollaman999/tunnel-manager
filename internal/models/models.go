@@ -12,10 +12,16 @@ import (
 // enabled and started connecting. Naming the column in Select does not change
 // it. Whatever inserts a Host says what Enabled is, and what an absent field
 // means is decided where absence can be told from false.
+//
+// Address and Port are unique together rather than Address alone. The same
+// private address is a different machine behind each Host it is reached
+// through, and a rule on the address alone refused the second of them. The
+// index keeps the name it had when it covered the address alone, which is what
+// database.widenHostAddressIndex moves an installation over by.
 type Host struct {
 	ID      uint   `gorm:"primaryKey;autoIncrement" json:"id"`
 	Address string `gorm:"uniqueIndex:idx_hosts_address;not null" json:"address"`
-	Port    int    `gorm:"not null" json:"port"`
+	Port    int    `gorm:"uniqueIndex:idx_hosts_address;not null" json:"port"`
 	User    string `gorm:"not null" json:"user"`
 	// Password carries no "not null" because a Host may be registered with a
 	// private key and no password at all. It used to be required, from when a
@@ -81,6 +87,26 @@ type Host struct {
 	SocksAllowedSources string    `json:"socks_allowed_sources"`
 	CreatedAt           time.Time `json:"created_at"`
 	UpdatedAt           time.Time `json:"updated_at"`
+}
+
+// HostJump is one step of the jump route of a Host: the connection to HostID
+// passes through JumpHostID on its way, as the Seq-th SSH server of the route,
+// counted from 1 at the one this machine connects to directly. A Host with no
+// row here is connected to directly.
+//
+// The route is a list per Host rather than a single previous step on each
+// Host. With one previous step, a Host put into the route of another took
+// that route on as its own, and changing the route of one Host changed the
+// way to every Host that passes through it. The route is also taken as it is
+// written: the route of a Host that is passed through is not followed, so
+// what a row says is the whole of the way.
+//
+// The Host and the step are the key together, the way the Host and the number
+// are on LocalForward, so a route cannot hold two different Hosts at one step.
+type HostJump struct {
+	HostID     uint `gorm:"primaryKey;not null" json:"host_id"`
+	Seq        uint `gorm:"primaryKey;not null" json:"seq"`
+	JumpHostID uint `gorm:"not null" json:"jump_host_id"`
 }
 
 type ServicePort struct {
