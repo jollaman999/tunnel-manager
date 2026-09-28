@@ -129,6 +129,7 @@ const (
 	errHostNotFound                errorCode = "host.not_found"
 	errHostFetchFailed             errorCode = "host.fetch_failed"
 	errHostListFailed              errorCode = "host.list_failed"
+	errHostListIDsInvalid          errorCode = "host.list.ids_invalid"
 	errHostCreateFailed            errorCode = "host.create_failed"
 	errHostUpdateFailed            errorCode = "host.update_failed"
 	errHostDeleteFailed            errorCode = "host.delete_failed"
@@ -404,6 +405,7 @@ var errorMessages = map[errorCode]string{
 	errHostNotFound:                "Host not found",
 	errHostFetchFailed:             "Failed to fetch Host",
 	errHostListFailed:              "Failed to fetch Hosts",
+	errHostListIDsInvalid:          "The Hosts were not read: ids must be at most {max} Host ids, each a whole number above 0, separated by commas",
 	errHostCreateFailed:            "Failed to create Host",
 	errHostUpdateFailed:            "Failed to update Host",
 	errHostDeleteFailed:            "Failed to delete Host",

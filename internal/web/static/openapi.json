@@ -423,6 +423,12 @@
                         "description": "Only the Hosts whose address, user, description or SSH port holds this text, with ASCII letters matched in either case. % and _ are taken as written",
                         "name": "q",
                         "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Only the Hosts with these ids, written as positive whole numbers separated by commas, at most 1000 of them. Every one of them that is registered is answered on one page, oldest first, with page and size left unread; an id that is not registered is left out. q narrows them as it narrows the list",
+                        "name": "ids",
+                        "in": "query"
                     }
                 ],
                 "responses": {
@@ -460,7 +466,7 @@
                         }
                     },
                     "400": {
-                        "description": "page is not a number, or size is not one of the sizes taken",
+                        "description": "page is not a number, size is not one of the sizes taken, or ids is not a list of at most 1000 Host ids",
                         "schema": {
                             "$ref": "#/definitions/api.errorBody"
                         }
@@ -3189,6 +3195,7 @@
                 "host.not_found",
                 "host.fetch_failed",
                 "host.list_failed",
+                "host.list.ids_invalid",
                 "host.create_failed",
                 "host.update_failed",
                 "host.delete_failed",
@@ -3391,6 +3398,7 @@
                 "errHostNotFound",
                 "errHostFetchFailed",
                 "errHostListFailed",
+                "errHostListIDsInvalid",
                 "errHostCreateFailed",
                 "errHostUpdateFailed",
                 "errHostDeleteFailed",

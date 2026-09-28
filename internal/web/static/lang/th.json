@@ -208,6 +208,7 @@
   "error.host.jump.self.error": "เส้นทางจัมป์ถูกปฏิเสธ: Host ผ่านตัวเองไม่ได้",
   "error.host.jump.too_many.error": "เส้นทางจัมป์ถูกปฏิเสธ: ผ่าน Host มากกว่า {max} ตัว",
   "error.host.jump.unknown.error": "เส้นทางจัมป์ถูกปฏิเสธ: ไม่มี Host {host_id} ให้เพิ่ม Host นั้นก่อนแล้วจึงใส่ในเส้นทาง",
+  "error.host.list.ids_invalid.error": "อ่าน Host ไม่ได้ เพราะ ids ต้องเป็น ID ของ Host ไม่เกิน {max} ตัว แต่ละตัวเป็นจำนวนเต็มที่มากกว่า 0 คั่นด้วยจุลภาค",
   "error.host.list_failed.error": "ดึงรายการ Host ไม่สำเร็จ",
   "error.host.not_found.error": "ไม่พบ Host นี้",
   "error.host.password.encrypt_failed.error": "เข้ารหัสรหัสผ่านไม่สำเร็จ",

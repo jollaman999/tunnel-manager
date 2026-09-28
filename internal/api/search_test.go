@@ -6,6 +6,8 @@ import (
 	"net/http"
 	"net/url"
 	"reflect"
+	"strings"
+	"sync/atomic"
 	"testing"
 
 	"github.com/jollaman999/tunnel-manager/internal/models"
@@ -464,6 +466,214 @@ func TestLikeContainingEscapesWhatLikeReads(t *testing.T) {
 	for text, want := range cases {
 		if got := likeContaining(text); got != want {
 			t.Errorf("likeContaining(%q) = %q, want %q", text, got, want)
+		}
+	}
+}
+
+// listHostsByIDsDB is 30 Hosts, the even ones described as wanted, and a jump
+// route on Host 4 that goes through 2 and then 3.
+func listHostsByIDsDB(t *testing.T) *gorm.DB {
+	t.Helper()
+
+	var hosts []models.Host
+
+	for id := uint(1); id <= 30; id++ {
+		description := "other"
+		if id%2 == 0 {
+			description = "wanted"
+		}
+
+		hosts = append(hosts, models.Host{
+			ID: id, Address: fmt.Sprintf("192.0.2.%d", id), Port: 22, User: "root",
+			Description: description, Enabled: true,
+		})
+	}
+
+	db := newRowsDB(t, hosts, nil, nil)
+
+	for seq, jump := range []uint{2, 3} {
+		err := db.Create(&models.HostJump{HostID: 4, Seq: uint(seq + 1), JumpHostID: jump}).Error
+		if err != nil {
+			t.Fatalf("failed to store the route: %v", err)
+		}
+	}
+
+	return db
+}
+
+// TestListHostsByIDsAnswersThoseHostsOnOnePage pins ids on the Hosts: the
+// Hosts named are answered in id order whatever order they are named in, one
+// named twice is answered once, one that is not registered is left out, and
+// page and size are not what cuts them.
+func TestListHostsByIDsAnswersThoseHostsOnOnePage(t *testing.T) {
+	db := listHostsByIDsDB(t)
+
+	var many []string
+	var every []uint
+	for id := uint(1); id <= 30; id++ {
+		many = append(many, fmt.Sprint(id))
+		every = append(every, id)
+	}
+
+	tests := []struct {
+		name  string
+		query string
+		want  []uint
+	}{
+		{"in id order", "ids=12,3,7", []uint{3, 7, 12}},
+		{"one named twice is answered once", "ids=7,3,7,3", []uint{3, 7}},
+		{"one not registered is left out", "ids=5,999,6", []uint{5, 6}},
+		{"none registered is an empty list", "ids=999", []uint{}},
+		{"page and size are not read", "ids=" + url.QueryEscape(strings.Join(many, ",")) + "&page=3&size=10", every},
+		{"a page that is not a number is not read either", "ids=1&page=x", []uint{1}},
+		{"q narrows them", "ids=3,4,5,6&q=wanted", []uint{4, 6}},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			got := listSearch(t, db, listHosts, tc.query)
+
+			if !reflect.DeepEqual(got.ids, tc.want) {
+				t.Errorf("%s answers %v, want %v", tc.query, got.ids, tc.want)
+			}
+			if got.total != len(tc.want) || got.page != 1 {
+				t.Errorf("%s says total %d on page %d, want %d on page 1", tc.query, got.total, got.page, len(tc.want))
+			}
+		})
+	}
+
+	// No ids and an empty one are the list as it was.
+	for _, query := range []string{"", "ids="} {
+		got := listSearch(t, db, listHosts, query)
+		if !reflect.DeepEqual(got.ids, every[:defaultPageSize]) || got.total != 30 {
+			t.Errorf("%q answers %v of %d, want the first page of every Host", query, got.ids, got.total)
+		}
+	}
+}
+
+// TestListHostsByIDsCarriesTheJumpRoute pins that a Host read by id is the
+// hostView the list answers, jump_host_ids and all.
+func TestListHostsByIDsCarriesTheJumpRoute(t *testing.T) {
+	db := listHostsByIDsDB(t)
+
+	c, rec := getRequest(t, "/api/host?ids=4,5", "", "")
+	h := NewHandler(db, &wakeRecorder{tx: &txConnPool{}}, zap.NewNop(), newTestCipher(t))
+
+	err := h.ListHosts(c)
+	if err != nil {
+		t.Fatalf("the list returned error: %v", err)
+	}
+
+	var page struct {
+		Data struct {
+			Items []hostView `json:"items"`
+		} `json:"data"`
+	}
+
+	err = json.Unmarshal(rec.Body.Bytes(), &page)
+	if err != nil {
+		t.Fatalf("failed to read the list %s: %v", rec.Body.String(), err)
+	}
+
+	want := map[uint][]uint{4: {2, 3}, 5: {}}
+	if len(page.Data.Items) != len(want) {
+		t.Fatalf("the list carries %d Hosts, want %d: %s", len(page.Data.Items), len(want), rec.Body.String())
+	}
+
+	for _, view := range page.Data.Items {
+		if !reflect.DeepEqual(view.JumpHostIDs, want[view.ID]) {
+			t.Errorf("Host %d carries %v, want %v", view.ID, view.JumpHostIDs, want[view.ID])
+		}
+	}
+}
+
+// TestListHostsByIDsRefusesWhatIsNotAListOfIDs pins the refusal of ids: a
+// value that is not positive whole numbers separated by commas, and more of
+// them than maxListHostIDs, are refused with the same code, and the ids that
+// are just at the limit are taken.
+func TestListHostsByIDsRefusesWhatIsNotAListOfIDs(t *testing.T) {
+	db := listHostsByIDsDB(t)
+	h := NewHandler(db, &wakeRecorder{tx: &txConnPool{}}, zap.NewNop(), newTestCipher(t))
+
+	idsOf := func(count int) string {
+		ids := make([]string, 0, count)
+		for id := 1; id <= count; id++ {
+			ids = append(ids, fmt.Sprint(id))
+		}
+
+		return strings.Join(ids, ",")
+	}
+
+	tests := []struct {
+		name   string
+		ids    string
+		status int
+	}{
+		{"not a number", "x", http.StatusBadRequest},
+		{"zero", "0", http.StatusBadRequest},
+		{"below zero", "-3", http.StatusBadRequest},
+		{"an empty entry", "3,,7", http.StatusBadRequest},
+		{"a trailing comma", "3,7,", http.StatusBadRequest},
+		{"a space", "3, 7", http.StatusBadRequest},
+		{"past 32 bits", "4294967296", http.StatusBadRequest},
+		{"one past the limit", idsOf(maxListHostIDs + 1), http.StatusBadRequest},
+		{"one past the limit, all the same id", strings.Repeat("1,", maxListHostIDs) + "1", http.StatusBadRequest},
+		{"just at the limit", idsOf(maxListHostIDs), http.StatusOK},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			c, rec := getRequest(t, "/api/host?ids="+url.QueryEscape(tc.ids), "", "")
+
+			err := h.ListHosts(c)
+			if err != nil {
+				t.Fatalf("the list returned error: %v", err)
+			}
+			if rec.Code != tc.status {
+				t.Fatalf("status = %d, want %d, body: %s", rec.Code, tc.status, rec.Body.String())
+			}
+			if tc.status == http.StatusOK {
+				return
+			}
+
+			var refusal errorBody
+
+			err = json.Unmarshal(rec.Body.Bytes(), &refusal)
+			if err != nil {
+				t.Fatalf("failed to read the refusal %s: %v", rec.Body.String(), err)
+			}
+			if refusal.Code != errHostListIDsInvalid {
+				t.Errorf("code = %q, want %q", refusal.Code, errHostListIDsInvalid)
+			}
+		})
+	}
+}
+
+// TestListHostsByIDsIsTwoReadsHoweverManyIDs pins what the parameter is for:
+// the Hosts are one read and their routes another, so a screen that asks for
+// many Hosts costs the database what it costs to ask for one.
+func TestListHostsByIDsIsTwoReadsHoweverManyIDs(t *testing.T) {
+	db := listHostsByIDsDB(t)
+
+	var reads atomic.Int64
+
+	err := db.Callback().Query().After("gorm:query").Register("test:count_reads", func(*gorm.DB) {
+		reads.Add(1)
+	})
+	if err != nil {
+		t.Fatalf("failed to register the read counter: %v", err)
+	}
+
+	for _, ids := range []string{"4", "1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20"} {
+		reads.Store(0)
+
+		got := listSearch(t, db, listHosts, "ids="+url.QueryEscape(ids))
+		if len(got.ids) == 0 {
+			t.Fatalf("ids=%s answers no Host", ids)
+		}
+
+		if n := reads.Load(); n != 2 {
+			t.Errorf("ids=%s is %d reads, want 2", ids, n)
 		}
 	}
 }

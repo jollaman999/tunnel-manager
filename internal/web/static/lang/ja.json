@@ -208,6 +208,7 @@
   "error.host.jump.self.error": "ジャンプ経路が拒否されました: Host は自分自身を経由できません",
   "error.host.jump.too_many.error": "ジャンプ経路が拒否されました: {max} 個を超える Host を経由しています",
   "error.host.jump.unknown.error": "ジャンプ経路が拒否されました: Host {host_id} はありません。先に Host を登録してから経路に入れてください",
+  "error.host.list.ids_invalid.error": "Host を読めませんでした。ids は 0 より大きい整数の Host ID をカンマで区切って最大 {max} 個まで送ってください",
   "error.host.list_failed.error": "Host の一覧を取得できませんでした",
   "error.host.not_found.error": "Host が見つかりません",
   "error.host.password.encrypt_failed.error": "パスワードを暗号化できませんでした",

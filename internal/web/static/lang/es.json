@@ -208,6 +208,7 @@
   "error.host.jump.self.error": "La ruta de salto se rechazó: un Host no puede pasar por sí mismo",
   "error.host.jump.too_many.error": "La ruta de salto se rechazó: pasa por más de {max} Hosts",
   "error.host.jump.unknown.error": "La ruta de salto se rechazó: no existe el Host {host_id}. Registre primero el Host y añádalo después a la ruta",
+  "error.host.list.ids_invalid.error": "Los Hosts no se leyeron: ids tiene que ser como mucho {max} ID de Host, cada uno un número entero mayor que 0, separados por comas",
   "error.host.list_failed.error": "No se pudieron obtener los Hosts",
   "error.host.not_found.error": "No se encontró el Host",
   "error.host.password.encrypt_failed.error": "No se pudo cifrar la contraseña",

@@ -208,6 +208,7 @@
   "error.host.jump.self.error": "The jump route is refused: a Host cannot go through itself",
   "error.host.jump.too_many.error": "The jump route is refused: it goes through more than {max} Hosts",
   "error.host.jump.unknown.error": "The jump route is refused: there is no Host {host_id}. Register the Host first and put it on the route after",
+  "error.host.list.ids_invalid.error": "The Hosts were not read: ids must be at most {max} Host ids, each a whole number above 0, separated by commas",
   "error.host.list_failed.error": "Failed to fetch Hosts",
   "error.host.not_found.error": "Host not found",
   "error.host.password.encrypt_failed.error": "Failed to encrypt the password",

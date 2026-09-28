@@ -208,6 +208,7 @@
   "error.host.jump.self.error": "رُفض مسار القفز: لا يمكن للـ Host أن يمر بنفسه",
   "error.host.jump.too_many.error": "رُفض مسار القفز: يمر بأكثر من {max} Hosts",
   "error.host.jump.unknown.error": "رُفض مسار القفز: لا يوجد Host {host_id}. سجّل الـ Host أولًا ثم أضفه إلى المسار",
+  "error.host.list.ids_invalid.error": "لم تُقرأ الـ Hosts: يجب أن تكون ids حتى {max} من معرّفات الـ Host، كل منها عدد صحيح أكبر من 0، مفصولة بفواصل",
   "error.host.list_failed.error": "تعذّر جلب الـ Hosts",
   "error.host.not_found.error": "لم يُعثر على Host",
   "error.host.password.encrypt_failed.error": "تعذّر تشفير كلمة المرور",

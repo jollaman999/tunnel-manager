@@ -208,6 +208,7 @@
   "error.host.jump.self.error": "Die Sprungroute wird abgelehnt: Ein Host kann nicht über sich selbst führen",
   "error.host.jump.too_many.error": "Die Sprungroute wird abgelehnt: Sie führt über mehr als {max} Hosts",
   "error.host.jump.unknown.error": "Die Sprungroute wird abgelehnt: Es gibt keinen Host {host_id}. Legen Sie den Host zuerst an und nehmen Sie ihn danach in die Route auf",
+  "error.host.list.ids_invalid.error": "Die Hosts wurden nicht gelesen: ids muss aus höchstens {max} Host-IDs bestehen, jede eine ganze Zahl über 0, durch Kommas getrennt",
   "error.host.list_failed.error": "Die Hosts konnten nicht geladen werden",
   "error.host.not_found.error": "Host nicht gefunden",
   "error.host.password.encrypt_failed.error": "Das Passwort konnte nicht verschlüsselt werden",

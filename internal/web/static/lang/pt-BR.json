@@ -208,6 +208,7 @@
   "error.host.jump.self.error": "A rota de salto foi recusada: um Host não pode passar por ele mesmo",
   "error.host.jump.too_many.error": "A rota de salto foi recusada: ela passa por mais de {max} Hosts",
   "error.host.jump.unknown.error": "A rota de salto foi recusada: não existe o Host {host_id}. Cadastre o Host primeiro e depois coloque-o na rota",
+  "error.host.list.ids_invalid.error": "Os Hosts não foram lidos: ids deve ter no máximo {max} IDs de Host, cada um um número inteiro maior que 0, separados por vírgulas",
   "error.host.list_failed.error": "Falha ao buscar os Hosts",
   "error.host.not_found.error": "Host não encontrado",
   "error.host.password.encrypt_failed.error": "Falha ao criptografar a senha",

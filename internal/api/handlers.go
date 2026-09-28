@@ -610,10 +610,19 @@ func (h *Handler) CreateHost(c echo.Context) error {
 // @Param   page  query  int  false  "The page, counted from 1. Below 1 is read as 1, and a page past the last one is answered with the last page"
 // @Param   size  query  int  false  "How many rows a page holds"  Enums(10, 20, 30, 50, 100)
 // @Param   q     query  string  false  "Only the Hosts whose address, user, description or SSH port holds this text, with ASCII letters matched in either case. % and _ are taken as written"
+// @Param   ids   query  string  false  "Only the Hosts with these ids, written as positive whole numbers separated by commas, at most 1000 of them. Every one of them that is registered is answered on one page, oldest first, with page and size left unread; an id that is not registered is left out. q narrows them as it narrows the list"
 // @Success  200  {object}  models.Response{data=api.listPageOf{items=[]api.hostView}}
-// @Failure  400  {object}  api.errorBody  "page is not a number, or size is not one of the sizes taken"
+// @Failure  400  {object}  api.errorBody  "page is not a number, size is not one of the sizes taken, or ids is not a list of at most 1000 Host ids"
 // @Router       /host [get]
 func (h *Handler) ListHosts(c echo.Context) error {
+	ids, listed, refused := readListHostIDs(c)
+	if refused != nil {
+		return refused.answer(c)
+	}
+	if listed {
+		return h.listHostsByID(c, ids)
+	}
+
 	page, refused := readListPage(c)
 	if refused != nil {
 		return badListPage(c, refused)
@@ -658,6 +667,85 @@ func (h *Handler) ListHosts(c echo.Context) error {
 			Total: total,
 			Page:  page.number,
 			Size:  page.size,
+		},
+	})
+}
+
+// maxListHostIDs is how many ids a list of Hosts may be asked for by. It is
+// above what a screen can show at once, a page of the largest size with a full
+// jump route on every row, and it keeps what one request makes the database
+// bind well under what SQLite takes in one statement.
+const maxListHostIDs = 1000
+
+// readListHostIDs reads ids off the query string of the list of Hosts. listed
+// is false when there is no ids or an empty one, which is the list as it was
+// before the parameter was there. An id named twice is read once, and the ids
+// come back in ascending order.
+//
+// The entries are counted before they are read, so that a request that names
+// too many is refused without every one of them being parsed.
+func readListHostIDs(c echo.Context) (ids []uint, listed bool, refused *refusal) {
+	raw := c.QueryParam("ids")
+	if raw == "" {
+		return nil, false, nil
+	}
+
+	invalid := refuse(http.StatusBadRequest, errHostListIDsInvalid,
+		errorArgs{"max": strconv.Itoa(maxListHostIDs)})
+
+	if strings.Count(raw, ",")+1 > maxListHostIDs {
+		return nil, false, invalid
+	}
+
+	seen := make(map[uint]bool)
+
+	for _, field := range strings.Split(raw, ",") {
+		id, err := strconv.ParseUint(field, 10, 32)
+		if err != nil || id == 0 {
+			return nil, false, invalid
+		}
+
+		if !seen[uint(id)] {
+			seen[uint(id)] = true
+			ids = append(ids, uint(id))
+		}
+	}
+
+	sort.Slice(ids, func(i, j int) bool { return ids[i] < ids[j] })
+
+	return ids, true, nil
+}
+
+// listHostsByID answers the Hosts of ids that are registered and match q, on
+// one page. It is what a screen reads the Hosts by that it has to name and that
+// are not on the page it shows, the jump Hosts of a route among them, so that
+// however many there are they cost it one request.
+func (h *Handler) listHostsByID(c echo.Context, ids []uint) error {
+	var hosts []models.Host
+	err := h.db.Scopes(hostsMatching(readListSearch(c))).Where("id IN ?", ids).Order("id").Find(&hosts).Error
+	if err != nil {
+		h.logger.Error("failed to fetch Hosts", logid.HostListFetchFailed.Field(), zap.Error(err))
+		return failure(c, http.StatusInternalServerError, errHostListFailed)
+	}
+
+	hostIDs := make([]uint, 0, len(hosts))
+	for _, host := range hosts {
+		hostIDs = append(hostIDs, host.ID)
+	}
+
+	routes, err := jumpRoutesOf(h.db, hostIDs)
+	if err != nil {
+		h.logger.Error("failed to fetch Hosts", logid.HostListFetchFailed.Field(), zap.Error(err))
+		return failure(c, http.StatusInternalServerError, errHostListFailed)
+	}
+
+	return c.JSON(http.StatusOK, models.Response{
+		Success: true,
+		Data: listPageOf{
+			Items: hostViewsOf(hosts, routes, h.manager.SocksStatuses()),
+			Total: int64(len(hosts)),
+			Page:  1,
+			Size:  len(ids),
 		},
 	})
 }

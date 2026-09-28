@@ -208,6 +208,7 @@
   "error.host.jump.self.error": "La route de rebond est refusée : un Host ne peut pas passer par lui-même",
   "error.host.jump.too_many.error": "La route de rebond est refusée : elle passe par plus de {max} Hosts",
   "error.host.jump.unknown.error": "La route de rebond est refusée : il n'existe pas de Host {host_id}. Enregistrez d'abord le Host, puis ajoutez-le à la route",
+  "error.host.list.ids_invalid.error": "Les Hosts n'ont pas été lus : ids doit contenir au plus {max} ID de Host, chacun un nombre entier supérieur à 0, séparés par des virgules",
   "error.host.list_failed.error": "La récupération des Hosts a échoué",
   "error.host.not_found.error": "Host introuvable",
   "error.host.password.encrypt_failed.error": "Le chiffrement du mot de passe a échoué",

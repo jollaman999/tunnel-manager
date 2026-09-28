@@ -208,6 +208,7 @@
   "error.host.jump.self.error": "Tuyến nhảy bị từ chối: một Host không thể đi qua chính nó",
   "error.host.jump.too_many.error": "Tuyến nhảy bị từ chối: tuyến đi qua hơn {max} Host",
   "error.host.jump.unknown.error": "Tuyến nhảy bị từ chối: không có Host {host_id}. Hãy thêm Host đó trước rồi mới đưa vào tuyến",
+  "error.host.list.ids_invalid.error": "Không đọc được Host: ids phải gồm tối đa {max} ID Host, mỗi ID là một số nguyên lớn hơn 0, cách nhau bằng dấu phẩy",
   "error.host.list_failed.error": "Không lấy được danh sách Host",
   "error.host.not_found.error": "Không tìm thấy Host",
   "error.host.password.encrypt_failed.error": "Không mã hóa được mật khẩu",

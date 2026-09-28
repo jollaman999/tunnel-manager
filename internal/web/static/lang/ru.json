@@ -208,6 +208,7 @@
   "error.host.jump.self.error": "Маршрут перехода отклонён: Host не может проходить через самого себя",
   "error.host.jump.too_many.error": "Маршрут перехода отклонён: он проходит больше чем через {max} Host",
   "error.host.jump.unknown.error": "Маршрут перехода отклонён: Host {host_id} не существует. Сначала добавьте этот Host, затем включите его в маршрут",
+  "error.host.list.ids_invalid.error": "Host не прочитаны: ids должен содержать не больше {max} ID Host, каждый целое число больше 0, через запятую",
   "error.host.list_failed.error": "Не удалось получить список Host",
   "error.host.not_found.error": "Host не найден",
   "error.host.password.encrypt_failed.error": "Не удалось зашифровать пароль",

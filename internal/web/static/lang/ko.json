@@ -208,6 +208,7 @@
   "error.host.jump.self.error": "점프 경로가 거부됐습니다: Host 는 자기 자신을 거쳐 갈 수 없습니다",
   "error.host.jump.too_many.error": "점프 경로가 거부됐습니다: Host 를 {max} 개보다 많이 거쳐 갑니다",
   "error.host.jump.unknown.error": "점프 경로가 거부됐습니다: Host {host_id} 가 없습니다. 이 시스템에 그 Host 를 먼저 추가하고 경로에 넣으십시오",
+  "error.host.list.ids_invalid.error": "Host 를 읽지 않았습니다. ids 는 0 보다 큰 정수인 Host id 를 쉼표로 이어 최대 {max} 개까지 보내야 합니다",
   "error.host.list_failed.error": "Host 목록을 가져오지 못했습니다",
   "error.host.not_found.error": "그런 Host 가 없습니다",
   "error.host.password.encrypt_failed.error": "비밀번호를 암호화하지 못했습니다",
