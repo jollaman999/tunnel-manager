@@ -465,6 +465,18 @@ func assertOnlyDialed(t *testing.T, s *jumpTestServer, want string) {
 	}
 }
 
+// assertJumpFailure checks where on the route a connection is reported to
+// have stopped and why.
+func assertJumpFailure(t *testing.T, what string, seq int, hostID uint, reason string, want jumpFailure) {
+	t.Helper()
+
+	got := jumpFailure{seq: seq, hostID: hostID, reason: reason}
+	if got != want {
+		t.Fatalf("%s reports jump_seq %d, jump_host_id %d, jump_reason %q, want %d, %d, %q",
+			what, got.seq, got.hostID, got.reason, want.seq, want.hostID, want.reason)
+	}
+}
+
 // TestAJumpRouteCarriesARemoteTunnel is a tunnel of a Host reached through
 // another: the Host passed through opens a channel to the Host at the end and
 // to nothing else, the Host at the end opens the forwarded port, and what that
@@ -573,6 +585,8 @@ func TestAnUnapprovedKeyOfAJumpHostIsAskedOfThatHost(t *testing.T) {
 	if !strings.HasPrefix(row.LastError, f.jumpPrefix()+": ") {
 		t.Fatalf("the tunnel says %q, want it to start with %q", row.LastError, f.jumpPrefix())
 	}
+	assertJumpFailure(t, "the tunnel", row.JumpSeq, row.JumpHostID, row.JumpReason,
+		jumpFailure{seq: 1, hostID: 2, reason: JumpReasonHostKey})
 
 	jump := f.host(t, 2)
 	if jump.PendingHostKey != MarshalHostKey(f.jump.key) {
@@ -613,12 +627,16 @@ func TestADisabledJumpHostIsNotDialled(t *testing.T) {
 	if !strings.HasPrefix(row.LastError, f.jumpPrefix()+" is disabled") {
 		t.Fatalf("the tunnel says %q, want it to name %q as disabled", row.LastError, f.jumpPrefix())
 	}
+	assertJumpFailure(t, "the tunnel", row.JumpSeq, row.JumpHostID, row.JumpReason,
+		jumpFailure{seq: 1, hostID: 2, reason: JumpReasonDisabled})
 
 	state := waitLocalStatus(t, f.m, LocalForwardKey{HostID: 1, Number: 1}, "the local forward to report the disabled Host",
 		func(state LocalForwardState) bool { return state.Status == StatusJumpHostDisabled })
 	if !strings.HasPrefix(state.LastError, f.jumpPrefix()+" is disabled") {
 		t.Fatalf("the local forward says %q, want it to name %q as disabled", state.LastError, f.jumpPrefix())
 	}
+	assertJumpFailure(t, "the local forward", state.JumpSeq, state.JumpHostID, state.JumpReason,
+		jumpFailure{seq: 1, hostID: 2, reason: JumpReasonDisabled})
 
 	if n := f.jump.handshakes.Load() + f.target.handshakes.Load(); n != 0 {
 		t.Fatalf("%d connections were made through a disabled Host", n)
@@ -638,10 +656,14 @@ func TestADisabledJumpHostIsNotDialled(t *testing.T) {
 		t.Fatalf("the pass after enabling the Host passed through reported %+v, want both restarted", result)
 	}
 
-	f.waitTunnelRow(t, "the tunnel to connect", func(row models.Tunnel) bool {
+	row = f.waitTunnelRow(t, "the tunnel to connect", func(row models.Tunnel) bool {
 		return row.Status == statusConnected
 	})
-	waitLocalStatus(t, f.m, LocalForwardKey{HostID: 1, Number: 1}, "the local forward to connect", isConnected)
+	assertJumpFailure(t, "the connected tunnel", row.JumpSeq, row.JumpHostID, row.JumpReason, jumpFailure{})
+
+	state = waitLocalStatus(t, f.m, LocalForwardKey{HostID: 1, Number: 1}, "the local forward to connect", isConnected)
+	assertJumpFailure(t, "the connected local forward", state.JumpSeq, state.JumpHostID, state.JumpReason,
+		jumpFailure{})
 }
 
 // TestAJumpHostThatDoesNotAnswerIsNamed is a route whose first step refuses
@@ -671,6 +693,8 @@ func TestAJumpHostThatDoesNotAnswerIsNamed(t *testing.T) {
 	if row.Status != localStatusError && row.Status != localStatusReconnecting {
 		t.Fatalf("the tunnel status is %q, want error or reconnecting", row.Status)
 	}
+	assertJumpFailure(t, "the tunnel", row.JumpSeq, row.JumpHostID, row.JumpReason,
+		jumpFailure{seq: 1, hostID: 2, reason: JumpReasonDial})
 }
 
 // TestARouteNamingAHostThatIsNotThereIsRefused is a route left naming a Host
@@ -689,6 +713,8 @@ func TestARouteNamingAHostThatIsNotThereIsRefused(t *testing.T) {
 	if row.Status != localStatusError || row.LastError != "jump 1 names host #9, which is not registered" {
 		t.Fatalf("the tunnel is %q with %q", row.Status, row.LastError)
 	}
+	assertJumpFailure(t, "the tunnel", row.JumpSeq, row.JumpHostID, row.JumpReason,
+		jumpFailure{seq: 1, hostID: 9, reason: JumpReasonRoute})
 
 	if n := f.jump.handshakes.Load() + f.target.handshakes.Load(); n != 0 {
 		t.Fatalf("%d connections were made on a route naming a Host that is not there", n)
@@ -715,17 +741,23 @@ func TestCheckJumpRouteRefusesWhatCannotBeDialled(t *testing.T) {
 		hops   []jumpHop
 		status string
 		reason string
+		jump   jumpFailure
 	}{
 		{"itself", []jumpHop{hop(2), {id: 1, host: target}}, localStatusError,
-			"jump 2 (host #1 192.0.2.1:22) is this Host itself"},
+			"jump 2 (host #1 192.0.2.1:22) is this Host itself",
+			jumpFailure{seq: 2, hostID: 1, reason: JumpReasonRoute}},
 		{"twice", []jumpHop{hop(2), hop(3), hop(2)}, localStatusError,
-			"jump 3 (host #2 192.0.2.2:22) is jump 1 as well"},
+			"jump 3 (host #2 192.0.2.2:22) is jump 1 as well",
+			jumpFailure{seq: 3, hostID: 2, reason: JumpReasonRoute}},
 		{"missing", []jumpHop{hop(2), {id: 7}}, localStatusError,
-			"jump 2 names host #7, which is not registered"},
+			"jump 2 names host #7, which is not registered",
+			jumpFailure{seq: 2, hostID: 7, reason: JumpReasonRoute}},
 		{"too long", long, localStatusError,
-			"the jump route of this Host passes through 9 Hosts, and a route may pass through 8 at most"},
+			"the jump route of this Host passes through 9 Hosts, and a route may pass through 8 at most",
+			jumpFailure{reason: JumpReasonRoute}},
 		{"disabled", []jumpHop{hop(2), {id: 3, host: &models.Host{ID: 3, Address: "192.0.2.3", Port: 22}}},
-			StatusJumpHostDisabled, "jump 2 (host #3 192.0.2.3:22) is disabled, so the route to this Host is not dialled"},
+			StatusJumpHostDisabled, "jump 2 (host #3 192.0.2.3:22) is disabled, so the route to this Host is not dialled",
+			jumpFailure{seq: 2, hostID: 3, reason: JumpReasonDisabled}},
 	}
 
 	for _, tc := range cases {
@@ -737,6 +769,9 @@ func TestCheckJumpRouteRefusesWhatCannotBeDialled(t *testing.T) {
 			if refusal.status != tc.status || refusal.reason != tc.reason {
 				t.Fatalf("the route was refused as %q with %q, want %q with %q",
 					refusal.status, refusal.reason, tc.status, tc.reason)
+			}
+			if refusal.jump != tc.jump {
+				t.Fatalf("the route was refused at %+v, want %+v", refusal.jump, tc.jump)
 			}
 		})
 	}
@@ -846,6 +881,127 @@ func TestAFailureAtAJumpNamesTheStep(t *testing.T) {
 	if target.handshakes.Load() != 0 {
 		t.Fatal("the Host at the end was reached behind a refused login")
 	}
+}
+
+// TestAFailureAtAJumpIsGivenItsReason is the reason each way a step of the
+// route fails comes out as: a login it refused, a key it presented that is not
+// trusted, and a Host passed through that is not reached, whether it refuses
+// the connection, takes it and sends nothing, or is behind a step that cannot
+// open a channel to it. A failure at the Host at the end is not one of the
+// route at all.
+func TestAFailureAtAJumpIsGivenItsReason(t *testing.T) {
+	jump := startJumpTestServer(t)
+	target := startJumpTestServer(t)
+
+	closed, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("failed to listen: %v", err)
+	}
+	closedAddr := closed.Addr().String()
+	_ = closed.Close()
+
+	wrong := testClientConfig(localTestTimeout)
+	wrong.Auth = []ssh.AuthMethod{ssh.Password("wrong")}
+
+	untrusted := testClientConfig(localTestTimeout)
+	untrusted.HostKeyCallback = func(string, net.Addr, ssh.PublicKey) error {
+		return &HostKeyError{Status: StatusHostKeyUnapproved}
+	}
+
+	short := testClientConfig(300 * time.Millisecond)
+
+	cases := []struct {
+		name  string
+		route []sshHop
+		want  jumpFailure
+	}{
+		{"a refused login", []sshHop{
+			{hostID: 2, addr: jump.addr, config: wrong},
+			{hostID: 1, addr: target.addr, config: testClientConfig(localTestTimeout)},
+		}, jumpFailure{seq: 1, hostID: 2, reason: JumpReasonAuth}},
+		{"a key that is not trusted", []sshHop{
+			{hostID: 2, addr: jump.addr, config: untrusted},
+			{hostID: 1, addr: target.addr, config: testClientConfig(localTestTimeout)},
+		}, jumpFailure{seq: 1, hostID: 2, reason: JumpReasonHostKey}},
+		{"a refused connection", []sshHop{
+			{hostID: 2, addr: closedAddr, config: testClientConfig(localTestTimeout)},
+			{hostID: 1, addr: target.addr, config: testClientConfig(localTestTimeout)},
+		}, jumpFailure{seq: 1, hostID: 2, reason: JumpReasonDial}},
+		{"a Host that sends nothing", []sshHop{
+			{hostID: 2, addr: startSilentListener(t), config: short},
+			{hostID: 1, addr: target.addr, config: testClientConfig(localTestTimeout)},
+		}, jumpFailure{seq: 1, hostID: 2, reason: JumpReasonDial}},
+		{"a channel that does not open", []sshHop{
+			{hostID: 2, addr: jump.addr, config: testClientConfig(localTestTimeout)},
+			{hostID: 3, addr: closedAddr, config: testClientConfig(localTestTimeout)},
+			{hostID: 1, addr: target.addr, config: testClientConfig(localTestTimeout)},
+		}, jumpFailure{seq: 2, hostID: 3, reason: JumpReasonDial}},
+		{"the Host at the end", []sshHop{
+			{hostID: 2, addr: jump.addr, config: testClientConfig(localTestTimeout)},
+			{hostID: 1, addr: target.addr, config: wrong},
+		}, jumpFailure{}},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			client, _, err := dialSSHClient(tc.route)
+			if err == nil {
+				_ = client.Close()
+				t.Fatal("the route was connected over")
+			}
+
+			if got := jumpFailureOf(err); got != tc.want {
+				t.Fatalf("the error %v reads as %+v, want %+v", err, got, tc.want)
+			}
+		})
+	}
+
+	if got := jumpFailureOf(nil); got != (jumpFailure{}) {
+		t.Fatalf("no error reads as %+v, want nothing", got)
+	}
+}
+
+// TestASocksProxyNamesTheJumpHostThatRefusedTheLogin is the SOCKS5 proxy of a
+// Host reached through a Host that refuses the login. The proxy says which
+// step it was and why, and once the password of the Host passed through is put
+// right it connects and says nothing about the route any more.
+func TestASocksProxyNamesTheJumpHostThatRefusedTheLogin(t *testing.T) {
+	socksPort := freeDualStackPort(t)
+
+	f := newJumpFixture(t, func(target, jump *models.Host) {
+		target.SocksEnabled = true
+		target.SocksPort = socksPort
+		target.SocksBindScope = models.BindScopeLoopback
+		jump.Password = "wrong" // hook:allow
+	})
+
+	f.reconcile(t)
+
+	var state SocksState
+	waitFor(t, localTestTimeout, "the SOCKS5 proxy to be refused", func() bool {
+		var ok bool
+		state, ok = f.m.SocksStatus(1)
+		return ok && state.Status == localStatusError
+	})
+	if !strings.HasPrefix(state.LastError, f.jumpPrefix()+": ") {
+		t.Fatalf("the proxy says %q, want it to start with %q", state.LastError, f.jumpPrefix())
+	}
+	assertJumpFailure(t, "the SOCKS5 proxy", state.JumpSeq, state.JumpHostID, state.JumpReason,
+		jumpFailure{seq: 1, hostID: 2, reason: JumpReasonAuth})
+
+	err := f.db.Model(&models.Host{}).Where("id = ?", 2).Update("password", "pass").Error // hook:allow
+	if err != nil {
+		t.Fatalf("failed to put the password of the Host passed through right: %v", err)
+	}
+
+	result := f.reconcile(t)
+	if result.Restarted != 1 || result.Failed != 0 {
+		t.Fatalf("the pass after the password was put right reported %+v, want the proxy restarted", result)
+	}
+
+	state = waitSocksConnected(t, f.m, 1)
+	assertJumpFailure(t, "the connected SOCKS5 proxy", state.JumpSeq, state.JumpHostID, state.JumpReason,
+		jumpFailure{})
 }
 
 // v3160Fingerprints are the fingerprints v3.16.0 gives the settings below,

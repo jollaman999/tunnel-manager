@@ -390,6 +390,44 @@ func TestTheHostViewCarriesTheSocksStatus(t *testing.T) {
 	}
 }
 
+// TestTheHostViewCarriesWhereOnTheJumpRouteTheSocksProxyStopped pins
+// socks_jump_seq, socks_jump_host_id and socks_jump_reason: what the running
+// proxy reports, by name on the wire, and empty while none runs.
+func TestTheHostViewCarriesWhereOnTheJumpRouteTheSocksProxyStopped(t *testing.T) {
+	states := map[uint]tunnel.SocksState{
+		1: {Status: "error", LastError: "jump 2 (host #3 192.0.2.3:22): dial tcp 192.0.2.3:22: i/o timeout",
+			JumpSeq: 2, JumpHostID: 3, JumpReason: tunnel.JumpReasonDial},
+	}
+
+	tests := []struct {
+		host models.Host
+		want [3]interface{}
+	}{
+		{socksHost(1, true, 1080), [3]interface{}{float64(2), float64(3), tunnel.JumpReasonDial}},
+		{socksHost(2, true, 1081), [3]interface{}{float64(0), float64(0), ""}},
+	}
+
+	for _, tc := range tests {
+		encoded, err := json.Marshal(hostViewOf(tc.host, nil, states))
+		if err != nil {
+			t.Fatalf("failed to serialize the view of Host %d: %v", tc.host.ID, err)
+		}
+
+		var view map[string]interface{}
+
+		err = json.Unmarshal(encoded, &view)
+		if err != nil {
+			t.Fatalf("failed to read the view of Host %d back: %v", tc.host.ID, err)
+		}
+
+		got := [3]interface{}{view["socks_jump_seq"], view["socks_jump_host_id"], view["socks_jump_reason"]}
+		if got != tc.want {
+			t.Errorf("Host %d carries socks_jump_seq, socks_jump_host_id, socks_jump_reason = %v, want %v",
+				tc.host.ID, got, tc.want)
+		}
+	}
+}
+
 // TestALocalForwardOnTheSocksPortIsRefused is the other side of the proxy's
 // own check: a local forward on the port a proxy that is switched on opens,
 // whether its Host is enabled or not, is a conflict naming that Host.

@@ -574,6 +574,86 @@ func (e *JumpError) Unwrap() error {
 	return e.Err
 }
 
+// The reasons a connection is reported as having stopped at a Host of its jump
+// route, as models.Tunnel.JumpReason and the states of the local forwards and
+// the SOCKS5 proxies carry them. The screen says what to do about each in the
+// language it is drawn in, so what travels is one of these words rather than
+// the sentence the error was written in.
+//
+//	disabled - the Host passed through is disabled, and nothing was dialled
+//	dial     - the Host passed through was not reached: the TCP connection
+//	           or the channel to it did not open, or its handshake did not
+//	           finish in time
+//	auth     - the Host passed through refused the login
+//	host_key - the key the Host passed through presented is not the one it
+//	           is trusted on, or it is trusted on none
+//	route    - the route is wrong as it is stored: it names a Host that is
+//	           not there, the Host itself, a Host twice, or more than
+//	           MaxJumps of them
+const (
+	JumpReasonDisabled = "disabled"
+	JumpReasonDial     = "dial"
+	JumpReasonAuth     = "auth"
+	JumpReasonHostKey  = "host_key"
+	JumpReasonRoute    = "route"
+)
+
+// Reason is which of the reasons above the step failed for. A host key refusal
+// and a refused login are told apart the way the Host at the end of the route
+// is told apart on them, and every other failure of a step is one of reaching
+// it, since that is what is left once it answered and was neither.
+func (e *JumpError) Reason() string {
+	switch {
+	case hostKeyRefusal(e.Err) != nil:
+		return JumpReasonHostKey
+	case isAuthFailure(e.Err):
+		return JumpReasonAuth
+	default:
+		return JumpReasonDial
+	}
+}
+
+// jumpFailure is where on its jump route a connection stopped and why, as a
+// tunnel row and the states of the local forwards and the SOCKS5 proxies
+// report it. The zero value is a connection that did not stop on its route: one
+// that stands, or one that failed at the Host it is for.
+type jumpFailure struct {
+	seq    int
+	hostID uint
+	reason string
+}
+
+// jumpFailureOf is the jumpFailure of a connection that failed with err.
+func jumpFailureOf(err error) jumpFailure {
+	var jumpErr *JumpError
+	if !errors.As(err, &jumpErr) {
+		return jumpFailure{}
+	}
+
+	return jumpFailure{seq: jumpErr.Seq, hostID: jumpErr.HostID, reason: jumpErr.Reason()}
+}
+
+// setOn writes the failure onto a tunnel row.
+func (j jumpFailure) setOn(tunnel *models.Tunnel) {
+	tunnel.JumpSeq = j.seq
+	tunnel.JumpHostID = j.hostID
+	tunnel.JumpReason = j.reason
+}
+
+// setOnLocalForward writes the failure onto what a local forward reports.
+func (j jumpFailure) setOnLocalForward(state *LocalForwardState) {
+	state.JumpSeq = j.seq
+	state.JumpHostID = j.hostID
+	state.JumpReason = j.reason
+}
+
+// setOnSocks writes the failure onto what a SOCKS5 proxy reports.
+func (j jumpFailure) setOnSocks(state *SocksState) {
+	state.JumpSeq = j.seq
+	state.JumpHostID = j.hostID
+	state.JumpReason = j.reason
+}
+
 // dialSSH connects to the SSH server and hands back the net.Conn the client was
 // built on, which ssh.Dial does not expose. It does what ssh.Dial does
 // (ssh/client.go, Dial): dial with the timeout from the configuration, run the
@@ -810,6 +890,7 @@ func (t *SSHTunnel) establishConnection(m *Manager, tunnel *models.Tunnel) error
 		t.tunnelMu.Lock()
 		tunnel.Status = connectFailureStatus(err)
 		tunnel.LastError = err.Error()
+		jumpFailureOf(err).setOn(tunnel)
 		t.saveTunnelStatus(m, tunnel)
 		t.tunnelMu.Unlock()
 
@@ -833,6 +914,7 @@ func (t *SSHTunnel) establishConnection(m *Manager, tunnel *models.Tunnel) error
 		tunnel.Status = "error"
 		tunnel.LastError = err.Error()
 		tunnel.ErrorKind = listenErrorKind(err)
+		jumpFailure{}.setOn(tunnel)
 		// Nothing of the pair is open, so what the last connection opened is
 		// no longer true of this one. It goes back to the empty value rather
 		// than staying at what it was, or a tunnel that is now failing would
@@ -867,6 +949,7 @@ func (t *SSHTunnel) establishConnection(m *Manager, tunnel *models.Tunnel) error
 	tunnel.RetryCount = 0
 	tunnel.LastError = ""
 	tunnel.ErrorKind = ""
+	jumpFailure{}.setOn(tunnel)
 	tunnel.LastConnectedAt = time.Now()
 	tunnel.ServerBanner = string(client.ServerVersion())
 	// Which halves of the pair opened is a fact about this connection for the
@@ -1166,6 +1249,7 @@ func (t *SSHTunnel) Start(m *Manager, tunnel *models.Tunnel) {
 		tunnel.Status = t.refusal.status
 		tunnel.LastError = t.refusal.reason
 		tunnel.ErrorKind = ""
+		t.refusal.jump.setOn(tunnel)
 		t.saveTunnelStatus(m, tunnel)
 		t.tunnelMu.Unlock()
 

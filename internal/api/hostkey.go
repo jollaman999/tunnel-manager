@@ -58,9 +58,14 @@ type hostView struct {
 	// SocksStatus is "off" while the proxy is not asked for, "disabled" while
 	// it is and the Host is disabled, "stopped" while it is asked for and none
 	// runs, and what the running proxy reports otherwise. SocksLastError is
-	// what the running proxy reports, and empty while none runs.
-	SocksStatus    string `json:"socks_status"`
-	SocksLastError string `json:"socks_last_error"`
+	// what the running proxy reports, and empty while none runs, and so are
+	// SocksJumpSeq, SocksJumpHostID and SocksJumpReason, which say where on the
+	// jump route the proxy stopped and why, as models.Tunnel carries them.
+	SocksStatus     string `json:"socks_status"`
+	SocksLastError  string `json:"socks_last_error"`
+	SocksJumpSeq    int    `json:"socks_jump_seq"`
+	SocksJumpHostID uint   `json:"socks_jump_host_id"`
+	SocksJumpReason string `json:"socks_jump_reason"`
 	// JumpHostIDs is the jump route of the Host in the order it goes, and an
 	// empty list for a Host reached directly.
 	JumpHostIDs []uint    `json:"jump_host_ids"`
@@ -117,6 +122,9 @@ func hostViewOf(host models.Host, route []uint, socks map[uint]tunnel.SocksState
 	default:
 		view.SocksStatus = state.Status
 		view.SocksLastError = state.LastError
+		view.SocksJumpSeq = state.JumpSeq
+		view.SocksJumpHostID = state.JumpHostID
+		view.SocksJumpReason = state.JumpReason
 	}
 
 	return view

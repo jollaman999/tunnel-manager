@@ -43,9 +43,10 @@ const (
 // embedded so that a service port row carries exactly the fields it always
 // carried, down to a column added to models.Tunnel later, and a local forward
 // fills the few of them that mean something for it: status, last_error,
-// retry_count and last_connected_at from what the forward reports, and server, local and remote from where it listens and what it
-// reaches. The rest stay at their zero values, because nothing measures those
-// for a local forward.
+// retry_count, last_connected_at, jump_seq, jump_host_id and jump_reason from
+// what the forward reports, and server, local and remote from where it listens
+// and what it reaches. The rest stay at their zero values, because nothing
+// measures those for a local forward.
 //
 // local and remote are the mirror of what they hold on a tunnel row. On a
 // tunnel, local is the port opened on the Host and remote the service reached
@@ -276,6 +277,9 @@ func localForwardStatusRow(lf models.LocalForward, host *models.Host,
 				LastError:       view.LastError,
 				RetryCount:      view.RetryCount,
 				LastConnectedAt: view.LastConnectedAt,
+				JumpSeq:         view.JumpSeq,
+				JumpHostID:      view.JumpHostID,
+				JumpReason:      view.JumpReason,
 				Server:          server,
 				Local:           listenV4,
 				Remote:          target,

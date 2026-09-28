@@ -61,6 +61,11 @@ type SocksState struct {
 	LastError       string    `json:"last_error"`
 	RetryCount      int       `json:"retry_count"`
 	LastConnectedAt time.Time `json:"last_connected_at"`
+	// JumpSeq, JumpHostID and JumpReason are where on the jump route of the
+	// Host the connection stopped and why, as models.Tunnel carries them.
+	JumpSeq    int    `json:"jump_seq"`
+	JumpHostID uint   `json:"jump_host_id"`
+	JumpReason string `json:"jump_reason"`
 }
 
 // ParseAllowedSources reads models.Host.SocksAllowedSources: addresses and
@@ -448,6 +453,7 @@ func (p *socksTunnel) establish() error {
 		p.setState(func(state *SocksState) {
 			state.Status = connectFailureStatus(err)
 			state.LastError = err.Error()
+			jumpFailureOf(err).setOnSocks(state)
 		})
 
 		return fmt.Errorf("failed to establish SSH connection: %w", err)
@@ -463,6 +469,7 @@ func (p *socksTunnel) establish() error {
 		p.setState(func(state *SocksState) {
 			state.Status = localStatusError
 			state.LastError = err.Error()
+			jumpFailure{}.setOnSocks(state)
 		})
 
 		return fmt.Errorf("failed to open the proxy port: %w", err)
@@ -491,6 +498,7 @@ func (p *socksTunnel) establish() error {
 		state.Status = localStatusConnected
 		state.RetryCount = 0
 		state.LastError = ""
+		jumpFailure{}.setOnSocks(state)
 		state.LastConnectedAt = time.Now()
 	})
 
@@ -690,6 +698,7 @@ func (p *socksTunnel) Start() {
 		p.setState(func(state *SocksState) {
 			state.Status = p.refusal.status
 			state.LastError = p.refusal.reason
+			p.refusal.jump.setOnSocks(state)
 		})
 
 		return

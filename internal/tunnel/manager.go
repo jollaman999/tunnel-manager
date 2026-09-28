@@ -723,9 +723,13 @@ func hostServer(host *models.Host) string {
 // the reason what it was for is left in. It is decided before anything is
 // dialled, from what is stored, so that no attempt is made that could only
 // fail or that would connect to a Host nobody is to connect to.
+//
+// jump is the same refusal as the reason a connection stopped on its route,
+// naming the step and the Host where the refusal is about one of them.
 type routeRefusal struct {
 	status string
 	reason string
+	jump   jumpFailure
 }
 
 func (r *routeRefusal) Error() string {
@@ -748,24 +752,27 @@ func checkJumpRoute(host *models.Host, hops []jumpHop) *routeRefusal {
 	if len(hops) > MaxJumps {
 		return &routeRefusal{status: localStatusError, reason: fmt.Sprintf(
 			"the jump route of this Host passes through %d Hosts, and a route may pass through %d at most",
-			len(hops), MaxJumps)}
+			len(hops), MaxJumps), jump: jumpFailure{reason: JumpReasonRoute}}
 	}
 
 	seen := make(map[uint]int, len(hops))
 	for i, hop := range hops {
 		if hop.host == nil {
 			return &routeRefusal{status: localStatusError, reason: fmt.Sprintf(
-				"jump %d names host #%d, which is not registered", i+1, hop.id)}
+				"jump %d names host #%d, which is not registered", i+1, hop.id),
+				jump: jumpFailure{seq: i + 1, hostID: hop.id, reason: JumpReasonRoute}}
 		}
 
 		if hop.id == host.ID {
 			return &routeRefusal{status: localStatusError, reason: fmt.Sprintf(
-				"jump %d (host #%d %s) is this Host itself", i+1, hop.id, hostServer(hop.host))}
+				"jump %d (host #%d %s) is this Host itself", i+1, hop.id, hostServer(hop.host)),
+				jump: jumpFailure{seq: i + 1, hostID: hop.id, reason: JumpReasonRoute}}
 		}
 
 		if first, ok := seen[hop.id]; ok {
 			return &routeRefusal{status: localStatusError, reason: fmt.Sprintf(
-				"jump %d (host #%d %s) is jump %d as well", i+1, hop.id, hostServer(hop.host), first)}
+				"jump %d (host #%d %s) is jump %d as well", i+1, hop.id, hostServer(hop.host), first),
+				jump: jumpFailure{seq: i + 1, hostID: hop.id, reason: JumpReasonRoute}}
 		}
 		seen[hop.id] = i + 1
 	}
@@ -774,7 +781,8 @@ func checkJumpRoute(host *models.Host, hops []jumpHop) *routeRefusal {
 		if !hop.host.Enabled {
 			return &routeRefusal{status: StatusJumpHostDisabled, reason: fmt.Sprintf(
 				"jump %d (host #%d %s) is disabled, so the route to this Host is not dialled",
-				i+1, hop.id, hostServer(hop.host))}
+				i+1, hop.id, hostServer(hop.host)),
+				jump: jumpFailure{seq: i + 1, hostID: hop.id, reason: JumpReasonDisabled}}
 		}
 	}
 

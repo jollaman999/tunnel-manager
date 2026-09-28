@@ -184,10 +184,10 @@ func (oldTunnel) TableName() string {
 	return "tunnels"
 }
 
-// TestTunnelMigrationKeepsTheRowsThatWereThere pins that the two readings added
-// to Tunnel reach an installation that has rows already. AutoMigrate adds a
-// column to a table that is in use, and a column that is added NOT NULL with no
-// default is what breaks the rows that are there, so neither of the two carries
+// TestTunnelMigrationKeepsTheRowsThatWereThere pins that the readings added to
+// Tunnel reach an installation that has rows already. AutoMigrate adds a column
+// to a table that is in use, and a column that is added NOT NULL with no
+// default is what breaks the rows that are there, so none of them carries
 // one. What a row written before them holds is nothing, which is the same thing
 // the screen and the API take for a reading that was never made.
 func TestTunnelMigrationKeepsTheRowsThatWereThere(t *testing.T) {
@@ -239,7 +239,13 @@ func TestTunnelMigrationKeepsTheRowsThatWereThere(t *testing.T) {
 		t.Fatalf("a row written before the banner carries one: banner=%q", after.ServerBanner)
 	}
 
+	if after.JumpSeq != 0 || after.JumpHostID != 0 || after.JumpReason != "" {
+		t.Fatalf("a row written before the jump route carries a step of one: seq=%d host=%d reason=%q",
+			after.JumpSeq, after.JumpHostID, after.JumpReason)
+	}
+
 	after.ServerBanner = "SSH-2.0-OpenSSH_10.5p1"
+	after.JumpSeq, after.JumpHostID, after.JumpReason = 2, 7, "auth"
 
 	err = db.Save(&after).Error
 	if err != nil {
@@ -254,6 +260,11 @@ func TestTunnelMigrationKeepsTheRowsThatWereThere(t *testing.T) {
 
 	if stored.ServerBanner != after.ServerBanner {
 		t.Fatalf("the banner did not survive being stored: banner=%q", stored.ServerBanner)
+	}
+
+	if stored.JumpSeq != 2 || stored.JumpHostID != 7 || stored.JumpReason != "auth" {
+		t.Fatalf("the step of the route did not survive being stored: seq=%d host=%d reason=%q",
+			stored.JumpSeq, stored.JumpHostID, stored.JumpReason)
 	}
 }
 
@@ -448,15 +459,18 @@ func TestABindScopeThatIsNeitherIsRefused(t *testing.T) {
 	}
 }
 
-// TestTunnelSerializesTheBanner pins the name the API answers with. The status
-// screen reads it off the tunnel rows of GET /api/status, so a rename here is a
-// screen that shows nothing.
+// TestTunnelSerializesTheBanner pins the names the API answers the banner and
+// the step of the jump route with. The status screen reads them off the tunnel
+// rows of GET /api/status, so a rename here is a screen that shows nothing.
 func TestTunnelSerializesTheBanner(t *testing.T) {
 	encoded, err := json.Marshal(Tunnel{
 		HostID:       1,
 		SPID:         2,
 		Status:       "connected",
 		ServerBanner: "SSH-2.0-OpenSSH_10.5p1 Ubuntu-1ubuntu2",
+		JumpSeq:      1,
+		JumpHostID:   3,
+		JumpReason:   "disabled",
 	})
 	if err != nil {
 		t.Fatalf("failed to serialize: %v", err)
@@ -466,6 +480,9 @@ func TestTunnelSerializesTheBanner(t *testing.T) {
 
 	for _, want := range []string{
 		`"server_banner":"SSH-2.0-OpenSSH_10.5p1 Ubuntu-1ubuntu2"`,
+		`"jump_seq":1`,
+		`"jump_host_id":3`,
+		`"jump_reason":"disabled"`,
 	} {
 		if !strings.Contains(body, want) {
 			t.Fatalf("the serialized Tunnel is missing %s: %s", want, body)

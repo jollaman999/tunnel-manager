@@ -40,6 +40,12 @@ type localForwardView struct {
 	LastError       string    `json:"last_error"`
 	RetryCount      int       `json:"retry_count"`
 	LastConnectedAt time.Time `json:"last_connected_at"`
+	// JumpSeq, JumpHostID and JumpReason are where on the jump route of the
+	// Host the running forward stopped and why, as models.Tunnel carries them,
+	// and empty while none runs.
+	JumpSeq    int    `json:"jump_seq"`
+	JumpHostID uint   `json:"jump_host_id"`
+	JumpReason string `json:"jump_reason"`
 	// ForwardReach is whether the target answered a connection dialled from
 	// the Host over the connection the forward stands on: "reachable",
 	// "unreachable", or "unknown" where it has not been measured yet. It is
@@ -74,6 +80,9 @@ func localForwardViewOf(lf models.LocalForward, hostEnabled bool,
 		view.LastError = state.LastError
 		view.RetryCount = state.RetryCount
 		view.LastConnectedAt = state.LastConnectedAt
+		view.JumpSeq = state.JumpSeq
+		view.JumpHostID = state.JumpHostID
+		view.JumpReason = state.JumpReason
 		view.ForwardReach = state.ForwardReach
 	}
 

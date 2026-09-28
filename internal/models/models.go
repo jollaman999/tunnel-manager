@@ -279,6 +279,23 @@ type Tunnel struct {
 	// without giving a reason, and the several settings that make it refuse
 	// look identical from here, so none of them may be reported as the cause.
 	ErrorKind string `json:"error_kind"`
+	// JumpSeq, JumpHostID and JumpReason say where on the jump route of the
+	// Host the connection stopped and why, for a failure that is about a Host
+	// passed through rather than the Host itself: the step counted from 1 the
+	// way HostJump.Seq is, the Host at that step, and one of "disabled",
+	// "dial", "auth", "host_key" and "route" (tunnel.JumpReasonDisabled and
+	// the rest). All three are empty on a row that is not in error and on a
+	// failure that is not about the route, and a "route" refusal leaves the
+	// step and the Host empty when it is about the whole of the route, one
+	// longer than it may be.
+	//
+	// They are here for the reason ErrorKind is: LastError names the step in a
+	// sentence, and the screen says what to do about it in its own words.
+	//
+	// None of them carries "not null", for the reason ServerBanner does not.
+	JumpSeq    int    `json:"jump_seq"`
+	JumpHostID uint   `json:"jump_host_id"`
+	JumpReason string `json:"jump_reason"`
 	// OpenReach says which of the two addresses this assignment asked for were
 	// actually opened.
 	//   "both"  - both went up

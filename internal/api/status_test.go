@@ -844,3 +844,53 @@ func TestLocalForwardStatusCountsCountEachStatus(t *testing.T) {
 			localForwardStatusCounts(nil))
 	}
 }
+
+// TestGetStatusCarriesWhereOnTheJumpRouteARowStopped pins jump_seq,
+// jump_host_id and jump_reason on both sorts of row: a tunnel row by what is
+// written on it and a local forward by what it reports. A row that did not
+// stop on its route carries them empty, and they are there by name either way,
+// which is what the screen reads its note under the error off.
+func TestGetStatusCarriesWhereOnTheJumpRouteARowStopped(t *testing.T) {
+	hosts := []models.Host{statusHost(1, true), statusHost(2, true), statusHost(3, true)}
+	sps := []models.ServicePort{statusServicePort(1), statusServicePort(2)}
+
+	behind := statusTunnel(1, 1, tunnel.StatusJumpHostDisabled)
+	behind.JumpSeq, behind.JumpHostID, behind.JumpReason = 1, 3, tunnel.JumpReasonDisabled
+
+	tunnels := []models.Tunnel{behind, statusTunnel(1, 2, "connected")}
+
+	states := map[tunnel.LocalForwardKey]tunnel.LocalForwardState{
+		{HostID: 2, Number: 1}: {Status: "error", JumpSeq: 2, JumpHostID: 3, JumpReason: tunnel.JumpReasonAuth},
+	}
+
+	db := newRowsDB(t, hosts, sps, tunnels)
+	storeLocalForwards(t, db, []models.LocalForward{
+		statusLocalForward(1, 2, 19000, models.BindScopeWildcard, true),
+	})
+
+	rows, _ := statusRowsWithStates(t, db, "/api/status", states)
+
+	want := map[string][3]interface{}{
+		"service_port host=1 sp=1":                 {float64(1), float64(3), tunnel.JumpReasonDisabled},
+		"service_port host=1 sp=2":                 {float64(0), float64(0), ""},
+		"local_forward host=2 local=0.0.0.0:19000": {float64(2), float64(3), tunnel.JumpReasonAuth},
+	}
+
+	if len(rows) != len(want) {
+		t.Fatalf("the answer carries %d rows, want %d: %v", len(rows), len(want), rows)
+	}
+
+	for _, row := range rows {
+		name := rowName(t, row)
+
+		expected, ok := want[name]
+		if !ok {
+			t.Fatalf("the answer carries %s, which is not stored", name)
+		}
+
+		got := [3]interface{}{row["jump_seq"], row["jump_host_id"], row["jump_reason"]}
+		if got != expected {
+			t.Errorf("%s carries jump_seq, jump_host_id, jump_reason = %v, want %v", name, got, expected)
+		}
+	}
+}

@@ -3829,6 +3829,15 @@
                     "description": "The SOCKS5 proxy of the Host as it is stored. SocksBindScope goes out as\na word every time, for the reason localForwardViewOf gives.",
                     "type": "boolean"
                 },
+                "socks_jump_host_id": {
+                    "type": "integer"
+                },
+                "socks_jump_reason": {
+                    "type": "string"
+                },
+                "socks_jump_seq": {
+                    "type": "integer"
+                },
                 "socks_last_error": {
                     "type": "string"
                 },
@@ -3836,7 +3845,7 @@
                     "type": "integer"
                 },
                 "socks_status": {
-                    "description": "SocksStatus is \"off\" while the proxy is not asked for, \"disabled\" while\nit is and the Host is disabled, \"stopped\" while it is asked for and none\nruns, and what the running proxy reports otherwise. SocksLastError is\nwhat the running proxy reports, and empty while none runs.",
+                    "description": "SocksStatus is \"off\" while the proxy is not asked for, \"disabled\" while\nit is and the Host is disabled, \"stopped\" while it is asked for and none\nruns, and what the running proxy reports otherwise. SocksLastError is\nwhat the running proxy reports, and empty while none runs, and so are\nSocksJumpSeq, SocksJumpHostID and SocksJumpReason, which say where on the\njump route the proxy stopped and why, as models.Tunnel carries them.",
                     "type": "string"
                 },
                 "updated_at": {
@@ -3976,6 +3985,16 @@
                     "type": "string"
                 },
                 "host_id": {
+                    "type": "integer"
+                },
+                "jump_host_id": {
+                    "type": "integer"
+                },
+                "jump_reason": {
+                    "type": "string"
+                },
+                "jump_seq": {
+                    "description": "JumpSeq, JumpHostID and JumpReason are where on the jump route of the\nHost the running forward stopped and why, as models.Tunnel carries them,\nand empty while none runs.",
                     "type": "integer"
                 },
                 "last_connected_at": {

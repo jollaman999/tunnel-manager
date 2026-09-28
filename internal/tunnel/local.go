@@ -50,6 +50,11 @@ type LocalForwardState struct {
 	LastError       string    `json:"last_error"`
 	RetryCount      int       `json:"retry_count"`
 	LastConnectedAt time.Time `json:"last_connected_at"`
+	// JumpSeq, JumpHostID and JumpReason are where on the jump route of the
+	// Host the connection stopped and why, as models.Tunnel carries them.
+	JumpSeq    int    `json:"jump_seq"`
+	JumpHostID uint   `json:"jump_host_id"`
+	JumpReason string `json:"jump_reason"`
 	// ForwardReach is what the reachability probe measured of the target over
 	// the connection that stands, in the words a tunnel writes to
 	// models.Tunnel.ForwardReach. It is "unknown" from the moment a connection
@@ -248,6 +253,7 @@ func (f *localTunnel) establish() error {
 		f.setState(func(state *LocalForwardState) {
 			state.Status = connectFailureStatus(err)
 			state.LastError = err.Error()
+			jumpFailureOf(err).setOnLocalForward(state)
 		})
 
 		return fmt.Errorf("failed to establish SSH connection: %w", err)
@@ -263,6 +269,7 @@ func (f *localTunnel) establish() error {
 		f.setState(func(state *LocalForwardState) {
 			state.Status = localStatusError
 			state.LastError = err.Error()
+			jumpFailure{}.setOnLocalForward(state)
 		})
 
 		return fmt.Errorf("failed to open the local port: %w", err)
@@ -293,6 +300,7 @@ func (f *localTunnel) establish() error {
 		state.Status = localStatusConnected
 		state.RetryCount = 0
 		state.LastError = ""
+		jumpFailure{}.setOnLocalForward(state)
 		state.LastConnectedAt = time.Now()
 		// What the last connection measured says nothing about this one, which
 		// may go to a Host that was reconfigured or to a target that came back
@@ -640,6 +648,7 @@ func (f *localTunnel) Start() {
 		f.setState(func(state *LocalForwardState) {
 			state.Status = f.refusal.status
 			state.LastError = f.refusal.reason
+			f.refusal.jump.setOnLocalForward(state)
 		})
 
 		return

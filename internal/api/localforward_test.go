@@ -336,6 +336,63 @@ func TestListHostLocalForwardsCarriesTheStatus(t *testing.T) {
 	}
 }
 
+// TestListHostLocalForwardsCarriesWhereOnTheJumpRouteItStopped pins that
+// jump_seq, jump_host_id and jump_reason are what the running forward reports,
+// and that a forward that did not stop on its route carries them by name with
+// nothing in them.
+func TestListHostLocalForwardsCarriesWhereOnTheJumpRouteItStopped(t *testing.T) {
+	db := newLocalForwardDB(t,
+		[]models.Host{statusHost(1, true)},
+		[]models.LocalForward{
+			storedLocalForward(1, 1, 15001),
+			storedLocalForward(2, 1, 15002),
+		})
+
+	manager := &wakeRecorder{tx: &txConnPool{}, localStates: map[tunnel.LocalForwardKey]tunnel.LocalForwardState{
+		{HostID: 1, Number: 1}: {Status: tunnel.StatusHostKeyUnapproved, LastError: "jump 1 (host #2 192.0.2.2:22): refused",
+			JumpSeq: 1, JumpHostID: 2, JumpReason: tunnel.JumpReasonHostKey},
+		{HostID: 1, Number: 2}: {Status: "connected"},
+	}}
+	h := NewHandler(db, manager, zap.NewNop(), newTestCipher(t))
+
+	c, rec := localForwardRequest(t, http.MethodGet, "/api/host/1/local-forward", "", "1")
+
+	err := h.ListHostLocalForwards(c)
+	if err != nil {
+		t.Fatalf("ListHostLocalForwards returned error: %v", err)
+	}
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d, body: %s", rec.Code, http.StatusOK, rec.Body.String())
+	}
+
+	var answer struct {
+		Data struct {
+			Items []map[string]interface{} `json:"items"`
+		} `json:"data"`
+	}
+
+	err = json.Unmarshal(rec.Body.Bytes(), &answer)
+	if err != nil {
+		t.Fatalf("failed to read the answer: %v, body: %s", err, rec.Body.String())
+	}
+
+	want := [][3]interface{}{
+		{float64(1), float64(2), tunnel.JumpReasonHostKey},
+		{float64(0), float64(0), ""},
+	}
+
+	if len(answer.Data.Items) != len(want) {
+		t.Fatalf("the answer carries %d rows, want %d, body: %s", len(answer.Data.Items), len(want), rec.Body.String())
+	}
+
+	for i, item := range answer.Data.Items {
+		got := [3]interface{}{item["jump_seq"], item["jump_host_id"], item["jump_reason"]}
+		if got != want[i] {
+			t.Errorf("row %d carries jump_seq, jump_host_id, jump_reason = %v, want %v", i+1, got, want[i])
+		}
+	}
+}
+
 // TestListHostLocalForwardsAnswersEmptyAsAnArray pins that a Host with no
 // forwards is answered with an empty array of items and not a null.
 func TestListHostLocalForwardsAnswersEmptyAsAnArray(t *testing.T) {
