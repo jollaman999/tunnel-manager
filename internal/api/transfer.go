@@ -534,13 +534,13 @@ type importRequest struct {
 // DryRun asks for the file to be opened and checked and nothing written, so
 // that a screen can say what the import would replace before it is made.
 //
-// Overwrite is what the import that added and skipped rows was told whether to
-// replace the rows it met by. It is read only to refuse a body that carries it.
+// overwrite, what the import that added and skipped rows was told whether to
+// replace the rows it met by, has no field here. ImportTunnels refuses a body
+// that carries the key before the body is decoded, whatever its value is.
 type importTunnelsRequest struct {
 	importRequest
 	AccountPassword string `json:"account_password"`
 	DryRun          bool   `json:"dry_run"`
-	Overwrite       *bool  `json:"overwrite,omitempty" swaggerignore:"true"`
 }
 
 // exportedTunnels is the answer to an export of the tunnel configuration. The
@@ -1386,6 +1386,15 @@ func (h *TransferHandler) ExportTunnels(c echo.Context) error {
 // @Failure  409  {object}  api.errorBody  "A local forward or a SOCKS5 proxy of the file opens the port this server listens on. Nothing was stored"
 // @Router       /import/tunnels [post]
 func (h *TransferHandler) ImportTunnels(c echo.Context) error {
+	overwrite, refused := bodyFieldKey(c, "overwrite")
+	if refused != nil {
+		return refused.answer(c)
+	}
+
+	if overwrite != "" {
+		return failure(c, http.StatusBadRequest, errImportOverwriteRemoved)
+	}
+
 	var req importTunnelsRequest
 
 	err := c.Bind(&req)
@@ -1393,11 +1402,7 @@ func (h *TransferHandler) ImportTunnels(c echo.Context) error {
 		return unreadableBody(err).answer(c)
 	}
 
-	if req.Overwrite != nil {
-		return failure(c, http.StatusBadRequest, errImportOverwriteRemoved)
-	}
-
-	refused := h.accountPasswordRefused(c, req.AccountPassword, true, transferKindTunnels)
+	refused = h.accountPasswordRefused(c, req.AccountPassword, true, transferKindTunnels)
 	if refused != nil {
 		return refused.answer(c)
 	}

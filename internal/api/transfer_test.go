@@ -4274,7 +4274,8 @@ func TestAFileWithoutIDsIsNumberedInItsOrder(t *testing.T) {
 // TestABodyThatCarriesOverwriteIsRefused is the field of the import that added
 // and skipped rows. A screen or a script written for that import sends it, and
 // what it would get now is its whole configuration replaced, so it is told
-// instead, whatever the field says, and nothing is read or written.
+// instead, whatever the field says, null included, and nothing is read or
+// written. A body without the key is imported.
 func TestABodyThatCarriesOverwriteIsRefused(t *testing.T) {
 	source := testRoute(t)
 	target := newTransferInstall(t)
@@ -4284,26 +4285,42 @@ func TestABodyThatCarriesOverwriteIsRefused(t *testing.T) {
 	before := target.configuration(t)
 	file := source.exportTunnels(t, testExportPassword)
 
-	for _, overwrite := range []bool{false, true} {
-		rec := target.importTunnelsWith(t, map[string]interface{}{
-			"password":         testExportPassword,
-			"account_password": testPassword,
-			"file":             file,
-			"overwrite":        overwrite,
-		})
-		if rec.Code != http.StatusBadRequest {
-			t.Fatalf("overwrite %v: the import answered %d, want %d: %s", overwrite, rec.Code,
-				http.StatusBadRequest, rec.Body.String())
-		}
+	for _, dryRun := range []bool{false, true} {
+		for _, overwrite := range []interface{}{nil, false, true} {
+			rec := target.importTunnelsWith(t, map[string]interface{}{
+				"password":         testExportPassword,
+				"account_password": testPassword,
+				"file":             file,
+				"dry_run":          dryRun,
+				"overwrite":        overwrite,
+			})
+			if rec.Code != http.StatusBadRequest {
+				t.Fatalf("dry_run %v, overwrite %v: the import answered %d, want %d: %s", dryRun, overwrite,
+					rec.Code, http.StatusBadRequest, rec.Body.String())
+			}
 
-		if errorCodeOf(t, rec) != errImportOverwriteRemoved {
-			t.Errorf("overwrite %v: the import was refused under %s, want %s", overwrite,
-				errorCodeOf(t, rec), errImportOverwriteRemoved)
+			if errorCodeOf(t, rec) != errImportOverwriteRemoved {
+				t.Errorf("dry_run %v, overwrite %v: the import was refused under %s, want %s", dryRun, overwrite,
+					errorCodeOf(t, rec), errImportOverwriteRemoved)
+			}
 		}
 	}
 
 	if !reflect.DeepEqual(target.configuration(t), before) || target.manager.count() != 0 {
 		t.Fatalf("a refused import changed what is stored or woke the loop")
+	}
+
+	rec := target.importTunnelsWith(t, map[string]interface{}{
+		"password":         testExportPassword,
+		"account_password": testPassword,
+		"file":             file,
+	})
+	if rec.Code != http.StatusOK {
+		t.Fatalf("a body without overwrite answered %d, want %d: %s", rec.Code, http.StatusOK, rec.Body.String())
+	}
+
+	if reflect.DeepEqual(target.configuration(t), before) {
+		t.Fatalf("a body without overwrite left the configuration as it was")
 	}
 }
 
