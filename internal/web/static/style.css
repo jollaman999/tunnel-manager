@@ -1074,6 +1074,13 @@ button[type="submit"].danger:active {
   border-color: var(--danger-active);
 }
 
+button[type="submit"]:disabled {
+  color: var(--text-disabled);
+  background: var(--bg-sunken);
+  border-color: var(--border);
+  box-shadow: none;
+}
+
 /* The switch and its Save are one thing, and the certificate below them is
    another. Sitting against each other they read as one, and the Save looks as
    if it stores the certificate as well. The gap is 1.25rem, which is what a
