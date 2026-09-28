@@ -1186,6 +1186,7 @@ button.copy {
 .table-scroll {
   overflow-x: auto;
   -webkit-overflow-scrolling: touch;
+  container-type: inline-size;
 }
 
 table {
@@ -1236,6 +1237,13 @@ td.num {
 tbody tr.under > td {
   padding-top: 0;
   border-bottom: 1px solid var(--border-soft);
+}
+
+tbody tr.under > td > * {
+  position: sticky;
+  inset-inline-start: 0.6rem;
+  box-sizing: border-box;
+  max-width: calc(100cqi - 1.2rem);
 }
 
 .last-error {
