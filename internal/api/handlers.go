@@ -6,6 +6,7 @@ import (
 	"errors"
 	"io"
 	"net/http"
+	"net/netip"
 	"sort"
 	"strconv"
 	"strings"
@@ -396,30 +397,54 @@ func nextHostID(tx *gorm.DB) (uint, error) {
 	return last.ID + 1, nil
 }
 
+// hostAddressKey is the address of a Host as two Hosts are compared on: what is
+// stored and shown stays as it was typed. An IP address is written the one way
+// netip writes it, so that 2001:0db8:0::1 and 2001:DB8::1 are the same, and an
+// IPv4 address in the IPv4-mapped IPv6 form is the IPv4 address, since that is
+// what a connection to it is made to. A zone is kept as it is. Anything else is
+// a host name, which is read without regard to case, and a single trailing dot
+// is dropped, since it only says the name is fully qualified.
+func hostAddressKey(address string) string {
+	ip, err := netip.ParseAddr(address)
+	if err == nil {
+		return ip.Unmap().String()
+	}
+
+	return strings.ToLower(strings.TrimSuffix(address, "."))
+}
+
 // hostAddressRefused refuses the address and SSH port a Host is being given
 // when another Host is registered on the two already. self is the Host being
-// updated, and zero for one being registered. The two columns are one unique
-// index, so what this turns into a refusal naming the Host that holds them is
-// what the write would otherwise fail on as a database error.
+// updated, and zero for one being registered. The addresses are compared as
+// hostAddressKey writes them, which the unique index of the two columns does
+// not, so every Host on the port is read, in one read, and compared here. What
+// this turns into a refusal naming the Host that holds them is what the write
+// would otherwise either fail on as a database error or store twice.
 //
 // A non-nil error is a failed read, as it is for socksPortRefused.
 func hostAddressRefused(tx *gorm.DB, self uint, address string, port int) (*refusal, error) {
-	var holders []models.Host
+	var onPort []models.Host
 
-	err := tx.Select("id").Where("address = ? AND port = ? AND id <> ?", address, port, self).
-		Limit(1).Find(&holders).Error
+	err := tx.Select("id", "address").Where("port = ? AND id <> ?", port, self).
+		Order("id").Find(&onPort).Error
 	if err != nil {
 		return nil, err
 	}
-	if len(holders) == 0 {
-		return nil, nil
+
+	key := hostAddressKey(address)
+	for _, holder := range onPort {
+		if hostAddressKey(holder.Address) != key {
+			continue
+		}
+
+		return refuse(http.StatusConflict, errHostAddressTaken, errorArgs{
+			"address": address,
+			"port":    strconv.Itoa(port),
+			"host_id": strconv.FormatUint(uint64(holder.ID), 10),
+		}), nil
 	}
 
-	return refuse(http.StatusConflict, errHostAddressTaken, errorArgs{
-		"address": address,
-		"port":    strconv.Itoa(port),
-		"host_id": strconv.FormatUint(uint64(holders[0].ID), 10),
-	}), nil
+	return nil, nil
 }
 
 // hostWriteRefused turns a write of a Host that failed on the unique index of
@@ -455,7 +480,7 @@ func hostWriteRefused(tx *gorm.DB, writeErr error, self uint, address string, po
 // @Param   body  body  models.CreateHostRequest  true  "The Host to register"
 // @Success  200  {object}  models.Response{data=api.hostView}
 // @Failure  400  {object}  api.errorBody  "The body is refused, carries the old name ip in place of address, the private key cannot be read, the SOCKS5 proxy is switched on without a port or with allowed sources that do not read, or the jump route names a Host that is not registered, names one twice or is longer than 8"
-// @Failure  409  {object}  api.errorBody  "Another Host is registered on the address and SSH port, or socks_port is the port of this server, of the SOCKS5 proxy of another Host or of a local forward"
+// @Failure  409  {object}  api.errorBody  "Another Host is registered on the address and SSH port, the addresses compared without regard to case or to how an IP address is written, or socks_port is the port of this server, of the SOCKS5 proxy of another Host or of a local forward"
 // @Router       /host [post]
 func (h *Handler) CreateHost(c echo.Context) error {
 	refusedField := renamedFieldRefused(c, "ip", "address")
@@ -885,7 +910,7 @@ func (h *Handler) GetHost(c echo.Context) error {
 // @Success  200  {object}  models.Response{data=api.hostView}
 // @Failure  400  {object}  api.errorBody  "The body is refused, carries the old name ip in place of address, or the jump route names a Host that is not registered, the Host itself, one Host twice or is longer than 8"
 // @Failure  404  {object}  api.errorBody  "No such Host"
-// @Failure  409  {object}  api.errorBody  "The address or the SSH port is changed to the two another Host is registered on, or the SOCKS5 proxy is switched on or moved to the port of this server, of the SOCKS5 proxy of another Host or of a local forward"
+// @Failure  409  {object}  api.errorBody  "The address or the SSH port is changed to the two another Host is registered on, the addresses compared without regard to case or to how an IP address is written, or the SOCKS5 proxy is switched on or moved to the port of this server, of the SOCKS5 proxy of another Host or of a local forward"
 // @Router       /host/{id} [put]
 func (h *Handler) UpdateHost(c echo.Context) error {
 	id, err := strconv.ParseUint(c.Param("id"), 10, 32)

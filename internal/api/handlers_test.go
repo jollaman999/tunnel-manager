@@ -775,8 +775,8 @@ func TestWriteHandlersReadTheirRowInsideTheTransaction(t *testing.T) {
 // column and the one row, on the same transaction, and it is named here so that
 // a create which started scanning its own table for something else would still
 // be caught. It reads it for the Host on the address and SSH port it is given
-// as well, so that the refusal can name that Host rather than the write fail
-// on the unique index of the two.
+// as well, every Host on the SSH port in one read, so that the refusal can name
+// that Host rather than the write fail on the unique index of the two.
 func TestCreateHandlersReadOnlyWhatTheyAssign(t *testing.T) {
 	tests := []struct {
 		name     string
@@ -798,7 +798,7 @@ func TestCreateHandlersReadOnlyWhatTheyAssign(t *testing.T) {
 			own:      "hosts",
 			ownReads: []string{
 				"SELECT `id` FROM `hosts` ORDER BY id desc LIMIT 1",
-				"SELECT `id` FROM `hosts` WHERE address = ? AND port = ? AND id <> ? LIMIT 1",
+				"SELECT `id`,`address` FROM `hosts` WHERE port = ? AND id <> ? ORDER BY id",
 			},
 			call: (*Handler).CreateHost,
 		},

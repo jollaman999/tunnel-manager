@@ -1606,7 +1606,7 @@ func (h *TransferHandler) planImport(c echo.Context, withIDs bool, content tunne
 			}
 		}
 
-		address := net.JoinHostPort(host.Address, strconv.Itoa(host.Port))
+		address := net.JoinHostPort(hostAddressKey(host.Address), strconv.Itoa(host.Port))
 		if heldAddresses[address] {
 			return plan, refuse(http.StatusBadRequest, errImportHostDuplicate,
 				errorArgs{"host": host.Address, "port": strconv.Itoa(host.Port)})

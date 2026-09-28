@@ -4433,6 +4433,50 @@ func TestAnIDTheFileCarriesTwiceIsRefused(t *testing.T) {
 	}
 }
 
+// TestAHostTheFileCarriesTwiceUnderAnotherSpellingIsRefused is a file that
+// holds two Hosts on one SSH port whose addresses differ only in how they are
+// written: they are one Host held twice, the refusal a file that repeats the
+// address as it is gets.
+func TestAHostTheFileCarriesTwiceUnderAnotherSpellingIsRefused(t *testing.T) {
+	for _, tt := range []struct {
+		name   string
+		first  string
+		second string
+	}{
+		{"a host name in another case", "Host-A.example", "host-a.example"},
+		{"an IPv6 address written another way", "2001:db8::1", "2001:0DB8:0::1"},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			source := newTransferInstall(t)
+			source.registerHost(t, passwordHost(tt.first))
+			source.registerHost(t, passwordHost("198.51.100.2"))
+
+			target := newTransferInstall(t)
+			target.registerHost(t, passwordHost("198.51.100.1"))
+
+			before := target.configuration(t)
+
+			file := rewriteContent(t, source.exportTunnels(t, testExportPassword), testExportPassword,
+				func(content map[string]interface{}) {
+					content["hosts"].([]interface{})[1].(map[string]interface{})["address"] = tt.second
+				})
+
+			rec := target.importTunnels(t, file, testExportPassword)
+			if rec.Code != http.StatusBadRequest {
+				t.Fatalf("the import answered %d, want %d: %s", rec.Code, http.StatusBadRequest, rec.Body.String())
+			}
+
+			if errorCodeOf(t, rec) != errImportHostDuplicate {
+				t.Errorf("the import was refused under %s, want %s", errorCodeOf(t, rec), errImportHostDuplicate)
+			}
+
+			if !reflect.DeepEqual(target.configuration(t), before) {
+				t.Fatalf("a refused import changed what is stored")
+			}
+		})
+	}
+}
+
 // rewriteContent opens a file, hands its content over as the JSON object it
 // is, and seals what comes back with the same password and format version.
 func rewriteContent(t *testing.T, file string, password string, change func(content map[string]interface{})) string {

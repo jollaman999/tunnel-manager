@@ -405,6 +405,87 @@ func TestAHostOnTheAddressAndPortOfAnotherIsRefused(t *testing.T) {
 	}
 }
 
+// TestAnAddressWrittenAnotherWayIsTheSameHost pins that the address of a Host
+// is compared the way hostAddressKey writes it: a host name in another case,
+// and an IP address written another way, are the Host already registered on
+// the port, while what is stored stays as it was typed.
+func TestAnAddressWrittenAnotherWayIsTheSameHost(t *testing.T) {
+	for _, tt := range []struct {
+		name  string
+		held  string
+		asked string
+	}{
+		{"a host name in another case", "Host-A.example", "host-a.example"},
+		{"an IPv6 address written short and in full", "2001:db8::1", "2001:0db8:0::1"},
+		{"an IPv6 address in capitals", "2001:db8::1", "2001:DB8::1"},
+		{"the same IPv4 address", "192.0.2.1", "192.0.2.1"},
+		{"an IPv4 address in the IPv4-mapped IPv6 form", "192.0.2.1", "::ffff:192.0.2.1"},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			f := newHostFixture(t)
+
+			rec := f.createHost(t, fmt.Sprintf(`{"address":%q,"port":22,"user":"operator","password":"secret"}`, tt.held))
+			if rec.Code != http.StatusCreated {
+				t.Fatalf("registering %s: status = %d, want %d, body: %s", tt.held, rec.Code, http.StatusCreated, rec.Body.String())
+			}
+
+			rec = f.createHost(t, fmt.Sprintf(`{"address":%q,"port":22,"user":"other","password":"secret"}`, tt.asked))
+			wantAddressTaken(t, rec, tt.asked, "22", "1")
+
+			rec = f.createHost(t, fmt.Sprintf(`{"address":%q,"port":2222,"user":"other","password":"secret"}`, tt.asked))
+			if rec.Code != http.StatusCreated {
+				t.Fatalf("%s on another port: status = %d, want %d, body: %s", tt.asked, rec.Code, http.StatusCreated, rec.Body.String())
+			}
+
+			rec = f.updateHost(t, "2", `{"port":22}`)
+			wantAddressTaken(t, rec, tt.asked, "22", "1")
+
+			rec = f.updateHost(t, "1", fmt.Sprintf(`{"address":%q}`, tt.asked))
+			if rec.Code != http.StatusOK {
+				t.Fatalf("Host 1 written as %s: status = %d, want %d, body: %s", tt.asked, rec.Code, http.StatusOK, rec.Body.String())
+			}
+
+			want := map[uint]string{1: tt.asked + ":22", 2: tt.asked + ":2222"}
+			if got := storedHostAddresses(t, f); !reflect.DeepEqual(got, want) {
+				t.Fatalf("the Hosts are %v, want %v", got, want)
+			}
+		})
+	}
+}
+
+// TestAStoredNameWithATrailingDotIsTheSameHost is a name stored with the dot
+// that ends a fully qualified name. The rules of a create refuse the dot, so it
+// is written into the table directly, as a row stored before them would be.
+func TestAStoredNameWithATrailingDotIsTheSameHost(t *testing.T) {
+	f := newHostFixture(t)
+
+	err := f.db.Create(&models.Host{ID: 1, Address: "host-a.example.", Port: 22, User: "operator"}).Error
+	if err != nil {
+		t.Fatalf("failed to store the Host: %v", err)
+	}
+
+	rec := f.createHost(t, `{"address":"Host-A.example","port":22,"user":"other","password":"secret"}`)
+	wantAddressTaken(t, rec, "Host-A.example", "22", "1")
+}
+
+// TestHostAddressKey holds each way of writing an address to the key it is
+// compared under.
+func TestHostAddressKey(t *testing.T) {
+	for address, want := range map[string]string{
+		"Host-A.example":   "host-a.example",
+		"host-a.example.":  "host-a.example",
+		"2001:0db8:0::1":   "2001:db8::1",
+		"2001:DB8::1":      "2001:db8::1",
+		"::ffff:192.0.2.1": "192.0.2.1",
+		"192.0.2.1":        "192.0.2.1",
+		"fe80::1%eth0":     "fe80::1%eth0",
+	} {
+		if got := hostAddressKey(address); got != want {
+			t.Errorf("hostAddressKey(%q) = %q, want %q", address, got, want)
+		}
+	}
+}
+
 // TestAWriteThatFailsOnTheAddressIndexIsTheSameRefusal pins what a Host stored
 // by another request between the check and the write comes to: the write
 // fails on the unique index, and that failure, as the driver reports it, is

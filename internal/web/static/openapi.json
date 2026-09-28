@@ -527,7 +527,7 @@
                         }
                     },
                     "409": {
-                        "description": "Another Host is registered on the address and SSH port, or socks_port is the port of this server, of the SOCKS5 proxy of another Host or of a local forward",
+                        "description": "Another Host is registered on the address and SSH port, the addresses compared without regard to case or to how an IP address is written, or socks_port is the port of this server, of the SOCKS5 proxy of another Host or of a local forward",
                         "schema": {
                             "$ref": "#/definitions/api.errorBody"
                         }
@@ -782,7 +782,7 @@
                         }
                     },
                     "409": {
-                        "description": "The address or the SSH port is changed to the two another Host is registered on, or the SOCKS5 proxy is switched on or moved to the port of this server, of the SOCKS5 proxy of another Host or of a local forward",
+                        "description": "The address or the SSH port is changed to the two another Host is registered on, the addresses compared without regard to case or to how an IP address is written, or the SOCKS5 proxy is switched on or moved to the port of this server, of the SOCKS5 proxy of another Host or of a local forward",
                         "schema": {
                             "$ref": "#/definitions/api.errorBody"
                         }
