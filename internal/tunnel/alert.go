@@ -27,8 +27,19 @@ func serverHost(server string) string {
 // runningTunnel is what an alert needs of a running tunnel that the row does
 // not say plainly.
 type runningTunnel struct {
-	host string
-	port int
+	server string
+	port   int
+}
+
+// alertKey names a forward to the alert watcher. It carries the SSH address of
+// the Host the forward goes through and the port the forward opens as well as
+// its id, because the id alone is kept by a Host whose address or port was
+// changed and given again to a Host added after one was removed. A forward
+// whose Host is not the one it was is a new key, so the outage of the old one
+// is forgotten as one that stopped rather than answered by an up that names the
+// Host there now.
+func alertKey(kind, id, server string, localPort int) string {
+	return kind + ":" + id + "@" + server + "/" + strconv.Itoa(localPort)
 }
 
 // AlertConditions returns every running tunnel, local forward and SOCKS5 proxy
@@ -45,7 +56,7 @@ func (m *Manager) AlertConditions() ([]alert.Condition, error) {
 	m.mu.RLock()
 	running := make(map[string]runningTunnel, len(m.tunnels))
 	for key, t := range m.tunnels {
-		running[key] = runningTunnel{host: serverHost(t.Server), port: t.Local.port()}
+		running[key] = runningTunnel{server: t.Server, port: t.Local.port()}
 	}
 	m.mu.RUnlock()
 
@@ -68,9 +79,9 @@ func (m *Manager) AlertConditions() ([]alert.Condition, error) {
 			}
 
 			conditions = append(conditions, alert.Condition{
-				Key:       alert.KindServicePort + ":" + key,
+				Key:       alertKey(alert.KindServicePort, key, t.server, t.port),
 				Kind:      alert.KindServicePort,
-				Host:      t.host,
+				Host:      serverHost(t.server),
 				LocalPort: t.port,
 				Connected: row.Status == statusConnected,
 				LastError: row.LastError,
@@ -87,9 +98,10 @@ func (m *Manager) AlertConditions() ([]alert.Condition, error) {
 
 	for key, f := range forwards {
 		state := f.snapshot()
+		id := strconv.FormatUint(uint64(key.HostID), 10) + "-" + strconv.FormatUint(uint64(key.Number), 10)
 
 		conditions = append(conditions, alert.Condition{
-			Key:       alert.KindLocalForward + ":" + strconv.FormatUint(uint64(key.HostID), 10) + "-" + strconv.FormatUint(uint64(key.Number), 10),
+			Key:       alertKey(alert.KindLocalForward, id, f.server, f.listen.port()),
 			Kind:      alert.KindLocalForward,
 			Host:      serverHost(f.server),
 			LocalPort: f.listen.port(),
@@ -109,7 +121,7 @@ func (m *Manager) AlertConditions() ([]alert.Condition, error) {
 		state := p.snapshot()
 
 		conditions = append(conditions, alert.Condition{
-			Key:       alert.KindSocks + ":" + strconv.FormatUint(uint64(id), 10),
+			Key:       alertKey(alert.KindSocks, strconv.FormatUint(uint64(id), 10), p.server, p.listen.port()),
 			Kind:      alert.KindSocks,
 			Host:      serverHost(p.server),
 			LocalPort: p.listen.port(),
