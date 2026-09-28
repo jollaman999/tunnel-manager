@@ -2251,6 +2251,13 @@ curl -s -b cookies.txt -X PUT "$BASE/api/host/1/local-forward/1" \
 Host 的分配关系，是因为这两个词在任何一台系统上的意思都相同。这也是没有手工填地址的框的另一个
 理由：地址指的是某一台机器的网卡，其余的机器就会被要求在自己没有的地址上打开端口。
 
+**两个服务端口不能共用服务地址和服务端口，也不能共用本地端口。** 把服务端口创建或改到另一个服务
+端口的服务地址和服务端口上的请求，会以 `service_port.address.taken` 被 `409` 拒绝，`error_args`
+里带着 `service_address`、`service_port`，以及占着它们的那个服务端口的 `service_port_id`。地址和
+Host 的地址一样，比较时不区分大小写，也不管 IP 地址怎么写。创建或改到另一个服务端口的本地端口上的
+请求，会以 `service_port.local_port.taken` 被 `409` 拒绝，`error_args` 里带着 `local_port` 和
+`service_port_id`。两种情况都不保存任何内容。
+
 ### 状态
 
 | 方法 | 路径 | 做什么 |

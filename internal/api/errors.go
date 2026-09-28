@@ -165,6 +165,8 @@ const (
 	errServicePortDeleteFailed     errorCode = "service_port.delete_failed"
 	errServicePortCreateHostsRead  errorCode = "service_port.create.hosts_read_failed"
 	errServicePortCreateHostsStore errorCode = "service_port.create.hosts_store_failed"
+	errServicePortAddressTaken     errorCode = "service_port.address.taken"
+	errServicePortLocalPortTaken   errorCode = "service_port.local_port.taken"
 
 	errLocalForwardNumberInvalid errorCode = "local_forward.number.invalid"
 	errLocalForwardNotFound      errorCode = "local_forward.not_found"
@@ -456,6 +458,8 @@ var errorMessages = map[errorCode]string{
 	errServicePortDeleteFailed:     "Failed to delete service port",
 	errServicePortCreateHostsRead:  "The service port was not created: failed to read the Hosts",
 	errServicePortCreateHostsStore: "The service port was not created: failed to store the Hosts that carry it",
+	errServicePortAddressTaken:     "The service address {service_address} with the service port {service_port} is already registered as the service port {service_port_id}",
+	errServicePortLocalPortTaken:   "The local port {local_port} is already the local port of the service port {service_port_id}",
 
 	// The local forwards of a Host. The two refusals over the local port are
 	// conflicts rather than a malformed body: the port is opened on this

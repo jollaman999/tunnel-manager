@@ -1224,28 +1224,74 @@ func (h *Handler) DeleteHost(c echo.Context) error {
 	})
 }
 
-// servicePortAddressHolder is the service port other than self that names the
-// service address and service port already, or zero for none. The addresses are
-// compared as hostAddressKey writes them, which the unique index of the two
-// columns does not, so every service port on the port is read and compared
-// here. One found is answered as the write that fails on the index is.
-func servicePortAddressHolder(tx *gorm.DB, self uint, address string, port int) (uint, error) {
+// servicePortRefused refuses the service address, service port and local port
+// a service port is being given when another service port holds them already.
+// self is the service port being updated, and zero for one being registered.
+// The service addresses are compared as hostAddressKey writes them, which the
+// unique index of the two columns does not, so every service port on the
+// service port is read, in one read, and compared here. The local port is held
+// to the unique index of its own column. What this turns into a refusal naming
+// the service port that holds them is what the write would otherwise either
+// fail on as a database error or store twice.
+//
+// A non-nil error is a failed read, as it is for hostAddressRefused.
+func servicePortRefused(tx *gorm.DB, self uint, address string, port int, localPort int) (*refusal, error) {
 	var onPort []models.ServicePort
 
 	err := tx.Select("id", "service_address").Where("service_port = ? AND id <> ?", port, self).
 		Order("id").Find(&onPort).Error
 	if err != nil {
-		return 0, err
+		return nil, err
 	}
 
 	key := hostAddressKey(address)
 	for _, holder := range onPort {
-		if hostAddressKey(holder.ServiceAddress) == key {
-			return holder.ID, nil
+		if hostAddressKey(holder.ServiceAddress) != key {
+			continue
 		}
+
+		return refuse(http.StatusConflict, errServicePortAddressTaken, errorArgs{
+			"service_address": address,
+			"service_port":    strconv.Itoa(port),
+			"service_port_id": strconv.FormatUint(uint64(holder.ID), 10),
+		}), nil
 	}
 
-	return 0, nil
+	var onLocalPort []models.ServicePort
+
+	err = tx.Select("id").Where("local_port = ? AND id <> ?", localPort, self).
+		Order("id").Limit(1).Find(&onLocalPort).Error
+	if err != nil {
+		return nil, err
+	}
+
+	if len(onLocalPort) > 0 {
+		return refuse(http.StatusConflict, errServicePortLocalPortTaken, errorArgs{
+			"local_port":      strconv.Itoa(localPort),
+			"service_port_id": strconv.FormatUint(uint64(onLocalPort[0].ID), 10),
+		}), nil
+	}
+
+	return nil, nil
+}
+
+// servicePortWriteRefused is hostWriteRefused for a service port: a write that
+// failed on the unique index of the service address and service port, or on
+// that of the local port, is answered with the refusal servicePortRefused
+// gives. Any other failure, or one after which no service port holds them, is
+// handed back as nil.
+func servicePortWriteRefused(tx *gorm.DB, writeErr error, sp *models.ServicePort) *refusal {
+	translator, ok := tx.Dialector.(gorm.ErrorTranslator)
+	if !ok || !errors.Is(translator.Translate(writeErr), gorm.ErrDuplicatedKey) {
+		return nil
+	}
+
+	refused, err := servicePortRefused(tx, sp.ID, sp.ServiceAddress, sp.ServicePort, sp.LocalPort)
+	if err != nil {
+		return nil
+	}
+
+	return refused
 }
 
 // @Summary      Register a service port
@@ -1257,7 +1303,8 @@ func servicePortAddressHolder(tx *gorm.DB, self uint, address string, port int) 
 // @Security  CSRFToken
 // @Param   body  body  models.CreateServicePortRequest  true  "The service port to register"
 // @Success  201  {object}  models.Response{data=models.ServicePort}
-// @Failure  400  {object}  api.errorBody  "The body is refused, carries the old name service_ip in place of service_address, or the local port is already taken"
+// @Failure  400  {object}  api.errorBody  "The body is refused, or carries the old name service_ip in place of service_address"
+// @Failure  409  {object}  api.errorBody  "Another service port is registered on the service address and service port, the addresses compared without regard to case or to how an IP address is written, or on the local port"
 // @Router       /service-port [post]
 func (h *Handler) CreateServicePort(c echo.Context) error {
 	refusedField := renamedFieldRefused(c, "service_ip", "service_address")
@@ -1291,22 +1338,24 @@ func (h *Handler) CreateServicePort(c echo.Context) error {
 	}
 	defer rollbackUnlessDone(tx)
 
-	holder, err := servicePortAddressHolder(tx, 0, sp.ServiceAddress, sp.ServicePort)
+	refused, err := servicePortRefused(tx, 0, sp.ServiceAddress, sp.ServicePort, sp.LocalPort)
 	if err != nil {
 		tx.Rollback()
 		h.logger.Error("failed to fetch service ports", logid.ServicePortListFetchFailed.Field(), zap.Error(err))
 		return failure(c, http.StatusInternalServerError, errServicePortCreateFailed)
 	}
-	if holder != 0 {
+	if refused != nil {
 		tx.Rollback()
-		h.logger.Error("failed to create service port", logid.ServicePortCreateFailed.Field(),
-			zap.Uint("held_by", holder))
-		return failure(c, http.StatusInternalServerError, errServicePortCreateFailed)
+		return refused.answer(c)
 	}
 
 	err = tx.Create(sp).Error
 	if err != nil {
+		refused = servicePortWriteRefused(tx, err, sp)
 		tx.Rollback()
+		if refused != nil {
+			return refused.answer(c)
+		}
 		h.logger.Error("failed to create service port", logid.ServicePortCreateFailed.Field(), zap.Error(err))
 		return failure(c, http.StatusInternalServerError, errServicePortCreateFailed)
 	}
@@ -1452,8 +1501,9 @@ func (h *Handler) GetServicePort(c echo.Context) error {
 // @Param   id    path  int  true  "The id of the service port"
 // @Param   body  body  models.CreateServicePortRequest  true  "The service port as it should stand"
 // @Success  200  {object}  models.Response{data=models.ServicePort}
-// @Failure  400  {object}  api.errorBody  "The body is refused, carries the old name service_ip in place of service_address, or the local port is already taken"
+// @Failure  400  {object}  api.errorBody  "The body is refused, or carries the old name service_ip in place of service_address"
 // @Failure  404  {object}  api.errorBody  "No such service port"
+// @Failure  409  {object}  api.errorBody  "Another service port is registered on the service address and service port, the addresses compared without regard to case or to how an IP address is written, or on the local port"
 // @Router       /service-port/{id} [put]
 func (h *Handler) UpdateServicePort(c echo.Context) error {
 	id, err := strconv.ParseUint(c.Param("id"), 10, 32)
@@ -1505,22 +1555,24 @@ func (h *Handler) UpdateServicePort(c echo.Context) error {
 	sp.LocalPort = req.LocalPort
 	sp.Description = req.Description
 
-	holder, err := servicePortAddressHolder(tx, sp.ID, sp.ServiceAddress, sp.ServicePort)
+	refused, err := servicePortRefused(tx, sp.ID, sp.ServiceAddress, sp.ServicePort, sp.LocalPort)
 	if err != nil {
 		tx.Rollback()
 		h.logger.Error("failed to fetch service ports", logid.ServicePortListFetchFailed.Field(), zap.Error(err))
 		return failure(c, http.StatusInternalServerError, errServicePortUpdateFailed)
 	}
-	if holder != 0 {
+	if refused != nil {
 		tx.Rollback()
-		h.logger.Error("failed to update service port", logid.ServicePortUpdateFailed.Field(),
-			zap.Uint("held_by", holder))
-		return failure(c, http.StatusInternalServerError, errServicePortUpdateFailed)
+		return refused.answer(c)
 	}
 
 	err = tx.Save(&sp).Error
 	if err != nil {
+		refused = servicePortWriteRefused(tx, err, &sp)
 		tx.Rollback()
+		if refused != nil {
+			return refused.answer(c)
+		}
 		h.logger.Error("failed to update service port", logid.ServicePortUpdateFailed.Field(), zap.Error(err))
 		return failure(c, http.StatusInternalServerError, errServicePortUpdateFailed)
 	}

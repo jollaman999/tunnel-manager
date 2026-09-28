@@ -2803,6 +2803,16 @@ which is the other reason there is no box for an address typed in: an address
 names an interface of one machine, and the rest would be asked to open a port on
 an address they do not have.
 
+**Two service ports do not share a service address and service port, or a local
+port.** A create or an update that puts a service port on the service address
+and the service port of another is refused with `409` under
+`service_port.address.taken`, with `service_address`, `service_port` and
+`service_port_id`, the service port that holds them, in `error_args`. The
+addresses are compared the way the addresses of Hosts are, without regard to
+case or to how an IP address is written. One on the local port of another is
+refused with `409` under `service_port.local_port.taken`, with `local_port` and
+`service_port_id`. Nothing is stored in either case.
+
 ### Status
 
 | Method | Path | What it does |

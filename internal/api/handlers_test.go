@@ -12,6 +12,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
+	"reflect"
 	"slices"
 	"strings"
 	"sync"
@@ -782,7 +783,9 @@ func TestWriteHandlersReadTheirRowInsideTheTransaction(t *testing.T) {
 // a create which started scanning its own table for something else would still
 // be caught. It reads it for the Host on the address and SSH port it is given
 // as well, every Host on the SSH port in one read, so that the refusal can name
-// that Host rather than the write fail on the unique index of the two.
+// that Host rather than the write fail on the unique index of the two. A create
+// of a service port reads its own table for the same reason, for the service
+// address and service port and then for the local port.
 func TestCreateHandlersReadOnlyWhatTheyAssign(t *testing.T) {
 	tests := []struct {
 		name     string
@@ -816,6 +819,7 @@ func TestCreateHandlersReadOnlyWhatTheyAssign(t *testing.T) {
 			own:      "service_ports",
 			ownReads: []string{
 				"SELECT `id`,`service_address` FROM `service_ports` WHERE service_port = ? AND id <> ? ORDER BY id",
+				"SELECT `id` FROM `service_ports` WHERE local_port = ? AND id <> ? ORDER BY id LIMIT 1",
 			},
 			call: (*Handler).CreateServicePort,
 		},
@@ -2521,10 +2525,7 @@ func TestAServiceAddressWrittenAnotherWayIsTheSameService(t *testing.T) {
 			}
 
 			rec = f.createServicePort(t, fmt.Sprintf(`{"service_address":%q,"service_port":80,"local_port":18081}`, tt.asked))
-			if rec.Code != http.StatusInternalServerError || errorCodeOf(t, rec) != errServicePortCreateFailed {
-				t.Fatalf("%s on the same port: status = %d, want %d %s, body: %s",
-					tt.asked, rec.Code, http.StatusInternalServerError, errServicePortCreateFailed, rec.Body.String())
-			}
+			wantServiceAddressTaken(t, rec, tt.asked, "80", "1")
 
 			rec = f.createServicePort(t, fmt.Sprintf(`{"service_address":%q,"service_port":81,"local_port":18081}`, tt.asked))
 			if rec.Code != http.StatusCreated {
@@ -2536,10 +2537,7 @@ func TestAServiceAddressWrittenAnotherWayIsTheSameService(t *testing.T) {
 			}
 
 			rec = update("2", fmt.Sprintf(`{"service_address":%q,"service_port":80,"local_port":18081}`, tt.asked))
-			if rec.Code != http.StatusInternalServerError || errorCodeOf(t, rec) != errServicePortUpdateFailed {
-				t.Fatalf("service port 2 moved onto %s:80: status = %d, want %d %s, body: %s",
-					tt.asked, rec.Code, http.StatusInternalServerError, errServicePortUpdateFailed, rec.Body.String())
-			}
+			wantServiceAddressTaken(t, rec, tt.asked, "80", "1")
 
 			rec = update("1", fmt.Sprintf(`{"service_address":%q,"service_port":80,"local_port":18080}`, tt.asked))
 			if rec.Code != http.StatusOK {
@@ -2561,6 +2559,168 @@ func TestAServiceAddressWrittenAnotherWayIsTheSameService(t *testing.T) {
 			want := "1=" + tt.asked + ":80,2=" + tt.asked + ":81"
 			if strings.Join(got, ",") != want {
 				t.Fatalf("the service ports are %v, want %v", got, want)
+			}
+		})
+	}
+}
+
+// wantServiceAddressTaken checks that rec is the refusal of a service address
+// and service port the service port holderID is registered on.
+func wantServiceAddressTaken(t *testing.T, rec *httptest.ResponseRecorder, address, port, holderID string) {
+	t.Helper()
+
+	wantServicePortRefusal(t, rec, errServicePortAddressTaken,
+		errorArgs{"service_address": address, "service_port": port, "service_port_id": holderID})
+}
+
+// wantLocalPortTaken checks that rec is the refusal of a local port the
+// service port holderID is registered on.
+func wantLocalPortTaken(t *testing.T, rec *httptest.ResponseRecorder, localPort, holderID string) {
+	t.Helper()
+
+	wantServicePortRefusal(t, rec, errServicePortLocalPortTaken,
+		errorArgs{"local_port": localPort, "service_port_id": holderID})
+}
+
+func wantServicePortRefusal(t *testing.T, rec *httptest.ResponseRecorder, code errorCode, args errorArgs) {
+	t.Helper()
+
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("status = %d, want %d, body: %s", rec.Code, http.StatusConflict, rec.Body.String())
+	}
+
+	refusal := jumpRefusalOf(t, rec.Body.Bytes())
+	if refusal.Code != code {
+		t.Errorf("code = %q, want %q", refusal.Code, code)
+	}
+
+	if !reflect.DeepEqual(refusal.Args, args) {
+		t.Errorf("args = %v, want %v", refusal.Args, args)
+	}
+}
+
+// storedServicePorts is every service port as service address:service port
+// on local port, and every assignment as Host-service port, in id order.
+func storedServicePorts(t *testing.T, f *hostFixture) string {
+	t.Helper()
+
+	var sps []models.ServicePort
+
+	err := f.db.Order("id").Find(&sps).Error
+	if err != nil {
+		t.Fatalf("failed to read the service ports: %v", err)
+	}
+
+	stored := make([]string, 0, len(sps))
+	for _, sp := range sps {
+		stored = append(stored, fmt.Sprintf("%d=%s:%d@%d/%s", sp.ID, sp.ServiceAddress, sp.ServicePort, sp.LocalPort, sp.Description))
+	}
+
+	return strings.Join(stored, ",") + " " + strings.Join(f.assignmentScopes(t), ",")
+}
+
+// TestAServicePortOnTheAddressOrLocalPortOfAnotherIsRefused pins that a
+// service port is not registered on, or moved onto, the service address and
+// service port or the local port of another: the answer is a refusal naming
+// that service port rather than a failed write, and nothing is stored, the
+// assignments a registration makes included.
+func TestAServicePortOnTheAddressOrLocalPortOfAnotherIsRefused(t *testing.T) {
+	f := newHostFixture(t)
+
+	rec := f.createHost(t, `{"address":"192.0.2.10","port":22,"user":"operator","password":"a password"}`)
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("the Host was answered %d: %s", rec.Code, rec.Body.String())
+	}
+
+	for _, body := range []string{
+		`{"service_address":"192.0.2.20","service_port":80,"local_port":18080}`,
+		`{"service_address":"192.0.2.21","service_port":80,"local_port":18081}`,
+	} {
+		rec = f.createServicePort(t, body)
+		if rec.Code != http.StatusCreated {
+			t.Fatalf("registering %s: status = %d, want %d, body: %s", body, rec.Code, http.StatusCreated, rec.Body.String())
+		}
+	}
+
+	before := storedServicePorts(t, f)
+
+	rec = f.createServicePort(t, `{"service_address":"192.0.2.20","service_port":80,"local_port":18090}`)
+	wantServiceAddressTaken(t, rec, "192.0.2.20", "80", "1")
+
+	rec = f.createServicePort(t, `{"service_address":"::ffff:192.0.2.20","service_port":80,"local_port":18090}`)
+	wantServiceAddressTaken(t, rec, "::ffff:192.0.2.20", "80", "1")
+
+	rec = f.createServicePort(t, `{"service_address":"192.0.2.22","service_port":80,"local_port":18080}`)
+	wantLocalPortTaken(t, rec, "18080", "1")
+
+	update := func(id, body string) *httptest.ResponseRecorder {
+		return f.call(t, http.MethodPut, "/api/service-port/"+id, body, "id", id, f.h.UpdateServicePort)
+	}
+
+	rec = update("2", `{"service_address":"192.0.2.20","service_port":80,"local_port":18081,"description":"moved"}`)
+	wantServiceAddressTaken(t, rec, "192.0.2.20", "80", "1")
+
+	rec = update("2", `{"service_address":"192.0.2.21","service_port":80,"local_port":18080,"description":"moved"}`)
+	wantLocalPortTaken(t, rec, "18080", "1")
+
+	if got := storedServicePorts(t, f); got != before {
+		t.Fatalf("the service ports after the refusals are %s, want %s", got, before)
+	}
+
+	// A service port saved on what it already has is not in the way of
+	// itself.
+	rec = update("1", `{"service_address":"192.0.2.20","service_port":80,"local_port":18080,"description":"kept"}`)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("saving a service port on its own ports: status = %d, want %d, body: %s", rec.Code, http.StatusOK, rec.Body.String())
+	}
+}
+
+// TestAWriteThatFailsOnAServicePortIndexIsTheSameRefusal pins what a service
+// port stored by another request between the check and the write comes to:
+// the write fails on a unique index, and that failure is answered with the
+// refusal the check gives. Any other failed write is not.
+func TestAWriteThatFailsOnAServicePortIndexIsTheSameRefusal(t *testing.T) {
+	f := newHostFixture(t)
+
+	rec := f.createServicePort(t, `{"service_address":"192.0.2.20","service_port":80,"local_port":18080}`)
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("status = %d, want %d, body: %s", rec.Code, http.StatusCreated, rec.Body.String())
+	}
+
+	for _, tt := range []struct {
+		name string
+		sp   models.ServicePort
+		code errorCode
+	}{
+		{"the service address", models.ServicePort{ServiceAddress: "192.0.2.20", ServicePort: 80, LocalPort: 18099}, errServicePortAddressTaken},
+		{"the local port", models.ServicePort{ServiceAddress: "192.0.2.21", ServicePort: 80, LocalPort: 18080}, errServicePortLocalPortTaken},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			tx := f.db.Begin()
+			defer tx.Rollback()
+
+			sp := tt.sp
+
+			writeErr := tx.Create(&sp).Error
+			if writeErr == nil {
+				t.Fatalf("the service port %+v was stored, want the unique index to refuse it", tt.sp)
+			}
+
+			sp.ID = 0
+
+			refused := servicePortWriteRefused(tx, writeErr, &sp)
+			if refused == nil {
+				t.Fatalf("the failure %v is not taken as a port being taken", writeErr)
+			}
+			if refused.status != http.StatusConflict || refused.code != tt.code {
+				t.Errorf("the refusal is %d %q, want %d %q", refused.status, refused.code, http.StatusConflict, tt.code)
+			}
+			if refused.args["service_port_id"] != "1" {
+				t.Errorf("the refusal names service port %q, want 1", refused.args["service_port_id"])
+			}
+
+			if refused := servicePortWriteRefused(tx, errQueryFailed, &sp); refused != nil {
+				t.Errorf("a failure that is not the index is taken as %q", refused.code)
 			}
 		})
 	}

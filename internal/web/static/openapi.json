@@ -2024,7 +2024,13 @@
                         }
                     },
                     "400": {
-                        "description": "The body is refused, carries the old name service_ip in place of service_address, or the local port is already taken",
+                        "description": "The body is refused, or carries the old name service_ip in place of service_address",
+                        "schema": {
+                            "$ref": "#/definitions/api.errorBody"
+                        }
+                    },
+                    "409": {
+                        "description": "Another service port is registered on the service address and service port, the addresses compared without regard to case or to how an IP address is written, or on the local port",
                         "schema": {
                             "$ref": "#/definitions/api.errorBody"
                         }
@@ -2132,13 +2138,19 @@
                         }
                     },
                     "400": {
-                        "description": "The body is refused, carries the old name service_ip in place of service_address, or the local port is already taken",
+                        "description": "The body is refused, or carries the old name service_ip in place of service_address",
                         "schema": {
                             "$ref": "#/definitions/api.errorBody"
                         }
                     },
                     "404": {
                         "description": "No such service port",
+                        "schema": {
+                            "$ref": "#/definitions/api.errorBody"
+                        }
+                    },
+                    "409": {
+                        "description": "Another service port is registered on the service address and service port, the addresses compared without regard to case or to how an IP address is written, or on the local port",
                         "schema": {
                             "$ref": "#/definitions/api.errorBody"
                         }
@@ -3230,6 +3242,8 @@
                 "service_port.delete_failed",
                 "service_port.create.hosts_read_failed",
                 "service_port.create.hosts_store_failed",
+                "service_port.address.taken",
+                "service_port.local_port.taken",
                 "local_forward.number.invalid",
                 "local_forward.not_found",
                 "local_forward.fetch_failed",
@@ -3438,6 +3452,8 @@
                 "errServicePortDeleteFailed",
                 "errServicePortCreateHostsRead",
                 "errServicePortCreateHostsStore",
+                "errServicePortAddressTaken",
+                "errServicePortLocalPortTaken",
                 "errLocalForwardNumberInvalid",
                 "errLocalForwardNotFound",
                 "errLocalForwardFetchFailed",
