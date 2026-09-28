@@ -502,8 +502,8 @@
                     }
                 ],
                 "responses": {
-                    "200": {
-                        "description": "OK",
+                    "201": {
+                        "description": "Created",
                         "schema": {
                             "allOf": [
                                 {
@@ -1569,7 +1569,7 @@
                         }
                     },
                     "400": {
-                        "description": "The password is wrong, the file is damaged, it is not a file this program wrote, it holds the other kind, a row of it is refused, the body carries overwrite, or account_password is empty",
+                        "description": "The password is wrong, the file is damaged, it is not a file this program wrote, it holds the other kind, a row of it is refused, the file holds one Host twice on the same SSH port with the address only written differently, the body carries overwrite, or account_password is empty",
                         "schema": {
                             "$ref": "#/definitions/api.errorBody"
                         }
@@ -1789,7 +1789,7 @@
         },
         "/metrics": {
             "get": {
-                "description": "Answers in the Prometheus text exposition format, version 0.0.4, rather than in the JSON every other route answers with, so that Prometheus, telegraf and anything else that scrapes that format can read it as it is. A token needs the read scope.\ntunnel_manager_forwards counts the running forwards by kind and status; its connected, reconnecting and error series over service_port and local_forward add up to the counts GET /status answers with. tunnel_manager_forwards_desired is desired_tunnels of GET /status, by kind. tunnel_manager_forward_up and tunnel_manager_forward_retries have one series per running forward. tunnel_manager_host_info carries the description of each Host, to be joined on host.",
+                "description": "Answers in the Prometheus text exposition format, version 0.0.4, rather than in the JSON every other route answers with, so that Prometheus, telegraf and anything else that scrapes that format can read it as it is. A token needs the read scope.\ntunnel_manager_forwards counts the running forwards by kind and status; it is one series per status, so over service_port and local_forward the connected and reconnecting series are connected_tunnels and reconnecting_tunnels of GET /status, and error_tunnels is the error series and the jump_host_disabled series added together. tunnel_manager_forwards_desired is desired_tunnels of GET /status, by kind. tunnel_manager_forward_up and tunnel_manager_forward_retries have one series per running forward. tunnel_manager_host_info carries the description of each Host, to be joined on host.",
                 "produces": [
                     "text/plain"
                 ],
@@ -2005,8 +2005,8 @@
                     }
                 ],
                 "responses": {
-                    "200": {
-                        "description": "OK",
+                    "201": {
+                        "description": "Created",
                         "schema": {
                             "allOf": [
                                 {

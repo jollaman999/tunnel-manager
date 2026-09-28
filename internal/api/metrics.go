@@ -182,7 +182,7 @@ func portOf(address string) string {
 //
 // @Summary      The state of the installation in the Prometheus text format
 // @Description  Answers in the Prometheus text exposition format, version 0.0.4, rather than in the JSON every other route answers with, so that Prometheus, telegraf and anything else that scrapes that format can read it as it is. A token needs the read scope.
-// @Description  tunnel_manager_forwards counts the running forwards by kind and status; its connected, reconnecting and error series over service_port and local_forward add up to the counts GET /status answers with. tunnel_manager_forwards_desired is desired_tunnels of GET /status, by kind. tunnel_manager_forward_up and tunnel_manager_forward_retries have one series per running forward. tunnel_manager_host_info carries the description of each Host, to be joined on host.
+// @Description  tunnel_manager_forwards counts the running forwards by kind and status; it is one series per status, so over service_port and local_forward the connected and reconnecting series are connected_tunnels and reconnecting_tunnels of GET /status, and error_tunnels is the error series and the jump_host_disabled series added together. tunnel_manager_forwards_desired is desired_tunnels of GET /status, by kind. tunnel_manager_forward_up and tunnel_manager_forward_retries have one series per running forward. tunnel_manager_host_info carries the description of each Host, to be joined on host.
 // @Tags         status
 // @Produce  plain
 // @Success  200  {string}  string  "The metrics"

@@ -478,7 +478,7 @@ func hostWriteRefused(tx *gorm.DB, writeErr error, self uint, address string, po
 // @Produce  json
 // @Security  CSRFToken
 // @Param   body  body  models.CreateHostRequest  true  "The Host to register"
-// @Success  200  {object}  models.Response{data=api.hostView}
+// @Success  201  {object}  models.Response{data=api.hostView}
 // @Failure  400  {object}  api.errorBody  "The body is refused, carries the old name ip in place of address, the private key cannot be read, the SOCKS5 proxy is switched on without a port or with allowed sources that do not read, or the jump route names a Host that is not registered, names one twice or is longer than 8"
 // @Failure  409  {object}  api.errorBody  "Another Host is registered on the address and SSH port, the addresses compared without regard to case or to how an IP address is written, or socks_port is the port of this server, of the SOCKS5 proxy of another Host or of a local forward"
 // @Router       /host [post]
@@ -1231,7 +1231,7 @@ func (h *Handler) DeleteHost(c echo.Context) error {
 // @Produce  json
 // @Security  CSRFToken
 // @Param   body  body  models.CreateServicePortRequest  true  "The service port to register"
-// @Success  200  {object}  models.Response{data=models.ServicePort}
+// @Success  201  {object}  models.Response{data=models.ServicePort}
 // @Failure  400  {object}  api.errorBody  "The body is refused, carries the old name service_ip in place of service_address, or the local port is already taken"
 // @Router       /service-port [post]
 func (h *Handler) CreateServicePort(c echo.Context) error {

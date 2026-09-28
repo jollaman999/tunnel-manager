@@ -1380,7 +1380,7 @@ func (h *TransferHandler) ExportTunnels(c echo.Context) error {
 // @Security  CSRFToken
 // @Param   body  body  api.importTunnelsRequest  true  "The password, the file, whether to only check it, and the password of the account"
 // @Success  200  {object}  models.Response{data=api.importedTunnels}
-// @Failure  400  {object}  api.errorBody  "The password is wrong, the file is damaged, it is not a file this program wrote, it holds the other kind, a row of it is refused, the body carries overwrite, or account_password is empty"
+// @Failure  400  {object}  api.errorBody  "The password is wrong, the file is damaged, it is not a file this program wrote, it holds the other kind, a row of it is refused, the file holds one Host twice on the same SSH port with the address only written differently, the body carries overwrite, or account_password is empty"
 // @Failure  401  {object}  api.errorBody  "account_password does not open this account"
 // @Failure  429  {object}  api.errorBody  "Too many passwords that do not open this account were tried. Retry-After says when to try again"
 // @Failure  409  {object}  api.errorBody  "A local forward or a SOCKS5 proxy of the file opens the port this server listens on. Nothing was stored"
