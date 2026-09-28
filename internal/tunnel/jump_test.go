@@ -32,12 +32,16 @@ import (
 // port accepts back as forwarded-tcpip channels, which is what the Host of a
 // tunnel does. With prohibit set it refuses every direct-tcpip channel as
 // administratively prohibited instead, which is what sshd does for a login
-// that AllowTcpForwarding is off for.
+// that AllowTcpForwarding is off for. With denyForwardConns at n it refuses
+// every tcpip-forward asked on the first n connections it takes, which is what
+// sshd does while it still holds the port for a session that went away without
+// closing.
 type jumpTestServer struct {
 	addr string
 	key  ssh.PublicKey
 
-	prohibit atomic.Bool
+	prohibit         atomic.Bool
+	denyForwardConns atomic.Int64
 
 	mu     sync.Mutex
 	dialed []string
@@ -132,7 +136,7 @@ func (s *jumpTestServer) serve(conn net.Conn, config *ssh.ServerConfig) {
 		_ = sshConn.Close()
 	}()
 
-	s.handshakes.Add(1)
+	seq := s.handshakes.Add(1)
 	s.active.Add(1)
 	defer s.active.Add(-1)
 
@@ -153,6 +157,11 @@ func (s *jumpTestServer) serve(conn net.Conn, config *ssh.ServerConfig) {
 				if req.WantReply {
 					_ = req.Reply(req.Type == "cancel-tcpip-forward", nil)
 				}
+				continue
+			}
+
+			if seq <= s.denyForwardConns.Load() {
+				_ = req.Reply(false, nil)
 				continue
 			}
 

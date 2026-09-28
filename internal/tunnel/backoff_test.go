@@ -1,6 +1,8 @@
 package tunnel
 
 import (
+	"errors"
+	"fmt"
 	"io"
 	"net"
 	"strconv"
@@ -371,5 +373,260 @@ func TestALocalForwardStartsOverAfterItConnected(t *testing.T) {
 	after := waitRetryLines(t, logs, message, 3)
 	if after[2] != 1 {
 		t.Fatalf("the first failure after the forward connected waited %d seconds, want the interval of 1", after[2])
+	}
+}
+
+// retryReasons returns the retry_reason of every line that starts with message,
+// in the order they were written, and the empty string for a line with none.
+func retryReasons(logs *observer.ObservedLogs, message string) []string {
+	var reasons []string
+
+	for _, entry := range logs.All() {
+		if !strings.HasPrefix(entry.Message, message) {
+			continue
+		}
+
+		reason, _ := entry.ContextMap()["retry_reason"].(string)
+		reasons = append(reasons, reason)
+	}
+
+	return reasons
+}
+
+// assertRetryReasons checks that the first n lines that start with message
+// carry want as their retry_reason.
+func assertRetryReasons(t *testing.T, logs *observer.ObservedLogs, message string, n int, want string) {
+	t.Helper()
+
+	for i, got := range retryReasons(logs, message)[:n] {
+		if got != want {
+			t.Fatalf("retry line %d carries retry_reason %q, want %q", i+1, got, want)
+		}
+	}
+}
+
+// prohibitingRoute is a Host reached through a Host that refuses the channel to
+// it as administratively prohibited: the address of the Host at the end, and
+// the route to it.
+func prohibitingRoute(t *testing.T) (string, []sshHop) {
+	t.Helper()
+
+	jump := startJumpTestServer(t)
+	jump.prohibit.Store(true)
+	target := startJumpTestServer(t)
+
+	return target.addr, []sshHop{{hostID: 2, addr: jump.addr, config: testClientConfig(time.Second)}}
+}
+
+// TestATunnelBehindAProhibitingJumpWaitsTheCeiling is a tunnel whose jump Host
+// refuses the channel to the Host at the end. That refusal is put right in the
+// settings of the jump Host and nowhere else, so every attempt waits the
+// ceiling from the first, rather than the interval doubling towards it.
+func TestATunnelBehindAProhibitingJumpWaitsTheCeiling(t *testing.T) {
+	m := newSSHTestManager(t, 1)
+	m.SetReconnectMaxInterval(3)
+
+	server, jumps := prohibitingRoute(t)
+	tun, tunnel := newSSHTestTunnel(t, server)
+	tun.jumps = jumps
+
+	core, logs := observer.New(zapcore.InfoLevel)
+	tun.logger = zap.New(core)
+
+	returned := make(chan struct{})
+	go func() {
+		tun.Start(m, tunnel)
+		close(returned)
+	}()
+
+	got := waitRetryLines(t, logs, "connection failed, retrying in", 2)
+
+	_ = tun.Stop(m)
+	<-returned
+
+	if want := []int64{3, 3}; !sameInts(got, want) {
+		t.Fatalf("the tunnel waited %v seconds, want %v", got, want)
+	}
+	assertRetryReasons(t, logs, "connection failed, retrying in", 2, retryReasonJumpProhibited)
+}
+
+func TestALocalForwardBehindAProhibitingJumpWaitsTheCeiling(t *testing.T) {
+	server, jumps := prohibitingRoute(t)
+	host, port := splitTestAddr(t, server)
+
+	h := &models.Host{ID: 1, Address: host, Port: port, User: "tester"}
+	lf := &models.LocalForward{
+		Number: 7, HostID: 1, BindScope: models.BindScopeLoopback, LocalPort: freeDualStackPort(t),
+		TargetAddress: "127.0.0.1", TargetPort: 1, Enabled: true,
+	}
+
+	core, logs := observer.New(zapcore.InfoLevel)
+
+	f, err := newLocalTunnel(lf, h, testClientConfig(time.Second), time.Second, zap.New(core))
+	if err != nil {
+		t.Fatalf("failed to build the forward: %v", err)
+	}
+	f.jumps = jumps
+	f.maxInterval = 3 * time.Second
+
+	returned := make(chan struct{})
+	go func() {
+		f.Start()
+		close(returned)
+	}()
+
+	got := waitRetryLines(t, logs, "local forward connection failed, retrying in", 2)
+
+	f.Stop()
+	<-returned
+
+	if want := []int64{3, 3}; !sameInts(got, want) {
+		t.Fatalf("the forward waited %v seconds, want %v", got, want)
+	}
+	assertRetryReasons(t, logs, "local forward connection failed, retrying in", 2, retryReasonJumpProhibited)
+}
+
+func TestASocksProxyBehindAProhibitingJumpWaitsTheCeiling(t *testing.T) {
+	server, jumps := prohibitingRoute(t)
+	host := socksHostOn(t, server)
+
+	core, logs := observer.New(zapcore.InfoLevel)
+
+	p, err := newSocksTunnel(host, testClientConfig(time.Second), time.Second, zap.New(core))
+	if err != nil {
+		t.Fatalf("failed to build the proxy: %v", err)
+	}
+	p.jumps = jumps
+	p.maxInterval = 3 * time.Second
+
+	returned := make(chan struct{})
+	go func() {
+		p.Start()
+		close(returned)
+	}()
+
+	got := waitRetryLines(t, logs, "SOCKS5 proxy connection failed, retrying in", 2)
+
+	p.Stop()
+	<-returned
+
+	if want := []int64{3, 3}; !sameInts(got, want) {
+		t.Fatalf("the proxy waited %v seconds, want %v", got, want)
+	}
+	assertRetryReasons(t, logs, "SOCKS5 proxy connection failed, retrying in", 2, retryReasonJumpProhibited)
+}
+
+// TestADeniedRemotePortIsRetriedAtTheInterval is a tunnel whose Host refuses to
+// open the forwarded port on the first five connections, the way sshd does
+// for a while after a session went away without closing, since it still holds
+// the port for it. The first refusals in a row are tried again at the interval,
+// and those past them go back to doubling. The tunnel connects once the Host
+// lets the port go.
+func TestADeniedRemotePortIsRetriedAtTheInterval(t *testing.T) {
+	m := newSSHTestManager(t, 1)
+	m.SetReconnectMaxInterval(8)
+
+	server := startJumpTestServer(t)
+	server.denyForwardConns.Store(5)
+
+	tun, tunnel := newSSHTestTunnel(t, server.addr)
+	tun.Config = testClientConfig(time.Second)
+
+	core, logs := observer.New(zapcore.InfoLevel)
+	tun.logger = zap.New(core)
+
+	returned := make(chan struct{})
+	go func() {
+		tun.Start(m, tunnel)
+		close(returned)
+	}()
+	defer func() {
+		_ = tun.Stop(m)
+		<-returned
+	}()
+
+	got := waitRetryLines(t, logs, "connection failed, retrying in", 5)
+	if want := []int64{1, 1, 1, 1, 2}; !sameInts(got, want) {
+		t.Fatalf("the tunnel waited %v seconds, want %v", got, want)
+	}
+	assertRetryReasons(t, logs, "connection failed, retrying in", 5, retryReasonForwardDenied)
+
+	waitFor(t, 20*time.Second, "the tunnel to connect", func() bool {
+		return server.handshakes.Load() >= 6 && server.active.Load() >= 1
+	})
+}
+
+// errForwardDenied is what establishConnection fails with when the SSH server
+// refused both addresses of the forwarded port.
+var errForwardDenied = errors.New("failed to start remote listener: the SSH server opened neither address " +
+	"of the bind scope (127.0.0.1:80: " + listenDeniedMessage + "; [::1]:80: " + listenDeniedMessage + ")")
+
+// errJumpProhibited is what a connection fails with when the Host it passes
+// through is prohibited from opening the channel to the next.
+var errJumpProhibited = fmt.Errorf("failed to establish SSH connection: %w", &JumpError{Seq: 1, HostID: 2,
+	Address: "jump.example.com:22", Err: &ssh.OpenChannelError{Reason: ssh.Prohibited, Message: "prohibited"}})
+
+func TestTheWaitAfterAFailureFollowsWhatFailed(t *testing.T) {
+	s := time.Second
+	failure := errors.New("dial tcp: connection refused")
+
+	cases := []struct {
+		name     string
+		interval time.Duration
+		max      time.Duration
+		errs     []error
+		want     []time.Duration
+	}{
+		{"a prohibited jump waits the ceiling from the first", 5 * s, 60 * s,
+			[]error{errJumpProhibited, errJumpProhibited}, []time.Duration{60 * s, 60 * s}},
+		{"a prohibited jump under a ceiling below the interval waits the interval", 5 * s, 3 * s,
+			[]error{errJumpProhibited}, []time.Duration{5 * s}},
+		{"a denied port is tried at the interval three times, then doubles", 5 * s, 60 * s,
+			[]error{errForwardDenied, errForwardDenied, errForwardDenied, errForwardDenied, errForwardDenied},
+			[]time.Duration{5 * s, 5 * s, 5 * s, 5 * s, 10 * s}},
+		{"a denied port after failures waits the interval, then doubles on from them", 5 * s, 60 * s,
+			[]error{failure, failure, errForwardDenied, errForwardDenied, errForwardDenied, errForwardDenied},
+			[]time.Duration{5 * s, 10 * s, 5 * s, 5 * s, 5 * s, 20 * s}},
+		{"another failure ends a run of denials", 5 * s, 60 * s,
+			[]error{errForwardDenied, errForwardDenied, errForwardDenied, failure, errForwardDenied},
+			[]time.Duration{5 * s, 5 * s, 5 * s, 5 * s, 5 * s}},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			b := newReconnectBackoff(tc.interval, tc.max)
+
+			got := make([]time.Duration, 0, len(tc.errs))
+			for _, err := range tc.errs {
+				wait, _ := b.after(err)
+				got = append(got, wait)
+			}
+
+			if !sameWaits(got, tc.want) {
+				t.Fatalf("waits = %v, want %v", got, tc.want)
+			}
+		})
+	}
+}
+
+func TestAConnectionEndsARunOfDenials(t *testing.T) {
+	b := newReconnectBackoff(5*time.Second, 60*time.Second)
+
+	for i := 0; i < 3; i++ {
+		_, _ = b.after(errForwardDenied)
+	}
+	b.reset()
+
+	got := make([]time.Duration, 0, 3)
+	for i := 0; i < 3; i++ {
+		wait, reason := b.after(errForwardDenied)
+		if reason != retryReasonForwardDenied {
+			t.Fatalf("a denied port is given the reason %q, want %q", reason, retryReasonForwardDenied)
+		}
+		got = append(got, wait)
+	}
+
+	if want := []time.Duration{5 * time.Second, 5 * time.Second, 5 * time.Second}; !sameWaits(got, want) {
+		t.Fatalf("waits after a connection = %v, want %v", got, want)
 	}
 }

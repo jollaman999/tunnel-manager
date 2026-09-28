@@ -1339,10 +1339,11 @@ func (t *SSHTunnel) Start(m *Manager, tunnel *models.Tunnel) {
 					return
 				}
 
-				wait := t.backoff.failed()
+				wait, reason := t.backoff.after(err)
 				t.logger.Error("connection failed, retrying in "+strconv.Itoa(retryInSec(wait))+" seconds",
 					logid.TunnelConnectFailedRetrying.Field(),
 					zap.Int("retry_in_sec", retryInSec(wait)),
+					retryReasonField(reason),
 					zap.String("local", t.Local.String()),
 					zap.String("server", t.Server),
 					zap.String("remote", t.Remote),

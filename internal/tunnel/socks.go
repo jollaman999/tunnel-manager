@@ -739,10 +739,10 @@ func (p *socksTunnel) Start() {
 			return
 		}
 
-		wait := p.backoff.failed()
+		wait, reason := p.backoff.after(err)
 		p.logger.Error("SOCKS5 proxy connection failed, retrying in "+strconv.Itoa(retryInSec(wait))+" seconds",
 			append([]zap.Field{logid.TunnelSocksConnectFailedRetrying.Field()},
-				p.fields(zap.Int("retry_in_sec", retryInSec(wait)), zap.Error(err))...)...)
+				p.fields(zap.Int("retry_in_sec", retryInSec(wait)), retryReasonField(reason), zap.Error(err))...)...)
 
 		if !waitUnlessDone(p.done, wait) {
 			return

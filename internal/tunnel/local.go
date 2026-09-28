@@ -689,10 +689,10 @@ func (f *localTunnel) Start() {
 			return
 		}
 
-		wait := f.backoff.failed()
+		wait, reason := f.backoff.after(err)
 		f.logger.Error("local forward connection failed, retrying in "+strconv.Itoa(retryInSec(wait))+" seconds",
 			append([]zap.Field{logid.TunnelLocalForwardConnectFailedRetrying.Field()},
-				f.fields(zap.Int("retry_in_sec", retryInSec(wait)), zap.Error(err))...)...)
+				f.fields(zap.Int("retry_in_sec", retryInSec(wait)), retryReasonField(reason), zap.Error(err))...)...)
 
 		if !f.waitBeforeRetry(wait) {
 			return
