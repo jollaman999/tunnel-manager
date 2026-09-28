@@ -1849,7 +1849,8 @@ func idList(ids []uint) string {
 // keeps the number from the pass rather than reading the tables for it on
 // every refresh of the screen, so a write shows in it once the pass it wakes
 // has run. connected_tunnels, reconnecting_tunnels and error_tunnels are how
-// many rows carry each of those statuses. The last two are apart because what
+// many rows carry each of those statuses, a row whose route passes through a
+// disabled Host counted in error_tunnels. The last two are apart because what
 // they leave an operator to do differs: a row that is reconnecting is on its
 // way back on its own, and one in error is waiting for somebody, and a single
 // number over the two says nothing about which.
@@ -1876,7 +1877,7 @@ func idList(ids []uint) string {
 //
 // @Summary      The counts of the installation and one page of the status rows
 // @Description  tunnels carries both sorts of forward: kind is service_port or local_forward, and sp_id is null on a local forward, which is carried by no service port. On a local forward row, local is the address opened on this machine and remote the target reached from the Host, which is the mirror of what they hold on a service port row. Whether the target of a local forward answers is on the local forwards of its Host (forward_reach), not here.
-// @Description  The counts are over every row and not over the page: they say what the installation is doing, not what is on the page being looked at. There are four, and each counts the service port tunnels and the local forwards together: desired_tunnels is what should be running as of the last reconcile pass, which a change wakes, and connected_tunnels, reconnecting_tunnels and error_tunnels are how many rows are in each of those statuses. A row that is starting or held up at a host key is in none of the three. total_rows is the rows of both sorts, which is what the pages are cut from.
+// @Description  The counts are over every row and not over the page: they say what the installation is doing, not what is on the page being looked at. There are four, and each counts the service port tunnels and the local forwards together: desired_tunnels is what should be running as of the last reconcile pass, which a change wakes, and connected_tunnels, reconnecting_tunnels and error_tunnels are how many rows are in each of those statuses. A row in jump_host_disabled, whose Host is reached through a disabled Host, is counted in error_tunnels. A row that is starting or held up at a host key is in none of the three. total_rows is the rows of both sorts, which is what the pages are cut from.
 // @Description  q narrows the rows and total_rows with them, and leaves the four counts over every row.
 // @Tags         status
 // @Produce  json

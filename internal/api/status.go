@@ -22,11 +22,17 @@ const (
 // running local forward reports are the same words, which is what lets the two
 // sorts be counted together.
 //
-// The statuses that are none of these - a row still starting, and the two host
-// key refusals - are counted under none of the three. They are left out rather
-// than swept into the error count, because what an operator does about them is
-// to approve or to look at a key, which is what the two counts of Hosts waiting
-// in this same answer are for.
+// One status that is none of these words is counted as an error all the same:
+// tunnel.StatusJumpHostDisabled, a row whose Host is reached through a Host
+// that is disabled. The row belongs to a Host that is on and it does not come
+// up, and nothing else in this answer counts it, so it is one more row waiting
+// for somebody - to enable the Host passed through or to change the route.
+//
+// The other statuses - a row still starting, and the two host key refusals -
+// are counted under none of the three. They are left out rather than swept
+// into the error count, because what an operator does about them is to approve
+// or to look at a key, which is what the two counts of Hosts waiting in this
+// same answer are for.
 const (
 	statusConnected    = "connected"
 	statusReconnecting = "reconnecting"
@@ -320,15 +326,16 @@ type statusCounts struct {
 	errored      int
 }
 
-// add adds one row in the given status. A status that is none of the three is
-// counted nowhere, for the reason given where the three are named.
+// add adds one row in the given status. A route through a disabled Host is
+// counted as an error and any other status that is none of the three is
+// counted nowhere, for the reasons given where the three are named.
 func (c *statusCounts) add(status string, rows int) {
 	switch status {
 	case statusConnected:
 		c.connected += rows
 	case statusReconnecting:
 		c.reconnecting += rows
-	case statusError:
+	case statusError, tunnel.StatusJumpHostDisabled:
 		c.errored += rows
 	}
 }

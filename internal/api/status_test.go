@@ -266,6 +266,46 @@ func TestGetStatusCarriesBothSortsOfForward(t *testing.T) {
 	}
 }
 
+// TestGetStatusCountsARouteThroughADisabledHostAsAnError pins that a row whose
+// Host is reached through a disabled Host is in error_tunnels, a tunnel row by
+// the status written on it and a local forward by the status it reports. The
+// Host of the row is on and the row does not come up, so it is waiting for
+// somebody the way a row in error is.
+func TestGetStatusCountsARouteThroughADisabledHostAsAnError(t *testing.T) {
+	hosts := []models.Host{statusHost(1, true), statusHost(2, true)}
+	sps := []models.ServicePort{statusServicePort(1), statusServicePort(2)}
+	tunnels := []models.Tunnel{
+		statusTunnel(1, 1, "connected"),
+		statusTunnel(1, 2, "error"),
+		statusTunnel(2, 1, tunnel.StatusJumpHostDisabled),
+		statusTunnel(2, 2, tunnel.StatusJumpHostDisabled),
+	}
+
+	states := map[tunnel.LocalForwardKey]tunnel.LocalForwardState{
+		{HostID: 2, Number: 1}: {Status: tunnel.StatusJumpHostDisabled},
+	}
+
+	db := newRowsDB(t, hosts, sps, tunnels)
+	storeLocalForwards(t, db, []models.LocalForward{
+		statusLocalForward(1, 2, 19000, models.BindScopeWildcard, true),
+	})
+
+	_, data := statusRowsWithStates(t, db, "/api/status", states)
+
+	counts := map[string]int{
+		"connected_tunnels":    1,
+		"reconnecting_tunnels": 0,
+		// One tunnel in error, two tunnels and one forward behind a
+		// disabled Host.
+		"error_tunnels": 4,
+	}
+	for key, want := range counts {
+		if got := statusCount(t, data, key); got != want {
+			t.Errorf("%s = %d, want %d", key, got, want)
+		}
+	}
+}
+
 // TestGetStatusCarriesWhereALocalForwardListens pins that the address on the
 // row is the one the bind scope asks for, and that it is the IPv4 one of the
 // pair, which is what a tunnel row carries too.
@@ -779,8 +819,9 @@ func TestSplitStatusPageCutsBothRuns(t *testing.T) {
 }
 
 // TestLocalForwardStatusCountsCountEachStatus pins that the forwards are
-// counted by what they report, each into its own number, and that a status
-// which is none of the three is counted nowhere.
+// counted by what they report, each into its own number, that a route through
+// a disabled Host is counted as an error, and that a status which is none of
+// the three is counted nowhere.
 func TestLocalForwardStatusCountsCountEachStatus(t *testing.T) {
 	states := map[tunnel.LocalForwardKey]tunnel.LocalForwardState{
 		{HostID: 1, Number: 1}: {Status: "connected"},
@@ -788,10 +829,11 @@ func TestLocalForwardStatusCountsCountEachStatus(t *testing.T) {
 		{HostID: 2, Number: 1}: {Status: "connected"},
 		{HostID: 2, Number: 2}: {Status: "error"},
 		{HostID: 2, Number: 3}: {Status: "starting"},
+		{HostID: 3, Number: 1}: {Status: tunnel.StatusJumpHostDisabled},
 	}
 
 	got := localForwardStatusCounts(states)
-	want := statusCounts{connected: 2, reconnecting: 1, errored: 1}
+	want := statusCounts{connected: 2, reconnecting: 1, errored: 2}
 
 	if got != want {
 		t.Errorf("localForwardStatusCounts = %+v, want %+v", got, want)
