@@ -96,7 +96,7 @@ func newHostKeyDB(t *testing.T, host models.Host) *gorm.DB {
 
 	sqlDB.SetMaxOpenConns(1)
 
-	err = db.AutoMigrate(&models.Host{}, &models.User{})
+	err = db.AutoMigrate(&models.Host{}, &models.HostJump{}, &models.User{})
 	if err != nil {
 		t.Fatalf("failed to migrate the database: %v", err)
 	}
@@ -647,6 +647,13 @@ func TestTheHostViewCarriesEveryFieldOfAHost(t *testing.T) {
 		if !found {
 			t.Errorf("models.Host has %s and hostView does not, so it reaches no client", name)
 		}
+	}
+
+	// The jump route is kept in rows of models.HostJump rather than on the
+	// Host, and goes out as the ids of the Hosts it goes through.
+	_, found := carried.FieldByName("JumpHostIDs")
+	if !found {
+		t.Error("hostView does not carry the jump route of the Host")
 	}
 }
 

@@ -381,13 +381,14 @@ func nextHostID(tx *gorm.DB) (uint, error) {
 // @Description  enabled is optional and a Host that does not say is enabled.
 // @Description  bind_scope is what every assignment this registration makes is opened to: loopback, wildcard, or left out for the wildcard. It is read only when the assignments are made.
 // @Description  socks_enabled switches on the SOCKS5 proxy of the Host, which needs socks_port. socks_bind_scope is loopback, wildcard, or left out for loopback. socks_allowed_sources is the addresses and CIDR blocks a client may connect from, separated by commas or spaces; empty lets every address in.
+// @Description  jump_host_ids is the jump route: the ids of registered Hosts the SSH connection goes through, in order, at most 8. Left out, the Host is reached directly.
 // @Tags         hosts
 // @Accept   json
 // @Produce  json
 // @Security  CSRFToken
 // @Param   body  body  models.CreateHostRequest  true  "The Host to register"
 // @Success  200  {object}  models.Response{data=api.hostView}
-// @Failure  400  {object}  api.errorBody  "The body is refused, carries the old name ip in place of address, the private key cannot be read, or the SOCKS5 proxy is switched on without a port or with allowed sources that do not read"
+// @Failure  400  {object}  api.errorBody  "The body is refused, carries the old name ip in place of address, the private key cannot be read, the SOCKS5 proxy is switched on without a port or with allowed sources that do not read, or the jump route names a Host that is not registered, names one twice or is longer than 8"
 // @Failure  409  {object}  api.errorBody  "socks_port is the port of this server, of the SOCKS5 proxy of another Host or of a local forward"
 // @Router       /host [post]
 func (h *Handler) CreateHost(c echo.Context) error {
@@ -520,7 +521,25 @@ func (h *Handler) CreateHost(c echo.Context) error {
 		}
 	}
 
+	refused, err = jumpRouteRefused(tx, 0, req.JumpHostIDs)
+	if err != nil {
+		tx.Rollback()
+		h.logger.Error("failed to fetch Hosts", logid.HostListFetchFailed.Field(), zap.Error(err))
+		return failure(c, http.StatusInternalServerError, errHostCreateFailed)
+	}
+	if refused != nil {
+		tx.Rollback()
+		return refused.answer(c)
+	}
+
 	err = tx.Create(host).Error
+	if err != nil {
+		tx.Rollback()
+		h.logger.Error("failed to create Host", logid.HostCreateFailed.Field(), zap.Error(err))
+		return failure(c, http.StatusInternalServerError, errHostCreateFailed)
+	}
+
+	err = writeJumpRoute(tx, host.ID, req.JumpHostIDs)
 	if err != nil {
 		tx.Rollback()
 		h.logger.Error("failed to create Host", logid.HostCreateFailed.Field(), zap.Error(err))
@@ -574,7 +593,7 @@ func (h *Handler) CreateHost(c echo.Context) error {
 
 	return c.JSON(http.StatusCreated, models.Response{
 		Success: true,
-		Data:    hostViewOf(*host, h.manager.SocksStatuses()),
+		Data:    hostViewOf(*host, req.JumpHostIDs, h.manager.SocksStatuses()),
 	})
 }
 
@@ -621,10 +640,21 @@ func (h *Handler) ListHosts(c echo.Context) error {
 		return failure(c, http.StatusInternalServerError, errHostListFailed)
 	}
 
+	hostIDs := make([]uint, 0, len(hosts))
+	for _, host := range hosts {
+		hostIDs = append(hostIDs, host.ID)
+	}
+
+	routes, err := jumpRoutesOf(h.db, hostIDs)
+	if err != nil {
+		h.logger.Error("failed to fetch Hosts", logid.HostListFetchFailed.Field(), zap.Error(err))
+		return failure(c, http.StatusInternalServerError, errHostListFailed)
+	}
+
 	return c.JSON(http.StatusOK, models.Response{
 		Success: true,
 		Data: listPageOf{
-			Items: hostViewsOf(hosts, h.manager.SocksStatuses()),
+			Items: hostViewsOf(hosts, routes, h.manager.SocksStatuses()),
 			Total: total,
 			Page:  page.number,
 			Size:  page.size,
@@ -661,15 +691,22 @@ func (h *Handler) GetHost(c echo.Context) error {
 		return failure(c, http.StatusInternalServerError, errHostFetchFailed)
 	}
 
+	route, err := jumpRouteOf(h.db, host.ID)
+	if err != nil {
+		h.logger.Error("failed to fetch Host", logid.HostFetchFailed.Field(), zap.Error(err))
+		return failure(c, http.StatusInternalServerError, errHostFetchFailed)
+	}
+
 	return c.JSON(http.StatusOK, models.Response{
 		Success: true,
-		Data:    hostViewOf(host, h.manager.SocksStatuses()),
+		Data:    hostViewOf(host, route, h.manager.SocksStatuses()),
 	})
 }
 
 // @Summary      Update a Host
 // @Description  Every field is optional; enabled false stops its tunnels.
 // @Description  A SOCKS5 field left out keeps what is stored. socks_allowed_sources sent empty lets every address in; socks_bind_scope left empty keeps the stored scope.
+// @Description  jump_host_ids replaces the jump route: left out or null keeps the stored route, and an empty list takes it away.
 // @Tags         hosts
 // @Accept   json
 // @Produce  json
@@ -677,7 +714,7 @@ func (h *Handler) GetHost(c echo.Context) error {
 // @Param   id    path  int  true  "The id of the Host"
 // @Param   body  body  models.UpdateHostRequest  true  "The fields to change"
 // @Success  200  {object}  models.Response{data=api.hostView}
-// @Failure  400  {object}  api.errorBody  "The body is refused, or carries the old name ip in place of address"
+// @Failure  400  {object}  api.errorBody  "The body is refused, carries the old name ip in place of address, or the jump route names a Host that is not registered, the Host itself, one Host twice or is longer than 8"
 // @Failure  404  {object}  api.errorBody  "No such Host"
 // @Failure  409  {object}  api.errorBody  "The SOCKS5 proxy is switched on or moved to the port of this server, of the SOCKS5 proxy of another Host or of a local forward"
 // @Router       /host/{id} [put]
@@ -826,11 +863,40 @@ func (h *Handler) UpdateHost(c echo.Context) error {
 		}
 	}
 
+	if req.JumpHostIDs != nil {
+		refused, err = jumpRouteRefused(tx, host.ID, *req.JumpHostIDs)
+		if err != nil {
+			tx.Rollback()
+			h.logger.Error("failed to fetch Hosts", logid.HostListFetchFailed.Field(), zap.Error(err))
+			return failure(c, http.StatusInternalServerError, errHostUpdateFailed)
+		}
+		if refused != nil {
+			tx.Rollback()
+			return refused.answer(c)
+		}
+	}
+
 	err = tx.Save(&host).Error
 	if err != nil {
 		tx.Rollback()
 		h.logger.Error("failed to update Host", logid.HostUpdateFailed.Field(), zap.Error(err))
 		return failure(c, http.StatusInternalServerError, errHostUpdateFailed)
+	}
+
+	if req.JumpHostIDs != nil {
+		err = writeJumpRoute(tx, host.ID, *req.JumpHostIDs)
+		if err != nil {
+			tx.Rollback()
+			h.logger.Error("failed to update Host", logid.HostUpdateFailed.Field(), zap.Error(err))
+			return failure(c, http.StatusInternalServerError, errHostUpdateFailed)
+		}
+	}
+
+	route, err := jumpRouteOf(tx, host.ID)
+	if err != nil {
+		tx.Rollback()
+		h.logger.Error("failed to fetch Host", logid.HostFetchFailed.Field(), zap.Error(err))
+		return failure(c, http.StatusInternalServerError, errHostFetchFailed)
 	}
 
 	err = tx.Commit().Error
@@ -843,17 +909,19 @@ func (h *Handler) UpdateHost(c echo.Context) error {
 
 	return c.JSON(http.StatusOK, models.Response{
 		Success: true,
-		Data:    hostViewOf(host, h.manager.SocksStatuses()),
+		Data:    hostViewOf(host, route, h.manager.SocksStatuses()),
 	})
 }
 
 // @Summary      Delete a Host, and the assignments naming it
+// @Description  A Host that is on the jump route of another Host is not deleted. The refusal names those Hosts in error_args and carries them as data.
 // @Tags         hosts
 // @Produce  json
 // @Security  CSRFToken
 // @Param   id  path  int  true  "The id of the Host"
 // @Success  200  {object}  models.Response{data=string}
 // @Failure  404  {object}  api.errorBody  "No such Host"
+// @Failure  409  {object}  api.errorBody{data=[]api.jumpUser}  "The Host is on the jump route of other Hosts"
 // @Router       /host/{id} [delete]
 func (h *Handler) DeleteHost(c echo.Context) error {
 	id, err := strconv.ParseUint(c.Param("id"), 10, 32)
@@ -883,6 +951,17 @@ func (h *Handler) DeleteHost(c echo.Context) error {
 		return failure(c, http.StatusInternalServerError, errHostFetchFailed)
 	}
 
+	users, err := jumpUsersOf(tx, host.ID)
+	if err != nil {
+		tx.Rollback()
+		h.logger.Error("failed to fetch Hosts", logid.HostListFetchFailed.Field(), zap.Error(err), zap.Uint64("host_id", id))
+		return failure(c, http.StatusInternalServerError, errHostDeleteFailed)
+	}
+	if len(users) > 0 {
+		tx.Rollback()
+		return jumpUsersRefusal(users).answer(c)
+	}
+
 	err = tx.Delete(&host).Error
 	if err != nil {
 		tx.Rollback()
@@ -908,6 +987,13 @@ func (h *Handler) DeleteHost(c echo.Context) error {
 	// line carries HostDeleteFailed rather than an identifier of its own, since
 	// the Host is what failed to be deleted and the rollback leaves it stored.
 	err = tx.Where("host_id = ?", host.ID).Delete(&models.LocalForward{}).Error
+	if err != nil {
+		tx.Rollback()
+		h.logger.Error("failed to delete Host", logid.HostDeleteFailed.Field(), zap.Error(err), zap.Uint64("host_id", id))
+		return failure(c, http.StatusInternalServerError, errHostDeleteFailed)
+	}
+
+	err = tx.Where("host_id = ?", host.ID).Delete(&models.HostJump{}).Error
 	if err != nil {
 		tx.Rollback()
 		h.logger.Error("failed to delete Host", logid.HostDeleteFailed.Field(), zap.Error(err), zap.Uint64("host_id", id))
@@ -2053,6 +2139,12 @@ func (h *Handler) GetHostStatus(c echo.Context) error {
 		return failure(c, http.StatusInternalServerError, errStatusFetchFailed)
 	}
 
+	route, err := jumpRouteOf(h.db, host.ID)
+	if err != nil {
+		h.logger.Error("failed to fetch Host", logid.HostFetchFailed.Field(), zap.Error(err))
+		return failure(c, http.StatusInternalServerError, errHostFetchFailed)
+	}
+
 	var connectedTunnels int
 	for _, t := range *tunnels {
 		if t.Status == "connected" {
@@ -2063,7 +2155,7 @@ func (h *Handler) GetHostStatus(c echo.Context) error {
 	return c.JSON(http.StatusOK, models.Response{
 		Success: true,
 		Data: map[string]interface{}{
-			"host":              hostViewOf(host, h.manager.SocksStatuses()),
+			"host":              hostViewOf(host, route, h.manager.SocksStatuses()),
 			"total_tunnels":     len(*tunnels),
 			"connected_tunnels": connectedTunnels,
 			"tunnels":           tunnels,

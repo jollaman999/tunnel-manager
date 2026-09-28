@@ -378,7 +378,7 @@ func TestTheHostViewCarriesTheSocksStatus(t *testing.T) {
 	}
 
 	for _, tc := range tests {
-		view := hostViewOf(tc.host, states)
+		view := hostViewOf(tc.host, nil, states)
 		if view.SocksStatus != tc.status || view.SocksLastError != tc.lastError {
 			t.Errorf("Host %d: socks_status = %q, socks_last_error = %q, want %q and %q", tc.host.ID,
 				view.SocksStatus, view.SocksLastError, tc.status, tc.lastError)

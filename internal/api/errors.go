@@ -148,6 +148,11 @@ const (
 	errHostSocksPortIsAPIPort      errorCode = "host.socks_port.api_port"
 	errHostSocksPortTaken          errorCode = "host.socks_port.taken"
 	errHostSocksPortLocalForward   errorCode = "host.socks_port.local_forward"
+	errHostJumpUnknown             errorCode = "host.jump.unknown"
+	errHostJumpSelf                errorCode = "host.jump.self"
+	errHostJumpRepeated            errorCode = "host.jump.repeated"
+	errHostJumpTooMany             errorCode = "host.jump.too_many"
+	errHostDeleteUsedAsJump        errorCode = "host.delete.used_as_jump"
 
 	errServicePortIDInvalid        errorCode = "service_port.id.invalid"
 	errServicePortNotFound         errorCode = "service_port.not_found"
@@ -426,6 +431,11 @@ var errorMessages = map[errorCode]string{
 	errHostSocksPortIsAPIPort:    "The SOCKS5 port {socks_port} is the port this server listens on",
 	errHostSocksPortTaken:        "The SOCKS5 port {socks_port} is already opened by the SOCKS5 proxy of the Host {host}",
 	errHostSocksPortLocalForward: "The SOCKS5 port {socks_port} is already opened by a local forward of the Host {host}",
+	errHostJumpUnknown:           "The jump route is refused: there is no Host {host_id}. Register the Host first and put it on the route after",
+	errHostJumpSelf:              "The jump route is refused: a Host cannot go through itself",
+	errHostJumpRepeated:          "The jump route is refused: the Host {host_id} is on it twice",
+	errHostJumpTooMany:           "The jump route is refused: it goes through more than {max} Hosts",
+	errHostDeleteUsedAsJump:      "The Host was not deleted: the Hosts {hosts} (id {host_ids}) go through it on their jump route. Take it off those routes first",
 
 	// The service ports.
 	errServicePortIDInvalid:        "Invalid service port ID: {reason}",

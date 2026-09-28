@@ -473,7 +473,7 @@
                         "CSRFToken": []
                     }
                 ],
-                "description": "address is a host name or an IP address. A name is resolved each time the Host is connected to.\nenabled is optional and a Host that does not say is enabled.\nbind_scope is what every assignment this registration makes is opened to: loopback, wildcard, or left out for the wildcard. It is read only when the assignments are made.\nsocks_enabled switches on the SOCKS5 proxy of the Host, which needs socks_port. socks_bind_scope is loopback, wildcard, or left out for loopback. socks_allowed_sources is the addresses and CIDR blocks a client may connect from, separated by commas or spaces; empty lets every address in.",
+                "description": "address is a host name or an IP address. A name is resolved each time the Host is connected to.\nenabled is optional and a Host that does not say is enabled.\nbind_scope is what every assignment this registration makes is opened to: loopback, wildcard, or left out for the wildcard. It is read only when the assignments are made.\nsocks_enabled switches on the SOCKS5 proxy of the Host, which needs socks_port. socks_bind_scope is loopback, wildcard, or left out for loopback. socks_allowed_sources is the addresses and CIDR blocks a client may connect from, separated by commas or spaces; empty lets every address in.\njump_host_ids is the jump route: the ids of registered Hosts the SSH connection goes through, in order, at most 8. Left out, the Host is reached directly.",
                 "consumes": [
                     "application/json"
                 ],
@@ -515,7 +515,7 @@
                         }
                     },
                     "400": {
-                        "description": "The body is refused, carries the old name ip in place of address, the private key cannot be read, or the SOCKS5 proxy is switched on without a port or with allowed sources that do not read",
+                        "description": "The body is refused, carries the old name ip in place of address, the private key cannot be read, the SOCKS5 proxy is switched on without a port or with allowed sources that do not read, or the jump route names a Host that is not registered, names one twice or is longer than 8",
                         "schema": {
                             "$ref": "#/definitions/api.errorBody"
                         }
@@ -715,7 +715,7 @@
                         "CSRFToken": []
                     }
                 ],
-                "description": "Every field is optional; enabled false stops its tunnels.\nA SOCKS5 field left out keeps what is stored. socks_allowed_sources sent empty lets every address in; socks_bind_scope left empty keeps the stored scope.",
+                "description": "Every field is optional; enabled false stops its tunnels.\nA SOCKS5 field left out keeps what is stored. socks_allowed_sources sent empty lets every address in; socks_bind_scope left empty keeps the stored scope.\njump_host_ids replaces the jump route: left out or null keeps the stored route, and an empty list takes it away.",
                 "consumes": [
                     "application/json"
                 ],
@@ -764,7 +764,7 @@
                         }
                     },
                     "400": {
-                        "description": "The body is refused, or carries the old name ip in place of address",
+                        "description": "The body is refused, carries the old name ip in place of address, or the jump route names a Host that is not registered, the Host itself, one Host twice or is longer than 8",
                         "schema": {
                             "$ref": "#/definitions/api.errorBody"
                         }
@@ -789,6 +789,7 @@
                         "CSRFToken": []
                     }
                 ],
+                "description": "A Host that is on the jump route of another Host is not deleted. The refusal names those Hosts in error_args and carries them as data.",
                 "produces": [
                     "application/json"
                 ],
@@ -828,6 +829,27 @@
                         "description": "No such Host",
                         "schema": {
                             "$ref": "#/definitions/api.errorBody"
+                        }
+                    },
+                    "409": {
+                        "description": "The Host is on the jump route of other Hosts",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/api.errorBody"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "data": {
+                                            "type": "array",
+                                            "items": {
+                                                "$ref": "#/definitions/api.jumpUser"
+                                            }
+                                        }
+                                    }
+                                }
+                            ]
                         }
                     }
                 }
@@ -3186,6 +3208,11 @@
                 "host.socks_port.api_port",
                 "host.socks_port.taken",
                 "host.socks_port.local_forward",
+                "host.jump.unknown",
+                "host.jump.self",
+                "host.jump.repeated",
+                "host.jump.too_many",
+                "host.delete.used_as_jump",
                 "service_port.id.invalid",
                 "service_port.not_found",
                 "service_port.fetch_failed",
@@ -3383,6 +3410,11 @@
                 "errHostSocksPortIsAPIPort",
                 "errHostSocksPortTaken",
                 "errHostSocksPortLocalForward",
+                "errHostJumpUnknown",
+                "errHostJumpSelf",
+                "errHostJumpRepeated",
+                "errHostJumpTooMany",
+                "errHostDeleteUsedAsJump",
                 "errServicePortIDInvalid",
                 "errServicePortNotFound",
                 "errServicePortFetchFailed",
@@ -3774,6 +3806,13 @@
                 "id": {
                     "type": "integer"
                 },
+                "jump_host_ids": {
+                    "description": "JumpHostIDs is the jump route of the Host in the order it goes, and an\nempty list for a Host reached directly.",
+                    "type": "array",
+                    "items": {
+                        "type": "integer"
+                    }
+                },
                 "pending_host_key_fingerprint": {
                     "type": "string"
                 },
@@ -3878,6 +3917,20 @@
                     "type": "integer"
                 },
                 "skipped": {
+                    "type": "integer"
+                }
+            }
+        },
+        "api.jumpUser": {
+            "type": "object",
+            "properties": {
+                "address": {
+                    "type": "string"
+                },
+                "id": {
+                    "type": "integer"
+                },
+                "port": {
                     "type": "integer"
                 }
             }
@@ -4571,6 +4624,13 @@
                     "description": "Enabled is a pointer so that a Host asked for as disabled can be told\nfrom one that did not mention it. A plain bool cannot say the difference,\nand the two mean different things: the second one is enabled.",
                     "type": "boolean"
                 },
+                "jump_host_ids": {
+                    "description": "JumpHostIDs is the jump route of the Host: the registered Hosts its SSH\nconnection goes through, in the order it goes through them. Left out,\nthe Host is reached directly.",
+                    "type": "array",
+                    "items": {
+                        "type": "integer"
+                    }
+                },
                 "key_passphrase": {
                     "type": "string"
                 },
@@ -4737,6 +4797,13 @@
                 },
                 "enabled": {
                     "type": "boolean"
+                },
+                "jump_host_ids": {
+                    "description": "JumpHostIDs is a pointer so that a request that leaves the route out\nkeeps the one that is stored, and one that sends an empty list takes it\naway.",
+                    "type": "array",
+                    "items": {
+                        "type": "integer"
+                    }
                 },
                 "key_passphrase": {
                     "type": "string"

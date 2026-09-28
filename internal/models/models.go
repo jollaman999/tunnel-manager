@@ -378,6 +378,10 @@ type CreateHostRequest struct {
 	SocksPort           int    `json:"socks_port" validate:"omitempty,min=1,max=65535"`
 	SocksBindScope      string `json:"socks_bind_scope" validate:"omitempty,oneof=loopback wildcard"`
 	SocksAllowedSources string `json:"socks_allowed_sources"`
+	// JumpHostIDs is the jump route of the Host: the registered Hosts its SSH
+	// connection goes through, in the order it goes through them. Left out,
+	// the Host is reached directly.
+	JumpHostIDs []uint `json:"jump_host_ids"`
 }
 
 // UpdateHostRequest changes a Host. A field the request leaves out is left as
@@ -402,6 +406,10 @@ type UpdateHostRequest struct {
 	SocksPort           *int    `json:"socks_port" validate:"omitempty,min=1,max=65535"`
 	SocksBindScope      string  `json:"socks_bind_scope" validate:"omitempty,oneof=loopback wildcard"`
 	SocksAllowedSources *string `json:"socks_allowed_sources"`
+	// JumpHostIDs is a pointer so that a request that leaves the route out
+	// keeps the one that is stored, and one that sends an empty list takes it
+	// away.
+	JumpHostIDs *[]uint `json:"jump_host_ids"`
 }
 
 type CreateServicePortRequest struct {

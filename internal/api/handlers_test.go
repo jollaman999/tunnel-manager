@@ -732,22 +732,24 @@ func TestWriteHandlersReadTheirRowInsideTheTransaction(t *testing.T) {
 			}
 
 			all := reads.all()
-			if len(all) != 1 {
-				t.Fatalf("reads = %d, want 1: %v", len(all), all)
+			if len(all) == 0 {
+				t.Fatal("the handler read nothing")
 			}
-			read := all[0]
+			if !strings.Contains(all[0].sql, "`"+tt.table+"`") {
+				t.Errorf("sql = %s, want a read of %s first", all[0].sql, tt.table)
+			}
 
-			if strings.Contains(read.sql, "FOR UPDATE") {
-				t.Errorf("the read asks for a row lock that SQLite does not take: %s", read.sql)
-			}
-			if !strings.Contains(read.sql, "`"+tt.table+"`") {
-				t.Errorf("sql = %s, want a read of %s", read.sql, tt.table)
-			}
-			if !read.inTx {
-				t.Errorf("the row was read outside the transaction, so the write does not cover it: %s", read.sql)
-			}
-			if read.commits != 0 {
-				t.Errorf("commits at the read = %d, want 0: the transaction that writes was already through", read.commits)
+			for _, read := range all {
+				if strings.Contains(read.sql, "FOR UPDATE") {
+					t.Errorf("the read asks for a row lock that SQLite does not take: %s", read.sql)
+				}
+				if !read.inTx {
+					t.Errorf("a read went outside the transaction, so the write does not cover it: %s", read.sql)
+				}
+				if read.commits != 0 {
+					t.Errorf("commits at the read = %d, want 0: the transaction that writes was already through: %s",
+						read.commits, read.sql)
+				}
 			}
 
 			commits, rollbacks := txPool.counts()
@@ -973,7 +975,7 @@ func newRowsDB(t *testing.T, hosts []models.Host, sps []models.ServicePort, tunn
 		}
 	})
 
-	err = db.AutoMigrate(&models.Host{}, &models.ServicePort{}, &models.Tunnel{}, &models.HostServicePort{}, &models.LocalForward{})
+	err = db.AutoMigrate(&models.Host{}, &models.HostJump{}, &models.ServicePort{}, &models.Tunnel{}, &models.HostServicePort{}, &models.LocalForward{})
 	if err != nil {
 		t.Fatalf("failed to migrate the database: %v", err)
 	}
@@ -2725,7 +2727,7 @@ func newHostFixture(t *testing.T) *hostFixture {
 	// The service ports and the assignments are built as well, because
 	// registering a Host assigns it the service ports that are stored and so
 	// reads one table and writes the other.
-	err = db.AutoMigrate(&models.Host{}, &models.ServicePort{}, &models.HostServicePort{})
+	err = db.AutoMigrate(&models.Host{}, &models.HostJump{}, &models.ServicePort{}, &models.HostServicePort{})
 	if err != nil {
 		t.Fatalf("failed to migrate the database: %v", err)
 	}

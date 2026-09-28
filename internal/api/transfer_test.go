@@ -119,7 +119,7 @@ func newTransferInstall(t *testing.T) *transferInstall {
 		}
 	})
 
-	err = db.AutoMigrate(&models.Host{}, &models.ServicePort{}, &models.HostServicePort{},
+	err = db.AutoMigrate(&models.Host{}, &models.HostJump{}, &models.ServicePort{}, &models.HostServicePort{},
 		&models.LocalForward{}, &settings.Settings{}, &models.User{}, &models.APIToken{})
 	if err != nil {
 		t.Fatalf("failed to migrate the database: %v", err)

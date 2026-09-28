@@ -54,7 +54,7 @@ func newLocalForwardDB(t *testing.T, hosts []models.Host, forwards []models.Loca
 
 	sqlDB.SetMaxOpenConns(1)
 
-	err = db.AutoMigrate(&models.Host{}, &models.LocalForward{}, &settings.Settings{})
+	err = db.AutoMigrate(&models.Host{}, &models.HostJump{}, &models.LocalForward{}, &settings.Settings{})
 	if err != nil {
 		t.Fatalf("failed to migrate the database: %v", err)
 	}

@@ -45,7 +45,7 @@ func newSettingsDB(t *testing.T) *gorm.DB {
 
 	// The local forwards are there because a save that changes the port reads
 	// them.
-	err = db.AutoMigrate(&settings.Settings{}, &models.Host{}, &models.LocalForward{})
+	err = db.AutoMigrate(&settings.Settings{}, &models.Host{}, &models.HostJump{}, &models.LocalForward{})
 	if err != nil {
 		t.Fatalf("failed to migrate the database: %v", err)
 	}

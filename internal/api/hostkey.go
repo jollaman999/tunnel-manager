@@ -59,10 +59,13 @@ type hostView struct {
 	// it is and the Host is disabled, "stopped" while it is asked for and none
 	// runs, and what the running proxy reports otherwise. SocksLastError is
 	// what the running proxy reports, and empty while none runs.
-	SocksStatus    string    `json:"socks_status"`
-	SocksLastError string    `json:"socks_last_error"`
-	CreatedAt      time.Time `json:"created_at"`
-	UpdatedAt      time.Time `json:"updated_at"`
+	SocksStatus    string `json:"socks_status"`
+	SocksLastError string `json:"socks_last_error"`
+	// JumpHostIDs is the jump route of the Host in the order it goes, and an
+	// empty list for a Host reached directly.
+	JumpHostIDs []uint    `json:"jump_host_ids"`
+	CreatedAt   time.Time `json:"created_at"`
+	UpdatedAt   time.Time `json:"updated_at"`
 }
 
 // The statuses the SOCKS5 proxy of a Host carries when none runs for it. The
@@ -73,9 +76,10 @@ const (
 	socksStatusStopped  = localForwardStatusStopped
 )
 
-// hostViewOf turns a row into what goes out. socks is what the running SOCKS5
-// proxies report, keyed by Host, as tunnelManager.SocksStatuses answers it.
-func hostViewOf(host models.Host, socks map[uint]tunnel.SocksState) hostView {
+// hostViewOf turns a row into what goes out. route is its jump route, as
+// jumpRoutesOf reads it. socks is what the running SOCKS5 proxies report, keyed
+// by Host, as tunnelManager.SocksStatuses answers it.
+func hostViewOf(host models.Host, route []uint, socks map[uint]tunnel.SocksState) hostView {
 	view := hostView{
 		ID:                        host.ID,
 		Address:                   host.Address,
@@ -89,12 +93,17 @@ func hostViewOf(host models.Host, socks map[uint]tunnel.SocksState) hostView {
 		SocksPort:                 host.SocksPort,
 		SocksBindScope:            host.SocksBindScope,
 		SocksAllowedSources:       host.SocksAllowedSources,
+		JumpHostIDs:               route,
 		CreatedAt:                 host.CreatedAt,
 		UpdatedAt:                 host.UpdatedAt,
 	}
 
 	if view.SocksBindScope == "" {
 		view.SocksBindScope = models.BindScopeWildcard
+	}
+
+	if view.JumpHostIDs == nil {
+		view.JumpHostIDs = []uint{}
 	}
 
 	state, running := socks[host.ID]
@@ -116,10 +125,10 @@ func hostViewOf(host models.Host, socks map[uint]tunnel.SocksState) hostView {
 // hostViewsOf does the same for a page of them. A page that holds no row is an
 // empty slice and not nil, for the reason ListHosts states: a client draws a
 // list out of it, and null is not a list.
-func hostViewsOf(hosts []models.Host, socks map[uint]tunnel.SocksState) []hostView {
+func hostViewsOf(hosts []models.Host, routes map[uint][]uint, socks map[uint]tunnel.SocksState) []hostView {
 	views := make([]hostView, 0, len(hosts))
 	for _, host := range hosts {
-		views = append(views, hostViewOf(host, socks))
+		views = append(views, hostViewOf(host, routes[host.ID], socks))
 	}
 
 	return views
@@ -448,6 +457,14 @@ func (h *Handler) ApproveHostKey(c echo.Context) error {
 		return failure(c, http.StatusInternalServerError, errHostUpdateFailed)
 	}
 
+	route, err := jumpRouteOf(tx, host.ID)
+	if err != nil {
+		tx.Rollback()
+		h.logger.Error("failed to fetch Host", logid.HostFetchFailed.Field(), zap.Error(err))
+
+		return failure(c, http.StatusInternalServerError, errHostFetchFailed)
+	}
+
 	err = tx.Commit().Error
 	if err != nil {
 		h.logger.Error("failed to commit the transaction", logid.DatabaseTransactionCommitFailed.Field(), zap.Error(err))
@@ -476,7 +493,7 @@ func (h *Handler) ApproveHostKey(c echo.Context) error {
 
 	return c.JSON(http.StatusOK, models.Response{
 		Success: true,
-		Data:    hostViewOf(host, h.manager.SocksStatuses()),
+		Data:    hostViewOf(host, route, h.manager.SocksStatuses()),
 	})
 }
 
