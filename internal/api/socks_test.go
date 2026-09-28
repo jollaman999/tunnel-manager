@@ -601,8 +601,8 @@ func (i *transferInstall) proxies(t *testing.T) []string {
 }
 
 // TestTheSocksProxyOfAHostCrossesToAnotherInstallation is the round trip: the
-// four fields are written into the file and stored by the import, and the
-// proxy is an item of its own, named by its code.
+// four fields are written into the file and stored by the import as they
+// were, an empty scope included.
 func TestTheSocksProxyOfAHostCrossesToAnotherInstallation(t *testing.T) {
 	source := newTransferInstall(t)
 	target := newTransferInstall(t)
@@ -611,67 +611,53 @@ func TestTheSocksProxyOfAHostCrossesToAnotherInstallation(t *testing.T) {
 	source.registerHost(t, passwordHost("192.0.2.11"))
 	source.setSocks(t, "192.0.2.10", 1080, models.BindScopeLoopback, "192.0.2.0/24 198.51.100.7")
 
-	rec := target.importTunnels(t, source.exportTunnels(t, testExportPassword), testExportPassword, false)
+	rec := target.importTunnels(t, source.exportTunnels(t, testExportPassword), testExportPassword)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("the import answered %d: %s", rec.Code, rec.Body.String())
 	}
 
 	want := []string{
 		"192.0.2.10 on 1080 loopback 192.0.2.0/24 198.51.100.7",
-		"192.0.2.11 off 0 wildcard ",
+		"192.0.2.11 off 0  ",
 	}
 	if !reflect.DeepEqual(target.proxies(t), want) {
 		t.Fatalf("the imported proxies are %v, want %v", target.proxies(t), want)
 	}
-
-	checkNamedItems(t, decodeTransfer(t, rec).Data, []namedItem{{
-		kind:       "socks",
-		name:       "192.0.2.10 opens the SOCKS5 proxy on 1080",
-		nameCode:   textImportNameSocks,
-		nameValues: textArgs{"host": "192.0.2.10", "socks_port": "1080"},
-		action:     transferAdded,
-	}})
 }
 
-// TestAFileFromBeforeTheSocksProxiesLeavesThemAlone is a file with none of
-// the four fields imported with overwrite onto a Host whose proxy is on here.
-// Such a file says nothing about the proxy, so it stays as it is; a file that
-// carries the proxy as off switches it off.
-func TestAFileFromBeforeTheSocksProxiesLeavesThemAlone(t *testing.T) {
+// TestAFileFromBeforeTheSocksProxiesImportsNone is a file with none of the
+// four fields, which is every file of a release before the proxies. The Host
+// it names is imported with no proxy, whatever the Host stored here had; a
+// file that carries the proxy as off does the same.
+func TestAFileFromBeforeTheSocksProxiesImportsNone(t *testing.T) {
 	source := newTransferInstall(t)
-	target := newTransferInstall(t)
 
 	source.registerHost(t, passwordHost("192.0.2.10"))
 
-	target.registerHost(t, passwordHost("192.0.2.10"))
-	target.setSocks(t, "192.0.2.10", 1080, models.BindScopeWildcard, "192.0.2.0/24")
-
-	before := target.proxies(t)
 	exported := source.exportTunnels(t, testExportPassword)
 
-	file := rewriteHosts(t, exported, testExportPassword, func(host map[string]interface{}) {
-		for _, name := range []string{"socks_enabled", "socks_port", "socks_bind_scope", "socks_allowed_sources"} {
-			delete(host, name)
+	older := rewriteHosts(t, formatOne(t, exported, testExportPassword), testExportPassword,
+		func(host map[string]interface{}) {
+			for _, name := range []string{"socks_enabled", "socks_port", "socks_bind_scope", "socks_allowed_sources"} {
+				delete(host, name)
+			}
+		})
+
+	for _, file := range []string{older, exported} {
+		target := newTransferInstall(t)
+
+		target.registerHost(t, passwordHost("192.0.2.10"))
+		target.setSocks(t, "192.0.2.10", 1080, models.BindScopeWildcard, "192.0.2.0/24")
+
+		rec := target.importTunnels(t, file, testExportPassword)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("the import answered %d: %s", rec.Code, rec.Body.String())
 		}
-	})
 
-	rec := target.importTunnels(t, file, testExportPassword, true)
-	if rec.Code != http.StatusOK {
-		t.Fatalf("the import answered %d: %s", rec.Code, rec.Body.String())
-	}
-
-	if !reflect.DeepEqual(target.proxies(t), before) {
-		t.Fatalf("a file that names no proxy changed it to %v, want %v", target.proxies(t), before)
-	}
-
-	rec = target.importTunnels(t, exported, testExportPassword, true)
-	if rec.Code != http.StatusOK {
-		t.Fatalf("the import answered %d: %s", rec.Code, rec.Body.String())
-	}
-
-	want := []string{"192.0.2.10 off 0 wildcard "}
-	if !reflect.DeepEqual(target.proxies(t), want) {
-		t.Fatalf("a file that carries the proxy as off left %v, want %v", target.proxies(t), want)
+		want := []string{"192.0.2.10 off 0  "}
+		if !reflect.DeepEqual(target.proxies(t), want) {
+			t.Fatalf("the import left the proxies %v, want %v", target.proxies(t), want)
+		}
 	}
 }
 
@@ -689,17 +675,6 @@ func TestASocksProxyTheInstallationCannotOpenIsRefused(t *testing.T) {
 		{"on the port of this server", func() []hostContent {
 			return []hostContent{withSocks(passwordHost("192.0.2.10"), apiPort, "", "")}
 		}, http.StatusConflict, errImportSocksAPIPort},
-		{"on the port of a proxy here", func() []hostContent {
-			return []hostContent{withSocks(passwordHost("192.0.2.10"), 1080, "", "")}
-		}, http.StatusConflict, errImportSocksPortTaken},
-		{"on the port of a local forward here", func() []hostContent {
-			return []hostContent{withSocks(passwordHost("192.0.2.10"), 15432, "", "")}
-		}, http.StatusConflict, errImportSocksLocalForward},
-		{"a local forward on the port of a proxy here", func() []hostContent {
-			host := passwordHost("192.0.2.10")
-			host.LocalForwards = []localForwardContent{{LocalPort: 1080, TargetAddress: "192.0.2.30", TargetPort: 80}}
-			return []hostContent{host}
-		}, http.StatusConflict, errImportLocalForwardSocks},
 		{"two proxies of the file on one port", func() []hostContent {
 			return []hostContent{
 				withSocks(passwordHost("192.0.2.10"), 1090, "", ""),
@@ -742,7 +717,7 @@ func TestASocksProxyTheInstallationCannotOpenIsRefused(t *testing.T) {
 
 			file := sealedTunnelsFile(t, source, tunnelsContent{Hosts: tc.hosts()}, testExportPassword)
 
-			rec := target.importTunnels(t, file, testExportPassword, true)
+			rec := target.importTunnels(t, file, testExportPassword)
 			if rec.Code != tc.status {
 				t.Fatalf("the import answered %d, want %d: %s", rec.Code, tc.status, rec.Body.String())
 			}
@@ -757,6 +732,39 @@ func TestASocksProxyTheInstallationCannotOpenIsRefused(t *testing.T) {
 					target.proxies(t), target.count(t, &models.LocalForward{}), before)
 			}
 		})
+	}
+}
+
+// TestAPortSomethingHereOpensIsFreedByTheImport is a proxy or a local forward
+// of the file on a port a proxy or a local forward stored here opens. The
+// import deletes what is stored before it writes the file, so none of them is
+// in the way.
+func TestAPortSomethingHereOpensIsFreedByTheImport(t *testing.T) {
+	source := newTransferInstall(t)
+	target := newTransferInstall(t)
+
+	target.registerHost(t, passwordHost("192.0.2.12"))
+	target.setSocks(t, "192.0.2.12", 1080, models.BindScopeWildcard, "")
+	target.forward(t, "192.0.2.12", localForwardContent{BindScope: models.BindScopeWildcard,
+		LocalPort: 15432, TargetAddress: "192.0.2.40", TargetPort: 5432})
+
+	host := withSocks(passwordHost("192.0.2.10"), 15432, models.BindScopeLoopback, "")
+	host.LocalForwards = []localForwardContent{{LocalPort: 1080, TargetAddress: "192.0.2.30", TargetPort: 80}}
+
+	file := sealedTunnelsFile(t, source, tunnelsContent{Hosts: []hostContent{host}}, testExportPassword)
+
+	rec := target.importTunnels(t, file, testExportPassword)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("the import answered %d: %s", rec.Code, rec.Body.String())
+	}
+
+	want := []string{"192.0.2.10 on 15432 loopback "}
+	if !reflect.DeepEqual(target.proxies(t), want) {
+		t.Fatalf("after the import the proxies are %v, want %v", target.proxies(t), want)
+	}
+
+	if !reflect.DeepEqual(target.forwards(t), []string{"192.0.2.10 wildcard 1080 -> 192.0.2.30:80 ()"}) {
+		t.Fatalf("after the import the installation forwards %v", target.forwards(t))
 	}
 }
 
@@ -777,7 +785,7 @@ func TestASocksPortTheFileMovesIsFree(t *testing.T) {
 		withSocks(passwordHost("192.0.2.11"), 1080, models.BindScopeWildcard, ""),
 	}}, testExportPassword)
 
-	rec := target.importTunnels(t, file, testExportPassword, true)
+	rec := target.importTunnels(t, file, testExportPassword)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("the import answered %d: %s", rec.Code, rec.Body.String())
 	}

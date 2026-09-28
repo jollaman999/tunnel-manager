@@ -240,6 +240,7 @@ const (
 	errExportServicePortsRead        errorCode = "export.service_ports.read_failed"
 	errExportAssignmentsRead         errorCode = "export.assignments.read_failed"
 	errExportLocalForwardsRead       errorCode = "export.local_forwards.read_failed"
+	errExportJumpsRead               errorCode = "export.jumps.read_failed"
 	errExportHostSecretsSealed       errorCode = "export.host.secrets_unreadable"
 	errExportSealFailed              errorCode = "export.seal_failed"
 
@@ -257,41 +258,45 @@ const (
 	errImportFileNewerFormatBy       errorCode = "import.file.newer_format_by"
 	errImportFileEmpty               errorCode = "import.file.empty"
 
-	errImportTunnelsUnreadable      errorCode = "import.tunnels.unreadable"
-	errImportHostRefused            errorCode = "import.host.refused"
-	errImportHostNoLogin            errorCode = "import.host.no_login"
-	errImportHostsReadFailed        errorCode = "import.hosts.read_failed"
-	errImportHostPasswordEncrypt    errorCode = "import.host.password_encrypt_failed"
-	errImportHostKeyRefused         errorCode = "import.host.key_refused"
-	errImportHostKeyEncrypt         errorCode = "import.host.private_key_encrypt_failed"
-	errImportHostReplaceFailed      errorCode = "import.host.replace_failed"
-	errImportHostCreateFailed       errorCode = "import.host.create_failed"
-	errImportServicePortRefused     errorCode = "import.service_port.refused"
-	errImportServicePortsReadFailed errorCode = "import.service_ports.read_failed"
-	errImportServicePortCreate      errorCode = "import.service_port.create_failed"
-	errImportServicePortTwoRows     errorCode = "import.service_port.two_rows"
-	errImportServicePortReplace     errorCode = "import.service_port.replace_failed"
-	errImportAssignmentsHostRead    errorCode = "import.assignments.host_read_failed"
-	errImportAssignmentsClearFailed errorCode = "import.assignments.clear_failed"
-	errImportAssignmentsStoreFailed errorCode = "import.assignments.store_failed"
-	errImportSettingsUnreadable     errorCode = "import.settings.unreadable"
-	errImportSettingsRefused        errorCode = "import.settings.refused"
-	errImportSettingsAPIPortForward errorCode = "import.settings.api_port.local_forward"
-	errImportSettingsAPIPortSocks   errorCode = "import.settings.api_port.socks"
+	errImportOverwriteRemoved             errorCode = "import.overwrite.removed"
+	errImportCountsReadFailed             errorCode = "import.counts.read_failed"
+	errImportClearFailed                  errorCode = "import.configuration.clear_failed"
+	errImportTunnelsUnreadable            errorCode = "import.tunnels.unreadable"
+	errImportHostRefused                  errorCode = "import.host.refused"
+	errImportHostNoLogin                  errorCode = "import.host.no_login"
+	errImportHostIDInvalid                errorCode = "import.host.id_invalid"
+	errImportHostDuplicate                errorCode = "import.host.duplicate"
+	errImportHostPasswordEncrypt          errorCode = "import.host.password_encrypt_failed"
+	errImportHostKeyRefused               errorCode = "import.host.key_refused"
+	errImportHostKeyEncrypt               errorCode = "import.host.private_key_encrypt_failed"
+	errImportHostCreateFailed             errorCode = "import.host.create_failed"
+	errImportServicePortRefused           errorCode = "import.service_port.refused"
+	errImportServicePortIDInvalid         errorCode = "import.service_port.id_invalid"
+	errImportServicePortDuplicate         errorCode = "import.service_port.duplicate"
+	errImportServicePortCreate            errorCode = "import.service_port.create_failed"
+	errImportAssignmentUnknownServicePort errorCode = "import.assignment.unknown_service_port"
+	errImportAssignmentUnknownLocalPort   errorCode = "import.assignment.unknown_local_port"
+	errImportAssignmentsStoreFailed       errorCode = "import.assignments.store_failed"
+	errImportSettingsUnreadable           errorCode = "import.settings.unreadable"
+	errImportSettingsRefused              errorCode = "import.settings.refused"
+	errImportSettingsAPIPortForward       errorCode = "import.settings.api_port.local_forward"
+	errImportSettingsAPIPortSocks         errorCode = "import.settings.api_port.socks"
 
-	errImportLocalForwardRefused      errorCode = "import.local_forward.refused"
-	errImportLocalForwardDuplicate    errorCode = "import.local_forward.duplicate"
-	errImportLocalForwardAPIPort      errorCode = "import.local_forward.local_port.api_port"
-	errImportLocalForwardPortTaken    errorCode = "import.local_forward.local_port.taken"
-	errImportLocalForwardsReadFailed  errorCode = "import.local_forwards.read_failed"
-	errImportLocalForwardsClearFailed errorCode = "import.local_forwards.clear_failed"
-	errImportLocalForwardsStoreFailed errorCode = "import.local_forwards.store_failed"
-	errImportLocalForwardSocks        errorCode = "import.local_forward.local_port.socks"
+	errImportLocalForwardRefused       errorCode = "import.local_forward.refused"
+	errImportLocalForwardDuplicate     errorCode = "import.local_forward.duplicate"
+	errImportLocalForwardNumberInvalid errorCode = "import.local_forward.number_invalid"
+	errImportLocalForwardAPIPort       errorCode = "import.local_forward.local_port.api_port"
+	errImportLocalForwardsReadFailed   errorCode = "import.local_forwards.read_failed"
+	errImportLocalForwardsStoreFailed  errorCode = "import.local_forwards.store_failed"
 
-	errImportSocksDuplicate    errorCode = "import.socks.duplicate"
-	errImportSocksAPIPort      errorCode = "import.socks.socks_port.api_port"
-	errImportSocksPortTaken    errorCode = "import.socks.socks_port.taken"
-	errImportSocksLocalForward errorCode = "import.socks.socks_port.local_forward"
+	errImportSocksDuplicate errorCode = "import.socks.duplicate"
+	errImportSocksAPIPort   errorCode = "import.socks.socks_port.api_port"
+
+	errImportJumpUnknownHost  errorCode = "import.jump.unknown_host"
+	errImportJumpSelf         errorCode = "import.jump.self"
+	errImportJumpDuplicate    errorCode = "import.jump.duplicate"
+	errImportJumpTooMany      errorCode = "import.jump.too_many"
+	errImportJumpsStoreFailed errorCode = "import.jumps.store_failed"
 
 	errUninstallPasswordWrong errorCode = "uninstall.password.wrong"
 )
@@ -554,6 +559,7 @@ var errorMessages = map[errorCode]string{
 	errExportServicePortsRead:        "Failed to read the service ports",
 	errExportAssignmentsRead:         "Failed to read the service port assignments",
 	errExportLocalForwardsRead:       "Failed to read the local forwards",
+	errExportJumpsRead:               "Failed to read the jump routes",
 	errExportHostSecretsSealed:       "No export was made: the stored secrets of the Host {host} do not open with the encryption key of this installation",
 	errExportSealFailed:              "Failed to encrypt the file",
 
@@ -577,44 +583,49 @@ var errorMessages = map[errorCode]string{
 	errImportFileEmpty:         "The file carries no content",
 
 	// Writing what the file holds.
-	errImportTunnelsUnreadable:      "The file says it holds the tunnel configuration, but the configuration in it cannot be read",
-	errImportHostRefused:            "Nothing was imported. The Host {host} in the file was refused: {reason}",
-	errImportHostNoLogin:            "Nothing was imported. The Host {host} in the file carries no way to log in: it has neither a private key nor a password",
-	errImportHostsReadFailed:        "Nothing was imported: failed to read the Hosts",
-	errImportHostPasswordEncrypt:    "Nothing was imported: failed to encrypt the password of the Host {host}",
-	errImportHostKeyRefused:         "Nothing was imported. The private key of the Host {host} in the file was refused: {reason}",
-	errImportHostKeyEncrypt:         "Nothing was imported: failed to encrypt the private key of the Host {host}",
-	errImportHostReplaceFailed:      "Nothing was imported: failed to replace the Host {host}",
-	errImportHostCreateFailed:       "Nothing was imported: failed to create the Host {host}",
-	errImportServicePortRefused:     "Nothing was imported. The service port {service_port} in the file was refused: {reason}",
-	errImportServicePortsReadFailed: "Nothing was imported: failed to read the service ports",
-	errImportServicePortCreate:      "Nothing was imported: failed to create the service port {service_port}",
-	errImportServicePortTwoRows:     "Nothing was imported. The service port {service_port} in the file meets two rows that are registered here: {service_address} belongs to one and the local port {local_port} to another. Delete one of the two and import again",
-	errImportServicePortReplace:     "Nothing was imported: failed to replace the service port {service_port}",
-	errImportAssignmentsHostRead:    "Nothing was imported: failed to read the Host {host}",
-	errImportAssignmentsClearFailed: "Nothing was imported: failed to replace the service ports the Host {host} carries",
-	errImportAssignmentsStoreFailed: "Nothing was imported: failed to store the service ports the Host {host} carries",
-	errImportSettingsUnreadable:     "The file says it holds the settings of the manager, but the settings in it cannot be read",
-	errImportSettingsRefused:        "Nothing was imported. The settings in the file are refused: {reason}",
-	errImportSettingsAPIPortForward: "Nothing was imported. The file sets the port of this server to {api_port}, which the local forward of the Host {host} to {target} opens here. Move the local forward to another port and import again",
-	errImportSettingsAPIPortSocks:   "Nothing was imported. The file sets the port of this server to {api_port}, which the SOCKS5 proxy of the Host {host} opens here. Move the SOCKS5 proxy to another port and import again",
+	errImportOverwriteRemoved:             "Nothing was imported. The field overwrite is no longer read: an import replaces the whole tunnel configuration stored here with what the file holds. Send the request without it, and with dry_run set to true first to see what would be replaced",
+	errImportCountsReadFailed:             "Nothing was imported: failed to read what is stored here",
+	errImportClearFailed:                  "Nothing was imported: failed to delete the tunnel configuration stored here",
+	errImportTunnelsUnreadable:            "The file says it holds the tunnel configuration, but the configuration in it cannot be read",
+	errImportHostRefused:                  "Nothing was imported. The Host {host} in the file was refused: {reason}",
+	errImportHostNoLogin:                  "Nothing was imported. The Host {host} in the file carries no way to log in: it has neither a private key nor a password",
+	errImportHostIDInvalid:                "Nothing was imported. The Host {host} in the file carries the id {id}, which is 0 or the id of another Host of the file",
+	errImportHostDuplicate:                "Nothing was imported. The file holds the Host {host} on the SSH port {port} more than once",
+	errImportHostPasswordEncrypt:          "Nothing was imported: failed to encrypt the password of the Host {host}",
+	errImportHostKeyRefused:               "Nothing was imported. The private key of the Host {host} in the file was refused: {reason}",
+	errImportHostKeyEncrypt:               "Nothing was imported: failed to encrypt the private key of the Host {host}",
+	errImportHostCreateFailed:             "Nothing was imported: failed to create the Host {host}",
+	errImportServicePortRefused:           "Nothing was imported. The service port {service_port} in the file was refused: {reason}",
+	errImportServicePortIDInvalid:         "Nothing was imported. The service port {service_port} in the file carries the id {id}, which is 0 or the id of another service port of the file",
+	errImportServicePortDuplicate:         "Nothing was imported. The service port {service_port} in the file has the service address or the local port of another service port of the file",
+	errImportServicePortCreate:            "Nothing was imported: failed to create the service port {service_port}",
+	errImportAssignmentUnknownServicePort: "Nothing was imported. The Host {host} in the file carries the service port with the id {service_port_id}, which the file does not hold",
+	errImportAssignmentUnknownLocalPort:   "Nothing was imported. The Host {host} in the file carries the service port on the local port {local_port}, which the file does not hold",
+	errImportAssignmentsStoreFailed:       "Nothing was imported: failed to store the service ports the Host {host} carries",
+	errImportSettingsUnreadable:           "The file says it holds the settings of the manager, but the settings in it cannot be read",
+	errImportSettingsRefused:              "Nothing was imported. The settings in the file are refused: {reason}",
+	errImportSettingsAPIPortForward:       "Nothing was imported. The file sets the port of this server to {api_port}, which the local forward of the Host {host} to {target} opens here. Move the local forward to another port and import again",
+	errImportSettingsAPIPortSocks:         "Nothing was imported. The file sets the port of this server to {api_port}, which the SOCKS5 proxy of the Host {host} opens here. Move the SOCKS5 proxy to another port and import again",
 
-	errImportLocalForwardRefused:      "Nothing was imported. The local forward on the local port {local_port} of the Host {host} in the file was refused: {reason}",
-	errImportLocalForwardDuplicate:    "Nothing was imported. The file opens the local port {local_port} with more than one local forward",
-	errImportLocalForwardAPIPort:      "Nothing was imported. The local forward of the Host {host} in the file opens the local port {local_port}, which is the port this server listens on",
-	errImportLocalForwardPortTaken:    "Nothing was imported. The local forward of the Host {host} in the file opens the local port {local_port}, which a local forward of the Host {owner} opens here already. Change or delete one of the two and import again",
-	errImportLocalForwardsReadFailed:  "Nothing was imported: failed to read the local forwards",
-	errImportLocalForwardsClearFailed: "Nothing was imported: failed to replace the local forwards of the Host {host}",
-	errImportLocalForwardsStoreFailed: "Nothing was imported: failed to store the local forwards of the Host {host}",
-	errImportLocalForwardSocks:        "Nothing was imported. The local forward of the Host {host} in the file opens the local port {local_port}, which the SOCKS5 proxy of the Host {owner} opens here already. Change one of the two and import again",
+	errImportLocalForwardRefused:       "Nothing was imported. The local forward on the local port {local_port} of the Host {host} in the file was refused: {reason}",
+	errImportLocalForwardDuplicate:     "Nothing was imported. The file opens the local port {local_port} with more than one local forward",
+	errImportLocalForwardNumberInvalid: "Nothing was imported. The local forward on the local port {local_port} of the Host {host} in the file carries the number {number}, which is 0 or the number of another local forward of that Host",
+	errImportLocalForwardAPIPort:       "Nothing was imported. The local forward of the Host {host} in the file opens the local port {local_port}, which is the port this server listens on",
+	errImportLocalForwardsReadFailed:   "Nothing was imported: failed to read the local forwards",
+	errImportLocalForwardsStoreFailed:  "Nothing was imported: failed to store the local forwards of the Host {host}",
 
 	// The SOCKS5 proxies the file names. The fields of one are held to the
 	// rules of a create under errImportHostRefused, since they are fields of
 	// the Host.
-	errImportSocksDuplicate:    "Nothing was imported. The file opens the port {port} more than once among the SOCKS5 proxies and the local forwards of its Hosts",
-	errImportSocksAPIPort:      "Nothing was imported. The SOCKS5 proxy of the Host {host} in the file opens the port {socks_port}, which is the port this server listens on",
-	errImportSocksPortTaken:    "Nothing was imported. The SOCKS5 proxy of the Host {host} in the file opens the port {socks_port}, which the SOCKS5 proxy of the Host {owner} opens here already. Change one of the two and import again",
-	errImportSocksLocalForward: "Nothing was imported. The SOCKS5 proxy of the Host {host} in the file opens the port {socks_port}, which a local forward of the Host {owner} opens here already. Change one of the two and import again",
+	errImportSocksDuplicate: "Nothing was imported. The file opens the port {port} more than once among the SOCKS5 proxies and the local forwards of its Hosts",
+	errImportSocksAPIPort:   "Nothing was imported. The SOCKS5 proxy of the Host {host} in the file opens the port {socks_port}, which is the port this server listens on",
+
+	// The jump routes the file names.
+	errImportJumpUnknownHost:  "Nothing was imported. The jump route of the Host {host} in the file passes through the Host with the id {jump_host_id}, which the file does not hold",
+	errImportJumpSelf:         "Nothing was imported. The jump route of the Host {host} in the file passes through the Host itself",
+	errImportJumpDuplicate:    "Nothing was imported. The jump route of the Host {host} in the file passes through the Host with the id {jump_host_id} more than once",
+	errImportJumpTooMany:      "Nothing was imported. The jump route of the Host {host} in the file passes through more than {max} Hosts",
+	errImportJumpsStoreFailed: "Nothing was imported: failed to store the jump route of the Host {host}",
 
 	// Removing the installation.
 	errUninstallPasswordWrong: "The password does not open this account",

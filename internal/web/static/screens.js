@@ -367,10 +367,9 @@ function refusesAccountPassword(error) {
     transferAccountPasswordRequiredCodes.indexOf(error.code) !== -1;
 }
 
-// transferResult is what the last import of a tunnel configuration did with
-// every row of the file. It is kept because the screen is drawn again from the
-// server right afterwards, and that answer says nothing about what was skipped
-// or why.
+// transferResult is what the last import of a tunnel configuration deleted and
+// wrote. It is kept because the screen is drawn again from the server right
+// afterwards, and that answer says nothing about what was replaced.
 let transferResult = null;
 
 // settingsImportResult is what the last import of the settings of the manager
@@ -10375,7 +10374,12 @@ function importTunnelsForm() {
   }
 
   if (transferResult !== null) {
-    intro.push(transferItemsTable(transferResult));
+    const done = document.createElement("div");
+
+    done.appendChild(element("h3", t("transfer.items.title")));
+    done.appendChild(transferCountsTable(transferResult,
+      t("transfer.count-deleted.column"), t("transfer.count-imported.column")));
+    intro.push(done);
   }
 
   return showTransferAccountProblem(buildForm({
@@ -10386,13 +10390,6 @@ function importTunnelsForm() {
     fields: [
       transferFileField(transferDraft.tunnels),
       transferFilePasswordField(),
-      {
-        name: "overwrite",
-        label: t("transfer.overwrite.label"),
-        type: "checkbox",
-        value: false,
-        note: t("transfer.overwrite.hint")
-      },
       transferAccountPasswordField(t("transfer.account-password-import.hint"))
     ],
     onSubmit: importTunnels
@@ -10529,31 +10526,33 @@ function transferFileName(kind, exportedAt) {
   return "tunnel-manager-" + kind + "-" + stamp + ".tmexport";
 }
 
+// importTunnels replaces the tunnel configuration with the file, in two calls.
+// The first only opens and checks the file and answers what is stored and
+// what the file holds, which is what the panel asks about; the second, sent
+// once the operator has said yes, makes the replacement.
 async function importTunnels(values) {
   // What was pasted is kept before the call, so that a refusal comes back to a
   // form that still holds it.
   transferDraft.tunnels = values.file;
 
-  let answer;
+  const body = {
+    file: values.file,
+    password: values.password,
+    account_password: values.account_password
+  };
 
-  try {
-    answer = await sendTransfer("import-tunnels", "/api/import/tunnels", {
-      file: values.file,
-      password: values.password,
-      overwrite: values.overwrite,
-      account_password: values.account_password
-    });
-  } catch (error) {
-    if (error instanceof Redirected) {
-      throw error;
-    }
+  const checked = await sendImportTunnels(Object.assign({ dry_run: true }, body));
+  if (checked === null) {
+    return drawSettings();
+  }
 
-    // A refusal of the password of the account is drawn under its box, and
-    // is not a word about the file.
-    transferProblem.tunnels = refusesAccountPassword(error) ? "" : error.message;
-    transferResult = null;
-    setFailure(sayOf(error));
+  // Dismissed, the form is left as it is, with what was typed still in it.
+  if (await importConfirmPanel(checked) !== "replace") {
+    return;
+  }
 
+  const answer = await sendImportTunnels(body);
+  if (answer === null) {
     return drawSettings();
   }
 
@@ -10568,31 +10567,91 @@ async function importTunnels(values) {
   return drawSettings();
 }
 
-// importOutcome is the message after an import. What became of each row is in
-// the table on the card; this is the count, and what to do about what was
-// skipped.
-function importOutcome(answer) {
-  const added = countOf(answer, "added");
-  const replaced = countOf(answer, "replaced");
-  const skipped = countOf(answer, "skipped");
+// sendImportTunnels sends one of the two calls of an import, and hands back
+// the answer, or null once a refusal is put where the form draws it.
+async function sendImportTunnels(body) {
+  try {
+    return await sendTransfer("import-tunnels", "/api/import/tunnels", body);
+  } catch (error) {
+    if (error instanceof Redirected) {
+      throw error;
+    }
 
-  if (added + replaced + skipped === 0) {
+    // A refusal of the password of the account is drawn under its box, and
+    // is not a word about the file.
+    transferProblem.tunnels = refusesAccountPassword(error) ? "" : error.message;
+    transferResult = null;
+    setFailure(sayOf(error));
+
+    return null;
+  }
+}
+
+// importConfirmPanel asks before the configuration stored here is replaced
+// with the file, and says how much of each goes and how much comes in. It
+// settles with "replace" when the operator says yes.
+function importConfirmPanel(checked) {
+  const body = [statusLine(t("transfer.import-confirm.notice"), "warning")];
+
+  if (countOf(importCounts(checked, "file"), "hosts") === 0 &&
+    countOf(importCounts(checked, "file"), "service_ports") === 0) {
+    body.push(statusLine(t("transfer.import-confirm-empty.notice"), "warning"));
+  }
+
+  body.push(transferCountsTable(checked, t("transfer.count-to-delete.column"),
+    t("transfer.count-to-import.column")));
+
+  return openModal({
+    name: "import-confirm",
+    title: t("transfer.import-confirm.title"),
+    body: body,
+    buttons: [
+      // Painted as what cannot be taken back, the way the log clear is.
+      { label: t("transfer.import-confirm.button"), name: "replace", variant: "danger" },
+      { label: t("common.cancel.button"), name: "cancel" }
+    ]
+  });
+}
+
+// importCounts is one side of the answer of an import: what is stored here
+// under current, and what the file holds under file.
+function importCounts(answer, side) {
+  return answer === null || answer === undefined ||
+    answer[side] === null || answer[side] === undefined ? null : answer[side];
+}
+
+// transferCountsTable is how much of each thing an import deletes and writes,
+// one row per thing, under the two headings given.
+function transferCountsTable(answer, deleted, imported) {
+  const current = importCounts(answer, "current");
+  const file = importCounts(answer, "file");
+
+  return buildTable([t("transfer.item-kind.column"), deleted, imported],
+    [
+      ["hosts", "transfer.count-hosts.text"],
+      ["service_ports", "transfer.count-service-ports.text"],
+      ["assignments", "transfer.count-assignments.text"],
+      ["local_forwards", "transfer.count-local-forwards.text"],
+      ["jump_hosts", "transfer.count-jump-hosts.text"]
+    ].map(function (row) {
+      return [t(row[1]), String(countOf(current, row[0])), String(countOf(file, row[0]))];
+    }), [1, 2]);
+}
+
+// importOutcome is the message after an import. How much of each was replaced
+// is in the table on the card.
+function importOutcome(answer) {
+  const file = importCounts(answer, "file");
+
+  if (countOf(file, "hosts") === 0 && countOf(file, "service_ports") === 0) {
     return t("transfer.import-empty.notice");
   }
 
-  const counts = { added: added, replaced: replaced, skipped: skipped };
-
-  if (skipped === 0) {
-    return t("transfer.imported.notice", counts);
-  }
-
-  return t("transfer.imported-skipped.notice", counts);
+  return t("transfer.imported.notice");
 }
 
-// transferItemsTable is every row of the imported file and what became of it.
-// The reason is carried for the rows that were skipped, because that is what
-// says whether importing the same file again with the box ticked would change
-// anything.
+// transferItemsTable is what an import of the settings did not take from the
+// file, with the reason against each.
 function transferItemsTable(result) {
   const items = result === null || result === undefined ||
     result.items === null || result.items === undefined

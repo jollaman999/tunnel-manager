@@ -327,7 +327,7 @@
                         "CSRFToken": []
                     }
                 ],
-                "description": "A POST and not a GET because the password that seals the file is in the body.\nInside the file the SSH password, the private key and the key passphrase of every Host are in the clear, so treat it as the credentials of every Host it names.\nEach Host carries its local forwards in the file, and local_forwards in the answer counts them. Each Host carries its SOCKS5 proxy in socks_enabled, socks_port, socks_bind_scope and socks_allowed_sources.",
+                "description": "A POST and not a GET because the password that seals the file is in the body.\nInside the file the SSH password, the private key and the key passphrase of every Host are in the clear, so treat it as the credentials of every Host it names.\nThe file carries the id and the times of every Host and service port and the number of every local forward, so that an import puts the configuration back as it is here. Each Host carries its jump route in jump_host_ids, the service ports it carries in assignments, its local forwards, its pending host key and its SOCKS5 proxy. local_forwards in the answer counts the local forwards.",
                 "consumes": [
                     "application/json"
                 ],
@@ -1527,7 +1527,7 @@
                         "CSRFToken": []
                     }
                 ],
-                "description": "Adds what is not registered here and skips what is, naming in the answer what it skipped and why. Send the same file again with overwrite true to replace those rows instead.\nThe whole import is one transaction: a file that is refused half way through leaves the database exactly as it was.\nA Host the import writes is left carrying the local forwards the file names for it, and keeps its own when the file has no local_forwards for it. The import is refused when the file opens one local port twice, or opens the port this server is stored to listen on or a local port a local forward of another Host holds here.\nA Host the import writes takes the SOCKS5 fields the file carries, and keeps its own for a field the file does not carry. The import is refused when the file opens one port with two SOCKS5 proxies or with a SOCKS5 proxy and a local forward, or a SOCKS5 proxy it switches on opens the port this server listens on or a port the SOCKS5 proxy or a local forward of another Host opens here. Each SOCKS5 proxy it switches on is an item of kind socks.",
+                "description": "Every Host, service port, assignment, local forward and jump route stored here is deleted and the ones in the file are written in their place, under the ids and numbers the file carries. The account, the settings and the sessions are not touched.\nA file from before the ids were exported (format version 1) is written with ids counted from 1 in the order of the file, and with no jump route.\ndry_run true opens and checks the file and writes nothing. The answer is the same either way: current is what is stored here and file is what the file holds.\noverwrite is no longer read and a body that carries it is refused, so that a client written for the import that added and skipped rows does not replace the configuration without knowing it.\nThe whole import is one transaction: a file that is refused leaves the database exactly as it was.\nThe import is refused when a jump route of the file names a Host the file does not hold, the Host itself, one Host twice, or more than 8 Hosts, and when the file opens one local port twice, or opens the port this server listens on.",
                 "consumes": [
                     "application/json"
                 ],
@@ -1537,10 +1537,10 @@
                 "tags": [
                     "export and import"
                 ],
-                "summary": "Write what an exported tunnels file holds",
+                "summary": "Replace the tunnel configuration with what an exported tunnels file holds",
                 "parameters": [
                     {
-                        "description": "The password, the file, whether to overwrite, and the password of the account",
+                        "description": "The password, the file, whether to only check it, and the password of the account",
                         "name": "body",
                         "in": "body",
                         "required": true,
@@ -1569,7 +1569,7 @@
                         }
                     },
                     "400": {
-                        "description": "The password is wrong, the file is damaged, it is not a file this program wrote, it holds the other kind, or account_password is empty",
+                        "description": "The password is wrong, the file is damaged, it is not a file this program wrote, it holds the other kind, a row of it is refused, the body carries overwrite, or account_password is empty",
                         "schema": {
                             "$ref": "#/definitions/api.errorBody"
                         }
@@ -1581,7 +1581,7 @@
                         }
                     },
                     "409": {
-                        "description": "A local forward or a SOCKS5 proxy of the file opens a port this installation opens already. Nothing was stored",
+                        "description": "A local forward or a SOCKS5 proxy of the file opens the port this server listens on. Nothing was stored",
                         "schema": {
                             "$ref": "#/definitions/api.errorBody"
                         }
@@ -3296,6 +3296,7 @@
                 "export.service_ports.read_failed",
                 "export.assignments.read_failed",
                 "export.local_forwards.read_failed",
+                "export.jumps.read_failed",
                 "export.host.secrets_unreadable",
                 "export.seal_failed",
                 "import.file.missing",
@@ -3311,22 +3312,24 @@
                 "import.file.newer_format",
                 "import.file.newer_format_by",
                 "import.file.empty",
+                "import.overwrite.removed",
+                "import.counts.read_failed",
+                "import.configuration.clear_failed",
                 "import.tunnels.unreadable",
                 "import.host.refused",
                 "import.host.no_login",
-                "import.hosts.read_failed",
+                "import.host.id_invalid",
+                "import.host.duplicate",
                 "import.host.password_encrypt_failed",
                 "import.host.key_refused",
                 "import.host.private_key_encrypt_failed",
-                "import.host.replace_failed",
                 "import.host.create_failed",
                 "import.service_port.refused",
-                "import.service_ports.read_failed",
+                "import.service_port.id_invalid",
+                "import.service_port.duplicate",
                 "import.service_port.create_failed",
-                "import.service_port.two_rows",
-                "import.service_port.replace_failed",
-                "import.assignments.host_read_failed",
-                "import.assignments.clear_failed",
+                "import.assignment.unknown_service_port",
+                "import.assignment.unknown_local_port",
                 "import.assignments.store_failed",
                 "import.settings.unreadable",
                 "import.settings.refused",
@@ -3334,16 +3337,17 @@
                 "import.settings.api_port.socks",
                 "import.local_forward.refused",
                 "import.local_forward.duplicate",
+                "import.local_forward.number_invalid",
                 "import.local_forward.local_port.api_port",
-                "import.local_forward.local_port.taken",
                 "import.local_forwards.read_failed",
-                "import.local_forwards.clear_failed",
                 "import.local_forwards.store_failed",
-                "import.local_forward.local_port.socks",
                 "import.socks.duplicate",
                 "import.socks.socks_port.api_port",
-                "import.socks.socks_port.taken",
-                "import.socks.socks_port.local_forward",
+                "import.jump.unknown_host",
+                "import.jump.self",
+                "import.jump.duplicate",
+                "import.jump.too_many",
+                "import.jumps.store_failed",
                 "uninstall.password.wrong"
             ],
             "x-enum-varnames": [
@@ -3500,6 +3504,7 @@
                 "errExportServicePortsRead",
                 "errExportAssignmentsRead",
                 "errExportLocalForwardsRead",
+                "errExportJumpsRead",
                 "errExportHostSecretsSealed",
                 "errExportSealFailed",
                 "errImportFileMissing",
@@ -3515,22 +3520,24 @@
                 "errImportFileNewerFormat",
                 "errImportFileNewerFormatBy",
                 "errImportFileEmpty",
+                "errImportOverwriteRemoved",
+                "errImportCountsReadFailed",
+                "errImportClearFailed",
                 "errImportTunnelsUnreadable",
                 "errImportHostRefused",
                 "errImportHostNoLogin",
-                "errImportHostsReadFailed",
+                "errImportHostIDInvalid",
+                "errImportHostDuplicate",
                 "errImportHostPasswordEncrypt",
                 "errImportHostKeyRefused",
                 "errImportHostKeyEncrypt",
-                "errImportHostReplaceFailed",
                 "errImportHostCreateFailed",
                 "errImportServicePortRefused",
-                "errImportServicePortsReadFailed",
+                "errImportServicePortIDInvalid",
+                "errImportServicePortDuplicate",
                 "errImportServicePortCreate",
-                "errImportServicePortTwoRows",
-                "errImportServicePortReplace",
-                "errImportAssignmentsHostRead",
-                "errImportAssignmentsClearFailed",
+                "errImportAssignmentUnknownServicePort",
+                "errImportAssignmentUnknownLocalPort",
                 "errImportAssignmentsStoreFailed",
                 "errImportSettingsUnreadable",
                 "errImportSettingsRefused",
@@ -3538,16 +3545,17 @@
                 "errImportSettingsAPIPortSocks",
                 "errImportLocalForwardRefused",
                 "errImportLocalForwardDuplicate",
+                "errImportLocalForwardNumberInvalid",
                 "errImportLocalForwardAPIPort",
-                "errImportLocalForwardPortTaken",
                 "errImportLocalForwardsReadFailed",
-                "errImportLocalForwardsClearFailed",
                 "errImportLocalForwardsStoreFailed",
-                "errImportLocalForwardSocks",
                 "errImportSocksDuplicate",
                 "errImportSocksAPIPort",
-                "errImportSocksPortTaken",
-                "errImportSocksLocalForward",
+                "errImportJumpUnknownHost",
+                "errImportJumpSelf",
+                "errImportJumpDuplicate",
+                "errImportJumpTooMany",
+                "errImportJumpsStoreFailed",
                 "errUninstallPasswordWrong"
             ]
         },
@@ -3872,9 +3880,6 @@
                 "file": {
                     "type": "string"
                 },
-                "overwrite": {
-                    "type": "boolean"
-                },
                 "password": {
                     "type": "string"
                 }
@@ -3886,11 +3891,11 @@
                 "account_password": {
                     "type": "string"
                 },
+                "dry_run": {
+                    "type": "boolean"
+                },
                 "file": {
                     "type": "string"
-                },
-                "overwrite": {
-                    "type": "boolean"
                 },
                 "password": {
                     "type": "string"
@@ -3923,20 +3928,14 @@
         "api.importedTunnels": {
             "type": "object",
             "properties": {
-                "added": {
-                    "type": "integer"
+                "current": {
+                    "$ref": "#/definitions/api.transferCounts"
                 },
-                "items": {
-                    "type": "array",
-                    "items": {
-                        "$ref": "#/definitions/api.transferItem"
-                    }
+                "dry_run": {
+                    "type": "boolean"
                 },
-                "replaced": {
-                    "type": "integer"
-                },
-                "skipped": {
-                    "type": "integer"
+                "file": {
+                    "$ref": "#/definitions/api.transferCounts"
                 }
             }
         },
@@ -4427,6 +4426,26 @@
                     "items": {
                         "type": "string"
                     }
+                }
+            }
+        },
+        "api.transferCounts": {
+            "type": "object",
+            "properties": {
+                "assignments": {
+                    "type": "integer"
+                },
+                "hosts": {
+                    "type": "integer"
+                },
+                "jump_hosts": {
+                    "type": "integer"
+                },
+                "local_forwards": {
+                    "type": "integer"
+                },
+                "service_ports": {
+                    "type": "integer"
                 }
             }
         },

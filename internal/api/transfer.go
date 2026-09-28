@@ -37,7 +37,16 @@ import (
 // a file of the newer one wrong, not whenever a field is added: a field that is
 // only added arrives as its zero value in an older reader, which the import
 // already treats as "not named in the file".
-const transferFormatVersion = 1
+//
+// Version 2 carries the id of every row, and an import puts what the file holds
+// in place of what is stored rather than adding to it. A reader of version 1
+// would read such a file as rows to add and skip, so the number went up.
+const transferFormatVersion = 2
+
+// transferFormatWithIDs is the first version whose files carry the id of every
+// row. An import reads a file of an earlier version with ids counted from 1 in
+// the order of the file.
+const transferFormatWithIDs = 2
 
 // transferKindTunnels and transferKindSettings name what a file holds. They are
 // what keeps the tunnel configuration from being read in as the settings of the
@@ -78,9 +87,11 @@ type transferFile struct {
 // with, and nothing else. An unsealed export is the credentials of every Host,
 // which is why there is no way to ask for one.
 //
-// The id and the two timestamps are left out. They describe the rows of the
-// installation that was exported, and the import writes rows of its own.
+// The id and the two timestamps are carried, so that an import puts back the
+// rows as they were: the jump routes and the assignments name a Host by its id.
+// A file from before they were carried has none, and nil stands for that.
 type hostContent struct {
+	ID      uint   `json:"id,omitempty"`
 	Address string `json:"address"`
 	// IP is the name Address was carried under by the releases before it took
 	// a host name as well as an address. It is read and never written, the way
@@ -106,15 +117,12 @@ type hostContent struct {
 	// password and the PEM private key of every Host, so leaving out a public
 	// key protects nothing and costs that.
 	//
-	// models.Host.PendingHostKey is deliberately not here. It is what some
-	// server presented on a connection that was refused, which is the state of
-	// a connection this installation made rather than anything the operator
-	// asked for, and the question it stands for is about a machine that the
-	// installation reading the file has not spoken to yet. Carried across, it
-	// would put an approval on the screen of the other installation for a key
-	// nothing there ever saw. The import drops it for the same reason:
-	// importHost.
 	HostKey string `json:"host_key"`
+	// PendingHostKey is the key some server presented on a connection that was
+	// refused, waiting for a person to approve it. It is carried so that the
+	// file puts back the configuration as it was, the question included. A
+	// file from before it was carried has none.
+	PendingHostKey string `json:"pending_host_key"`
 	// BindAddress is read and never written. The release before this one kept
 	// how far the forwarded ports of a Host reach on the Host itself, as one
 	// address for all of them, and wrote it into the files it exported. The
@@ -131,6 +139,15 @@ type hostContent struct {
 	BindAddress string `json:"bind_address,omitempty"`
 	Description string `json:"description"`
 	Enabled     bool   `json:"enabled"`
+	// JumpHostIDs is the jump route of the Host: the ids of the Hosts of the
+	// same file it is reached through, in order. It is read from a file that
+	// carries ids and from no other.
+	JumpHostIDs []uint `json:"jump_host_ids,omitempty"`
+	// Assignments is which service ports this Host carries, named by the id of
+	// the service port in the same file. A file that carries ids is read by
+	// this field and not by the three below, which are what a file from before
+	// the ids carries, and the export no longer writes.
+	Assignments []assignmentContent `json:"assignments,omitempty"`
 	// AssignedLocalPorts is which service ports this Host carries, named by
 	// their local port rather than by the id of the row. The ids belong to the
 	// installation the file came from, so a file carrying them would point at
@@ -155,7 +172,7 @@ type hostContent struct {
 	// that is not nil. The export therefore never writes nil: a Host that
 	// carries nothing goes into the file as "[]", because a nil slice marshals
 	// to null, which reads back as the file not naming the assignments at all.
-	AssignedLocalPorts []int `json:"assigned_local_ports"`
+	AssignedLocalPorts []int `json:"assigned_local_ports,omitempty"`
 	// AssignedBindScopes is how far each of those assignments reaches, under
 	// the local port it is named by above, written as text because that is
 	// what a JSON object has for a key. The local port is what means the same
@@ -187,31 +204,31 @@ type hostContent struct {
 	// assignment switched on, which is what that release can run.
 	AssignedEnabled map[string]bool `json:"assigned_enabled,omitempty"`
 	// LocalForwards are the local forwards this Host carries, in the order of
-	// their local port. nil and an empty list are told apart the way they are
-	// for AssignedLocalPorts:
-	//
-	//	no field, or null  the file says nothing of them; they are left as they are
-	//	[]                 this Host forwards nothing
-	//
-	// A file from before they were stored carries no field, and it says nothing
-	// about the local forwards made here, so an overwrite does not clear them.
-	// The export therefore never writes nil.
+	// their number. A file from before they were stored carries no field, and
+	// the Host is imported forwarding nothing.
 	LocalForwards []localForwardContent `json:"local_forwards"`
 	// SocksEnabled, SocksPort, SocksBindScope and SocksAllowedSources are the
 	// SOCKS5 proxy of the Host. Each is a pointer, so that a field the file
-	// does not carry is told from one it carries as false, zero or empty:
-	//
-	//	no field, or null  the file says nothing of it; it is left as it is
-	//	a value            the Host is stored with that value
-	//
-	// A file from before the proxies were stored carries none of them, and an
-	// overwrite leaves the proxy of the Host as it is, the way it leaves the
-	// local forwards. A Host such a file adds has none. The export writes all
-	// four every time.
+	// does not carry is told from one it carries as false, zero or empty. A
+	// file from before the proxies were stored carries none of them, and the
+	// Host is imported with none. The export writes all four every time.
 	SocksEnabled        *bool   `json:"socks_enabled"`
 	SocksPort           *int    `json:"socks_port"`
 	SocksBindScope      *string `json:"socks_bind_scope"`
 	SocksAllowedSources *string `json:"socks_allowed_sources"`
+
+	CreatedAt *time.Time `json:"created_at,omitempty"`
+	UpdatedAt *time.Time `json:"updated_at,omitempty"`
+}
+
+// assignmentContent is one service port a Host carries, as a file with ids
+// carries it: the id of the service port, how far it reaches, whether it runs,
+// and when it was made.
+type assignmentContent struct {
+	ServicePortID uint       `json:"service_port_id"`
+	BindScope     string     `json:"bind_scope"`
+	Enabled       bool       `json:"enabled"`
+	CreatedAt     *time.Time `json:"created_at,omitempty"`
 }
 
 // socksOf lays the SOCKS5 fields a file carries for a Host over the ones the
@@ -245,9 +262,10 @@ func (host hostContent) opensSocks() bool {
 }
 
 // localForwardContent is one local forward as it is carried in a file, on the
-// Host it belongs to. The id, the Host id and the timestamps are left out for
-// the reason they are left out of a Host.
+// Host it belongs to. The number and the timestamps are carried for the reason
+// the id of a Host is. The Host is the one the forward is written under.
 type localForwardContent struct {
+	Number        uint   `json:"number,omitempty"`
 	BindScope     string `json:"bind_scope"`
 	LocalPort     int    `json:"local_port"`
 	TargetAddress string `json:"target_address"`
@@ -265,6 +283,9 @@ type localForwardContent struct {
 	// the list existed carries no field, which reads as empty: every address
 	// let in, as every forward of such a file did.
 	AllowedSources string `json:"allowed_sources"`
+
+	CreatedAt *time.Time `json:"created_at,omitempty"`
+	UpdatedAt *time.Time `json:"updated_at,omitempty"`
 }
 
 // enabled is whether the forward is stored as switched on.
@@ -273,9 +294,10 @@ func (lf localForwardContent) enabled() bool {
 }
 
 // servicePortContent is one service port as it is carried in a file. It holds
-// no secret, and the id and the timestamps are left out for the reason they are
-// left out of a Host.
+// no secret, and the id and the timestamps are carried for the reason they are
+// carried for a Host.
 type servicePortContent struct {
+	ID             uint   `json:"id,omitempty"`
 	ServiceAddress string `json:"service_address"`
 	// ServiceIP is the name ServiceAddress was carried under, read and never
 	// written for the reason hostContent.IP is.
@@ -283,6 +305,9 @@ type servicePortContent struct {
 	ServicePort int    `json:"service_port"`
 	LocalPort   int    `json:"local_port"`
 	Description string `json:"description"`
+
+	CreatedAt *time.Time `json:"created_at,omitempty"`
+	UpdatedAt *time.Time `json:"updated_at,omitempty"`
 }
 
 // tunnelsContent is the content of a file of kind tunnels.
@@ -493,22 +518,29 @@ type exportRequest struct {
 }
 
 // importRequest is what an import is given: the file as the export handed it
-// out, the password it was sealed with, and what to do about a row that is
-// already there.
+// out, and the password it was sealed with.
 type importRequest struct {
-	Password  string `json:"password"`
-	File      string `json:"file"`
-	Overwrite bool   `json:"overwrite"`
+	Password string `json:"password"`
+	File     string `json:"file"`
 }
 
 // importTunnelsRequest is what the import of the tunnels is given: what every
-// import is given, and the password of the account. An overwrite puts the host
-// key of the file in place of the one trusted here, which is what the approval
-// on the Status screen asks the password for, so the import asks for it too.
-// The import of the settings is left without it and takes importRequest.
+// import is given, and the password of the account. The import puts the host
+// keys of the file in place of the ones trusted here, which is what the
+// approval on the Status screen asks the password for, so the import asks for
+// it too. The import of the settings is left without it and takes
+// importRequest.
+//
+// DryRun asks for the file to be opened and checked and nothing written, so
+// that a screen can say what the import would replace before it is made.
+//
+// Overwrite is what the import that added and skipped rows was told whether to
+// replace the rows it met by. It is read only to refuse a body that carries it.
 type importTunnelsRequest struct {
 	importRequest
 	AccountPassword string `json:"account_password"`
+	DryRun          bool   `json:"dry_run"`
+	Overwrite       *bool  `json:"overwrite,omitempty" swaggerignore:"true"`
 }
 
 // exportedTunnels is the answer to an export of the tunnel configuration. The
@@ -530,18 +562,12 @@ type exportedSettings struct {
 	ExportedAt time.Time `json:"exported_at"`
 }
 
-// What became of one row an import found in the file. A row that was there
-// already is told from one that was written, because that is what says whether
-// running the import again with overwrite on would change anything.
-const (
-	transferAdded    = "added"
-	transferReplaced = "replaced"
-	transferSkipped  = "skipped"
-)
+// transferSkipped is what an import of the settings did with a path of the
+// file it did not store.
+const transferSkipped = "skipped"
 
-// transferItem is one row of the file and what the import did with it. The name
-// is how the operator finds the row on the screens: the address of a Host, and the
-// service and local port of a service port.
+// transferItem is one thing of the file and what the import did with it. The
+// name is how the operator finds it on the screens.
 //
 // A name or a reason that is an English sentence is named beside it by a
 // textCode and the values written into it, the way a refusal is, so that a
@@ -558,19 +584,12 @@ type transferItem struct {
 	ReasonValues textArgs `json:"reason_values,omitempty"`
 }
 
-// The names and the reasons an item of an import is written with.
+// The names and the reasons an item or a refusal of an import is written with.
 const (
-	textImportNameServicePort  textCode = "import.name.service_port"
-	textImportNameAssignment   textCode = "import.name.assignment"
-	textImportNameLocalForward textCode = "import.name.local_forward"
-	textImportNameSocks        textCode = "import.name.socks"
+	textImportNameServicePort textCode = "import.name.service_port"
 
-	textImportReasonHostRegistered      textCode = "import.reason.host_registered"
-	textImportReasonServiceAddressTaken textCode = "import.reason.service_address_taken"
-	textImportReasonLocalPortTaken      textCode = "import.reason.local_port_taken"
-	textImportReasonNoServicePort       textCode = "import.reason.no_service_port"
-	textImportReasonPathOutside         textCode = "import.reason.path_outside"
-	textImportReasonEmptyPathOutside    textCode = "import.reason.empty_path_outside"
+	textImportReasonPathOutside      textCode = "import.reason.path_outside"
+	textImportReasonEmptyPathOutside textCode = "import.reason.empty_path_outside"
 )
 
 // transferTexts is the English of each of those codes, written with {name} for
@@ -582,16 +601,8 @@ const (
 // other one, because "an empty path" is English a translator would not be
 // handed.
 var transferTexts = map[textCode]string{
-	textImportNameServicePort:  "{service_address} on {local_port}",
-	textImportNameAssignment:   "{host} carries {local_port}",
-	textImportNameLocalForward: "{host} opens {local_port} to {target}",
-	textImportNameSocks:        "{host} opens the SOCKS5 proxy on {socks_port}",
+	textImportNameServicePort: "{service_address} on {local_port}",
 
-	textImportReasonHostRegistered:      "a Host with this IP is registered here already",
-	textImportReasonServiceAddressTaken: "a service port for {service_address} is registered here already",
-	textImportReasonLocalPortTaken:      "the local port {local_port} is in use here by another service port",
-	textImportReasonNoServicePort: "no service port on the local port {local_port} is registered here, " +
-		"so there is nothing for the Host to carry",
 	textImportReasonPathOutside: "the file carries {carried}, which does not name a file under the " +
 		"directory the database file is in, so {stored} was stored instead",
 	textImportReasonEmptyPathOutside: "the file carries an empty path, which does not name a file under the " +
@@ -629,15 +640,24 @@ func (item transferItem) because(reason transferText) transferItem {
 	return item
 }
 
-// importedTunnels is the answer to an import of the tunnel configuration. Every
-// row of the file is in the list, the ones that were skipped included, along
-// with why it was skipped: the operator reads that and decides whether to send
-// the same file again with overwrite on.
+// transferCounts is how much of the tunnel configuration one side holds.
+// JumpHosts is the number of Hosts that have a jump route.
+type transferCounts struct {
+	Hosts         int `json:"hosts"`
+	ServicePorts  int `json:"service_ports"`
+	Assignments   int `json:"assignments"`
+	LocalForwards int `json:"local_forwards"`
+	JumpHosts     int `json:"jump_hosts"`
+}
+
+// importedTunnels is the answer to an import of the tunnel configuration:
+// what was stored here when it was asked for, which an import deletes, and
+// what the file holds, which an import writes. A dry run answers the same and
+// writes nothing.
 type importedTunnels struct {
-	Items    []transferItem `json:"items"`
-	Added    int            `json:"added"`
-	Replaced int            `json:"replaced"`
-	Skipped  int            `json:"skipped"`
+	DryRun  bool           `json:"dry_run"`
+	Current transferCounts `json:"current"`
+	File    transferCounts `json:"file"`
 }
 
 // The two settings that name a file of this installation, as the file carries
@@ -1057,113 +1077,101 @@ func (h *TransferHandler) unsealHost(host models.Host) (hostContent, error) {
 		return hostContent{}, err
 	}
 
-	socksBindScope := host.SocksBindScope
-	if socksBindScope == "" {
-		socksBindScope = models.BindScopeWildcard
-	}
+	createdAt := host.CreatedAt
+	updatedAt := host.UpdatedAt
 
 	return hostContent{
-		Address:       host.Address,
-		Port:          host.Port,
-		User:          host.User,
-		Password:      password,
-		PrivateKey:    privateKey,
-		KeyPassphrase: keyPassphrase,
-		HostKey:       host.HostKey,
-		Description:   host.Description,
-		Enabled:       host.Enabled,
+		ID:             host.ID,
+		Address:        host.Address,
+		Port:           host.Port,
+		User:           host.User,
+		Password:       password,
+		PrivateKey:     privateKey,
+		KeyPassphrase:  keyPassphrase,
+		HostKey:        host.HostKey,
+		PendingHostKey: host.PendingHostKey,
+		Description:    host.Description,
+		Enabled:        host.Enabled,
 
 		SocksEnabled:        &host.SocksEnabled,
 		SocksPort:           &host.SocksPort,
-		SocksBindScope:      &socksBindScope,
+		SocksBindScope:      &host.SocksBindScope,
 		SocksAllowedSources: &host.SocksAllowedSources,
+
+		CreatedAt: &createdAt,
+		UpdatedAt: &updatedAt,
 	}, nil
 }
 
-// hostAssignments is what one Host carries as a file says it: the local ports
-// of the service ports assigned to it, and how far each of those assignments
-// reaches and whether it runs, keyed by the local port written as text.
-type hostAssignments struct {
-	localPorts []int
-	bindScopes map[string]string
-	enabled    map[string]bool
-}
-
-// assignedByHost reads the assignments and returns that for each Host id. The
-// service ports are handed in rather than read again, since the export has them
-// already and the two reads have to agree on what is stored.
+// assignedByHost reads the assignments and returns them for each Host id, in
+// the order of the id of the service port so that exporting the same
+// configuration twice gives the same file. The service ports are handed in
+// rather than read again, since the export has them already and the two reads
+// have to agree on what is stored.
 //
 // An assignment whose service port is not among them is left out. It points at
-// a row that is not there, so there is no local port to write it as, and an id
-// carried across would name a different service port at the other installation.
-//
-// The lists are sorted, so that exporting the same configuration twice gives
-// the same file rather than whatever order the rows came back in. The scopes
-// need no sorting: encoding/json writes the keys of a map in order.
-//
-// A scope that is the empty value gets no entry. It is the wildcard, which is
-// what an assignment with nothing said about it is on at the other end too, so
-// the file says only what was chosen. An assignment that runs gets no entry
-// for whether it runs, for the same reason: running is what no entry means.
-func assignedByHost(db *gorm.DB, sps []models.ServicePort) (map[uint]hostAssignments, error) {
+// a row that is not there, and the import refuses a file whose Host carries a
+// service port the file does not hold.
+func assignedByHost(db *gorm.DB, sps []models.ServicePort) (map[uint][]assignmentContent, error) {
 	var assignments []models.HostServicePort
 
-	err := db.Find(&assignments).Error
+	err := db.Order("host_id, sp_id").Find(&assignments).Error
 	if err != nil {
 		return nil, err
 	}
 
-	localPortOf := make(map[uint]int, len(sps))
+	held := make(map[uint]bool, len(sps))
 	for _, sp := range sps {
-		localPortOf[sp.ID] = sp.LocalPort
+		held[sp.ID] = true
 	}
 
-	byHost := make(map[uint]hostAssignments)
+	byHost := make(map[uint][]assignmentContent)
 
 	for _, assignment := range assignments {
-		localPort, known := localPortOf[assignment.SPID]
-		if !known {
+		if !held[assignment.SPID] {
 			continue
 		}
 
-		carried := byHost[assignment.HostID]
-		carried.localPorts = append(carried.localPorts, localPort)
+		createdAt := assignment.CreatedAt
 
-		if assignment.BindScope != "" {
-			if carried.bindScopes == nil {
-				carried.bindScopes = make(map[string]string)
-			}
-
-			carried.bindScopes[strconv.Itoa(localPort)] = assignment.BindScope
-		}
-
-		if !assignment.Enabled {
-			if carried.enabled == nil {
-				carried.enabled = make(map[string]bool)
-			}
-
-			carried.enabled[strconv.Itoa(localPort)] = false
-		}
-
-		byHost[assignment.HostID] = carried
+		byHost[assignment.HostID] = append(byHost[assignment.HostID], assignmentContent{
+			ServicePortID: assignment.SPID,
+			BindScope:     assignment.BindScope,
+			Enabled:       assignment.Enabled,
+			CreatedAt:     &createdAt,
+		})
 	}
 
-	for hostID, carried := range byHost {
-		sort.Ints(carried.localPorts)
-		byHost[hostID] = carried
+	return byHost, nil
+}
+
+// jumpsByHost reads the jump routes and returns the route of each Host id, in
+// the order it is taken.
+func jumpsByHost(db *gorm.DB) (map[uint][]uint, error) {
+	var jumps []models.HostJump
+
+	err := db.Order("host_id, seq").Find(&jumps).Error
+	if err != nil {
+		return nil, err
+	}
+
+	byHost := make(map[uint][]uint)
+
+	for _, jump := range jumps {
+		byHost[jump.HostID] = append(byHost[jump.HostID], jump.JumpHostID)
 	}
 
 	return byHost, nil
 }
 
 // localForwardsByHost reads the local forwards and returns them for each Host
-// id, in the order of their local port so that the same configuration gives the
+// id, in the order of their number so that the same configuration gives the
 // same file. A local forward whose Host is not among the ones exported is left
 // out by the caller, since there is no Host to write it under.
 func localForwardsByHost(db *gorm.DB) (map[uint][]localForwardContent, error) {
 	var rows []models.LocalForward
 
-	err := db.Order("local_port").Find(&rows).Error
+	err := db.Order("host_id, number").Find(&rows).Error
 	if err != nil {
 		return nil, err
 	}
@@ -1172,8 +1180,11 @@ func localForwardsByHost(db *gorm.DB) (map[uint][]localForwardContent, error) {
 
 	for _, lf := range rows {
 		enabled := lf.Enabled
+		createdAt := lf.CreatedAt
+		updatedAt := lf.UpdatedAt
 
 		byHost[lf.HostID] = append(byHost[lf.HostID], localForwardContent{
+			Number:         lf.Number,
 			BindScope:      lf.BindScope,
 			LocalPort:      lf.LocalPort,
 			TargetAddress:  lf.TargetAddress,
@@ -1181,6 +1192,8 @@ func localForwardsByHost(db *gorm.DB) (map[uint][]localForwardContent, error) {
 			Description:    lf.Description,
 			AllowedSources: lf.AllowedSources,
 			Enabled:        &enabled,
+			CreatedAt:      &createdAt,
+			UpdatedAt:      &updatedAt,
 		})
 	}
 
@@ -1193,7 +1206,7 @@ func localForwardsByHost(db *gorm.DB) (map[uint][]localForwardContent, error) {
 // @Summary      Every Host and every service port, encrypted into one file
 // @Description  A POST and not a GET because the password that seals the file is in the body.
 // @Description  Inside the file the SSH password, the private key and the key passphrase of every Host are in the clear, so treat it as the credentials of every Host it names.
-// @Description  Each Host carries its local forwards in the file, and local_forwards in the answer counts them. Each Host carries its SOCKS5 proxy in socks_enabled, socks_port, socks_bind_scope and socks_allowed_sources.
+// @Description  The file carries the id and the times of every Host and service port and the number of every local forward, so that an import puts the configuration back as it is here. Each Host carries its jump route in jump_host_ids, the service ports it carries in assignments, its local forwards, its pending host key and its SOCKS5 proxy. local_forwards in the answer counts the local forwards.
 // @Tags         export and import
 // @Accept   json
 // @Produce  json
@@ -1224,7 +1237,7 @@ func (h *TransferHandler) ExportTunnels(c echo.Context) error {
 
 	var hosts []models.Host
 
-	err = h.hosts.db.Find(&hosts).Error
+	err = h.hosts.db.Order("id").Find(&hosts).Error
 	if err != nil {
 		h.hosts.logger.Error("failed to read the Hosts for an export", logid.TransferHostsReadFailed.Field(), zap.Error(err))
 		return failure(c, http.StatusInternalServerError, errExportHostsReadFailed)
@@ -1232,7 +1245,7 @@ func (h *TransferHandler) ExportTunnels(c echo.Context) error {
 
 	var sps []models.ServicePort
 
-	err = h.hosts.db.Find(&sps).Error
+	err = h.hosts.db.Order("id").Find(&sps).Error
 	if err != nil {
 		h.hosts.logger.Error("failed to read the service ports for an export",
 			logid.TransferServicePortsReadFailed.Field(),
@@ -1254,6 +1267,14 @@ func (h *TransferHandler) ExportTunnels(c echo.Context) error {
 			logid.TransferLocalForwardsReadFailed.Field(),
 			zap.Error(err))
 		return failure(c, http.StatusInternalServerError, errExportLocalForwardsRead)
+	}
+
+	jumps, err := jumpsByHost(h.hosts.db)
+	if err != nil {
+		h.hosts.logger.Error("failed to read the jump routes for an export",
+			logid.TransferJumpsReadFailed.Field(),
+			zap.Error(err))
+		return failure(c, http.StatusInternalServerError, errExportJumpsRead)
 	}
 
 	exportedForwards := 0
@@ -1278,22 +1299,9 @@ func (h *TransferHandler) ExportTunnels(c echo.Context) error {
 			return failure(c, http.StatusInternalServerError, errExportHostSecretsSealed, errorArgs{"host": host.Address})
 		}
 
-		// A Host that carries nothing is written as an empty list and never as
-		// nil, which is the difference the import reads: see hostContent.
-		opened.AssignedLocalPorts = assigned[host.ID].localPorts
-		if opened.AssignedLocalPorts == nil {
-			opened.AssignedLocalPorts = []int{}
-		}
+		opened.Assignments = assigned[host.ID]
+		opened.JumpHostIDs = jumps[host.ID]
 
-		// The scopes are the other way about: a nil map is left nil so that the
-		// field stays out of the file altogether, because every assignment
-		// being on the wildcard is what no entry means.
-		opened.AssignedBindScopes = assigned[host.ID].bindScopes
-
-		// Left nil where every assignment runs, for the reason the scopes are.
-		opened.AssignedEnabled = assigned[host.ID].enabled
-
-		// Never nil, for the reason AssignedLocalPorts is never nil.
 		opened.LocalForwards = forwards[host.ID]
 		if opened.LocalForwards == nil {
 			opened.LocalForwards = []localForwardContent{}
@@ -1305,11 +1313,17 @@ func (h *TransferHandler) ExportTunnels(c echo.Context) error {
 	}
 
 	for _, sp := range sps {
+		createdAt := sp.CreatedAt
+		updatedAt := sp.UpdatedAt
+
 		content.ServicePorts = append(content.ServicePorts, servicePortContent{
+			ID:             sp.ID,
 			ServiceAddress: sp.ServiceAddress,
 			ServicePort:    sp.ServicePort,
 			LocalPort:      sp.LocalPort,
 			Description:    sp.Description,
+			CreatedAt:      &createdAt,
+			UpdatedAt:      &updatedAt,
 		})
 	}
 
@@ -1346,29 +1360,30 @@ func (h *TransferHandler) ExportTunnels(c echo.Context) error {
 	})
 }
 
-// ImportTunnels takes a file an export made and writes the Hosts and the
-// service ports in it.
+// ImportTunnels takes a file an export made and puts what it holds in place of
+// the tunnel configuration stored here.
 //
 // Everything happens in one transaction, and anything that stops it rolls the
 // whole of it back: a configuration that landed half way is one the operator
-// has to take apart by hand before trying again, and the row that stopped the
-// import is not always the last one.
+// has to take apart by hand before trying again.
 //
-// @Summary      Write what an exported tunnels file holds
-// @Description  Adds what is not registered here and skips what is, naming in the answer what it skipped and why. Send the same file again with overwrite true to replace those rows instead.
-// @Description  The whole import is one transaction: a file that is refused half way through leaves the database exactly as it was.
-// @Description  A Host the import writes is left carrying the local forwards the file names for it, and keeps its own when the file has no local_forwards for it. The import is refused when the file opens one local port twice, or opens the port this server is stored to listen on or a local port a local forward of another Host holds here.
-// @Description  A Host the import writes takes the SOCKS5 fields the file carries, and keeps its own for a field the file does not carry. The import is refused when the file opens one port with two SOCKS5 proxies or with a SOCKS5 proxy and a local forward, or a SOCKS5 proxy it switches on opens the port this server listens on or a port the SOCKS5 proxy or a local forward of another Host opens here. Each SOCKS5 proxy it switches on is an item of kind socks.
+// @Summary      Replace the tunnel configuration with what an exported tunnels file holds
+// @Description  Every Host, service port, assignment, local forward and jump route stored here is deleted and the ones in the file are written in their place, under the ids and numbers the file carries. The account, the settings and the sessions are not touched.
+// @Description  A file from before the ids were exported (format version 1) is written with ids counted from 1 in the order of the file, and with no jump route.
+// @Description  dry_run true opens and checks the file and writes nothing. The answer is the same either way: current is what is stored here and file is what the file holds.
+// @Description  overwrite is no longer read and a body that carries it is refused, so that a client written for the import that added and skipped rows does not replace the configuration without knowing it.
+// @Description  The whole import is one transaction: a file that is refused leaves the database exactly as it was.
+// @Description  The import is refused when a jump route of the file names a Host the file does not hold, the Host itself, one Host twice, or more than 8 Hosts, and when the file opens one local port twice, or opens the port this server listens on.
 // @Tags         export and import
 // @Accept   json
 // @Produce  json
 // @Security  CSRFToken
-// @Param   body  body  api.importTunnelsRequest  true  "The password, the file, whether to overwrite, and the password of the account"
+// @Param   body  body  api.importTunnelsRequest  true  "The password, the file, whether to only check it, and the password of the account"
 // @Success  200  {object}  models.Response{data=api.importedTunnels}
-// @Failure  400  {object}  api.errorBody  "The password is wrong, the file is damaged, it is not a file this program wrote, it holds the other kind, or account_password is empty"
+// @Failure  400  {object}  api.errorBody  "The password is wrong, the file is damaged, it is not a file this program wrote, it holds the other kind, a row of it is refused, the body carries overwrite, or account_password is empty"
 // @Failure  401  {object}  api.errorBody  "account_password does not open this account"
 // @Failure  429  {object}  api.errorBody  "Too many passwords that do not open this account were tried. Retry-After says when to try again"
-// @Failure  409  {object}  api.errorBody  "A local forward or a SOCKS5 proxy of the file opens a port this installation opens already. Nothing was stored"
+// @Failure  409  {object}  api.errorBody  "A local forward or a SOCKS5 proxy of the file opens the port this server listens on. Nothing was stored"
 // @Router       /import/tunnels [post]
 func (h *TransferHandler) ImportTunnels(c echo.Context) error {
 	var req importTunnelsRequest
@@ -1376,6 +1391,10 @@ func (h *TransferHandler) ImportTunnels(c echo.Context) error {
 	err := c.Bind(&req)
 	if err != nil {
 		return unreadableBody(err).answer(c)
+	}
+
+	if req.Overwrite != nil {
+		return failure(c, http.StatusBadRequest, errImportOverwriteRemoved)
 	}
 
 	refused := h.accountPasswordRefused(c, req.AccountPassword, true, transferKindTunnels)
@@ -1407,9 +1426,6 @@ func (h *TransferHandler) ImportTunnels(c echo.Context) error {
 		return refused.answer(c)
 	}
 
-	// Read before the transaction for the reason storedAPIPort gives, and only
-	// for a file that carries a local forward or opens a SOCKS5 proxy, so that
-	// a file without either reads nothing it has no use for.
 	apiPort := 0
 
 	if carriesLocalForwards(content) || opensSocks(content) {
@@ -1418,6 +1434,25 @@ func (h *TransferHandler) ImportTunnels(c echo.Context) error {
 			h.hosts.logger.Error("failed to read the settings", logid.SettingsReadFailed.Field(), zap.Error(err))
 			return failure(c, http.StatusInternalServerError, errSettingsReadFailed)
 		}
+	}
+
+	plan, refused := h.planImport(c, file.FormatVersion >= transferFormatWithIDs, content, apiPort)
+	if refused != nil {
+		return refused.answer(c)
+	}
+
+	if req.DryRun {
+		current, err := storedCounts(h.hosts.db)
+		if err != nil {
+			h.hosts.logger.Error("failed to count what is stored for an import",
+				logid.TransferHostsReadFailed.Field(), zap.Error(err))
+			return failure(c, http.StatusInternalServerError, errImportCountsReadFailed)
+		}
+
+		return c.JSON(http.StatusOK, models.Response{
+			Success: true,
+			Data:    importedTunnels{DryRun: true, Current: current, File: plan.counts()},
+		})
 	}
 
 	tx := h.hosts.db.Begin()
@@ -1429,76 +1464,19 @@ func (h *TransferHandler) ImportTunnels(c echo.Context) error {
 	}
 	defer rollbackUnlessDone(tx)
 
-	items := make([]transferItem, 0, len(content.Hosts)+len(content.ServicePorts))
-
-	// The Hosts whose assignments this import is to write: the ones it wrote.
-	// A Host that was skipped is one that was registered here before this file
-	// arrived, and what it carries was not asked to be replaced either.
-	written := make([]hostContent, 0, len(content.Hosts))
-	writtenAs := make(map[string]string, len(content.Hosts))
-
-	for _, host := range content.Hosts {
-		item, refused := h.importHost(c, tx, host, req.Overwrite)
-		if refused != nil {
-			tx.Rollback()
-			return refused.answer(c)
-		}
-
-		if item.Action != transferSkipped {
-			written = append(written, host)
-			writtenAs[host.Address] = item.Action
-		}
-
-		items = append(items, *item)
+	current, err := storedCounts(tx)
+	if err != nil {
+		tx.Rollback()
+		h.hosts.logger.Error("failed to count what is stored for an import",
+			logid.TransferHostsReadFailed.Field(), zap.Error(err))
+		return failure(c, http.StatusInternalServerError, errImportCountsReadFailed)
 	}
 
-	// The service ports are written after the Hosts, so that a file whose
-	// service ports are refused takes the Hosts of that same file back out with
-	// them. Which of the two comes first is otherwise of no consequence: the
-	// tunnels are built by the loop from both together, and no row of one
-	// points at a row of the other.
-	for _, sp := range content.ServicePorts {
-		item, refused := h.importServicePort(c, tx, sp, req.Overwrite)
-		if refused != nil {
-			tx.Rollback()
-			return refused.answer(c)
-		}
-
-		items = append(items, *item)
-	}
-
-	// The assignments are written last, after both tables are in place. They
-	// point at rows of both, and a service port of the file is created in the
-	// loop above, so anything earlier would be looking for rows this same
-	// import has not written yet.
-	for _, host := range written {
-		more, refused := h.importAssignments(tx, host, content)
-		if refused != nil {
-			tx.Rollback()
-			return refused.answer(c)
-		}
-
-		items = append(items, more...)
-	}
-
-	more, refused := h.importLocalForwards(tx, written, apiPort)
+	refused = h.replaceConfiguration(tx, plan)
 	if refused != nil {
 		tx.Rollback()
 		return refused.answer(c)
 	}
-
-	items = append(items, more...)
-
-	// The SOCKS5 proxies are held to the rest of this installation last, once
-	// every Host and every local forward of the file is in place, so that a
-	// port the file moves from one of them to another is free by then.
-	more, refused = h.importSocks(tx, written, writtenAs, apiPort)
-	if refused != nil {
-		tx.Rollback()
-		return refused.answer(c)
-	}
-
-	items = append(items, more...)
 
 	err = tx.Commit().Error
 	if err != nil {
@@ -1508,29 +1486,21 @@ func (h *TransferHandler) ImportTunnels(c echo.Context) error {
 		return failure(c, http.StatusInternalServerError, errTransactionCommitFailed)
 	}
 
-	answer := importedTunnels{Items: items}
-
-	for _, item := range items {
-		switch item.Action {
-		case transferAdded:
-			answer.Added++
-		case transferReplaced:
-			answer.Replaced++
-		case transferSkipped:
-			answer.Skipped++
-		}
-	}
-
 	// The loop is woken after the commit, for the reason every write handler
 	// wakes it there: a pass that runs before it reads the rows as they were.
 	h.hosts.manager.WakeReconcile()
 
+	answer := importedTunnels{Current: current, File: plan.counts()}
+
 	h.hosts.logger.Info("imported a tunnel configuration",
 		logid.TransferImported.Field(),
-		zap.Bool("overwrite", req.Overwrite),
-		zap.Int("added", answer.Added),
-		zap.Int("replaced", answer.Replaced),
-		zap.Int("skipped", answer.Skipped))
+		zap.Int("format_version", file.FormatVersion),
+		zap.Int("removed_hosts", current.Hosts),
+		zap.Int("hosts", answer.File.Hosts),
+		zap.Int("service_ports", answer.File.ServicePorts),
+		zap.Int("assignments", answer.File.Assignments),
+		zap.Int("local_forwards", answer.File.LocalForwards),
+		zap.Int("jump_hosts", answer.File.JumpHosts))
 
 	return c.JSON(http.StatusOK, models.Response{
 		Success: true,
@@ -1538,14 +1508,221 @@ func (h *TransferHandler) ImportTunnels(c echo.Context) error {
 	})
 }
 
-// importHost writes one Host of the file and reports what it did with it.
-//
-// It is checked here, inside the transaction, rather than in a pass of its own
-// beforehand. The refusal then names the row that stopped the import while the
-// rows before it are taken back out by the rollback, which is what makes "run
-// it again once that row is fixed" the whole of the work left.
-func (h *TransferHandler) importHost(c echo.Context, tx *gorm.DB, host hostContent,
-	overwrite bool) (*transferItem, *refusal) {
+// importPlan is the rows a file is written as, built and checked in full before
+// anything is deleted.
+type importPlan struct {
+	hosts         []models.Host
+	servicePorts  []models.ServicePort
+	assignments   []models.HostServicePort
+	localForwards []models.LocalForward
+	jumps         []models.HostJump
+}
+
+// counts is how much of each the plan writes.
+func (plan importPlan) counts() transferCounts {
+	routed := make(map[uint]bool)
+	for _, jump := range plan.jumps {
+		routed[jump.HostID] = true
+	}
+
+	return transferCounts{
+		Hosts:         len(plan.hosts),
+		ServicePorts:  len(plan.servicePorts),
+		Assignments:   len(plan.assignments),
+		LocalForwards: len(plan.localForwards),
+		JumpHosts:     len(routed),
+	}
+}
+
+// storedCounts is how much of each is stored.
+func storedCounts(db *gorm.DB) (transferCounts, error) {
+	var counts transferCounts
+
+	for _, table := range []struct {
+		model interface{}
+		into  *int
+	}{
+		{&models.Host{}, &counts.Hosts},
+		{&models.ServicePort{}, &counts.ServicePorts},
+		{&models.HostServicePort{}, &counts.Assignments},
+		{&models.LocalForward{}, &counts.LocalForwards},
+	} {
+		var rows int64
+
+		err := db.Model(table.model).Count(&rows).Error
+		if err != nil {
+			return counts, err
+		}
+
+		*table.into = int(rows)
+	}
+
+	var routed int64
+
+	err := db.Model(&models.HostJump{}).Distinct("host_id").Count(&routed).Error
+	if err != nil {
+		return counts, err
+	}
+
+	counts.JumpHosts = int(routed)
+
+	return counts, nil
+}
+
+// timeOf is a time a file carries, or the zero time where it carries none, which
+// gorm stores as the time of the write.
+func timeOf(at *time.Time) time.Time {
+	if at == nil {
+		return time.Time{}
+	}
+
+	return *at
+}
+
+// planImport reads a file into the rows it is written as and holds every one of
+// them to the rules, so that a file that is refused is refused before anything
+// stored is deleted. withIDs is whether the file carries the ids of its rows; a
+// file that does not is given ids counted from 1 in the order it lists them.
+func (h *TransferHandler) planImport(c echo.Context, withIDs bool, content tunnelsContent,
+	apiPort int) (importPlan, *refusal) {
+	var plan importPlan
+
+	hostIDs := make([]uint, len(content.Hosts))
+	heldHostIDs := make(map[uint]bool, len(content.Hosts))
+	heldAddresses := make(map[string]bool, len(content.Hosts))
+
+	for i, host := range content.Hosts {
+		id := uint(i + 1)
+		if withIDs {
+			id = host.ID
+			if id == 0 || heldHostIDs[id] {
+				return plan, refuse(http.StatusBadRequest, errImportHostIDInvalid,
+					errorArgs{"host": host.Address, "id": strconv.FormatUint(uint64(host.ID), 10)})
+			}
+		}
+
+		address := net.JoinHostPort(host.Address, strconv.Itoa(host.Port))
+		if heldAddresses[address] {
+			return plan, refuse(http.StatusBadRequest, errImportHostDuplicate,
+				errorArgs{"host": host.Address, "port": strconv.Itoa(host.Port)})
+		}
+
+		heldHostIDs[id] = true
+		heldAddresses[address] = true
+		hostIDs[i] = id
+
+		stored, refused := h.planHost(c, host, withIDs)
+		if refused != nil {
+			return plan, refused
+		}
+
+		stored.ID = id
+		if withIDs {
+			stored.PendingHostKey = host.PendingHostKey
+			stored.CreatedAt = timeOf(host.CreatedAt)
+			stored.UpdatedAt = timeOf(host.UpdatedAt)
+		}
+
+		if host.opensSocks() && isAPIPort(*host.SocksPort, apiPort, h.hosts.runningAPIPort) {
+			return plan, refuse(http.StatusConflict, errImportSocksAPIPort,
+				errorArgs{"host": host.Address, "socks_port": strconv.Itoa(*host.SocksPort)})
+		}
+
+		plan.hosts = append(plan.hosts, stored)
+	}
+
+	spIDOfLocalPort := make(map[int]uint, len(content.ServicePorts))
+	heldSPIDs := make(map[uint]bool, len(content.ServicePorts))
+	heldServices := make(map[string]bool, len(content.ServicePorts))
+
+	for i, sp := range content.ServicePorts {
+		serviceAddress := sp.ServiceAddress + ":" + strconv.Itoa(sp.ServicePort)
+		named := transferText{textImportNameServicePort,
+			textArgs{"service_address": serviceAddress, "local_port": strconv.Itoa(sp.LocalPort)}}
+		name := named.english()
+		nameCodes := map[string]textCode{"service_port": named.code}
+
+		id := uint(i + 1)
+		if withIDs {
+			id = sp.ID
+			if id == 0 || heldSPIDs[id] {
+				return plan, refuse(http.StatusBadRequest, errImportServicePortIDInvalid,
+					errorArgs{"service_port": name, "id": strconv.FormatUint(uint64(sp.ID), 10)}).
+					named(nameCodes, named.values)
+			}
+		}
+
+		err := c.Validate(&models.CreateServicePortRequest{
+			ServiceAddress: sp.ServiceAddress,
+			ServicePort:    sp.ServicePort,
+			LocalPort:      sp.LocalPort,
+			Description:    sp.Description,
+		})
+		if err != nil {
+			return plan, refuse(http.StatusBadRequest, errImportServicePortRefused,
+				errorArgs{"service_port": name, "reason": err.Error()}).named(nameCodes, named.values)
+		}
+
+		_, localPortHeld := spIDOfLocalPort[sp.LocalPort]
+		if heldServices[serviceAddress] || localPortHeld {
+			return plan, refuse(http.StatusBadRequest, errImportServicePortDuplicate,
+				errorArgs{"service_port": name}).named(nameCodes, named.values)
+		}
+
+		heldSPIDs[id] = true
+		heldServices[serviceAddress] = true
+		spIDOfLocalPort[sp.LocalPort] = id
+
+		stored := models.ServicePort{
+			ID:             id,
+			ServiceAddress: sp.ServiceAddress,
+			ServicePort:    sp.ServicePort,
+			LocalPort:      sp.LocalPort,
+			Description:    sp.Description,
+		}
+		if withIDs {
+			stored.CreatedAt = timeOf(sp.CreatedAt)
+			stored.UpdatedAt = timeOf(sp.UpdatedAt)
+		}
+
+		plan.servicePorts = append(plan.servicePorts, stored)
+	}
+
+	for i, host := range content.Hosts {
+		assignments, refused := planAssignments(withIDs, host, hostIDs[i], content, heldSPIDs, spIDOfLocalPort)
+		if refused != nil {
+			return plan, refused
+		}
+
+		plan.assignments = append(plan.assignments, assignments...)
+
+		forwards, refused := h.planLocalForwards(withIDs, host, hostIDs[i], apiPort)
+		if refused != nil {
+			return plan, refused
+		}
+
+		plan.localForwards = append(plan.localForwards, forwards...)
+
+		if !withIDs {
+			continue
+		}
+
+		jumps, refused := planJumps(host, hostIDs[i], heldHostIDs)
+		if refused != nil {
+			return plan, refused
+		}
+
+		plan.jumps = append(plan.jumps, jumps...)
+	}
+
+	return plan, nil
+}
+
+// planHost holds one Host of the file to the rules of a create and seals its
+// secrets with the key of this installation. A file with ids is stored with the
+// SOCKS5 scope it carries, an empty one included, since it is the scope the
+// row it was exported from held.
+func (h *TransferHandler) planHost(c echo.Context, host hostContent, withIDs bool) (models.Host, *refusal) {
 	name := host.Address
 
 	// The rules of a create are run on what the file carries, so that a file
@@ -1566,7 +1743,7 @@ func (h *TransferHandler) importHost(c echo.Context, tx *gorm.DB, host hostConte
 		SocksAllowedSources: socks.SocksAllowedSources,
 	})
 	if err != nil {
-		return nil, refuse(http.StatusBadRequest, errImportHostRefused, errorArgs{"host": name, "reason": err.Error()})
+		return models.Host{}, refuse(http.StatusBadRequest, errImportHostRefused, errorArgs{"host": name, "reason": err.Error()})
 	}
 
 	// The rules a create holds the proxy to past the validator. The reason is
@@ -1575,7 +1752,7 @@ func (h *TransferHandler) importHost(c echo.Context, tx *gorm.DB, host hostConte
 	refusedSocks := checkSocks(&socks)
 	if refusedSocks != nil {
 		reason, _ := renderErrorMessage(errorMessages[refusedSocks.code], refusedSocks.args)
-		return nil, refuse(http.StatusBadRequest, errImportHostRefused, errorArgs{"host": name, "reason": reason})
+		return models.Host{}, refuse(http.StatusBadRequest, errImportHostRefused, errorArgs{"host": name, "reason": reason})
 	}
 
 	// The scopes the file names are held to the two words as well. The column
@@ -1583,34 +1760,15 @@ func (h *TransferHandler) importHost(c echo.Context, tx *gorm.DB, host hostConte
 	// be met as a failed write halfway through the import, which names the row
 	// and not what is wrong with it.
 	unknown := unknownBindScope(host.AssignedBindScopes)
+	if unknown == "" {
+		unknown = unknownAssignmentScope(host.Assignments)
+	}
 	if unknown != "" {
-		return nil, refuse(http.StatusBadRequest, errImportHostRefused, errorArgs{"host": name, "reason": unknown})
+		return models.Host{}, refuse(http.StatusBadRequest, errImportHostRefused, errorArgs{"host": name, "reason": unknown})
 	}
 
 	if host.Password == "" && strings.TrimSpace(host.PrivateKey) == "" {
-		return nil, refuse(http.StatusBadRequest, errImportHostNoLogin, errorArgs{"host": name})
-	}
-
-	var stored models.Host
-
-	err = tx.Where("address = ?", host.Address).First(&stored).Error
-	found := err == nil
-
-	if err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
-		h.hosts.logger.Error("failed to look for a Host while importing",
-			logid.TransferHostLookupFailed.Field(),
-			zap.Error(err))
-		return nil, refuse(http.StatusInternalServerError, errImportHostsReadFailed)
-	}
-
-	if found && !overwrite {
-		item := transferItem{
-			Kind:   "host",
-			Name:   name,
-			Action: transferSkipped,
-		}.because(transferText{textImportReasonHostRegistered, nil})
-
-		return &item, nil
+		return models.Host{}, refuse(http.StatusBadRequest, errImportHostNoLogin, errorArgs{"host": name})
 	}
 
 	// Sealed with the key of this installation, which is what makes the file
@@ -1621,58 +1779,24 @@ func (h *TransferHandler) importHost(c echo.Context, tx *gorm.DB, host hostConte
 		h.hosts.logger.Error("failed to encrypt the password of an imported Host",
 			logid.TransferHostPasswordEncryptFailed.Field(),
 			zap.Error(err))
-		return nil, refuse(http.StatusInternalServerError, errImportHostPasswordEncrypt, errorArgs{"host": name})
+		return models.Host{}, refuse(http.StatusInternalServerError, errImportHostPasswordEncrypt, errorArgs{"host": name})
 	}
 
 	privateKey, keyPassphrase, err := h.hosts.sealPrivateKey(host.PrivateKey, host.KeyPassphrase)
 	if err != nil {
 		var refusedKey *tunnel.KeyError
 		if errors.As(err, &refusedKey) {
-			return nil, refuse(http.StatusBadRequest, errImportHostKeyRefused, errorArgs{"host": name, "reason": refusedKey.Error()})
+			return models.Host{}, refuse(http.StatusBadRequest, errImportHostKeyRefused, errorArgs{"host": name, "reason": refusedKey.Error()})
 		}
 
 		h.hosts.logger.Error("failed to encrypt the private key of an imported Host",
 			logid.TransferHostPrivateKeyEncryptFailed.Field(),
 			zap.Error(err))
 
-		return nil, refuse(http.StatusInternalServerError, errImportHostKeyEncrypt, errorArgs{"host": name})
+		return models.Host{}, refuse(http.StatusInternalServerError, errImportHostKeyEncrypt, errorArgs{"host": name})
 	}
 
-	if found {
-		// The row keeps its id, so the tunnels of that Host go on pointing at
-		// it and the loop reconnects them rather than building them anew.
-		stored.Port = host.Port
-		stored.User = host.User
-		stored.Password = password
-		stored.PrivateKey = privateKey
-		stored.KeyPassphrase = keyPassphrase
-		stored.HostKey = host.HostKey
-		// The pending key is dropped rather than kept. It was the key some
-		// server presented to this installation while the row was trusted on
-		// what it was trusted on before, and the answer to it is "is this the
-		// right server". The file has just said what the right key is, so that
-		// question is no longer the one being asked: approving the old pending
-		// key would overwrite what was imported with a key the file did not
-		// name. Dropping it costs nothing, since a server that still presents
-		// something other than the imported key writes the pending key again
-		// on the next connection, with what it presents now.
-		stored.PendingHostKey = ""
-		stored.Description = host.Description
-		stored.Enabled = host.Enabled
-		stored = host.socksOf(stored)
-
-		err = tx.Save(&stored).Error
-		if err != nil {
-			h.hosts.logger.Error("failed to replace a Host while importing",
-				logid.TransferHostReplaceFailed.Field(),
-				zap.Error(err))
-			return nil, refuse(http.StatusInternalServerError, errImportHostReplaceFailed, errorArgs{"host": name})
-		}
-
-		return &transferItem{Kind: "host", Name: name, Action: transferReplaced}, nil
-	}
-
-	created := models.Host{
+	stored := models.Host{
 		Address:       host.Address,
 		Port:          host.Port,
 		User:          host.User,
@@ -1683,148 +1807,294 @@ func (h *TransferHandler) importHost(c echo.Context, tx *gorm.DB, host hostConte
 		Description:   host.Description,
 		Enabled:       host.Enabled,
 	}
-	created = host.socksOf(created)
 
-	// The number is chosen the way the Hosts screen chooses it. An import that
-	// left it to the column would step over a number the screen would have
-	// handed out, so which of the two registered a Host would decide whether
-	// the numbers have a gap in them.
-	created.ID, err = nextHostID(tx)
-	if err != nil {
-		h.hosts.logger.Error("failed to work out the number for a Host being imported",
-			logid.HostNextNumberReadFailed.Field(), zap.Error(err))
-		return nil, refuse(http.StatusInternalServerError, errImportHostCreateFailed, errorArgs{"host": name})
+	stored = host.socksOf(stored)
+	if withIDs && host.SocksBindScope != nil {
+		stored.SocksBindScope = *host.SocksBindScope
 	}
 
-	err = tx.Create(&created).Error
-	if err != nil {
-		h.hosts.logger.Error("failed to create a Host while importing",
-			logid.TransferHostCreateFailed.Field(),
-			zap.Error(err))
-		return nil, refuse(http.StatusInternalServerError, errImportHostCreateFailed, errorArgs{"host": name})
-	}
-
-	return &transferItem{Kind: "host", Name: name, Action: transferAdded}, nil
+	return stored, nil
 }
 
-// importServicePort writes one service port of the file and reports what it did
-// with it.
-//
-// A service port is held by two rules, not one: the service address with its
-// port, and the local port. A row of the file can meet either of them, so both
-// are looked up.
-func (h *TransferHandler) importServicePort(c echo.Context, tx *gorm.DB, sp servicePortContent,
-	overwrite bool) (*transferItem, *refusal) {
-	serviceAddress := sp.ServiceAddress + ":" + strconv.Itoa(sp.ServicePort)
-	localPort := strconv.Itoa(sp.LocalPort)
-	named := transferText{textImportNameServicePort,
-		textArgs{"service_address": serviceAddress, "local_port": localPort}}
-	name := named.english()
-	nameCodes := map[string]textCode{"service_port": named.code}
-
-	err := c.Validate(&models.CreateServicePortRequest{
-		ServiceAddress: sp.ServiceAddress,
-		ServicePort:    sp.ServicePort,
-		LocalPort:      sp.LocalPort,
-		Description:    sp.Description,
-	})
-	if err != nil {
-		return nil, refuse(http.StatusBadRequest, errImportServicePortRefused,
-			errorArgs{"service_port": name, "reason": err.Error()}).named(nameCodes, named.values)
-	}
-
-	var onService models.ServicePort
-
-	err = tx.Where("service_address = ? AND service_port = ?", sp.ServiceAddress, sp.ServicePort).
-		First(&onService).Error
-	foundOnService := err == nil
-
-	if err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
-		h.hosts.logger.Error("failed to look for a service port while importing",
-			logid.TransferServicePortLookupFailed.Field(),
-			zap.Error(err))
-		return nil, refuse(http.StatusInternalServerError, errImportServicePortsReadFailed)
-	}
-
-	var onLocal models.ServicePort
-
-	err = tx.Where("local_port = ?", sp.LocalPort).First(&onLocal).Error
-	foundOnLocal := err == nil
-
-	if err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
-		h.hosts.logger.Error("failed to look for a service port while importing",
-			logid.TransferServicePortLookupFailed.Field(),
-			zap.Error(err))
-		return nil, refuse(http.StatusInternalServerError, errImportServicePortsReadFailed)
-	}
-
-	if !foundOnService && !foundOnLocal {
-		created := models.ServicePort{
-			ServiceAddress: sp.ServiceAddress,
-			ServicePort:    sp.ServicePort,
-			LocalPort:      sp.LocalPort,
-			Description:    sp.Description,
+// unknownAssignmentScope is unknownBindScope for the assignments of a file that
+// names them by the id of the service port.
+func unknownAssignmentScope(assignments []assignmentContent) string {
+	for _, assignment := range assignments {
+		switch assignment.BindScope {
+		case "", models.BindScopeLoopback, models.BindScopeWildcard:
+			continue
 		}
 
-		err = tx.Create(&created).Error
+		return "the assignment of the service port " + strconv.FormatUint(uint64(assignment.ServicePortID), 10) +
+			" is opened to " + assignment.BindScope + ", which is neither " + models.BindScopeLoopback + " nor " +
+			models.BindScopeWildcard
+	}
+
+	return ""
+}
+
+// planAssignments is the service ports one Host of the file carries.
+//
+// A file with ids names them by the id of the service port. A file without
+// names them by the local port, and one that does not name them at all was
+// written before they were stored, when every Host carried every service port.
+// Either way a service port the file does not hold is refused: every service
+// port stored here after the import is one of the file.
+func planAssignments(withIDs bool, host hostContent, hostID uint, content tunnelsContent,
+	heldSPIDs map[uint]bool, spIDOfLocalPort map[int]uint) ([]models.HostServicePort, *refusal) {
+	assignments := make([]models.HostServicePort, 0)
+	assigned := make(map[uint]bool)
+
+	if withIDs {
+		for _, carried := range host.Assignments {
+			if !heldSPIDs[carried.ServicePortID] {
+				return nil, refuse(http.StatusBadRequest, errImportAssignmentUnknownServicePort,
+					errorArgs{"host": host.Address,
+						"service_port_id": strconv.FormatUint(uint64(carried.ServicePortID), 10)})
+			}
+
+			if assigned[carried.ServicePortID] {
+				continue
+			}
+
+			assigned[carried.ServicePortID] = true
+
+			assignments = append(assignments, models.HostServicePort{
+				HostID:    hostID,
+				SPID:      carried.ServicePortID,
+				BindScope: carried.BindScope,
+				Enabled:   carried.Enabled,
+				CreatedAt: timeOf(carried.CreatedAt),
+			})
+		}
+
+		return assignments, nil
+	}
+
+	wanted := host.AssignedLocalPorts
+	if wanted == nil {
+		wanted = make([]int, 0, len(content.ServicePorts))
+		for _, sp := range content.ServicePorts {
+			wanted = append(wanted, sp.LocalPort)
+		}
+	}
+
+	for _, localPort := range wanted {
+		spID, held := spIDOfLocalPort[localPort]
+		if !held {
+			return nil, refuse(http.StatusBadRequest, errImportAssignmentUnknownLocalPort,
+				errorArgs{"host": host.Address, "local_port": strconv.Itoa(localPort)})
+		}
+
+		if assigned[spID] {
+			continue
+		}
+
+		assigned[spID] = true
+
+		// Each assignment is written on the scope the file gives it, which a
+		// file from before the scopes were stored answers with the bind
+		// address it carries for the whole Host.
+		assignments = append(assignments, models.HostServicePort{
+			HostID:    hostID,
+			SPID:      spID,
+			BindScope: bindScopeOf(host, localPort),
+			Enabled:   enabledOf(host, localPort),
+		})
+	}
+
+	return assignments, nil
+}
+
+// planLocalForwards is the local forwards one Host of the file carries. A file
+// without ids numbers them from 1 in the order it lists them.
+func (h *TransferHandler) planLocalForwards(withIDs bool, host hostContent, hostID uint,
+	apiPort int) ([]models.LocalForward, *refusal) {
+	forwards := make([]models.LocalForward, 0, len(host.LocalForwards))
+	numbered := make(map[uint]bool, len(host.LocalForwards))
+
+	for i, lf := range host.LocalForwards {
+		localPort := strconv.Itoa(lf.LocalPort)
+
+		number := uint(i + 1)
+		if withIDs {
+			number = lf.Number
+			if number == 0 || numbered[number] {
+				return nil, refuse(http.StatusBadRequest, errImportLocalForwardNumberInvalid,
+					errorArgs{"host": host.Address, "local_port": localPort,
+						"number": strconv.FormatUint(uint64(lf.Number), 10)})
+			}
+		}
+
+		numbered[number] = true
+
+		if isAPIPort(lf.LocalPort, apiPort, h.hosts.runningAPIPort) {
+			return nil, refuse(http.StatusConflict, errImportLocalForwardAPIPort,
+				errorArgs{"host": host.Address, "local_port": localPort})
+		}
+
+		// An empty scope of a file without ids is stored as the word it
+		// stands for, the way a create stores it. A file with ids is stored
+		// as the row it was exported from held it.
+		bindScope := lf.BindScope
+		if bindScope == "" && !withIDs {
+			bindScope = models.BindScopeWildcard
+		}
+
+		stored := models.LocalForward{
+			HostID:         hostID,
+			Number:         number,
+			BindScope:      bindScope,
+			LocalPort:      lf.LocalPort,
+			TargetAddress:  lf.TargetAddress,
+			TargetPort:     lf.TargetPort,
+			Description:    lf.Description,
+			AllowedSources: lf.AllowedSources,
+			Enabled:        lf.enabled(),
+		}
+		if withIDs {
+			stored.CreatedAt = timeOf(lf.CreatedAt)
+			stored.UpdatedAt = timeOf(lf.UpdatedAt)
+		}
+
+		forwards = append(forwards, stored)
+	}
+
+	return forwards, nil
+}
+
+// planJumps is the jump route of one Host of the file, held to naming Hosts of
+// the same file, never the Host itself, and none of them twice.
+func planJumps(host hostContent, hostID uint, heldHostIDs map[uint]bool) ([]models.HostJump, *refusal) {
+	if len(host.JumpHostIDs) > maxJumpHosts {
+		return nil, refuse(http.StatusBadRequest, errImportJumpTooMany,
+			errorArgs{"host": host.Address, "max": strconv.Itoa(maxJumpHosts)})
+	}
+
+	jumps := make([]models.HostJump, 0, len(host.JumpHostIDs))
+	passed := make(map[uint]bool, len(host.JumpHostIDs))
+
+	for i, jumpHostID := range host.JumpHostIDs {
+		jumpHost := strconv.FormatUint(uint64(jumpHostID), 10)
+
+		switch {
+		case jumpHostID == hostID:
+			return nil, refuse(http.StatusBadRequest, errImportJumpSelf, errorArgs{"host": host.Address})
+		case !heldHostIDs[jumpHostID]:
+			return nil, refuse(http.StatusBadRequest, errImportJumpUnknownHost,
+				errorArgs{"host": host.Address, "jump_host_id": jumpHost})
+		case passed[jumpHostID]:
+			return nil, refuse(http.StatusBadRequest, errImportJumpDuplicate,
+				errorArgs{"host": host.Address, "jump_host_id": jumpHost})
+		}
+
+		passed[jumpHostID] = true
+
+		jumps = append(jumps, models.HostJump{HostID: hostID, Seq: uint(i + 1), JumpHostID: jumpHostID})
+	}
+
+	return jumps, nil
+}
+
+// replaceConfiguration deletes the tunnel configuration stored here and writes
+// the plan in its place, inside the transaction it is handed.
+//
+// The rows of the tunnels are the state of the connections this process holds,
+// which the reconcile loop keeps. The ones whose assignment the plan still
+// carries are left to it: it restarts a tunnel whose Host or service port is
+// now another, and one that is the same goes on running on the row it writes
+// its state to. The rest are deleted with the configuration they stood for.
+func (h *TransferHandler) replaceConfiguration(tx *gorm.DB, plan importPlan) *refusal {
+	for _, model := range []interface{}{
+		&models.HostJump{},
+		&models.LocalForward{},
+		&models.HostServicePort{},
+		&models.ServicePort{},
+		&models.Host{},
+	} {
+		err := tx.Where("1 = 1").Delete(model).Error
 		if err != nil {
+			h.hosts.logger.Error("failed to delete the tunnel configuration while importing",
+				logid.TransferConfigurationClearFailed.Field(), zap.Error(err))
+			return refuse(http.StatusInternalServerError, errImportClearFailed)
+		}
+	}
+
+	for i := range plan.hosts {
+		err := tx.Create(&plan.hosts[i]).Error
+		if err != nil {
+			h.hosts.logger.Error("failed to create a Host while importing",
+				logid.TransferHostCreateFailed.Field(),
+				zap.Error(err))
+			return refuse(http.StatusInternalServerError, errImportHostCreateFailed, errorArgs{"host": plan.hosts[i].Address})
+		}
+	}
+
+	for i := range plan.servicePorts {
+		err := tx.Create(&plan.servicePorts[i]).Error
+		if err != nil {
+			sp := plan.servicePorts[i]
+			named := transferText{textImportNameServicePort, textArgs{
+				"service_address": sp.ServiceAddress + ":" + strconv.Itoa(sp.ServicePort),
+				"local_port":      strconv.Itoa(sp.LocalPort)}}
+
 			h.hosts.logger.Error("failed to create a service port while importing",
 				logid.TransferServicePortCreateFailed.Field(),
 				zap.Error(err))
-			return nil, refuse(http.StatusInternalServerError, errImportServicePortCreate,
-				errorArgs{"service_port": name}).named(nameCodes, named.values)
+			return refuse(http.StatusInternalServerError, errImportServicePortCreate,
+				errorArgs{"service_port": named.english()}).
+				named(map[string]textCode{"service_port": named.code}, named.values)
 		}
-
-		item := transferItem{Kind: "service_port", Action: transferAdded}.namedBy(named)
-
-		return &item, nil
 	}
 
-	if !overwrite {
-		reason := transferText{textImportReasonLocalPortTaken, textArgs{"local_port": localPort}}
-		if foundOnService {
-			reason = transferText{textImportReasonServiceAddressTaken,
-				textArgs{"service_address": serviceAddress}}
+	hostOf := make(map[uint]string, len(plan.hosts))
+	for _, host := range plan.hosts {
+		hostOf[host.ID] = host.Address
+	}
+
+	for i := range plan.assignments {
+		err := tx.Create(&plan.assignments[i]).Error
+		if err != nil {
+			h.hosts.logger.Error("failed to store an assignment while importing",
+				logid.TransferAssignmentStoreFailed.Field(),
+				zap.Error(err))
+			return refuse(http.StatusInternalServerError, errImportAssignmentsStoreFailed,
+				errorArgs{"host": hostOf[plan.assignments[i].HostID]})
 		}
-
-		item := transferItem{Kind: "service_port", Action: transferSkipped}.namedBy(named).because(reason)
-
-		return &item, nil
 	}
 
-	// Two rows can stand in the way of one row of the file: one holding the
-	// service address and another holding the local port. Replacing either of
-	// them would leave the other breaking the rule it is under, and deleting
-	// one of them is not what an overwrite was asked for, so this is refused
-	// with the two rows named and the whole import is taken back.
-	if foundOnService && foundOnLocal && onService.ID != onLocal.ID {
-		return nil, refuse(http.StatusConflict, errImportServicePortTwoRows, errorArgs{"service_port": name,
-			"service_address": serviceAddress,
-			"local_port":      localPort}).named(nameCodes, named.values)
+	for i := range plan.localForwards {
+		err := tx.Create(&plan.localForwards[i]).Error
+		if err != nil {
+			h.hosts.logger.Error("failed to store a local forward while importing",
+				logid.TransferLocalForwardStoreFailed.Field(),
+				zap.Error(err))
+			return refuse(http.StatusInternalServerError, errImportLocalForwardsStoreFailed,
+				errorArgs{"host": hostOf[plan.localForwards[i].HostID]})
+		}
 	}
 
-	stored := onService
-	if !foundOnService {
-		stored = onLocal
+	for i := range plan.jumps {
+		err := tx.Create(&plan.jumps[i]).Error
+		if err != nil {
+			h.hosts.logger.Error("failed to store a jump route while importing",
+				logid.TransferJumpStoreFailed.Field(),
+				zap.Error(err))
+			return refuse(http.StatusInternalServerError, errImportJumpsStoreFailed,
+				errorArgs{"host": hostOf[plan.jumps[i].HostID]})
+		}
 	}
 
-	stored.ServiceAddress = sp.ServiceAddress
-	stored.ServicePort = sp.ServicePort
-	stored.LocalPort = sp.LocalPort
-	stored.Description = sp.Description
-
-	err = tx.Save(&stored).Error
+	err := tx.Where("NOT EXISTS (SELECT 1 FROM host_service_ports WHERE " +
+		"host_service_ports.host_id = tunnels.host_id AND host_service_ports.sp_id = tunnels.sp_id)").
+		Delete(&models.Tunnel{}).Error
 	if err != nil {
-		h.hosts.logger.Error("failed to replace a service port while importing",
-			logid.TransferServicePortReplaceFailed.Field(),
-			zap.Error(err))
-		return nil, refuse(http.StatusInternalServerError, errImportServicePortReplace,
-			errorArgs{"service_port": name}).named(nameCodes, named.values)
+		h.hosts.logger.Error("failed to delete the tunnel configuration while importing",
+			logid.TransferConfigurationClearFailed.Field(), zap.Error(err))
+		return refuse(http.StatusInternalServerError, errImportClearFailed)
 	}
 
-	item := transferItem{Kind: "service_port", Action: transferReplaced}.namedBy(named)
-
-	return &item, nil
+	return nil
 }
 
 // unknownBindScope names the first entry of a file that is not a scope an
@@ -1893,106 +2163,6 @@ func enabledOf(host hostContent, localPort int) bool {
 	}
 
 	return true
-}
-
-// importAssignments makes one Host of the file carry the service ports the file
-// says it carries, and reports the ones it could not.
-//
-// What is stored for that Host is replaced rather than added to: the file says
-// which service ports the Host carries, not which ones to add, so a Host the
-// import wrote is left carrying what the file names and nothing besides. Only
-// the Hosts this import wrote are touched, so the assignments of a Host that
-// was skipped stay as they are.
-//
-// A local port the file names and this installation does not hold is left out
-// with a word about it, and the rest of the import stands. It is how a file
-// arrives whose service port was skipped for being registered here under
-// another local port, and refusing the whole file for it would take across
-// neither the Hosts nor the service ports that were fine, over an assignment
-// the operator fixes by adding the service port and importing again. What is
-// not done is passing over it in silence: every one of them is in the answer as
-// a skipped item, with the Host and the local port named.
-func (h *TransferHandler) importAssignments(tx *gorm.DB, host hostContent,
-	content tunnelsContent) ([]transferItem, *refusal) {
-	var stored models.Host
-
-	err := tx.Where("address = ?", host.Address).First(&stored).Error
-	if err != nil {
-		h.hosts.logger.Error("failed to read back a Host while importing its assignments",
-			logid.TransferHostReadBackFailed.Field(),
-			zap.Error(err))
-		return nil, refuse(http.StatusInternalServerError, errImportAssignmentsHostRead, errorArgs{"host": host.Address})
-	}
-
-	wanted := host.AssignedLocalPorts
-	if wanted == nil {
-		// The file does not name them, which is a file written before they were
-		// stored at all. Every Host carried every service port then, so that is
-		// what it is taken to say: the service ports of that same file, which
-		// are all the ones the installation it came from had.
-		wanted = make([]int, 0, len(content.ServicePorts))
-		for _, sp := range content.ServicePorts {
-			wanted = append(wanted, sp.LocalPort)
-		}
-	}
-
-	err = tx.Where("host_id = ?", stored.ID).Delete(&models.HostServicePort{}).Error
-	if err != nil {
-		h.hosts.logger.Error("failed to clear the assignments of a Host while importing",
-			logid.TransferHostAssignmentsClearFailed.Field(),
-			zap.Error(err))
-		return nil, refuse(http.StatusInternalServerError, errImportAssignmentsClearFailed, errorArgs{"host": host.Address})
-	}
-
-	items := make([]transferItem, 0)
-	// A hand-written file can name the same local port twice, and the pair of
-	// columns is the primary key, so the second write of it would fail.
-	assigned := make(map[uint]bool, len(wanted))
-
-	for _, localPort := range wanted {
-		named := transferText{textImportNameAssignment,
-			textArgs{"host": host.Address, "local_port": strconv.Itoa(localPort)}}
-
-		var sp models.ServicePort
-
-		err = tx.Where("local_port = ?", localPort).First(&sp).Error
-		if errors.Is(err, gorm.ErrRecordNotFound) {
-			items = append(items, transferItem{Kind: "assignment", Action: transferSkipped}.
-				namedBy(named).
-				because(transferText{textImportReasonNoServicePort,
-					textArgs{"local_port": strconv.Itoa(localPort)}}))
-
-			continue
-		}
-
-		if err != nil {
-			h.hosts.logger.Error("failed to look for a service port while importing an assignment",
-				logid.TransferAssignmentServicePortLookupFailed.Field(),
-				zap.Error(err))
-
-			return nil, refuse(http.StatusInternalServerError, errImportServicePortsReadFailed)
-		}
-
-		if assigned[sp.ID] {
-			continue
-		}
-
-		assigned[sp.ID] = true
-
-		// Each assignment is written on the scope the file gives it, which a
-		// file from before the scopes were stored answers with the bind
-		// address it carries for the whole Host.
-		err = tx.Create(&models.HostServicePort{HostID: stored.ID, SPID: sp.ID,
-			BindScope: bindScopeOf(host, localPort), Enabled: enabledOf(host, localPort)}).Error
-		if err != nil {
-			h.hosts.logger.Error("failed to store an assignment while importing",
-				logid.TransferAssignmentStoreFailed.Field(),
-				zap.Error(err))
-			return nil, refuse(http.StatusInternalServerError, errImportAssignmentsStoreFailed, errorArgs{"host": host.Address})
-		}
-	}
-
-	return items, nil
 }
 
 // carriesLocalForwards reports whether any Host of a file carries a local
@@ -2082,226 +2252,6 @@ func checkSocksPorts(content tunnelsContent) *refusal {
 	}
 
 	return nil
-}
-
-// importSocks holds the SOCKS5 proxy of each Host this import wrote, where the
-// file switches it on, to what else this installation opens: the port of this
-// server, the proxy of another Host and a local forward. The proxy itself was
-// stored with the Host by importHost; what is refused here takes it back out
-// with the rest of the import. Each proxy that passes is an item of its own,
-// added or replaced as its Host was, since the Host row is what it is kept on.
-func (h *TransferHandler) importSocks(tx *gorm.DB, written []hostContent, writtenAs map[string]string,
-	apiPort int) ([]transferItem, *refusal) {
-	items := make([]transferItem, 0)
-
-	for _, host := range written {
-		if !host.opensSocks() {
-			continue
-		}
-
-		socksPort := strconv.Itoa(*host.SocksPort)
-
-		if isAPIPort(*host.SocksPort, apiPort, h.hosts.runningAPIPort) {
-			return nil, refuse(http.StatusConflict, errImportSocksAPIPort,
-				errorArgs{"host": host.Address, "socks_port": socksPort})
-		}
-
-		var stored models.Host
-
-		err := tx.Where("address = ?", host.Address).First(&stored).Error
-		if err != nil {
-			h.hosts.logger.Error("failed to read back a Host while importing its SOCKS5 proxy",
-				logid.TransferHostReadBackFailed.Field(),
-				zap.Error(err))
-			return nil, refuse(http.StatusInternalServerError, errImportAssignmentsHostRead, errorArgs{"host": host.Address})
-		}
-
-		other, err := socksHolder(tx, *host.SocksPort, stored.ID)
-		if err != nil {
-			h.hosts.logger.Error("failed to look for a Host while importing",
-				logid.TransferHostLookupFailed.Field(),
-				zap.Error(err))
-			return nil, refuse(http.StatusInternalServerError, errImportHostsReadFailed)
-		}
-
-		if other != nil {
-			return nil, refuse(http.StatusConflict, errImportSocksPortTaken,
-				errorArgs{"host": host.Address, "socks_port": socksPort, "owner": other.Address})
-		}
-
-		forward, owner, err := localForwardHolder(tx, *host.SocksPort)
-		if err != nil {
-			h.hosts.logger.Error("failed to look for a local forward while importing",
-				logid.TransferLocalForwardLookupFailed.Field(),
-				zap.Error(err))
-			return nil, refuse(http.StatusInternalServerError, errImportLocalForwardsReadFailed)
-		}
-
-		if forward != nil {
-			return nil, refuse(http.StatusConflict, errImportSocksLocalForward,
-				errorArgs{"host": host.Address, "socks_port": socksPort, "owner": owner})
-		}
-
-		named := transferText{textImportNameSocks, textArgs{"host": host.Address, "socks_port": socksPort}}
-		items = append(items, transferItem{Kind: "socks", Action: writtenAs[host.Address]}.namedBy(named))
-	}
-
-	return items, nil
-}
-
-// importLocalForwards makes each Host this import wrote carry the local
-// forwards the file names for it and nothing besides, as importAssignments does
-// for the service ports. A Host that was skipped keeps what it carries, and so
-// does a Host the file names no local forwards for at all (hostContent).
-//
-// Every one of those Hosts is cleared before any row is written, so that a
-// local port that moves from one Host of the file to another is free by the
-// time it is written, whichever of the two comes first. What still holds the
-// port after that belongs to a Host this import does not write, and taking it
-// from that Host is not what an overwrite was asked for, so the import is
-// refused with that Host named.
-func (h *TransferHandler) importLocalForwards(tx *gorm.DB, written []hostContent,
-	apiPort int) ([]transferItem, *refusal) {
-	hostIDs := make([]uint, len(written))
-	heldBefore := make([]map[int]bool, len(written))
-
-	for i, host := range written {
-		if host.LocalForwards == nil {
-			continue
-		}
-
-		var stored models.Host
-
-		err := tx.Where("address = ?", host.Address).First(&stored).Error
-		if err != nil {
-			h.hosts.logger.Error("failed to read back a Host while importing its local forwards",
-				logid.TransferHostReadBackFailed.Field(),
-				zap.Error(err))
-			return nil, refuse(http.StatusInternalServerError, errImportAssignmentsHostRead, errorArgs{"host": host.Address})
-		}
-
-		var held []models.LocalForward
-
-		err = tx.Where("host_id = ?", stored.ID).Find(&held).Error
-		if err != nil {
-			h.hosts.logger.Error("failed to look for a local forward while importing",
-				logid.TransferLocalForwardLookupFailed.Field(),
-				zap.Error(err))
-			return nil, refuse(http.StatusInternalServerError, errImportLocalForwardsReadFailed)
-		}
-
-		heldBefore[i] = make(map[int]bool, len(held))
-		for _, lf := range held {
-			heldBefore[i][lf.LocalPort] = true
-		}
-
-		err = tx.Where("host_id = ?", stored.ID).Delete(&models.LocalForward{}).Error
-		if err != nil {
-			h.hosts.logger.Error("failed to clear the local forwards of a Host while importing",
-				logid.TransferHostLocalForwardsClearFailed.Field(),
-				zap.Error(err))
-			return nil, refuse(http.StatusInternalServerError, errImportLocalForwardsClearFailed, errorArgs{"host": host.Address})
-		}
-
-		hostIDs[i] = stored.ID
-	}
-
-	items := make([]transferItem, 0)
-
-	for i, host := range written {
-		for _, lf := range host.LocalForwards {
-			localPort := strconv.Itoa(lf.LocalPort)
-			named := transferText{textImportNameLocalForward, textArgs{"host": host.Address,
-				"local_port": localPort,
-				"target":     net.JoinHostPort(lf.TargetAddress, strconv.Itoa(lf.TargetPort))}}
-
-			if isAPIPort(lf.LocalPort, apiPort, h.hosts.runningAPIPort) {
-				return nil, refuse(http.StatusConflict, errImportLocalForwardAPIPort,
-					errorArgs{"host": host.Address, "local_port": localPort})
-			}
-
-			var holder models.LocalForward
-
-			err := tx.Where("local_port = ?", lf.LocalPort).First(&holder).Error
-			if err == nil {
-				// The Host is named by its address, which is how the screens
-				// show it; a row whose Host is gone is named by the number.
-				owner := strconv.FormatUint(uint64(holder.HostID), 10)
-
-				var ownerHost models.Host
-				if tx.First(&ownerHost, holder.HostID).Error == nil {
-					owner = ownerHost.Address
-				}
-
-				return nil, refuse(http.StatusConflict, errImportLocalForwardPortTaken,
-					errorArgs{"host": host.Address, "local_port": localPort, "owner": owner})
-			}
-
-			if !errors.Is(err, gorm.ErrRecordNotFound) {
-				h.hosts.logger.Error("failed to look for a local forward while importing",
-					logid.TransferLocalForwardLookupFailed.Field(),
-					zap.Error(err))
-				return nil, refuse(http.StatusInternalServerError, errImportLocalForwardsReadFailed)
-			}
-
-			// The SOCKS5 proxies are read as the Hosts of this import left
-			// them, which is what they will open once it is committed.
-			proxy, err := socksHolder(tx, lf.LocalPort, 0)
-			if err != nil {
-				h.hosts.logger.Error("failed to look for a Host while importing",
-					logid.TransferHostLookupFailed.Field(),
-					zap.Error(err))
-				return nil, refuse(http.StatusInternalServerError, errImportHostsReadFailed)
-			}
-
-			if proxy != nil {
-				return nil, refuse(http.StatusConflict, errImportLocalForwardSocks,
-					errorArgs{"host": host.Address, "local_port": localPort, "owner": proxy.Address})
-			}
-
-			// An empty scope is stored as the word it stands for, the way a
-			// create stores it.
-			bindScope := lf.BindScope
-			if bindScope == "" {
-				bindScope = models.BindScopeWildcard
-			}
-
-			number, err := nextLocalForwardNumber(tx, hostIDs[i])
-			if err != nil {
-				h.hosts.logger.Error("failed to look for a local forward while importing",
-					logid.TransferLocalForwardLookupFailed.Field(),
-					zap.Error(err))
-				return nil, refuse(http.StatusInternalServerError, errImportLocalForwardsReadFailed)
-			}
-
-			err = tx.Create(&models.LocalForward{
-				HostID:         hostIDs[i],
-				Number:         number,
-				BindScope:      bindScope,
-				LocalPort:      lf.LocalPort,
-				TargetAddress:  lf.TargetAddress,
-				TargetPort:     lf.TargetPort,
-				Description:    lf.Description,
-				AllowedSources: lf.AllowedSources,
-				Enabled:        lf.enabled(),
-			}).Error
-			if err != nil {
-				h.hosts.logger.Error("failed to store a local forward while importing",
-					logid.TransferLocalForwardStoreFailed.Field(),
-					zap.Error(err))
-				return nil, refuse(http.StatusInternalServerError, errImportLocalForwardsStoreFailed, errorArgs{"host": host.Address})
-			}
-
-			action := transferAdded
-			if heldBefore[i][lf.LocalPort] {
-				action = transferReplaced
-			}
-
-			items = append(items, transferItem{Kind: "local_forward", Action: action}.namedBy(named))
-		}
-	}
-
-	return items, nil
 }
 
 // ExportSettings hands out the stored settings, sealed with the password in the

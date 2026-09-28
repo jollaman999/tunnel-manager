@@ -120,7 +120,7 @@ func newTransferInstall(t *testing.T) *transferInstall {
 	})
 
 	err = db.AutoMigrate(&models.Host{}, &models.HostJump{}, &models.ServicePort{}, &models.HostServicePort{},
-		&models.LocalForward{}, &settings.Settings{}, &models.User{}, &models.APIToken{})
+		&models.LocalForward{}, &models.Tunnel{}, &settings.Settings{}, &models.User{}, &models.APIToken{})
 	if err != nil {
 		t.Fatalf("failed to migrate the database: %v", err)
 	}
@@ -314,14 +314,27 @@ func (i *transferInstall) exportTunnels(t *testing.T, password string) string {
 }
 
 // importTunnels runs the import of a file and hands back what it answered.
-func (i *transferInstall) importTunnels(t *testing.T, file string, password string,
-	overwrite bool) *httptest.ResponseRecorder {
+func (i *transferInstall) importTunnels(t *testing.T, file string, password string) *httptest.ResponseRecorder {
 	t.Helper()
 
-	body := `{"password":` + jsonString(t, password) + `,"account_password":` + jsonString(t, testPassword) +
-		`,"file":` + jsonString(t, file) + `,"overwrite":` + map[bool]string{true: "true", false: "false"}[overwrite] + `}`
+	return i.importTunnelsWith(t, map[string]interface{}{
+		"password":         password,
+		"account_password": testPassword,
+		"file":             file,
+	})
+}
 
-	return i.call(t, i.handler.ImportTunnels, body)
+// importTunnelsWith runs the import with the body given, for the tests that
+// send a field the ordinary call does not.
+func (i *transferInstall) importTunnelsWith(t *testing.T, body map[string]interface{}) *httptest.ResponseRecorder {
+	t.Helper()
+
+	encoded, err := json.Marshal(body)
+	if err != nil {
+		t.Fatalf("failed to write the body: %v", err)
+	}
+
+	return i.call(t, i.handler.ImportTunnels, string(encoded))
 }
 
 // twoHosts is the pair every test that moves a configuration starts from: one
@@ -390,28 +403,15 @@ func TestTheSettingsContentCarriesEverySetting(t *testing.T) {
 }
 
 // TestTheHostContentCarriesEveryFieldOfAHost does for a Host what the test
-// above does for the settings.
+// above does for the settings. Every field is carried, the id, the times and
+// the key waiting for approval included, so that an import puts the row back
+// as it was.
 func TestTheHostContentCarriesEveryFieldOfAHost(t *testing.T) {
-	// PendingHostKey is the one field left out that is not a column about the
-	// row itself. It is the key some server presented on a connection this
-	// installation was refused on, waiting for a person to say whether it is
-	// the right one, so it describes a connection rather than the
-	// configuration. Carried in a file, it would ask the installation that
-	// imports it to approve a key presented to a machine it is not, about a
-	// server it has never spoken to. HostKey, the key already approved, is
-	// carried: see hostContent.
-	left := map[string]bool{
-		"ID": true, "CreatedAt": true, "UpdatedAt": true, "PendingHostKey": true,
-	}
-
 	stored := reflect.TypeOf(models.Host{})
 	carried := reflect.TypeOf(hostContent{})
 
 	for i := 0; i < stored.NumField(); i++ {
 		name := stored.Field(i).Name
-		if left[name] {
-			continue
-		}
 
 		_, found := carried.FieldByName(name)
 		if !found {
@@ -421,24 +421,17 @@ func TestTheHostContentCarriesEveryFieldOfAHost(t *testing.T) {
 }
 
 // TestTheServicePortContentCarriesEveryFieldOfAServicePort is the other half of
-// the check above. A service port holds no secret, so nothing is left out of it
-// but the id and the two timestamps, which describe the row this export was
-// read from rather than what was asked for.
+// the check above.
 //
 // A field added to the model and not here would be dropped by an export
 // without a word, and the installation that imported the file would come up
 // running something other than what was exported.
 func TestTheServicePortContentCarriesEveryFieldOfAServicePort(t *testing.T) {
-	left := map[string]bool{"ID": true, "CreatedAt": true, "UpdatedAt": true}
-
 	stored := reflect.TypeOf(models.ServicePort{})
 	carried := reflect.TypeOf(servicePortContent{})
 
 	for i := 0; i < stored.NumField(); i++ {
 		name := stored.Field(i).Name
-		if left[name] {
-			continue
-		}
 
 		_, found := carried.FieldByName(name)
 		if !found {
@@ -448,10 +441,35 @@ func TestTheServicePortContentCarriesEveryFieldOfAServicePort(t *testing.T) {
 	}
 }
 
-// TestAnExportedFileHoldsNoSecretInTheClear is the rule the whole format rests
-// on: the SSH password, the private key and its passphrase are inside the file,
-// and the file is one sealed string, so none of the three can be read off it
-// without the password.
+// TestTheAssignmentContentCarriesEveryFieldOfAnAssignment is the same for an
+// assignment. The Host is the one it is written under, and the service port is
+// named by its id under a name of its own.
+func TestTheAssignmentContentCarriesEveryFieldOfAnAssignment(t *testing.T) {
+	left := map[string]string{"HostID": "", "SPID": "ServicePortID"}
+
+	stored := reflect.TypeOf(models.HostServicePort{})
+	carried := reflect.TypeOf(assignmentContent{})
+
+	for i := 0; i < stored.NumField(); i++ {
+		name := stored.Field(i).Name
+
+		as, renamed := left[name]
+		if renamed {
+			if as == "" {
+				continue
+			}
+
+			name = as
+		}
+
+		_, found := carried.FieldByName(name)
+		if !found {
+			t.Errorf("models.HostServicePort has %s and assignmentContent does not, "+
+				"so it is not carried by an export", name)
+		}
+	}
+}
+
 func TestAnExportedFileHoldsNoSecretInTheClear(t *testing.T) {
 	source := newTransferInstall(t)
 
@@ -490,9 +508,9 @@ func TestAnExportedFileHoldsNoSecretInTheClear(t *testing.T) {
 		t.Fatalf("the opened file does not carry the secrets of the Hosts")
 	}
 
-	if strings.Contains(opened, `"id"`) || strings.Contains(opened, `"created_at"`) ||
-		strings.Contains(opened, `"updated_at"`) {
-		t.Errorf("the file carries the row ids or the timestamps of the installation it came from")
+	if !strings.Contains(opened, `"id":1,`) || !strings.Contains(opened, `"created_at"`) ||
+		!strings.Contains(opened, `"updated_at"`) || !strings.Contains(opened, `"format_version":2`) {
+		t.Errorf("the file does not carry the row ids and the timestamps of the installation: %s", opened)
 	}
 }
 
@@ -511,11 +529,6 @@ func TestAnExportIsRefusedWithoutAPasswordThatHolds(t *testing.T) {
 	}
 }
 
-// TestAnExportedConfigurationIsReadableOnAnotherInstallation is what the format
-// exists for. The secrets are sealed in the database with a key that stays on
-// the machine, so the check is not that the import answered but that the row it
-// wrote opens with the key of the installation that took it in and holds the
-// plaintext the other installation had.
 func TestAnExportedConfigurationIsReadableOnAnotherInstallation(t *testing.T) {
 	source := newTransferInstall(t)
 	target := newTransferInstall(t)
@@ -541,7 +554,7 @@ func TestAnExportedConfigurationIsReadableOnAnotherInstallation(t *testing.T) {
 		t.Fatalf("the two installations were built with the same encryption key")
 	}
 
-	rec := target.importTunnels(t, file, testExportPassword, false)
+	rec := target.importTunnels(t, file, testExportPassword)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("the import answered %d: %s", rec.Code, rec.Body.String())
 	}
@@ -550,9 +563,9 @@ func TestAnExportedConfigurationIsReadableOnAnotherInstallation(t *testing.T) {
 
 	decodeTransfer(t, rec).into(t, &imported)
 
-	if imported.Added != 3 || imported.Skipped != 0 || imported.Replaced != 0 {
-		t.Fatalf("the import added %d, replaced %d and skipped %d, want 3 added",
-			imported.Added, imported.Replaced, imported.Skipped)
+	want := importedTunnels{File: transferCounts{Hosts: 2, ServicePorts: 1}}
+	if imported != want {
+		t.Fatalf("the import answered %+v, want %+v", imported, want)
 	}
 
 	for _, want := range []hostContent{withKey, withPassword} {
@@ -619,10 +632,11 @@ func TestAnExportedConfigurationIsReadableOnAnotherInstallation(t *testing.T) {
 	}
 }
 
-// TestTheSameFileImportedTwiceSkipsEverything is what a file being imported
-// twice has to do: the second time nothing is added and every row is reported
-// as skipped, with the reason the operator decides about an overwrite from.
-func TestTheSameFileImportedTwiceSkipsEverything(t *testing.T) {
+// TestTheSameFileImportedTwiceLeavesTheSameConfiguration is what an import
+// that replaces rather than adds does with a file sent twice: the second time
+// replaces what the first wrote with the same rows, and the answer counts what
+// was there as well as what the file holds.
+func TestTheSameFileImportedTwiceLeavesTheSameConfiguration(t *testing.T) {
 	source := newTransferInstall(t)
 	target := newTransferInstall(t)
 
@@ -632,15 +646,18 @@ func TestTheSameFileImportedTwiceSkipsEverything(t *testing.T) {
 	source.registerServicePort(t, servicePortContent{
 		ServiceAddress: "192.0.2.20", ServicePort: 80, LocalPort: 18080,
 	})
+	source.assign(t, withKey.Address, 18080)
 
 	file := source.exportTunnels(t, testExportPassword)
 
-	rec := target.importTunnels(t, file, testExportPassword, false)
+	rec := target.importTunnels(t, file, testExportPassword)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("the first import answered %d: %s", rec.Code, rec.Body.String())
 	}
 
-	rec = target.importTunnels(t, file, testExportPassword, false)
+	first := target.configuration(t)
+
+	rec = target.importTunnels(t, file, testExportPassword)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("the second import answered %d: %s", rec.Code, rec.Body.String())
 	}
@@ -649,31 +666,20 @@ func TestTheSameFileImportedTwiceSkipsEverything(t *testing.T) {
 
 	decodeTransfer(t, rec).into(t, &imported)
 
-	if imported.Added != 0 || imported.Replaced != 0 || imported.Skipped != 3 {
-		t.Fatalf("the second import added %d, replaced %d and skipped %d, want 3 skipped",
-			imported.Added, imported.Replaced, imported.Skipped)
+	counts := transferCounts{Hosts: 2, ServicePorts: 1, Assignments: 1}
+	if imported != (importedTunnels{Current: counts, File: counts}) {
+		t.Fatalf("the second import answered %+v, want %+v on both sides", imported, counts)
 	}
 
-	for _, item := range imported.Items {
-		if item.Action != transferSkipped {
-			t.Errorf("the item %s was %s on the second import", item.Name, item.Action)
-		}
-
-		if item.Reason == "" {
-			t.Errorf("the item %s was skipped without saying why", item.Name)
-		}
-	}
-
-	if target.count(t, &models.Host{}) != 2 ||
-		target.count(t, &models.ServicePort{}) != 1 {
-		t.Fatalf("the second import wrote rows of its own")
+	if !reflect.DeepEqual(target.configuration(t), first) {
+		t.Fatalf("the second import left another configuration:\n%v\nwant\n%v", target.configuration(t), first)
 	}
 }
 
-// TestAnImportWithOverwriteReplacesTheStoredRows is the other mode: the rows
-// that stood in the way are replaced, ids and all, and the values that were
-// stored here are gone.
-func TestAnImportWithOverwriteReplacesTheStoredRows(t *testing.T) {
+// TestAnImportReplacesEverythingStoredHere is what the import is: every Host,
+// service port, assignment, local forward and jump route stored here is gone
+// and what the file holds is stored in its place, under the ids of the file.
+func TestAnImportReplacesEverythingStoredHere(t *testing.T) {
 	source := newTransferInstall(t)
 	target := newTransferInstall(t)
 
@@ -686,20 +692,26 @@ func TestAnImportWithOverwriteReplacesTheStoredRows(t *testing.T) {
 
 	file := source.exportTunnels(t, testExportPassword)
 
-	// The target holds the same rows with other values, which is what an
-	// overwrite has to put right.
+	// The target holds the same address under other values, a Host the file
+	// does not name, and something of every table.
 	stale := withPassword
 	stale.Port = 2222
 	stale.User = "somebody-else"
 	stale.Password = "the password that is stored here"
-	stale.Description = "as stored here"
-	stale.Enabled = false
-	staleHost := target.registerHost(t, stale)
+	target.registerHost(t, stale)
+	target.registerHost(t, passwordHost("192.0.2.99"))
+	target.registerHost(t, passwordHost("192.0.2.98"))
 	target.registerServicePort(t, servicePortContent{
 		ServiceAddress: "192.0.2.20", ServicePort: 80, LocalPort: 18080, Description: "as stored here",
 	})
+	target.registerServicePort(t, servicePortContent{
+		ServiceAddress: "192.0.2.21", ServicePort: 80, LocalPort: 18081,
+	})
+	target.assign(t, "192.0.2.99", 18081)
+	target.forward(t, "192.0.2.99", localForwardContent{LocalPort: 15432, TargetAddress: "192.0.2.30", TargetPort: 5432})
+	target.jump(t, "192.0.2.99", "192.0.2.98")
 
-	rec := target.importTunnels(t, file, testExportPassword, true)
+	rec := target.importTunnels(t, file, testExportPassword)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("the import answered %d: %s", rec.Code, rec.Body.String())
 	}
@@ -708,59 +720,35 @@ func TestAnImportWithOverwriteReplacesTheStoredRows(t *testing.T) {
 
 	decodeTransfer(t, rec).into(t, &imported)
 
-	if imported.Added != 1 || imported.Replaced != 2 || imported.Skipped != 0 {
-		t.Fatalf("the import added %d, replaced %d and skipped %d, want 1 added and 2 replaced",
-			imported.Added, imported.Replaced, imported.Skipped)
+	want := importedTunnels{
+		Current: transferCounts{Hosts: 3, ServicePorts: 2, Assignments: 1, LocalForwards: 1, JumpHosts: 1},
+		File:    transferCounts{Hosts: 2, ServicePorts: 1},
+	}
+	if imported != want {
+		t.Fatalf("the import answered %+v, want %+v", imported, want)
 	}
 
-	var replaced models.Host
-
-	err := target.db.Where("address = ?", withPassword.Address).First(&replaced).Error
-	if err != nil {
-		t.Fatalf("the Host is gone: %v", err)
+	if !reflect.DeepEqual(target.configuration(t), source.configuration(t)) {
+		t.Fatalf("after the import the installation holds\n%v\nwant what the file came from\n%v",
+			target.configuration(t), source.configuration(t))
 	}
 
-	if replaced.ID != staleHost.ID {
-		t.Errorf("the replaced Host was written as a new row, so the tunnels of the old one are orphaned")
-	}
-
-	if replaced.Port != withPassword.Port || replaced.User != withPassword.User ||
-		replaced.Description != withPassword.Description || !replaced.Enabled {
-		t.Errorf("the Host was not replaced with what the file carried: %+v", replaced)
-	}
-
-	opened, err := target.cipher.Decrypt(replaced.Password)
-	if err != nil {
-		t.Fatalf("the password of the replaced Host does not open: %v", err)
-	}
-
-	if opened != withPassword.Password {
-		t.Errorf("the password of the replaced Host is not the one the file carried")
-	}
-
-	var sp models.ServicePort
-
-	err = target.db.Where("local_port = ?", 18080).First(&sp).Error
-	if err != nil {
-		t.Fatalf("the service port is gone: %v", err)
-	}
-
-	if sp.Description != "as exported" {
-		t.Errorf("the service port was not replaced: its description is %q", sp.Description)
-	}
-
-	if target.count(t, &models.Host{}) != 2 ||
-		target.count(t, &models.ServicePort{}) != 1 {
-		t.Fatalf("the overwrite left rows behind")
+	if target.count(t, &models.LocalForward{}) != 0 || target.count(t, &models.HostJump{}) != 0 ||
+		target.count(t, &models.HostServicePort{}) != 0 {
+		t.Fatalf("the import left rows of the configuration it replaced")
 	}
 }
 
 // TestAnImportThatIsRefusedWritesNothing is the transaction. The second Host of
-// the file cannot be stored, and what the import has to leave behind is not the
-// first one but the database as it was.
+// the file cannot be stored, and what the import has to leave behind is the
+// database as it was, what was stored here included.
 func TestAnImportThatIsRefusedWritesNothing(t *testing.T) {
 	source := newTransferInstall(t)
 	target := newTransferInstall(t)
+
+	target.registerHost(t, passwordHost("192.0.2.99"))
+
+	before := target.configuration(t)
 
 	withKey, withPassword := twoHosts(t)
 
@@ -777,7 +765,7 @@ func TestAnImportThatIsRefusedWritesNothing(t *testing.T) {
 		},
 	}, testExportPassword)
 
-	rec := target.importTunnels(t, file, testExportPassword, false)
+	rec := target.importTunnels(t, file, testExportPassword)
 	if rec.Code != http.StatusBadRequest {
 		t.Fatalf("the import answered %d, want %d: %s", rec.Code, http.StatusBadRequest, rec.Body.String())
 	}
@@ -787,12 +775,8 @@ func TestAnImportThatIsRefusedWritesNothing(t *testing.T) {
 		t.Errorf("the refusal does not name the Host that stopped the import: %q", answer.Error)
 	}
 
-	if target.count(t, &models.Host{}) != 0 {
-		t.Fatalf("the Host that came before the refused one was left in the database")
-	}
-
-	if target.count(t, &models.ServicePort{}) != 0 {
-		t.Fatalf("a service port was left in the database")
+	if !reflect.DeepEqual(target.configuration(t), before) {
+		t.Fatalf("the refused import changed what is stored to\n%v\nwant\n%v", target.configuration(t), before)
 	}
 
 	if target.manager.count() != 0 {
@@ -810,7 +794,7 @@ func TestAHostWithNoWayInIsRefused(t *testing.T) {
 		Hosts: []hostContent{{Address: "192.0.2.10", Port: 22, User: "operator", Enabled: true}},
 	}, testExportPassword)
 
-	rec := target.importTunnels(t, file, testExportPassword, false)
+	rec := target.importTunnels(t, file, testExportPassword)
 	if rec.Code != http.StatusBadRequest {
 		t.Fatalf("the import answered %d, want %d", rec.Code, http.StatusBadRequest)
 	}
@@ -824,81 +808,58 @@ func TestAHostWithNoWayInIsRefused(t *testing.T) {
 	}
 }
 
-// TestAServicePortMeetingTwoStoredRowsIsRefused is the one conflict an
-// overwrite cannot settle: the service address belongs to one stored row and
-// the local port to another, so replacing either leaves the other breaking the
-// rule it is under.
-func TestAServicePortMeetingTwoStoredRowsIsRefused(t *testing.T) {
-	source := newTransferInstall(t)
-	target := newTransferInstall(t)
+// TestAServicePortTheFileHoldsTwiceIsRefused is a file whose two service ports
+// meet on the service address or on the local port. Either would be refused by
+// the database halfway through the import, so the file is refused before it,
+// with the second of the two named.
+func TestAServicePortTheFileHoldsTwiceIsRefused(t *testing.T) {
+	for _, second := range []servicePortContent{
+		{ServiceAddress: "192.0.2.20", ServicePort: 80, LocalPort: 18081},
+		{ServiceAddress: "192.0.2.21", ServicePort: 80, LocalPort: 18080},
+	} {
+		t.Run(second.ServiceAddress, func(t *testing.T) {
+			source := newTransferInstall(t)
+			target := newTransferInstall(t)
 
-	file := sealedTunnelsFile(t, source, tunnelsContent{
-		ServicePorts: []servicePortContent{
-			{ServiceAddress: "192.0.2.20", ServicePort: 80, LocalPort: 18080},
-		},
-	}, testExportPassword)
+			target.registerServicePort(t, servicePortContent{ServiceAddress: "192.0.2.30", ServicePort: 80, LocalPort: 18090})
 
-	target.registerServicePort(t, servicePortContent{
-		ServiceAddress: "192.0.2.20", ServicePort: 80, LocalPort: 18081,
-	})
-	target.registerServicePort(t, servicePortContent{
-		ServiceAddress: "192.0.2.21", ServicePort: 80, LocalPort: 18080,
-	})
+			before := target.configuration(t)
 
-	rec := target.importTunnels(t, file, testExportPassword, true)
-	if rec.Code != http.StatusConflict {
-		t.Fatalf("the import answered %d, want %d: %s", rec.Code, http.StatusConflict, rec.Body.String())
-	}
+			file := sealedTunnelsFile(t, source, tunnelsContent{
+				ServicePorts: []servicePortContent{
+					{ServiceAddress: "192.0.2.20", ServicePort: 80, LocalPort: 18080},
+					second,
+				},
+			}, testExportPassword)
 
-	if target.count(t, &models.ServicePort{}) != 2 {
-		t.Fatalf("the refused import changed the stored service ports")
-	}
+			rec := target.importTunnels(t, file, testExportPassword)
+			if rec.Code != http.StatusBadRequest {
+				t.Fatalf("the import answered %d, want %d: %s", rec.Code, http.StatusBadRequest, rec.Body.String())
+			}
 
-	var refused struct {
-		Error string            `json:"error"`
-		Code  string            `json:"error_code"`
-		Args  map[string]string `json:"error_args"`
-	}
+			var refused struct {
+				Code string            `json:"error_code"`
+				Args map[string]string `json:"error_args"`
+			}
 
-	if err := json.Unmarshal(rec.Body.Bytes(), &refused); err != nil {
-		t.Fatalf("the refusal is not JSON: %v", err)
-	}
+			if err := json.Unmarshal(rec.Body.Bytes(), &refused); err != nil {
+				t.Fatalf("the refusal is not JSON: %v", err)
+			}
 
-	if refused.Code != string(errImportServicePortTwoRows) {
-		t.Fatalf("the refusal is %q, want %q", refused.Code, errImportServicePortTwoRows)
-	}
+			if refused.Code != string(errImportServicePortDuplicate) {
+				t.Fatalf("the refusal is %q, want %q", refused.Code, errImportServicePortDuplicate)
+			}
 
-	want := map[string]string{
-		"service_port":      "192.0.2.20:80 on 18080",
-		"service_port_code": string(textImportNameServicePort),
-		"service_address":   "192.0.2.20:80",
-		"local_port":        "18080",
-	}
+			name := second.ServiceAddress + ":80 on " + strconv.Itoa(second.LocalPort)
+			if refused.Args["service_port"] != name ||
+				refused.Args["service_port_code"] != string(textImportNameServicePort) {
+				t.Errorf("the refusal carries %v, want the service port %q named by its code", refused.Args, name)
+			}
 
-	if !reflect.DeepEqual(refused.Args, want) {
-		t.Errorf("the refusal carries %v, want %v", refused.Args, want)
-	}
-
-	wantEnglish := "Nothing was imported. The service port 192.0.2.20:80 on 18080 in the file meets two rows " +
-		"that are registered here: 192.0.2.20:80 belongs to one and the local port 18080 to another. " +
-		"Delete one of the two and import again"
-	if refused.Error != wantEnglish {
-		t.Errorf("the English sentence is %q, want %q", refused.Error, wantEnglish)
-	}
-
-	// Without the overwrite the same file is skipped rather than refused, and
-	// the reason names the rule that stood in the way.
-	rec = target.importTunnels(t, file, testExportPassword, false)
-	if rec.Code != http.StatusOK {
-		t.Fatalf("the import answered %d: %s", rec.Code, rec.Body.String())
-	}
-
-	var imported importedTunnels
-
-	decodeTransfer(t, rec).into(t, &imported)
-
-	if imported.Skipped != 1 || imported.Added != 0 {
-		t.Fatalf("the import added %d and skipped %d, want 1 skipped", imported.Added, imported.Skipped)
+			if !reflect.DeepEqual(target.configuration(t), before) {
+				t.Fatalf("the refused import changed what is stored")
+			}
+		})
 	}
 }
 
@@ -916,7 +877,7 @@ func TestARefusedServicePortIsNamedByCode(t *testing.T) {
 		},
 	}, testExportPassword)
 
-	rec := target.importTunnels(t, file, testExportPassword, false)
+	rec := target.importTunnels(t, file, testExportPassword)
 	if rec.Code != http.StatusBadRequest {
 		t.Fatalf("the import answered %d, want %d: %s", rec.Code, http.StatusBadRequest, rec.Body.String())
 	}
@@ -979,10 +940,10 @@ func TestEveryWayOfNotOpeningAFileIsAnsweredApart(t *testing.T) {
 	}
 
 	cases := []refusedFile{
-		{"a wrong password", target.importTunnels(t, file, "another password entirely", false)},
-		{"not a file of ours", target.importTunnels(t, "just some text", testExportPassword, false)},
-		{"a damaged file", target.importTunnels(t, damaged, testExportPassword, false)},
-		{"the other kind", target.importTunnels(t, settingsFile, testExportPassword, false)},
+		{"a wrong password", target.importTunnels(t, file, "another password entirely")},
+		{"not a file of ours", target.importTunnels(t, "just some text", testExportPassword)},
+		{"a damaged file", target.importTunnels(t, damaged, testExportPassword)},
+		{"the other kind", target.importTunnels(t, settingsFile, testExportPassword)},
 	}
 
 	seen := map[string]string{}
@@ -1033,7 +994,7 @@ func TestAWrongKindNamesBothKinds(t *testing.T) {
 
 	settingsFile := source.exportSettings(t, testExportPassword)
 
-	rec := target.importTunnels(t, settingsFile, testExportPassword, false)
+	rec := target.importTunnels(t, settingsFile, testExportPassword)
 	if rec.Code != http.StatusBadRequest {
 		t.Fatalf("the tunnel import took a settings file: %d %s", rec.Code, rec.Body.String())
 	}
@@ -1091,7 +1052,7 @@ func TestAnUnknownKindCarriesTheKind(t *testing.T) {
 		t.Fatalf("failed to seal a file: %v", err)
 	}
 
-	rec := source.importTunnels(t, file, testExportPassword, false)
+	rec := source.importTunnels(t, file, testExportPassword)
 	if rec.Code != http.StatusBadRequest {
 		t.Fatalf("the import took a file of an unknown kind: %d %s", rec.Code, rec.Body.String())
 	}
@@ -1132,12 +1093,36 @@ func (i *transferInstall) exportSettings(t *testing.T, password string) string {
 	return exported.File
 }
 
-// sealedTunnelsFile builds a file the way an export builds it, for the tests
-// that need a content no export would write.
+// sealedTunnelsFile builds a file the way the release before the ids built
+// one, for the tests that need a content no export would write. Such a
+// content carries no ids, which is what that release wrote.
 func sealedTunnelsFile(t *testing.T, i *transferInstall, content tunnelsContent, password string) string {
 	t.Helper()
 
-	file, err := i.handler.seal(transferKindTunnels, content, password, time.Now())
+	return sealedAtFormat(t, 1, content, password)
+}
+
+// sealedAtFormat seals a content as a file of the format version given.
+func sealedAtFormat(t *testing.T, version int, content interface{}, password string) string {
+	t.Helper()
+
+	body, err := json.Marshal(content)
+	if err != nil {
+		t.Fatalf("failed to write the content: %v", err)
+	}
+
+	plaintext, err := json.Marshal(transferFile{
+		Kind:          transferKindTunnels,
+		FormatVersion: version,
+		ExportedAt:    time.Now(),
+		ExportedBy:    "0.0.0-test",
+		Content:       body,
+	})
+	if err != nil {
+		t.Fatalf("failed to write the file: %v", err)
+	}
+
+	file, err := crypto.EncryptWithPassword(string(plaintext), password)
 	if err != nil {
 		t.Fatalf("failed to seal a file: %v", err)
 	}
@@ -1560,7 +1545,7 @@ func TestAFileFromALaterFormatIsRefused(t *testing.T) {
 		t.Fatalf("failed to seal a file: %v", err)
 	}
 
-	rec := target.importTunnels(t, sealed, testExportPassword, false)
+	rec := target.importTunnels(t, sealed, testExportPassword)
 	if rec.Code != http.StatusBadRequest {
 		t.Fatalf("the import answered %d, want %d", rec.Code, http.StatusBadRequest)
 	}
@@ -1584,7 +1569,7 @@ func TestNoSecretIsWrittenToTheLogOrTheAnswer(t *testing.T) {
 
 	file := source.exportTunnels(t, testExportPassword)
 
-	rec := target.importTunnels(t, file, testExportPassword, false)
+	rec := target.importTunnels(t, file, testExportPassword)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("the import answered %d: %s", rec.Code, rec.Body.String())
 	}
@@ -1681,7 +1666,7 @@ func TestAnImportedHostThatWasDisabledStaysDisabled(t *testing.T) {
 
 	file := source.exportTunnels(t, testExportPassword)
 
-	rec := target.importTunnels(t, file, testExportPassword, false)
+	rec := target.importTunnels(t, file, testExportPassword)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("the import answered %d: %s", rec.Code, rec.Body.String())
 	}
@@ -1722,17 +1707,11 @@ func (i *transferInstall) presentedAKeyNobodyHasApproved(t *testing.T, hostIP st
 	}
 }
 
-// TestTheTrustedHostKeyComesAcrossAndThePendingOneDoesNot is the round trip of
-// the two keys of a Host.
-//
-// The approved key is what makes a Host reachable: a tunnel is built only to a
-// server that presents it, so an installation that took the Hosts in without
-// it would connect to none of them until a person had approved every server
-// again. The key waiting for approval is the other way round. It is what some
-// server presented to the installation the file came from, on a connection
-// that was refused, so on the installation reading the file it stands for a
-// conversation that never happened there.
-func TestTheTrustedHostKeyComesAcrossAndThePendingOneDoesNot(t *testing.T) {
+// TestBothHostKeysOfAHostComeAcross is the round trip of the two keys of a
+// Host. The file puts back the configuration as it was, so the key waiting for
+// approval comes across with the one the Host is trusted on, and an import over
+// a Host waiting on another key leaves the one of the file.
+func TestBothHostKeysOfAHostComeAcross(t *testing.T) {
 	source := newTransferInstall(t)
 	target := newTransferInstall(t)
 
@@ -1742,24 +1721,23 @@ func TestTheTrustedHostKeyComesAcrossAndThePendingOneDoesNot(t *testing.T) {
 	source.registerHost(t, withKey)
 	source.presentedAKeyNobodyHasApproved(t, withKey.Address, testPresentedHostKey)
 
+	here := withKey
+	here.HostKey = "ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAABgQCtheKeyThisInstallationTrusted"
+	target.registerHost(t, here)
+	target.presentedAKeyNobodyHasApproved(t, here.Address, "ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAABgQCaKeyPresentedHere")
+
 	file := source.exportTunnels(t, testExportPassword)
 
-	// Opened rather than read as JSON: the pending key must not be anywhere in
-	// the content, under whatever name.
 	opened, err := crypto.DecryptWithPassword(file, testExportPassword)
 	if err != nil {
 		t.Fatalf("the exported file does not open: %v", err)
 	}
 
-	if !strings.Contains(opened, testTrustedHostKey) {
-		t.Errorf("the file does not carry the key the Host is trusted on")
+	if !strings.Contains(opened, `"host_key":"`+testTrustedHostKey+`","pending_host_key":"`+testPresentedHostKey+`"`) {
+		t.Errorf("the file does not carry both keys of the Host: %s", opened)
 	}
 
-	if strings.Contains(opened, testPresentedHostKey) {
-		t.Errorf("the file carries the key the Host is waiting for an approval of")
-	}
-
-	rec := target.importTunnels(t, file, testExportPassword, false)
+	rec := target.importTunnels(t, file, testExportPassword)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("the import answered %d: %s", rec.Code, rec.Body.String())
 	}
@@ -1771,68 +1749,9 @@ func TestTheTrustedHostKeyComesAcrossAndThePendingOneDoesNot(t *testing.T) {
 		t.Fatalf("the Host %s did not arrive: %v", withKey.Address, err)
 	}
 
-	if stored.HostKey != testTrustedHostKey {
-		t.Errorf("the Host arrived trusted on %q, want %q", stored.HostKey, testTrustedHostKey)
-	}
-
-	if stored.PendingHostKey != "" {
-		t.Errorf("the Host arrived waiting for an approval of %q, want none", stored.PendingHostKey)
-	}
-}
-
-// TestImportingOverAHostDropsTheKeyItWasWaitingOnApprovalFor is the same two
-// keys on a row that is already here.
-//
-// The Host on this installation is trusted on one key and has been presented
-// another, so somebody is being asked whether the server changed. The file
-// then says what the key is. Approving the pending one after that would put
-// back a key the file did not name, and the question it stands for was asked
-// about the trust the row held before, so the import drops it. Nothing is lost
-// by that: a server that still presents something else writes the pending key
-// again on the next connection.
-func TestImportingOverAHostDropsTheKeyItWasWaitingOnApprovalFor(t *testing.T) {
-	source := newTransferInstall(t)
-	target := newTransferInstall(t)
-
-	withKey, _ := twoHosts(t)
-	withKey.HostKey = testTrustedHostKey
-	source.registerHost(t, withKey)
-
-	here := withKey
-	here.HostKey = "ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAABgQCtheKeyThisInstallationTrusted"
-	target.registerHost(t, here)
-	target.presentedAKeyNobodyHasApproved(t, here.Address, testPresentedHostKey)
-
-	file := source.exportTunnels(t, testExportPassword)
-
-	rec := target.importTunnels(t, file, testExportPassword, true)
-	if rec.Code != http.StatusOK {
-		t.Fatalf("the import answered %d: %s", rec.Code, rec.Body.String())
-	}
-
-	var imported importedTunnels
-
-	decodeTransfer(t, rec).into(t, &imported)
-
-	if imported.Replaced != 1 {
-		t.Fatalf("the import replaced %d Hosts, want 1", imported.Replaced)
-	}
-
-	var stored models.Host
-
-	err := target.db.Where("address = ?", withKey.Address).First(&stored).Error
-	if err != nil {
-		t.Fatalf("the Host %s is no longer stored: %v", withKey.Address, err)
-	}
-
-	if stored.HostKey != testTrustedHostKey {
-		t.Errorf("the Host is trusted on %q, want the %q the file carried",
-			stored.HostKey, testTrustedHostKey)
-	}
-
-	if stored.PendingHostKey != "" {
-		t.Errorf("the Host is still waiting for an approval of %q, want none",
-			stored.PendingHostKey)
+	if stored.HostKey != testTrustedHostKey || stored.PendingHostKey != testPresentedHostKey {
+		t.Errorf("the Host arrived trusted on %q and waiting on %q, want %q and %q",
+			stored.HostKey, stored.PendingHostKey, testTrustedHostKey, testPresentedHostKey)
 	}
 }
 
@@ -2071,10 +1990,6 @@ var everyPair = []string{
 	"192.0.2.11 carries 18082",
 }
 
-// TestTheServicePortsAHostCarriesCrossToAnotherInstallation is what the
-// assignments are in the file for. Which service ports a Host carries is what
-// the operator set up, so an installation that took the file in and runs
-// something else is one that has to be set up by hand all over again.
 func TestTheServicePortsAHostCarriesCrossToAnotherInstallation(t *testing.T) {
 	source := partlyAssigned(t)
 	target := newTransferInstall(t)
@@ -2097,7 +2012,7 @@ func TestTheServicePortsAHostCarriesCrossToAnotherInstallation(t *testing.T) {
 		t.Fatalf("the two installations were built with the same encryption key")
 	}
 
-	rec := target.importTunnels(t, file, testExportPassword, false)
+	rec := target.importTunnels(t, file, testExportPassword)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("the import answered %d: %s", rec.Code, rec.Body.String())
 	}
@@ -2107,28 +2022,22 @@ func TestTheServicePortsAHostCarriesCrossToAnotherInstallation(t *testing.T) {
 			target.carried(t), fourPairs)
 	}
 
-	// What the file names them by is the other half of it. Carried as the ids
-	// of the source, the pairs above would still be four and would point at
-	// whatever holds those ids here.
+	// The file names them by the id of the service port, which the import
+	// stores the service ports under as well, and no longer by the local port.
 	opened, err := crypto.DecryptWithPassword(file, testExportPassword)
 	if err != nil {
 		t.Fatalf("the file does not open: %v", err)
 	}
 
-	if !strings.Contains(opened, `"assigned_local_ports":[18080,18081]`) {
-		t.Errorf("the file does not name the assignments by their local port: %s", opened)
+	if !strings.Contains(opened, `"assignments":[{"service_port_id":1,`) {
+		t.Errorf("the file does not name the assignments by the id of the service port: %s", opened)
 	}
 
-	if strings.Contains(opened, `"sp_id"`) || strings.Contains(opened, `"host_id"`) {
-		t.Errorf("the file carries the row ids of the installation it came from: %s", opened)
+	if strings.Contains(opened, `"assigned_local_ports"`) {
+		t.Errorf("the file names the assignments by their local port as well: %s", opened)
 	}
 }
 
-// TestHowFarEachAssignmentReachesCrossesToAnotherInstallation is the half of
-// the assignments that is not which service ports a Host carries but how far
-// each of them is opened. Dropped on the way, every one of them would come up
-// on the wildcard, and the installation that took the file in would be opening
-// on every interface of a Host what the one it came from had on loopback alone.
 func TestHowFarEachAssignmentReachesCrossesToAnotherInstallation(t *testing.T) {
 	source := partlyAssigned(t)
 	target := newTransferInstall(t)
@@ -2149,7 +2058,7 @@ func TestHowFarEachAssignmentReachesCrossesToAnotherInstallation(t *testing.T) {
 
 	file := source.exportTunnels(t, testExportPassword)
 
-	rec := target.importTunnels(t, file, testExportPassword, false)
+	rec := target.importTunnels(t, file, testExportPassword)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("the import answered %d: %s", rec.Code, rec.Body.String())
 	}
@@ -2164,23 +2073,15 @@ func TestHowFarEachAssignmentReachesCrossesToAnotherInstallation(t *testing.T) {
 		t.Fatalf("the file does not open: %v", err)
 	}
 
-	// The scopes are named by the local port, as the assignments themselves
-	// are: the row ids belong to the installation the file came from.
-	if !strings.Contains(opened, `"assigned_bind_scopes":{"18080":"loopback"}`) {
+	if !strings.Contains(opened, `{"service_port_id":1,"bind_scope":"loopback","enabled":true,`) {
 		t.Errorf("the file does not name what the assignments are opened to: %s", opened)
 	}
 
-	// An assignment on the wildcard needs no entry, which is why the second
-	// Host has none: the empty column is the wildcard at both ends.
-	if strings.Contains(opened, `"18081":`) {
-		t.Errorf("the file names a scope for an assignment that is on the wildcard: %s", opened)
-	}
-
-	// The file of the release before this one held one address for the whole
+	// The file of the release before the scopes held one address for the whole
 	// Host. Writing it again would be an answer this version does not keep,
 	// read back by nothing.
-	if strings.Contains(opened, `"bind_address"`) {
-		t.Errorf("the file carries a bind address of its own on a Host: %s", opened)
+	if strings.Contains(opened, `"bind_address"`) || strings.Contains(opened, `"assigned_bind_scopes"`) {
+		t.Errorf("the file carries the scopes the way an older release wrote them: %s", opened)
 	}
 }
 
@@ -2249,10 +2150,6 @@ func (i *transferInstall) carriedRunning(t *testing.T) []string {
 	return pairs
 }
 
-// TestWhetherEachAssignmentRunsCrossesToAnotherInstallation is the export and
-// the import of a paused assignment. Dropped on the way, it would come up
-// running at the installation that took the file in, which is a tunnel
-// somebody stopped being started by an import.
 func TestWhetherEachAssignmentRunsCrossesToAnotherInstallation(t *testing.T) {
 	source := partlyAssigned(t)
 	target := newTransferInstall(t)
@@ -2272,7 +2169,7 @@ func TestWhetherEachAssignmentRunsCrossesToAnotherInstallation(t *testing.T) {
 
 	file := source.exportTunnels(t, testExportPassword)
 
-	rec := target.importTunnels(t, file, testExportPassword, false)
+	rec := target.importTunnels(t, file, testExportPassword)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("the import answered %d: %s", rec.Code, rec.Body.String())
 	}
@@ -2286,22 +2183,15 @@ func TestWhetherEachAssignmentRunsCrossesToAnotherInstallation(t *testing.T) {
 		t.Fatalf("the file does not open: %v", err)
 	}
 
-	// The one that is off is named by its local port, as the assignments
-	// themselves are. The ones that run need no entry, which is why the
-	// second Host has none: no entry is running at both ends.
-	if !strings.Contains(opened, `"assigned_enabled":{"18081":false}`) {
+	if !strings.Contains(opened, `{"service_port_id":2,"bind_scope":"","enabled":false,`) {
 		t.Errorf("the file does not say that the paused assignment is off: %s", opened)
 	}
 
-	if strings.Count(opened, `"assigned_enabled"`) != 1 {
-		t.Errorf("the file says whether an assignment runs for a Host whose assignments all run: %s", opened)
+	if strings.Contains(opened, `"assigned_enabled"`) {
+		t.Errorf("the file says whether an assignment runs the way an older release wrote it: %s", opened)
 	}
 }
 
-// TestAFileFromBeforeAssignmentsCouldBeSwitchedOffRunsEveryOne is the import of
-// a file that does not say whether its assignments run, which is every file
-// exported before they could be switched off. Each of them was running, and
-// read as off they would all come up stopped.
 func TestAFileFromBeforeAssignmentsCouldBeSwitchedOffRunsEveryOne(t *testing.T) {
 	for _, tt := range []struct {
 		name   string
@@ -2337,14 +2227,14 @@ func TestAFileFromBeforeAssignmentsCouldBeSwitchedOffRunsEveryOne(t *testing.T) 
 
 			source.switchOff(t, "192.0.2.10", 18081)
 
-			older := rewriteHosts(t, source.exportTunnels(t, testExportPassword), testExportPassword,
-				func(host map[string]interface{}) {
+			older := rewriteHosts(t, formatOne(t, source.exportTunnels(t, testExportPassword), testExportPassword),
+				testExportPassword, func(host map[string]interface{}) {
 					for _, field := range tt.strip {
 						delete(host, field)
 					}
 				})
 
-			rec := target.importTunnels(t, older, testExportPassword, false)
+			rec := target.importTunnels(t, older, testExportPassword)
 			if rec.Code != http.StatusOK {
 				t.Fatalf("the import answered %d: %s", rec.Code, rec.Body.String())
 			}
@@ -2357,21 +2247,12 @@ func TestAFileFromBeforeAssignmentsCouldBeSwitchedOffRunsEveryOne(t *testing.T) 
 	}
 }
 
-// TestAFileFromWhenTheHostHeldTheAddressOpensItsAssignmentsThere is the import
-// half of what database.fillBindScopes does for an upgrade. The release before
-// this one kept one address for the whole Host and wrote it into its files, and
-// an import that passed over it would take an installation that had every port
-// of that Host on the loopback and put the lot on the wildcard.
-//
-// Only a loopback address is carried over. Every other answer, an address of
-// some interface of the machine among them, is the wildcard, which is what the
-// empty scope already means, so nothing is written for those.
 func TestAFileFromWhenTheHostHeldTheAddressOpensItsAssignmentsThere(t *testing.T) {
 	source := partlyAssigned(t)
 	target := newTransferInstall(t)
 
-	older := rewriteHosts(t, source.exportTunnels(t, testExportPassword), testExportPassword,
-		func(host map[string]interface{}) {
+	older := rewriteHosts(t, formatOne(t, source.exportTunnels(t, testExportPassword), testExportPassword),
+		testExportPassword, func(host map[string]interface{}) {
 			delete(host, "assigned_bind_scopes")
 
 			if host["address"] == "192.0.2.10" {
@@ -2383,7 +2264,7 @@ func TestAFileFromWhenTheHostHeldTheAddressOpensItsAssignmentsThere(t *testing.T
 			host["bind_address"] = "192.0.2.11"
 		})
 
-	rec := target.importTunnels(t, older, testExportPassword, false)
+	rec := target.importTunnels(t, older, testExportPassword)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("the import answered %d: %s", rec.Code, rec.Body.String())
 	}
@@ -2401,52 +2282,70 @@ func TestAFileFromWhenTheHostHeldTheAddressOpensItsAssignmentsThere(t *testing.T
 	}
 }
 
-// TestAFileNamingAScopeThatIsNeitherIsRefused holds a hand-written file to the
-// rule the screens are under. The column is under it in the database as well,
-// which would stop the import halfway with a failed write naming the row and
-// not what is wrong with it, and the whole file has to be refused before
-// anything of it is stored.
 func TestAFileNamingAScopeThatIsNeitherIsRefused(t *testing.T) {
-	source := partlyAssigned(t)
-	target := newTransferInstall(t)
+	for _, tt := range []struct {
+		name  string
+		write func(t *testing.T, file string) string
+	}{
+		{"by the id of the service port", func(t *testing.T, file string) string {
+			return rewriteHosts(t, file, testExportPassword, func(host map[string]interface{}) {
+				if host["address"] != "192.0.2.10" {
+					return
+				}
 
-	byHand := rewriteHosts(t, source.exportTunnels(t, testExportPassword), testExportPassword,
-		func(host map[string]interface{}) {
-			if host["address"] != "192.0.2.10" {
-				return
+				assignments, ok := host["assignments"].([]interface{})
+				if !ok || len(assignments) == 0 {
+					t.Fatalf("the exported file does not name the assignments of a Host")
+				}
+
+				assignments[0].(map[string]interface{})["bind_scope"] = "everywhere"
+			})
+		}},
+		{"by the local port", func(t *testing.T, file string) string {
+			return rewriteHosts(t, formatOne(t, file, testExportPassword), testExportPassword,
+				func(host map[string]interface{}) {
+					if host["address"] != "192.0.2.10" {
+						return
+					}
+
+					host["assigned_bind_scopes"] = map[string]interface{}{"18080": "everywhere"}
+				})
+		}},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			source := partlyAssigned(t)
+			target := newTransferInstall(t)
+
+			byHand := tt.write(t, source.exportTunnels(t, testExportPassword))
+
+			rec := target.importTunnels(t, byHand, testExportPassword)
+			if rec.Code != http.StatusBadRequest {
+				t.Fatalf("the import answered %d, want %d: %s", rec.Code, http.StatusBadRequest,
+					rec.Body.String())
 			}
 
-			host["assigned_bind_scopes"] = map[string]interface{}{"18080": "everywhere"}
+			if errorCodeOf(t, rec) != errImportHostRefused {
+				t.Errorf("the import was refused under %s, want %s", errorCodeOf(t, rec), errImportHostRefused)
+			}
+
+			if target.count(t, &models.Host{}) != 0 || target.count(t, &models.ServicePort{}) != 0 {
+				t.Fatalf("the refused file left %d Hosts and %d service ports, want none of either",
+					target.count(t, &models.Host{}), target.count(t, &models.ServicePort{}))
+			}
 		})
-
-	rec := target.importTunnels(t, byHand, testExportPassword, false)
-	if rec.Code != http.StatusBadRequest {
-		t.Fatalf("the import answered %d, want %d: %s", rec.Code, http.StatusBadRequest,
-			rec.Body.String())
-	}
-
-	if target.count(t, &models.Host{}) != 0 || target.count(t, &models.ServicePort{}) != 0 {
-		t.Fatalf("the refused file left %d Hosts and %d service ports, want none of either",
-			target.count(t, &models.Host{}), target.count(t, &models.ServicePort{}))
 	}
 }
 
-// TestAFileFromBeforeTheAssignmentsWereStoredCarriesEverything is the one that
-// keeps an upgrade from taking every tunnel down. A file exported before the
-// assignments existed does not name them, and what it meant is what every
-// installation ran on then: every Host carries every service port. Read as "the
-// Host carries nothing", such a file imports without a word and leaves the
-// installation with no tunnel at all.
 func TestAFileFromBeforeTheAssignmentsWereStoredCarriesEverything(t *testing.T) {
 	source := partlyAssigned(t)
 	target := newTransferInstall(t)
 
-	older := rewriteHosts(t, source.exportTunnels(t, testExportPassword), testExportPassword,
-		func(host map[string]interface{}) {
+	older := rewriteHosts(t, formatOne(t, source.exportTunnels(t, testExportPassword), testExportPassword),
+		testExportPassword, func(host map[string]interface{}) {
 			delete(host, "assigned_local_ports")
 		})
 
-	rec := target.importTunnels(t, older, testExportPassword, false)
+	rec := target.importTunnels(t, older, testExportPassword)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("the import answered %d: %s", rec.Code, rec.Body.String())
 	}
@@ -2457,152 +2356,120 @@ func TestAFileFromBeforeTheAssignmentsWereStoredCarriesEverything(t *testing.T) 
 	}
 }
 
-// TestAHostThatIsCarriedAsCarryingNothingCarriesNothing is the other side of
-// the test above, and the two are what the difference between an absent field
-// and an empty list is for. The operator who took every service port off a Host
-// asked for that, and an import that filled them back in would undo it.
 func TestAHostThatIsCarriedAsCarryingNothingCarriesNothing(t *testing.T) {
-	source := partlyAssigned(t)
-	target := newTransferInstall(t)
+	for _, tt := range []struct {
+		name  string
+		write func(t *testing.T, file string) string
+	}{
+		{"a file with ids and no assignments", func(t *testing.T, file string) string {
+			return rewriteHosts(t, file, testExportPassword, func(host map[string]interface{}) {
+				delete(host, "assignments")
+			})
+		}},
+		{"a file without ids and an empty list", func(t *testing.T, file string) string {
+			return rewriteHosts(t, formatOne(t, file, testExportPassword), testExportPassword,
+				func(host map[string]interface{}) {
+					host["assigned_local_ports"] = []interface{}{}
+				})
+		}},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			source := partlyAssigned(t)
+			target := newTransferInstall(t)
 
-	emptied := rewriteHosts(t, source.exportTunnels(t, testExportPassword), testExportPassword,
-		func(host map[string]interface{}) {
-			host["assigned_local_ports"] = []interface{}{}
-		})
+			emptied := tt.write(t, source.exportTunnels(t, testExportPassword))
 
-	rec := target.importTunnels(t, emptied, testExportPassword, false)
-	if rec.Code != http.StatusOK {
-		t.Fatalf("the import answered %d: %s", rec.Code, rec.Body.String())
-	}
-
-	if len(target.carried(t)) != 0 {
-		t.Fatalf("a file whose Hosts carry nothing left the installation carrying %v",
-			target.carried(t))
-	}
-
-	// The Hosts and the service ports themselves came across all the same. An
-	// empty list is about what a Host carries and about nothing else.
-	if target.count(t, &models.Host{}) != 2 || target.count(t, &models.ServicePort{}) != 3 {
-		t.Fatalf("the file left %d Hosts and %d service ports, want 2 and 3",
-			target.count(t, &models.Host{}), target.count(t, &models.ServicePort{}))
-	}
-}
-
-// TestAnAssignmentToAServicePortThatIsNotHereIsSkipped pins what is done with a
-// local port the file names and this installation does not hold: the assignment
-// is left out and said so in the answer, and the rest of the file is imported.
-// It is not refused, because the Hosts and the service ports that are fine
-// would go down with it, and it is not passed over in silence, because then
-// nobody would know which Host came up carrying less than the file said.
-func TestAnAssignmentToAServicePortThatIsNotHereIsSkipped(t *testing.T) {
-	source := partlyAssigned(t)
-	target := newTransferInstall(t)
-
-	// The service port on 19999 is in no file and in neither installation, so
-	// the import has nothing to point the assignment at.
-	withOne := rewriteHosts(t, source.exportTunnels(t, testExportPassword), testExportPassword,
-		func(host map[string]interface{}) {
-			ports, ok := host["assigned_local_ports"].([]interface{})
-			if !ok {
-				t.Fatalf("the exported file does not name the assignments of a Host")
+			rec := target.importTunnels(t, emptied, testExportPassword)
+			if rec.Code != http.StatusOK {
+				t.Fatalf("the import answered %d: %s", rec.Code, rec.Body.String())
 			}
 
-			host["assigned_local_ports"] = append(ports, float64(19999))
+			if len(target.carried(t)) != 0 {
+				t.Fatalf("a file whose Hosts carry nothing left the installation carrying %v",
+					target.carried(t))
+			}
+
+			// The Hosts and the service ports themselves came across all the
+			// same. An empty list is about what a Host carries and about
+			// nothing else.
+			if target.count(t, &models.Host{}) != 2 || target.count(t, &models.ServicePort{}) != 3 {
+				t.Fatalf("the file left %d Hosts and %d service ports, want 2 and 3",
+					target.count(t, &models.Host{}), target.count(t, &models.ServicePort{}))
+			}
 		})
-
-	rec := target.importTunnels(t, withOne, testExportPassword, false)
-	if rec.Code != http.StatusOK {
-		t.Fatalf("the import answered %d: %s", rec.Code, rec.Body.String())
-	}
-
-	var imported importedTunnels
-
-	decodeTransfer(t, rec).into(t, &imported)
-
-	if !reflect.DeepEqual(target.carried(t), fourPairs) {
-		t.Fatalf("the installation carries %v, want the four pairs the file could be followed on: %v",
-			target.carried(t), fourPairs)
-	}
-
-	skipped := make([]string, 0, len(imported.Items))
-
-	for _, item := range imported.Items {
-		if item.Kind != "assignment" {
-			continue
-		}
-
-		if item.Action != transferSkipped || item.Reason == "" {
-			t.Errorf("the assignment %q was reported as %q with the reason %q",
-				item.Name, item.Action, item.Reason)
-		}
-
-		skipped = append(skipped, item.Name)
-	}
-
-	want := []string{"192.0.2.10 carries 19999", "192.0.2.11 carries 19999"}
-	if !reflect.DeepEqual(skipped, want) {
-		t.Fatalf("the import reported the assignments %v as skipped, want %v", skipped, want)
-	}
-
-	if imported.Skipped != 2 {
-		t.Errorf("the import counted %d skipped, want the 2 assignments it could not follow",
-			imported.Skipped)
 	}
 }
 
-// TestTheAssignmentsOfASkippedHostAreLeftAlone holds the assignments to the
-// rule the rest of the import is under. A Host that is registered here already
-// is skipped without an overwrite, and what it carries is part of that Host: an
-// import that left the Host as it was and moved what it carries under it would
-// be a change nobody asked for.
-func TestTheAssignmentsOfASkippedHostAreLeftAlone(t *testing.T) {
-	source := partlyAssigned(t)
-	target := newTransferInstall(t)
+// TestAnAssignmentToAServicePortTheFileDoesNotHoldIsRefused is a Host of the
+// file carrying a service port the file does not hold. Every service port
+// stored after the import is one of the file, so there is nothing to point
+// the assignment at, and the file is refused with the Host named.
+func TestAnAssignmentToAServicePortTheFileDoesNotHoldIsRefused(t *testing.T) {
+	for _, tt := range []struct {
+		name  string
+		write func(t *testing.T, file string) string
+		code  errorCode
+		arg   string
+		value string
+	}{
+		{"by the id of the service port", func(t *testing.T, file string) string {
+			return rewriteHosts(t, file, testExportPassword, func(host map[string]interface{}) {
+				assignments, _ := host["assignments"].([]interface{})
+				host["assignments"] = append(assignments,
+					map[string]interface{}{"service_port_id": 99, "bind_scope": "", "enabled": true})
+			})
+		}, errImportAssignmentUnknownServicePort, "service_port_id", "99"},
+		{"by the local port", func(t *testing.T, file string) string {
+			return rewriteHosts(t, formatOne(t, file, testExportPassword), testExportPassword,
+				func(host map[string]interface{}) {
+					ports, ok := host["assigned_local_ports"].([]interface{})
+					if !ok {
+						t.Fatalf("the older file does not name the assignments of a Host")
+					}
 
-	withKey, _ := twoHosts(t)
-	target.registerHost(t, withKey)
-	threeServicePorts(t, target)
-	target.assign(t, withKey.Address, 18082)
+					host["assigned_local_ports"] = append(ports, float64(19999))
+				})
+		}, errImportAssignmentUnknownLocalPort, "local_port", "19999"},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			source := partlyAssigned(t)
+			target := newTransferInstall(t)
 
-	file := source.exportTunnels(t, testExportPassword)
+			target.registerHost(t, passwordHost("192.0.2.99"))
 
-	rec := target.importTunnels(t, file, testExportPassword, false)
-	if rec.Code != http.StatusOK {
-		t.Fatalf("the import answered %d: %s", rec.Code, rec.Body.String())
-	}
+			before := target.configuration(t)
 
-	// The Host that was skipped goes on carrying the one service port it was
-	// given here, and the Host the file brought in carries what the file says.
-	want := []string{
-		"192.0.2.10 carries 18082",
-		"192.0.2.11 carries 18081",
-		"192.0.2.11 carries 18082",
-	}
+			rec := target.importTunnels(t, tt.write(t, source.exportTunnels(t, testExportPassword)), testExportPassword)
+			if rec.Code != http.StatusBadRequest {
+				t.Fatalf("the import answered %d, want %d: %s", rec.Code, http.StatusBadRequest, rec.Body.String())
+			}
 
-	if !reflect.DeepEqual(target.carried(t), want) {
-		t.Fatalf("after the import the installation carries %v, want %v", target.carried(t), want)
-	}
+			var refused struct {
+				Code errorCode         `json:"error_code"`
+				Args map[string]string `json:"error_args"`
+			}
 
-	// With the overwrite the Host is written, and then what it carries is what
-	// the file says rather than the two sets put together.
-	rec = target.importTunnels(t, file, testExportPassword, true)
-	if rec.Code != http.StatusOK {
-		t.Fatalf("the import with overwrite answered %d: %s", rec.Code, rec.Body.String())
-	}
+			if err := json.Unmarshal(rec.Body.Bytes(), &refused); err != nil {
+				t.Fatalf("the refusal is not JSON: %v", err)
+			}
 
-	if !reflect.DeepEqual(target.carried(t), fourPairs) {
-		t.Fatalf("after the overwrite the installation carries %v, want %v",
-			target.carried(t), fourPairs)
+			if refused.Code != tt.code || refused.Args["host"] != "192.0.2.10" || refused.Args[tt.arg] != tt.value {
+				t.Errorf("the import was refused under %s with %v, want %s naming 192.0.2.10 and %s %s",
+					refused.Code, refused.Args, tt.code, tt.arg, tt.value)
+			}
+
+			if !reflect.DeepEqual(target.configuration(t), before) {
+				t.Fatalf("the refused import changed what is stored")
+			}
+		})
 	}
 }
 
 // TestTheLocalForwardContentCarriesEveryFieldOfALocalForward does for a local
-// forward what the tests above do for a Host and a service port. The Host and
-// the number, which are the key, are left out: the Host is the one the forward
-// is written under in the file, and the number is handed out again by the
-// installation that reads it.
+// forward what the tests above do for a Host and a service port. The Host is
+// left out: it is the one the forward is written under in the file.
 func TestTheLocalForwardContentCarriesEveryFieldOfALocalForward(t *testing.T) {
-	left := map[string]bool{"Number": true, "HostID": true, "CreatedAt": true, "UpdatedAt": true}
+	left := map[string]bool{"HostID": true}
 
 	stored := reflect.TypeOf(models.LocalForward{})
 	carried := reflect.TypeOf(localForwardContent{})
@@ -2736,7 +2603,7 @@ func errorCodeOf(t *testing.T, rec *httptest.ResponseRecorder) errorCode {
 
 // TestTheLocalForwardsOfAHostCrossToAnotherInstallation is the round trip: what
 // an installation forwards is what the one that took the file in forwards, on
-// the same Host, and an empty scope arrives as the wildcard it stands for.
+// the same Host under the same number, and an empty scope is stored as it was.
 func TestTheLocalForwardsOfAHostCrossToAnotherInstallation(t *testing.T) {
 	source := newTransferInstall(t)
 	target := newTransferInstall(t)
@@ -2768,12 +2635,12 @@ func TestTheLocalForwardsOfAHostCrossToAnotherInstallation(t *testing.T) {
 		t.Fatalf("the file does not open: %v", err)
 	}
 
-	// In the order of the local port, whatever order the rows were stored in.
-	if !strings.Contains(opened, `"local_forwards":[{"bind_scope":"wildcard","local_port":15432,`) {
-		t.Errorf("the file does not carry the local forwards of the Host in port order: %s", opened)
+	// In the order of the number, which is the order they were added in.
+	if !strings.Contains(opened, `"local_forwards":[{"number":1,"bind_scope":"loopback","local_port":15433,`) {
+		t.Errorf("the file does not carry the local forwards of the Host in the order of their number: %s", opened)
 	}
 
-	rec = target.importTunnels(t, exported.File, testExportPassword, false)
+	rec = target.importTunnels(t, exported.File, testExportPassword)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("the import answered %d: %s", rec.Code, rec.Body.String())
 	}
@@ -2782,22 +2649,42 @@ func TestTheLocalForwardsOfAHostCrossToAnotherInstallation(t *testing.T) {
 
 	decodeTransfer(t, rec).into(t, &imported)
 
-	if imported.Added != 5 {
-		t.Errorf("the import added %d rows, want the 2 Hosts and the 3 local forwards", imported.Added)
+	if imported.File.Hosts != 2 || imported.File.LocalForwards != 3 {
+		t.Errorf("the import counts %+v, want the 2 Hosts and the 3 local forwards", imported.File)
 	}
 
 	want := []string{
 		"192.0.2.10 wildcard 15432 -> 192.0.2.30:5432 ()",
 		"192.0.2.10 loopback 15433 -> 127.0.0.1:5432 (the database)",
-		"192.0.2.11 wildcard 18443 -> 192.0.2.31:443 (no scope)",
+		"192.0.2.11  18443 -> 192.0.2.31:443 (no scope)",
 	}
 
 	if !reflect.DeepEqual(target.forwards(t), want) {
 		t.Fatalf("the installation that took the file in forwards %v, want %v", target.forwards(t), want)
 	}
 
+	if !reflect.DeepEqual(target.configuration(t), source.configuration(t)) {
+		t.Fatalf("the local forwards came across as\n%v\nwant\n%v", target.configuration(t), source.configuration(t))
+	}
+
 	if target.manager.count() != 1 {
 		t.Errorf("the import asked for %d reconcile passes, want 1", target.manager.count())
+	}
+
+	// A file without the numbers, which is every file of the release before
+	// them, is numbered from 1 in its order, and an empty scope in it is
+	// stored as the wildcard it stands for, as it always was.
+	fromOlder := newTransferInstall(t)
+
+	rec = fromOlder.importTunnels(t, formatOne(t, exported.File, testExportPassword), testExportPassword)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("the import of the older file answered %d: %s", rec.Code, rec.Body.String())
+	}
+
+	want[2] = "192.0.2.11 wildcard 18443 -> 192.0.2.31:443 (no scope)"
+
+	if !reflect.DeepEqual(fromOlder.forwards(t), want) {
+		t.Fatalf("the installation that took the older file in forwards %v, want %v", fromOlder.forwards(t), want)
 	}
 }
 
@@ -2828,7 +2715,7 @@ func TestWhetherALocalForwardIsOnCrossesWithIt(t *testing.T) {
 
 	target := newTransferInstall(t)
 
-	rec := target.importTunnels(t, file, testExportPassword, false)
+	rec := target.importTunnels(t, file, testExportPassword)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("the import answered %d: %s", rec.Code, rec.Body.String())
 	}
@@ -2865,7 +2752,7 @@ func TestWhetherALocalForwardIsOnCrossesWithIt(t *testing.T) {
 
 	fromOlder := newTransferInstall(t)
 
-	rec = fromOlder.importTunnels(t, older, testExportPassword, false)
+	rec = fromOlder.importTunnels(t, older, testExportPassword)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("the import of the older file answered %d: %s", rec.Code, rec.Body.String())
 	}
@@ -2899,7 +2786,7 @@ func TestAFileFromBeforeTheLocalForwardsWereStoredIsImported(t *testing.T) {
 		t.Fatalf("the file still carries the local forwards: %s", opened)
 	}
 
-	rec := target.importTunnels(t, file, testExportPassword, false)
+	rec := target.importTunnels(t, file, testExportPassword)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("the import answered %d: %s", rec.Code, rec.Body.String())
 	}
@@ -2913,10 +2800,6 @@ func TestAFileFromBeforeTheLocalForwardsWereStoredIsImported(t *testing.T) {
 	}
 }
 
-// TestAFileFromBeforeTheAddressesWereRenamedIsImported is a file exported by a
-// release that carried the addresses as ip, service_ip and target_ip. Every
-// address it holds arrives under the new name, and a Host that names both is
-// stored at the new one.
 func TestAFileFromBeforeTheAddressesWereRenamedIsImported(t *testing.T) {
 	target := newTransferInstall(t)
 
@@ -2932,18 +2815,15 @@ func TestAFileFromBeforeTheAddressesWereRenamedIsImported(t *testing.T) {
 		"service_ports": [{"service_ip": "198.51.100.20", "service_port": 80, "local_port": 18080}]
 	}`)
 
-	file, err := target.handler.seal(transferKindTunnels, content, testExportPassword, time.Now())
-	if err != nil {
-		t.Fatalf("failed to seal the file: %v", err)
-	}
+	file := sealedAtFormat(t, 1, content, testExportPassword)
 
-	rec := target.importTunnels(t, file, testExportPassword, false)
+	rec := target.importTunnels(t, file, testExportPassword)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("the import answered %d: %s", rec.Code, rec.Body.String())
 	}
 
 	var hosts []models.Host
-	err = target.db.Order("id").Find(&hosts).Error
+	err := target.db.Order("id").Find(&hosts).Error
 	if err != nil {
 		t.Fatalf("failed to read the Hosts: %v", err)
 	}
@@ -3050,7 +2930,7 @@ func TestALocalForwardTheFileCannotCarryIsRefused(t *testing.T) {
 				Hosts: []hostContent{first, second},
 			}, testExportPassword)
 
-			rec := target.importTunnels(t, file, testExportPassword, true)
+			rec := target.importTunnels(t, file, testExportPassword)
 			if rec.Code != http.StatusBadRequest {
 				t.Fatalf("the import answered %d, want %d: %s", rec.Code, http.StatusBadRequest, rec.Body.String())
 			}
@@ -3089,7 +2969,7 @@ func TestALocalForwardOnThePortOfThisServerIsRefused(t *testing.T) {
 
 	file := sealedTunnelsFile(t, source, tunnelsContent{Hosts: []hostContent{host}}, testExportPassword)
 
-	rec := target.importTunnels(t, file, testExportPassword, false)
+	rec := target.importTunnels(t, file, testExportPassword)
 	if rec.Code != http.StatusConflict {
 		t.Fatalf("the import answered %d, want %d: %s", rec.Code, http.StatusConflict, rec.Body.String())
 	}
@@ -3127,7 +3007,7 @@ func TestALocalForwardOnTheRunningPortOfThisServerIsRefused(t *testing.T) {
 
 			file := sealedTunnelsFile(t, source, tunnelsContent{Hosts: []hostContent{host}}, testExportPassword)
 
-			rec := target.importTunnels(t, file, testExportPassword, false)
+			rec := target.importTunnels(t, file, testExportPassword)
 
 			if running == 0 {
 				if rec.Code != http.StatusOK || target.count(t, &models.LocalForward{}) != 1 {
@@ -3221,11 +3101,10 @@ func TestImportedSettingsSuggestAPortClearOfTheRunningAPIPort(t *testing.T) {
 	}
 }
 
-// TestALocalPortAnotherHostHoldsIsRefused is a local forward of the file on a
-// port a Host the file does not write already opens here. An overwrite replaces
-// what the Hosts of the file carry and nothing of any other Host, so the port is
-// not taken from it: the import is refused with that Host named.
-func TestALocalPortAnotherHostHoldsIsRefused(t *testing.T) {
+// TestALocalPortAHostHereHoldsIsFreedByTheImport is a local forward of the file
+// on a port a Host the file does not name opens here. The import deletes that
+// Host with the rest of what is stored, so the port is free for the file.
+func TestALocalPortAHostHereHoldsIsFreedByTheImport(t *testing.T) {
 	source := newTransferInstall(t)
 	target := newTransferInstall(t)
 
@@ -3233,46 +3112,26 @@ func TestALocalPortAnotherHostHoldsIsRefused(t *testing.T) {
 	target.forward(t, "192.0.2.12", localForwardContent{BindScope: models.BindScopeWildcard,
 		LocalPort: 15432, TargetAddress: "192.0.2.40", TargetPort: 5432})
 
-	before := target.forwards(t)
-
 	host := passwordHost("192.0.2.10")
 	host.LocalForwards = []localForwardContent{{LocalPort: 15432, TargetAddress: "192.0.2.30", TargetPort: 5432}}
 
 	file := sealedTunnelsFile(t, source, tunnelsContent{Hosts: []hostContent{host}}, testExportPassword)
 
-	for _, overwrite := range []bool{false, true} {
-		rec := target.importTunnels(t, file, testExportPassword, overwrite)
-		if rec.Code != http.StatusConflict {
-			t.Fatalf("overwrite %v: the import answered %d, want %d: %s", overwrite, rec.Code,
-				http.StatusConflict, rec.Body.String())
-		}
+	rec := target.importTunnels(t, file, testExportPassword)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("the import answered %d: %s", rec.Code, rec.Body.String())
+	}
 
-		if errorCodeOf(t, rec) != errImportLocalForwardPortTaken {
-			t.Errorf("overwrite %v: the import was refused under %s, want %s", overwrite,
-				errorCodeOf(t, rec), errImportLocalForwardPortTaken)
-		}
-
-		if !strings.Contains(decodeTransfer(t, rec).Error, "192.0.2.12") {
-			t.Errorf("overwrite %v: the refusal does not name the Host holding the port: %q", overwrite,
-				decodeTransfer(t, rec).Error)
-		}
-
-		if target.count(t, &models.Host{}) != 1 {
-			t.Fatalf("overwrite %v: the Host of the refused file was left behind", overwrite)
-		}
-
-		if !reflect.DeepEqual(target.forwards(t), before) {
-			t.Fatalf("overwrite %v: the refused import changed the local forwards to %v, want %v",
-				overwrite, target.forwards(t), before)
-		}
+	want := []string{"192.0.2.10 wildcard 15432 -> 192.0.2.30:5432 ()"}
+	if !reflect.DeepEqual(target.forwards(t), want) {
+		t.Fatalf("after the import the installation forwards %v, want %v", target.forwards(t), want)
 	}
 }
 
-// TestAnOverwriteReplacesTheLocalForwardsOfTheHostsItWrites is the other side
-// of the rule above. A Host the import writes carries what the file names, and
-// a port that moves between two Hosts of the file moves, whichever of them the
-// file names first. A Host the import skips keeps what it forwards.
-func TestAnOverwriteReplacesTheLocalForwardsOfTheHostsItWrites(t *testing.T) {
+// TestALocalPortTheFileMovesBetweenHostsMoves is two Hosts here trading their
+// local ports in the file: whichever of them the file names first, the port
+// is free by the time it is written.
+func TestALocalPortTheFileMovesBetweenHostsMoves(t *testing.T) {
 	source := newTransferInstall(t)
 	target := newTransferInstall(t)
 
@@ -3285,8 +3144,6 @@ func TestAnOverwriteReplacesTheLocalForwardsOfTheHostsItWrites(t *testing.T) {
 	target.forward(t, "192.0.2.11", localForwardContent{BindScope: models.BindScopeWildcard,
 		LocalPort: 15433, TargetAddress: "192.0.2.31", TargetPort: 5432})
 
-	before := target.forwards(t)
-
 	// The two ports trade places, and the first Host drops the third.
 	first := passwordHost("192.0.2.10")
 	first.LocalForwards = []localForwardContent{{BindScope: models.BindScopeLoopback,
@@ -3298,19 +3155,9 @@ func TestAnOverwriteReplacesTheLocalForwardsOfTheHostsItWrites(t *testing.T) {
 
 	file := sealedTunnelsFile(t, source, tunnelsContent{Hosts: []hostContent{first, second}}, testExportPassword)
 
-	rec := target.importTunnels(t, file, testExportPassword, false)
+	rec := target.importTunnels(t, file, testExportPassword)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("the import answered %d: %s", rec.Code, rec.Body.String())
-	}
-
-	if !reflect.DeepEqual(target.forwards(t), before) {
-		t.Fatalf("an import without overwrite changed what the skipped Hosts forward to %v, want %v",
-			target.forwards(t), before)
-	}
-
-	rec = target.importTunnels(t, file, testExportPassword, true)
-	if rec.Code != http.StatusOK {
-		t.Fatalf("the import with overwrite answered %d: %s", rec.Code, rec.Body.String())
 	}
 
 	want := []string{
@@ -3319,44 +3166,13 @@ func TestAnOverwriteReplacesTheLocalForwardsOfTheHostsItWrites(t *testing.T) {
 	}
 
 	if !reflect.DeepEqual(target.forwards(t), want) {
-		t.Fatalf("after the overwrite the installation forwards %v, want %v", target.forwards(t), want)
+		t.Fatalf("after the import the installation forwards %v, want %v", target.forwards(t), want)
 	}
 }
 
-// TestAFileFromBeforeTheLocalForwardsLeavesThemAlone is a file with no
-// local_forwards field imported with overwrite onto a Host that forwards
-// something here. Such a file says nothing about local forwards, so what the
-// Host forwards here stays.
-func TestAFileFromBeforeTheLocalForwardsLeavesThemAlone(t *testing.T) {
-	source := newTransferInstall(t)
-	target := newTransferInstall(t)
-
-	source.registerHost(t, passwordHost("192.0.2.10"))
-
-	target.registerHost(t, passwordHost("192.0.2.10"))
-	target.forward(t, "192.0.2.10", localForwardContent{BindScope: models.BindScopeWildcard,
-		LocalPort: 15432, TargetAddress: "192.0.2.30", TargetPort: 5432})
-
-	before := target.forwards(t)
-
-	file := rewriteHosts(t, source.exportTunnels(t, testExportPassword), testExportPassword,
-		func(host map[string]interface{}) {
-			delete(host, "local_forwards")
-		})
-
-	rec := target.importTunnels(t, file, testExportPassword, true)
-	if rec.Code != http.StatusOK {
-		t.Fatalf("the import answered %d: %s", rec.Code, rec.Body.String())
-	}
-
-	if !reflect.DeepEqual(target.forwards(t), before) {
-		t.Fatalf("a file that names no local forwards changed them to %v, want %v", target.forwards(t), before)
-	}
-}
-
-// TestAHostCarriedAsForwardingNothingForwardsNothing is the other half: an
-// empty list is a file saying the Host forwards nothing, and an overwrite
-// leaves it forwarding nothing.
+// TestAHostCarriedAsForwardingNothingForwardsNothing is a Host the file names
+// with an empty list: it forwards nothing after the import, whatever it
+// forwarded here before.
 func TestAHostCarriedAsForwardingNothingForwardsNothing(t *testing.T) {
 	source := newTransferInstall(t)
 	target := newTransferInstall(t)
@@ -3378,13 +3194,13 @@ func TestAHostCarriedAsForwardingNothingForwardsNothing(t *testing.T) {
 		t.Fatalf("a Host with no local forward is not written with an empty list: %s", opened)
 	}
 
-	rec := target.importTunnels(t, file, testExportPassword, true)
+	rec := target.importTunnels(t, file, testExportPassword)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("the import answered %d: %s", rec.Code, rec.Body.String())
 	}
 
 	if target.count(t, &models.LocalForward{}) != 0 {
-		t.Fatalf("after the overwrite the Host still forwards %v", target.forwards(t))
+		t.Fatalf("after the import the Host still forwards %v", target.forwards(t))
 	}
 }
 
@@ -3595,79 +3411,6 @@ func checkNamedItems(t *testing.T, raw json.RawMessage, want []namedItem) {
 	}
 }
 
-// TestTheItemsOfAnImportNameTheirSentences is every way a row of a tunnel
-// configuration can be named by a sentence or skipped for a reason, in one
-// import: a Host that is here already, a service port meeting a stored service
-// address, one meeting a stored local port, an assignment to a service port
-// that is nowhere, and a local forward, which is named by a sentence.
-func TestTheItemsOfAnImportNameTheirSentences(t *testing.T) {
-	target := newTransferInstall(t)
-
-	target.registerHost(t, passwordHost("192.0.2.10"))
-	target.registerServicePort(t, servicePortContent{ServiceAddress: "192.0.2.20", ServicePort: 80, LocalPort: 18080})
-	target.registerServicePort(t, servicePortContent{ServiceAddress: "192.0.2.21", ServicePort: 81, LocalPort: 18090})
-
-	carrying := passwordHost("192.0.2.11")
-	carrying.AssignedLocalPorts = []int{19999}
-	carrying.LocalForwards = []localForwardContent{{BindScope: models.BindScopeLoopback,
-		LocalPort: 15432, TargetAddress: "127.0.0.1", TargetPort: 5432}}
-
-	file := sealedTunnelsFile(t, target, tunnelsContent{
-		Hosts: []hostContent{passwordHost("192.0.2.10"), carrying},
-		ServicePorts: []servicePortContent{
-			{ServiceAddress: "192.0.2.20", ServicePort: 80, LocalPort: 18081},
-			{ServiceAddress: "192.0.2.22", ServicePort: 82, LocalPort: 18090},
-		},
-	}, testExportPassword)
-
-	rec := target.importTunnels(t, file, testExportPassword, false)
-	if rec.Code != http.StatusOK {
-		t.Fatalf("the import answered %d: %s", rec.Code, rec.Body.String())
-	}
-
-	checkNamedItems(t, decodeTransfer(t, rec).Data, []namedItem{
-		{
-			kind: "host", name: "192.0.2.10", action: transferSkipped,
-			reason:     "a Host with this IP is registered here already",
-			reasonCode: textImportReasonHostRegistered,
-		},
-		{
-			kind: "host", name: "192.0.2.11", action: transferAdded,
-		},
-		{
-			kind: "service_port", name: "192.0.2.20:80 on 18081", action: transferSkipped,
-			nameCode:     textImportNameServicePort,
-			nameValues:   textArgs{"service_address": "192.0.2.20:80", "local_port": "18081"},
-			reason:       "a service port for 192.0.2.20:80 is registered here already",
-			reasonCode:   textImportReasonServiceAddressTaken,
-			reasonValues: textArgs{"service_address": "192.0.2.20:80"},
-		},
-		{
-			kind: "service_port", name: "192.0.2.22:82 on 18090", action: transferSkipped,
-			nameCode:     textImportNameServicePort,
-			nameValues:   textArgs{"service_address": "192.0.2.22:82", "local_port": "18090"},
-			reason:       "the local port 18090 is in use here by another service port",
-			reasonCode:   textImportReasonLocalPortTaken,
-			reasonValues: textArgs{"local_port": "18090"},
-		},
-		{
-			kind: "assignment", name: "192.0.2.11 carries 19999", action: transferSkipped,
-			nameCode:   textImportNameAssignment,
-			nameValues: textArgs{"host": "192.0.2.11", "local_port": "19999"},
-			reason: "no service port on the local port 19999 is registered here, so there is " +
-				"nothing for the Host to carry",
-			reasonCode:   textImportReasonNoServicePort,
-			reasonValues: textArgs{"local_port": "19999"},
-		},
-		{
-			kind: "local_forward", name: "192.0.2.11 opens 15432 to 127.0.0.1:5432", action: transferAdded,
-			nameCode: textImportNameLocalForward,
-			nameValues: textArgs{"host": "192.0.2.11", "local_port": "15432",
-				"target": "127.0.0.1:5432"},
-		},
-	})
-}
-
 // TestADroppedPathNamesItsReason is the same for the settings: a path outside
 // the installation and an empty one are each skipped under a code of their own,
 // the empty one because "an empty path" is not a value a translator can place.
@@ -3763,7 +3506,7 @@ func TestTheAllowedSourcesOfALocalForwardCrossWithIt(t *testing.T) {
 
 	target := newTransferInstall(t)
 
-	rec := target.importTunnels(t, file, testExportPassword, false)
+	rec := target.importTunnels(t, file, testExportPassword)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("the import answered %d: %s", rec.Code, rec.Body.String())
 	}
@@ -3799,7 +3542,7 @@ func TestTheAllowedSourcesOfALocalForwardCrossWithIt(t *testing.T) {
 
 	fromOlder := newTransferInstall(t)
 
-	rec = fromOlder.importTunnels(t, older, testExportPassword, false)
+	rec = fromOlder.importTunnels(t, older, testExportPassword)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("the import of the older file answered %d: %s", rec.Code, rec.Body.String())
 	}
@@ -4074,4 +3817,742 @@ func TestATokenIsAskedForTheAccountPasswordToo(t *testing.T) {
 			t.Fatalf("with no account_password it answered %d, want 200: %s", rec.Code, rec.Body.String())
 		}
 	})
+}
+
+// jump gives a stored Host a jump route through the stored Hosts named, in
+// order, the way the Host screen stores one.
+func (i *transferInstall) jump(t *testing.T, hostIP string, through ...string) {
+	t.Helper()
+
+	idOf := func(address string) uint {
+		var host models.Host
+
+		err := i.db.Where("address = ?", address).First(&host).Error
+		if err != nil {
+			t.Fatalf("the Host %s is not registered here: %v", address, err)
+		}
+
+		return host.ID
+	}
+
+	hostID := idOf(hostIP)
+
+	for n, address := range through {
+		err := i.db.Create(&models.HostJump{HostID: hostID, Seq: uint(n + 1), JumpHostID: idOf(address)}).Error
+		if err != nil {
+			t.Fatalf("failed to store the jump route of %s: %v", hostIP, err)
+		}
+	}
+}
+
+// configuration is every row of the tunnel configuration stored, written out
+// with its id, its number and its times, and with the secrets of the Hosts
+// opened: they are sealed with a key of each installation, so what is the same
+// on both sides is what they open to.
+func (i *transferInstall) configuration(t *testing.T) []string {
+	t.Helper()
+
+	var written []string
+
+	add := func(what string, row interface{}) {
+		encoded, err := json.Marshal(row)
+		if err != nil {
+			t.Fatalf("failed to write a row: %v", err)
+		}
+
+		written = append(written, what+" "+string(encoded))
+	}
+
+	var hosts []models.Host
+
+	err := i.db.Order("id").Find(&hosts).Error
+	if err != nil {
+		t.Fatalf("failed to read the Hosts: %v", err)
+	}
+
+	for _, host := range hosts {
+		opened, err := i.handler.unsealHost(host)
+		if err != nil {
+			t.Fatalf("the secrets of the Host %s do not open: %v", host.Address, err)
+		}
+
+		host.CreatedAt = host.CreatedAt.UTC()
+		host.UpdatedAt = host.UpdatedAt.UTC()
+
+		add("host", struct {
+			models.Host
+			Password      string
+			PrivateKey    string
+			KeyPassphrase string
+		}{host, opened.Password, opened.PrivateKey, opened.KeyPassphrase})
+	}
+
+	var sps []models.ServicePort
+
+	err = i.db.Order("id").Find(&sps).Error
+	if err != nil {
+		t.Fatalf("failed to read the service ports: %v", err)
+	}
+
+	for _, sp := range sps {
+		sp.CreatedAt = sp.CreatedAt.UTC()
+		sp.UpdatedAt = sp.UpdatedAt.UTC()
+		add("service_port", sp)
+	}
+
+	var assignments []models.HostServicePort
+
+	err = i.db.Order("host_id, sp_id").Find(&assignments).Error
+	if err != nil {
+		t.Fatalf("failed to read the assignments: %v", err)
+	}
+
+	for _, assignment := range assignments {
+		assignment.CreatedAt = assignment.CreatedAt.UTC()
+		add("assignment", assignment)
+	}
+
+	var forwards []models.LocalForward
+
+	err = i.db.Order("host_id, number").Find(&forwards).Error
+	if err != nil {
+		t.Fatalf("failed to read the local forwards: %v", err)
+	}
+
+	for _, lf := range forwards {
+		lf.CreatedAt = lf.CreatedAt.UTC()
+		lf.UpdatedAt = lf.UpdatedAt.UTC()
+		add("local_forward", lf)
+	}
+
+	var jumps []models.HostJump
+
+	err = i.db.Order("host_id, seq").Find(&jumps).Error
+	if err != nil {
+		t.Fatalf("failed to read the jump routes: %v", err)
+	}
+
+	for _, jump := range jumps {
+		add("jump", jump)
+	}
+
+	return written
+}
+
+// formatOne writes a file of this version again as the release before the ids
+// wrote it: no id, number, time or pending key on any row, no jump route, and
+// the assignments named by the local port of the service port.
+func formatOne(t *testing.T, file string, password string) string {
+	t.Helper()
+
+	plaintext, err := crypto.DecryptWithPassword(file, password)
+	if err != nil {
+		t.Fatalf("failed to open the file: %v", err)
+	}
+
+	var read transferFile
+
+	err = json.Unmarshal([]byte(plaintext), &read)
+	if err != nil {
+		t.Fatalf("failed to read the file: %v", err)
+	}
+
+	var content tunnelsContent
+
+	err = json.Unmarshal(read.Content, &content)
+	if err != nil {
+		t.Fatalf("failed to read the content of the file: %v", err)
+	}
+
+	localPortOf := make(map[uint]int, len(content.ServicePorts))
+
+	for n := range content.ServicePorts {
+		sp := &content.ServicePorts[n]
+		localPortOf[sp.ID] = sp.LocalPort
+		sp.ID, sp.CreatedAt, sp.UpdatedAt = 0, nil, nil
+	}
+
+	for n := range content.Hosts {
+		host := &content.Hosts[n]
+
+		host.AssignedLocalPorts = []int{}
+
+		for _, assignment := range host.Assignments {
+			localPort := strconv.Itoa(localPortOf[assignment.ServicePortID])
+			host.AssignedLocalPorts = append(host.AssignedLocalPorts, localPortOf[assignment.ServicePortID])
+
+			if assignment.BindScope != "" {
+				if host.AssignedBindScopes == nil {
+					host.AssignedBindScopes = map[string]string{}
+				}
+
+				host.AssignedBindScopes[localPort] = assignment.BindScope
+			}
+
+			if !assignment.Enabled {
+				if host.AssignedEnabled == nil {
+					host.AssignedEnabled = map[string]bool{}
+				}
+
+				host.AssignedEnabled[localPort] = false
+			}
+		}
+
+		host.ID, host.CreatedAt, host.UpdatedAt = 0, nil, nil
+		host.PendingHostKey, host.JumpHostIDs, host.Assignments = "", nil, nil
+
+		for m := range host.LocalForwards {
+			lf := &host.LocalForwards[m]
+			lf.Number, lf.CreatedAt, lf.UpdatedAt = 0, nil, nil
+		}
+	}
+
+	// assigned_local_ports is written even where it is empty, since an empty
+	// list and no field say different things in a file of this version.
+	body, err := json.Marshal(content)
+	if err != nil {
+		t.Fatalf("failed to write the content back: %v", err)
+	}
+
+	var fields map[string]interface{}
+
+	err = json.Unmarshal(body, &fields)
+	if err != nil {
+		t.Fatalf("failed to read the content back: %v", err)
+	}
+
+	for _, entry := range fields["hosts"].([]interface{}) {
+		host := entry.(map[string]interface{})
+		if _, carried := host["assigned_local_ports"]; !carried {
+			host["assigned_local_ports"] = []interface{}{}
+		}
+	}
+
+	return sealedAtFormat(t, 1, fields, password)
+}
+
+// testRoute is an installation with something in every table of the tunnel
+// configuration, with gaps in the ids and the numbers and with times of its
+// own, so that an import that numbered anything anew or stamped anything with
+// the time of the write is told from one that put the rows back.
+func testRoute(t *testing.T) *transferInstall {
+	t.Helper()
+
+	source := newTransferInstall(t)
+
+	withKey, withPassword := twoHosts(t)
+	withKey.HostKey = testTrustedHostKey
+
+	source.registerHost(t, withKey)
+	source.registerHost(t, passwordHost("192.0.2.12"))
+	source.registerHost(t, withPassword)
+	source.registerHost(t, passwordHost("203.0.113.5"))
+	source.registerHost(t, passwordHost("203.0.113.6"))
+
+	// The second Host goes, so the ids are 1, 3, 4 and 5.
+	err := source.db.Delete(&models.Host{}, 2).Error
+	if err != nil {
+		t.Fatalf("failed to delete a Host: %v", err)
+	}
+
+	source.presentedAKeyNobodyHasApproved(t, withKey.Address, testPresentedHostKey)
+	source.setSocks(t, withPassword.Address, 1080, models.BindScopeLoopback, "192.0.2.0/24")
+
+	err = source.db.Model(&models.Host{}).Where("address = ?", "203.0.113.6").
+		Updates(map[string]interface{}{"enabled": false, "socks_bind_scope": ""}).Error
+	if err != nil {
+		t.Fatalf("failed to change a Host: %v", err)
+	}
+
+	source.jump(t, "203.0.113.5", withKey.Address)
+	source.jump(t, "203.0.113.6", withKey.Address, withPassword.Address, "203.0.113.5")
+
+	threeServicePorts(t, source)
+
+	// The first service port goes, so the ids are 2 and 3.
+	err = source.db.Delete(&models.ServicePort{}, 1).Error
+	if err != nil {
+		t.Fatalf("failed to delete a service port: %v", err)
+	}
+
+	source.assign(t, withKey.Address, 18081)
+	source.assign(t, "203.0.113.5", 18081)
+	source.assign(t, "203.0.113.5", 18082)
+	source.openTo(t, "203.0.113.5", 18082, models.BindScopeLoopback)
+	source.switchOff(t, withKey.Address, 18081)
+
+	off := false
+
+	source.forward(t, "203.0.113.5", localForwardContent{BindScope: models.BindScopeLoopback,
+		LocalPort: 15432, TargetAddress: "127.0.0.1", TargetPort: 5432, Description: "goes"})
+	source.forward(t, "203.0.113.5", localForwardContent{BindScope: models.BindScopeWildcard,
+		LocalPort: 15433, TargetAddress: "203.0.113.7", TargetPort: 5432, AllowedSources: "192.0.2.0/24"})
+	source.forward(t, "203.0.113.5", localForwardContent{LocalPort: 15434, TargetAddress: "db.example.com",
+		TargetPort: 5432, Enabled: &off})
+
+	// The first forward goes, so the numbers are 2 and 3.
+	err = source.db.Where("local_port = ?", 15432).Delete(&models.LocalForward{}).Error
+	if err != nil {
+		t.Fatalf("failed to delete a local forward: %v", err)
+	}
+
+	// Every row is given times of its own, a day apart for each table, so that
+	// the times of the write are told from the ones put back.
+	at := time.Date(2025, 3, 14, 15, 9, 26, 535897932, time.UTC)
+
+	for n, table := range []string{"hosts", "service_ports", "local_forwards"} {
+		err = source.db.Exec("UPDATE "+table+" SET created_at = ?, updated_at = ?",
+			at.Add(time.Duration(n)*24*time.Hour), at.Add(time.Duration(n)*24*time.Hour+time.Minute)).Error
+		if err != nil {
+			t.Fatalf("failed to set the times of %s: %v", table, err)
+		}
+	}
+
+	err = source.db.Exec("UPDATE host_service_ports SET created_at = ?", at.Add(72*time.Hour)).Error
+	if err != nil {
+		t.Fatalf("failed to set the times of the assignments: %v", err)
+	}
+
+	return source
+}
+
+// TestAnExportAndAnImportPutTheConfigurationBackAsItWas is what the file is for
+// now: taken in by an installation that holds something else entirely, it
+// leaves every table of the tunnel configuration as the one it came from held
+// it, ids, numbers, jump routes and times included.
+func TestAnExportAndAnImportPutTheConfigurationBackAsItWas(t *testing.T) {
+	source := testRoute(t)
+	target := newTransferInstall(t)
+
+	target.registerHost(t, passwordHost("198.51.100.1"))
+	target.registerHost(t, passwordHost("198.51.100.2"))
+	target.registerServicePort(t, servicePortContent{ServiceAddress: "198.51.100.30", ServicePort: 80, LocalPort: 18080})
+	target.assign(t, "198.51.100.1", 18080)
+	target.forward(t, "198.51.100.1", localForwardContent{LocalPort: 15433, TargetAddress: "198.51.100.40", TargetPort: 22})
+	target.jump(t, "198.51.100.2", "198.51.100.1")
+
+	file := source.exportTunnels(t, testExportPassword)
+
+	rec := target.importTunnels(t, file, testExportPassword)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("the import answered %d: %s", rec.Code, rec.Body.String())
+	}
+
+	want := source.configuration(t)
+	got := target.configuration(t)
+
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("the installation that took the file in holds\n%s\nwant\n%s",
+			strings.Join(got, "\n"), strings.Join(want, "\n"))
+	}
+
+	var imported importedTunnels
+
+	decodeTransfer(t, rec).into(t, &imported)
+
+	wantAnswer := importedTunnels{
+		Current: transferCounts{Hosts: 2, ServicePorts: 1, Assignments: 1, LocalForwards: 1, JumpHosts: 1},
+		File:    transferCounts{Hosts: 4, ServicePorts: 2, Assignments: 3, LocalForwards: 2, JumpHosts: 2},
+	}
+	if imported != wantAnswer {
+		t.Errorf("the import answered %+v, want %+v", imported, wantAnswer)
+	}
+}
+
+// TestTheNextServicePortIsNumberedPastTheImportedOnes is the sequence sqlite
+// hands the next id out of. The import writes the ids of the file itself, and
+// a service port added afterwards has to be numbered past every one of them,
+// whatever the installation had numbered up to before.
+func TestTheNextServicePortIsNumberedPastTheImportedOnes(t *testing.T) {
+	for _, before := range []int{0, 5} {
+		t.Run(strconv.Itoa(before), func(t *testing.T) {
+			source := testRoute(t)
+			target := newTransferInstall(t)
+
+			for n := 0; n < before; n++ {
+				target.registerServicePort(t, servicePortContent{ServiceAddress: "198.51.100.30",
+					ServicePort: 1000 + n, LocalPort: 19000 + n})
+			}
+
+			rec := target.importTunnels(t, source.exportTunnels(t, testExportPassword), testExportPassword)
+			if rec.Code != http.StatusOK {
+				t.Fatalf("the import answered %d: %s", rec.Code, rec.Body.String())
+			}
+
+			var sequence int64
+
+			err := target.db.Raw("SELECT seq FROM sqlite_sequence WHERE name = ?", "service_ports").
+				Scan(&sequence).Error
+			if err != nil {
+				t.Fatalf("failed to read the sequence: %v", err)
+			}
+
+			added := models.ServicePort{ServiceAddress: "198.51.100.31", ServicePort: 80, LocalPort: 19999}
+
+			err = target.db.Create(&added).Error
+			if err != nil {
+				t.Fatalf("failed to add a service port: %v", err)
+			}
+
+			t.Logf("the sequence stands at %d after the import, and the next service port is %d",
+				sequence, added.ID)
+
+			if added.ID <= 3 {
+				t.Fatalf("the service port added after the import is %d, which is not past the imported 3", added.ID)
+			}
+		})
+	}
+}
+
+// TestAFileWithoutIDsIsNumberedInItsOrder is the import of a file of the
+// release before the ids: whatever the installation held, the rows of the file
+// are numbered from 1 in the order the file lists them, and no Host has a jump
+// route.
+func TestAFileWithoutIDsIsNumberedInItsOrder(t *testing.T) {
+	source := testRoute(t)
+	target := newTransferInstall(t)
+
+	target.registerHost(t, passwordHost("198.51.100.1"))
+	target.registerHost(t, passwordHost("198.51.100.2"))
+	target.jump(t, "198.51.100.2", "198.51.100.1")
+
+	rec := target.importTunnels(t, formatOne(t, source.exportTunnels(t, testExportPassword), testExportPassword),
+		testExportPassword)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("the import answered %d: %s", rec.Code, rec.Body.String())
+	}
+
+	var hosts []models.Host
+
+	err := target.db.Order("id").Find(&hosts).Error
+	if err != nil {
+		t.Fatalf("failed to read the Hosts: %v", err)
+	}
+
+	got := make([]string, 0, len(hosts))
+	for _, host := range hosts {
+		got = append(got, strconv.FormatUint(uint64(host.ID), 10)+" "+host.Address+" "+host.PendingHostKey)
+	}
+
+	want := []string{"1 192.0.2.10 ", "2 192.0.2.11 ", "3 203.0.113.5 ", "4 203.0.113.6 "}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("the Hosts are %v, want %v", got, want)
+	}
+
+	var sps []models.ServicePort
+
+	err = target.db.Order("id").Find(&sps).Error
+	if err != nil {
+		t.Fatalf("failed to read the service ports: %v", err)
+	}
+
+	if len(sps) != 2 || sps[0].ID != 1 || sps[0].LocalPort != 18081 || sps[1].ID != 2 || sps[1].LocalPort != 18082 {
+		t.Fatalf("the service ports are %+v, want 18081 as 1 and 18082 as 2", sps)
+	}
+
+	var numbers []uint
+
+	err = target.db.Model(&models.LocalForward{}).Order("number").Pluck("number", &numbers).Error
+	if err != nil {
+		t.Fatalf("failed to read the local forwards: %v", err)
+	}
+
+	if !reflect.DeepEqual(numbers, []uint{1, 2}) {
+		t.Fatalf("the local forwards are numbered %v, want 1 and 2", numbers)
+	}
+
+	if target.count(t, &models.HostJump{}) != 0 {
+		t.Fatalf("a file without ids left %d jump route steps, want none", target.count(t, &models.HostJump{}))
+	}
+
+	wantCarried := []string{"192.0.2.10 carries 18081", "203.0.113.5 carries 18081", "203.0.113.5 carries 18082"}
+	if !reflect.DeepEqual(target.carried(t), wantCarried) {
+		t.Fatalf("the assignments are %v, want %v", target.carried(t), wantCarried)
+	}
+}
+
+// TestABodyThatCarriesOverwriteIsRefused is the field of the import that added
+// and skipped rows. A screen or a script written for that import sends it, and
+// what it would get now is its whole configuration replaced, so it is told
+// instead, whatever the field says, and nothing is read or written.
+func TestABodyThatCarriesOverwriteIsRefused(t *testing.T) {
+	source := testRoute(t)
+	target := newTransferInstall(t)
+
+	target.registerHost(t, passwordHost("198.51.100.1"))
+
+	before := target.configuration(t)
+	file := source.exportTunnels(t, testExportPassword)
+
+	for _, overwrite := range []bool{false, true} {
+		rec := target.importTunnelsWith(t, map[string]interface{}{
+			"password":         testExportPassword,
+			"account_password": testPassword,
+			"file":             file,
+			"overwrite":        overwrite,
+		})
+		if rec.Code != http.StatusBadRequest {
+			t.Fatalf("overwrite %v: the import answered %d, want %d: %s", overwrite, rec.Code,
+				http.StatusBadRequest, rec.Body.String())
+		}
+
+		if errorCodeOf(t, rec) != errImportOverwriteRemoved {
+			t.Errorf("overwrite %v: the import was refused under %s, want %s", overwrite,
+				errorCodeOf(t, rec), errImportOverwriteRemoved)
+		}
+	}
+
+	if !reflect.DeepEqual(target.configuration(t), before) || target.manager.count() != 0 {
+		t.Fatalf("a refused import changed what is stored or woke the loop")
+	}
+}
+
+// TestAJumpRouteTheFileCannotCarryIsRefused holds every jump route of the file
+// to the rules the Host screen is held to, and refuses the whole file for one
+// that breaks them.
+func TestAJumpRouteTheFileCannotCarryIsRefused(t *testing.T) {
+	for _, tt := range []struct {
+		name  string
+		route []interface{}
+		code  errorCode
+		args  map[string]string
+	}{
+		{"a Host the file does not hold", []interface{}{1, 42}, errImportJumpUnknownHost,
+			map[string]string{"host": "203.0.113.6", "jump_host_id": "42"}},
+		{"the Host itself", []interface{}{1, 5}, errImportJumpSelf,
+			map[string]string{"host": "203.0.113.6"}},
+		{"one Host twice", []interface{}{1, 3, 1}, errImportJumpDuplicate,
+			map[string]string{"host": "203.0.113.6", "jump_host_id": "1"}},
+		{"more than eight Hosts", []interface{}{1, 3, 4, 1, 3, 4, 1, 3, 4}, errImportJumpTooMany,
+			map[string]string{"host": "203.0.113.6", "max": "8"}},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			source := testRoute(t)
+			target := newTransferInstall(t)
+
+			target.registerHost(t, passwordHost("198.51.100.1"))
+
+			before := target.configuration(t)
+
+			file := rewriteHosts(t, source.exportTunnels(t, testExportPassword), testExportPassword,
+				func(host map[string]interface{}) {
+					if host["address"] == "203.0.113.6" {
+						host["jump_host_ids"] = tt.route
+					}
+				})
+
+			rec := target.importTunnels(t, file, testExportPassword)
+			if rec.Code != http.StatusBadRequest {
+				t.Fatalf("the import answered %d, want %d: %s", rec.Code, http.StatusBadRequest, rec.Body.String())
+			}
+
+			var refused struct {
+				Code errorCode         `json:"error_code"`
+				Args map[string]string `json:"error_args"`
+			}
+
+			if err := json.Unmarshal(rec.Body.Bytes(), &refused); err != nil {
+				t.Fatalf("the refusal is not JSON: %v", err)
+			}
+
+			if refused.Code != tt.code || !reflect.DeepEqual(refused.Args, tt.args) {
+				t.Errorf("the import was refused under %s with %v, want %s with %v",
+					refused.Code, refused.Args, tt.code, tt.args)
+			}
+
+			if !reflect.DeepEqual(target.configuration(t), before) || target.manager.count() != 0 {
+				t.Fatalf("a refused import changed what is stored or woke the loop")
+			}
+		})
+	}
+}
+
+// TestAnIDTheFileCarriesTwiceIsRefused is a file with ids whose ids do not
+// name one row each: an id that is missing or taken by another Host, another
+// service port or, for a local forward, another forward of the same Host.
+func TestAnIDTheFileCarriesTwiceIsRefused(t *testing.T) {
+	for _, tt := range []struct {
+		name   string
+		change func(content map[string]interface{})
+		code   errorCode
+	}{
+		{"a Host with the id of another", func(content map[string]interface{}) {
+			content["hosts"].([]interface{})[1].(map[string]interface{})["id"] = 1
+		}, errImportHostIDInvalid},
+		{"a Host without an id", func(content map[string]interface{}) {
+			delete(content["hosts"].([]interface{})[0].(map[string]interface{}), "id")
+		}, errImportHostIDInvalid},
+		{"a service port with the id of another", func(content map[string]interface{}) {
+			content["service_ports"].([]interface{})[1].(map[string]interface{})["id"] = 2
+		}, errImportServicePortIDInvalid},
+		{"a local forward with the number of another", func(content map[string]interface{}) {
+			forwards := content["hosts"].([]interface{})[2].(map[string]interface{})["local_forwards"].([]interface{})
+			forwards[1].(map[string]interface{})["number"] = 2
+		}, errImportLocalForwardNumberInvalid},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			source := testRoute(t)
+			target := newTransferInstall(t)
+
+			target.registerHost(t, passwordHost("198.51.100.1"))
+
+			before := target.configuration(t)
+
+			file := rewriteContent(t, source.exportTunnels(t, testExportPassword), testExportPassword, tt.change)
+
+			rec := target.importTunnels(t, file, testExportPassword)
+			if rec.Code != http.StatusBadRequest {
+				t.Fatalf("the import answered %d, want %d: %s", rec.Code, http.StatusBadRequest, rec.Body.String())
+			}
+
+			if errorCodeOf(t, rec) != tt.code {
+				t.Errorf("the import was refused under %s, want %s", errorCodeOf(t, rec), tt.code)
+			}
+
+			if !reflect.DeepEqual(target.configuration(t), before) {
+				t.Fatalf("a refused import changed what is stored")
+			}
+		})
+	}
+}
+
+// rewriteContent opens a file, hands its content over as the JSON object it
+// is, and seals what comes back with the same password and format version.
+func rewriteContent(t *testing.T, file string, password string, change func(content map[string]interface{})) string {
+	t.Helper()
+
+	plaintext, err := crypto.DecryptWithPassword(file, password)
+	if err != nil {
+		t.Fatalf("failed to open the file: %v", err)
+	}
+
+	var read transferFile
+
+	err = json.Unmarshal([]byte(plaintext), &read)
+	if err != nil {
+		t.Fatalf("failed to read the file: %v", err)
+	}
+
+	var content map[string]interface{}
+
+	err = json.Unmarshal(read.Content, &content)
+	if err != nil {
+		t.Fatalf("failed to read the content of the file: %v", err)
+	}
+
+	change(content)
+
+	return sealedAtFormat(t, read.FormatVersion, content, password)
+}
+
+// TestADryRunWritesNothing is the question a screen asks before it replaces
+// anything: the file is opened and checked, the answer says what is stored and
+// what the file holds, and nothing is written, the loop is not woken and no
+// import is logged. The password of the account is asked for all the same, and
+// a file that would be refused is refused.
+func TestADryRunWritesNothing(t *testing.T) {
+	source := testRoute(t)
+	target := newTransferInstall(t)
+
+	target.registerHost(t, passwordHost("198.51.100.1"))
+	target.registerHost(t, passwordHost("198.51.100.2"))
+	target.jump(t, "198.51.100.2", "198.51.100.1")
+
+	before := target.configuration(t)
+	file := source.exportTunnels(t, testExportPassword)
+
+	rec := target.importTunnelsWith(t, map[string]interface{}{
+		"password":         testExportPassword,
+		"account_password": testPassword,
+		"file":             file,
+		"dry_run":          true,
+	})
+	if rec.Code != http.StatusOK {
+		t.Fatalf("the dry run answered %d: %s", rec.Code, rec.Body.String())
+	}
+
+	var answered importedTunnels
+
+	decodeTransfer(t, rec).into(t, &answered)
+
+	want := importedTunnels{
+		DryRun:  true,
+		Current: transferCounts{Hosts: 2, JumpHosts: 1},
+		File:    transferCounts{Hosts: 4, ServicePorts: 2, Assignments: 3, LocalForwards: 2, JumpHosts: 2},
+	}
+	if answered != want {
+		t.Errorf("the dry run answered %+v, want %+v", answered, want)
+	}
+
+	if !reflect.DeepEqual(target.configuration(t), before) {
+		t.Fatalf("the dry run changed what is stored")
+	}
+
+	if target.manager.count() != 0 || target.logs.FilterMessage("imported a tunnel configuration").Len() != 0 {
+		t.Fatalf("the dry run woke the loop or was logged as an import")
+	}
+
+	rec = target.importTunnelsWith(t, map[string]interface{}{
+		"password":         testExportPassword,
+		"account_password": "not the password of the account",
+		"file":             file,
+		"dry_run":          true,
+	})
+	if rec.Code != http.StatusUnauthorized || errorCodeOf(t, rec) != errImportAccountPasswordWrong {
+		t.Fatalf("a dry run with the wrong account password answered %d: %s", rec.Code, rec.Body.String())
+	}
+
+	broken := rewriteHosts(t, file, testExportPassword, func(host map[string]interface{}) {
+		host["jump_host_ids"] = []interface{}{42}
+	})
+
+	rec = target.importTunnelsWith(t, map[string]interface{}{
+		"password":         testExportPassword,
+		"account_password": testPassword,
+		"file":             broken,
+		"dry_run":          true,
+	})
+	if rec.Code != http.StatusBadRequest || errorCodeOf(t, rec) != errImportJumpUnknownHost {
+		t.Fatalf("a dry run of a file that is refused answered %d: %s", rec.Code, rec.Body.String())
+	}
+
+	if !reflect.DeepEqual(target.configuration(t), before) {
+		t.Fatalf("a refused dry run changed what is stored")
+	}
+}
+
+// TestOnlyTheTunnelRowsOfAssignmentsTheFileCarriesAreKept is the state of the
+// connections. A row whose assignment the file carries is left to the loop,
+// which goes on writing the state of that tunnel into it or restarts it; one
+// whose assignment is gone is deleted with it.
+func TestOnlyTheTunnelRowsOfAssignmentsTheFileCarriesAreKept(t *testing.T) {
+	source := testRoute(t)
+	target := newTransferInstall(t)
+
+	for _, row := range []models.Tunnel{
+		{HostID: 1, SPID: 2, Status: "connected", Server: "a", Local: "b", Remote: "c"},
+		{HostID: 3, SPID: 2, Status: "connected", Server: "a", Local: "b", Remote: "c"},
+		{HostID: 7, SPID: 9, Status: "error", Server: "a", Local: "b", Remote: "c"},
+	} {
+		err := target.db.Create(&row).Error
+		if err != nil {
+			t.Fatalf("failed to store a tunnel row: %v", err)
+		}
+	}
+
+	rec := target.importTunnels(t, source.exportTunnels(t, testExportPassword), testExportPassword)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("the import answered %d: %s", rec.Code, rec.Body.String())
+	}
+
+	var kept []models.Tunnel
+
+	err := target.db.Order("host_id, sp_id").Find(&kept).Error
+	if err != nil {
+		t.Fatalf("failed to read the tunnel rows: %v", err)
+	}
+
+	if len(kept) != 1 || kept[0].HostID != 1 || kept[0].SPID != 2 || kept[0].Status != "connected" {
+		t.Fatalf("the tunnel rows after the import are %+v, want only the one of Host 1 and service port 2", kept)
+	}
 }
