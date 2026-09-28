@@ -65,7 +65,7 @@ one assignment is what one tunnel is built from.
 
 | Part | What it is |
 |------|------------|
-| Host | An SSH server to connect to: address or host name, port, user, and a private key or a password |
+| Host | An SSH server to connect to: address or host name, port, user, and a private key or a password, and the Hosts it is reached through when it is not reached directly |
 | Service port | The service to publish, at any address this machine can reach, and the port to open on the Hosts that carry it |
 | Assignment | Which Host carries which service port. One assignment that is switched on, on a Host that is enabled, is one tunnel |
 | Local forward | A port opened on this machine, carried through one Host to an address that Host reaches |
@@ -91,6 +91,10 @@ Tunnel Manager keeps the forwards as records and runs what the records say.
   address only that Host reaches. It is stored with its Host, built again when
   it drops, and listed in the same status table as the tunnels. A Host can also
   be a SOCKS5 proxy, the way `ssh -D` does.
+- **Hosts behind other Hosts.** A Host can carry a jump route, the Hosts to
+  pass through on the way to it, the way `ssh -J` does, up to 8 of them. Its
+  tunnels, its local forwards and its SOCKS5 proxy all take the route, and a
+  connection that stops on it says at which Host and why.
 - **Records, not a pile of commands.** Hosts, service ports and assignments are
   rows in the database. A reconcile pass keeps the running tunnels equal to the
   stored ones and builds a dropped one again, doubling the wait after each
@@ -108,7 +112,8 @@ Tunnel Manager keeps the forwards as records and runs what the records say.
   stays down past a delay you set, and another when it comes back.
 - **Settings in one place.** The settings are in the database and are changed
   in the browser. The whole configuration moves as one file sealed with a
-  password. SSH passwords, private keys and the webhook and mail settings are
+  password, and importing it replaces the tunnel configuration that was there.
+  SSH passwords, private keys and the webhook and mail settings are
   kept encrypted with the key file of the installation.
 - **Also:** API tokens limited to their scopes, Prometheus metrics at
   `/api/metrics`, one binary that installs itself as a service with
@@ -123,14 +128,18 @@ Tunnel Manager keeps the forwards as records and runs what the records say.
 - Turns a Host into a SOCKS5 proxy, the way `ssh -D` does: a browser pointed at
   a port on this machine reaches whatever that Host reaches, limited to the
   client addresses you allow.
-- Connects to the forwarded port itself once the tunnel is up and says whether
-  it answered, since which address the SSH server binds it to is that server's
-  decision.
+- Reaches a Host through other Hosts along its jump route, several hops deep,
+  for its tunnels, its local forwards and its SOCKS5 proxy alike.
+- Says what the SSH server answered for the forwarded port and what the Host
+  has listening once the tunnel is up, since which address the port is bound to
+  is that server's decision.
 - Serves the UI and the API over HTTPS, with a certificate it makes on the first
   start and one of your own once you register it.
 - Keeps the SSH passwords, the private keys and the certificate key encrypted
   with a key file of this installation.
 - Carries the whole configuration to another installation as one encrypted file.
+  An import replaces every Host, service port and local forward there with what
+  the file holds, after showing how much of each would go and come in.
 - Lets a script call the API with a token made on the Settings screen, limited
   to the scopes it was made with.
 - Serves the tunnel status as Prometheus metrics, for Prometheus or telegraf to
@@ -220,7 +229,7 @@ well, and what `-purge` removes cannot be brought back.
 
 | Section | What is in it |
 |---------|---------------|
-| [How it works](docs/reference.md#how-it-works) | The reconcile loop, the assignments, one tunnel end to end, local forwards, the SOCKS5 proxy of a Host |
+| [How it works](docs/reference.md#how-it-works) | The reconcile loop, the assignments, one tunnel end to end, local forwards, the SOCKS5 proxy of a Host, jump routes |
 | [Install and run](docs/reference.md#install-and-run) | The flags, where the files go, Docker Compose, systemd, from source |
 | [Installing as a service](docs/reference.md#installing-as-a-service) | The four flags, what an install does over one that is already there, what a removal reads the paths from |
 | [HTTPS and the certificate](docs/reference.md#https-and-the-certificate) | The browser warning, registering a certificate of your own, renewing, turning HTTPS off |

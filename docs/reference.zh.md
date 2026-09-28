@@ -16,7 +16,7 @@ Tunnel Manager 建立 SSH 隧道，并让它们保持连接。你注册它要登
 
 | 你注册的内容 | 字段 | 是什么 |
 |--------------|------|--------|
-| Host | `address`、`port`、`user`、`private_key`、`key_passphrase`、`password`、`description`、`enabled`、`socks_enabled`、`socks_port`、`socks_bind_scope`、`socks_allowed_sources` | Tunnel Manager 要登录的 SSH 服务器。可以用私钥登录，可以用密码登录，也可以两个都注册，但至少要有一个。密钥、密钥的密码和登录密码都加密保存。`socks_` 开头的字段是它可以带的 [SOCKS5 代理](#host-的-socks5-代理)。 |
+| Host | `address`、`port`、`user`、`private_key`、`key_passphrase`、`password`、`description`、`enabled`、`jump_host_ids`、`socks_enabled`、`socks_port`、`socks_bind_scope`、`socks_allowed_sources` | Tunnel Manager 要登录的 SSH 服务器。可以用私钥登录，可以用密码登录，也可以两个都注册，但至少要有一个。密钥、密钥的密码和登录密码都加密保存。`jump_host_ids` 是不能直接连到时要经由的[跳板路线](#跳板路线)。`socks_` 开头的字段是它可以带的 [SOCKS5 代理](#host-的-socks5-代理)。 |
 | 服务端口 | `service_address`、`service_port`、`local_port` | 要发布的服务，以及在负责它的每台 Host 上打开的端口。 |
 | 分配关系 | `host_id`、`sp_id`、`bind_scope` | 一台 Host 配一个服务端口，表示这台 Host 负责它。隧道就是根据它建立的，你注册 Host 或服务端口时它会自动生成。`bind_scope` 是请求把转发端口开在 Host 的哪个范围上，取 `loopback` 或 `wildcard`，不给就是通配范围。 |
 | 本地转发 | `local_port`、`bind_scope`、`target_address`、`target_port`、`description` | 在本机打开的端口，连到它的连接通过一台 Host 的 SSH 连接送到 Host 眼中的 `target_address:target_port`。只属于那台 Host。 |
@@ -370,6 +370,7 @@ Host 就能到达 Host 眼中的 `target_address:target_port`，因为 SSH 登�
 | `reconnecting` | 连接断了或尝试失败了，正在重新连接。`retry_count` 是次数 |
 | `error` | 上一次尝试失败了，原因在 `last_error`。登录被拒时会停在这里直到修改 Host；其他情况会在监控间隔之后重试，每连续失败一次等待翻倍，直到 `reconnect_max_interval_sec` |
 | `host_key_unapproved`、`host_key_mismatch` | 和隧道一样，主机密钥被拒绝了。会停在这里直到批准密钥 |
+| `jump_host_disabled` | Host 的[跳板路线](#跳板路线)上有一台 Host 已停用，所以什么都不连接。启用那台 Host 就会恢复 |
 
 **状态保存在运行本地转发的那个进程的内存里**，本地转发的接口和 `GET /api/status` 都会返回
 它。`GET /api/status` 把本地转发和隧道放在一起，并和隧道合在一起统计，见
@@ -475,7 +476,7 @@ SSH 服务器不允许，其他情况则是一般性失败。从 Host 发起的�
 | `off` | 代理没有开启，什么都不打开 |
 | `disabled` | 代理开启了，但 Host 已停用，什么都不打开 |
 | `stopped` | Host 已启用，但没有在运行的代理：调谐循环还没轮到它，或者启动失败了，失败的话日志里有 |
-| `starting`、`connected`、`reconnecting`、`error`、`host_key_unapproved`、`host_key_mismatch` | 运行中的代理报告的值，含义和本地转发相同，见[本地转发](#本地转发) |
+| `starting`、`connected`、`reconnecting`、`error`、`host_key_unapproved`、`host_key_mismatch`、`jump_host_disabled` | 运行中的代理报告的值，含义和本地转发相同，见[本地转发](#本地转发) |
 
 `connected` 表示 SSH 连接存在、`socks_port` 已打开，不表示某个网站有应答。状态保存在内存里，
 `GET /api/status` 里没有，状态页也不统计。Host 上的 SSH 服务器和本地转发一样，必须允许这个方向
@@ -495,8 +496,76 @@ SSH 服务器不允许，其他情况则是一般性失败。从 Host 发起的�
   Chrome 不会把 `127.0.0.1` 这样的回环地址发给代理。要访问 Host 在它自己的回环地址上提供的
   页面，再加上 `--proxy-bypass-list="<-loopback>"`。
 
-**导出的文件里带着每台 Host 的代理**，就是那台 Host 上的上述四个字段。不带这些字段的文件会让
-Host 的代理保持原样，见[导出与导入](#导出与导入)。
+**导出的文件里带着每台 Host 的代理**，就是那台 Host 上的上述四个字段。代理出现之前写出的文件，
+导入的 Host 没有代理，见[导出与导入](#导出与导入)。
+
+### 跳板路线
+
+**一台 Host 可以经由其他 Host 连接。** 它的跳板路线是去往它时要途经的 Host 按顺序排成的列表，
+和 `ssh -J` 接收的一样。第一台由本机直接连接，之后的每一台都通过前一台的通道连接，所以通往
+终点 Host 的 SSH 连接，是在通往途经的每一台 Host 的连接里面走的。途经的 Host 上不会打开端口：
+它只是把 SSH 连接传过去，看不到里面的内容。没有路线的 Host 直接连接，和有路线之前的所有 Host
+一样。
+
+```mermaid
+flowchart LR
+    subgraph here [本机]
+        tm[tunnel-manager]
+    end
+    hop1[第 1 站<br/>已注册的 Host]
+    hop2[第 2 站<br/>已注册的 Host]
+    target[拥有这条路线的 Host]
+
+    tm ==>|"1. SSH，直接连接"| hop1
+    hop1 ==>|"2. SSH，经第 1 站的通道"| hop2
+    hop2 ==>|"3. SSH，经第 2 站的通道"| target
+```
+
+**这台 Host 运行的东西全都走这条路线**：它的隧道、本地转发和 SOCKS5 代理。没有路线时它们各自
+打开自己的 SSH 连接，有路线时也各自从头到尾打开整条路线。
+
+**只经过路线上写下的 Host，并按写下的顺序经过。** 途经的 Host 自己的路线不会被沿用：如果路线上
+第一台 Host 本身要经由另一台才能到达，那一台也得写进这条路线。面板可以把某台 Host 平时的路线
+放到它前面，这是一次性的复制，之后那台 Host 的路线再改，这条路线也不会变。
+
+**路线上的每台 Host 都是已注册的 Host**，各自用自己的用户和凭据登录，并用自己信任的主机密钥
+检查。途经的 Host 出示的密钥如果没人批准过，它等在**那台 Host** 上，而不是终点的 Host 上，也要在
+那台 Host 上批准，见[主机密钥的批准](#主机密钥的批准)。一条路线**最多经过 8 台 Host**，因为每台
+不应答的 Host 都要各自等完连接超时。路线不能写拥有它的 Host 自己，也不能把同一台 Host 写两次。
+
+**改动途经的 Host，经过它的东西都会重新连接。** 它的地址、端口、用户、凭据、信任的密钥以及是否
+启用，都是这条路线上每一条连接的构成材料，所以其中任何一项改动，路线经过它的每台 Host 的隧道、
+本地转发和代理都会停下再重新启动。
+
+**已停用的 Host 也可以放进路线，路线会保留，但在它停用期间，这条路线上什么都不连接**：停用一台
+Host 就是说谁也不要连它，而经过它也是在连它。在这期间，走这条路线的东西会显示
+`jump_host_disabled`，并计为错误，见[读懂隧道状态](#读懂隧道状态)；启用那台 Host 就会恢复。
+**在别的 Host 的路线上的 Host 不能删除**：删除会被 `409` 拒绝，并指出经过它的那些 Host。
+
+**在路线上停下的连接会说明停在哪里。** `jump_seq` 是站号，直接连接的 Host 记为 1；
+`jump_host_id` 是那一站的 Host；`jump_reason` 是原因。它们出现在状态行和 Host 的本地转发上，
+SOCKS5 代理则以 `socks_jump_seq`、`socks_jump_host_id` 和 `socks_jump_reason` 出现在 Host 上。
+没有在路线上停下的连接，也就是已建立的连接，或者在终点 Host 上失败的连接，是 `0`、`0` 和 `""`。
+
+| `jump_reason` | 是什么让它停下 |
+|---------------|----------------|
+| `disabled` | 那一站的 Host 已停用，什么都没有连接 |
+| `dial` | 没连到那一站的 Host，或它没在限定时间内完成握手，或它不肯打开通往下一站的通道，比如 `AllowTcpForwarding` 为 `no` 的服务器 |
+| `auth` | 那一站的 Host 拒绝了登录 |
+| `host_key` | 那一站的 Host 出示的密钥不是它受信任的那把，或者它还没有受信任的密钥 |
+| `route` | 路线存得不对：写了不存在的 Host、Host 自己、同一台 Host 两次，或超过 8 台。问题在整条路线的长度时，`jump_seq` 和 `jump_host_id` 为 0 |
+
+界面会在行下面的一行里，按原因写出该做什么，以及在哪台 Host 上做。
+
+**在 Hosts 页面上，路线在表单里和行里设置。** 添加和编辑表单在 SSH 端口和用户下面有
+**跳板路线** 一栏，带有 **设置路线**、**修改路线** 和 **清除路线**；正在添加的 Host 的路线在
+添加 Host 时一起保存。列表在端口后面有 **跳板路线** 一列，显示 **无**、站数，或者在途经的 Host
+已停用或有密钥在等待时显示带 `!` 的站数，点它会打开同一个面板。面板里有带搜索的途经 Host 列表，
+以及从本机到这台 Host 的路线。点一台 Host 再点 **加入路线**，它会放在终点 Host 的正前方；要放到
+别的位置，就点路线连线上的 **+ 放在这里**；在桌面上也可以拖过去。↑、↓ 和 ✕ 用来移动和拿掉一站。
+列表里没有的 Host，先在 Hosts 页面上添加，**去添加 Host** 会带你过去。
+
+在 API 里，路线就是 Host 上的 `jump_host_ids`，见 [Host](#host)。
 
 ## 安装与运行
 
@@ -984,11 +1053,11 @@ curl -s -b cookies.txt -X PUT "$BASE/api/account" \
 
 | 页面 | 路径 | 显示什么、能做什么 |
 |------|------|--------------------|
-| Status | `/ui/status` | 四个计数（期望、已连接、重连中、出错，四个都把两种转发合在一起数）、一句话说明它们之间的差是怎么回事，以及两种行各占一行：Host、种类、服务端口、状态、服务器、开在哪、可访问地址、连到哪、重试次数、上次连上的时间。本地转发那一行的服务端口一栏是 `-`。开在哪是打开端口的地址，可访问地址是客户端要连的地址，每个地址旁都有复制按钮：在所有接口上打开的端口是登记的 Host 地址加端口，本地转发是打开这个页面所用的地址，在回环上打开的端口是 `127.0.0.1` 和 `[::1]`，复制回环地址时会提示它只能在那台机器上使用。出了问题的隧道会在它下面横跨整张表再加一行写清哪里不对。已建立的隧道在有与请求不一致之处时，下面会写出关于这条转发的地址已知的信息，把请求过的、SSH 服务器应答的、Host 上正在监听的分开来写；它从不说端口是开着的，也不会去连接该端口。本地转发的目标是否应答，在该 Host 的本地转发里。这些行是一页一页出的，一开始每页十行，页大小和页码在表格上方选；计数始终是整套安装的计数，不是这一页的。它每 5 秒刷新一次，刷新后仍停在你正在看的那一页。表格上方的搜索框可以缩小行，见[搜索](#搜索)。 |
-| Hosts | `/ui/hosts` | 每台 Host 一行，有 ID、地址、端口、用户、描述、是否启用、SOCKS5 代理和更新时间。行是一页一页出的，一开始每页十行，页大小（10、20、30、50 或 100）和页码在表格上方选。这个选择只记在这个页面上，而短到一页最小页大小就放得下的列表，索性连控件都不显示。可以添加 Host、编辑、启用或停用、删除。添加和编辑表单里有粘贴私钥的框、拖放密钥文件的区域，还有给带密码的密钥填密码的框；添加表单里有一个默认勾上的 **Assign all service ports**，它决定这台 Host 一开始负责什么，旁边的 **在 Host 上的可达范围** 列表则是这个勾选所建立的全部分配关系的起点范围。行里的 **Service ports** 会打开一个面板，列出所有服务端口，这台 Host 负责的那些已勾选，每一行旁边还有它的可达范围：可以在上方选一个范围套用到所有勾选的行，也可以单独改一行，没勾的行不会被动；每一行的 **启用** 勾选框可以暂停这条分配关系的隧道而不拿走它；保存时只发送改动过的部分，所以在这个面板里勾选一项，不会影响你没有查看的那些页。行里的 **Local forwards** 会打开一个面板，一页一页地列出这台 Host 的本地转发及各自的状态，在那里添加、修改、开启和关闭、删除，可以一行一行地做，也可以对勾选的行一起做，见[本地转发](#本地转发)。添加和编辑表单还能开启这台 Host 的 SOCKS5 代理，那一栏显示端口和状态，见 [Host 的 SOCKS5 代理](#host-的-socks5-代理)。 |
+| Status | `/ui/status` | 四个计数（期望、已连接、重连中、出错，四个都把两种转发合在一起数）、一句话说明它们之间的差是怎么回事，以及两种行各占一行：Host、种类、服务端口、状态、服务器、开在哪、可访问地址、连到哪、重试次数、上次连上的时间。本地转发那一行的服务端口一栏是 `-`。开在哪是打开端口的地址，可访问地址是客户端要连的地址，每个地址旁都有复制按钮：在所有接口上打开的端口是登记的 Host 地址加端口，本地转发是打开这个页面所用的地址，在回环上打开的端口是 `127.0.0.1` 和 `[::1]`，复制回环地址时会提示它只能在那台机器上使用。出了问题的隧道会在它下面横跨整张表再加一行写清哪里不对，在跳板路线上停下的，这一行还会写出该去看途经的哪台 Host、该做什么。已建立的隧道在有与请求不一致之处时，下面会写出关于这条转发的地址已知的信息，把请求过的、SSH 服务器应答的、Host 上正在监听的分开来写；它从不说端口是开着的，也不会去连接该端口。本地转发的目标是否应答，在该 Host 的本地转发里。这些行是一页一页出的，一开始每页十行，页大小和页码在表格下方选；计数始终是整套安装的计数，不是这一页的。它每 5 秒刷新一次，刷新后仍停在你正在看的那一页。表格上方的搜索框可以缩小行，见[搜索](#搜索)。 |
+| Hosts | `/ui/hosts` | 每台 Host 一行，有 ID、地址、端口、跳板路线、用户、描述、是否启用、SOCKS5 代理和更新时间。行是一页一页出的，一开始每页十行，页大小（10、20、30、50 或 100）和页码在表格下方选。这个选择只记在这个页面上，而短到一页最小页大小就放得下的列表，索性连控件都不显示。可以添加 Host、编辑、启用或停用、删除。添加和编辑表单里有粘贴私钥的框、拖放密钥文件的区域，还有给带密码的密钥填密码的框；添加表单里有一个默认勾上的 **Assign all service ports**，它决定这台 Host 一开始负责什么，旁边的 **在 Host 上的可达范围** 列表则是这个勾选所建立的全部分配关系的起点范围。行里的 **Service ports** 会打开一个面板，列出所有服务端口，这台 Host 负责的那些已勾选，每一行旁边还有它的可达范围：可以在上方选一个范围套用到所有勾选的行，也可以单独改一行，没勾的行不会被动；每一行的 **启用** 勾选框可以暂停这条分配关系的隧道而不拿走它；保存时只发送改动过的部分，所以在这个面板里勾选一项，不会影响你没有查看的那些页。行里的 **Local forwards** 会打开一个面板，一页一页地列出这台 Host 的本地转发及各自的状态，在那里添加、修改、开启和关闭、删除，可以一行一行地做，也可以对勾选的行一起做，见[本地转发](#本地转发)。添加和编辑表单还能开启这台 Host 的 SOCKS5 代理，那一栏显示端口和状态，见 [Host 的 SOCKS5 代理](#host-的-socks5-代理)。添加和编辑表单里有 **跳板路线** 一栏，点一行的跳板路线列会为那台 Host 打开同一个面板，见[跳板路线](#跳板路线)。 |
 | Service Ports | `/ui/service-ports` | 每个服务端口一行，有 ID、服务地址、服务端口、本地端口、描述和更新时间。行和 Hosts 一样是一页一页出的，页大小和页码各记各的。可以添加、编辑和删除。添加表单里有一个默认勾上的 **Assign to all hosts**，它决定一开始哪些 Host 负责它，旁边的 **在 Host 上的可达范围** 列表则是这个勾选所建立的分配关系的起点范围；之后哪些 Host 负责它、每条分配关系各能到多远，都在 Hosts 页面上修改。Hosts 和 Service Ports 页面的表格上方各有一个搜索框，见[搜索](#搜索)。 |
 | Logs | `/ui/logs` | 日志文件的末尾，最新的在最下面，可以按级别过滤，也可以选看多少行。它每 5 秒刷新一次。它读的是进程此刻正在写的那个文件，轮转后的文件不显示。行按页面的语言显示，文件本身还是英文；见[页面的语言](#页面的语言)。 |
-| Settings | `/ui/settings` | 分为常规、日志、告警、HTTPS、账户、设置管理、更新、服务几个标签页，打开的标签页记在地址的 `#` 后面，刷新后仍回到它。标签页上方，无论在哪个标签页，都显示已经保存但还没生效的设置，那张卡片里有一个让它们生效的 Restart；所有已保存的设置，以及一次保存改了什么（没选过语言的浏览器看本安装用哪种语言，以及各带一个测试按钮的 webhook 和邮件告警，也在这里，见[告警](#告警)）；正在使用的证书，带一个重新生成它的按钮和两个注册你自己证书的框；这个账号的用户名和密码；把隧道配置和管理器的设置各加密成一个文件导出，以及把这样的文件导回来的导入；一个停止服务再重新启动的 Restart；还有“服务”标签页里的卸载。见[设置](#设置)。 |
+| Settings | `/ui/settings` | 分为常规、日志、告警、HTTPS、账户、设置管理、更新、服务几个标签页，打开的标签页记在地址的 `#` 后面，刷新后仍回到它。标签页上方，无论在哪个标签页，都显示已经保存但还没生效的设置，那张卡片里有一个让它们生效的 Restart；所有已保存的设置，以及一次保存改了什么（没选过语言的浏览器看本安装用哪种语言，以及各带一个测试按钮的 webhook 和邮件告警，也在这里，见[告警](#告警)）；正在使用的证书，带一个重新生成它的按钮和两个注册你自己证书的框；这个账号的用户名和密码；把隧道配置和管理器的设置各加密成一个文件导出，以及把这样的文件导回来的导入（隧道配置要先经过一个列出各项要删除多少、写入多少的面板）；一个停止服务再重新启动的 Restart；还有“服务”标签页里的卸载。见[设置](#设置)。 |
 | Update | `/ui/settings#update` | 设置里的一个标签页，`/ui/update` 也会打开它。本安装正在运行的版本，与最新发布并排显示，以及决定是否再去查看这两者的两个设置。最新发布是按计时读取的，不是在打开页面时读取，所以打开页面不会给发布 API 带来负担；要立刻读取就按按钮。若发布更新，且本进程是由服务注册启动的，页面会给出安装按钮，它会要求账户密码，并在最后重启服务。参见[更新](#更新)。 |
 | Manual | `/ui/manual` | 一套安装由什么组成，在一个页面上用图和文字讲清楚：它做什么、一条隧道的完整流程、Host 和服务端口以及它们之间的分配关系、转发端口无法连接意味着什么、那两个间隔，还有文件放在哪里。它不向服务器请求任何数据，所以登录页面也能显示同样的内容。 |
 | Login | `/ui/login` | 没有会话的客户端会落到这里。第一次登录时用户名留空。账号还没有用户名时，它会把你带到初始化页面。上面的 **Manual** 按钮会把手册作为面板盖在它上面打开，不需要会话，因为最需要手册的时刻，正是什么都还没运行起来的时候。 |
@@ -1601,7 +1670,7 @@ jq -r '.data.token'
 | 指标 | 含义 |
 |------|------|
 | `tunnel_manager_info{version}` | 版本，值恒为 `1` |
-| `tunnel_manager_forwards{kind,status}` | 按状态统计的运行中转发数。`kind` 为 `service_port`、`local_forward` 或 `socks`。前两种里 `connected`、`reconnecting`、`error` 相加，等于 `GET /api/status` 返回的计数 |
+| `tunnel_manager_forwards{kind,status}` | 按状态统计的运行中转发数。`kind` 为 `service_port`、`local_forward` 或 `socks`。前两种里 `connected`、`reconnecting`，以及加上 `jump_host_disabled` 的 `error` 相加，等于 `GET /api/status` 返回的计数 |
 | `tunnel_manager_forwards_desired{kind}` | 截至上一轮调谐应当运行的数量，即按种类拆开的 `GET /api/status` 的 `desired_tunnels` |
 | `tunnel_manager_forward_up{kind,host,local_port,remote}` | 运行中的转发已连接为 `1`，否则为 `0`。每个运行中的转发一条时间序列，已关闭的转发没有 |
 | `tunnel_manager_forward_retries{kind,host,local_port}` | 该转发自上次连上以来的重试次数 |
@@ -1790,10 +1859,10 @@ curl -s -b cookies.txt "$BASE/api/host?q=example&page=1&size=20"
 | 方法 | 路径 | 做什么 |
 |------|------|--------|
 | `POST` | `/api/host` | 创建一台 Host。`enabled` 可以不填，未指定时 Host 为启用状态；`bind_scope` 是这次请求所建立的分配关系开在哪个范围上 |
-| `GET` | `/api/host` | Host 的一页，旧的在前。收 `page` 和 `size`，见[分页](#分页)；也收 `q`，见[搜索](#搜索) |
+| `GET` | `/api/host` | Host 的一页，旧的在前。收 `page` 和 `size`，见[分页](#分页)；也收 `q`，见[搜索](#搜索)；按 id 列表读 Host 用 `ids` |
 | `GET` | `/api/host/:id` | 读一台 Host |
 | `PUT` | `/api/host/:id` | 更新一台 Host。每个字段都可以不填；`enabled` 为 false 会停止它的隧道 |
-| `DELETE` | `/api/host/:id` | 删除一台 Host，以及涉及它的分配关系和它的本地转发 |
+| `DELETE` | `/api/host/:id` | 删除一台 Host，以及涉及它的分配关系、它的本地转发和它的跳板路线。在别的 Host 的跳板路线上的 Host 会被 `409` 拒绝 |
 | `GET` | `/api/host/:id/service-port` | 服务端口的一页，附带这台 Host 的分配关系，见[一台 Host 负责的服务端口](#一台-host-负责的服务端口) |
 | `PUT` | `/api/host/:id/service-port` | 为这台 Host 添加和移除分配关系 |
 | `GET` | `/api/host/:id/local-forward` | 这台 Host 的本地转发及其状态的一页，见[一台 Host 的本地转发](#一台-host-的本地转发) |
@@ -1813,6 +1882,7 @@ curl -s -b cookies.txt "$BASE/api/host?q=example&page=1&size=20"
 | `socks_enabled`、`socks_port` | 可不填。`socks_enabled` 为 true 时 `socks_port` 必填 | 可不填；没写的保持原样 |
 | `socks_bind_scope` | 可不填。取 `loopback` 或 `wildcard`，不填或发成空就是 `loopback` | 可不填；不填或发成空，保留已保存的范围 |
 | `socks_allowed_sources` | 可不填。留空则接受所有地址 | 可不填；不填则保留已保存的列表，发成 `""` 则接受所有地址 |
+| `jump_host_ids` | 可选。要经过的已注册 Host 的 id，按顺序，最多 8 个。不给或给 `[]` 就直接连接 | 可选；不给或给 `null` 保留已保存的路线，给 `[]` 则清除路线 |
 
 既没有密钥又没有密码的创建会被拒绝，无法使用的密钥也一样。拒绝时会说明是哪一种：这个值不是
 PEM、密钥有密码保护但没把密码发来、或者密码打不开这把密钥。这几种情况下什么都不会被保存。
@@ -1848,7 +1918,9 @@ curl -s -b cookies.txt -X POST "$BASE/api/host" \
 **SOCKS5 字段是构建 Host 代理的材料**，见 [Host 的 SOCKS5 代理](#host-的-socks5-代理)。开启代理却
 不给端口，或允许的来源地址读不懂，会被 `400` 拒绝。开启或换到另一台 Host 的代理、某个本地转发或
 本服务器占着的端口，会被 `409` 拒绝。两种情况都不保存任何内容。凡是带着 Host 的响应，都带着保存
-下来的这四个字段、总是写成单词的 `socks_bind_scope`，以及 `socks_status` 和 `socks_last_error`。
+下来的这四个字段、总是写成单词的 `socks_bind_scope`、`socks_status` 和 `socks_last_error`，以及
+说明代理在跳板路线上哪里停下的 `socks_jump_seq`、`socks_jump_host_id` 和 `socks_jump_reason`，
+见[跳板路线](#跳板路线)。
 
 ```bash
 # 在端口 1080 上开启 Host 3 的 SOCKS5 代理，只接受两个来源。
@@ -1856,6 +1928,39 @@ curl -s -b cookies.txt -X PUT "$BASE/api/host/3" \
   -H 'Content-Type: application/json' \
   -H "X-CSRF-Token: $CSRF" \
   -d '{"socks_enabled":true,"socks_port":1080,"socks_allowed_sources":"203.0.113.0/24, 198.51.100.7"}'
+```
+
+**`jump_host_ids` 是 Host 的跳板路线**，见[跳板路线](#跳板路线)。凡是带着 Host 的响应都带着它，
+直接连接的 Host 是 `[]`。路线写了未注册的 Host（`host.jump.unknown`）、Host 自己
+（`host.jump.self`）、同一台 Host 两次（`host.jump.repeated`）或超过 8 台 Host
+（`host.jump.too_many`）时，会被 `400` 拒绝，不保存任何内容。已停用的 Host 可以写进去，路线会等它
+重新启用。
+
+```bash
+# 依次经由 Host 2 和 Host 3 连接 Host 5。
+curl -s -b cookies.txt -X PUT "$BASE/api/host/5" \
+  -H 'Content-Type: application/json' \
+  -H "X-CSRF-Token: $CSRF" \
+  -d '{"jump_host_ids":[2,3]}'
+```
+
+**在别的 Host 的跳板路线上的 Host 不会被删除。** 删除会以 `host.delete.used_as_jump` 被 `409`
+拒绝：`error_args` 里的 `host_ids` 和 `hosts` 指出经过它的那些 Host，`data` 把它们写成
+`[{"id":..., "address":..., "port":...}]`，让界面能指到那些行。请先把它从那些路线上拿掉。
+
+**两台 Host 只要 SSH 端口不同，就可以用同一个地址**，因为同一个私有地址，经由不同的 Host 到达的
+是不同的机器。把 Host 注册或改到另一台 Host 的地址和 SSH 端口上的请求，会以 `host.address.taken`
+被 `409` 拒绝，`error_args` 里带着 `address`、`port`，以及占着它们的那台 Host 的 `host_id`。地址
+比较时不区分大小写，也不管 IP 地址怎么写，所以 `2001:DB8::1` 和 `2001:db8:0::1` 是同一个地址，
+`Example.com` 和 `example.com` 也是。
+
+**`ids` 一次读出一个 id 列表所指的 Host**，界面就是这样读它所画路线上的 Host 的。它接收最多 1000
+个用逗号分隔的正整数。其中已注册的全部按 id 顺序在一页里返回，不读 `page` 和 `size`；没注册的
+id 会被略过；`q` 像缩小列表一样缩小它们。不是这种列表的值会以 `host.list.ids_invalid` 被 `400`
+拒绝。
+
+```bash
+curl -s -b cookies.txt "$BASE/api/host?ids=2,3"
 ```
 
 ### 一台 Host 负责的服务端口
@@ -2087,6 +2192,7 @@ curl -s -b cookies.txt -X POST "$BASE/api/host/1/local-forward" \
         "enabled": true, "allowed_sources": "",
         "status": "connected", "last_error": "", "retry_count": 0,
         "last_connected_at": "<连接建立的时间>", "forward_reach": "reachable",
+        "jump_seq": 0, "jump_host_id": 0, "jump_reason": "",
         "created_at": "<...>", "updated_at": "<...>" }
     ],
     "total": 1,
@@ -2099,7 +2205,8 @@ curl -s -b cookies.txt -X POST "$BASE/api/host/1/local-forward" \
 这是之后 `GET /api/host/1/local-forward` 的返回：一页，形状和其他分页的列表一样，见[分页](#分页)。
 创建、读取和修改都用一个和 `items` 里一样的对象作答。响应里的 `bind_scope` 总是 `loopback` 或
 `wildcard`，不会是空的。`forward_reach` 是目标有没有应答，没在运行的转发不带这个字段，见
-[本地转发能不能到达目标](#本地转发能不能到达目标)。
+[本地转发能不能到达目标](#本地转发能不能到达目标)。`jump_seq`、`jump_host_id` 和 `jump_reason`
+说明转发在 Host 的跳板路线上哪里停下，见[跳板路线](#跳板路线)。
 
 **这个列表以前返回全部行，`data` 就是它们的数组。** 现在分页了，`data` 是上面的对象，原来读
 `data[0]` 的客户端现在读 `data.items[0]`。
@@ -2196,8 +2303,8 @@ Host 的分配关系，是因为这两个词在任何一台系统上的意思都
 
 | 方法 | 路径 | 做什么 |
 |------|------|--------|
-| `POST` | `/api/export/tunnels` | 收 `password` 和 `account_password`，把每台 Host（连同它的本地转发）和每个服务端口加密成一个文件返回 |
-| `POST` | `/api/import/tunnels` | 收 `password`、`file`、`overwrite` 和 `account_password`，把文件里的内容写进来 |
+| `POST` | `/api/export/tunnels` | 收 `password` 和 `account_password`，把每台 Host（连同它的本地转发和跳板路线）和每个服务端口加密成一个文件返回 |
+| `POST` | `/api/import/tunnels` | 收 `password`、`file`、`account_password` 和 `dry_run`，用文件里的内容替换这里保存的隧道配置 |
 | `POST` | `/api/export/settings` | 收 `password` 和 `account_password`，把已保存的设置加密成一个文件返回 |
 | `POST` | `/api/import/settings` | 收 `password` 和 `file`，保存文件里的设置 |
 
@@ -2205,7 +2312,7 @@ Host 的分配关系，是因为这两个词在任何一台系统上的意思都
 保留多久由你决定，两套安装之间也不需要互相访问。
 
 `password` 是文件的密码，`account_password` 是再问一次的账号密码。两个导出和隧道导入要收它，
-是因为导出以明文带出数据库加密保存的东西，而带 `overwrite` 的导入会替换信任 Host 所用的主机密钥，
+是因为导出以明文带出数据库加密保存的东西，而导入会替换信任 Host 所用的主机密钥，
 所以两者都不能只靠一个打开的会话或一个令牌。用令牌的请求也要发它。空的以 `400` 拒绝，打不开账号的
 以 `401` 拒绝，这种情况太多则以 `429` 拒绝，用的是和登录相同的计数器。设置导入不收它。
 
@@ -2215,61 +2322,59 @@ ASCII，粘到输入框、消息或者工单里也不会因为换行而损坏。
 并告诉你。文件里没有任何一处是人能直接读的。导入界面接收的是长长的一行，把文件拖进去和把内容
 粘进去是同一件事，原因都在这里。
 
-**文件里记录着每台 Host 负责哪些服务端口**，放在 Host 的 `assigned_local_ports` 里，用本地端口
-来标识而不是用行的 id：id 只在文件来源的那套安装里有意义，而本地端口在一套安装的所有服务端口里
-是唯一的，所以两边指的是同一个东西。这个列表是导入之后这台 Host 负责的全部，不是在原有基础上
-再加：导入写入的 Host，负责的就是文件里列出的那些，其他都没有；被跳过的 Host 则保留它原有的
-分配关系。文件里列出而本安装没有的本地端口，会作为被跳过的分配关系列在响应里，带有 Host 和
-端口，导入的其余部分照常生效。
+**隧道导入会替换整套隧道配置。** 这里保存的所有 Host、服务端口、分配关系、本地转发和跳板路线都会
+被删除，文件里的内容写到它们的位置上，这在一个事务里完成。在这里有而文件里没有的 Host，导入之后
+就不在了。账号、设置、会话和 API 令牌不受影响。隧道本身不随文件走，因为调谐循环会根据 Host、
+服务端口和它们之间的分配关系建立隧道：Host 和服务端口以相同的 id 仍然存在的隧道交给调谐循环，
+其余的连同它们所代表的配置一起删除。
 
-在分配关系还没被保存之前写出的文件里没有这个字段，那样的文件里每台 Host 都视为负责文件里的
-每一个服务端口。那种文件当初隐含的意思正是如此，而读成“不负责任何服务端口”的话，它会顺利
-导入完成，然后留下一套一条隧道都没有的安装。不负责任何服务端口的 Host 在文件里写成 `[]`，这是
-同一件事的另一面。
+**`overwrite` 已经没有了。** 以前的导入会把这里没有的添加进来，已经有的跳过，带上 `overwrite`
+则替换。仍然带着这个字段的请求，不论值是什么，哪怕是 `null`，都会以 `import.overwrite.removed`
+被 `400` 拒绝，免得照以前的导入写的脚本在不知情的情况下替换掉配置。
 
-**每条分配关系能到多远也一起带走**，放在 Host 的 `assigned_bind_scopes` 里，用同一个本地端口
-作键。那里没有条目的分配关系就是通配范围，这也是数据库里空值的意思，所以只写其他答案。v3.8.3
-导出的文件里没有这个字段，取而代之的是每台 Host 一个 `bind_address`。它也会被读：写的是回环
-地址时，那台 Host 的每一条分配关系都成为 `loopback`，其他答案一律成为通配范围，规则和升级时用
-的一样。它只读不写，所以导入不会悄悄把谁收窄过的设置又放宽回去，而这个版本写出的文件里根本
-没有 `bind_address`。
+**`dry_run` 设为 true 时只打开并检查文件，什么都不写。** 两种情况下响应都一样：`current` 是这里
+保存的数量，也就是导入要删除的；`file` 是文件里的数量，也就是导入要写入的。`jump_hosts` 是有
+跳板路线的 Host 的数量。
 
-**每条分配关系是否运行也一起带走**，放在 Host 的 `assigned_enabled` 里，用同一个本地端口作键。
-只有关掉的分配关系才写一条 `false`，没有条目的分配关系就运行，所以分配关系还不能关闭之前写出的
-文件，导入后所有分配关系都是开着的。
+```json
+{
+  "success": true,
+  "data": {
+    "dry_run": true,
+    "current": { "hosts": 3, "service_ports": 2, "assignments": 6, "local_forwards": 1, "jump_hosts": 1 },
+    "file": { "hosts": 2, "service_ports": 2, "assignments": 4, "local_forwards": 0, "jump_hosts": 0 }
+  }
+}
+```
 
-**每台 Host 的本地转发也跟着一起走**，写在 Host 的 `local_forwards` 里，导出响应里的
-`local_forwards` 是它们的个数。和 `assigned_local_ports` 一样，这个列表是导入后这台 Host 拥有的
-全部，没有这个字段和空列表是两种不同的答案。
+Settings 页面会先这样做：用 `dry_run` 发送文件，按类别列出要从这里删除多少、要从文件导入多少，
+只有按下 **替换** 才真正替换配置。会被拒绝的文件，在询问之前就在这次检查里被拒绝了。
 
-列表里的每个本地转发都带着 `enabled`，导出总会写上它。没有 `enabled` 的本地转发，也就是本地转发还
-不能关闭之前写出的文件里的那些，都按开启保存：在写出这个文件的地方，它们都在运行。每个本地转发
-还带着 `allowed_sources`，没有它的本地转发放行所有地址，这个字段出现之前的本地转发都是这样。
+**文件里带着每一行的 id**，从 `format_version` 2 开始，所以单凭这个文件就能把配置恢复成原样。
+导入按文件给出的 id 和编号写入各行，按 id 指向 Host 的跳板路线，以及按 Host 和编号来指称的
+本地转发，才能继续指向原来指向的东西。
 
-| 文件中 Host 上的 `local_forwards` | 写入这台 Host 的导入会做什么 |
-|------------------------------------|------------------------------|
-| 没有，或者是 `null` | 这台 Host 的本地转发保持不变。本地转发出现之前写出的文件对此什么也没说 |
-| `[]` | 删除这台 Host 的全部本地转发 |
-| 一个列表 | 用这个列表替换这台 Host 的本地转发 |
+| 文件里 | 带着什么 |
+|--------|----------|
+| 每台 Host | `id`、`created_at`、`updated_at`、凭据、`host_key`、`pending_host_key`、`jump_host_ids`、四个 `socks_` 字段、`assignments` 和 `local_forwards` |
+| Host 上的 `assignments` | 它负责的每个服务端口一条：`service_port_id`、`bind_scope`、`enabled` 和 `created_at` |
+| Host 上的 `local_forwards` | 每个转发一条，除了它的字段，还有 `number`、`created_at` 和 `updated_at` |
+| 每个服务端口 | 除了它的字段，还有 `id`、`created_at` 和 `updated_at` |
 
-被跳过的 Host 不管文件怎么写，都保留自己的本地转发。导出总是写出列表，一个都没有的 Host 写 `[]`。
-导入写入的每个本地转发都会以 `added` 或 `replaced` 列在响应里。**文件把同一个 `local_port` 打开了
-两次、其中的本地转发通不过创建时的规则、打开了本服务器保存下来要监听的端口，或者打开了导入保留下来
-的某个本地转发在这里已占用的端口时，导入会被拒绝，什么都不写。** 最后一种情况会指出那个本地转发
-所属的 Host。
-
-**每台 Host 的 SOCKS5 代理也跟着一起走**，写在 Host 的 `socks_enabled`、`socks_port`、
-`socks_bind_scope` 和 `socks_allowed_sources` 里，导出总是写出这四个。文件里没有的字段保留 Host
-现有的值，所以代理出现之前写出的文件不会关掉任何代理；被跳过的 Host 不管文件怎么写，都保留自己的
-代理。导入开启的每个代理都会以类型 `socks` 列在响应里。**文件在代理和本地转发之间把同一个端口打开
-了两次，或者文件开启的代理打开了本服务器监听的端口、这里另一台 Host 的代理或本地转发已打开的端口
-时，导入会被拒绝，什么都不写。**
+**以前的版本写出的文件照样可以导入。** 那样的文件没有 id，所以 Host 和服务端口按文件里的顺序从 1
+开始分配 id，每台 Host 的本地转发也同样从 1 开始编号，而且没有任何 Host 有跳板路线。那样的文件把
+Host 负责的服务端口按本地端口写在 `assigned_local_ports` 里，旁边是以同一个本地端口作键的
+`assigned_bind_scopes` 和 `assigned_enabled`。没有 `assigned_local_ports` 的 Host 负责文件里的
+每一个服务端口，因为分配关系被保存之前写出的文件就是这个意思；`[]` 则什么都不负责。没有范围的
+分配关系是通配范围，没有 `enabled` 的分配关系会运行。v3.8.3 的文件里没有范围，而是每台 Host 一个
+`bind_address`：写的是回环地址时，那台 Host 的每一条分配关系都成为 `loopback`，其他答案一律成为
+通配范围。没有 `local_forwards` 的文件导入的 Host 没有本地转发，没有 `enabled` 的本地转发按开启
+保存，没有 `allowed_sources` 的放行所有地址，一个 `socks_` 字段都没有的文件导入的 Host 没有代理。
 
 **每台 Host 信任的那把密钥也跟着一起走**，写在 `host_key` 里，所以搬一套配置不会把这份信任
 扔掉，接收文件的那套安装不必把每台 Host 重新批准一遍就能连上。它是公钥，所以不加密，行里怎么
-存就怎么写。某台服务器在被拒绝的连接里出示的那把密钥，任何文件里都没有；替换行的导入，还会把
-原先存着的那把丢掉：那是一个关于接收文件的安装还没有打过交道的机器的问题，而正确的密钥是哪
-一把，文件刚刚已经说了。
+存就怎么写。某台服务器在被拒绝的连接里出示的那把密钥也写在 `pending_host_key` 里一起走，所以
+原本在等人处理的问题，导入之后仍然在等。
 
 **整个文件用导出时给的那个密码加密，这个密码是文件唯一的保护。** 文件内部，每台 Host 的 SSH
 密码、私钥和密钥密码都是以明文写入的。这正是它的用途：数据库保存它们时用的是保存它们那台
@@ -2281,19 +2386,24 @@ ASCII，粘到输入框、消息或者工单里也不会因为换行而损坏。
 也会进发起请求的那个浏览器的历史记录。这个密码同样限制在账号密码那样的 12 到 72 字节，而且哪里
 都不保存：密码忘了的文件，谁也打不开，这个程序自己也打不开。
 
-导入会把这里没有的添加进来，已经有的**跳过**，并在响应里说明跳过了什么、为什么跳过。把同一个
-文件再发一次、把 `overwrite` 设成 true，就是拿它去替换那些被跳过的行；被替换的行保留原来的
-id，所以那台 Host 的隧道是重连而不是重建。文件里的每一行都会在响应里列成 `added`、`replaced`
-或 `skipped`，决定要不要覆盖之前看的就是它。整个导入是一个事务：中途被拒绝的文件，留下的
-数据库和原来完全一致。隧道本身不随文件走，因为调谐循环会根据 Host、服务端口和它们之间的
-分配关系建立隧道。英文句子形式的 `reason` 和 `name` 会附带 `reason_code` 与 `reason_values`、
-`name_code` 与 `name_values`，界面据此用自己的语言写出这句话。
+**文件里有一行通不过创建时的规则，或者文件本身前后对不上时，导入会被拒绝，什么都不写。**
+
+| 文件里有什么 | 拒绝代码 |
+|--------------|----------|
+| 同一个 SSH 端口上的同一台 Host 出现两次，地址比较时不区分大小写，也不管 IP 地址怎么写 | `import.host.duplicate` |
+| id 为 0 或与文件里另一行相同的 Host 或服务端口，编号为 0 或与这台 Host 的另一个转发相同的本地转发 | `import.host.id_invalid`、`import.service_port.id_invalid`、`import.local_forward.number_invalid` |
+| 服务地址和端口相同，或本地端口相同的两个服务端口 | `import.service_port.duplicate` |
+| 指向文件里没有的服务端口的分配关系 | `import.assignment.unknown_service_port`、`import.assignment.unknown_local_port` |
+| 在本地转发和 SOCKS5 代理之间被打开两次的端口 | `import.local_forward.duplicate`、`import.socks.duplicate` |
+| 打开本服务器保存下来要监听的端口或现在监听的端口的本地转发或代理 | `409`，`import.local_forward.local_port.api_port` 和 `import.socks.socks_port.api_port` |
+| 写了文件里没有的 Host、Host 自己、同一台 Host 两次或超过 8 台的跳板路线 | `import.jump.unknown_host`、`import.jump.self`、`import.jump.duplicate`、`import.jump.too_many` |
 
 设置的导入只把设置**保存下来**，一项都不应用到正在运行的进程上，`api_port` 和 `api_https_enabled`
 也不例外。保存的是下次启动使用的值，在那之前 `GET /api/settings` 会把差别报在
 `pending_restart` 里，所以一次导入不会把正在处理它的那个请求所用的端口改掉。设置不符合 Settings
 页面那些规则的文件会被拒绝，不保存任何内容；`api_port` 要改成这里某个本地转发打开的端口的文件也一样，
-和保存一样用 `409` 拒绝。
+和保存一样用 `409` 拒绝。设置导入没有照文件原样保存的路径会列在 `items` 里，那里英文句子形式的
+`reason` 会附带 `reason_code` 与 `reason_values`，界面据此用自己的语言写出这句话。
 
 打不开的文件会说明是四种情况里的哪一种：密码错误、这不是这个程序写出来的文件、文件损坏了，或者
 它包含的是另一种内容。
@@ -2305,9 +2415,16 @@ curl -s -b cookies.txt -X POST "$BASE/api/export/tunnels" \
   -d '{"password":"<the password that encrypts the file>","account_password":"<the password of your account>"}' |
 jq -r '.data.file' > tunnels.tmexport
 
-# 在另一套安装上导入它。
+# 在另一套安装上，先看导入会替换什么。
 jq -n --arg file "$(cat tunnels.tmexport)" \
-  '{password:"<the same password>",file:$file,overwrite:false,account_password:"<the password of your account>"}' |
+  '{password:"<the same password>",file:$file,dry_run:true,account_password:"<the password of your account>"}' |
+curl -s -b cookies.txt -X POST "$BASE/api/import/tunnels" \
+  -H "X-CSRF-Token: $CSRF" -H 'Content-Type: application/json' \
+  --data-binary @-
+
+# 然后替换。
+jq -n --arg file "$(cat tunnels.tmexport)" \
+  '{password:"<the same password>",file:$file,account_password:"<the password of your account>"}' |
 curl -s -b cookies.txt -X POST "$BASE/api/import/tunnels" \
   -H "X-CSRF-Token: $CSRF" -H 'Content-Type: application/json' \
   --data-binary @-
@@ -2361,6 +2478,9 @@ curl -s -b cookies.txt https://127.0.0.1:8888/api/status
         "remote": "198.51.100.20:18080",
         "server_banner": "SSH-2.0-OpenSSH_9.9",
         "error_kind": "",
+        "jump_seq": 0,
+        "jump_host_id": 0,
+        "jump_reason": "",
         "open_reach": "ipv4",
         "listen_addresses": "0.0.0.0,::",
         "kind": "service_port",
@@ -2377,6 +2497,9 @@ curl -s -b cookies.txt https://127.0.0.1:8888/api/status
         "remote": "198.51.100.30:80",
         "server_banner": "",
         "error_kind": "",
+        "jump_seq": 0,
+        "jump_host_id": 0,
+        "jump_reason": "",
         "open_reach": "",
         "listen_addresses": "",
         "kind": "local_forward",
@@ -2419,7 +2542,7 @@ Host 上开端口，这些字段没有可说的对象。
 | `desired_tunnels` | 两种合起来**应该**运行多少行：Host 处于启用状态的那些分配关系，加上开着的、Host 处于启用状态的本地转发 |
 | `connected_tunnels` | 有多少行写着 `connected` |
 | `reconnecting_tunnels` | 有多少行写着 `reconnecting`：没人动手也会自己回来的那些 |
-| `error_tunnels` | 有多少行写着 `error`：在等人的那些 |
+| `error_tunnels` | 有多少行写着 `error` 或 `jump_host_disabled`：在等人的那些 |
 | `total_rows` | 两种的行加起来的数，页就是从它上面切下来的 |
 
 **把 `reconnecting` 和 `error` 分开数，是因为要人做的事不一样。** 重连中的行是自己在往回走，
@@ -2479,6 +2602,7 @@ Host 上开端口，这些字段没有可说的对象。
 | `error` | 这次尝试失败了。`last_error` 里写着原因 |
 | `host_key_unapproved` | SSH 服务器出示了主机密钥，而这台 Host 没有已批准的密钥，连接被拒绝。见[主机密钥的批准](#主机密钥的批准) |
 | `host_key_mismatch` | SSH 服务器出示的密钥不是这台 Host 信任的那把，连接被拒绝。见[主机密钥的批准](#主机密钥的批准) |
+| `jump_host_disabled` | 这台 Host 的跳板路线上有一台 Host 已停用，什么都没有连接。计入 `error_tunnels`。见[跳板路线](#跳板路线) |
 
 上面这些是**服务端口**的行会写的值。本地转发的行写的是本地转发报告的值，`disabled`、`off`、
 `stopped` 也在其中，见[本地转发](#本地转发)。
@@ -2487,6 +2611,9 @@ Host 上开端口，这些字段没有可说的对象。
 是 SSH 服务器拒绝打开转发端口。其余的失败，以及所有不是错误的行，这里都是空的。
 它只说发生了什么，从不说为什么：让服务器拒绝的那几个设置，从这边看都
 一模一样。
+
+`jump_seq`、`jump_host_id` 和 `jump_reason` 在两种行上都说明连接在 Host 的跳板路线上哪里、为什么
+停下，没有在路线上停下的行是 `0`、`0` 和 `""`。每个原因的含义见[跳板路线](#跳板路线)。
 
 ### 转发端口开在哪里
 

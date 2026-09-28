@@ -23,7 +23,7 @@ from the Host.
 
 | What you register | Fields | What it is |
 |-------------------|--------|------------|
-| Host | `address`, `port`, `user`, `private_key`, `key_passphrase`, `password`, `description`, `enabled`, `socks_enabled`, `socks_port`, `socks_bind_scope`, `socks_allowed_sources` | An SSH server Tunnel Manager logs in to. It logs in with a private key, with a password, or with both; at least one of the two is required. The key, its passphrase and the password are all stored encrypted. The `socks_` fields are the [SOCKS5 proxy](#a-socks5-proxy-on-a-host) it may carry. |
+| Host | `address`, `port`, `user`, `private_key`, `key_passphrase`, `password`, `description`, `enabled`, `jump_host_ids`, `socks_enabled`, `socks_port`, `socks_bind_scope`, `socks_allowed_sources` | An SSH server Tunnel Manager logs in to. It logs in with a private key, with a password, or with both; at least one of the two is required. The key, its passphrase and the password are all stored encrypted. `jump_host_ids` is the [jump route](#a-jump-route) it is reached through, when it is not reached directly. The `socks_` fields are the [SOCKS5 proxy](#a-socks5-proxy-on-a-host) it may carry. |
 | Service port | `service_address`, `service_port`, `local_port` | The service to publish, and the port opened on every Host that carries it. |
 | Assignment | `host_id`, `sp_id`, `bind_scope` | One Host paired with one service port: this Host is to carry it. It is what a tunnel is built from, and it is made for you as a Host or a service port is registered. `bind_scope` is how far its forwarded port is asked to reach on the Host, `loopback` or `wildcard`, and the wildcard where it is not given. |
 | Local forward | `local_port`, `bind_scope`, `target_address`, `target_port`, `description` | A port opened on this machine, whose connections are carried through the SSH connection of one Host to `target_address:target_port` as the Host sees it. It belongs to that Host alone. |
@@ -476,6 +476,7 @@ direction; OpenSSH refuses it where `AllowTcpForwarding` is `no` or `remote`.
 | `reconnecting` | The connection dropped or an attempt failed, and it is being made again. `retry_count` counts these |
 | `error` | The last attempt failed, and `last_error` says why. After a refused login it stays here until the Host is changed; otherwise it is tried again after the monitoring interval, and each failure in a row doubles the wait up to `reconnect_max_interval_sec` |
 | `host_key_unapproved`, `host_key_mismatch` | The host key was refused, as on a tunnel. It stays here until the key is approved |
+| `jump_host_disabled` | A Host on the [jump route](#a-jump-route) of the Host is disabled, so nothing is connected. Enabling that Host brings it back |
 
 **The status is kept in memory**, by the process that runs the forward, and is
 answered by the local forward calls and by `GET /api/status`, which carries the
@@ -618,7 +619,7 @@ on a line under the row.
 | `off` | The proxy is not switched on. Nothing is opened |
 | `disabled` | The proxy is on and the Host is disabled. Nothing is opened |
 | `stopped` | The Host is enabled and no proxy runs: the reconcile loop has not reached it yet, or it failed to start it, which the log says |
-| `starting`, `connected`, `reconnecting`, `error`, `host_key_unapproved`, `host_key_mismatch` | What the running proxy reports, with the meanings they have for a local forward, see [Local forwards](#local-forwards) |
+| `starting`, `connected`, `reconnecting`, `error`, `host_key_unapproved`, `host_key_mismatch`, `jump_host_disabled` | What the running proxy reports, with the meanings they have for a local forward, see [Local forwards](#local-forwards) |
 
 `connected` says the SSH connection stands and `socks_port` is open, not that a
 site answers. The status is kept in memory, is not in `GET /api/status` and is
@@ -643,8 +644,101 @@ forwarding in this direction, as for a local forward.
   `--proxy-bypass-list="<-loopback>"`.
 
 **An export carries the proxy of each Host**, in the four fields above on that
-Host. A file that does not carry them leaves the proxy of the Host as it is.
+Host. A file from before the proxy existed imports the Host with none.
 See [Export and import](#export-and-import).
+
+### A jump route
+
+**A Host can be reached through other Hosts.** Its jump route is the list of
+Hosts to pass through on the way to it, in order, the way `ssh -J` takes one.
+The first of them is connected to straight from this machine, and each one after
+it is connected to through a channel of the one before, so the SSH connection
+to the Host at the end runs inside the connection to every Host on the way. No
+port is opened on a Host on the way: it passes the SSH connection on and cannot
+see inside it. A Host with no route is connected to directly, as every Host was
+before the route existed.
+
+```mermaid
+flowchart LR
+    subgraph here [This machine]
+        tm[tunnel-manager]
+    end
+    hop1[Hop 1<br/>a registered Host]
+    hop2[Hop 2<br/>a registered Host]
+    target[The Host the route belongs to]
+
+    tm ==>|"1. SSH, connected directly"| hop1
+    hop1 ==>|"2. SSH, through a channel of hop 1"| hop2
+    hop2 ==>|"3. SSH, through a channel of hop 2"| target
+```
+
+**Everything the Host runs takes the route**: its tunnels, its local forwards and
+its SOCKS5 proxy. Each of them opens the whole route on its own, the way each of
+them opens an SSH connection of its own without one.
+
+**Only the Hosts written on the route are passed through, in the order they are
+written.** The route of a Host that is passed through is not followed: if the
+first Host on the route is itself reached through another, that one has to be
+written on this route too. The panel offers to put the usual route of a Host in
+front of it, which copies it once; a later change to the route of that Host does
+not change this one.
+
+**Every Host on the route is a registered Host**, logged in to with its own user
+and credentials and checked against its own trusted host key. A key that a Host
+on the way presents and nobody has approved is waiting on **that Host**, not on
+the one at the end, and is approved there, see [Host keys](#host-keys). A route
+passes through **8 Hosts at most**, since every one of them waits out the
+connection timeout on its own when it does not answer. It cannot name the Host
+it belongs to, nor one Host twice.
+
+**A change to a Host on the way rebuilds what goes through it.** Its address,
+port, user, credentials, trusted key and whether it is enabled are part of what
+every connection over the route is built from, so a change to any of them stops
+and starts again the tunnels, local forwards and proxies of every Host whose
+route passes through it.
+
+**A disabled Host can be put on a route**, and the route is kept, but nothing is
+connected over it while that Host is off: disabling a Host means nobody is to
+connect to it, and passing through it is connecting to it. What goes over the
+route reads `jump_host_disabled` meanwhile and is counted as an error, see
+[Reading the tunnel status](#reading-the-tunnel-status), and enabling the Host
+brings it back. **A Host that is on the route of another cannot be deleted**:
+the delete is refused with `409`, naming the Hosts that pass through it.
+
+**A connection that stops on its route says where.** `jump_seq` is the hop,
+counted from 1 at the Host connected to directly, `jump_host_id` is the Host at
+that hop, and `jump_reason` is why. They are on the status rows, on the local
+forwards of a Host, and on a Host for its SOCKS5 proxy as `socks_jump_seq`,
+`socks_jump_host_id` and `socks_jump_reason`. A connection that did not stop on
+its route, one that stands or one that failed at the Host at the end, carries
+`0`, `0` and `""`.
+
+| `jump_reason` | What stopped it |
+|---------------|-----------------|
+| `disabled` | The Host at that hop is disabled, and nothing was connected |
+| `dial` | The Host at that hop was not reached, did not finish its handshake in time, or refused to open the channel to the next hop, as a server where `AllowTcpForwarding` is `no` does |
+| `auth` | The Host at that hop refused the login |
+| `host_key` | The Host at that hop presented a key it is not trusted on, or it is trusted on none yet |
+| `route` | The route is stored wrong: it names a Host that is not there, the Host itself, one Host twice, or more than 8. `jump_seq` and `jump_host_id` are 0 where it is about the length of the whole route |
+
+The screens say what to do about each on a line under the row, and name the Host
+to do it on.
+
+**On the Hosts screen the route is set in the form and from the row.** The add
+and edit forms have a **Jump route** field under the SSH port and the user, with
+**Set a route**, **Edit the route** and **Clear the route**, and the route of a
+Host being added is stored when the Host is. The list has a **Jump route**
+column after the port, which reads **None**, the number of hops, or the number
+of hops with `!` when a Host on the way is disabled or has a key waiting, and a
+press on it opens the same panel. The panel lists the Hosts to pass through,
+with a search, and the route from this machine to the Host. Press a Host and
+then **Add to the route** to put it just before the Host at the end, or
+**+ Put it here** on a link of the route to put it anywhere else; on a desktop
+it can be dragged there too. ↑, ↓ and ✕ move a hop and take it off. A Host that
+is not in the list is added on the Hosts screen first, which **Go and add a
+Host** leads to.
+
+Through the API the route is `jump_host_ids` on a Host, see [Hosts](#hosts).
 
 ## Install and run
 
@@ -1258,11 +1352,11 @@ no directory travels next to it and no path has to be configured.
 
 | Screen | Path | What it shows and does |
 |--------|------|------------------------|
-| Status | `/ui/status` | Four counts, each over both sorts of forward together (desired, connected, reconnecting, errors), a sentence about the difference between them, and one line per row of either sort: Host, kind, service port, status, server, opened, reachable at, reaches, retries, last connected. The service port of a local forward is a dash. Opened is the address the port was opened on, and Reachable at is where a client connects to it, with a copy button on each address: the registered address of the Host with the port for a port opened on every interface, the address this page was loaded from for a local forward, and `127.0.0.1` and `[::1]` for a port opened on loopback, whose copy says that it works only on that machine. A tunnel with something wrong carries what went wrong on a line under it, across the whole table. A tunnel that is up carries under it what is known about the addresses of its forward where something differs from what was asked: what was asked for, what the SSH server answered, and what the Host has listening. It never says a port is open, and it does not try the port; whether the target of a local forward answers is on the local forwards of its Host. The rows come a page at a time, ten to a page to begin with, with the size and the page chosen above the table; the counts stay counts of the whole installation and not of the page. It asks again every 5 seconds and comes back on the page being read. A search box above the table narrows the rows, see [Searching](#searching). |
-| Hosts | `/ui/hosts` | One row per Host with ID, address, port, user, description, enabled, SOCKS5 proxy and updated. The rows come a page at a time, ten to a page to begin with, with the size (10, 20, 30, 50 or 100) and the page chosen above the table. The choice is remembered for this screen on its own, and a list short enough to fit a page of the smallest size carries no controls at all. Add a Host, edit one, enable or disable one, delete one. The add and edit forms have a box to paste a private key into, an area to drop the key file onto, and a box for the passphrase of a key that has one, and the add form has an **Assign all service ports** tick, on by default, that says what the Host starts out carrying, with a **Reach on the Host** list beside it that every assignment that tick makes starts on. **Service ports** in a row opens a panel of every service port with a tick against the ones this Host carries, and a reach beside each row: pick a reach above and apply it to everything ticked, or set one row on its own, and a row that was not ticked is left alone, with an **Enabled** box against each row that pauses the tunnel of that assignment without taking it away. Only what was changed is sent when it is saved, so a tick made there leaves the pages that were not read alone. **Local forwards** in a row opens a panel of the local forwards of that Host with the status of each, a page at a time, where they are added, changed, switched off and on, and deleted, one row at a time or the ticked rows together; see [Local forwards](#local-forwards). The add and edit forms also switch on the SOCKS5 proxy of the Host, and its column shows the port and the status; see [A SOCKS5 proxy on a Host](#a-socks5-proxy-on-a-host). |
+| Status | `/ui/status` | Four counts, each over both sorts of forward together (desired, connected, reconnecting, errors), a sentence about the difference between them, and one line per row of either sort: Host, kind, service port, status, server, opened, reachable at, reaches, retries, last connected. The service port of a local forward is a dash. Opened is the address the port was opened on, and Reachable at is where a client connects to it, with a copy button on each address: the registered address of the Host with the port for a port opened on every interface, the address this page was loaded from for a local forward, and `127.0.0.1` and `[::1]` for a port opened on loopback, whose copy says that it works only on that machine. A tunnel with something wrong carries what went wrong on a line under it, across the whole table, and one that stopped on its jump route says there which Host on the way to look at and what to do about it. A tunnel that is up carries under it what is known about the addresses of its forward where something differs from what was asked: what was asked for, what the SSH server answered, and what the Host has listening. It never says a port is open, and it does not try the port; whether the target of a local forward answers is on the local forwards of its Host. The rows come a page at a time, ten to a page to begin with, with the size and the page chosen below the table; the counts stay counts of the whole installation and not of the page. It asks again every 5 seconds and comes back on the page being read. A search box above the table narrows the rows, see [Searching](#searching). |
+| Hosts | `/ui/hosts` | One row per Host with ID, address, port, jump route, user, description, enabled, SOCKS5 proxy and updated. The rows come a page at a time, ten to a page to begin with, with the size (10, 20, 30, 50 or 100) and the page chosen below the table. The choice is remembered for this screen on its own, and a list short enough to fit a page of the smallest size carries no controls at all. Add a Host, edit one, enable or disable one, delete one. The add and edit forms have a box to paste a private key into, an area to drop the key file onto, and a box for the passphrase of a key that has one, and the add form has an **Assign all service ports** tick, on by default, that says what the Host starts out carrying, with a **Reach on the Host** list beside it that every assignment that tick makes starts on. **Service ports** in a row opens a panel of every service port with a tick against the ones this Host carries, and a reach beside each row: pick a reach above and apply it to everything ticked, or set one row on its own, and a row that was not ticked is left alone, with an **Enabled** box against each row that pauses the tunnel of that assignment without taking it away. Only what was changed is sent when it is saved, so a tick made there leaves the pages that were not read alone. **Local forwards** in a row opens a panel of the local forwards of that Host with the status of each, a page at a time, where they are added, changed, switched off and on, and deleted, one row at a time or the ticked rows together; see [Local forwards](#local-forwards). The add and edit forms also switch on the SOCKS5 proxy of the Host, and its column shows the port and the status; see [A SOCKS5 proxy on a Host](#a-socks5-proxy-on-a-host). The add and edit forms have a **Jump route** field, and the jump route column of a row opens the same panel for that Host; see [A jump route](#a-jump-route). |
 | Service Ports | `/ui/service-ports` | One row per service port with ID, service address, service port, local port, description and updated. The rows come a page at a time the same way the Hosts do, with a size and a page of their own. Add, edit and delete. The add form has an **Assign to all hosts** tick, on by default, that says which Hosts carry it from the start, with a **Reach on the Host** list beside it that the assignments that tick makes start on; which Hosts carry it after that, and what each of those assignments reaches, is changed from the Hosts screen. The Hosts and Service Ports screens each have a search box above the table, see [Searching](#searching). |
 | Logs | `/ui/logs` | The end of the log file, newest last, with a level filter and a count to show. It asks again every 5 seconds. It reads the file the process is writing now; rotated files are not shown. The lines are shown in the language of the screen while the file stays English; see [The language of the screens](#the-language-of-the-screens). |
-| Settings | `/ui/settings` | Cut into the tabs General, Logging, Alerts, HTTPS, Account, Manage settings, Update and Service, and the tab that is open is kept after the `#` of the address, so a reload comes back to it. Above the tabs, on every one of them, is what is stored but not being run on yet, with a Restart in that card that puts it into place. On the tabs are every stored setting and what a save changed, among them the language this installation shows a browser that has picked none and the alerts by webhook and mail with a test button for each (see [Alerts](#alerts)), the certificate being served with a button to renew it and boxes to register one of your own, the username and the password of this account, an export of the tunnel configuration and of the settings of this manager into one encrypted file each and an import that takes such a file back, a Restart that takes the service down and brings it back, and the Uninstall on the Service tab. See [Settings](#settings). |
+| Settings | `/ui/settings` | Cut into the tabs General, Logging, Alerts, HTTPS, Account, Manage settings, Update and Service, and the tab that is open is kept after the `#` of the address, so a reload comes back to it. Above the tabs, on every one of them, is what is stored but not being run on yet, with a Restart in that card that puts it into place. On the tabs are every stored setting and what a save changed, among them the language this installation shows a browser that has picked none and the alerts by webhook and mail with a test button for each (see [Alerts](#alerts)), the certificate being served with a button to renew it and boxes to register one of your own, the username and the password of this account, an export of the tunnel configuration and of the settings of this manager into one encrypted file each and an import that takes such a file back, the tunnel configuration after a panel that says how much of each it deletes and writes, a Restart that takes the service down and brings it back, and the Uninstall on the Service tab. See [Settings](#settings). |
 | Update | `/ui/settings#update` | A tab of Settings; `/ui/update` still opens it. What this installation is running beside what the newest release is, and the two settings that decide whether either is looked at again. The reading is taken on a timer rather than when the screen is drawn, so opening it costs the release API nothing; a press takes it now. Where the release is newer and this process is what a service registration starts, a press installs it, which takes the password of the account and ends with the service restarting. See [Updates](#updates). |
 | Manual | `/ui/manual` | What an installation is made of, drawn and said on one screen: what this does, one tunnel end to end, Hosts and service ports and the assignments between them, what an unreached port means, the two intervals, and where the files go. It asks the server for nothing, which is what lets the login screen show the same thing. |
 | Login | `/ui/login` | Where a client without a session lands. Leave the username empty on the first sign in. It leads to the setup screen while the account still needs one. A **Manual** button opens the manual as a panel over it, without a session, because the state it is most needed in is the one where nothing works yet. |
@@ -2029,7 +2123,7 @@ logged-in browser.
 | Metric | What it says |
 |--------|--------------|
 | `tunnel_manager_info{version}` | The version, always `1` |
-| `tunnel_manager_forwards{kind,status}` | How many running forwards are in each status. `kind` is `service_port`, `local_forward` or `socks`. Over the first two, `connected`, `reconnecting` and `error` add up to the counts `GET /api/status` answers with |
+| `tunnel_manager_forwards{kind,status}` | How many running forwards are in each status. `kind` is `service_port`, `local_forward` or `socks`. Over the first two, `connected`, `reconnecting`, and `error` together with `jump_host_disabled`, add up to the counts `GET /api/status` answers with |
 | `tunnel_manager_forwards_desired{kind}` | What should be running as of the last reconcile pass: `desired_tunnels` of `GET /api/status`, by kind |
 | `tunnel_manager_forward_up{kind,host,local_port,remote}` | `1` for a running forward that is connected, `0` for one that is not. One series per running forward; one that is switched off has none |
 | `tunnel_manager_forward_retries{kind,host,local_port}` | How many times that forward has retried since it last connected |
@@ -2245,10 +2339,10 @@ curl -s -b cookies.txt "$BASE/api/host?q=example&page=1&size=20"
 | Method | Path | What it does |
 |--------|------|--------------|
 | `POST` | `/api/host` | Creates a Host. `enabled` is optional and a Host that does not say is enabled, and `bind_scope` is what the assignments this request makes are opened to |
-| `GET` | `/api/host` | One page of the Hosts, oldest first. Takes `page` and `size`, see [Paging](#paging), and `q`, see [Searching](#searching) |
+| `GET` | `/api/host` | One page of the Hosts, oldest first. Takes `page` and `size`, see [Paging](#paging), and `q`, see [Searching](#searching), or `ids` for the Hosts a list of ids names |
 | `GET` | `/api/host/:id` | Reads one Host |
 | `PUT` | `/api/host/:id` | Updates a Host. Every field is optional; `enabled` false stops its tunnels |
-| `DELETE` | `/api/host/:id` | Deletes a Host, the assignments naming it and its local forwards |
+| `DELETE` | `/api/host/:id` | Deletes a Host, the assignments naming it, its local forwards and its jump route. A Host on the jump route of another is refused with `409` |
 | `GET` | `/api/host/:id/service-port` | One page of the service ports with the assignments of this Host laid over them, see [The service ports a Host carries](#the-service-ports-a-host-carries) |
 | `PUT` | `/api/host/:id/service-port` | Adds and removes assignments of this Host |
 | `GET` | `/api/host/:id/local-forward` | One page of the local forwards of this Host with their status, see [The local forwards of a Host](#the-local-forwards-of-a-host) |
@@ -2268,6 +2362,7 @@ The body of a create and of an update takes these fields.
 | `socks_enabled`, `socks_port` | Optional. `socks_port` is required when `socks_enabled` is true | Optional; what is left out stays as it is |
 | `socks_bind_scope` | Optional. `loopback` or `wildcard`, and left out or sent empty it is `loopback` | Optional; left out or sent empty, the stored scope stays |
 | `socks_allowed_sources` | Optional. Empty lets every address in | Optional; left out, the stored list stays, and sent as `""` it lets every address in |
+| `jump_host_ids` | Optional. The ids of registered Hosts to pass through, in order, at most 8. Left out or `[]`, the Host is reached directly | Optional; left out or `null`, the stored route stays, and `[]` takes it away |
 
 A create that carries neither a key nor a password is refused, and so is a key
 that cannot be used. The refusal says which of them it is: that the value is not
@@ -2315,8 +2410,10 @@ without a port, or with allowed addresses that do not read, is refused with
 `400`. One switched on or moved to a port that the proxy of another Host, a
 local forward or this server holds is refused with `409`. Nothing is stored in
 either case. Every answer that carries a Host carries the four fields as they
-are stored, `socks_bind_scope` as a word every time, and `socks_status` and
-`socks_last_error`.
+are stored, `socks_bind_scope` as a word every time, `socks_status` and
+`socks_last_error`, and `socks_jump_seq`, `socks_jump_host_id` and
+`socks_jump_reason`, which say where on its jump route the proxy stopped, see
+[A jump route](#a-jump-route).
 
 ```bash
 # Switch on the SOCKS5 proxy of Host 3 on port 1080, for two sources only.
@@ -2324,6 +2421,49 @@ curl -s -b cookies.txt -X PUT "$BASE/api/host/3" \
   -H 'Content-Type: application/json' \
   -H "X-CSRF-Token: $CSRF" \
   -d '{"socks_enabled":true,"socks_port":1080,"socks_allowed_sources":"203.0.113.0/24, 198.51.100.7"}'
+```
+
+**`jump_host_ids` is the jump route of the Host**, see
+[A jump route](#a-jump-route). Every answer that carries a Host carries it, `[]`
+for a Host reached directly. A route is refused with `400`, and nothing is
+stored, when it names a Host that is not registered (`host.jump.unknown`), the
+Host itself (`host.jump.self`), one Host twice (`host.jump.repeated`) or more
+than 8 Hosts (`host.jump.too_many`). A disabled Host is taken, and the route
+waits for it to be enabled again.
+
+```bash
+# Reach Host 5 through Host 2 and then Host 3.
+curl -s -b cookies.txt -X PUT "$BASE/api/host/5" \
+  -H 'Content-Type: application/json' \
+  -H "X-CSRF-Token: $CSRF" \
+  -d '{"jump_host_ids":[2,3]}'
+```
+
+**A Host on the jump route of another is not deleted.** The delete is refused
+with `409` under `host.delete.used_as_jump`: `error_args` names the Hosts that
+pass through it in `host_ids` and `hosts`, and `data` carries them as
+`[{"id":..., "address":..., "port":...}]`, so that a screen can point at the
+rows. Take it off those routes first.
+
+**Two Hosts may share an address on different SSH ports**, since the same
+private address is a different machine behind each Host it is reached through.
+A create or an update that puts a Host on the address and the SSH port of
+another is refused with `409` under `host.address.taken`, with `address`,
+`port` and `host_id`, the Host that holds them, in `error_args`. The addresses
+are compared without regard to case or to how an IP address is written, so
+`2001:DB8::1` and `2001:db8:0::1` are one address, as are `Example.com` and
+`example.com`.
+
+**`ids` reads the Hosts a list of ids names in one request**, which is how the
+screens read the Hosts on the routes they draw. It takes up to 1000 positive
+whole numbers separated by commas. Every one of them that is registered is
+answered on one page, in the order of their ids, with `page` and `size` left
+unread; an id that is not registered is left out, and `q` narrows them as it
+narrows the list. A value that is not such a list is refused with `400` under
+`host.list.ids_invalid`.
+
+```bash
+curl -s -b cookies.txt "$BASE/api/host?ids=2,3"
 ```
 
 ### The service ports a Host carries
@@ -2592,6 +2732,7 @@ curl -s -b cookies.txt -X POST "$BASE/api/host/1/local-forward" \
         "enabled": true, "allowed_sources": "",
         "status": "connected", "last_error": "", "retry_count": 0,
         "last_connected_at": "<when the connection was made>", "forward_reach": "reachable",
+        "jump_seq": 0, "jump_host_id": 0, "jump_reason": "",
         "created_at": "<...>", "updated_at": "<...>" }
     ],
     "total": 1,
@@ -2607,6 +2748,8 @@ read and an update answer with one object like those in `items`. `bind_scope` in
 an answer is always `loopback` or `wildcard`, never empty. `forward_reach` is
 whether the target answered, and a forward that is not running leaves it out,
 see [Whether a local forward reaches its target](#whether-a-local-forward-reaches-its-target).
+`jump_seq`, `jump_host_id` and `jump_reason` say where on the jump route of the
+Host the forward stopped, see [A jump route](#a-jump-route).
 
 **This list used to answer every row, with `data` the array of them.** It is
 paged now and `data` is the object above, so a client reading `data[0]` reads
@@ -2725,8 +2868,8 @@ shown as it was written.
 
 | Method | Path | What it does |
 |--------|------|--------------|
-| `POST` | `/api/export/tunnels` | Takes `password` and `account_password`, answers with every Host, its local forwards included, and every service port encrypted into one file |
-| `POST` | `/api/import/tunnels` | Takes `password`, `file`, `overwrite` and `account_password`, and writes what the file holds |
+| `POST` | `/api/export/tunnels` | Takes `password` and `account_password`, answers with every Host, its local forwards and its jump route included, and every service port encrypted into one file |
+| `POST` | `/api/import/tunnels` | Takes `password`, `file`, `account_password` and `dry_run`, and replaces the tunnel configuration stored here with what the file holds |
 | `POST` | `/api/export/settings` | Takes `password` and `account_password`, answers with the stored settings encrypted into one file |
 | `POST` | `/api/import/settings` | Takes `password` and `file`, and stores the settings the file holds |
 
@@ -2737,11 +2880,11 @@ kept and for how long, and neither installation has to reach the other.
 `password` is the password of the file, and `account_password` is the password
 of the account, asked for again. The two exports and the import of the tunnels
 take it because an export carries in plain text what the database keeps
-encrypted, and an import with `overwrite` replaces the host key a Host is
-trusted with, so an open session or a token alone is not enough for either. A
-request with a token sends it too. An empty one is refused with `400`, one that
-does not open the account with `401`, and too many of those with `429`, the
-same counters the login uses. The import of the settings does not take it.
+encrypted, and an import replaces the host keys the Hosts are trusted with, so
+an open session or a token alone is not enough for either. A request with a
+token sends it too. An empty one is refused with `400`, one that does not open
+the account with `401`, and too many of those with `429`, the same counters the
+login uses. The import of the settings does not take it.
 
 **What an export hands out is one line of text.** It opens with the marker
 `tmpwenc:v1:` and everything after it is base64, so the whole file is ASCII and
@@ -2753,85 +2896,78 @@ password be told apart from a damaged file, and nothing readable is in the file
 at all. That is why the import screen takes a single long line, and why dropping
 the file onto it and pasting what is in it do the same thing.
 
-**The file says which service ports each Host carries**, in
-`assigned_local_ports` on the Host, named by local port and not by the id of the
-row: the ids belong to the installation the file came from, while the local port
-is unique across the service ports of an installation and so means the same on
-both sides. The list is what the Host carries after the import and not what to
-add to it, so a Host the import wrote is left carrying what the file names and
-nothing besides; a Host that was skipped keeps the assignments it has. A local
-port the file names and this installation does not hold is listed in the answer
-as a skipped assignment, with the Host and the port, and the rest of the import
-stands.
+**An import of the tunnels replaces the whole tunnel configuration.** Every
+Host, service port, assignment, local forward and jump route stored here is
+deleted, and the ones in the file are written in their place, in one
+transaction. A Host that is here and not in the file is gone afterwards. The
+account, the settings, the sessions and the API tokens are not touched. The
+tunnels themselves are not carried, since the reconcile loop builds them from
+the Hosts, the service ports and the assignments between them: a tunnel whose
+Host and service port are still there under the same ids is left to it, and
+the rest are deleted with the configuration they stood for.
 
-A file written before the assignments were stored carries no such field, and
-every Host in it is taken to carry every service port in it. That is what such a
-file meant without saying it, and read as "carries none" it would import
-cleanly and leave the installation with no tunnel at all. A Host that carries
-nothing is written into the file as `[]`, which is the same distinction from the
-other side.
+**`overwrite` is gone.** The import used to add what was not registered here
+and skip or, with `overwrite`, replace what was. A body that still carries the
+field is refused with `400` under `import.overwrite.removed`, whatever its value
+is, `null` included, so that a script written for that import does not replace
+a configuration without knowing it.
 
-**How far each assignment reaches travels with it**, in `assigned_bind_scopes`
-on the Host, keyed by the same local port. An assignment with no entry there is
-on the wildcard, which is what the empty value means in the database, so only an
-answer other than that one is written. A file from v3.8.3 carries no such field
-and one `bind_address` for the whole Host instead: that is read, and a loopback
-address there makes every assignment of that Host `loopback` while every other
-answer makes them the wildcard, by the same rule the upgrade uses. It is read
-and never written, so an import cannot quietly undo a narrowing somebody made,
-and a file this version writes carries no `bind_address` at all.
+**`dry_run` set to true opens and checks the file and writes nothing.** The
+answer is the same either way: `current` is how much is stored here, which the
+import deletes, and `file` is how much the file holds, which the import writes.
+`jump_hosts` is the number of Hosts that have a jump route.
 
-**Whether each assignment runs travels with it**, in `assigned_enabled` on the
-Host, keyed by the same local port. Only an assignment that is switched off has
-an entry, `false`, and an assignment with no entry runs, so a file written
-before assignments could be switched off imports every assignment switched on.
+```json
+{
+  "success": true,
+  "data": {
+    "dry_run": true,
+    "current": { "hosts": 3, "service_ports": 2, "assignments": 6, "local_forwards": 1, "jump_hosts": 1 },
+    "file": { "hosts": 2, "service_ports": 2, "assignments": 4, "local_forwards": 0, "jump_hosts": 0 }
+  }
+}
+```
 
-**The local forwards of each Host travel with it**, in `local_forwards` on the
-Host, and `local_forwards` in the answer of the export counts them. Like
-`assigned_local_ports`, the list is what the Host carries after the import, and
-a missing field and an empty list are two different answers.
+The Settings screen does that first: it sends the file with `dry_run`, shows how
+much of each would be deleted from here and imported from the file, and replaces
+the configuration only once **Replace** is pressed. A file that is refused is
+refused on the dry run, before anything is asked.
 
-Each forward in the list carries `enabled`, and the export always writes it. A
-forward with no `enabled`, which is every forward of a file written before a
-forward could be switched off, is stored switched on: each of them was running
-where the file came from. Each also carries `allowed_sources`, and a forward
-without it lets every address in, as every forward did before the field
-existed.
+**The file carries the id of every row**, from `format_version` 2 on, so it
+alone puts a configuration back as it was. The import writes the rows under the
+ids and numbers the file gives them, which is what keeps a jump route, which
+names its Hosts by id, and a local forward, which is named by its Host and its
+number, pointing at what they pointed at.
 
-| `local_forwards` on a Host in the file | What an import that writes that Host does |
-|----------------------------------------|-------------------------------------------|
-| Missing, or `null` | Leaves the local forwards of that Host as they are. A file written before local forwards existed says nothing about them |
-| `[]` | Deletes every local forward of that Host |
-| A list | Replaces the local forwards of that Host with the list |
+| In the file | What it carries |
+|-------------|-----------------|
+| Each Host | `id`, `created_at`, `updated_at`, the credentials, `host_key`, `pending_host_key`, `jump_host_ids`, the four `socks_` fields, `assignments` and `local_forwards` |
+| `assignments` on a Host | One entry per service port it carries: `service_port_id`, `bind_scope`, `enabled` and `created_at` |
+| `local_forwards` on a Host | One entry per forward, with its `number`, `created_at` and `updated_at` beside its fields |
+| Each service port | `id`, `created_at` and `updated_at` beside its fields |
 
-A Host that was skipped keeps its local forwards whatever the file says. The
-export always writes the list, `[]` for a Host with none. Every local forward
-the import writes is listed in the answer as `added` or `replaced`. **The import
-is refused, and nothing is written**, when the file opens one `local_port`
-twice, when a forward in it does not pass the rules of a create, when it opens
-the port this server is stored to listen on, or when it opens a port that a local
-forward the import leaves in place holds here; the Host of that forward is named
-in the refusal.
-
-**The SOCKS5 proxy of each Host travels with it**, in `socks_enabled`,
-`socks_port`, `socks_bind_scope` and `socks_allowed_sources` on the Host. The
-export always writes the four. A field the file does not carry leaves what the
-Host has as it is, so a file written before the proxy existed switches no proxy
-off, and a Host that was skipped keeps its proxy whatever the file says. Every
-proxy the import switches on is listed in the answer under the kind `socks`.
-**The import is refused, and nothing is written**, when the file opens one port
-twice among its proxies and local forwards, or when a proxy it switches on opens
-the port this server listens on or a port the proxy or a local forward of
-another Host opens here.
+**A file from an earlier release still imports.** It carries no ids, so the
+Hosts and the service ports are given ids counted from 1 in the order the file
+lists them, the local forwards of each Host are numbered from 1 in the same
+way, and no Host has a jump route. Such a file names the service ports a Host
+carries in `assigned_local_ports`, by local port, with `assigned_bind_scopes`
+and `assigned_enabled` beside it, keyed by the same local port. A Host without
+`assigned_local_ports` carries every service port of the file, which is what a
+file written before the assignments were stored meant, and `[]` carries none.
+An assignment with no scope is on the wildcard and one with no `enabled` runs.
+A file from v3.8.3 carries one `bind_address` for the whole Host instead of the
+scopes: a loopback address there makes every assignment of that Host
+`loopback`, and every other answer makes them the wildcard. A file that carries
+no `local_forwards` imports the Host with none, a forward without `enabled` is
+stored switched on and one without `allowed_sources` lets every address in, and
+a file that carries none of the `socks_` fields imports the Host with no proxy.
 
 **The key each Host is trusted on travels with it**, in `host_key`, so moving a
 configuration does not throw the trust away and the installation that takes the
 file in connects without every Host being approved again. It is a public key and
 is written as the row holds it rather than encrypted. The key some server
-presented on a refused connection is in no file, and an import that replaces a
-row drops the one that was there: it is a question about a machine the other
-installation has not spoken to yet, and the file has just said what the right
-key is.
+presented on a refused connection travels too, in `pending_host_key`, so a
+question that was waiting for somebody is still waiting after the import.
 
 **The whole file is encrypted with the password given to the export, and that
 password is the only thing protecting it.** Inside it, the SSH password, the
@@ -2849,17 +2985,19 @@ the browser that asked. The password is held to the same 12 to 72 bytes the
 account password is, and it is stored nowhere: a file whose password is
 forgotten cannot be opened by anyone, this program included.
 
-An import adds what is not registered here and **skips** what is, naming in the
-answer what it skipped and why. Send the same file again with `overwrite` set to
-true to replace those rows instead; a replaced row keeps its id, so the tunnels
-of that Host reconnect rather than being built anew. Every row of the file is
-listed in the answer as `added`, `replaced` or `skipped`, which is what you read
-before deciding about an overwrite. The whole import is one transaction: a file
-that is refused half way through leaves the database exactly as it was. The
-tunnels themselves are not carried, since the reconcile loop builds them from
-the Hosts, the service ports and the assignments between them. A `reason` or a `name` that
-is an English sentence comes with `reason_code` and `reason_values`, or `name_code` and
-`name_values`, the code and the values a screen says it from in its own language.
+**The import is refused, and nothing is written**, when a row of the file does
+not pass the rules of a create, and when the file does not hold together on its
+own:
+
+| What the file holds | Refused under |
+|---------------------|---------------|
+| One Host twice on the same SSH port, with the addresses compared without regard to case or to how an IP address is written | `import.host.duplicate` |
+| A Host or a service port whose id is 0 or the id of another row of the file, or a local forward whose number is 0 or that of another forward of its Host | `import.host.id_invalid`, `import.service_port.id_invalid`, `import.local_forward.number_invalid` |
+| Two service ports on one service address and port, or on one local port | `import.service_port.duplicate` |
+| An assignment naming a service port the file does not hold | `import.assignment.unknown_service_port`, `import.assignment.unknown_local_port` |
+| One port opened twice among the local forwards and the SOCKS5 proxies | `import.local_forward.duplicate`, `import.socks.duplicate` |
+| A local forward or a proxy on the port this server listens on, stored or now | `409`, under `import.local_forward.local_port.api_port` and `import.socks.socks_port.api_port` |
+| A jump route that names a Host the file does not hold, the Host itself, one Host twice, or more than 8 | `import.jump.unknown_host`, `import.jump.self`, `import.jump.duplicate`, `import.jump.too_many` |
 
 The settings import **stores** the settings and puts none of them onto the
 running process, `api_port` and `api_https_enabled` included. What is stored is
@@ -2867,7 +3005,11 @@ what the next startup runs on, and `GET /api/settings` reports the difference in
 `pending_restart` until then, so an import cannot move the port out from under
 the request that carries it. A file whose settings do not pass the rules of the
 Settings screen is refused, and nothing is stored; so is a file whose `api_port`
-is a new port a local forward opens here, with `409` as a save is.
+is a new port a local forward opens here, with `409` as a save is. A path the
+settings import stored other than the file had it is listed in `items`, and a
+`reason` there that is an English sentence comes with `reason_code` and
+`reason_values`, the code and the values a screen says it from in its own
+language.
 
 A file that does not open says which of the four it is: the password is wrong,
 it is not a file this program wrote, it is damaged, or it holds the other kind.
@@ -2879,9 +3021,16 @@ curl -s -b cookies.txt -X POST "$BASE/api/export/tunnels" \
   -d '{"password":"<the password that encrypts the file>","account_password":"<the password of your account>"}' |
 jq -r '.data.file' > tunnels.tmexport
 
-# Import it on the other installation.
+# On the other installation, see what the import would replace first.
 jq -n --arg file "$(cat tunnels.tmexport)" \
-  '{password:"<the same password>",file:$file,overwrite:false,account_password:"<the password of your account>"}' |
+  '{password:"<the same password>",file:$file,dry_run:true,account_password:"<the password of your account>"}' |
+curl -s -b cookies.txt -X POST "$BASE/api/import/tunnels" \
+  -H "X-CSRF-Token: $CSRF" -H 'Content-Type: application/json' \
+  --data-binary @-
+
+# Then replace it.
+jq -n --arg file "$(cat tunnels.tmexport)" \
+  '{password:"<the same password>",file:$file,account_password:"<the password of your account>"}' |
 curl -s -b cookies.txt -X POST "$BASE/api/import/tunnels" \
   -H "X-CSRF-Token: $CSRF" -H 'Content-Type: application/json' \
   --data-binary @-
@@ -2937,6 +3086,9 @@ curl -s -b cookies.txt https://127.0.0.1:8888/api/status
         "remote": "198.51.100.20:18080",
         "server_banner": "SSH-2.0-OpenSSH_9.9",
         "error_kind": "",
+        "jump_seq": 0,
+        "jump_host_id": 0,
+        "jump_reason": "",
         "open_reach": "ipv4",
         "listen_addresses": "0.0.0.0,::",
         "kind": "service_port",
@@ -2953,6 +3105,9 @@ curl -s -b cookies.txt https://127.0.0.1:8888/api/status
         "remote": "198.51.100.30:80",
         "server_banner": "",
         "error_kind": "",
+        "jump_seq": 0,
+        "jump_host_id": 0,
+        "jump_reason": "",
         "open_reach": "",
         "listen_addresses": "",
         "kind": "local_forward",
@@ -3010,7 +3165,7 @@ how much is waiting for somebody, whichever sort each row is.
 | `desired_tunnels` | How many rows of the two sorts **should** be running: the assignments whose Host is enabled, and the local forwards that are switched on and whose Host is enabled |
 | `connected_tunnels` | How many rows say `connected` |
 | `reconnecting_tunnels` | How many rows say `reconnecting`: on their way back without anybody doing anything |
-| `error_tunnels` | How many rows say `error`: waiting for somebody |
+| `error_tunnels` | How many rows say `error` or `jump_host_disabled`: waiting for somebody |
 | `total_rows` | The rows of both sorts, which is what the pages are cut from |
 
 **`reconnecting` and `error` are counted apart because what they leave you to do
@@ -3080,6 +3235,7 @@ the list behind them is `GET /api/host-key`; see [Host keys](#host-keys).
 | `error` | The attempt failed. `last_error` holds the reason |
 | `host_key_unapproved` | The SSH server presented a host key and none has been approved for this Host, so the connection was refused. See [Host keys](#host-keys) |
 | `host_key_mismatch` | The SSH server presented a key other than the one this Host is trusted on, so the connection was refused. See [Host keys](#host-keys) |
+| `jump_host_disabled` | A Host on the jump route of this Host is disabled, so nothing was connected. It is counted in `error_tunnels`. See [A jump route](#a-jump-route) |
 
 Those are the words a **service port** row carries. A local forward row carries
 the words a local forward reports, `disabled`, `off` and `stopped` among them;
@@ -3090,6 +3246,11 @@ is somewhere to send you: `forward_denied` is the SSH server refusing to open
 the forwarded port. Every other failure, and every row that is not in error,
 leave it empty. It says what happened and never why, since
 the several settings that make a server refuse look identical from here.
+
+`jump_seq`, `jump_host_id` and `jump_reason` say where on the jump route of the
+Host a connection stopped and why, on either sort of row, and are `0`, `0` and
+`""` on a row that did not stop on its route. What each reason means is in
+[A jump route](#a-jump-route).
 
 ### Where the forwarded port is opened
 
