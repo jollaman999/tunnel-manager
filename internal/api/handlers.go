@@ -716,7 +716,7 @@ func (h *Handler) CreateHost(c echo.Context) error {
 // @Param   page  query  int  false  "The page, counted from 1. Below 1 is read as 1, and a page past the last one is answered with the last page"
 // @Param   size  query  int  false  "How many rows a page holds"  Enums(10, 20, 30, 50, 100)
 // @Param   q     query  string  false  "Only the Hosts whose address, user, description or SSH port holds this text, with ASCII letters matched in either case. % and _ are taken as written"
-// @Param   ids   query  string  false  "Only the Hosts with these ids, written as positive whole numbers separated by commas, at most 1000 of them. Every one of them that is registered is answered on one page, oldest first, with page and size left unread; an id that is not registered is left out. q narrows them as it narrows the list"
+// @Param   ids   query  string  false  "Only the Hosts with these ids, written as positive whole numbers separated by commas, at most 1000 of them. ids named more than once is read as one list of every value it is named with, and the 1000 are counted over all of them, an id named twice counted twice. Every one of them that is registered is answered on one page, oldest first, with page and size left unread; an id that is not registered is left out. q narrows them as it narrows the list"
 // @Success  200  {object}  models.Response{data=api.listPageOf{items=[]api.hostView}}
 // @Failure  400  {object}  api.errorBody  "page is not a number, size is not one of the sizes taken, or ids is not a list of at most 1000 Host ids"
 // @Router       /host [get]
@@ -785,13 +785,14 @@ const maxListHostIDs = 1000
 
 // readListHostIDs reads ids off the query string of the list of Hosts. listed
 // is false when there is no ids or an empty one, which is the list as it was
-// before the parameter was there. An id named twice is read once, and the ids
-// come back in ascending order.
+// before the parameter was there. ids named more than once is every value it is
+// named with, read as the one list they make joined by commas. An id named twice
+// is read once, and the ids come back in ascending order.
 //
 // The entries are counted before they are read, so that a request that names
 // too many is refused without every one of them being parsed.
 func readListHostIDs(c echo.Context) (ids []uint, listed bool, refused *refusal) {
-	raw := c.QueryParam("ids")
+	raw := strings.Join(c.QueryParams()["ids"], ",")
 	if raw == "" {
 		return nil, false, nil
 	}

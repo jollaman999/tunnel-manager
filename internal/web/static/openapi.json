@@ -426,7 +426,7 @@
                     },
                     {
                         "type": "string",
-                        "description": "Only the Hosts with these ids, written as positive whole numbers separated by commas, at most 1000 of them. Every one of them that is registered is answered on one page, oldest first, with page and size left unread; an id that is not registered is left out. q narrows them as it narrows the list",
+                        "description": "Only the Hosts with these ids, written as positive whole numbers separated by commas, at most 1000 of them. ids named more than once is read as one list of every value it is named with, and the 1000 are counted over all of them, an id named twice counted twice. Every one of them that is registered is answered on one page, oldest first, with page and size left unread; an id that is not registered is left out. q narrows them as it narrows the list",
                         "name": "ids",
                         "in": "query"
                     }

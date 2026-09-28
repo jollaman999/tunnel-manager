@@ -649,6 +649,71 @@ func TestListHostsByIDsRefusesWhatIsNotAListOfIDs(t *testing.T) {
 	}
 }
 
+// TestListHostsByIDsReadsEveryTimeItIsNamed pins ids named more than once in
+// the query string: every one of them is read, as the one list their values
+// make when joined by commas, so the refusal and the limit are the ones that
+// list is held to.
+func TestListHostsByIDsReadsEveryTimeItIsNamed(t *testing.T) {
+	db := listHostsByIDsDB(t)
+	h := NewHandler(db, &wakeRecorder{tx: &txConnPool{}}, zap.NewNop(), newTestCipher(t))
+
+	for _, tc := range []struct {
+		query string
+		want  []uint
+	}{
+		{"ids=12&ids=3", []uint{3, 12}},
+		{"ids=12&ids=3,7&ids=3", []uint{3, 7, 12}},
+		{"ids=5&ids=999&ids=6", []uint{5, 6}},
+	} {
+		got := listSearch(t, db, listHosts, tc.query)
+
+		if !reflect.DeepEqual(got.ids, tc.want) {
+			t.Errorf("%s answers %v, want %v", tc.query, got.ids, tc.want)
+		}
+		if got.total != len(tc.want) || got.page != 1 {
+			t.Errorf("%s says total %d on page %d, want %d on page 1", tc.query, got.total, got.page, len(tc.want))
+		}
+	}
+
+	half := strings.TrimSuffix(strings.Repeat("1,", maxListHostIDs/2), ",")
+
+	for _, tc := range []struct {
+		name   string
+		query  string
+		status int
+	}{
+		{"one that is not a number", "ids=3&ids=x", http.StatusBadRequest},
+		{"one that is empty", "ids=3&ids=", http.StatusBadRequest},
+		{"one past the limit in all", "ids=" + half + "&ids=" + half + ",1", http.StatusBadRequest},
+		{"just at the limit in all", "ids=" + half + "&ids=" + half, http.StatusOK},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			c, rec := getRequest(t, "/api/host?"+tc.query, "", "")
+
+			err := h.ListHosts(c)
+			if err != nil {
+				t.Fatalf("the list returned error: %v", err)
+			}
+			if rec.Code != tc.status {
+				t.Fatalf("status = %d, want %d, body: %s", rec.Code, tc.status, rec.Body.String())
+			}
+			if tc.status == http.StatusOK {
+				return
+			}
+
+			var refusal errorBody
+
+			err = json.Unmarshal(rec.Body.Bytes(), &refusal)
+			if err != nil {
+				t.Fatalf("failed to read the refusal %s: %v", rec.Body.String(), err)
+			}
+			if refusal.Code != errHostListIDsInvalid {
+				t.Errorf("code = %q, want %q", refusal.Code, errHostListIDsInvalid)
+			}
+		})
+	}
+}
+
 // TestListHostsByIDsIsTwoReadsHoweverManyIDs pins what the parameter is for:
 // the Hosts are one read and their routes another, so a screen that asks for
 // many Hosts costs the database what it costs to ask for one.
