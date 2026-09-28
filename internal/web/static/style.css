@@ -3388,9 +3388,9 @@ button.jump-chip.on {
   }
 }
 
-/* Under a row held up at a host key of a Host on the jump route: which Host the
-   key is waiting on. */
-.jump-key-note {
+/* Under a connection that stopped at a Host on its jump route: which Host it
+   stopped at, and what to do about it. */
+.jump-note {
   margin: 0;
   padding: 0.3rem 0.5rem;
   color: var(--warn);

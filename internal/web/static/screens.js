@@ -682,6 +682,15 @@ async function drawStatus() {
   }
 
   const tunnels = data.tunnels === null || data.tunnels === undefined ? [] : data.tunnels;
+  const known = await readHostsByID(jumpNoteHosts(tunnels, function (tunnel) {
+    return tunnel.jump_reason;
+  }, function (tunnel) {
+    return tunnel.jump_host_id;
+  }), []);
+
+  if (currentScreen !== "status") {
+    return;
+  }
 
   // The box goes under the lines about the counts and over the rows it
   // narrows. The counts are over every row whatever it holds, so above them it
@@ -735,7 +744,7 @@ async function drawStatus() {
         under.push(said);
       }
 
-      const hop = jumpKeyNote(tunnel);
+      const hop = jumpNote(tunnel.jump_reason, tunnel.jump_seq, tunnel.jump_host_id, known);
       if (hop !== null) {
         under.push(hop);
       }
@@ -789,30 +798,86 @@ async function drawStatus() {
   render(t("status.screen.title"), nodes);
 }
 
-// jumpFailure is how the server begins the error of a connection that failed
-// at a Host on the jump route: which hop, and which Host it is.
-const jumpFailure = /^jump ([0-9]+) \(host #([0-9]+) ([^)]*)\):/;
+// jumpNote says, under a connection that stopped at a Host on its jump route,
+// what to do about it and on which Host, or null for one that did not. reason,
+// step and id are what the server reports of the stop, and known holds the
+// Hosts read for them.
+function jumpNote(reason, step, id, known) {
+  const host = Object.prototype.hasOwnProperty.call(known, String(id)) ? known[String(id)] : null;
+  const values = {
+    step: step,
+    id: id,
+    address: host === null ? "#" + id : joinAddress(String(host.address), String(host.port))
+  };
+  let said;
 
-// jumpKeyNote says, under a row held up at a host key, that the key is the one
-// of a Host on the jump route and not of the Host of the row. The key waits on
-// that Host, which is where it is approved.
-function jumpKeyNote(tunnel) {
-  if (hostKeyState(tunnel.status) === null || typeof tunnel.last_error !== "string") {
-    return null;
+  switch (reason) {
+    case "disabled":
+      said = t("status.jump-reason-disabled.notice", values);
+      break;
+    case "dial":
+      said = t("status.jump-reason-dial.notice", values);
+      break;
+    case "auth":
+      said = t("status.jump-reason-auth.notice", values);
+      break;
+    case "host_key":
+      said = t("status.jump-reason-host-key.notice", values);
+      break;
+    case "route":
+      said = t("status.jump-reason-route.notice", values);
+      break;
+    default:
+      return null;
   }
 
-  const said = jumpFailure.exec(tunnel.last_error);
+  const note = element("p", said);
 
-  if (said === null) {
-    return null;
+  note.className = "jump-note";
+  note.dataset.jumpReason = reason;
+
+  if (Number.isInteger(id) && id > 0) {
+    note.dataset.jumpHost = String(id);
   }
-
-  const note = element("p", t("status.jump-host-key.notice", { step: said[1], id: said[2], address: said[3] }));
-
-  note.className = "jump-key-note";
-  note.dataset.jumpHost = said[2];
 
   return note;
+}
+
+// jumpNoteHosts is the ids of the Hosts the jump notes of rows name. reasonOf
+// and hostOf read the two fields off a row.
+function jumpNoteHosts(rows, reasonOf, hostOf) {
+  const ids = [];
+
+  for (const row of rows) {
+    const reason = reasonOf(row);
+
+    if (typeof reason === "string" && reason !== "" && Number.isInteger(hostOf(row))) {
+      ids.push(hostOf(row));
+    }
+  }
+
+  return ids;
+}
+
+// socksJumpReason is why the SOCKS5 proxy of a Host stopped on its jump route,
+// said of a proxy that is switched on and of no other, as its error is.
+function socksJumpReason(host) {
+  return host.socks_enabled && typeof host.socks_jump_reason === "string" ? host.socks_jump_reason : "";
+}
+
+// underBoth is what goes under a row that has a line under it already and a
+// note to go after it.
+function underBoth(under, note) {
+  if (under === undefined) {
+    return note;
+  }
+
+  const both = document.createElement("div");
+
+  both.appendChild(under);
+  both.appendChild(note);
+
+  return both;
 }
 
 // isLocalForward is which of the two sorts a status row is. The server says it
@@ -2783,6 +2848,12 @@ async function drawHostsAnew() {
     }
   }
 
+  for (const id of jumpNoteHosts(hosts, socksJumpReason, function (host) {
+    return host.socks_jump_host_id;
+  })) {
+    wanted.push(id);
+  }
+
   const known = await readHostsByID(wanted, hosts.concat(editing === undefined ? [] : [editing]));
 
   if (currentScreen !== "hosts") {
@@ -2820,6 +2891,12 @@ async function drawHostsAnew() {
         if (failure !== "") {
           row.under = element("span", failure);
           row.under.className = "last-error";
+        }
+
+        const hop = jumpNote(socksJumpReason(host), host.socks_jump_seq, host.socks_jump_host_id, known);
+
+        if (hop !== null) {
+          row.under = underBoth(row.under, hop);
         }
 
         return row;
@@ -3100,14 +3177,13 @@ async function readHostOrNull(id) {
   }
 }
 
-// jumpReadsAtMost is how many Hosts a draw reads one by one to name the Hosts
-// its routes pass through. Past it the first page of the list is read once,
-// and a Host that is still not found is named by its id alone, so a draw costs
-// the same few requests however many Hosts there are.
-const jumpReadsAtMost = 16;
+// hostIDsPerRead is how many Hosts one read by ids names at most, which is as
+// many as the server takes in one list.
+const hostIDsPerRead = 1000;
 
 // readHostsByID is the Hosts named in ids, keyed by id, with the ones in have
-// taken as they are.
+// taken as they are. The rest are read by ids in one request, or one per
+// hostIDsPerRead of them, and a Host that is not stored is left out.
 async function readHostsByID(ids, have) {
   const found = {};
 
@@ -3115,31 +3191,25 @@ async function readHostsByID(ids, have) {
     found[String(host.id)] = host;
   }
 
-  const unread = function () {
-    const left = [];
+  const unread = [];
+  const asked = {};
 
-    for (const id of ids) {
-      if (!Object.prototype.hasOwnProperty.call(found, String(id)) && left.indexOf(id) === -1) {
-        left.push(id);
-      }
+  for (const id of ids) {
+    if (!Number.isInteger(id) || id <= 0) {
+      continue;
     }
 
-    return left;
-  };
-
-  if (unread().length > jumpReadsAtMost) {
-    const answer = await apiCall("GET", "/api/host?" +
-      pageQuery({ number: 1, size: listSizes[listSizes.length - 1] }));
-
-    for (const host of answer === null || !Array.isArray(answer.items) ? [] : answer.items) {
-      found[String(host.id)] = host;
+    if (!Object.prototype.hasOwnProperty.call(found, String(id)) &&
+      !Object.prototype.hasOwnProperty.call(asked, String(id))) {
+      asked[String(id)] = true;
+      unread.push(id);
     }
   }
 
-  const read = await Promise.all(unread().slice(0, jumpReadsAtMost).map(readHostOrNull));
+  for (let at = 0; at < unread.length; at += hostIDsPerRead) {
+    const answer = await apiCall("GET", "/api/host?ids=" + unread.slice(at, at + hostIDsPerRead).join(","));
 
-  for (const host of read) {
-    if (host !== null) {
+    for (const host of answer === null || !Array.isArray(answer.items) ? [] : answer.items) {
       found[String(host.id)] = host;
     }
   }
@@ -5874,6 +5944,7 @@ async function openHostLocalForwards(host) {
   problem.hidden = true;
 
   let shown = [];
+  let known = {};
   let total = 0;
   let open = true;
   let timer = null;
@@ -5947,7 +6018,7 @@ async function openHostLocalForwards(host) {
         t("local-forwards.description.column"), t("local-forwards.status.column"),
         t("local-forwards.reach.column"), ""],
       shown.map(function (item) {
-        const row = localForwardRow(item, openForm, flipOne, remove);
+        const row = localForwardRow(item, known, openForm, flipOne, remove);
 
         row.pick = picks.box(item.number);
 
@@ -6036,6 +6107,11 @@ async function openHostLocalForwards(host) {
       ? []
       : answer.items;
     total = answer === null || typeof answer.total !== "number" ? shown.length : answer.total;
+    known = await readHostsByID(jumpNoteHosts(shown, function (item) {
+      return item.jump_reason;
+    }, function (item) {
+      return item.jump_host_id;
+    }), [host]);
 
     drawList();
   }
@@ -6322,7 +6398,7 @@ async function openHostLocalForwards(host) {
 // localForwardRow is the cells of one local forward in that panel. The last
 // error goes under the row, as it does on the status screen, because a
 // sentence in a column of a table this narrow is a column of single words.
-function localForwardRow(item, edit, flip, remove) {
+function localForwardRow(item, known, edit, flip, remove) {
   const buttons = document.createElement("div");
 
   buttons.className = "buttons";
@@ -6377,6 +6453,11 @@ function localForwardRow(item, edit, flip, remove) {
   if (failure !== "") {
     row.under = element("span", failure);
     row.under.className = "last-error";
+  }
+
+  const hop = jumpNote(item.jump_reason, item.jump_seq, item.jump_host_id, known);
+  if (hop !== null) {
+    row.under = underBoth(row.under, hop);
   }
 
   return row;
