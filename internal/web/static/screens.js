@@ -749,15 +749,6 @@ async function drawStatus() {
       return { cells: cells, under: both };
     });
 
-    // The pages are cut from both sorts together, so what the controls are
-    // built over is the count of rows and not the count of tunnels. Over the
-    // tunnels alone the last pages of an installation that has local forwards
-    // are pages the numbering does not reach.
-    const controls = pageControls("status", page, data.total_rows, drawStatus);
-    if (controls !== null) {
-      nodes.push(controls);
-    }
-
     nodes.push(buildTable(
       [t("status.host.column"), t("status.kind.column"), t("status.service-port.column"),
         t("status.status.column"), t("status.server.column"), t("status.opened.column"),
@@ -766,6 +757,15 @@ async function drawStatus() {
       rows,
       [0, 2, 8]
     ));
+
+    // The pages are cut from both sorts together, so what the controls are
+    // built over is the count of rows and not the count of tunnels. Over the
+    // tunnels alone the last pages of an installation that has local forwards
+    // are pages the numbering does not reach.
+    const controls = pageControls("status", page, data.total_rows, drawStatus);
+    if (controls !== null) {
+      nodes.push(controls);
+    }
   }
 
   render(t("status.screen.title"), nodes);
@@ -1580,11 +1580,6 @@ async function openHostKeysPanel() {
       return;
     }
 
-    const controls = pageControls("host-keys", page, total, turnPage);
-    if (controls !== null) {
-      list.appendChild(controls);
-    }
-
     const all = hostKeysPageBox(shown, picked, function () {
       drawList();
     });
@@ -1598,6 +1593,11 @@ async function openHostKeysPanel() {
         function () {
           return approveOne(item);
         }));
+    }
+
+    const controls = pageControls("host-keys", page, total, turnPage);
+    if (controls !== null) {
+      list.appendChild(controls);
     }
 
     sayChosen();
@@ -2500,7 +2500,7 @@ function listNumberFirst(page, span, last) {
   return Math.floor((page.number - 1) / span) * span + 1;
 }
 
-// pageControls is the row above a table: the size the list is read in, the way
+// pageControls is the row under a table: the size the list is read in, the way
 // to the page on either side, the numbers of the pages around this one, and
 // where in the list this page is.
 //
@@ -2512,7 +2512,7 @@ function listNumberFirst(page, span, last) {
 // that is the state a screen is left in by choosing a hundred, and controls
 // that took themselves away there would leave no way back to ten.
 //
-// name is what the controls are named by, so that the row over a list and the
+// name is what the controls are named by, so that the row under a list and the
 // row inside a panel opened over it are not two buttons of the same name in
 // one document. Each works either way, since each holds its own draw, but
 // anything that finds a button by its name would find the wrong one.
@@ -2720,11 +2720,6 @@ async function drawHosts() {
       ? t("hosts.none.empty")
       : t("list.no-match.empty"), "empty"));
   } else {
-    const controls = pageControls("hosts", page, total, drawHosts);
-    if (controls !== null) {
-      nodes.push(controls);
-    }
-
     const picks = listPickColumn("hosts", hosts, function (id) {
       return t("hosts.pick-row.aria", { id: id });
     });
@@ -2751,9 +2746,8 @@ async function drawHosts() {
     table.dataset.list = "hosts";
     foldingRows(table);
 
-    // The press that acts on the ticks goes under the controls that turn the
-    // page and over the rows it acts on, which are the rows of this page: a
-    // tick is held for nothing else.
+    // The press that acts on the ticks goes over the rows it acts on, which
+    // are the rows of this page: a tick is held for nothing else.
     const bar = deletePickedBar({
       name: "hosts",
       items: hosts,
@@ -2809,6 +2803,11 @@ async function drawHosts() {
     }
 
     nodes.push(table);
+
+    const controls = pageControls("hosts", page, total, drawHosts);
+    if (controls !== null) {
+      nodes.push(controls);
+    }
   }
 
   render(t("hosts.screen.title"), nodes);
@@ -3801,11 +3800,6 @@ async function openHostServicePorts(host) {
       return;
     }
 
-    const controls = pageControls("host-service-ports", page, total, turnPage);
-    if (controls !== null) {
-      list.appendChild(controls);
-    }
-
     // What the server said about this page is taken before anything is drawn,
     // because the tick in the head of the table is drawn from it: a row nobody
     // has touched is ticked where the Host carries it, and that answer has to
@@ -3835,6 +3829,11 @@ async function openHostServicePorts(host) {
       [0, 2],
       column.head
     ));
+
+    const controls = pageControls("host-service-ports", page, total, turnPage);
+    if (controls !== null) {
+      list.appendChild(controls);
+    }
   }
 
   async function drawPage() {
@@ -4409,16 +4408,11 @@ async function openHostLocalForwards(host) {
 
     keepPicksOnPage("local-forwards", shown, localForwardNumber);
 
-    // The Add is at the far end of the row that turns the page, over the list
-    // it adds to, and is there on an empty list too.
+    // The Add is on a row of its own over the list it adds to, and is there on
+    // an empty list too. The controls that turn the page go under the rows.
     const head = document.createElement("div");
 
     head.className = "list-head";
-
-    const controls = pageControls("local-forwards", page, total, turnPage);
-    if (controls !== null) {
-      head.appendChild(controls);
-    }
 
     head.appendChild(actionButton(t("common.add.button"), "local-forward-add", function () {
       return openForm(null);
@@ -4522,6 +4516,11 @@ async function openHostLocalForwards(host) {
     }
 
     list.appendChild(table);
+
+    const controls = pageControls("local-forwards", page, total, turnPage);
+    if (controls !== null) {
+      list.appendChild(controls);
+    }
 
     putBackFocus(list, heading(), focused);
   }
@@ -5180,13 +5179,13 @@ async function pickHostsToAssignTo(ports) {
       return;
     }
 
+    for (const host of shown) {
+      list.appendChild(hostPickRow(host, picks, settle));
+    }
+
     const controls = pageControls("assign-picked-hosts", page, total, turnPage);
     if (controls !== null) {
       list.appendChild(controls);
-    }
-
-    for (const host of shown) {
-      list.appendChild(hostPickRow(host, picks, settle));
     }
   }
 
@@ -5502,11 +5501,6 @@ async function drawServicePorts() {
       ? t("service-ports.none.empty")
       : t("list.no-match.empty"), "empty"));
   } else {
-    const controls = pageControls("service-ports", page, total, drawServicePorts);
-    if (controls !== null) {
-      nodes.push(controls);
-    }
-
     const picks = listPickColumn("service-ports", ports, function (id) {
       return t("service-ports.pick-row.aria", { id: id });
     });
@@ -5557,6 +5551,11 @@ async function drawServicePorts() {
         })));
 
     nodes.push(bar, table);
+
+    const controls = pageControls("service-ports", page, total, drawServicePorts);
+    if (controls !== null) {
+      nodes.push(controls);
+    }
   }
 
   render(t("service-ports.screen.title"), nodes);

@@ -1663,9 +1663,10 @@ td.pick input[type="checkbox"] {
 /* The lists above the log act as they are changed, so they are a row of
    controls rather than a form with a button under it.
 
-   The row above a paged table is the same thing and is painted by the same
+   The row under a paged table is the same thing and is painted by the same
    rules, so that the list of sizes on one screen is the list of sizes on the
-   others. */
+   others. It is the one below what it controls, so it keeps its distance on
+   the side the table is on. */
 .log-controls,
 .page-controls {
   display: flex;
@@ -1673,6 +1674,11 @@ td.pick input[type="checkbox"] {
   gap: 0.6rem 1rem;
   align-items: center;
   margin-bottom: 0.75rem;
+}
+
+.page-controls {
+  margin-top: 0.75rem;
+  margin-bottom: 0;
 }
 
 .log-controls label,
@@ -1780,20 +1786,11 @@ input.list-search:focus {
   font-size: 12px;
 }
 
-/* The row over a list in a panel: the controls that turn the page, and the
-   press that adds to the list at the far end of it. The controls wrap inside
-   their own box, so the press stays at the top of the row. */
+/* The row over a list in a panel: the press that adds to the list, at the far
+   end of it. The controls that turn the page are under the list, not here. */
 .list-head {
   display: flex;
-  gap: 0.6rem 1rem;
-  align-items: flex-start;
   margin-bottom: 0.75rem;
-}
-
-.list-head > .page-controls {
-  flex: 1 1 auto;
-  min-width: 0;
-  margin-bottom: 0;
 }
 
 .list-head > .list-add {
@@ -1801,11 +1798,10 @@ input.list-search:focus {
   margin-inline-start: auto;
 }
 
-/* The presses that act on what is ticked, on the row between the controls that
-   turn the page and the table itself. They sit with the rows they act on and
-   not with the page controls: the ticks are the rows of this page, and a press
-   on the row of page numbers would read as something the whole list is put
-   through. */
+/* The presses that act on what is ticked, on the row over the table itself.
+   They sit with the rows they act on and not with the page controls: the ticks
+   are the rows of this page, and a press on the row of page numbers would read
+   as something the whole list is put through. */
 .list-actions {
   display: flex;
   flex-wrap: wrap;
