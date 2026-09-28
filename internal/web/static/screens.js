@@ -1050,11 +1050,13 @@ function pageHost() {
 // statusBadge is what a tunnel is, drawn so that the one row that is not
 // working is found without reading the column. A state the server is known to
 // send is drawn as a word in the language of the page, and one added later is
-// drawn as the server said it, so it still shows up; only the three that are
-// known are coloured. data-status carries the word as the server said it in
-// every case, since that is what the styles and the recorder pick a row by.
+// drawn as the server said it, so it still shows up; only the ones in known
+// are coloured. jump_host_disabled is painted as error is, because the server
+// counts it among the error tunnels and the count and the badge should agree.
+// data-status carries the word as the server said it in every case, since that
+// is what the styles and the recorder pick a row by.
 function statusBadge(status) {
-  const known = { connected: "ok", error: "bad", reconnecting: "waiting", jump_host_disabled: "waiting" };
+  const known = { connected: "ok", error: "bad", reconnecting: "waiting", jump_host_disabled: "bad" };
   const words = {
     jump_host_disabled: "status.state-jump-host-disabled.text",
     starting: "status.state-starting.text",
