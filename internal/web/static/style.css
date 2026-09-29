@@ -2939,7 +2939,7 @@ span.jump-pill {
 
 .jump-route {
   display: grid;
-  grid-template-columns: 15rem minmax(18rem, 1fr) minmax(16rem, 21rem);
+  grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 1rem;
   align-items: start;
 }
@@ -3073,6 +3073,7 @@ button.jump-block:disabled {
   display: flex;
   flex-direction: column;
   align-items: stretch;
+  container-type: inline-size;
 }
 
 .jump-node {
@@ -3146,6 +3147,21 @@ button.jump-block:disabled {
   display: flex;
   gap: 0.25rem;
   align-items: center;
+}
+
+@container (max-width: 22rem) {
+  .jump-node {
+    grid-template-columns: 1.75rem minmax(0, 1fr);
+  }
+
+  .jump-side {
+    grid-column: 2 / -1;
+    flex-wrap: wrap;
+  }
+
+  .jump-side:empty {
+    display: none;
+  }
 }
 
 button.jump-icon {
