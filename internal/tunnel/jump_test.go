@@ -35,7 +35,8 @@ import (
 // that AllowTcpForwarding is off for. With denyForwardConns at n it refuses
 // every tcpip-forward asked on the first n connections it takes, which is what
 // sshd does while it still holds the port for a session that went away without
-// closing.
+// closing. With a hold set by holdForwards it answers no tcpip-forward until
+// the hold is released, and says on asked when the first one arrives.
 type jumpTestServer struct {
 	addr string
 	key  ssh.PublicKey
@@ -46,9 +47,43 @@ type jumpTestServer struct {
 	mu     sync.Mutex
 	dialed []string
 	conns  []net.Conn
+	hold   chan struct{}
+	asked  chan struct{}
 
 	handshakes atomic.Int64
 	active     atomic.Int64
+}
+
+// holdForwards makes the server keep every tcpip-forward waiting for its answer
+// until release is called. asked is sent on when the first one arrives.
+func (s *jumpTestServer) holdForwards() (asked <-chan struct{}, release func()) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	s.hold = make(chan struct{})
+	s.asked = make(chan struct{}, 1)
+
+	hold := s.hold
+
+	return s.asked, func() { close(hold) }
+}
+
+// waitForHold is where a tcpip-forward waits while the forwards are held.
+func (s *jumpTestServer) waitForHold() {
+	s.mu.Lock()
+	hold, asked := s.hold, s.asked
+	s.mu.Unlock()
+
+	if hold == nil {
+		return
+	}
+
+	select {
+	case asked <- struct{}{}:
+	default:
+	}
+
+	<-hold
 }
 
 func (s *jumpTestServer) targets() []string {
@@ -159,6 +194,8 @@ func (s *jumpTestServer) serve(conn net.Conn, config *ssh.ServerConfig) {
 				}
 				continue
 			}
+
+			s.waitForHold()
 
 			if seq <= s.denyForwardConns.Load() {
 				_ = req.Reply(false, nil)

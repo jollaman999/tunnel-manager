@@ -21,6 +21,10 @@ import (
 // not a failure, but the Start loop still has to wait before reconnecting.
 var errConnectionClosed = errors.New("connection closed")
 
+// errTunnelStopped is what establishConnection returns when Stop came while it
+// was connecting, which is not a failure and is not retried.
+var errTunnelStopped = errors.New("tunnel stopped")
+
 // localPair is the two addresses a bind scope asks the forwarded port to be
 // opened on, one per address family. A forward request carries one address, so
 // a scope is two requests, and both of them belong to the one tunnel: the row
@@ -956,7 +960,22 @@ func (t *SSHTunnel) establishConnection(m *Manager, tunnel *models.Tunnel) error
 	}
 	defer opened.close()
 
+	// Stop closes the client it finds here, and one that came while the
+	// connection was being made found none. Checked under the same lock, so
+	// either Stop sees this client and closes it, or this sees that Stop has
+	// been and closes it itself. Otherwise nothing would close it: the
+	// forwarded ports would stay open on the Host, carrying traffic for a
+	// tunnel that is no longer there, and the wait for them below would never
+	// end.
 	t.clientMu.Lock()
+	select {
+	case <-t.done:
+		t.clientMu.Unlock()
+		_ = client.Close()
+
+		return errTunnelStopped
+	default:
+	}
 	t.client = client
 	t.clientMu.Unlock()
 
@@ -1307,6 +1326,10 @@ func (t *SSHTunnel) Start(m *Manager, tunnel *models.Tunnel) {
 
 			err := t.establishConnection(m, tunnel)
 			if err != nil {
+				if errors.Is(err, errTunnelStopped) {
+					return
+				}
+
 				if errors.Is(err, errConnectionClosed) {
 					if !t.waitBeforeRetry(time.Duration(m.monitoringIntervalSec) * time.Second) {
 						return

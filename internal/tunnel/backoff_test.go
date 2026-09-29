@@ -556,6 +556,47 @@ func TestADeniedRemotePortIsRetriedAtTheInterval(t *testing.T) {
 	})
 }
 
+// TestAStopWhileTheForwardsAreAskedForEndsTheTunnel stops a tunnel after it
+// connected and before the Host answered for its forwarded ports. Stop finds no
+// client to close then, and the one that connection makes must still be
+// closed and Start must still return, or the ports stay open on the Host for a
+// tunnel that was stopped.
+func TestAStopWhileTheForwardsAreAskedForEndsTheTunnel(t *testing.T) {
+	m := newSSHTestManager(t, 1)
+
+	server := startJumpTestServer(t)
+	asked, release := server.holdForwards()
+
+	tun, tunnel := newSSHTestTunnel(t, server.addr)
+	tun.Config = testClientConfig(time.Second)
+
+	returned := make(chan struct{})
+	go func() {
+		tun.Start(m, tunnel)
+		close(returned)
+	}()
+
+	select {
+	case <-asked:
+	case <-time.After(10 * time.Second):
+		release()
+		t.Fatal("the tunnel never asked for its forwarded ports")
+	}
+
+	_ = tun.Stop(m)
+	release()
+
+	select {
+	case <-returned:
+	case <-time.After(10 * time.Second):
+		t.Fatal("Start did not return after Stop")
+	}
+
+	waitFor(t, 10*time.Second, "the SSH connection to be closed", func() bool {
+		return server.active.Load() == 0
+	})
+}
+
 // errForwardDenied is what establishConnection fails with when the SSH server
 // refused both addresses of the forwarded port.
 var errForwardDenied = errors.New("failed to start remote listener: the SSH server opened neither address " +
