@@ -47,8 +47,8 @@ still imports: the old names are read there.
 three service ports runs three tunnels, and a Host that carries none runs none
 however many service ports are stored. Registering a Host assigns it every
 service port there is, and registering a service port assigns it to every Host
-there is, unless the request says otherwise, so an installation that never
-touches the assignments runs every combination the way it always did. What a
+there is, unless the request says otherwise, so on a machine where nobody
+touches the assignments every combination runs the way it always did. What a
 Host carries after that is changed with the **Service ports** button in its row
 on the Hosts screen and through
 [the service ports a Host carries](#the-service-ports-a-host-carries).
@@ -245,8 +245,8 @@ nobody else should reach in over. Either end on its own forces one answer on the
 other.
 
 An assignment stored before the column existed holds the empty value, which is
-the wildcard, so an upgrade takes reach away from nothing that is running. An
-installation that set a bind address on the **Host** in v3.8.3 has that answer
+the wildcard, so an upgrade takes reach away from nothing that is running. A
+machine that set a bind address on the **Host** in v3.8.3 has that answer
 carried onto every assignment of that Host: a loopback address there becomes
 `loopback`, and every other answer, the empty one and an address of an interface
 of the machine among them, becomes the wildcard. It is carried on the startup
@@ -510,7 +510,7 @@ out at the place it was already shown at and nothing about it changes but the
 way it is named. The whole of it is one transaction: either every forward is
 numbered or the rows are left exactly as they were and the startup stops and
 says why. It runs on the startup that finds the old shape and on no other, so
-starting the new version twice over one installation numbers it once.
+starting the new version twice on one machine numbers it once.
 
 **An export carries the local forwards of each Host**, in `local_forwards` on
 that Host. See [Export and import](#export-and-import).
@@ -757,7 +757,7 @@ Through the API the route is `jump_host_ids` on a Host, see [Hosts](#hosts).
 
 ## Install and run
 
-**An installation is one file.** Download the binary for your platform from the
+**tunnel-manager is one file.** Download the binary for your platform from the
 releases page, make it executable and start it. It creates the database file, the
 account and everything else it needs on the first startup.
 
@@ -781,7 +781,7 @@ The flags are all of them:
 | Flag | What it does |
 |------|--------------|
 | `-db <path>` | The database file. It holds the settings, the registered hosts and the account, and it is created, directories above it included, if it is not there |
-| `-install` | Installs this program as a service of this system and exits: the executable is put in place, the data directory is made, and the service is registered to start at boot and to come back on its own. It needs root, or an administrator on Windows. See [Installing as a service](#installing-as-a-service) |
+| `-install` | Installs this program as a service of this machine and exits: the executable is put in place, the data directory is made, and the service is registered to start at boot and to come back on its own. It needs root, or an administrator on Windows. See [Installing as a service](#installing-as-a-service) |
 | `-uninstall` | Stops the service, takes its registration out, removes the installed executable and exits. The data is kept. See [Removing the installation](#removing-the-installation) |
 | `-bin` | Where `-install` puts the executable, and where `-uninstall` looks for one on a machine that has no registration left. Left out, it is the place this platform keeps programs an administrator installed. It goes with `-install` or with `-uninstall` |
 | `-purge` | With `-uninstall`, removes the data directory as well. What it removes cannot be brought back |
@@ -792,9 +792,9 @@ The flags are all of them:
 
 ### Where the files go
 
-**One directory holds the whole installation.** `-db` names the database file,
-and everything else this installation is made of sits in the directory that file
-is in.
+**One directory holds everything tunnel-manager keeps on this machine.** `-db`
+names the database file, and everything else sits in the directory that file is
+in.
 
 ```text
 <the directory the database file is in>/
@@ -817,18 +817,18 @@ somewhere different on every host.
 and `logs/a/b/x.log` or `x.log` is as free as it gets; an absolute path and a
 path that climbs out with `..` are refused when they are saved. The process
 creates the log file and appends to it, and the Logs screen reads its tail
-back, so a path that could leave the installation made the setting a way to
+back, so a path that could leave that directory made the setting a way to
 have this process write into any file on the machine and read any file it can
 open.
 
-**Neither may name a file the installation keeps something else in:** the
+**Neither may name a file tunnel-manager keeps something else in:** the
 database file, its `-wal`, `-shm` and `-journal`, `initial-password`, or the
 other of the two. The comparison ignores case and reads `./x` and `x` as the
 same file, and the database file is named by the file `-db` names, not by the
 default. The logger is opened before the key is read, so a log file on the key
 file writes into the key and the next start stops on a key it cannot read.
 
-An installation that stored such a path while it was still accepted comes up on
+A machine that stored such a path while it was still accepted comes up on
 the default instead and says what it replaced. When the log file names the key
 file it is the log file that is put back:
 
@@ -840,10 +840,10 @@ warn  a stored path setting names a place outside the directory the database fil
        "to": "logs/tunnel-manager.log"}
 ```
 
-**A key that was kept outside the installation directory is not read after
-that.** The startup creates a new one beside the database, and the passwords
+**A key that was kept outside the directory the database file is in is not read
+after that.** The startup creates a new one beside the database, and the passwords
 sealed with the old key do not open under it, which is what stops the startup
-in [Encryption key](#encryption-key). Move the key file into the installation
+in [Encryption key](#encryption-key). Move the key file into that
 directory and name it there.
 
 **Nothing is created in the directory the process was started from.**
@@ -858,7 +858,7 @@ that writes a log line.
 
 Left out, `-db` is worked out from the place the platform keeps user data in.
 
-| Started | `-db` | The directory the installation lives in |
+| Started | `-db` | The directory tunnel-manager keeps its files in on this machine |
 |---------|-------|------------------------------------------|
 | No flags, Windows | Not given | `%AppData%\tunnel-manager\` |
 | No flags, macOS | Not given | `~/Library/Application Support/tunnel-manager/` |
@@ -1089,7 +1089,7 @@ every platform in the table above.
 
 ## HTTPS and the certificate
 
-**The API and the UI are served over HTTPS, with a certificate this installation
+**The API and the UI are served over HTTPS, with a certificate this machine
 makes for itself.** Open `https://<address>:<port>/` in a browser. The first
 startup generates the certificate and stores it in the database file, so there
 is nothing to prepare beforehand and no file to put anywhere.
@@ -1190,7 +1190,7 @@ is served the new one. Two things follow from a fingerprint that changed:
   once more, until the new fingerprint is trusted as well.
 
 A replacement is written to the log with both fingerprints, the old and the new,
-so a fingerprint this installation changed can be told apart from one it did not.
+so a fingerprint this machine changed can be told apart from one it did not.
 
 ### Turning HTTPS off
 
@@ -1253,7 +1253,7 @@ connection, whatever `X-Forwarded-For` says.
 
 It is a flag and not a setting because it describes the deployment around this
 process rather than something to change while it runs, and because a setting
-would put the question on the Settings screen of an installation that has
+would put the question on the Settings screen of a machine that has
 nothing in front of it.
 
 ## First startup and the account
@@ -1367,13 +1367,13 @@ no directory travels next to it and no path has to be configured.
 
 | Screen | Path | What it shows and does |
 |--------|------|------------------------|
-| Status | `/ui/status` | Four counts, each over both sorts of forward together (desired, connected, reconnecting, errors), a sentence about the difference between them, and one line per row of either sort: Host, kind, service port, status, server, opened, reachable at, reaches, retries, last connected. The service port of a local forward is a dash. Opened is the address the port was opened on, and Reachable at is where a client connects to it, with a copy button on each address: the registered address of the Host with the port for a port opened on every interface, the address this page was loaded from for a local forward, and `127.0.0.1` and `[::1]` for a port opened on loopback, whose copy says that it works only on that machine. A tunnel with something wrong carries what went wrong on a line under it, across the whole table; on a screen narrower than the table that line stays inside the width that shows and wraps there while the table scrolls sideways. One that stopped on its jump route says there which Host on the way to look at and what to do about it. A tunnel that is up carries under it what is known about the addresses of its forward where something differs from what was asked: what was asked for, what the SSH server answered, and what the Host has listening. It never says a port is open, and it does not try the port; whether the target of a local forward answers is on the local forwards of its Host. The rows come a page at a time, ten to a page to begin with, with the size and the page chosen below the table; the counts stay counts of the whole installation and not of the page. It asks again every 5 seconds and comes back on the page being read. A search box above the table narrows the rows, see [Searching](#searching). |
+| Status | `/ui/status` | Four counts, each over both sorts of forward together (desired, connected, reconnecting, errors), a sentence about the difference between them, and one line per row of either sort: Host, kind, service port, status, server, opened, reachable at, reaches, retries, last connected. The service port of a local forward is a dash. Opened is the address the port was opened on, and Reachable at is where a client connects to it, with a copy button on each address: the registered address of the Host with the port for a port opened on every interface, the address this page was loaded from for a local forward, and `127.0.0.1` and `[::1]` for a port opened on loopback, whose copy says that it works only on that machine. A tunnel with something wrong carries what went wrong on a line under it, across the whole table; on a screen narrower than the table that line stays inside the width that shows and wraps there while the table scrolls sideways. One that stopped on its jump route says there which Host on the way to look at and what to do about it. A tunnel that is up carries under it what is known about the addresses of its forward where something differs from what was asked: what was asked for, what the SSH server answered, and what the Host has listening. It never says a port is open, and it does not try the port; whether the target of a local forward answers is on the local forwards of its Host. The rows come a page at a time, ten to a page to begin with, with the size and the page chosen below the table; the counts stay counts of every row and not of the page. It asks again every 5 seconds and comes back on the page being read. A search box above the table narrows the rows, see [Searching](#searching). |
 | Hosts | `/ui/hosts` | One row per Host with ID, address, port, jump route, user, description, enabled, SOCKS5 proxy and updated. The rows come a page at a time, ten to a page to begin with, with the size (10, 20, 30, 50 or 100) and the page chosen below the table. The choice is remembered for this screen on its own, and a list short enough to fit a page of the smallest size carries no controls at all. Add a Host, edit one, enable or disable one, delete one. The add and edit forms have a box to paste a private key into, an area to drop the key file onto, and a box for the passphrase of a key that has one, and the add form has an **Assign all service ports** tick, on by default, that says what the Host starts out carrying, with a **Reach on the Host** list beside it that every assignment that tick makes starts on. **Service ports** in a row opens a panel of every service port with a tick against the ones this Host carries, and a reach beside each row: pick a reach above and apply it to everything ticked, or set one row on its own, and a row that was not ticked is left alone, with an **Enabled** box against each row that pauses the tunnel of that assignment without taking it away. Only what was changed is sent when it is saved, so a tick made there leaves the pages that were not read alone. **Local forwards** in a row opens a panel of the local forwards of that Host with the status of each, a page at a time, where they are added, changed, switched off and on, and deleted, one row at a time or the ticked rows together; see [Local forwards](#local-forwards). The add and edit forms also switch on the SOCKS5 proxy of the Host, and its column shows the port and the status; see [A SOCKS5 proxy on a Host](#a-socks5-proxy-on-a-host). The add and edit forms have a **Jump route** field, and the jump route column of a row opens the same panel for that Host; see [A jump route](#a-jump-route). |
 | Service Ports | `/ui/service-ports` | One row per service port with ID, service address, service port, local port, description and updated. The rows come a page at a time the same way the Hosts do, with a size and a page of their own. Add, edit and delete. The add form has an **Assign to all hosts** tick, on by default, that says which Hosts carry it from the start, with a **Reach on the Host** list beside it that the assignments that tick makes start on; which Hosts carry it after that, and what each of those assignments reaches, is changed from the Hosts screen. The Hosts and Service Ports screens each have a search box above the table, see [Searching](#searching). |
 | Logs | `/ui/logs` | The end of the log file, newest last, with a level filter and a count to show. It asks again every 5 seconds. It reads the file the process is writing now; rotated files are not shown. The lines are shown in the language of the screen while the file stays English; see [The language of the screens](#the-language-of-the-screens). |
-| Settings | `/ui/settings` | Cut into the tabs General, Logging, Alerts, HTTPS, Account, Manage settings, Update and Service, and the tab that is open is kept after the `#` of the address, so a reload comes back to it. Above the tabs, on every one of them, is what is stored but not being run on yet, with a Restart in that card that puts it into place. On the tabs are every stored setting and what a save changed, among them the language this installation shows a browser that has picked none and the alerts by webhook and mail with a test button for each (see [Alerts](#alerts)), the certificate being served with a button to renew it and boxes to register one of your own, the username and the password of this account, an export of the tunnel configuration and of the settings of this manager into one encrypted file each and an import that takes such a file back, the tunnel configuration after a panel that says how much of each it deletes and writes, a Restart that takes the service down and brings it back, and the Uninstall on the Service tab. See [Settings](#settings). |
-| Update | `/ui/settings#update` | A tab of Settings; `/ui/update` still opens it. What this installation is running beside what the newest release is, and the two settings that decide whether either is looked at again. The reading is taken on a timer rather than when the screen is drawn, so opening it costs the release API nothing; a press takes it now. Where the release is newer and this process is what a service registration starts, a press installs it, which takes the password of the account and ends with the service restarting. See [Updates](#updates). |
-| Manual | `/ui/manual` | What an installation is made of, drawn and said on one screen: what this does, one tunnel end to end, Hosts and service ports and the assignments between them, what an unreached port means, the two intervals, and where the files go. It asks the server for nothing, which is what lets the login screen show the same thing. |
+| Settings | `/ui/settings` | Cut into the tabs General, Logging, Alerts, HTTPS, Account, Manage settings, Update and Service, and the tab that is open is kept after the `#` of the address, so a reload comes back to it. Above the tabs, on every one of them, is what is stored but not being run on yet, with a Restart in that card that puts it into place. On the tabs are every stored setting and what a save changed, among them the language this machine shows a browser that has picked none and the alerts by webhook and mail with a test button for each (see [Alerts](#alerts)), the certificate being served with a button to renew it and boxes to register one of your own, the username and the password of this account, an export of the tunnel configuration and of the settings of this manager into one encrypted file each and an import that takes such a file back, the tunnel configuration after a panel that says how much of each it deletes and writes, a Restart that takes the service down and brings it back, and the Uninstall on the Service tab. See [Settings](#settings). |
+| Update | `/ui/settings#update` | A tab of Settings; `/ui/update` still opens it. What this machine is running beside what the newest release is, and the two settings that decide whether either is looked at again. The reading is taken on a timer rather than when the screen is drawn, so opening it costs the release API nothing; a press takes it now. Where the release is newer and this process is what a service registration starts, a press installs it, which takes the password of the account and ends with the service restarting. See [Updates](#updates). |
+| Manual | `/ui/manual` | What runs on a machine and what it is made of, drawn and said on one screen: what this does, one tunnel end to end, Hosts and service ports and the assignments between them, what an unreached port means, the two intervals, and where the files go. It asks the server for nothing, which is what lets the login screen show the same thing. |
 | Login | `/ui/login` | Where a client without a session lands. Leave the username empty on the first sign in. It leads to the setup screen while the account still needs one. A **Manual** button opens the manual as a panel over it, without a session, because the state it is most needed in is the one where nothing works yet. |
 
 The version of the binary is in the bottom right corner of every screen, the
@@ -1385,7 +1385,7 @@ the browser decides, and a browser that is changed from light to dark while a
 screen is open is followed without the page being loaded again. A press is kept
 in the local storage of that browser under `tm_theme` and is never sent
 anywhere: which theme a screen is read in belongs to the screen and not to the
-installation, and two people reading the same server may want different ones.
+machine, and two people reading the same server may want different ones.
 
 **The screens come in thirteen languages**, and the switch is the list in the
 top right corner of every screen, beside the theme switch, the login one
@@ -1393,7 +1393,7 @@ included. Each language is listed under its own name: English, 한국어, 日本
 中文, Español, Français, Deutsch, Português (Brasil), Русский, العربية, हिन्दी,
 Tiếng Việt and ไทย. Arabic is written right to left, and the whole page turns
 round with it. Which language a browser that has picked none is shown is a
-setting of the installation; see
+setting of this machine; see
 [The language of the screens](#the-language-of-the-screens) for that and for
 the order in which the language is settled.
 
@@ -1422,7 +1422,7 @@ answer that is there wins:
 1. **What was picked in the corner of this browser.** The pick is kept in the
    local storage of that browser under `tm_lang`, as the theme is, and is never
    sent anywhere.
-2. **What the installation was set to show**: the `ui_default_language`
+2. **What this machine was set to show**: the `ui_default_language`
    setting, on the Settings screen. It is what everybody who has said nothing
    is shown, and it is read once there is a session.
 3. **What the browser asks for**, matched against the thirteen. A tag is
@@ -1431,8 +1431,8 @@ answer that is there wins:
    rather than English.
 4. English.
 
-A pick in the corner wins over the setting on purpose. The setting is what an
-installation shows to somebody who has said nothing about it, and somebody who
+A pick in the corner wins over the setting on purpose. The setting is what this
+machine shows to somebody who has said nothing about it, and somebody who
 has picked a language has said something, on the very screen they are reading.
 
 **The login screen does not follow the setting.** Reading a setting needs a
@@ -1459,7 +1459,7 @@ for the shape of a refusal and [Settings and uninstall](#settings-and-uninstall)
 for the shape of a log line.
 
 Each language is one catalog, served out of the binary as
-`/ui/lang/<code>.json`, so an installation on a host that reaches nothing else
+`/ui/lang/<code>.json`, so a machine that reaches nothing else
 still has all thirteen. Every catalog carries the same keys, one per sentence
 the screens can show, and a key a language has no words for is drawn in English
 rather than left blank. The page fetches the catalog of the language in use and
@@ -1507,7 +1507,7 @@ and `PUT /api/settings`.
 | Rotated log files kept | `logging_file_max_backups` | `logging.file.max_backups` | `5` | At the next start |
 | Days a rotated log file is kept | `logging_file_max_age` | `logging.file.max_age` | `30` | At the next start |
 | Compress rotated log files | `logging_file_compress` | `logging.file.compress` | `true` | At the next start |
-| Language this installation is shown in | `ui_default_language` | `ui.default_language` | empty, which names none | **The moment it is saved** |
+| Language this machine shows its screens in | `ui_default_language` | `ui.default_language` | empty, which names none | **The moment it is saved** |
 | Look for a newer release | `update_check_enabled` | `update.check_enabled` | `true` | **The moment it is saved** |
 | How often to look (hours) | `update_check_interval_hours` | `update.check_interval_hours` | `24` | **The moment it is saved** |
 | Install a newer release on its own | `update_auto_install` | `update.auto_install` | `false` | **The moment it is saved** |
@@ -1530,7 +1530,7 @@ one the database writes its statements through included, which is the half of
 `debug` it is usually turned on for. The language is never read by this process
 at all: the browser reads it, out of the answer to the save that stored it and
 out of every read after that, so there is nothing a restart could put into
-place. An empty language is a value and not a gap: it says this installation
+place. An empty language is a value and not a gap: it says this machine
 names none, and a browser is shown what it asks for, which is what every browser
 was shown before the setting existed. Everything else is stored and read at the
 next start; the screen says so per field, and the answer to a save marks each
@@ -1607,7 +1607,7 @@ the value this process is on and `stored` is the one a restart would bring it
 to. It is the same for every client and for every session, and a restart empties
 it without anything being cleared, since the process comes back running on what
 is stored. Neither the log level nor the language is ever in it, because both
-are in place the moment they are saved. An installation that is running on
+are in place the moment they are saved. A machine that is running on
 everything it has stored gets `[]`.
 
 **A stored `api_port` that another program holds does not stop the start.** The
@@ -1662,7 +1662,7 @@ is sent again; the failure goes to the log.
   "local_port": 18080,
   "since": "2026-09-26T01:02:03Z",
   "last_error": "<the last error the forward reported>",
-  "installation": "<the host name of this system>"
+  "installation": "<the host name of this machine>"
 }
 ```
 
@@ -1671,10 +1671,10 @@ is sent again; the failure goes to the log.
 | `event` | `down`, `up`, or `test` for the test button |
 | `kind` | `service_port`, `local_forward` or `socks` |
 | `host` | The address of the Host the forward goes through |
-| `local_port` | The port the forward opens: on the Host for a service port, on this system for a local forward and a SOCKS5 proxy |
+| `local_port` | The port the forward opens: on the Host for a service port, on this machine for a local forward and a SOCKS5 proxy |
 | `since` | When the forward was first seen without a connection, RFC 3339 in UTC. An `up` carries the same time as the `down` it answers |
 | `last_error` | The last error seen during the outage |
-| `installation` | The host name of this system, so that alerts from several installations sent to one place can be told apart |
+| `installation` | The host name of this machine, so that alerts from several machines sent to one place can be told apart |
 
 **Mail is a plain text message** with the same fields, under a subject such as
 `[tunnel-manager <installation>] DOWN: <kind> <local_port> on <host>`. The
@@ -1684,8 +1684,8 @@ Picking one on the screen puts its port in the port box, and nothing is stored
 until the card is saved. The login is `login` by default, and `plain` and
 `none` are the others. A password
 is never sent over a connection without TLS unless the mail server is this
-system itself. The certificate of the server is checked unless
-`smtp_skip_verify` is on, and with it on anybody between this system and the
+machine itself. The certificate of the server is checked unless
+`smtp_skip_verify` is on, and with it on anybody between this machine and the
 server can read the password. One message is given 30 seconds.
 
 **Where an alert goes is stored encrypted.** The mail password, and the webhook
@@ -1759,7 +1759,7 @@ that moment.
 **Windows has no exec.** There the restart is an ordered stop and nothing else,
 and starting the program again is left to whatever supervises the service; one
 that was started by hand does not come back. Both answers carry `comes_back` so
-that the screen can say which of the two this installation is before anything is
+that the screen can say which of the two this machine is before anything is
 pressed, and `GET /api/restart` answers that without doing anything.
 
 The sessions are held in memory, so they go with the process. The screen asks for
@@ -1816,7 +1816,7 @@ without the privilege for it for instance, still ends the start.
 
 ## Updates
 
-The Update tab of Settings says what this installation is running and what the newest
+The Update tab of Settings says what this machine is running and what the newest
 release is, and it can install that release.
 
 **What is read is the release page of this repository, and nothing else.** The
@@ -1880,23 +1880,24 @@ the time, which is not something this program can work out, which is why the
 default leaves it with the operator.
 
 It is subject to everything above: a check that failed, a tag that cannot be
-compared and a release that is not newer all leave it alone, and an installation
-that is not a registered service never reaches it.
+compared and a release that is not newer all leave it alone, and a machine
+where tunnel-manager is not a registered service never reaches it.
 
-**An exported configuration carries this setting.** A file exported from an
-installation that has it on turns it on wherever the file is taken in; see
+**An exported configuration carries this setting.** A file exported from a
+machine that has it on turns it on wherever the file is taken in; see
 [Export and import](#export-and-import).
 
 ## Uninstall
 
-The Service tab of the Settings screen removes this installation. It stops every
-tunnel, deletes the files the installation is made of and ends the process.
+The Service tab of the Settings screen removes tunnel-manager from this machine. It
+stops every tunnel, deletes the files tunnel-manager keeps on this machine and
+ends the process.
 `POST /api/uninstall` is the same thing from a script.
 
 > **Removing the encryption key cannot be undone.** The SSH password of every
 > Host is encrypted with that key. A backup of the database taken beforehand does
 > not help: the passwords in it stay unreadable, and every Host has to be
-> registered again with its password on a fresh installation.
+> registered again with its password once tunnel-manager is installed afresh.
 
 | Removed | Left alone |
 |---------|------------|
@@ -1959,7 +1960,7 @@ needs a CSRF token as well.**
    sets. Over HTTPS they are named `__Host-tm_session` and `__Host-tm_csrf`;
    over plain HTTP they are `tm_session` and `tm_csrf`. The `__Host-` prefix is
    what tells a browser that the cookie belongs to this host alone, and a
-   browser only takes that name from a cookie marked `Secure`, so an install
+   browser only takes that name from a cookie marked `Secure`, so a machine
    with HTTPS turned off is served the names without it. A cookie jar keeps
    whichever pair arrived, so a script that uses one does not have to know
    which.
@@ -2070,7 +2071,7 @@ and send it as `Authorization: Bearer <token>`.** A request that carries one nee
 no session cookie and no `X-CSRF-Token`: a browser never adds that header by
 itself, so a request that has it was written by something that holds the token.
 
-The token is shown once, when it is made. What the installation keeps is its
+The token is shown once, when it is made. What this machine keeps is its
 SHA-256, so a lost token cannot be shown again; revoke it and make another.
 
 A token reaches only the routes of the scopes it was made with:
@@ -2187,11 +2188,11 @@ this server.
 The page comes out of the binary, the way the screens do. Nothing is fetched
 from the network to draw it, so it comes up on a machine that reaches this
 server and nowhere else. It needs no session of its own: what it shows is the
-same for every installation and is in the reference you are reading. It is the
+same on every machine and is in the reference you are reading. It is the
 calls it sends that need one.
 
 **Those calls are the real thing.** `POST /api/uninstall` on that page removes
-the installation and `DELETE /api/host/{id}` deletes the Host. There is nothing
+tunnel-manager from this machine and `DELETE /api/host/{id}` deletes the Host. There is nothing
 practising behind the button.
 
 ### Logging in on that page
@@ -2267,7 +2268,7 @@ token needs neither, see [With an API token](#with-an-api-token).
 ### Paging
 
 `GET /api/host`, `GET /api/service-port` and `GET /api/status` answer one page
-at a time. A list that answers with everything grows with the installation: the
+at a time. A list that answers with everything grows with what is stored: the
 answer, the memory it is built in and the screen that holds it grow with the
 number of rows, none of which is looked at at once.
 
@@ -2311,7 +2312,7 @@ that array too, and takes `page` and `size` and answers in this shape now, see
 `/api/status` was an object already. `tunnels` is one page of the status rows
 now, both sorts of forward in the one list, and `page` and `size` stand beside
 it, while **the counts are over every row and not over the page**: they say what
-the installation is doing, not what is on the page being looked at.
+this machine is doing, not what is on the page being looked at.
 
 ```bash
 # The second page of twenty Hosts, and the last page of the status rows: a page
@@ -2336,7 +2337,7 @@ the Hosts, Service Ports and Status screens send it.
 
 The page is cut from the rows that match, so `total` on the first two and
 `total_rows` on the status are counts of what matched. The four counts of
-`GET /api/status` stay over the whole installation.
+`GET /api/status` stay over every row.
 
 ```bash
 curl -s -b cookies.txt "$BASE/api/host?q=example&page=1&size=20"
@@ -2839,7 +2840,7 @@ refused with `409` under `service_port.local_port.taken`, with `local_port` and
 
 | Method | Path | What it does |
 |--------|------|--------------|
-| `GET` | `/api/status` | The counts of the installation and one page of the status rows, the service port tunnels and the local forwards together with `kind` on each. Takes `page` and `size`, see [Paging](#paging), and `q`, see [Searching](#searching) |
+| `GET` | `/api/status` | The counts of this machine and one page of the status rows, the service port tunnels and the local forwards together with `kind` on each. Takes `page` and `size`, see [Paging](#paging), and `q`, see [Searching](#searching) |
 | `GET` | `/api/status/:hostId` | The Host and the tunnels of that Host. Not paged: a Host holds one tunnel per service port it carries |
 | `GET` | `/api/metrics` | The same state in the Prometheus text format. See [Metrics](#metrics) |
 
@@ -2856,7 +2857,7 @@ refused with `409` under `service_port.local_port.taken`, with `local_port` and
 | `PUT` | `/api/certificate` | Takes `cert_pem` and `key_pem`, stores them and serves them from the next connection on |
 | `GET` | `/api/restart` | What a restart would do here: how long before the service goes and whether it comes back on its own |
 | `POST` | `/api/restart` | Takes the service down in order and runs the program again in place of this process, where the platform has exec |
-| `POST` | `/api/uninstall` | Takes `password`, removes the installation and ends the process |
+| `POST` | `/api/uninstall` | Takes `password`, removes tunnel-manager from this machine and ends the process |
 | `GET` | `/api/logs` | The end of the log file. `lines` says how many, up to 2000 |
 | `POST` | `/api/logs/clear` | Takes `password`, empties the file the log is being written to and leaves the rotated files beside it alone |
 | `GET` | `/api/update` | What the last look found: the version running, the newest release, whether it is newer, and whether an install can be started from here |
@@ -2905,9 +2906,9 @@ shown as it was written.
 | `POST` | `/api/export/settings` | Takes `password` and `account_password`, answers with the stored settings encrypted into one file |
 | `POST` | `/api/import/settings` | Takes `password` and `file`, and stores the settings the file holds |
 
-These four carry a configuration from one installation to another. An export
+These four carry a configuration from one machine to another. An export
 hands out a file and an import takes one back, so you decide where the file is
-kept and for how long, and neither installation has to reach the other.
+kept and for how long, and neither machine has to reach the other.
 
 `password` is the password of the file, and `account_password` is the password
 of the account, asked for again. The two exports and the import of the tunnels
@@ -2995,7 +2996,7 @@ stored switched on and one without `allowed_sources` lets every address in, and
 a file that carries none of the `socks_` fields imports the Host with no proxy.
 
 **The key each Host is trusted on travels with it**, in `host_key`, so moving a
-configuration does not throw the trust away and the installation that takes the
+configuration does not throw the trust away and the machine that takes the
 file in connects without every Host being approved again. It is a public key and
 is written as the row holds it rather than encrypted. The key some server
 presented on a refused connection travels too, in `pending_host_key`, so a
@@ -3006,8 +3007,8 @@ password is the only thing protecting it.** Inside it, the SSH password, the
 private key and the key passphrase of every Host are written in the clear. That
 is what the file is for: the database keeps those encrypted with the encryption
 key of the machine they were stored on, that key never leaves it, and a file
-carrying them in that form could be read on no other installation. They are
-decrypted on the way out and encrypted again with the key of the installation
+carrying them in that form could be read on no other machine. They are
+decrypted on the way out and encrypted again with the key of the machine
 that takes them in. So treat an exported file as the credentials of every Host
 it names.
 
@@ -3053,7 +3054,7 @@ curl -s -b cookies.txt -X POST "$BASE/api/export/tunnels" \
   -d '{"password":"<the password that encrypts the file>","account_password":"<the password of your account>"}' |
 jq -r '.data.file' > tunnels.tmexport
 
-# On the other installation, see what the import would replace first.
+# On the other machine, see what the import would replace first.
 jq -n --arg file "$(cat tunnels.tmexport)" \
   '{password:"<the same password>",file:$file,dry_run:true,account_password:"<the password of your account>"}' |
 curl -s -b cookies.txt -X POST "$BASE/api/import/tunnels" \
@@ -3182,14 +3183,14 @@ this answer but on the local forwards of its Host, see
 rows alone and stay empty on a local forward, which opens no port on the Host
 for them to describe.
 
-The counts are over every row and not over the page: an installation of
+The counts are over every row and not over the page: a machine with
 twenty-five rows reports twenty-five on a page of ten, and `connected_tunnels`
-counts the connected tunnels of the installation and not the ones that happen to
+counts the connected tunnels of this machine and not the ones that happen to
 be on the page.
 
 **There are four counts and each one counts both sorts of forward together.** A
 local forward is a tunnel to whoever is reading the answer, so what the four say
-is how much of the installation is up, how much is coming back on its own and
+is how much of what this machine runs is up, how much is coming back on its own and
 how much is waiting for somebody, whichever sort each row is.
 
 | Count | What it counts |
@@ -3208,7 +3209,7 @@ about which of them is being looked at.
 **The four do not add up, and are not meant to.** A row that is `starting`, and
 one held up at a host key, is in none of the three status counts, and the two
 counts of Hosts below are where the second of those is answered. These counts
-came off an installation of six rows, one of them reconnecting and two in error:
+came off a machine with six rows, one of them reconnecting and two in error:
 
 ```json
 {
@@ -3251,7 +3252,7 @@ tunnels.**
 | `host_keys_unapproved` | Hosts whose SSH server presented a host key and that carry no approved key yet |
 | `host_keys_mismatched` | Hosts that are trusted on one key and were presented another |
 
-They are over the whole installation and not over the page, for the reason the
+They are over every row and not over the page, for the reason the
 counts above are, and for one more: a Host that carries four service ports is
 refused on the same key four times, so a count over the page would carry the
 same question four times over. What is waiting is the two added together, and

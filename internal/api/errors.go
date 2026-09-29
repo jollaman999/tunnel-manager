@@ -493,7 +493,7 @@ var errorMessages = map[errorCode]string{
 	// The one rule of the settings that is raised under a code of its own. A
 	// screen showing it has to list the languages that would be taken, and a
 	// list arriving inside {reason} as English prose is one it cannot use.
-	errSettingsLanguageUnsupported: "The settings are refused: {language} is not a language this installation is drawn in. Use one of {languages}, or leave it empty to show each browser the language it asks for",
+	errSettingsLanguageUnsupported: "The settings are refused: {language} is not a language the screens of this machine are drawn in. Use one of {languages}, or leave it empty to show each browser the language it asks for",
 	// The port a local forward opens, asked for as the port of this server. The
 	// answer carries the forward and a free port in data, which is what the
 	// screen offers to move one of the two to.
@@ -548,7 +548,7 @@ var errorMessages = map[errorCode]string{
 	errLogsClearFailed:          "The log file at {path} could not be emptied: {reason}",
 
 	errUpdateCheckFailed:     "The newest release could not be read: {reason}",
-	errUpdateNotInstallable:  "This installation cannot install an update from here. It is running as a program somebody started rather than as a registered service, so there is nothing to restart it afterwards",
+	errUpdateNotInstallable:  "This machine cannot install an update from here. tunnel-manager runs on it as a program somebody started rather than as a registered service, so there is nothing to restart it afterwards",
 	errUpdatePasswordMissing: "Enter the password of your account to install the update",
 	errUpdatePasswordWrong:   "That is not the password of this account. Nothing was installed",
 	errUpdateInstallFailed:   "The install could not be started: {reason}",
@@ -564,12 +564,12 @@ var errorMessages = map[errorCode]string{
 	errExportAssignmentsRead:         "Failed to read the service port assignments",
 	errExportLocalForwardsRead:       "Failed to read the local forwards",
 	errExportJumpsRead:               "Failed to read the jump routes",
-	errExportHostSecretsSealed:       "No export was made: the stored secrets of the Host {host} do not open with the encryption key of this installation",
+	errExportHostSecretsSealed:       "No export was made: the stored secrets of the Host {host} do not open with the encryption key of this machine",
 	errExportSealFailed:              "Failed to encrypt the file",
 
 	// Opening the file an import was sent.
 	errImportFileMissing:             "No file was sent. Send the text an export answered with in the 'file' field",
-	errImportPasswordRequired:        "A password is required. It is the one the file was encrypted with at the installation it came from",
+	errImportPasswordRequired:        "A password is required. It is the one the file was encrypted with on the machine it came from",
 	errImportAccountPasswordRequired: "Enter the password of your account to import the tunnels",
 	errImportAccountPasswordWrong:    "That is not the password of this account. Nothing was imported",
 	errImportFileNotAnExport:         "This is not a file tunnel-manager exported. An exported file is one line of text that starts with a marker naming the format, and this one does not",

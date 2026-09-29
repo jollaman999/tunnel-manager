@@ -61,9 +61,9 @@ flowchart LR
     sshd -->|"4. connects to the target"| target
 ```
 
-An installation is made of three things. You register a Host and a service
-port, the assignment between them is made for you unless you say otherwise, and
-one assignment is what one tunnel is built from.
+What runs on a machine is made of three things. You register a Host and a
+service port, the assignment between them is made for you unless you say
+otherwise, and one assignment is what one tunnel is built from.
 
 | Part | What it is |
 |------|------------|
@@ -116,7 +116,7 @@ Tunnel Manager keeps the forwards as records and runs what the records say.
   in the browser. The whole configuration moves as one file sealed with a
   password, and importing it replaces the tunnel configuration that was there.
   SSH passwords, private keys and the webhook and mail settings are
-  kept encrypted with the key file of the installation.
+  kept encrypted with the key file of this machine.
 - **Also:** API tokens limited to their scopes, Prometheus metrics at
   `/api/metrics`, one binary that installs itself as a service with
   `-install`, and screens in thirteen languages.
@@ -138,8 +138,8 @@ Tunnel Manager keeps the forwards as records and runs what the records say.
 - Serves the UI and the API over HTTPS, with a certificate it makes on the first
   start and one of your own once you register it.
 - Keeps the SSH passwords, the private keys and the certificate key encrypted
-  with a key file of this installation.
-- Carries the whole configuration to another installation as one encrypted file.
+  with a key file of this machine.
+- Carries the whole configuration to another machine as one encrypted file.
   An import replaces every Host, service port and local forward there with what
   the file holds, after showing how much of each would go and come in.
 - Lets a script call the API with a token made on the Settings screen, limited
@@ -149,7 +149,7 @@ Tunnel Manager keeps the forwards as records and runs what the records say.
 - Sends an alert to a webhook or by mail when a tunnel, a local forward or a
   SOCKS5 proxy stays down past a delay you set, and again when it comes back.
 - Shows the screens in thirteen languages, picked in the corner of the browser
-  or set for the installation. The log file stays English.
+  or set for this machine. The log file stays English.
 - Runs on Linux, macOS and Windows as a single binary, with no C library and no
   database server behind it.
 
@@ -179,7 +179,7 @@ cat <dir>/initial-password
 ```
 
 Open `https://127.0.0.1:8888/` in a browser. The certificate is one this
-installation signed for itself, so the browser warns about it; the fingerprint
+machine signed for itself, so the browser warns about it; the fingerprint
 to check that warning against is in the startup log and on the Settings screen.
 
 Log in with an **empty username** and the password from that file, choose the
