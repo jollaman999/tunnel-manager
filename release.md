@@ -1,3 +1,38 @@
+# v4.0.0
+
+## Add/fix features:
+
+- **A Host can be reached through jump hosts, along a jump route.** The add and edit forms of a Host have a Jump route field, the Hosts list has a Jump route column, and either opens a panel to pick the jump hosts, put them in order and take them off. The remote tunnels, the local forwards and the SOCKS5 proxy of that Host all take the route, one SSH connection inside the one before, as `ssh -J` does, and no port is opened on a jump host. A route has at most 8 jump hosts, every one of them a registered Host, and only the ones written on it are used, in the order written: the route of a jump host is not followed. Through the API it is `jump_host_ids` on a Host.
+- **A connection that stops on its route says where and why.** The status, the local forwards of a Host and the SOCKS5 proxy of a Host name the hop and the Host it stopped at, and a line under the row says what to do about it on that Host: enable it, check its login, approve its host key, or check that it is reached and allows forwarding. A host key waiting on a jump host is waiting on that jump host, not on the Host at the end.
+- **A tunnel behind a disabled jump host is an error.** It reads `jump_host_disabled`, is counted in `error_tunnels` and is painted in the colour of an error. The route is kept, and enabling the jump host brings it back.
+- **A Host that is the jump host of another cannot be deleted.** The delete is refused with 409 and names the Hosts that use it.
+- **Two Hosts may share an address on different SSH ports**, since the same private address is a different machine behind each Host it is reached through. A Host on the address and the SSH port of another is refused with 409 under `host.address.taken`, which names that Host, with the addresses compared without regard to case or to how an IP address is written.
+- **`GET /api/host?ids=` reads the Hosts a list of ids names in one request**, up to 1000 of them, which is how the screens read the Hosts on the routes they draw. `ids` named more than once is read as one list of every value it is named with.
+- **Two service ports on one service address and port, or on one local port, are refused with 409** under `service_port.address.taken` or `service_port.local_port.taken`, which names the service port that holds them, in place of the 500 the failed write answered. The service addresses are compared without regard to case or to how an IP address is written, as the Host addresses are.
+- **A retry is paced by what the connection failed on.** A channel a jump host refuses to open, as where `AllowTcpForwarding` is `no`, does not come right until that server is set up otherwise, so it is retried at the longest wait from the start. A remote port the SSH server denies just after a reconnect is most often the old session still holding it, so the first three denials are retried at the shortest wait before the wait grows as it always did.
+- **An alert no longer answers the outage of one Host with the recovery of another.** A forward is watched by the address and SSH port of the Host it goes through and the port it opens as well as its id, so a Host whose address or port was changed, or a new Host given the id of one removed, starts an outage of its own, and the one that was down is forgotten rather than sent an up that names the Host there now.
+- **An export carries the ids, and an import replaces the whole tunnel configuration with it.** The file holds the id and the times of every row, the jump routes, the assignments by id, the host keys waiting for approval and the number of every local forward, so it alone puts a configuration back as it was. An import deletes every Host, service port, assignment, local forward and jump route stored here and writes the file in their place, in one transaction. The Settings screen checks the file first and shows how much of each would be deleted and imported before anything is replaced. The account and the settings are not touched.
+- **The page controls are under the list they turn**, on every screen and panel that has them.
+- **A primary button and a submit button that are disabled are grey**, so they no longer look like ones that can be pressed.
+- **The line under a row stays inside the width that shows** and wraps there, so on a narrow screen it can be read whole while the table scrolls sideways.
+- **The screens and the documents call the machine tunnel-manager runs on the Tunnel Manager server, and a Host a route passes through a jump host**, in every language. "This machine" read to somebody at a browser on another machine as their own PC, and the several words a Host on a route went by are now one.
+- **Every status badge in a column is as wide as the column**, so the badges of one column line up whatever word they carry.
+- **The three columns of the jump route panel are the same width**, and a long badge inside a Host card of the panel wraps inside the card instead of pushing out of it.
+- **What is typed into the Host form stays when the screen is drawn again**, after a press beside the form, a search, or saving the jump route from its panel.
+- The reference and the READMEs say how a jump route works and what an import now does, and the demo shows six Hosts, some of them reached through one or two jump hosts.
+
+## Notes:
+
+- **An import no longer adds and skips: it replaces everything.** The tunnel configuration stored before the import is gone after it, including the Hosts the file does not hold. `overwrite` is gone, and a body that carries it at all, `null` included, is refused with 400 under `import.overwrite.removed`, so a script written for the old import does not replace a configuration without knowing it. Send `dry_run` true first to see what would be replaced. A file from an earlier release still imports, with ids counted from 1 in the order of the file and no jump route.
+- **The unique index on the address of a Host now covers the address and the port**, under the name it had. An earlier release still starts on this database, but it does not know the jump routes and connects straight to every Host, and a Host that shares its address with another on a different port stays there.
+- **The database gains the `host_jumps` table and three columns on `tunnels`**, `jump_seq`, `jump_host_id` and `jump_reason`. An earlier release passes over both.
+- **`error_tunnels` counts the rows in `jump_host_disabled` as well**, so a script that reads it may read a larger number than before.
+- **Answers carry new fields**: `jump_host_ids` and `socks_jump_seq`, `socks_jump_host_id` and `socks_jump_reason` on a Host, and `jump_seq`, `jump_host_id` and `jump_reason` on a status row and on a local forward. They are 0 and empty where a connection did not stop on its route.
+- **A script that created a service port on the address and port or the local port of another met a 500, and now meets a 409** under `service_port.address.taken` or `service_port.local_port.taken`, on a create and on an update alike. Nothing is written in either case, as before.
+- **The error codes, the log ids and the command-line output keep their words.** The English sentences of some refusals and of `last_error` now say the Tunnel Manager server and jump host where they said this machine or a Host passed through, so a script that matched on the sentence rather than on `error_code` has to follow.
+- **Registering a Host and registering a service port are documented as the 201 they have always answered**, in the OpenAPI description, and the description of the metrics says that `error_tunnels` is the `error` series and the `jump_host_disabled` series added together.
+
+
 # v3.16.0
 
 ## Add/fix features:
