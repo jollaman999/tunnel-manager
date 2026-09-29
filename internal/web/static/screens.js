@@ -3633,18 +3633,24 @@ async function openHostFormFromPanel(close, id) {
     await drawHosts();
   }
 
-  const form = document.querySelector("#app form[data-form=\"" + (id === null ? "host-create" : "host-edit") + "\"]");
+  focusFormField(id === null ? "host-create" : "host-edit", "address");
+}
+
+// focusFormField scrolls the form of that name on the screen into view and puts
+// the keyboard in the box of that field.
+function focusFormField(formName, fieldName) {
+  const form = document.querySelector("#app form[data-form=\"" + formName + "\"]");
 
   if (form === null) {
     return;
   }
 
-  const address = form.querySelector("[data-field=\"address\"]");
+  const box = form.querySelector("[data-field=\"" + fieldName + "\"]");
 
   form.scrollIntoView({ block: "start", behavior: "smooth" });
 
-  if (address !== null) {
-    address.focus({ preventScroll: true });
+  if (box !== null) {
+    box.focus({ preventScroll: true });
   }
 }
 
