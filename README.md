@@ -7,8 +7,10 @@
 **Tunnel Manager publishes a service on machines that have no route to it.** It
 connects to those machines over SSH, has each of them open a port, and carries
 whatever arrives on that port back through the SSH connection to the service.
-It then keeps the tunnels up: one that drops is built again, and a screen in
-the browser shows what each of them is doing.
+A machine it cannot reach directly is reached through other Hosts on a jump
+route, one hop or several, the way `ssh -J` does. It then keeps the tunnels up:
+one that drops is built again, and a screen in the browser shows what each of
+them is doing.
 
 It is one file. The database is a SQLite file it creates itself, the settings
 are in that file and are changed in the browser, and the UI and the API are

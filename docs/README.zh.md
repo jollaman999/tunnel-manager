@@ -5,7 +5,8 @@
 ![Tunnel Manager: add three service ports and six Hosts, some behind others on a jump route of one or two hops, approve the host keys, reach the service through the tunnel, add a local forward, see both in the status screen, switch off a Host on the way, and turn on a SOCKS5 proxy](demo.gif)
 
 **Tunnel Manager 把一个服务发布到本来没有路由能到达它的机器上。** 它通过 SSH 连接这些机器，
-让每台机器各打开一个本地端口，再把到达本地端口的流量通过 SSH 连接转发回服务。之后它持续维护
+让每台机器各打开一个本地端口，再把到达本地端口的流量通过 SSH 连接转发回服务。直接连不上的
+机器，它会像 `ssh -J` 那样经过跳板路线上的其他 Host 去连接，一站或多站都可以。之后它持续维护
 这些隧道：断开的会重新建立，浏览器里的页面显示每条隧道正在做什么。
 
 一套安装就是一个文件。数据库是它自己创建的 SQLite 文件，设置存在这个 SQLite 文件里、
