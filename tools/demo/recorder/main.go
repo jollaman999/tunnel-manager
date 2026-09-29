@@ -69,10 +69,10 @@ func main() {
 	hopHosts := flag.String("hop-hosts", "", "comma-separated names of the Hosts that carry no service port")
 	flag.StringVar(&cfg.serviceHost, "service-host", "", "the Host whose ports for the service ports are opened")
 	flag.StringVar(&cfg.forwardHost, "forward-host", "", "the Host the local forward and the SOCKS5 proxy are made on")
-	flag.StringVar(&cfg.pauseHost, "pause-host", "", "the Host on the way that is switched off for a moment")
+	flag.StringVar(&cfg.pauseHost, "pause-host", "", "the jump host that is switched off for a moment")
 	flag.StringVar(&cfg.hostUser, "host-user", "demo", "SSH user of the Host")
 	flag.StringVar(&cfg.hostPassword, "host-password", "demo-host-password", "SSH password of the Host")
-	flag.StringVar(&cfg.forwardPort, "forward-port", "18080", "port the local forward opens on this machine")
+	flag.StringVar(&cfg.forwardPort, "forward-port", "18080", "port the local forward opens on the Tunnel Manager server")
 	flag.StringVar(&cfg.targetIP, "target-ip", "127.0.0.1", "address the local forward reaches from the Host")
 	flag.StringVar(&cfg.targetPort, "target-port", "80", "port the local forward reaches from the Host")
 	flag.StringVar(&cfg.socksPort, "socks-port", "1080", "port the SOCKS5 proxy of the Host listens on here")
@@ -371,7 +371,7 @@ func sceneHost(r *recorder, cfg config, _ string) error {
 		return err
 	}
 
-	if err := r.caption("3. Add the Host this machine reaches directly, the bastion"); err != nil {
+	if err := r.caption("3. Add the Host the Tunnel Manager server reaches directly, the bastion"); err != nil {
 		return err
 	}
 
@@ -385,7 +385,7 @@ func sceneHost(r *recorder, cfg config, _ string) error {
 // others the same way but quickly.
 func sceneJumpHosts(r *recorder, cfg config, _ string) error {
 	for i, name := range cfg.hosts[1:] {
-		caption := fmt.Sprintf("4. Add %s behind it: its jump route passes through the bastion", name)
+		caption := fmt.Sprintf("4. Add %s behind it, with the bastion as its jump host", name)
 
 		if i > 0 {
 			caption = "4. Add the other Hosts the same way, one or two hops deep"
@@ -815,7 +815,7 @@ func sceneLocalForward(r *recorder, cfg config, _ string) error {
 		return err
 	}
 
-	if err := r.caption(fmt.Sprintf("8. Open a port here that reaches a service only %s, two hops away, can reach",
+	if err := r.caption(fmt.Sprintf("8. Open a port on the Tunnel Manager server to a service only %s, two hops away, reaches",
 		cfg.forwardHost)); err != nil {
 		return err
 	}
@@ -885,7 +885,7 @@ func sceneLocalForward(r *recorder, cfg config, _ string) error {
 		return fmt.Errorf("the page at %s says %q and not the web server inside the Host", address, heading)
 	}
 
-	if err := r.caption(fmt.Sprintf("9. This machine opens the port and reaches the web server inside %s",
+	if err := r.caption(fmt.Sprintf("9. The Tunnel Manager server opens the port and reaches the web server inside %s",
 		cfg.forwardHost)); err != nil {
 		return err
 	}
@@ -925,7 +925,7 @@ func sceneStatusBoth(r *recorder, cfg config, _ string) error {
 	return r.shot(3500 * time.Millisecond)
 }
 
-// sceneHopOff switches off the Host on the way for a moment: the Hosts behind it
+// sceneHopOff switches off a jump host for a moment: the Hosts behind it
 // say in the list that their route stops there, the status screen says at
 // which hop and what to do, and switching it on again brings the route back.
 func sceneHopOff(r *recorder, cfg config, _ string) error {
@@ -947,7 +947,7 @@ func sceneHopOff(r *recorder, cfg config, _ string) error {
 		return err
 	}
 
-	if err := r.caption(fmt.Sprintf("11. Switch %s off and the Hosts behind it show their route stops there",
+	if err := r.caption(fmt.Sprintf("11. Switch the jump host %s off and the Hosts behind it show their route stops there",
 		cfg.pauseHost)); err != nil {
 		return err
 	}
@@ -988,7 +988,7 @@ func sceneHopOff(r *recorder, cfg config, _ string) error {
 		return err
 	}
 
-	if err := r.caption("11. The status screen says which hop is off and what to do about it"); err != nil {
+	if err := r.caption("11. The status screen says which jump host is off and what to do about it"); err != nil {
 		return err
 	}
 
@@ -1014,7 +1014,7 @@ func sceneHopOff(r *recorder, cfg config, _ string) error {
 		return err
 	}
 
-	if err := r.caption(fmt.Sprintf("11. Switch %s on again and the route is back", cfg.pauseHost)); err != nil {
+	if err := r.caption(fmt.Sprintf("11. Switch the jump host %s on again and the route is back", cfg.pauseHost)); err != nil {
 		return err
 	}
 

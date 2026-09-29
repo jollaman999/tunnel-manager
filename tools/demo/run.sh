@@ -244,13 +244,19 @@ log "recording"
 
 log "making the GIF"
 mkdir -p "$(dirname "$OUT")"
-for colors in 128 64 32; do
+for step in 128:bayer 64:bayer 32:bayer 32:none; do
+	colors=${step%:*}
+	dither=${step#*:}
+	if [ "$dither" = bayer ]; then
+		dither=bayer:bayer_scale=5
+	fi
+
 	timeout 600 ffmpeg -v error -y -f concat -safe 0 -i "$WORK/frames/frames.txt" \
-		-vf "scale=960:-1:flags=lanczos,split[a][b];[a]palettegen=max_colors=$colors:stats_mode=diff[p];[b][p]paletteuse=dither=bayer:bayer_scale=5:diff_mode=rectangle" \
+		-vf "scale=960:-1:flags=lanczos,split[a][b];[a]palettegen=max_colors=$colors:stats_mode=diff[p];[b][p]paletteuse=dither=$dither:diff_mode=rectangle" \
 		-fps_mode vfr -loop 0 "$WORK/demo.gif"
 
 	size=$(stat -c %s "$WORK/demo.gif")
-	log "$colors colors: $size bytes"
+	log "$colors colors, dither ${dither%%:*}: $size bytes"
 	if [ "$size" -le "$MAX_GIF_BYTES" ]; then
 		break
 	fi

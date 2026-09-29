@@ -23,10 +23,10 @@ What it does, in order:
 2. Makes three Docker networks in the ranges set aside for documentation, so
    that the addresses on the screens stand for nobody's network:
 
-   | Network | Subnet | Reached from this machine |
+   | Network | Subnet | Reached from the Tunnel Manager server |
    |---------|--------|---------------------------|
-   | `tunnel-manager-demo-site-a` | `198.51.100.0/24` | Yes, as the network this machine and the clients are on |
-   | `tunnel-manager-demo-site-b` | `203.0.113.0/24` | No: internal, with no address or route of this machine on it |
+   | `tunnel-manager-demo-site-a` | `198.51.100.0/24` | Yes, as the network the Tunnel Manager server and the clients are on |
+   | `tunnel-manager-demo-site-b` | `203.0.113.0/24` | No: internal, with no address or route of the Tunnel Manager server on it |
    | `tunnel-manager-demo-site-b-lan` | `2001:db8:b::/64`, IPv6 alone | No, the same way |
 
 3. Starts six containers of the image on them, named `tunnel-manager-demo-`
@@ -71,8 +71,8 @@ What it does, in order:
    would be looked up by `site-b-app`, which has no name server to ask, and its
    SSH server answers nothing else, the keepalive of the proxy included, while
    it waits.
-7. Turns the frames into a GIF 960 pixels wide with ffmpeg, with fewer colors
-   when it comes out larger than 5 MB.
+7. Turns the frames into a GIF 960 pixels wide with ffmpeg, with fewer colors,
+   and last without dithering, when it comes out larger than 5 MB.
 
 It needs Go, Docker, ffmpeg and Google Chrome, and these addresses free:
 `127.0.0.1:8888` (tunnel-manager), `127.0.0.1:8000`, `127.0.0.1:8001`,
