@@ -2819,10 +2819,10 @@ span.jump-pill {
   width: auto;
 }
 
-/* The route on the form takes more width than a box does: a step is a name and
-   a login side by side. The label goes to the top of the block it names. */
+/* The route on the form is as wide as the boxes above and below it, so the
+   column of the form reads as one edge. The label goes to the top of the block
+   it names. */
 .field.field-node {
-  grid-template-columns: 10rem minmax(0, 36rem);
   align-items: start;
 }
 
@@ -2849,10 +2849,14 @@ span.jump-pill {
 }
 
 .jump-field-said {
-  flex: 1 1 10rem;
+  flex: 1 1 auto;
   min-width: 0;
   color: var(--text-muted);
   font-size: 13px;
+}
+
+.jump-field-head > .buttons {
+  flex-basis: 100%;
 }
 
 .jump-steps {
@@ -2897,6 +2901,8 @@ span.jump-pill {
 }
 
 .jump-step-login {
+  justify-self: start;
+  max-width: 100%;
   overflow: hidden;
   font-family: ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
   font-size: 12px;
@@ -3425,10 +3431,6 @@ button.jump-chip.on {
 }
 
 @media (max-width: 34rem) {
-  .field.field-node {
-    grid-template-columns: minmax(0, 1fr);
-  }
-
   .field-node > .field-label {
     padding-top: 0;
   }
