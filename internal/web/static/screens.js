@@ -3102,10 +3102,12 @@ function hostRow(host, known) {
   const buttons = document.createElement("div");
 
   buttons.className = "buttons";
-  buttons.appendChild(actionButton(t("common.edit.button"), "host-edit-" + host.id, function () {
+  buttons.appendChild(actionButton(t("common.edit.button"), "host-edit-" + host.id, async function () {
     editingHostID = host.id;
 
-    return drawHosts();
+    await drawHosts();
+
+    focusFormField("host-edit", "address");
   }));
   buttons.appendChild(actionButton(t("hosts.service-ports.button"), "host-service-ports-" + host.id, function () {
     return openHostServicePorts(host);
@@ -3637,7 +3639,8 @@ async function openHostFormFromPanel(close, id) {
 }
 
 // focusFormField scrolls the form of that name on the screen into view and puts
-// the keyboard in the box of that field.
+// the keyboard in the box of that field, after what is in it already, since
+// an edit is most often a change to the end of a value.
 function focusFormField(formName, fieldName) {
   const form = document.querySelector("#app form[data-form=\"" + formName + "\"]");
 
@@ -3650,7 +3653,16 @@ function focusFormField(formName, fieldName) {
   form.scrollIntoView({ block: "start", behavior: "smooth" });
 
   if (box !== null) {
-    box.focus({ preventScroll: true });
+    putCaretAtEnd(box);
+  }
+}
+
+// putCaretAtEnd gives a box the keyboard with the caret after its text.
+function putCaretAtEnd(box) {
+  box.focus({ preventScroll: true });
+
+  if (typeof box.setSelectionRange === "function" && typeof box.value === "string") {
+    box.setSelectionRange(box.value.length, box.value.length);
   }
 }
 
@@ -6218,6 +6230,14 @@ async function openHostLocalForwards(host) {
       body: [said, form],
       opened: function (shut) {
         close = shut;
+
+        if (item !== null) {
+          const box = form.querySelector("[data-field=\"target_address\"]");
+
+          if (box !== null) {
+            putCaretAtEnd(box);
+          }
+        }
       }
     });
   }
@@ -7154,10 +7174,12 @@ function servicePortRow(port) {
   const buttons = document.createElement("div");
 
   buttons.className = "buttons";
-  buttons.appendChild(actionButton(t("common.edit.button"), "service-port-edit-" + port.id, function () {
+  buttons.appendChild(actionButton(t("common.edit.button"), "service-port-edit-" + port.id, async function () {
     editingServicePortID = port.id;
 
-    return drawServicePorts();
+    await drawServicePorts();
+
+    focusFormField("service-port-edit", "service_address");
   }));
   buttons.appendChild(actionButton(t("common.delete.button"), "service-port-delete-" + port.id, function () {
     return deleteServicePort(port);
