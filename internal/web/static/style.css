@@ -1682,6 +1682,21 @@ td.pick input[type="checkbox"] {
   border-color: var(--accent-ring);
 }
 
+td > .badge[data-status]:only-child,
+.socks-cell > .badge[data-status] {
+  display: block;
+  box-sizing: border-box;
+  width: 100%;
+  text-align: center;
+}
+
+.socks-cell {
+  display: grid;
+  grid-template-columns: 5ch auto;
+  gap: 0.4rem;
+  align-items: center;
+}
+
 /* The lists above the log act as they are changed, so they are a row of
    controls rather than a form with a button under it.
 
