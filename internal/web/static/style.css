@@ -3021,6 +3021,13 @@ button.jump-block:disabled {
   font-weight: 600;
 }
 
+.jump-block-name > .badge {
+  box-sizing: border-box;
+  max-width: 100%;
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+
 .jump-block-login {
   overflow-wrap: anywhere;
   font-family: ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
