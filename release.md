@@ -1,3 +1,10 @@
+# v4.0.2
+
+## Add/fix features:
+
+- **An Edit in a list puts the keyboard where the edit is made.** The Edit of a Host scrolls to its form and puts the caret in the Address box, the Edit of a service port does the same with the Service address box, and the Edit of a local forward puts it in the Target address box of its panel. The caret goes after what is in the box, from the button in the row and from the Actions menu alike, and the Edit of a jump host in the jump route panel now does the same.
+- **A tunnel stopped while it is connecting is stopped.** Where a Host or a service port was turned off, deleted or changed just as its tunnel was being connected, the SSH connection that went on to be made was left open: the forwarded ports stayed open on the Host and went on carrying traffic for the tunnel that was stopped, and the tunnel built again for the new settings was refused those ports until that connection ended or the process was restarted. That connection is now closed as soon as it is made.
+
 # v4.0.1
 
 ## Add/fix features:
