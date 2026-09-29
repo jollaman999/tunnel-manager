@@ -1,3 +1,10 @@
+# v4.0.1
+
+## Add/fix features:
+
+- **The Jump route field of the Host form is as wide as the boxes above and below it.** It was wider than every other field on a wide screen. Its buttons now go on a line of their own under the summary, at the left, and on a narrow screen the summary starts under the pill rather than in the narrow space to its right. In a right-to-left language the login of each step stands beside its name, not at the far side of the field.
+- **The jump route pill in the Hosts list is narrower.** Its column takes only the width of the longest pill and its heading, and the three kinds of pill keep one width and centre their words.
+
 # v4.0.0
 
 ## Add/fix features:
