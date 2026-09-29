@@ -449,8 +449,8 @@ func (h *Handler) ListHostLocalForwards(c echo.Context) error {
 }
 
 // @Summary      Add a local forward to a Host
-// @Description  This machine opens local_port and carries every connection to it over the SSH connection of the Host to target_address:target_port, as seen from the Host. target_address is a host name or an IP address, resolved by the Host.
-// @Description  bind_scope is where local_port is opened on this machine: loopback, wildcard, or left out for the wildcard.
+// @Description  The Tunnel Manager server opens local_port and carries every connection to it over the SSH connection of the Host to target_address:target_port, as seen from the Host. target_address is a host name or an IP address, resolved by the Host.
+// @Description  bind_scope is where local_port is opened on the Tunnel Manager server: loopback, wildcard, or left out for the wildcard.
 // @Description  enabled is whether the forward runs. Left out, it is true. A forward that is off opens no port and makes no SSH connection, and still holds local_port.
 // @Description  allowed_sources is the addresses and CIDR blocks a client may connect to local_port from, separated by commas or spaces; empty or left out lets every address in. It is taken and held to on either bind_scope, the way socks_allowed_sources of a Host is.
 // @Tags         local forwards

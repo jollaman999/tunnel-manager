@@ -218,9 +218,9 @@ type LocalForward struct {
 	// Number is which forward of its Host this is, counted from 1. Numbers are
 	// handed out per Host, so two Hosts each have a first forward.
 	Number uint `gorm:"primaryKey;not null" json:"number"`
-	// BindScope is where on this machine LocalPort is opened, with the words
-	// and the constraint HostServicePort.BindScope carries, and an empty value
-	// is the wildcard for the same reason.
+	// BindScope is where on the Tunnel Manager server LocalPort is opened,
+	// with the words and the constraint HostServicePort.BindScope carries, and
+	// an empty value is the wildcard for the same reason.
 	BindScope     string `gorm:"check:chk_local_forwards_bind_scope,bind_scope IN ('','loopback','wildcard')" json:"bind_scope"`
 	LocalPort     int    `gorm:"uniqueIndex:idx_local_forwards_local_port;not null" json:"local_port"`
 	TargetAddress string `gorm:"not null" json:"target_address"`
@@ -364,7 +364,7 @@ type CreateHostRequest struct {
 	Enabled *bool `json:"enabled"`
 	// AssignAllServicePorts is whether the Host is to carry every service port
 	// that is stored when it is registered. A Host with no assignment runs no
-	// tunnel at all, and carrying everything is what an installation did before
+	// tunnel at all, and carrying everything is what tunnel-manager did before
 	// the assignments were rows of their own, so a request that does not
 	// mention the field is answered that way.
 	//
@@ -395,9 +395,9 @@ type CreateHostRequest struct {
 	SocksPort           int    `json:"socks_port" validate:"omitempty,min=1,max=65535"`
 	SocksBindScope      string `json:"socks_bind_scope" validate:"omitempty,oneof=loopback wildcard"`
 	SocksAllowedSources string `json:"socks_allowed_sources"`
-	// JumpHostIDs is the jump route of the Host: the registered Hosts its SSH
-	// connection goes through, in the order it goes through them. Left out,
-	// the Host is reached directly.
+	// JumpHostIDs is the jump route of the Host: the ids of the registered
+	// Hosts used as its jump hosts, in the order its SSH connection is carried
+	// through them. Left out, the Host is reached directly.
 	JumpHostIDs []uint `json:"jump_host_ids"`
 }
 

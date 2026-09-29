@@ -772,7 +772,7 @@ func TestCheckJumpRouteRefusesWhatCannotBeDialled(t *testing.T) {
 			"jump 2 names host #7, which is not registered",
 			jumpFailure{seq: 2, hostID: 7, reason: JumpReasonRoute}},
 		{"too long", long, localStatusError,
-			"the jump route of this Host passes through 9 Hosts, and a route may pass through 8 at most",
+			"the jump route of this Host has 9 jump hosts, and a route may have 8 at most",
 			jumpFailure{reason: JumpReasonRoute}},
 		{"disabled", []jumpHop{hop(2), {id: 3, host: &models.Host{ID: 3, Address: "192.0.2.3", Port: 22}}},
 			StatusJumpHostDisabled, "jump 2 (host #3 192.0.2.3:22) is disabled, so the route to this Host is not dialled",

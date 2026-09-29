@@ -442,10 +442,10 @@ var errorMessages = map[errorCode]string{
 	errHostSocksPortTaken:        "The SOCKS5 port {socks_port} is already opened by the SOCKS5 proxy of the Host {host}",
 	errHostSocksPortLocalForward: "The SOCKS5 port {socks_port} is already opened by a local forward of the Host {host}",
 	errHostJumpUnknown:           "The jump route is refused: there is no Host {host_id}. Register the Host first and put it on the route after",
-	errHostJumpSelf:              "The jump route is refused: a Host cannot go through itself",
+	errHostJumpSelf:              "The jump route is refused: a Host cannot be its own jump host",
 	errHostJumpRepeated:          "The jump route is refused: the Host {host_id} is on it twice",
-	errHostJumpTooMany:           "The jump route is refused: it goes through more than {max} Hosts",
-	errHostDeleteUsedAsJump:      "The Host was not deleted: the Hosts {hosts} (id {host_ids}) go through it on their jump route. Take it off those routes first",
+	errHostJumpTooMany:           "The jump route is refused: it has more than {max} jump hosts",
+	errHostDeleteUsedAsJump:      "The Host was not deleted: the Hosts {hosts} (id {host_ids}) use it as a jump host. Take it off those routes first",
 	errHostAddressTaken:          "The address {address} with the SSH port {port} is already registered as the Host {host_id}",
 
 	// The service ports.
@@ -493,7 +493,7 @@ var errorMessages = map[errorCode]string{
 	// The one rule of the settings that is raised under a code of its own. A
 	// screen showing it has to list the languages that would be taken, and a
 	// list arriving inside {reason} as English prose is one it cannot use.
-	errSettingsLanguageUnsupported: "The settings are refused: {language} is not a language the screens of this machine are drawn in. Use one of {languages}, or leave it empty to show each browser the language it asks for",
+	errSettingsLanguageUnsupported: "The settings are refused: {language} is not a language the screens of the Tunnel Manager server are drawn in. Use one of {languages}, or leave it empty to show each browser the language it asks for",
 	// The port a local forward opens, asked for as the port of this server. The
 	// answer carries the forward and a free port in data, which is what the
 	// screen offers to move one of the two to.
@@ -548,7 +548,7 @@ var errorMessages = map[errorCode]string{
 	errLogsClearFailed:          "The log file at {path} could not be emptied: {reason}",
 
 	errUpdateCheckFailed:     "The newest release could not be read: {reason}",
-	errUpdateNotInstallable:  "This machine cannot install an update from here. tunnel-manager runs on it as a program somebody started rather than as a registered service, so there is nothing to restart it afterwards",
+	errUpdateNotInstallable:  "An update cannot be installed from this screen. tunnel-manager runs on the Tunnel Manager server as a program somebody started rather than as a registered service, so there is nothing to restart it afterwards",
 	errUpdatePasswordMissing: "Enter the password of your account to install the update",
 	errUpdatePasswordWrong:   "That is not the password of this account. Nothing was installed",
 	errUpdateInstallFailed:   "The install could not be started: {reason}",
@@ -564,12 +564,12 @@ var errorMessages = map[errorCode]string{
 	errExportAssignmentsRead:         "Failed to read the service port assignments",
 	errExportLocalForwardsRead:       "Failed to read the local forwards",
 	errExportJumpsRead:               "Failed to read the jump routes",
-	errExportHostSecretsSealed:       "No export was made: the stored secrets of the Host {host} do not open with the encryption key of this machine",
+	errExportHostSecretsSealed:       "No export was made: the stored secrets of the Host {host} do not open with the encryption key of the Tunnel Manager server",
 	errExportSealFailed:              "Failed to encrypt the file",
 
 	// Opening the file an import was sent.
 	errImportFileMissing:             "No file was sent. Send the text an export answered with in the 'file' field",
-	errImportPasswordRequired:        "A password is required. It is the one the file was encrypted with on the machine it came from",
+	errImportPasswordRequired:        "A password is required. It is the one the file was encrypted with on the Tunnel Manager server it came from",
 	errImportAccountPasswordRequired: "Enter the password of your account to import the tunnels",
 	errImportAccountPasswordWrong:    "That is not the password of this account. Nothing was imported",
 	errImportFileNotAnExport:         "This is not a file tunnel-manager exported. An exported file is one line of text that starts with a marker naming the format, and this one does not",
@@ -625,10 +625,10 @@ var errorMessages = map[errorCode]string{
 	errImportSocksAPIPort:   "Nothing was imported. The SOCKS5 proxy of the Host {host} in the file opens the port {socks_port}, which is the port this server listens on",
 
 	// The jump routes the file names.
-	errImportJumpUnknownHost:  "Nothing was imported. The jump route of the Host {host} in the file passes through the Host with the id {jump_host_id}, which the file does not hold",
-	errImportJumpSelf:         "Nothing was imported. The jump route of the Host {host} in the file passes through the Host itself",
-	errImportJumpDuplicate:    "Nothing was imported. The jump route of the Host {host} in the file passes through the Host with the id {jump_host_id} more than once",
-	errImportJumpTooMany:      "Nothing was imported. The jump route of the Host {host} in the file passes through more than {max} Hosts",
+	errImportJumpUnknownHost:  "Nothing was imported. The jump route of the Host {host} in the file names the Host with the id {jump_host_id} as a jump host, which the file does not hold",
+	errImportJumpSelf:         "Nothing was imported. The jump route of the Host {host} in the file names the Host itself as a jump host",
+	errImportJumpDuplicate:    "Nothing was imported. The jump route of the Host {host} in the file names the Host with the id {jump_host_id} as a jump host more than once",
+	errImportJumpTooMany:      "Nothing was imported. The jump route of the Host {host} in the file has more than {max} jump hosts",
 	errImportJumpsStoreFailed: "Nothing was imported: failed to store the jump route of the Host {host}",
 
 	// Removing the installation.

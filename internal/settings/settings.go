@@ -46,8 +46,8 @@ type Settings struct {
 	// TLS. It is stored with a column default of true so that a database
 	// written by a version that had no such column reads back as HTTPS on:
 	// SQLite fills the rows that are already there with the default as the
-	// column is added, and an installation that is upgraded gets the same
-	// answer a fresh one does.
+	// column is added, and a Tunnel Manager server that is upgraded gets the
+	// same answer a fresh one does.
 	//
 	// The column is named here because the name gorm works out from the field
 	// is api_http_s_enabled: it knows HTTP as one word and leaves the S of
@@ -62,8 +62,8 @@ type Settings struct {
 	// one that blinked is back within the interval. A value below the
 	// monitoring interval leaves every wait at the interval.
 	//
-	// The column carries its default so that an installation upgraded onto
-	// this version reads back the same answer a fresh one gives.
+	// The column carries its default so that a Tunnel Manager server upgraded
+	// onto this version reads back the same answer a fresh one gives.
 	ReconnectMaxIntervalSec int `gorm:"default:60" json:"reconnect_max_interval_sec"`
 	ReconcileIntervalSec    int `json:"reconcile_interval_sec"`
 
@@ -85,12 +85,13 @@ type Settings struct {
 
 	// UIDefaultLanguage is the language a browser that has picked none of its
 	// own is shown. A browser that has picked one keeps it: the pick belongs to
-	// the person reading the screen, and this is what the installation shows
-	// everybody else.
+	// the person reading the screen, and this is what the Tunnel Manager server
+	// shows everybody else.
 	//
 	// It is empty by default, and empty is a value rather than a gap: it means
-	// this installation names no language, so a browser falls back to the one
-	// it asks for, which is what every browser did before this setting existed.
+	// the Tunnel Manager server names no language, so a browser falls back to
+	// the one it asks for, which is what every browser did before this setting
+	// existed.
 	// Defaulting it to "en" would read the same way to Go and mean something
 	// else entirely on screen, turning a Korean browser English at the upgrade
 	// that added the column. The two cases have to be told apart, so the
@@ -98,8 +99,9 @@ type Settings struct {
 	//
 	// That is also what a row written before the column existed reads back as.
 	// The column carries no default, so SQLite fills such a row with NULL and
-	// gorm reads NULL into a string as the empty one: an installation that is
-	// upgraded names no language, which is the same answer a fresh one gives.
+	// gorm reads NULL into a string as the empty one: a Tunnel Manager server
+	// that is upgraded names no language, which is the same answer a fresh one
+	// gives.
 	//
 	// The column is named here for the reason the HTTPS one is: the name gorm
 	// works out from the field is uidefault_language, because it knows UI as
@@ -110,12 +112,12 @@ type Settings struct {
 
 	// UpdateCheckEnabled is whether the newest release is read on a timer. It
 	// is on by default: what it costs is one small answer from a public API,
-	// nothing is downloaded and nothing is written, and an installation that
-	// does not know a release exists is one whose operator finds out from
+	// nothing is downloaded and nothing is written, and a Tunnel Manager server
+	// that does not know a release exists is one whose operator finds out from
 	// somewhere else or not at all.
 	//
-	// The column carries its default so that an installation upgraded onto
-	// this version reads back the same answer a fresh one gives.
+	// The column carries its default so that a Tunnel Manager server upgraded
+	// onto this version reads back the same answer a fresh one gives.
 	UpdateCheckEnabled bool `gorm:"default:true" json:"update_check_enabled"`
 	// UpdateCheckIntervalHours is how often that read happens. Releases are
 	// not a thing that happens by the minute, and the answer is only ever used
@@ -143,10 +145,10 @@ type Settings struct {
 	// is past that and short enough that somebody hears about an outage while
 	// it is still one.
 	//
-	// The columns below carry their defaults so that an installation upgraded
-	// onto this version reads back what a fresh one gives, and every column
-	// is named here because the name gorm works out for SMTP runs the letters
-	// into what follows.
+	// The columns below carry their defaults so that a Tunnel Manager server
+	// upgraded onto this version reads back what a fresh one gives, and every
+	// column is named here because the name gorm works out for SMTP runs the
+	// letters into what follows.
 	AlertAfterSec int `gorm:"column:alert_after_sec;default:300" json:"alert_after_sec"`
 	// AlertWebhookURL is where a down and an up are posted to as JSON. Empty
 	// is the webhook switched off.
@@ -162,8 +164,8 @@ type Settings struct {
 	AlertWebhookURL string `gorm:"-" json:"-"`
 
 	// SMTPHost is the mail server a down and an up are sent through. Empty is
-	// mail switched off, which is what a fresh installation is on: there is
-	// no server this program could guess at.
+	// mail switched off, which is what a freshly installed Tunnel Manager
+	// server is on: there is no mail server this program could guess at.
 	SMTPHost string `gorm:"-" json:"smtp_host"`
 	SMTPPort int    `gorm:"-" json:"smtp_port"`
 	// SMTPSecurity is how the connection to the server is protected: "none",
@@ -378,7 +380,7 @@ func validateDataPath(setting string, path string) error {
 	}
 
 	if cleaned == "." {
-		return fmt.Errorf("invalid %s path: %s. It names the installation directory itself "+
+		return fmt.Errorf("invalid %s path: %s. It names the data directory itself "+
 			"rather than a file in it", setting, path)
 	}
 

@@ -49,12 +49,12 @@ func openLocalListeners(pair localPair) (*openForwards, error) {
 	// dual-stack socket is the port being unavailable, and opening 0.0.0.0
 	// after it would bind over the program that holds [::].
 	if !errors.Is(errDual, windows.WSAEAFNOSUPPORT) {
-		return nil, fmt.Errorf("the bind scope could not be opened on this machine (%s: %v)", pair.v6, errDual)
+		return nil, fmt.Errorf("the bind scope could not be opened on the Tunnel Manager server (%s: %v)", pair.v6, errDual)
 	}
 
 	listenerV4, errV4 := listenExclusive("tcp4", pair.v4)
 	if errV4 != nil {
-		return nil, fmt.Errorf("neither address of the bind scope could be opened on this machine (%s: %v; %s: %v)",
+		return nil, fmt.Errorf("neither address of the bind scope could be opened on the Tunnel Manager server (%s: %v; %s: %v)",
 			pair.v4, errV4, pair.v6, errDual)
 	}
 

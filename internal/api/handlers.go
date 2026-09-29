@@ -472,7 +472,7 @@ func hostWriteRefused(tx *gorm.DB, writeErr error, self uint, address string, po
 // @Description  enabled is optional and a Host that does not say is enabled.
 // @Description  bind_scope is what every assignment this registration makes is opened to: loopback, wildcard, or left out for the wildcard. It is read only when the assignments are made.
 // @Description  socks_enabled switches on the SOCKS5 proxy of the Host, which needs socks_port. socks_bind_scope is loopback, wildcard, or left out for loopback. socks_allowed_sources is the addresses and CIDR blocks a client may connect from, separated by commas or spaces; empty lets every address in.
-// @Description  jump_host_ids is the jump route: the ids of registered Hosts the SSH connection goes through, in order, at most 8. Left out, the Host is reached directly.
+// @Description  jump_host_ids is the jump route: the ids of the registered Hosts to use as jump hosts, in order, at most 8. Left out, the Host is reached directly.
 // @Tags         hosts
 // @Accept   json
 // @Produce  json
@@ -1493,7 +1493,7 @@ func (h *Handler) GetServicePort(c echo.Context) error {
 }
 
 // @Summary      Update a service port
-// @Description  service_address, service_port and local_port are all required. service_address is a host name or an IP address, resolved on this system each time a connection is forwarded.
+// @Description  service_address, service_port and local_port are all required. service_address is a host name or an IP address, resolved on the Tunnel Manager server each time a connection is forwarded.
 // @Tags         service ports
 // @Accept   json
 // @Produce  json
@@ -2187,9 +2187,9 @@ func idList(ids []uint) string {
 // database for the reason ListHosts states one; see there for what an order
 // that is not stated does to LIMIT and OFFSET.
 //
-// @Summary      The counts of the installation and one page of the status rows
-// @Description  tunnels carries both sorts of forward: kind is service_port or local_forward, and sp_id is null on a local forward, which is carried by no service port. On a local forward row, local is the address opened on this machine and remote the target reached from the Host, which is the mirror of what they hold on a service port row. Whether the target of a local forward answers is on the local forwards of its Host (forward_reach), not here.
-// @Description  The counts are over every row and not over the page: they say what the installation is doing, not what is on the page being looked at. There are four, and each counts the service port tunnels and the local forwards together: desired_tunnels is what should be running as of the last reconcile pass, which a change wakes, and connected_tunnels, reconnecting_tunnels and error_tunnels are how many rows are in each of those statuses. A row in jump_host_disabled, whose Host is reached through a disabled Host, is counted in error_tunnels. A row that is starting or held up at a host key is in none of the three. total_rows is the rows of both sorts, which is what the pages are cut from.
+// @Summary      The counts of the Tunnel Manager server and one page of the status rows
+// @Description  tunnels carries both sorts of forward: kind is service_port or local_forward, and sp_id is null on a local forward, which is carried by no service port. On a local forward row, local is the address opened on the Tunnel Manager server and remote the target reached from the Host, which is the mirror of what they hold on a service port row. Whether the target of a local forward answers is on the local forwards of its Host (forward_reach), not here.
+// @Description  The counts are over every row and not over the page: they say what the Tunnel Manager server is doing, not what is on the page being looked at. There are four, and each counts the service port tunnels and the local forwards together: desired_tunnels is what should be running as of the last reconcile pass, which a change wakes, and connected_tunnels, reconnecting_tunnels and error_tunnels are how many rows are in each of those statuses. A row in jump_host_disabled, whose route has a disabled jump host, is counted in error_tunnels. A row that is starting or held up at a host key is in none of the three. total_rows is the rows of both sorts, which is what the pages are cut from.
 // @Description  q narrows the rows and total_rows with them, and leaves the four counts over every row.
 // @Tags         status
 // @Produce  json

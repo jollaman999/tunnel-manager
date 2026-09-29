@@ -235,7 +235,7 @@ func Install(db *gorm.DB, cipher *crypto.Cipher, certPEM string, keyPEM string,
 	warning := ""
 	if now.Before(leaf.NotBefore) {
 		warning = fmt.Sprintf("the certificate is not valid until %s. A client that connects "+
-			"before then refuses it. Check the clock of this machine if that time looks wrong",
+			"before then refuses it. Check the clock of the Tunnel Manager server if that time looks wrong",
 			leaf.NotBefore.UTC().Format(time.RFC3339))
 	}
 

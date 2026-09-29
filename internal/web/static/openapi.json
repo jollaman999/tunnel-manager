@@ -479,7 +479,7 @@
                         "CSRFToken": []
                     }
                 ],
-                "description": "address is a host name or an IP address. A name is resolved each time the Host is connected to.\nenabled is optional and a Host that does not say is enabled.\nbind_scope is what every assignment this registration makes is opened to: loopback, wildcard, or left out for the wildcard. It is read only when the assignments are made.\nsocks_enabled switches on the SOCKS5 proxy of the Host, which needs socks_port. socks_bind_scope is loopback, wildcard, or left out for loopback. socks_allowed_sources is the addresses and CIDR blocks a client may connect from, separated by commas or spaces; empty lets every address in.\njump_host_ids is the jump route: the ids of registered Hosts the SSH connection goes through, in order, at most 8. Left out, the Host is reached directly.",
+                "description": "address is a host name or an IP address. A name is resolved each time the Host is connected to.\nenabled is optional and a Host that does not say is enabled.\nbind_scope is what every assignment this registration makes is opened to: loopback, wildcard, or left out for the wildcard. It is read only when the assignments are made.\nsocks_enabled switches on the SOCKS5 proxy of the Host, which needs socks_port. socks_bind_scope is loopback, wildcard, or left out for loopback. socks_allowed_sources is the addresses and CIDR blocks a client may connect from, separated by commas or spaces; empty lets every address in.\njump_host_ids is the jump route: the ids of the registered Hosts to use as jump hosts, in order, at most 8. Left out, the Host is reached directly.",
                 "consumes": [
                     "application/json"
                 ],
@@ -1029,7 +1029,7 @@
                         "CSRFToken": []
                     }
                 ],
-                "description": "This machine opens local_port and carries every connection to it over the SSH connection of the Host to target_address:target_port, as seen from the Host. target_address is a host name or an IP address, resolved by the Host.\nbind_scope is where local_port is opened on this machine: loopback, wildcard, or left out for the wildcard.\nenabled is whether the forward runs. Left out, it is true. A forward that is off opens no port and makes no SSH connection, and still holds local_port.\nallowed_sources is the addresses and CIDR blocks a client may connect to local_port from, separated by commas or spaces; empty or left out lets every address in. It is taken and held to on either bind_scope, the way socks_allowed_sources of a Host is.",
+                "description": "The Tunnel Manager server opens local_port and carries every connection to it over the SSH connection of the Host to target_address:target_port, as seen from the Host. target_address is a host name or an IP address, resolved by the Host.\nbind_scope is where local_port is opened on the Tunnel Manager server: loopback, wildcard, or left out for the wildcard.\nenabled is whether the forward runs. Left out, it is true. A forward that is off opens no port and makes no SSH connection, and still holds local_port.\nallowed_sources is the addresses and CIDR blocks a client may connect to local_port from, separated by commas or spaces; empty or left out lets every address in. It is taken and held to on either bind_scope, the way socks_allowed_sources of a Host is.",
                 "consumes": [
                     "application/json"
                 ],
@@ -1796,7 +1796,7 @@
                 "tags": [
                     "status"
                 ],
-                "summary": "The state of the installation in the Prometheus text format",
+                "summary": "The state of the Tunnel Manager server in the Prometheus text format",
                 "responses": {
                     "200": {
                         "description": "The metrics",
@@ -2089,7 +2089,7 @@
                         "CSRFToken": []
                     }
                 ],
-                "description": "service_address, service_port and local_port are all required. service_address is a host name or an IP address, resolved on this system each time a connection is forwarded.",
+                "description": "service_address, service_port and local_port are all required. service_address is a host name or an IP address, resolved on the Tunnel Manager server each time a connection is forwarded.",
                 "consumes": [
                     "application/json"
                 ],
@@ -2518,14 +2518,14 @@
         },
         "/status": {
             "get": {
-                "description": "tunnels carries both sorts of forward: kind is service_port or local_forward, and sp_id is null on a local forward, which is carried by no service port. On a local forward row, local is the address opened on this machine and remote the target reached from the Host, which is the mirror of what they hold on a service port row. Whether the target of a local forward answers is on the local forwards of its Host (forward_reach), not here.\nThe counts are over every row and not over the page: they say what the installation is doing, not what is on the page being looked at. There are four, and each counts the service port tunnels and the local forwards together: desired_tunnels is what should be running as of the last reconcile pass, which a change wakes, and connected_tunnels, reconnecting_tunnels and error_tunnels are how many rows are in each of those statuses. A row in jump_host_disabled, whose Host is reached through a disabled Host, is counted in error_tunnels. A row that is starting or held up at a host key is in none of the three. total_rows is the rows of both sorts, which is what the pages are cut from.\nq narrows the rows and total_rows with them, and leaves the four counts over every row.",
+                "description": "tunnels carries both sorts of forward: kind is service_port or local_forward, and sp_id is null on a local forward, which is carried by no service port. On a local forward row, local is the address opened on the Tunnel Manager server and remote the target reached from the Host, which is the mirror of what they hold on a service port row. Whether the target of a local forward answers is on the local forwards of its Host (forward_reach), not here.\nThe counts are over every row and not over the page: they say what the Tunnel Manager server is doing, not what is on the page being looked at. There are four, and each counts the service port tunnels and the local forwards together: desired_tunnels is what should be running as of the last reconcile pass, which a change wakes, and connected_tunnels, reconnecting_tunnels and error_tunnels are how many rows are in each of those statuses. A row in jump_host_disabled, whose route has a disabled jump host, is counted in error_tunnels. A row that is starting or held up at a host key is in none of the three. total_rows is the rows of both sorts, which is what the pages are cut from.\nq narrows the rows and total_rows with them, and leaves the four counts over every row.",
                 "produces": [
                     "application/json"
                 ],
                 "tags": [
                     "status"
                 ],
-                "summary": "The counts of the installation and one page of the status rows",
+                "summary": "The counts of the Tunnel Manager server and one page of the status rows",
                 "parameters": [
                     {
                         "type": "integer",
@@ -2765,7 +2765,7 @@
                         "CSRFToken": []
                     }
                 ],
-                "description": "Takes the account password. The tunnels come down, the files this installation is made of are removed, and the answer is written before the process goes.",
+                "description": "Takes the account password. The tunnels come down, the files tunnel-manager keeps are removed, and the answer is written before the process goes.",
                 "consumes": [
                     "application/json"
                 ],
@@ -2775,7 +2775,7 @@
                 "tags": [
                     "uninstall"
                 ],
-                "summary": "Remove the installation and end the process",
+                "summary": "Uninstall tunnel-manager and end the process",
                 "parameters": [
                     {
                         "description": "The account password",
@@ -3992,7 +3992,7 @@
                     "type": "string"
                 },
                 "bind_scope": {
-                    "description": "BindScope is where on this machine LocalPort is opened, with the words\nand the constraint HostServicePort.BindScope carries, and an empty value\nis the wildcard for the same reason.",
+                    "description": "BindScope is where on the Tunnel Manager server LocalPort is opened,\nwith the words and the constraint HostServicePort.BindScope carries, and\nan empty value is the wildcard for the same reason.",
                     "type": "string"
                 },
                 "created_at": {
@@ -4235,7 +4235,7 @@
             "type": "object",
             "properties": {
                 "alert_after_sec": {
-                    "description": "AlertAfterSec is how long a tunnel, a local forward or a SOCKS5 proxy\nhas to have been without a connection before it is reported as down.\nA connection that drops and comes back within the monitoring interval\nor two is what a network does now and then, and a message for each of\nthose would teach whoever receives them to stop reading. Five minutes\nis past that and short enough that somebody hears about an outage while\nit is still one.\n\nThe columns below carry their defaults so that an installation upgraded\nonto this version reads back what a fresh one gives, and every column\nis named here because the name gorm works out for SMTP runs the letters\ninto what follows.",
+                    "description": "AlertAfterSec is how long a tunnel, a local forward or a SOCKS5 proxy\nhas to have been without a connection before it is reported as down.\nA connection that drops and comes back within the monitoring interval\nor two is what a network does now and then, and a message for each of\nthose would teach whoever receives them to stop reading. Five minutes\nis past that and short enough that somebody hears about an outage while\nit is still one.\n\nThe columns below carry their defaults so that a Tunnel Manager server\nupgraded onto this version reads back what a fresh one gives, and every\ncolumn is named here because the name gorm works out for SMTP runs the\nletters into what follows.",
                     "type": "integer"
                 },
                 "alert_webhook_url_set": {
@@ -4243,7 +4243,7 @@
                     "type": "boolean"
                 },
                 "api_https_enabled": {
-                    "description": "APIHTTPSEnabled is what decides whether the port above is served over\nTLS. It is stored with a column default of true so that a database\nwritten by a version that had no such column reads back as HTTPS on:\nSQLite fills the rows that are already there with the default as the\ncolumn is added, and an installation that is upgraded gets the same\nanswer a fresh one does.\n\nThe column is named here because the name gorm works out from the field\nis api_http_s_enabled: it knows HTTP as one word and leaves the S of\nHTTPS on its own.",
+                    "description": "APIHTTPSEnabled is what decides whether the port above is served over\nTLS. It is stored with a column default of true so that a database\nwritten by a version that had no such column reads back as HTTPS on:\nSQLite fills the rows that are already there with the default as the\ncolumn is added, and a Tunnel Manager server that is upgraded gets the\nsame answer a fresh one does.\n\nThe column is named here because the name gorm works out from the field\nis api_http_s_enabled: it knows HTTP as one word and leaves the S of\nHTTPS on its own.",
                     "type": "boolean"
                 },
                 "api_port": {
@@ -4288,7 +4288,7 @@
                     "type": "integer"
                 },
                 "reconnect_max_interval_sec": {
-                    "description": "ReconnectMaxIntervalSec is the longest a connection that keeps failing\nwaits before it is tried again. The first wait is the monitoring\ninterval and each failure in a row doubles it up to this, so a Host that\nis down for an hour is not asked every five seconds for all of it, while\none that blinked is back within the interval. A value below the\nmonitoring interval leaves every wait at the interval.\n\nThe column carries its default so that an installation upgraded onto\nthis version reads back the same answer a fresh one gives.",
+                    "description": "ReconnectMaxIntervalSec is the longest a connection that keeps failing\nwaits before it is tried again. The first wait is the monitoring\ninterval and each failure in a row doubles it up to this, so a Host that\nis down for an hour is not asked every five seconds for all of it, while\none that blinked is back within the interval. A value below the\nmonitoring interval leaves every wait at the interval.\n\nThe column carries its default so that a Tunnel Manager server upgraded\nonto this version reads back the same answer a fresh one gives.",
                     "type": "integer"
                 },
                 "security_key_file": {
@@ -4302,7 +4302,7 @@
                     "type": "string"
                 },
                 "smtp_host": {
-                    "description": "SMTPHost is the mail server a down and an up are sent through. Empty is\nmail switched off, which is what a fresh installation is on: there is\nno server this program could guess at.",
+                    "description": "SMTPHost is the mail server a down and an up are sent through. Empty is\nmail switched off, which is what a freshly installed Tunnel Manager\nserver is on: there is no mail server this program could guess at.",
                     "type": "string"
                 },
                 "smtp_password_set": {
@@ -4328,7 +4328,7 @@
                     "type": "string"
                 },
                 "ui_default_language": {
-                    "description": "UIDefaultLanguage is the language a browser that has picked none of its\nown is shown. A browser that has picked one keeps it: the pick belongs to\nthe person reading the screen, and this is what the installation shows\neverybody else.\n\nIt is empty by default, and empty is a value rather than a gap: it means\nthis installation names no language, so a browser falls back to the one\nit asks for, which is what every browser did before this setting existed.\nDefaulting it to \"en\" would read the same way to Go and mean something\nelse entirely on screen, turning a Korean browser English at the upgrade\nthat added the column. The two cases have to be told apart, so the\nabsence is spelled as the absence.\n\nThat is also what a row written before the column existed reads back as.\nThe column carries no default, so SQLite fills such a row with NULL and\ngorm reads NULL into a string as the empty one: an installation that is\nupgraded names no language, which is the same answer a fresh one gives.\n\nThe column is named here for the reason the HTTPS one is: the name gorm\nworks out from the field is uidefault_language, because it knows UI as\none word and then runs it into what follows. Every other column is words\ndivided by underscores, and this one would be the exception nobody\nremembers when they come to write it in a query.",
+                    "description": "UIDefaultLanguage is the language a browser that has picked none of its\nown is shown. A browser that has picked one keeps it: the pick belongs to\nthe person reading the screen, and this is what the Tunnel Manager server\nshows everybody else.\n\nIt is empty by default, and empty is a value rather than a gap: it means\nthe Tunnel Manager server names no language, so a browser falls back to\nthe one it asks for, which is what every browser did before this setting\nexisted.\nDefaulting it to \"en\" would read the same way to Go and mean something\nelse entirely on screen, turning a Korean browser English at the upgrade\nthat added the column. The two cases have to be told apart, so the\nabsence is spelled as the absence.\n\nThat is also what a row written before the column existed reads back as.\nThe column carries no default, so SQLite fills such a row with NULL and\ngorm reads NULL into a string as the empty one: a Tunnel Manager server\nthat is upgraded names no language, which is the same answer a fresh one\ngives.\n\nThe column is named here for the reason the HTTPS one is: the name gorm\nworks out from the field is uidefault_language, because it knows UI as\none word and then runs it into what follows. Every other column is words\ndivided by underscores, and this one would be the exception nobody\nremembers when they come to write it in a query.",
                     "type": "string"
                 },
                 "update_auto_install": {
@@ -4336,7 +4336,7 @@
                     "type": "boolean"
                 },
                 "update_check_enabled": {
-                    "description": "UpdateCheckEnabled is whether the newest release is read on a timer. It\nis on by default: what it costs is one small answer from a public API,\nnothing is downloaded and nothing is written, and an installation that\ndoes not know a release exists is one whose operator finds out from\nsomewhere else or not at all.\n\nThe column carries its default so that an installation upgraded onto\nthis version reads back the same answer a fresh one gives.",
+                    "description": "UpdateCheckEnabled is whether the newest release is read on a timer. It\nis on by default: what it costs is one small answer from a public API,\nnothing is downloaded and nothing is written, and a Tunnel Manager server\nthat does not know a release exists is one whose operator finds out from\nsomewhere else or not at all.\n\nThe column carries its default so that a Tunnel Manager server upgraded\nonto this version reads back the same answer a fresh one gives.",
                     "type": "boolean"
                 },
                 "update_check_interval_hours": {
@@ -4670,7 +4670,7 @@
                     "type": "string"
                 },
                 "assign_all_service_ports": {
-                    "description": "AssignAllServicePorts is whether the Host is to carry every service port\nthat is stored when it is registered. A Host with no assignment runs no\ntunnel at all, and carrying everything is what an installation did before\nthe assignments were rows of their own, so a request that does not\nmention the field is answered that way.\n\nIt is a pointer for the reason Enabled is: a request asking for a Host\nwith no assignments has to be told apart from one that says nothing, and\non a plain bool the two arrive the same.",
+                    "description": "AssignAllServicePorts is whether the Host is to carry every service port\nthat is stored when it is registered. A Host with no assignment runs no\ntunnel at all, and carrying everything is what tunnel-manager did before\nthe assignments were rows of their own, so a request that does not\nmention the field is answered that way.\n\nIt is a pointer for the reason Enabled is: a request asking for a Host\nwith no assignments has to be told apart from one that says nothing, and\non a plain bool the two arrive the same.",
                     "type": "boolean"
                 },
                 "bind_scope": {
@@ -4689,7 +4689,7 @@
                     "type": "boolean"
                 },
                 "jump_host_ids": {
-                    "description": "JumpHostIDs is the jump route of the Host: the registered Hosts its SSH\nconnection goes through, in the order it goes through them. Left out,\nthe Host is reached directly.",
+                    "description": "JumpHostIDs is the jump route of the Host: the ids of the registered\nHosts used as its jump hosts, in the order its SSH connection is carried\nthrough them. Left out, the Host is reached directly.",
                     "type": "array",
                     "items": {
                         "type": "integer"
@@ -4911,11 +4911,11 @@
             "type": "object",
             "properties": {
                 "alert_after_sec": {
-                    "description": "AlertAfterSec is how long a tunnel, a local forward or a SOCKS5 proxy\nhas to have been without a connection before it is reported as down.\nA connection that drops and comes back within the monitoring interval\nor two is what a network does now and then, and a message for each of\nthose would teach whoever receives them to stop reading. Five minutes\nis past that and short enough that somebody hears about an outage while\nit is still one.\n\nThe columns below carry their defaults so that an installation upgraded\nonto this version reads back what a fresh one gives, and every column\nis named here because the name gorm works out for SMTP runs the letters\ninto what follows.",
+                    "description": "AlertAfterSec is how long a tunnel, a local forward or a SOCKS5 proxy\nhas to have been without a connection before it is reported as down.\nA connection that drops and comes back within the monitoring interval\nor two is what a network does now and then, and a message for each of\nthose would teach whoever receives them to stop reading. Five minutes\nis past that and short enough that somebody hears about an outage while\nit is still one.\n\nThe columns below carry their defaults so that a Tunnel Manager server\nupgraded onto this version reads back what a fresh one gives, and every\ncolumn is named here because the name gorm works out for SMTP runs the\nletters into what follows.",
                     "type": "integer"
                 },
                 "api_https_enabled": {
-                    "description": "APIHTTPSEnabled is what decides whether the port above is served over\nTLS. It is stored with a column default of true so that a database\nwritten by a version that had no such column reads back as HTTPS on:\nSQLite fills the rows that are already there with the default as the\ncolumn is added, and an installation that is upgraded gets the same\nanswer a fresh one does.\n\nThe column is named here because the name gorm works out from the field\nis api_http_s_enabled: it knows HTTP as one word and leaves the S of\nHTTPS on its own.",
+                    "description": "APIHTTPSEnabled is what decides whether the port above is served over\nTLS. It is stored with a column default of true so that a database\nwritten by a version that had no such column reads back as HTTPS on:\nSQLite fills the rows that are already there with the default as the\ncolumn is added, and a Tunnel Manager server that is upgraded gets the\nsame answer a fresh one does.\n\nThe column is named here because the name gorm works out from the field\nis api_http_s_enabled: it knows HTTP as one word and leaves the S of\nHTTPS on its own.",
                     "type": "boolean"
                 },
                 "api_port": {
@@ -4950,7 +4950,7 @@
                     "type": "integer"
                 },
                 "reconnect_max_interval_sec": {
-                    "description": "ReconnectMaxIntervalSec is the longest a connection that keeps failing\nwaits before it is tried again. The first wait is the monitoring\ninterval and each failure in a row doubles it up to this, so a Host that\nis down for an hour is not asked every five seconds for all of it, while\none that blinked is back within the interval. A value below the\nmonitoring interval leaves every wait at the interval.\n\nThe column carries its default so that an installation upgraded onto\nthis version reads back the same answer a fresh one gives.",
+                    "description": "ReconnectMaxIntervalSec is the longest a connection that keeps failing\nwaits before it is tried again. The first wait is the monitoring\ninterval and each failure in a row doubles it up to this, so a Host that\nis down for an hour is not asked every five seconds for all of it, while\none that blinked is back within the interval. A value below the\nmonitoring interval leaves every wait at the interval.\n\nThe column carries its default so that a Tunnel Manager server upgraded\nonto this version reads back the same answer a fresh one gives.",
                     "type": "integer"
                 },
                 "security_key_file": {
@@ -4964,7 +4964,7 @@
                     "type": "string"
                 },
                 "smtp_host": {
-                    "description": "SMTPHost is the mail server a down and an up are sent through. Empty is\nmail switched off, which is what a fresh installation is on: there is\nno server this program could guess at.",
+                    "description": "SMTPHost is the mail server a down and an up are sent through. Empty is\nmail switched off, which is what a freshly installed Tunnel Manager\nserver is on: there is no mail server this program could guess at.",
                     "type": "string"
                 },
                 "smtp_port": {
@@ -4986,7 +4986,7 @@
                     "type": "string"
                 },
                 "ui_default_language": {
-                    "description": "UIDefaultLanguage is the language a browser that has picked none of its\nown is shown. A browser that has picked one keeps it: the pick belongs to\nthe person reading the screen, and this is what the installation shows\neverybody else.\n\nIt is empty by default, and empty is a value rather than a gap: it means\nthis installation names no language, so a browser falls back to the one\nit asks for, which is what every browser did before this setting existed.\nDefaulting it to \"en\" would read the same way to Go and mean something\nelse entirely on screen, turning a Korean browser English at the upgrade\nthat added the column. The two cases have to be told apart, so the\nabsence is spelled as the absence.\n\nThat is also what a row written before the column existed reads back as.\nThe column carries no default, so SQLite fills such a row with NULL and\ngorm reads NULL into a string as the empty one: an installation that is\nupgraded names no language, which is the same answer a fresh one gives.\n\nThe column is named here for the reason the HTTPS one is: the name gorm\nworks out from the field is uidefault_language, because it knows UI as\none word and then runs it into what follows. Every other column is words\ndivided by underscores, and this one would be the exception nobody\nremembers when they come to write it in a query.",
+                    "description": "UIDefaultLanguage is the language a browser that has picked none of its\nown is shown. A browser that has picked one keeps it: the pick belongs to\nthe person reading the screen, and this is what the Tunnel Manager server\nshows everybody else.\n\nIt is empty by default, and empty is a value rather than a gap: it means\nthe Tunnel Manager server names no language, so a browser falls back to\nthe one it asks for, which is what every browser did before this setting\nexisted.\nDefaulting it to \"en\" would read the same way to Go and mean something\nelse entirely on screen, turning a Korean browser English at the upgrade\nthat added the column. The two cases have to be told apart, so the\nabsence is spelled as the absence.\n\nThat is also what a row written before the column existed reads back as.\nThe column carries no default, so SQLite fills such a row with NULL and\ngorm reads NULL into a string as the empty one: a Tunnel Manager server\nthat is upgraded names no language, which is the same answer a fresh one\ngives.\n\nThe column is named here for the reason the HTTPS one is: the name gorm\nworks out from the field is uidefault_language, because it knows UI as\none word and then runs it into what follows. Every other column is words\ndivided by underscores, and this one would be the exception nobody\nremembers when they come to write it in a query.",
                     "type": "string"
                 },
                 "update_auto_install": {
@@ -4994,7 +4994,7 @@
                     "type": "boolean"
                 },
                 "update_check_enabled": {
-                    "description": "UpdateCheckEnabled is whether the newest release is read on a timer. It\nis on by default: what it costs is one small answer from a public API,\nnothing is downloaded and nothing is written, and an installation that\ndoes not know a release exists is one whose operator finds out from\nsomewhere else or not at all.\n\nThe column carries its default so that an installation upgraded onto\nthis version reads back the same answer a fresh one gives.",
+                    "description": "UpdateCheckEnabled is whether the newest release is read on a timer. It\nis on by default: what it costs is one small answer from a public API,\nnothing is downloaded and nothing is written, and a Tunnel Manager server\nthat does not know a release exists is one whose operator finds out from\nsomewhere else or not at all.\n\nThe column carries its default so that a Tunnel Manager server upgraded\nonto this version reads back the same answer a fresh one gives.",
                     "type": "boolean"
                 },
                 "update_check_interval_hours": {

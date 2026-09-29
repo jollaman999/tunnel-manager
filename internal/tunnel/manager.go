@@ -751,7 +751,7 @@ func (r *routeRefusal) Error() string {
 func checkJumpRoute(host *models.Host, hops []jumpHop) *routeRefusal {
 	if len(hops) > MaxJumps {
 		return &routeRefusal{status: localStatusError, reason: fmt.Sprintf(
-			"the jump route of this Host passes through %d Hosts, and a route may pass through %d at most",
+			"the jump route of this Host has %d jump hosts, and a route may have %d at most",
 			len(hops), MaxJumps), jump: jumpFailure{reason: JumpReasonRoute}}
 	}
 
