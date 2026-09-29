@@ -2,7 +2,7 @@
 
 [English](../README.md) · [日本語](README.ja.md) · [中文](README.zh.md)
 
-![Tunnel Manager: add three service ports and six Hosts, some behind others on a jump route of one or two hops, approve the host keys, reach the service through the tunnel, add a local forward, see both in the status screen, switch off a Host on the way, and turn on a SOCKS5 proxy](demo.gif)
+![Tunnel Manager: add three service ports and six Hosts, some behind others on a jump route of one or two hops, approve the host keys, reach the service through the tunnel, add a local forward, see both in the status screen, switch off a jump host, and turn on a SOCKS5 proxy](demo.gif)
 
 **Tunnel Manager 는 서비스에 접속할 수 없는 장비에서 그 서비스를 쓸 수 있게 합니다.** SSH 로 그
 장비들에 접속해 포트를 하나씩 열게 하고, 그 포트로 들어온 것을 SSH 연결을 통해 서비스까지
@@ -23,7 +23,7 @@ flowchart LR
     subgraph host [Host - 등록한 SSH 서버]
         port[["local_port<br/>SSH 서버가 여는 포트"]]
     end
-    subgraph here [tunnel-manager 가 실행되는 장비]
+    subgraph here [Tunnel Manager 서버]
         tm[tunnel-manager]
     end
     service[("service_address:service_port<br/>tunnel-manager 가 접속할 수 있는 주소")]
@@ -34,14 +34,14 @@ flowchart LR
     tm -->|"4. 서비스로 연결"| service
 ```
 
-**로컬 포워딩: 이 장비가 포트를 엽니다.** 방향이 반대이며 `ssh -L` 과 같습니다.
-tunnel-manager 가 이 장비에 `local_port` 를 열고, 거기로 온 연결을 Host 의 SSH 연결을 타고 그
+**로컬 포워딩: Tunnel Manager 서버가 포트를 엽니다.** 방향이 반대이며 `ssh -L` 과 같습니다.
+tunnel-manager 가 Tunnel Manager 서버에 `local_port` 를 열고, 거기로 온 연결을 Host 의 SSH 연결을 타고 그
 Host 가 닿는 주소 `target_address:target_port` 로 나릅니다.
 
 ```mermaid
 flowchart LR
-    client([이 장비에 접속할 수 있는 클라이언트])
-    subgraph here [이 장비]
+    client([Tunnel Manager 서버에 접속할 수 있는 클라이언트])
+    subgraph here [Tunnel Manager 서버]
         port[["local_port<br/>tunnel-manager 가 여는 포트"]]
         tm[tunnel-manager]
     end
@@ -56,15 +56,15 @@ flowchart LR
     sshd -->|"4. 대상으로 연결"| target
 ```
 
-설치본은 세 가지로 이루어집니다. Host 와 서비스 포트는 직접 등록하고, 둘을 잇는 할당은 따로
+Tunnel Manager 서버에서 도는 것은 세 가지로 이루어집니다. Host 와 서비스 포트는 직접 등록하고, 둘을 잇는 할당은 따로
 정하지 않으면 등록할 때 같이 만들어집니다. 터널 하나는 할당 하나에서 만들어집니다.
 
 | 구성 요소 | 무엇인가 |
 |-----------|----------|
-| Host | 접속할 SSH 서버. 주소나 호스트 이름, 포트, 사용자, 그리고 개인키나 비밀번호. 바로 닿지 않으면 거쳐 갈 Host 들 |
-| 서비스 포트 | 내보낼 서비스(이 장비가 접속할 수 있는 주소면 됩니다)와, 이 서비스 포트를 담당하는 Host 에 열 포트 |
+| Host | 접속할 SSH 서버. 주소나 호스트 이름, 포트, 사용자, 그리고 개인키나 비밀번호. 바로 닿지 않으면 거쳐 갈 점프 호스트들 |
+| 서비스 포트 | 내보낼 서비스(Tunnel Manager 서버가 접속할 수 있는 주소면 됩니다)와, 이 서비스 포트를 담당하는 Host 에 열 포트 |
 | 할당 | 어느 Host 가 어느 서비스 포트를 담당하는지. 활성 Host 의 켜져 있는 할당 하나가 터널 하나 |
-| 로컬 포워딩 | 이 장비에 여는 포트. 들어온 연결을 Host 하나를 거쳐 그 Host 가 닿는 주소로 보냄 |
+| 로컬 포워딩 | Tunnel Manager 서버에 여는 포트. 들어온 연결을 Host 하나를 거쳐 그 Host 가 닿는 주소로 보냄 |
 
 마지막 줄은 없어도 되고, 위의 두 번째 그림이 이것입니다. 로컬 포워딩은 만든 Host 에 딸리며, 그 Host 행의 **Local forwards** 버튼에서 추가합니다.
 
@@ -74,15 +74,15 @@ flowchart LR
 필요하면 autossh 나 systemd 유닛으로 감싸 둡니다. Tunnel Manager 는 포워딩을 기록으로 저장하고,
 기록에 적힌 대로 돌립니다.
 
-- **서비스 포트로 짜는 reverse 터널.** 서비스는 이 장비에서 닿는 주소와 Host 들이 대신 열
+- **서비스 포트로 짜는 reverse 터널.** 서비스는 Tunnel Manager 서버에서 닿는 주소와 Host 들이 대신 열
   포트로 한 번만 저장합니다. 그 서비스를 Host 에 할당하면 Host 마다 그 포트를 열고, 들어온
   연결을 `ssh -R` 처럼 서비스로 되돌려 보냅니다. 서비스 하나를 여러 Host 로 내보내고 Host
   하나가 여러 서비스를 싣되, 짝마다 명령을 따로 두지 않습니다.
-- **같은 Host 로 로컬 포워딩.** `ssh -L` 방향도 같은 방식으로 관리합니다. 이 장비에 연 포트가
+- **같은 Host 로 로컬 포워딩.** `ssh -L` 방향도 같은 방식으로 관리합니다. Tunnel Manager 서버에 연 포트가
   Host 를 거쳐 그 Host 만 닿는 주소로 이어집니다. 그 Host 에 딸린 기록으로 저장되고, 끊기면
   다시 연결되며, 터널과 같은 상태 표에 나옵니다. Host 를 `ssh -D` 처럼 SOCKS5 프록시로 쓸 수도
   있습니다.
-- **다른 Host 뒤에 있는 Host.** Host 마다 점프 경로, 곧 그 Host 로 가는 길에 거쳐 갈 Host 들을
+- **다른 Host 뒤에 있는 Host.** Host 마다 점프 경로, 곧 그 Host 로 가는 길에 거쳐 갈 점프 호스트들을
   `ssh -J` 처럼 8개까지 둘 수 있습니다. 그 Host 의 터널, 로컬 포워딩, SOCKS5 프록시가 모두 그
   경로를 타고, 경로 중간에서 멈춘 연결은 어느 Host 에서 왜 멈췄는지 알려줍니다.
 - **명령 더미가 아니라 기록.** Host, 서비스 포트, 할당이 데이터베이스의 행입니다. 조정 루프가
@@ -100,16 +100,16 @@ flowchart LR
   다시 연결되면 한 번 더 알립니다.
 - **설정이 한곳에.** 설정은 데이터베이스에 있고 브라우저에서 고칩니다. 설정 전체를 비밀번호로
   잠근 파일 하나로 옮기고, 가져오면 그곳에 있던 터널 설정이 파일 내용으로 바뀝니다. SSH
-  비밀번호, 개인키, 웹훅과 메일 설정은 이 시스템의 키 파일로 암호화해 둡니다.
+  비밀번호, 개인키, 웹훅과 메일 설정은 Tunnel Manager 서버의 키 파일로 암호화해 둡니다.
 - **그 밖에:** 권한 범위가 정해진 API 토큰, `/api/metrics` 의 Prometheus 메트릭, `-install` 로
   스스로 서비스로 설치되는 단일 바이너리, 13개 언어로 된 화면.
 
 ## 하는 일
 
 - 할당마다 터널을 하나씩 만들고 지켜보다가, 연결이 끊기면 다시 연결합니다.
-- 로컬 포워딩도 엽니다. 이 장비의 포트가 Host 를 거쳐 그 Host 만 닿는 주소로 이어지며, 터널과
+- 로컬 포워딩도 엽니다. Tunnel Manager 서버의 포트가 Host 를 거쳐 그 Host 만 닿는 주소로 이어지며, 터널과
   같은 방식으로 연결을 유지합니다.
-- `ssh -D` 처럼 Host 를 SOCKS5 프록시로 씁니다. 브라우저가 이 장비의 포트를 프록시로 쓰면 그
+- `ssh -D` 처럼 Host 를 SOCKS5 프록시로 씁니다. 브라우저가 Tunnel Manager 서버의 포트를 프록시로 쓰면 그
   Host 가 닿는 곳에 닿고, 접속은 허용한 주소에서만 받습니다.
 - 점프 경로에 적힌 다른 Host 들을 여러 단계 거쳐 Host 에 접속합니다. 터널, 로컬 포워딩, SOCKS5
   프록시가 모두 같은 경로를 탑니다.
@@ -117,8 +117,8 @@ flowchart LR
   있는지를 알려줍니다. 그 포트를 어느 주소에 묶을지는 그 서버가 정하는 일이기 때문입니다.
 - UI 와 API 를 HTTPS 로 제공합니다. 인증서는 첫 기동이 스스로 만들고, 내 인증서를 등록하면
   그때부터 그것으로 제공합니다.
-- SSH 비밀번호와 개인키와 인증서의 키를 이 시스템의 키 파일로 암호화해 둡니다.
-- 설정 전체를 암호화된 파일 하나에 담아 다른 시스템으로 옮깁니다. 가져오기는 그곳의 Host,
+- SSH 비밀번호와 개인키와 인증서의 키를 Tunnel Manager 서버의 키 파일로 암호화해 둡니다.
+- 설정 전체를 암호화된 파일 하나에 담아 다른 Tunnel Manager 서버로 옮깁니다. 가져오기는 그곳의 Host,
   서비스 포트, 로컬 포워딩을 전부 파일 내용으로 바꾸고, 바꾸기 전에 무엇이 얼마나 지워지고
   들어오는지 보여줍니다.
 - 설정 화면에서 만든 토큰으로 스크립트가 API 를 부를 수 있습니다. 토큰은 만들 때 고른 권한까지만
@@ -127,7 +127,7 @@ flowchart LR
   있습니다.
 - 터널, 로컬 포워딩, SOCKS5 프록시가 정해 둔 시간보다 오래 끊겨 있으면 웹훅이나 메일로 알리고,
   다시 연결되면 한 번 더 알립니다.
-- 화면을 13개 언어로 보여줍니다. 브라우저 구석에서 고르거나 설치본에 정해 둡니다. 로그 파일은
+- 화면을 13개 언어로 보여줍니다. 브라우저 구석에서 고르거나 Tunnel Manager 서버에 정해 둡니다. 로그 파일은
   영어로 남습니다.
 - Linux, macOS, Windows 에서 단일 바이너리로 실행됩니다. C 라이브러리도, 따로 둘 데이터베이스
   서버도 필요 없습니다.
@@ -156,7 +156,7 @@ copy of the password  {"log_id": "account.created_with_initial_password",
 cat <dir>/initial-password
 ```
 
-브라우저로 `https://127.0.0.1:8888/` 를 엽니다. 인증서는 이 시스템이 스스로에게 발급한 것이라
+브라우저로 `https://127.0.0.1:8888/` 를 엽니다. 인증서는 Tunnel Manager 서버가 스스로에게 발급한 것이라
 브라우저가 경고합니다. 그 경고에서 확인할 지문은 기동 로그와 Settings 화면에 있습니다.
 
 **사용자명을 비운 채로** 그 파일의 비밀번호로 로그인하고, 계정이 계속 쓸 사용자명과 비밀번호를

@@ -2,7 +2,7 @@
 
 [한국어](docs/README.ko.md) · [日本語](docs/README.ja.md) · [中文](docs/README.zh.md)
 
-![Tunnel Manager: add three service ports and six Hosts, some behind others on a jump route of one or two hops, approve the host keys, reach the service through the tunnel, add a local forward, see both in the status screen, switch off a Host on the way, and turn on a SOCKS5 proxy](docs/demo.gif)
+![Tunnel Manager: add three service ports and six Hosts, some behind others on a jump route of one or two hops, approve the host keys, reach the service through the tunnel, add a local forward, see both in the status screen, switch off a jump host, and turn on a SOCKS5 proxy](docs/demo.gif)
 
 **Tunnel Manager publishes a service on machines that have no route to it.** It
 connects to those machines over SSH, has each of them open a port, and carries
@@ -27,7 +27,7 @@ flowchart LR
     subgraph host [Host - an SSH server you register]
         port[["local_port<br/>opened by the SSH server"]]
     end
-    subgraph here [The machine tunnel-manager runs on]
+    subgraph here [Tunnel Manager server]
         tm[tunnel-manager]
     end
     service[("service_address:service_port<br/>any address tunnel-manager can reach")]
@@ -38,15 +38,16 @@ flowchart LR
     tm -->|"4. connects to the service"| service
 ```
 
-**Local forward: this machine opens the port.** It runs the other way, the way
-`ssh -L` does. tunnel-manager opens `local_port` on this machine and carries
+**Local forward: the Tunnel Manager server opens the port.** It runs the other
+way, the way `ssh -L` does. tunnel-manager opens `local_port` on the Tunnel
+Manager server and carries
 every connection to it over the SSH connection of a Host to
 `target_address:target_port`, an address that Host reaches.
 
 ```mermaid
 flowchart LR
-    client([A client that reaches this machine])
-    subgraph here [This machine]
+    client([A client that reaches the Tunnel Manager server])
+    subgraph here [Tunnel Manager server]
         port[["local_port<br/>opened by tunnel-manager"]]
         tm[tunnel-manager]
     end
@@ -61,16 +62,16 @@ flowchart LR
     sshd -->|"4. connects to the target"| target
 ```
 
-What runs on a machine is made of three things. You register a Host and a
+What the Tunnel Manager server runs is made of three things. You register a Host and a
 service port, the assignment between them is made for you unless you say
 otherwise, and one assignment is what one tunnel is built from.
 
 | Part | What it is |
 |------|------------|
-| Host | An SSH server to connect to: address or host name, port, user, and a private key or a password, and the Hosts it is reached through when it is not reached directly |
-| Service port | The service to publish, at any address this machine can reach, and the port to open on the Hosts that carry it |
+| Host | An SSH server to connect to: address or host name, port, user, and a private key or a password, and the jump hosts it is reached through when it is not reached directly |
+| Service port | The service to publish, at any address the Tunnel Manager server can reach, and the port to open on the Hosts that carry it |
 | Assignment | Which Host carries which service port. One assignment that is switched on, on a Host that is enabled, is one tunnel |
-| Local forward | A port opened on this machine, carried through one Host to an address that Host reaches |
+| Local forward | A port opened on the Tunnel Manager server, carried through one Host to an address that Host reaches |
 
 The last row is optional and is the second picture above. A local forward
 belongs to the Host it is made on and is added from the **Local forwards** button
@@ -83,18 +84,20 @@ A port forward is usually set up once and left alone: an `ssh -R`, `-L` or
 Tunnel Manager keeps the forwards as records and runs what the records say.
 
 - **Reverse tunnels built from service ports.** A service is stored once, as
-  the address it answers on from this machine and the port the Hosts open for
+  the address it answers on from the Tunnel Manager server and the port the
+  Hosts open for
   it. Assigning it to Hosts makes each of them open that port and carry what
   arrives back to the service, the way `ssh -R` does, so one service is
   published through several Hosts and one Host carries several services,
   without a command for every pair.
 - **Local forwards on the same Hosts.** The `ssh -L` direction is kept the
-  same way: a port opened on this machine that reaches, through a Host, an
+  same way: a port opened on the Tunnel Manager server that reaches, through a
+  Host, an
   address only that Host reaches. It is stored with its Host, built again when
   it drops, and listed in the same status table as the tunnels. A Host can also
   be a SOCKS5 proxy, the way `ssh -D` does.
-- **Hosts behind other Hosts.** A Host can carry a jump route, the Hosts to
-  pass through on the way to it, the way `ssh -J` does, up to 8 of them. Its
+- **Hosts behind other Hosts.** A Host can carry a jump route, the jump hosts
+  to reach it through, the way `ssh -J` does, up to 8 of them. Its
   tunnels, its local forwards and its SOCKS5 proxy all take the route, and a
   connection that stops on it says at which Host and why.
 - **Records, not a pile of commands.** Hosts, service ports and assignments are
@@ -116,7 +119,7 @@ Tunnel Manager keeps the forwards as records and runs what the records say.
   in the browser. The whole configuration moves as one file sealed with a
   password, and importing it replaces the tunnel configuration that was there.
   SSH passwords, private keys and the webhook and mail settings are
-  kept encrypted with the key file of this machine.
+  kept encrypted with the key file of the Tunnel Manager server.
 - **Also:** API tokens limited to their scopes, Prometheus metrics at
   `/api/metrics`, one binary that installs itself as a service with
   `-install`, and screens in thirteen languages.
@@ -125,10 +128,10 @@ Tunnel Manager keeps the forwards as records and runs what the records say.
 
 - Builds a tunnel for every assignment, watches it, and builds it again when the
   connection drops.
-- Opens local forwards as well: a port on this machine that reaches, through a
-  Host, an address only that Host can reach. They are kept up the same way.
+- Opens local forwards as well: a port on the Tunnel Manager server that
+  reaches, through a Host, an address only that Host can reach. They are kept up the same way.
 - Turns a Host into a SOCKS5 proxy, the way `ssh -D` does: a browser pointed at
-  a port on this machine reaches whatever that Host reaches, limited to the
+  a port on the Tunnel Manager server reaches whatever that Host reaches, limited to the
   client addresses you allow.
 - Reaches a Host through other Hosts along its jump route, several hops deep,
   for its tunnels, its local forwards and its SOCKS5 proxy alike.
@@ -138,8 +141,9 @@ Tunnel Manager keeps the forwards as records and runs what the records say.
 - Serves the UI and the API over HTTPS, with a certificate it makes on the first
   start and one of your own once you register it.
 - Keeps the SSH passwords, the private keys and the certificate key encrypted
-  with a key file of this machine.
-- Carries the whole configuration to another machine as one encrypted file.
+  with a key file of the Tunnel Manager server.
+- Carries the whole configuration to another Tunnel Manager server as one
+  encrypted file.
   An import replaces every Host, service port and local forward there with what
   the file holds, after showing how much of each would go and come in.
 - Lets a script call the API with a token made on the Settings screen, limited
@@ -149,7 +153,7 @@ Tunnel Manager keeps the forwards as records and runs what the records say.
 - Sends an alert to a webhook or by mail when a tunnel, a local forward or a
   SOCKS5 proxy stays down past a delay you set, and again when it comes back.
 - Shows the screens in thirteen languages, picked in the corner of the browser
-  or set for this machine. The log file stays English.
+  or set for the Tunnel Manager server. The log file stays English.
 - Runs on Linux, macOS and Windows as a single binary, with no C library and no
   database server behind it.
 
@@ -178,8 +182,8 @@ copy of the password  {"log_id": "account.created_with_initial_password",
 cat <dir>/initial-password
 ```
 
-Open `https://127.0.0.1:8888/` in a browser. The certificate is one this
-machine signed for itself, so the browser warns about it; the fingerprint
+Open `https://127.0.0.1:8888/` in a browser. The certificate is one the
+Tunnel Manager server signed for itself, so the browser warns about it; the fingerprint
 to check that warning against is in the startup log and on the Settings screen.
 
 Log in with an **empty username** and the password from that file, choose the

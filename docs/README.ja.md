@@ -2,7 +2,7 @@
 
 [English](../README.md) · [한국어](README.ko.md) · [中文](README.zh.md)
 
-![Tunnel Manager: add three service ports and six Hosts, some behind others on a jump route of one or two hops, approve the host keys, reach the service through the tunnel, add a local forward, see both in the status screen, switch off a Host on the way, and turn on a SOCKS5 proxy](demo.gif)
+![Tunnel Manager: add three service ports and six Hosts, some behind others on a jump route of one or two hops, approve the host keys, reach the service through the tunnel, add a local forward, see both in the status screen, switch off a jump host, and turn on a SOCKS5 proxy](demo.gif)
 
 **Tunnel Manager は、サービスへの経路がないマシンからそのサービスを使えるようにします。**
 そうしたマシンに SSH で接続し、それぞれにポートを 1 つ開かせて、そのポートへの接続を
@@ -24,7 +24,7 @@ flowchart LR
     subgraph host ["Host - 登録した SSH サーバー"]
         port[["local_port<br/>SSH サーバーが開くポート"]]
     end
-    subgraph here ["tunnel-manager が動作するマシン"]
+    subgraph here ["Tunnel Manager サーバー"]
         tm["tunnel-manager"]
     end
     service[("service_address:service_port<br/>tunnel-manager が接続できるアドレス")]
@@ -35,14 +35,14 @@ flowchart LR
     tm -->|"4. サービスに接続する"| service
 ```
 
-**ローカルフォワード: このマシンがポートを開きます。** 向きが逆で、`ssh -L` と同じです。
-tunnel-manager がこのマシンに `local_port` を開き、そこへの接続を Host の SSH 接続を通して、
+**ローカルフォワード: Tunnel Manager サーバーがポートを開きます。** 向きが逆で、`ssh -L` と同じです。
+tunnel-manager がTunnel Manager サーバーに `local_port` を開き、そこへの接続を Host の SSH 接続を通して、
 その Host が接続できるアドレス `target_address:target_port` へ運びます。
 
 ```mermaid
 flowchart LR
-    client(["このマシンに接続できるクライアント"])
-    subgraph here ["このマシン"]
+    client(["Tunnel Manager サーバーに接続できるクライアント"])
+    subgraph here ["Tunnel Manager サーバー"]
         port[["local_port<br/>tunnel-manager が開くポート"]]
         tm["tunnel-manager"]
     end
@@ -57,16 +57,16 @@ flowchart LR
     sshd -->|"4. 転送先に接続する"| target
 ```
 
-マシンの上で動くものは 3 つからできています。Host とサービスポートは自分で登録し、両者をつなぐ
+Tunnel Manager サーバーの上で動くものは 3 つからできています。Host とサービスポートは自分で登録し、両者をつなぐ
 割り当ては、別に指定しなければ登録と同時に作られます。トンネル 1 本は割り当て 1 つから
 作られます。
 
 | 構成要素 | 何か |
 |----------|------|
-| Host | 接続先の SSH サーバーです。アドレスかホスト名、ポート、ユーザー、そして秘密鍵かパスワードを登録します。直接届かないときは、経由する Host も登録します |
-| サービスポート | 公開したいサービス (このマシンが接続できるアドレスなら、どこにあっても構いません) と、このサービスポートを担当する Host の上に開くポートです |
+| Host | 接続先の SSH サーバーです。アドレスかホスト名、ポート、ユーザー、そして秘密鍵かパスワードを登録します。直接届かないときは、ジャンプホストも登録します |
+| サービスポート | 公開したいサービス (Tunnel Manager サーバーが接続できるアドレスなら、どこにあっても構いません) と、このサービスポートを担当する Host の上に開くポートです |
 | 割り当て | どの Host がどのサービスポートを担当するかです。Host が有効で、それ自体もオンになっている割り当て 1 つが、トンネル 1 本です |
-| ローカルフォワード | このマシンに開くポートです。届いた接続を 1 台の Host を経由して、その Host が届くアドレスへ送ります |
+| ローカルフォワード | Tunnel Manager サーバーに開くポートです。届いた接続を 1 台の Host を経由して、その Host が届くアドレスへ送ります |
 
 最後の行は任意で、上の 2 つ目の図がこれです。ローカルフォワードは作成した Host に属し、その Host の行の **Local forwards**
 ボタンから追加します。
@@ -77,17 +77,17 @@ flowchart LR
 フォワードごとに 1 つ、必要なら autossh や systemd ユニットで包んでおきます。Tunnel Manager は
 フォワードを記録として保存し、記録のとおりに動かします。
 
-- **サービスポートで組むリバーストンネル。** サービスは、このマシンから届くアドレスと、
+- **サービスポートで組むリバーストンネル。** サービスは、Tunnel Manager サーバーから届くアドレスと、
   Host が代わりに開くポートとして一度だけ保存します。それを Host に割り当てると、Host ごとに
   そのポートを開き、届いた接続を `ssh -R` と同じようにサービスへ返します。1 つのサービスを
   複数の Host で公開し、1 つの Host が複数のサービスを運びますが、組み合わせごとにコマンドを
   置く必要はありません。
-- **同じ Host でローカルフォワード。** `ssh -L` の向きも同じ方法で管理します。このマシンで
+- **同じ Host でローカルフォワード。** `ssh -L` の向きも同じ方法で管理します。Tunnel Manager サーバーで
   開いたポートが Host を経由して、その Host だけが届くアドレスにつながります。その Host に
   属する記録として保存され、切れたらつなぎ直され、トンネルと同じステータス表に出ます。Host を
   `ssh -D` のように SOCKS5 プロキシとして使うこともできます。
-- **ほかの Host の奥にある Host。** Host ごとにジャンプ経路、つまりその Host へ行く途中で経由する
-  Host を、`ssh -J` のように 8 台まで持てます。その Host のトンネル、ローカルフォワード、SOCKS5
+- **ほかの Host の奥にある Host。** Host ごとにジャンプ経路、つまりその Host へ行くときに使う
+  ジャンプホストを、`ssh -J` のように 8 台まで持てます。その Host のトンネル、ローカルフォワード、SOCKS5
   プロキシはすべてその経路を通り、途中で止まった接続はどの Host でなぜ止まったかを示します。
 - **コマンドの寄せ集めではなく記録。** Host、サービスポート、割り当てはデータベースの行です。
   調整ループが動いているトンネルを保存されたものと同じに保ち、切れたトンネルは再接続します。
@@ -106,16 +106,16 @@ flowchart LR
 - **設定は 1 か所に。** 設定はデータベースにあり、ブラウザから変更します。設定一式を
   パスワードで封じた 1 つのファイルとして移せ、インポートするとそこにあったトンネル設定が
   ファイルの内容に置き換わります。SSH のパスワード、秘密鍵、Webhook と
-  メールの設定は、このマシンのキーファイルで暗号化して保存します。
+  メールの設定は、Tunnel Manager サーバーのキーファイルで暗号化して保存します。
 - **ほかに:** スコープを限った API トークン、`/api/metrics` の Prometheus メトリクス、
   `-install` で自分をサービスとしてインストールする単一バイナリ、13 の言語の画面。
 
 ## できること
 
 - 割り当てごとにトンネルを確立し、監視し、接続が切れたら再接続します。
-- ローカルフォワードも開きます。このマシンのポートが Host を経由して、その Host だけが届く
+- ローカルフォワードも開きます。Tunnel Manager サーバーのポートが Host を経由して、その Host だけが届く
   アドレスへつながります。トンネルと同じように維持します。
-- `ssh -D` と同じく Host を SOCKS5 プロキシにします。このマシンのポートをプロキシに設定した
+- `ssh -D` と同じく Host を SOCKS5 プロキシにします。Tunnel Manager サーバーのポートをプロキシに設定した
   ブラウザは、その Host が届く先に届きます。接続は許可したアドレスからだけ受けます。
 - Host へは、ジャンプ経路に書かれたほかの Host を何段でも経由して接続します。トンネル、
   ローカルフォワード、SOCKS5 プロキシがすべて同じ経路を通ります。
@@ -123,9 +123,9 @@ flowchart LR
   いるかを伝えます。転送ポートをどのアドレスに開くかは SSH サーバー側が決めることだからです。
 - UI と API を HTTPS で提供します。証明書は初回起動のときに自分で作り、独自の証明書を
   登録すればそちらを使います。
-- SSH のパスワード、秘密鍵、証明書の秘密鍵を、このマシンのキーファイルで暗号化した
+- SSH のパスワード、秘密鍵、証明書の秘密鍵を、Tunnel Manager サーバーのキーファイルで暗号化した
   まま保存します。
-- 設定一式を暗号化して 1 つのファイルにまとめ、別のマシンへ移行できます。インポートは
+- 設定一式を暗号化して 1 つのファイルにまとめ、別の Tunnel Manager サーバーへ移行できます。インポートは
   そこの Host、サービスポート、ローカルフォワードをすべてファイルの内容に置き換え、置き換える前に
   何がいくつ削除され、いくつ入るかを示します。
 - 設定画面で作ったトークンで、スクリプトから API を呼べます。トークンが届くのは作成時に選んだ
@@ -134,7 +134,7 @@ flowchart LR
   収集できます。
 - トンネル、ローカルフォワード、SOCKS5 プロキシが設定した時間より長く切れたままなら、Webhook か
   メールで知らせ、つながり直したらもう一度知らせます。
-- 画面を 13 の言語で表示します。ブラウザの隅で選ぶか、このマシンに設定しておきます。
+- 画面を 13 の言語で表示します。ブラウザの隅で選ぶか、Tunnel Manager サーバーに設定しておきます。
   ログファイルは英語のままです。
 - Linux、macOS、Windows でバイナリ 1 つとして動作します。C ライブラリも、別に動かす
   データベースサーバーも要りません。
@@ -163,7 +163,7 @@ copy of the password  {"log_id": "account.created_with_initial_password",
 cat <dir>/initial-password
 ```
 
-ブラウザで `https://127.0.0.1:8888/` を開きます。証明書はこのマシンが自分自身に向けて
+ブラウザで `https://127.0.0.1:8888/` を開きます。証明書はTunnel Manager サーバーが自分自身に向けて
 署名したものなので、ブラウザは警告を出します。その警告と照合する指紋は、起動ログと設定
 画面にあります。
 

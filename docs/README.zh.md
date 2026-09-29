@@ -2,7 +2,7 @@
 
 [English](../README.md) · [한국어](README.ko.md) · [日本語](README.ja.md)
 
-![Tunnel Manager: add three service ports and six Hosts, some behind others on a jump route of one or two hops, approve the host keys, reach the service through the tunnel, add a local forward, see both in the status screen, switch off a Host on the way, and turn on a SOCKS5 proxy](demo.gif)
+![Tunnel Manager: add three service ports and six Hosts, some behind others on a jump route of one or two hops, approve the host keys, reach the service through the tunnel, add a local forward, see both in the status screen, switch off a jump host, and turn on a SOCKS5 proxy](demo.gif)
 
 **Tunnel Manager 把一个服务发布到本来没有路由能到达它的机器上。** 它通过 SSH 连接这些机器，
 让每台机器各打开一个本地端口，再把到达本地端口的流量通过 SSH 连接转发回服务。直接连不上的
@@ -22,7 +22,7 @@ flowchart LR
     subgraph host ["Host - 你注册的 SSH 服务器"]
         port[["local_port<br/>由 SSH 服务器打开"]]
     end
-    subgraph here ["tunnel-manager 所在的机器"]
+    subgraph here ["Tunnel Manager 服务器"]
         tm["tunnel-manager"]
     end
     service[("service_address:service_port<br/>tunnel-manager 能访问到的任意地址")]
@@ -33,14 +33,14 @@ flowchart LR
     tm -->|"4. 连接服务"| service
 ```
 
-**本地转发：由本机打开端口。** 方向相反，和 `ssh -L` 一样。tunnel-manager 在本机打开
+**本地转发：由Tunnel Manager 服务器打开端口。** 方向相反，和 `ssh -L` 一样。tunnel-manager 在Tunnel Manager 服务器打开
 `local_port`，把连到它的每个连接通过 Host 的 SSH 连接送到 `target_address:target_port`，也就是这台
 Host 能访问到的地址。
 
 ```mermaid
 flowchart LR
-    client(["能访问到本机的客户端"])
-    subgraph here ["本机"]
+    client(["能访问到Tunnel Manager 服务器的客户端"])
+    subgraph here ["Tunnel Manager 服务器"]
         port[["local_port<br/>由 tunnel-manager 打开"]]
         tm["tunnel-manager"]
     end
@@ -55,15 +55,15 @@ flowchart LR
     sshd -->|"4. 连接目标"| target
 ```
 
-本机上运行的内容由三样东西组成。你注册 Host 和服务端口，两者之间的分配关系会自动生成（除非你另行
+Tunnel Manager 服务器上运行的内容由三样东西组成。你注册 Host 和服务端口，两者之间的分配关系会自动生成（除非你另行
 指定），一条隧道就是根据一条分配关系建立的。
 
 | 组成 | 是什么 |
 |------|--------|
-| Host | 要连接的 SSH 服务器：地址或主机名、端口、用户，以及私钥或密码；不能直接连到时，还有要途经的 Host |
-| 服务端口 | 要发布的服务，可以在本机能访问到的任意地址上，以及要在负责这个服务的每台 Host 上打开的端口 |
+| Host | 要连接的 SSH 服务器：地址或主机名、端口、用户，以及私钥或密码；不能直接连到时，还有要用的跳板机 |
+| 服务端口 | 要发布的服务，可以在Tunnel Manager 服务器能访问到的任意地址上，以及要在负责这个服务的每台 Host 上打开的端口 |
 | 分配关系 | 哪台 Host 负责哪个服务端口。一条分配关系，只要它本身开着、它的 Host 是启用的，就是一条隧道 |
-| 本地转发 | 在本机打开的端口，进来的连接经由一台 Host 转发到这台 Host 能访问到的地址 |
+| 本地转发 | 在Tunnel Manager 服务器打开的端口，进来的连接经由一台 Host 转发到这台 Host 能访问到的地址 |
 
 最后一行是可选的，就是上面的第二张图。本地转发属于创建它的那台 Host，在那台 Host 所在行的 **Local forwards** 按钮里添加。
 
@@ -72,13 +72,13 @@ flowchart LR
 端口转发通常是设好就不管了：每个转发一条 `ssh -R`、`-L` 或 `-D` 命令，或许再套上 autossh
 或一个 systemd 单元。Tunnel Manager 把转发保存成记录，并按记录去运行。
 
-- **用服务端口组织反向隧道。** 一个服务只保存一次：本机访问它的地址，以及各 Host 替它开放的
+- **用服务端口组织反向隧道。** 一个服务只保存一次：Tunnel Manager 服务器访问它的地址，以及各 Host 替它开放的
   端口。把它分配给 Host，每个 Host 就开放该端口，并像 `ssh -R` 那样把进来的连接送回服务。一个
   服务可以经多个 Host 发布，一个 Host 也可以承载多个服务，不需要为每一对各写一条命令。
-- **在同一批 Host 上做本地转发。** `ssh -L` 方向也用同样方式管理：本机开放的端口经 Host 通到
+- **在同一批 Host 上做本地转发。** `ssh -L` 方向也用同样方式管理：Tunnel Manager 服务器开放的端口经 Host 通到
   只有该 Host 能访问的地址。它作为该 Host 的记录保存，断开后重新建立，并和隧道列在同一张状态
   表里。Host 也可以像 `ssh -D` 那样作为 SOCKS5 代理。
-- **藏在其他 Host 后面的 Host。** 每台 Host 可以有一条跳板路线，也就是去往它时要途经的 Host，
+- **藏在其他 Host 后面的 Host。** 每台 Host 可以有一条跳板路线，也就是去往它时要用的跳板机，
   像 `ssh -J` 那样，最多 8 台。这台 Host 的隧道、本地转发和 SOCKS5 代理都走这条路线，在路线上
   停下的连接会说明停在哪台 Host、为什么停下。
 - **是记录，不是一堆命令。** Host、服务端口和分配关系都是数据库里的行。协调循环让正在运行的
@@ -94,28 +94,28 @@ flowchart LR
   一次。
 - **设置集中在一处。** 设置存在数据库里，在浏览器里改。整套配置可以作为一个用密码加密的文件
   迁移，导入时那边原有的隧道配置会被文件内容替换。SSH 密码、私钥以及 Webhook 和邮件设置都用
-  本机的密钥文件加密保存。
+  Tunnel Manager 服务器的密钥文件加密保存。
 - **另外：** 限定权限范围的 API 令牌、`/api/metrics` 上的 Prometheus 指标、用 `-install`
   把自己安装成服务的单个可执行文件、十三种语言的页面。
 
 ## 它做什么
 
 - 为每条分配关系建立一条隧道，持续监控，连接断开就重新建立。
-- 也能开本地转发：本机的一个端口经由 Host 通到只有这台 Host 能访问到的地址，同样持续维护。
-- 像 `ssh -D` 那样把 Host 当作 SOCKS5 代理：浏览器把本机的一个端口设为代理，就能访问这台 Host
+- 也能开本地转发：Tunnel Manager 服务器的一个端口经由 Host 通到只有这台 Host 能访问到的地址，同样持续维护。
+- 像 `ssh -D` 那样把 Host 当作 SOCKS5 代理：浏览器把Tunnel Manager 服务器的一个端口设为代理，就能访问这台 Host
   能访问到的地方，连接只接受你允许的地址。
 - 沿着跳板路线，经过写在上面的其他 Host 连接一台 Host，可以经过多站。隧道、本地转发和 SOCKS5
   代理都走同一条路线。
 - 隧道建立后，报告 SSH 服务器对转发端口怎么回答、Host 上有什么在监听。监听绑定哪个地址，由 SSH
   服务器自己决定。
 - 通过 HTTPS 提供界面和 API。证书在第一次启动时自签一张，你注册了自己的证书后就使用你的。
-- 把 SSH 密码、私钥和证书私钥都用本机的密钥文件加密保存。
-- 把整套配置加密成一个文件，迁移到另一台机器。导入会把那边所有的 Host、服务端口和本地转发都
+- 把 SSH 密码、私钥和证书私钥都用Tunnel Manager 服务器的密钥文件加密保存。
+- 把整套配置加密成一个文件，迁移到另一台 Tunnel Manager 服务器。导入会把那边所有的 Host、服务端口和本地转发都
   换成文件里的内容，替换之前先列出各项要删除多少、导入多少。
 - 脚本可以用在设置页面创建的令牌调用 API，令牌只能访问创建时选定的权限范围。
 - 把隧道状态作为 Prometheus 指标输出，Prometheus 或 telegraf 用只读令牌即可采集。
 - 隧道、本地转发或 SOCKS5 代理断开超过你设定的时间时，通过 Webhook 或邮件发出告警，恢复连接后再发一次。
-- 页面有十三种语言，在浏览器角落选择，或者为本机设置一个默认语言。日志文件还是英文。
+- 页面有十三种语言，在浏览器角落选择，或者为Tunnel Manager 服务器设置一个默认语言。日志文件还是英文。
 - 在 Linux、macOS 和 Windows 上都是单个可执行文件，不依赖 C 库，也不需要数据库服务器。
 
 ## 快速开始
@@ -141,7 +141,7 @@ copy of the password  {"log_id": "account.created_with_initial_password",
 cat <dir>/initial-password
 ```
 
-在浏览器里打开 `https://127.0.0.1:8888/`。证书是本机自签的，所以浏览器会警告；核对这个
+在浏览器里打开 `https://127.0.0.1:8888/`。证书是Tunnel Manager 服务器自签的，所以浏览器会警告；核对这个
 警告要用的指纹在启动日志里，登录之后也在 Settings 页面上。
 
 **用户名留空**，用初始密码文件里的密码登录，然后设置这个账号今后使用的用户名和密码，
