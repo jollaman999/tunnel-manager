@@ -1606,9 +1606,10 @@ form[data-form="import-settings"] td:nth-child(3) {
   white-space: nowrap;
 }
 
-/* The buttons take no more width than they need, which leaves the rest of the
-   row to the columns that carry values. */
-td.actions {
+/* The buttons and the jump route pills take no more width than they need,
+   which leaves the rest of the row to the columns that carry values. */
+td.actions,
+td.jump {
   width: 1%;
 }
 
@@ -2739,7 +2740,7 @@ body.modal-open {
    pill stretched to the width of its cell is as wide as the ones above it. */
 .jump-pill {
   display: grid;
-  grid-template-columns: 1.4em minmax(0, 1fr) 1.4em;
+  grid-template-columns: 1.4em minmax(max-content, 1fr) 1.4em;
   gap: 0.25rem;
   align-items: center;
   box-sizing: border-box;

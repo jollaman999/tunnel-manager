@@ -1906,6 +1906,10 @@ function buildTable(headers, rows, numericColumns, pickHeader) {
         if (cell.classList.contains("buttons")) {
           td.className = "actions";
         }
+
+        if (cell.classList.contains("jump-pill")) {
+          td.className = "jump";
+        }
       } else {
         td.textContent = cell === null || cell === undefined ? "" : String(cell);
       }
