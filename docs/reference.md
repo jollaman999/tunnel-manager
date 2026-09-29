@@ -327,6 +327,21 @@ where it stays. A connection that stands puts the wait back to the monitoring
 interval. A ceiling below the monitoring interval leaves every wait at the
 interval. The same holds for local forwards and SOCKS5 proxies.
 
+**Two failures are waited out by rules of their own.** A Host on the
+[jump route](#a-jump-route) that refuses to open the channel to the next hop as
+`administratively prohibited`, as a server where `AllowTcpForwarding` is `no`
+does, refuses by its configuration, and no number of attempts changes that. It
+is still tried again, since the change is made on that Host and nothing here
+hears of it, but at the ceiling from the first failure. A Host that refuses to
+open the forwarded port of a tunnel most often still holds it for a session of
+this tunnel that went away without closing, and lets it go moments later, so
+the first three refusals in a row are tried again at the monitoring interval and
+leave the doubling where it was. From the fourth refusal in a row the wait
+doubles on from where the failures before them had left it. The log line that
+says an attempt failed carries `retry_reason`, `jump_prohibited` or
+`forward_denied`, when the wait was one of these, and no such field when it was
+the doubling.
+
 ### Local forwards
 
 **A local forward runs the other way from a tunnel.** A tunnel has the Host open
@@ -474,7 +489,7 @@ direction; OpenSSH refuses it where `AllowTcpForwarding` is `no` or `remote`.
 | `starting` | The first connection is being made |
 | `connected` | The SSH connection stands and `local_port` is open |
 | `reconnecting` | The connection dropped or an attempt failed, and it is being made again. `retry_count` counts these |
-| `error` | The last attempt failed, and `last_error` says why. After a refused login it stays here until the Host is changed; otherwise it is tried again after the monitoring interval, and each failure in a row doubles the wait up to `reconnect_max_interval_sec` |
+| `error` | The last attempt failed, and `last_error` says why. After a refused login it stays here until the Host is changed; otherwise it is tried again after the monitoring interval, and each failure in a row doubles the wait up to `reconnect_max_interval_sec`. A Host on the jump route that refuses to open the channel is tried again at `reconnect_max_interval_sec` from the first failure, see [A single tunnel](#a-single-tunnel) |
 | `host_key_unapproved`, `host_key_mismatch` | The host key was refused, as on a tunnel. It stays here until the key is approved |
 | `jump_host_disabled` | A Host on the [jump route](#a-jump-route) of the Host is disabled, so nothing is connected. Enabling that Host brings it back |
 
@@ -1352,7 +1367,7 @@ no directory travels next to it and no path has to be configured.
 
 | Screen | Path | What it shows and does |
 |--------|------|------------------------|
-| Status | `/ui/status` | Four counts, each over both sorts of forward together (desired, connected, reconnecting, errors), a sentence about the difference between them, and one line per row of either sort: Host, kind, service port, status, server, opened, reachable at, reaches, retries, last connected. The service port of a local forward is a dash. Opened is the address the port was opened on, and Reachable at is where a client connects to it, with a copy button on each address: the registered address of the Host with the port for a port opened on every interface, the address this page was loaded from for a local forward, and `127.0.0.1` and `[::1]` for a port opened on loopback, whose copy says that it works only on that machine. A tunnel with something wrong carries what went wrong on a line under it, across the whole table, and one that stopped on its jump route says there which Host on the way to look at and what to do about it. A tunnel that is up carries under it what is known about the addresses of its forward where something differs from what was asked: what was asked for, what the SSH server answered, and what the Host has listening. It never says a port is open, and it does not try the port; whether the target of a local forward answers is on the local forwards of its Host. The rows come a page at a time, ten to a page to begin with, with the size and the page chosen below the table; the counts stay counts of the whole installation and not of the page. It asks again every 5 seconds and comes back on the page being read. A search box above the table narrows the rows, see [Searching](#searching). |
+| Status | `/ui/status` | Four counts, each over both sorts of forward together (desired, connected, reconnecting, errors), a sentence about the difference between them, and one line per row of either sort: Host, kind, service port, status, server, opened, reachable at, reaches, retries, last connected. The service port of a local forward is a dash. Opened is the address the port was opened on, and Reachable at is where a client connects to it, with a copy button on each address: the registered address of the Host with the port for a port opened on every interface, the address this page was loaded from for a local forward, and `127.0.0.1` and `[::1]` for a port opened on loopback, whose copy says that it works only on that machine. A tunnel with something wrong carries what went wrong on a line under it, across the whole table; on a screen narrower than the table that line stays inside the width that shows and wraps there while the table scrolls sideways. One that stopped on its jump route says there which Host on the way to look at and what to do about it. A tunnel that is up carries under it what is known about the addresses of its forward where something differs from what was asked: what was asked for, what the SSH server answered, and what the Host has listening. It never says a port is open, and it does not try the port; whether the target of a local forward answers is on the local forwards of its Host. The rows come a page at a time, ten to a page to begin with, with the size and the page chosen below the table; the counts stay counts of the whole installation and not of the page. It asks again every 5 seconds and comes back on the page being read. A search box above the table narrows the rows, see [Searching](#searching). |
 | Hosts | `/ui/hosts` | One row per Host with ID, address, port, jump route, user, description, enabled, SOCKS5 proxy and updated. The rows come a page at a time, ten to a page to begin with, with the size (10, 20, 30, 50 or 100) and the page chosen below the table. The choice is remembered for this screen on its own, and a list short enough to fit a page of the smallest size carries no controls at all. Add a Host, edit one, enable or disable one, delete one. The add and edit forms have a box to paste a private key into, an area to drop the key file onto, and a box for the passphrase of a key that has one, and the add form has an **Assign all service ports** tick, on by default, that says what the Host starts out carrying, with a **Reach on the Host** list beside it that every assignment that tick makes starts on. **Service ports** in a row opens a panel of every service port with a tick against the ones this Host carries, and a reach beside each row: pick a reach above and apply it to everything ticked, or set one row on its own, and a row that was not ticked is left alone, with an **Enabled** box against each row that pauses the tunnel of that assignment without taking it away. Only what was changed is sent when it is saved, so a tick made there leaves the pages that were not read alone. **Local forwards** in a row opens a panel of the local forwards of that Host with the status of each, a page at a time, where they are added, changed, switched off and on, and deleted, one row at a time or the ticked rows together; see [Local forwards](#local-forwards). The add and edit forms also switch on the SOCKS5 proxy of the Host, and its column shows the port and the status; see [A SOCKS5 proxy on a Host](#a-socks5-proxy-on-a-host). The add and edit forms have a **Jump route** field, and the jump route column of a row opens the same panel for that Host; see [A jump route](#a-jump-route). |
 | Service Ports | `/ui/service-ports` | One row per service port with ID, service address, service port, local port, description and updated. The rows come a page at a time the same way the Hosts do, with a size and a page of their own. Add, edit and delete. The add form has an **Assign to all hosts** tick, on by default, that says which Hosts carry it from the start, with a **Reach on the Host** list beside it that the assignments that tick makes start on; which Hosts carry it after that, and what each of those assignments reaches, is changed from the Hosts screen. The Hosts and Service Ports screens each have a search box above the table, see [Searching](#searching). |
 | Logs | `/ui/logs` | The end of the log file, newest last, with a level filter and a count to show. It asks again every 5 seconds. It reads the file the process is writing now; rotated files are not shown. The lines are shown in the language of the screen while the file stays English; see [The language of the screens](#the-language-of-the-screens). |
@@ -1625,7 +1640,11 @@ state the Status screen shows. Any status other than `connected` counts as
 down, `starting`, `reconnecting`, `error` and a refused host key among them.
 One outage is one `down` and one `up`. A forward that is switched off, removed
 or on a Host that was disabled is not an outage and is forgotten without an
-`up`. What was sent is kept in memory, so a restart counts again from the
+`up`. A forward is known to the alerts by its id together with the address and
+the SSH port of the Host it goes through and the port it opens. One whose Host
+was changed to another address or SSH port, or one whose id was given again to
+a Host added after another was removed, is a new forward whose outage is
+counted apart, and the outage of the one before is forgotten without an `up`. What was sent is kept in memory, so a restart counts again from the
 start: a forward still down after it is reported again once the delay has
 passed, and one that came back while the service was away is never reported
 as `up`. An outage that began while alerts were off is counted from the moment
@@ -2459,7 +2478,10 @@ screens read the Hosts on the routes they draw. It takes up to 1000 positive
 whole numbers separated by commas. Every one of them that is registered is
 answered on one page, in the order of their ids, with `page` and `size` left
 unread; an id that is not registered is left out, and `q` narrows them as it
-narrows the list. A value that is not such a list is refused with `400` under
+narrows the list. `ids` written more than once, as `?ids=2&ids=3`, is read as
+one list of every value it is written with, and the 1000 are counted over all
+of them before an id named twice is read once, so an id named twice counts
+twice. A value that is not such a list is refused with `400` under
 `host.list.ids_invalid`.
 
 ```bash
