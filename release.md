@@ -1,3 +1,10 @@
+# v4.1.4
+
+## Add/fix features:
+
+- **The Hosts panel of a service port is drawn as the service ports panel of a Host.** It is a table with a tick in its head that takes and releases the rows of the page, a tick on every row, and a reach and an Enabled box beside each row. The Reach to apply list above the table sets one reach on everything ticked, and a row can still be set on its own. Save sends one request for each Host that changed: a Host ticked for the first time is given the service port on the reach and the Enabled of its row, a Host cleared has it taken away, and a Host that carries it already has its reach moved or its tunnel switched on or off where those were changed.
+- The demo shows the panel as a table.
+
 # v4.1.3
 
 ## Add/fix features:
