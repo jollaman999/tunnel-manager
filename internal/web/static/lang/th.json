@@ -1147,6 +1147,8 @@
   "status.addresses-answered-both.text": "เซิร์ฟเวอร์ SSH ตอบรับคำขอทั้งสอง",
   "status.addresses-answered-ipv4.text": "เซิร์ฟเวอร์ SSH ตอบรับคำขอ IPv4 และตอบปฏิเสธคำขอ IPv6",
   "status.addresses-answered-ipv6.text": "เซิร์ฟเวอร์ SSH ตอบรับคำขอ IPv6 และตอบปฏิเสธคำขอ IPv4",
+  "status.addresses-gatewayports-off.text": "Host รอการเชื่อมต่อที่ที่อยู่ loopback ไม่ใช่ทุกอินเทอร์เฟซตามที่ขอ เซิร์ฟเวอร์ SSH ทำแบบนี้เมื่อ GatewayPorts no ซึ่งเป็นค่าเริ่มต้นของ OpenSSH ถ้าจะให้เปิดตามที่ขอ ให้ตั้ง GatewayPorts clientspecified ใน sshd_config ของ Host แล้วโหลด sshd ใหม่ และปิดแล้วเปิด Host นั้นที่นี่เพื่อขอพอร์ตใหม่",
+  "status.addresses-gatewayports-on.text": "ขอ loopback ไว้ แต่ Host รอการเชื่อมต่อที่ทุกอินเทอร์เฟซ เซิร์ฟเวอร์ SSH ทำแบบนี้เมื่อ GatewayPorts yes ถ้าจะให้เปิดตามที่ขอ ให้ตั้ง GatewayPorts clientspecified ใน sshd_config ของ Host แล้วโหลด sshd ใหม่ และปิดแล้วเปิด Host นั้นที่นี่เพื่อขอพอร์ตใหม่",
   "status.addresses-asked-one.text": "ขอให้เปิดไว้ที่ {address} ของ Host",
   "status.addresses-asked-pair.text": "ขอให้เปิดไว้ที่ {first} และ {second} ของ Host",
   "status.addresses-known.text": "สิ่งที่รู้เกี่ยวกับที่อยู่ของการส่งต่อนี้",

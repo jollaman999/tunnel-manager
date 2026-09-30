@@ -1147,6 +1147,8 @@
   "status.addresses-answered-both.text": "Le serveur SSH a dit oui aux deux demandes.",
   "status.addresses-answered-ipv4.text": "Le serveur SSH a dit oui à la demande IPv4 et non à la demande IPv6.",
   "status.addresses-answered-ipv6.text": "Le serveur SSH a dit oui à la demande IPv6 et non à la demande IPv4.",
+  "status.addresses-gatewayports-off.text": "Le Host écoute sur les adresses de boucle locale et non sur toutes les interfaces comme demandé. Un serveur SSH fait cela avec GatewayPorts no, la valeur par défaut d'OpenSSH. Pour que la demande soit suivie, mettez GatewayPorts clientspecified dans le sshd_config du Host, rechargez sshd, puis désactivez et réactivez le Host ici pour que le port soit redemandé.",
+  "status.addresses-gatewayports-on.text": "Le Host écoute sur toutes les interfaces alors que la boucle locale était demandée. Un serveur SSH fait cela avec GatewayPorts yes. Pour que la demande soit suivie, mettez GatewayPorts clientspecified dans le sshd_config du Host, rechargez sshd, puis désactivez et réactivez le Host ici pour que le port soit redemandé.",
   "status.addresses-asked-one.text": "Elle a été demandée sur {address} du Host.",
   "status.addresses-asked-pair.text": "Elle a été demandée sur {first} et {second} du Host.",
   "status.addresses-known.text": "Ce que l'on sait des adresses de cette redirection",

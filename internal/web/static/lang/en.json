@@ -1147,6 +1147,8 @@
   "status.addresses-answered-both.text": "The SSH server said yes to both requests.",
   "status.addresses-answered-ipv4.text": "The SSH server said yes to the IPv4 request and no to the IPv6 one.",
   "status.addresses-answered-ipv6.text": "The SSH server said yes to the IPv6 request and no to the IPv4 one.",
+  "status.addresses-gatewayports-off.text": "The Host is listening at the loopback addresses and not at every interface as asked. An SSH server does this with GatewayPorts no, the default of OpenSSH. To have what is asked for followed, set GatewayPorts clientspecified in the sshd_config of the Host, reload sshd, and switch the Host off and on here so that the port is asked for again.",
+  "status.addresses-gatewayports-on.text": "The Host is listening at every interface although the loopback was asked for. An SSH server does this with GatewayPorts yes. To have what is asked for followed, set GatewayPorts clientspecified in the sshd_config of the Host, reload sshd, and switch the Host off and on here so that the port is asked for again.",
   "status.addresses-asked-one.text": "Asked for at {address} on the Host.",
   "status.addresses-asked-pair.text": "Asked for at {first} and {second} on the Host.",
   "status.addresses-known.text": "What is known about the addresses of this forward",

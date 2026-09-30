@@ -1147,6 +1147,8 @@
   "status.addresses-answered-both.text": "Máy chủ SSH đã đồng ý cả hai yêu cầu.",
   "status.addresses-answered-ipv4.text": "Máy chủ SSH đồng ý yêu cầu IPv4 và trả lời không cho yêu cầu IPv6.",
   "status.addresses-answered-ipv6.text": "Máy chủ SSH đồng ý yêu cầu IPv6 và trả lời không cho yêu cầu IPv4.",
+  "status.addresses-gatewayports-off.text": "Host đang lắng nghe ở các địa chỉ loopback chứ không phải ở mọi giao diện như đã yêu cầu. Máy chủ SSH làm vậy với GatewayPorts no, giá trị mặc định của OpenSSH. Để yêu cầu được làm theo, đặt GatewayPorts clientspecified trong sshd_config của Host, nạp lại sshd, rồi tắt và bật lại Host ở đây để cổng được yêu cầu lại.",
+  "status.addresses-gatewayports-on.text": "Host đang lắng nghe ở mọi giao diện dù đã yêu cầu loopback. Máy chủ SSH làm vậy với GatewayPorts yes. Để yêu cầu được làm theo, đặt GatewayPorts clientspecified trong sshd_config của Host, nạp lại sshd, rồi tắt và bật lại Host ở đây để cổng được yêu cầu lại.",
   "status.addresses-asked-one.text": "Đã yêu cầu mở tại {address} trên Host.",
   "status.addresses-asked-pair.text": "Đã yêu cầu mở tại {first} và {second} trên Host.",
   "status.addresses-known.text": "Những gì đã biết về địa chỉ của chuyển tiếp này",

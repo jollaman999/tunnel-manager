@@ -1147,6 +1147,8 @@
   "status.addresses-answered-both.text": "O servidor SSH disse sim aos dois pedidos.",
   "status.addresses-answered-ipv4.text": "O servidor SSH disse sim ao pedido IPv4 e não ao pedido IPv6.",
   "status.addresses-answered-ipv6.text": "O servidor SSH disse sim ao pedido IPv6 e não ao pedido IPv4.",
+  "status.addresses-gatewayports-off.text": "O Host escuta nos endereços de loopback e não em todas as interfaces como foi pedido. Um servidor SSH faz isso com GatewayPorts no, o padrão do OpenSSH. Para que o pedido seja seguido, coloque GatewayPorts clientspecified no sshd_config do Host, recarregue o sshd e desative e ative o Host aqui para que a porta seja pedida de novo.",
+  "status.addresses-gatewayports-on.text": "O Host escuta em todas as interfaces embora o loopback tenha sido pedido. Um servidor SSH faz isso com GatewayPorts yes. Para que o pedido seja seguido, coloque GatewayPorts clientspecified no sshd_config do Host, recarregue o sshd e desative e ative o Host aqui para que a porta seja pedida de novo.",
   "status.addresses-asked-one.text": "Foi pedido em {address} do Host.",
   "status.addresses-asked-pair.text": "Foi pedido em {first} e {second} do Host.",
   "status.addresses-known.text": "O que se sabe sobre os endereços deste encaminhamento",

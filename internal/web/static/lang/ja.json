@@ -1147,6 +1147,8 @@
   "status.addresses-answered-both.text": "SSH サーバーは両方の要求に「はい」と答えました。",
   "status.addresses-answered-ipv4.text": "SSH サーバーは IPv4 の要求に「はい」、IPv6 の要求に「いいえ」と答えました。",
   "status.addresses-answered-ipv6.text": "SSH サーバーは IPv6 の要求に「はい」、IPv4 の要求に「いいえ」と答えました。",
+  "status.addresses-gatewayports-off.text": "Host は要求したすべてのインターフェースではなく、ループバックのアドレスで待ち受けています。SSH サーバーは OpenSSH の既定値 GatewayPorts no のときこうします。要求どおりに開かせるには、Host の sshd_config に GatewayPorts clientspecified を書いて sshd を読み込み直し、ここでその Host をいったん無効にしてから有効にして、ポートを要求し直してください。",
+  "status.addresses-gatewayports-on.text": "ループバックを要求したのに、Host はすべてのインターフェースで待ち受けています。SSH サーバーは GatewayPorts yes のときこうします。要求どおりに開かせるには、Host の sshd_config に GatewayPorts clientspecified を書いて sshd を読み込み直し、ここでその Host をいったん無効にしてから有効にして、ポートを要求し直してください。",
   "status.addresses-asked-one.text": "Host の {address} に開くよう要求しました。",
   "status.addresses-asked-pair.text": "Host の {first} と {second} に開くよう要求しました。",
   "status.addresses-known.text": "この転送のアドレスについて分かっていること",

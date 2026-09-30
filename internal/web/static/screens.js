@@ -1336,19 +1336,66 @@ function forwardAddresses(tunnel) {
   box.appendChild(element("p", askedSentence(tunnel.local)));
   box.appendChild(element("p", answeredSentence(reach)));
 
+  const listening = listeningSentence(tunnel.listen_addresses);
+
   // What an answer is worth is said where one of the two requests was turned
   // down, which is where a reader is most likely to take the answer for a
-  // measurement.
-  if (reach !== "both") {
+  // measurement. Where the Host said what is listening there is a measurement,
+  // and the sentence would only cast doubt on the line under it.
+  if (reach !== "both" && listening === null) {
     box.appendChild(element("p", t("status.addresses-answer-no-proof.text")));
   }
 
-  const listening = listeningSentence(tunnel.listen_addresses);
   if (listening !== null) {
     box.appendChild(element("p", listening));
   }
 
+  const setting = gatewayPortsSentence(tunnel);
+  if (setting !== null) {
+    box.appendChild(element("p", setting));
+  }
+
   return box;
+}
+
+// gatewayPortsSentence says why the Host is listening somewhere other than
+// where it was asked to, and what to change, and null where that is not what
+// the Host said.
+//
+// Two of the ways the two can differ have one cause each, and it is the
+// GatewayPorts setting of the SSH server on the Host. With it off, which is
+// the default of OpenSSH, the server binds the loopback whatever is asked for,
+// so a port asked for on every interface is closed to every other machine.
+// With it on, the server binds every interface whatever is asked for, so a
+// port asked for on the loopback is open to the network of the Host. The
+// setting that follows what was asked for is clientspecified.
+//
+// Anything else the Host names, an address of one interface, is not one of
+// those two and is left to the lines above.
+function gatewayPortsSentence(tunnel) {
+  const pair = bindScopePairOf(typeof tunnel.local === "string" ? tunnel.local : "");
+  const named = listeningHosts(tunnel);
+
+  if (pair === null || named === null) {
+    return null;
+  }
+
+  const loopbackOnly = named.every(function (host) {
+    return host === "127.0.0.1" || host === "::1";
+  });
+  const wildcard = named.some(function (host) {
+    return host === "0.0.0.0" || host === "::";
+  });
+
+  if (pair.scope === bindScopeWildcard && loopbackOnly) {
+    return t("status.addresses-gatewayports-off.text");
+  }
+
+  if (pair.scope === bindScopeLoopback && wildcard) {
+    return t("status.addresses-gatewayports-on.text");
+  }
+
+  return null;
 }
 
 // nothingCameOutOfTheOrdinary says whether the forward is open exactly as it

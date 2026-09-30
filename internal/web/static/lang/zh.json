@@ -1147,6 +1147,8 @@
   "status.addresses-answered-both.text": "SSH 服务器对两个请求都回答了同意。",
   "status.addresses-answered-ipv4.text": "SSH 服务器对 IPv4 请求回答同意，对 IPv6 请求回答不同意。",
   "status.addresses-answered-ipv6.text": "SSH 服务器对 IPv6 请求回答同意，对 IPv4 请求回答不同意。",
+  "status.addresses-gatewayports-off.text": "Host 在回环地址上监听，而不是按请求在所有接口上监听。SSH 服务器在 OpenSSH 默认的 GatewayPorts no 下就会这样。要让它按请求打开，请在 Host 的 sshd_config 里设置 GatewayPorts clientspecified，让 sshd 重新加载，再在这里把这台 Host 停用后重新启用，重新请求这个端口。",
+  "status.addresses-gatewayports-on.text": "请求的是回环，但 Host 在所有接口上监听。SSH 服务器在 GatewayPorts yes 下就会这样。要让它按请求打开，请在 Host 的 sshd_config 里设置 GatewayPorts clientspecified，让 sshd 重新加载，再在这里把这台 Host 停用后重新启用，重新请求这个端口。",
   "status.addresses-asked-one.text": "请求开在 Host 的 {address} 上。",
   "status.addresses-asked-pair.text": "请求开在 Host 的 {first} 和 {second} 上。",
   "status.addresses-known.text": "关于该转发地址已知的内容",

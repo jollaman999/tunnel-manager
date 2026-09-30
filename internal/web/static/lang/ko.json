@@ -1147,6 +1147,8 @@
   "status.addresses-answered-both.text": "SSH 서버는 두 요청 모두에 그렇다고 답했습니다.",
   "status.addresses-answered-ipv4.text": "SSH 서버는 IPv4 요청에는 그렇다고, IPv6 요청에는 아니라고 답했습니다.",
   "status.addresses-answered-ipv6.text": "SSH 서버는 IPv6 요청에는 그렇다고, IPv4 요청에는 아니라고 답했습니다.",
+  "status.addresses-gatewayports-off.text": "Host 는 요청한 모든 인터페이스가 아니라 루프백 주소에서 기다리고 있습니다. SSH 서버가 OpenSSH 기본값인 GatewayPorts no 이면 이렇게 합니다. 요청한 대로 열리게 하려면 Host 의 sshd_config 에 GatewayPorts clientspecified 를 넣고 sshd 를 다시 읽힌 뒤, 여기서 그 Host 를 껐다 켜서 포트를 다시 요청하십시오.",
+  "status.addresses-gatewayports-on.text": "루프백을 요청했는데 Host 는 모든 인터페이스에서 기다리고 있습니다. SSH 서버가 GatewayPorts yes 이면 이렇게 합니다. 요청한 대로 열리게 하려면 Host 의 sshd_config 에 GatewayPorts clientspecified 를 넣고 sshd 를 다시 읽힌 뒤, 여기서 그 Host 를 껐다 켜서 포트를 다시 요청하십시오.",
   "status.addresses-asked-one.text": "Host 의 {address} 에 열어 달라고 요청했습니다.",
   "status.addresses-asked-pair.text": "Host 의 {first} 주소와 {second} 주소에 열어 달라고 요청했습니다.",
   "status.addresses-known.text": "이 포워딩의 주소에 대해 아는 것",

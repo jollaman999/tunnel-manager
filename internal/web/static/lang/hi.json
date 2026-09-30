@@ -1147,6 +1147,8 @@
   "status.addresses-answered-both.text": "SSH सर्वर ने दोनों अनुरोधों पर हाँ कहा।",
   "status.addresses-answered-ipv4.text": "SSH सर्वर ने IPv4 अनुरोध पर हाँ और IPv6 अनुरोध पर ना कहा।",
   "status.addresses-answered-ipv6.text": "SSH सर्वर ने IPv6 अनुरोध पर हाँ और IPv4 अनुरोध पर ना कहा।",
+  "status.addresses-gatewayports-off.text": "Host माँगे गए सभी इंटरफ़ेस पर नहीं, बल्कि लूपबैक पतों पर सुन रहा है। OpenSSH के डिफ़ॉल्ट GatewayPorts no पर SSH सर्वर ऐसा करता है। माँगा हुआ लागू कराने के लिए Host के sshd_config में GatewayPorts clientspecified लिखें, sshd को फिर से लोड करें, और यहाँ उस Host को बंद करके फिर चालू करें ताकि पोर्ट फिर से माँगा जाए।",
+  "status.addresses-gatewayports-on.text": "लूपबैक माँगा गया था, पर Host सभी इंटरफ़ेस पर सुन रहा है। GatewayPorts yes पर SSH सर्वर ऐसा करता है। माँगा हुआ लागू कराने के लिए Host के sshd_config में GatewayPorts clientspecified लिखें, sshd को फिर से लोड करें, और यहाँ उस Host को बंद करके फिर चालू करें ताकि पोर्ट फिर से माँगा जाए।",
   "status.addresses-asked-one.text": "इसे Host के {address} पर खोलने को कहा गया था।",
   "status.addresses-asked-pair.text": "इसे Host के {first} और {second} पर खोलने को कहा गया था।",
   "status.addresses-known.text": "इस फ़ॉरवर्ड के पतों के बारे में जो पता है",

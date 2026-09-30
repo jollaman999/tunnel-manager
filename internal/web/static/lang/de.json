@@ -1147,6 +1147,8 @@
   "status.addresses-answered-both.text": "Der SSH-Server hat beiden Anfragen zugestimmt.",
   "status.addresses-answered-ipv4.text": "Der SSH-Server hat der IPv4-Anfrage zugestimmt und die IPv6-Anfrage verneint.",
   "status.addresses-answered-ipv6.text": "Der SSH-Server hat der IPv6-Anfrage zugestimmt und die IPv4-Anfrage verneint.",
+  "status.addresses-gatewayports-off.text": "Der Host wartet auf den Loopback-Adressen und nicht, wie angefordert, auf allen Schnittstellen. Ein SSH-Server tut das mit GatewayPorts no, dem Standard von OpenSSH. Damit die Anforderung befolgt wird, setzen Sie GatewayPorts clientspecified in der sshd_config des Hosts, laden sshd neu und schalten den Host hier aus und wieder ein, damit der Port neu angefordert wird.",
+  "status.addresses-gatewayports-on.text": "Der Host wartet auf allen Schnittstellen, obwohl Loopback angefordert war. Ein SSH-Server tut das mit GatewayPorts yes. Damit die Anforderung befolgt wird, setzen Sie GatewayPorts clientspecified in der sshd_config des Hosts, laden sshd neu und schalten den Host hier aus und wieder ein, damit der Port neu angefordert wird.",
   "status.addresses-asked-one.text": "Angefragt wurde sie auf {address} des Hosts.",
   "status.addresses-asked-pair.text": "Angefragt wurde sie auf {first} und {second} des Hosts.",
   "status.addresses-known.text": "Was über die Adressen dieser Weiterleitung bekannt ist",

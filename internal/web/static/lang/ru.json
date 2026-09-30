@@ -1147,6 +1147,8 @@
   "status.addresses-answered-both.text": "Сервер SSH ответил согласием на оба запроса.",
   "status.addresses-answered-ipv4.text": "Сервер SSH ответил согласием на запрос IPv4 и отказом на запрос IPv6.",
   "status.addresses-answered-ipv6.text": "Сервер SSH ответил согласием на запрос IPv6 и отказом на запрос IPv4.",
+  "status.addresses-gatewayports-off.text": "Host слушает на адресах loopback, а не на всех интерфейсах, как запрошено. SSH-сервер так делает при GatewayPorts no, значении OpenSSH по умолчанию. Чтобы запрос выполнялся, задайте GatewayPorts clientspecified в sshd_config на Host, перечитайте sshd и выключите и снова включите Host здесь, чтобы порт был запрошен заново.",
+  "status.addresses-gatewayports-on.text": "Host слушает на всех интерфейсах, хотя запрашивался loopback. SSH-сервер так делает при GatewayPorts yes. Чтобы запрос выполнялся, задайте GatewayPorts clientspecified в sshd_config на Host, перечитайте sshd и выключите и снова включите Host здесь, чтобы порт был запрошен заново.",
   "status.addresses-asked-one.text": "Открыть её просили по адресу {address} на Host.",
   "status.addresses-asked-pair.text": "Открыть её просили по адресам {first} и {second} на Host.",
   "status.addresses-known.text": "Что известно об адресах этой переадресации",
