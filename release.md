@@ -1,3 +1,9 @@
+# v4.1.6
+
+## Add/fix features:
+
+- **A description is sized to its text** in the Host list, the service port list and both assignment panels. A short one is as wide as it is, and a longer one is given the width at which it takes two lines, so a table squeezed to the screen no longer breaks it into a word a line. One too long for two lines of the widest cell, about 24rem, is cut with an ellipsis and opens whole when it is pressed, and shows whole under the pointer. The fixed width the two panels gave it in v4.1.5 is gone.
+
 # v4.1.5
 
 ## Add/fix features:
