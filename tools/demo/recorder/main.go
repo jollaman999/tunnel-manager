@@ -699,7 +699,7 @@ func sceneServicePortHosts(r *recorder, cfg config, _ string) error {
 
 	panel := `[data-modal-panel="service-port-hosts"]`
 
-	if err := r.rowAction("service-port-hosts-"+id, panel+` .assign-row`); err != nil {
+	if err := r.rowAction("service-port-hosts-"+id, panel+` tbody tr`); err != nil {
 		return err
 	}
 
@@ -708,9 +708,10 @@ func sceneServicePortHosts(r *recorder, cfg config, _ string) error {
 	var box string
 
 	if err := r.run(chromedp.Evaluate(fmt.Sprintf(`(function (name) {
-  for (const row of document.querySelectorAll('[data-modal-panel="service-port-hosts"] .assign-row')) {
-    for (const said of row.querySelectorAll(".assign-said")) {
-      if (said.textContent.trim() === name) { return row.querySelector('input[type="checkbox"]').dataset.field; }
+  for (const row of document.querySelectorAll('[data-modal-panel="service-port-hosts"] tbody tr')) {
+    const said = row.querySelector(".assign-text > span");
+    if (said !== null && said.textContent.trim() === name) {
+      return row.querySelector('input[type="checkbox"][data-field^="assign-"]').dataset.field;
     }
   }
   return "";
