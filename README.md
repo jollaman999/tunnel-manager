@@ -2,7 +2,7 @@
 
 [한국어](docs/README.ko.md) · [日本語](docs/README.ja.md) · [中文](docs/README.zh.md)
 
-![Tunnel Manager: add three service ports and six Hosts, some behind others on a jump route of one or two hops, approve the host keys, reach the service through the tunnel, add a local forward, see both in the status screen, switch off a jump host, and turn on a SOCKS5 proxy](docs/demo.gif)
+![Tunnel Manager: add three service ports and six Hosts, some behind others on a jump route of one or two hops, approve the host keys, give a service port to one more Host from its row, reach the service through the tunnel, add a local forward, see both in the status screen, switch off a jump host, and turn on a SOCKS5 proxy](docs/demo.gif)
 
 **Tunnel Manager publishes a service on machines that have no route to it.** It
 connects to those machines over SSH, has each of them open a port, and carries

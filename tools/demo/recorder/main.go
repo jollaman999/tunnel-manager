@@ -232,6 +232,7 @@ func record(cfg config) error {
 		{"host", sceneHost},
 		{"hosts behind it", sceneJumpHosts},
 		{"status", sceneStatus},
+		{"hosts of a service port", sceneServicePortHosts},
 		{"jump routes", sceneJumpRoutes},
 		{"service", sceneService},
 		{"local forward", sceneLocalForward},
@@ -411,8 +412,8 @@ func sceneJumpHosts(r *recorder, cfg config, _ string) error {
 }
 
 // addHost fills in the add form for the Host named, its jump route included,
-// and adds it. A Host that only passes the others on is added without the
-// service ports.
+// and adds it. The form adds a Host carrying no service port, so every Host
+// but the ones that only pass the others on is ticked to carry them all.
 func (r *recorder) addHost(cfg config, name string) error {
 	address, port := cfg.hostOf(name)
 
@@ -454,7 +455,7 @@ func (r *recorder) addHost(cfg config, name string) error {
 		}
 	}
 
-	if cfg.hopHosts[name] {
+	if !cfg.hopHosts[name] {
 		if err := r.click(`#host-create-assign_all_service_ports`, ``); err != nil {
 			return err
 		}
@@ -665,6 +666,99 @@ func sceneStatus(r *recorder, cfg config, _ string) error {
 	return r.shot(2500 * time.Millisecond)
 }
 
+// sceneServicePortHosts gives the first service port to the first Host, which
+// was added carrying none, from the row of the service port: the panel lists
+// every Host with the ones that carry it ticked, and the bastion is ticked on
+// top of them. The status screen then counts the tunnel it opens.
+func sceneServicePortHosts(r *recorder, cfg config, _ string) error {
+	name := cfg.hosts[0]
+
+	if !cfg.hopHosts[name] {
+		return fmt.Errorf("%s carries the service ports already, so there is nothing to give it", name)
+	}
+
+	if err := r.click(`nav a[data-screen="service-ports"]`, `[data-action^="service-port-hosts-"]`); err != nil {
+		return err
+	}
+
+	if err := r.scrollTo(`table`); err != nil {
+		return err
+	}
+
+	if err := r.caption(fmt.Sprintf("6. Pick the Hosts of a service port from its row, and give the first one to %s", name)); err != nil {
+		return err
+	}
+
+	r.pause(time.Second)
+
+	var id string
+
+	if err := r.run(chromedp.Evaluate(`document.querySelector('[data-action^="service-port-hosts-"]').dataset.action.slice("service-port-hosts-".length)`, &id)); err != nil {
+		return err
+	}
+
+	panel := `[data-modal-panel="service-port-hosts"]`
+
+	if err := r.rowAction("service-port-hosts-"+id, panel+` .assign-row`); err != nil {
+		return err
+	}
+
+	r.pause(1500 * time.Millisecond)
+
+	var box string
+
+	if err := r.run(chromedp.Evaluate(fmt.Sprintf(`(function (name) {
+  for (const row of document.querySelectorAll('[data-modal-panel="service-port-hosts"] .assign-row')) {
+    for (const said of row.querySelectorAll(".assign-said")) {
+      if (said.textContent.trim() === name) { return row.querySelector('input[type="checkbox"]').dataset.field; }
+    }
+  }
+  return "";
+})(%q)`, name), &box)); err != nil {
+		return err
+	}
+
+	if box == "" {
+		return fmt.Errorf("%s is not in the panel of service port %s", name, id)
+	}
+
+	if err := r.click(fmt.Sprintf(`%s [data-field=%q]`, panel, box), ``); err != nil {
+		return err
+	}
+
+	r.pause(time.Second)
+
+	if err := r.click(`[data-action="service-port-hosts-save"]`, ``); err != nil {
+		return err
+	}
+
+	if err := r.waitGone(panel, 10*time.Second); err != nil {
+		return err
+	}
+
+	if err := r.shot(1500 * time.Millisecond); err != nil {
+		return err
+	}
+
+	if err := r.click(`nav a[data-screen="status"]`, `[data-count="connected"]`); err != nil {
+		return err
+	}
+
+	if err := r.caption(fmt.Sprintf("6. %s opens the port and its tunnel comes up beside the others", name)); err != nil {
+		return err
+	}
+
+	if err := r.waitTrueWhileShooting(connectedExpr(cfg.tunnels()+1), "the tunnel of "+name, 60*time.Second); err != nil {
+		return err
+	}
+
+	if err := r.scrollTo(`table`); err != nil {
+		return err
+	}
+
+	return r.shot(2500 * time.Millisecond)
+}
+
 // approveFromRow approves the first Host of the host key list from its own row.
 func (r *recorder) approveFromRow() error {
 	if err := r.click(`[data-modal-panel="host-keys"] .host-key-row .buttons button`, `[data-action="host-key-approve"]`); err != nil {
@@ -711,7 +805,7 @@ func sceneJumpRoutes(r *recorder, cfg config, _ string) error {
 		return err
 	}
 
-	if err := r.caption("6. The list shows the jump route of every Host: none, one hop or two"); err != nil {
+	if err := r.caption("7. The list shows the jump route of every Host: none, one hop or two"); err != nil {
 		return err
 	}
 
@@ -780,10 +874,10 @@ func sceneService(r *recorder, cfg config, _ string) error {
 			return fmt.Errorf("the page at %s names port %q and not %s", address, port, cfg.servicePorts[i])
 		}
 
-		caption := fmt.Sprintf("7. A client opens the port on %s and reaches the service", cfg.serviceHost)
+		caption := fmt.Sprintf("8. A client opens the port on %s and reaches the service", cfg.serviceHost)
 
 		if i > 0 {
-			caption = fmt.Sprintf("7. The other ports on %s reach the other ports of the service", cfg.serviceHost)
+			caption = fmt.Sprintf("8. The other ports on %s reach the other ports of the service", cfg.serviceHost)
 			r.fast = true
 		}
 
@@ -815,7 +909,7 @@ func sceneLocalForward(r *recorder, cfg config, _ string) error {
 		return err
 	}
 
-	if err := r.caption(fmt.Sprintf("8. Open a port on the Tunnel Manager server to a service only %s, two hops away, reaches",
+	if err := r.caption(fmt.Sprintf("9. Open a port on the Tunnel Manager server to a service only %s, two hops away, reaches",
 		cfg.forwardHost)); err != nil {
 		return err
 	}
@@ -885,7 +979,7 @@ func sceneLocalForward(r *recorder, cfg config, _ string) error {
 		return fmt.Errorf("the page at %s says %q and not the web server inside the Host", address, heading)
 	}
 
-	if err := r.caption(fmt.Sprintf("9. The Tunnel Manager server opens the port and reaches the web server inside %s",
+	if err := r.caption(fmt.Sprintf("10. The Tunnel Manager server opens the port and reaches the web server inside %s",
 		cfg.forwardHost)); err != nil {
 		return err
 	}
@@ -906,13 +1000,14 @@ func sceneStatusBoth(r *recorder, cfg config, _ string) error {
 		return err
 	}
 
-	if err := r.caption("10. The status screen holds the tunnels and the local forward in one table"); err != nil {
+	if err := r.caption("11. The status screen holds the tunnels and the local forward in one table"); err != nil {
 		return err
 	}
 
-	// The count takes both sorts of row, so what is waited for is one more
-	// than there are service port tunnels.
-	both := connectedExpr(cfg.tunnels() + 1)
+	// The count takes both sorts of row, so what is waited for is the service
+	// port tunnels, the one sceneServicePortHosts gave the bastion, and the
+	// local forward.
+	both := connectedExpr(cfg.tunnels() + 2)
 
 	if err := r.waitTrueWhileShooting(both, "both rows to be connected", 60*time.Second); err != nil {
 		return err
@@ -947,7 +1042,7 @@ func sceneHopOff(r *recorder, cfg config, _ string) error {
 		return err
 	}
 
-	if err := r.caption(fmt.Sprintf("11. Switch the jump host %s off and the Hosts behind it show their route stops there",
+	if err := r.caption(fmt.Sprintf("12. Switch the jump host %s off and the Hosts behind it show their route stops there",
 		cfg.pauseHost)); err != nil {
 		return err
 	}
@@ -988,7 +1083,7 @@ func sceneHopOff(r *recorder, cfg config, _ string) error {
 		return err
 	}
 
-	if err := r.caption("11. The status screen says which jump host is off and what to do about it"); err != nil {
+	if err := r.caption("12. The status screen says which jump host is off and what to do about it"); err != nil {
 		return err
 	}
 
@@ -1014,7 +1109,7 @@ func sceneHopOff(r *recorder, cfg config, _ string) error {
 		return err
 	}
 
-	if err := r.caption(fmt.Sprintf("11. Switch the jump host %s on again and the route is back", cfg.pauseHost)); err != nil {
+	if err := r.caption(fmt.Sprintf("12. Switch the jump host %s on again and the route is back", cfg.pauseHost)); err != nil {
 		return err
 	}
 
@@ -1056,7 +1151,7 @@ func sceneSOCKS(r *recorder, cfg config, _ string) error {
 		return err
 	}
 
-	if err := r.caption(fmt.Sprintf("12. Turn on a SOCKS5 proxy on %s and browse the network behind it",
+	if err := r.caption(fmt.Sprintf("13. Turn on a SOCKS5 proxy on %s and browse the network behind it",
 		cfg.forwardHost)); err != nil {
 		return err
 	}
@@ -1178,7 +1273,7 @@ func (r *recorder) throughProxy(cfg config) error {
 		return fmt.Errorf("the page at %s through the proxy says %q and not the web server inside the Host", cfg.socksURL, heading)
 	}
 
-	if err := r.caption(fmt.Sprintf("13. A browser set to the SOCKS5 proxy opens %s as %s sees it",
+	if err := r.caption(fmt.Sprintf("14. A browser set to the SOCKS5 proxy opens %s as %s sees it",
 		cfg.socksURL, cfg.forwardHost)); err != nil {
 		return err
 	}

@@ -49,12 +49,15 @@ What it does, in order:
 6. Drives the UI in headless Chrome (`recorder/`): the first sign in and the
    setup of the account `admin`; three service ports that the Hosts open on
    `8080`, `8081` and `8082` (the first at the pace of the rest, the other two
-   the same way but quickly); the bastion, added without the service ports;
-   `site-a-app` behind it, with its jump route set in the panel of the add
-   form, and the other four the same way but quickly, `site-b-gw` also without
-   the service ports; the host keys approved as they come in, a hop at a time,
-   the first from its row and the others ticked together, and the tunnels
-   coming up; the jump route column of the Hosts list reading none, one hop and
+   the same way but quickly); the bastion, added without the service ports,
+   which is how the add form opens; `site-a-app` behind it, with its jump route
+   set in the panel of the add form and every service port ticked, and the
+   other four the same way but quickly, `site-b-gw` also without the service
+   ports; the host keys approved as they come in, a hop at a time, the first
+   from its row and the others ticked together, and the tunnels coming up; the
+   first service port given to the bastion from the **Hosts** button of its row
+   on the Service Ports screen, and the tunnel that opens on the bastion
+   counted on the status screen; the jump route column of the Hosts list reading none, one hop and
    two hops; the three services opened through the ports `site-a-app` opened
    for them on `198.51.100.21`, `8080`, `8081` and `8082` in turn (the first at
    the pace of the rest, the other two quickly), each page naming the port of

@@ -2,7 +2,7 @@
 
 [English](../README.md) · [한국어](README.ko.md) · [日本語](README.ja.md)
 
-![Tunnel Manager: add three service ports and six Hosts, some behind others on a jump route of one or two hops, approve the host keys, reach the service through the tunnel, add a local forward, see both in the status screen, switch off a jump host, and turn on a SOCKS5 proxy](demo.gif)
+![Tunnel Manager: add three service ports and six Hosts, some behind others on a jump route of one or two hops, approve the host keys, give a service port to one more Host from its row, reach the service through the tunnel, add a local forward, see both in the status screen, switch off a jump host, and turn on a SOCKS5 proxy](demo.gif)
 
 **Tunnel Manager 把一个服务发布到本来没有路由能到达它的机器上。** 它通过 SSH 连接这些机器，
 让每台机器各打开一个本地端口，再把到达本地端口的流量通过 SSH 连接转发回服务。直接连不上的
