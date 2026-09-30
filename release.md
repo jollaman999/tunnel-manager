@@ -1,3 +1,17 @@
+# v4.1.0
+
+## Add/fix features:
+
+- **The Hosts of a service port are picked from its row.** Every row of the Service Ports screen has a Hosts button that opens a panel of every Host, with the ones that carry that service port ticked. Tick a Host to give it the service port and clear one to take it away. The Reach of the new assignments list above says what the assignments the panel writes are opened to, and a Host that carries the service port already keeps the reach it holds. Only what was changed is sent when it is saved, one Host at a time, and a Host that refuses the change is named in the panel with what it met.
+- **`GET /api/service-port/:id/host` answers one page of the Hosts with the assignments of that service port laid over them**: `assigned`, `bind_scope` and `enabled` of the assignment, and `host_enabled` of the Host. A token needs the read scope. The assignments are changed through `PUT /api/host/:id/service-port`, as before.
+- **The add forms of a Host and of a service port leave Assign all service ports and Assign to all Hosts clear**, so a Host or a service port added from the screen carries nothing until it is picked, with the Service ports button of the Host or the Hosts button of the service port.
+- **The add form of a local forward opens on The Tunnel Manager server itself** rather than on every interface. The wildcard lets anybody who reaches the Tunnel Manager server into the network of the Host without logging in to it, so it is now chosen on purpose. The edit form opens on what is stored.
+- The reference, the READMEs and the demo show the Hosts button.
+
+## Notes:
+
+- **The API keeps its defaults.** A `POST /api/host` without `assign_all_service_ports`, a `POST /api/service-port` without `assign_to_all_hosts` and a local forward created without `bind_scope` are still given every service port, every Host and the wildcard, so a script written for an earlier release does what it did. Only the forms on the screen changed.
+
 # v4.0.2
 
 ## Add/fix features:
