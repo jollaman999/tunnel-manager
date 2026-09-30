@@ -1,3 +1,10 @@
+# v4.1.1
+
+## Add/fix features:
+
+- **Opened and Reachable at say where the port of a service port is open.** Where the Host has said what is listening on the port, the two columns of the status are drawn from that answer and no longer from what was asked for. A port asked for on every interface that an SSH server with `GatewayPorts no` put on the loopback now reads `127.0.0.1` and `[::1]` in both columns, where it read `0.0.0.0` and the address of the Host, which does not reach it. A port asked for on the loopback that `GatewayPorts yes` opened on every interface reads as that, with the address of the Host to connect to. What was asked for is still in the box under the row.
+- **The Hosts panel of a service port sets the reach of each Host.** Every Host carries a reach list beside its box, which can be changed while the Host is ticked. A Host ticked for the first time starts on every interface, and changing the reach of a Host that carries the service port already moves that assignment alone. The one list above the Hosts is gone.
+
 # v4.1.0
 
 ## Add/fix features:
