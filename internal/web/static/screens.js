@@ -3082,6 +3082,11 @@ async function drawHostsAnew() {
         function () {
           return flipPickedHosts(hosts, false);
         })));
+    flips.appendChild(ticksWakeThePress("hosts", table,
+      actionButton(t("hosts.reconnect-picked.button"), "hosts-reconnect-picked",
+        function () {
+          return reconnectPickedHosts(hosts);
+        })));
 
     bar.insertBefore(flips, bar.firstChild);
 
@@ -3147,6 +3152,84 @@ function flipRefusalList(refusals) {
 // request that wrote a hundred rows in one transaction would hold it for the
 // whole of them. A refusal stops that Host and nothing else, since what was
 // asked for was the rest of the list as much as that row.
+// reconnectedCount is how many connections an answer of the reconnect says
+// are being made again, over the three sorts of forward.
+function reconnectedCount(answer) {
+  return countedRows(answer, "tunnels") + countedRows(answer, "local_forwards") +
+    countedRows(answer, "socks");
+}
+
+// reconnectHost drops every connection of one Host and has it made again. It
+// is what a change made on the Host needs, GatewayPorts among them: an SSH
+// server reads its configuration once for each connection, so a forward that
+// stands was opened under the old one. Nothing about the Host is changed,
+// which is what sets it apart from switching the Host off and on.
+async function reconnectHost(host) {
+  const answer = await apiCall("POST", "/api/host/" + host.id + "/reconnect");
+  const count = reconnectedCount(answer);
+
+  setToast(function () {
+    return count === 0
+      ? t("hosts.reconnect-nothing.notice", { id: host.id })
+      : t("hosts.reconnect.notice", { id: host.id, count: count });
+  });
+
+  return drawHosts();
+}
+
+// reconnectPickedHosts is reconnectHost over the ticked Hosts, one request
+// each, for the reason the flips go one at a time. A refusal stops that Host
+// and nothing else, and is listed under the presses the way a flip that was
+// refused is. The ticks stay on, for the reason they stay after a flip.
+async function reconnectPickedHosts(hosts) {
+  const wanted = pickedIDs("hosts");
+  const chosen = hosts.filter(function (host) {
+    return wanted.indexOf(host.id) !== -1;
+  });
+
+  if (chosen.length === 0) {
+    return;
+  }
+
+  const refusals = [];
+  let reached = 0;
+  let count = 0;
+
+  for (const host of chosen) {
+    let answer = null;
+
+    try {
+      answer = await apiCall("POST", "/api/host/" + host.id + "/reconnect");
+    } catch (error) {
+      if (error instanceof Redirected) {
+        throw error;
+      }
+
+      refusals.push({ host: host, reason: error.message });
+
+      continue;
+    }
+
+    reached += 1;
+    count += reconnectedCount(answer);
+  }
+
+  if (refusals.length > 0) {
+    pickedFlipRefusals = refusals;
+
+    setFailure(function () {
+      return t("hosts.reconnected-picked-some.notice",
+        { hosts: reached, count: count, refused: refusals.length });
+    });
+  } else {
+    setToast(function () {
+      return t("hosts.reconnected-picked.notice", { hosts: reached, count: count });
+    });
+  }
+
+  return drawHosts();
+}
+
 async function flipPickedHosts(hosts, on) {
   const wanted = pickedIDs("hosts");
   const chosen = hosts.filter(function (host) {
@@ -3243,6 +3326,9 @@ function hostRow(host, known) {
   }));
   buttons.appendChild(actionButton(t("hosts.local-forwards.button"), "host-local-forwards-" + host.id, function () {
     return openHostLocalForwards(host);
+  }));
+  buttons.appendChild(actionButton(t("hosts.reconnect.button"), "host-reconnect-" + host.id, function () {
+    return reconnectHost(host);
   }));
   buttons.appendChild(actionButton(
     host.enabled ? t("hosts.disable.button") : t("hosts.enable.button"),

@@ -75,6 +75,10 @@ func (m *transferWakes) SocksStatuses() map[uint]tunnel.SocksState {
 	return nil
 }
 
+func (m *transferWakes) RequestReconnect(uint) tunnel.ReconnectCounts {
+	return tunnel.ReconnectCounts{}
+}
+
 // transferInstall is one tunnel-manager: a database file of its own, the
 // encryption key its secrets are sealed with, and the handlers served over it.
 //

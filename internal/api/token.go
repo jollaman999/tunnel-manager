@@ -136,6 +136,7 @@ var tokenRouteScopes = map[string]string{
 	"PUT /api/service-port/:id":                  TokenScopeTunnels,
 	"DELETE /api/service-port/:id":               TokenScopeTunnels,
 	"PUT /api/host/:id/service-port":             TokenScopeTunnels,
+	"POST /api/host/:id/reconnect":               TokenScopeTunnels,
 	"POST /api/host/:id/local-forward":           TokenScopeTunnels,
 	"PUT /api/host/:id/local-forward/:number":    TokenScopeTunnels,
 	"DELETE /api/host/:id/local-forward/:number": TokenScopeTunnels,

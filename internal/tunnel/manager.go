@@ -139,6 +139,12 @@ type Manager struct {
 	desiredCounts  desiredCounts
 	desiredCounted bool
 	desiredMu      sync.Mutex
+
+	// reconnectHosts are the Hosts whose connections the next reconcile pass
+	// is to drop and make again, which is what RequestReconnect asks for. The
+	// pass takes the set and empties it, so a request is served once.
+	reconnectHosts map[uint]bool
+	reconnectMu    sync.Mutex
 }
 
 // desiredCounts is how many of each sort of forward should be running.
@@ -157,6 +163,7 @@ func NewManager(db *gorm.DB, logger *zap.Logger, cipher *crypto.Cipher, monitori
 		reconcileWake:         make(chan struct{}, 1),
 		localForwards:         make(map[LocalForwardKey]*localTunnel),
 		socksProxies:          make(map[uint]*socksTunnel),
+		reconnectHosts:        make(map[uint]bool),
 	}, nil
 }
 

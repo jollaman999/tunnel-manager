@@ -314,6 +314,13 @@ func (m *Manager) Reconcile() (ReconcileResult, error) {
 
 	routes := m.hostRoutesOf(hostByID, stored)
 
+	// The Hosts somebody asked to reconnect have what runs over them stopped
+	// before anything is compared, so that the loops below find it missing and
+	// start it again on a new connection. It is stopped here, inside the pass,
+	// rather than by the request, so that it cannot race a pass that is
+	// starting or stopping the same forwards.
+	m.dropReconnecting(&result)
+
 	running := m.runningTunnelFingerprints()
 
 	for key, want := range desired {

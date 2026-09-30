@@ -1290,6 +1290,64 @@
                 }
             }
         },
+        "/host/{id}/reconnect": {
+            "post": {
+                "security": [
+                    {
+                        "CSRFToken": []
+                    }
+                ],
+                "description": "Its service port tunnels, local forwards and SOCKS5 proxy are stopped and started again on new SSH connections by the reconcile pass this request wakes. That is what a change to the SSH server of the Host, GatewayPorts among them, needs: the server reads its configuration once for each connection.\nThe counts are what was running over the Host when the request came, which is what is made again. A Host that is disabled or carries nothing is answered with zero counts.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "hosts"
+                ],
+                "summary": "Drop every connection of this Host and make it again",
+                "parameters": [
+                    {
+                        "type": "integer",
+                        "description": "The id of the Host",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/models.Response"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "data": {
+                                            "$ref": "#/definitions/tunnel.ReconnectCounts"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "400": {
+                        "description": "The id is not a number",
+                        "schema": {
+                            "$ref": "#/definitions/api.errorBody"
+                        }
+                    },
+                    "404": {
+                        "description": "No such Host",
+                        "schema": {
+                            "$ref": "#/definitions/api.errorBody"
+                        }
+                    }
+                }
+            }
+        },
         "/host/{id}/service-port": {
             "get": {
                 "description": "The page is taken over the service ports and not over the assignments, so a row sits on the same page of this list and of GET /api/service-port whether the Host carries it or not.\nbind_scope is what the assignment of this Host is opened to, and is empty on a row the Host does not carry.\nenabled is whether the tunnel of the assignment runs, and is false on a row the Host does not carry.",
@@ -5120,6 +5178,20 @@
                 },
                 "update_check_interval_hours": {
                     "description": "UpdateCheckIntervalHours is how often that read happens. Releases are\nnot a thing that happens by the minute, and the answer is only ever used\nto draw a line on a screen or, where the setting below is on, to start\nan install that takes the service down: a day is often enough for both\nand rare enough that nobody is rate limited for it.",
+                    "type": "integer"
+                }
+            }
+        },
+        "tunnel.ReconnectCounts": {
+            "type": "object",
+            "properties": {
+                "local_forwards": {
+                    "type": "integer"
+                },
+                "socks": {
+                    "type": "integer"
+                },
+                "tunnels": {
                     "type": "integer"
                 }
             }

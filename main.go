@@ -2065,6 +2065,10 @@ func serve() {
 	// sent it.
 	g.POST("/host/:id/host-key", h.ApproveHostKey)
 
+	// Dropping the connections of a Host and making them again changes nothing
+	// stored, so it is a POST of its own rather than an update of the Host.
+	g.POST("/host/:id/reconnect", h.ReconnectHost)
+
 	// The keys waiting to be approved across every Host, read a page at a time
 	// and approved together. It is its own path and not a filter on /host,
 	// because what a row of it carries is the pair of fingerprints and nothing

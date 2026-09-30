@@ -222,6 +222,20 @@ type wakeRecorder struct {
 	mu                 sync.Mutex
 	wakes              int
 	commitsAtFirstWake int
+	// reconnected are the Hosts RequestReconnect was called for, in order, and
+	// reconnectCounts is what it answers.
+	reconnected     []uint
+	reconnectCounts tunnel.ReconnectCounts
+}
+
+func (r *wakeRecorder) RequestReconnect(hostID uint) tunnel.ReconnectCounts {
+	r.mu.Lock()
+	r.reconnected = append(r.reconnected, hostID)
+	r.mu.Unlock()
+
+	r.WakeReconcile()
+
+	return r.reconnectCounts
 }
 
 func (r *wakeRecorder) WakeReconcile() {
@@ -1212,6 +1226,10 @@ type countFailingManager struct {
 }
 
 func (m *countFailingManager) WakeReconcile() {}
+
+func (m *countFailingManager) RequestReconnect(uint) tunnel.ReconnectCounts {
+	return tunnel.ReconnectCounts{}
+}
 
 func (m *countFailingManager) DesiredTunnelCount() (int, error) {
 	return 0, errQueryFailed

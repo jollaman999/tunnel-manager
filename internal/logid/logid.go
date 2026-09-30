@@ -96,6 +96,7 @@ const (
 	TunnelRestartFailed               ID = "tunnel.restart_failed"
 	TunnelReconcileFailed             ID = "tunnel.reconcile_failed"
 	TunnelReconciled                  ID = "tunnel.reconciled"
+	TunnelReconnectRequested          ID = "tunnel.reconnect_requested"
 	TunnelManagerCreateFailed         ID = "tunnel.manager_create_failed"
 	TunnelRestoreStarting             ID = "tunnel.restore_starting"
 	TunnelReconcileStopTimedOut       ID = "tunnel.reconcile_stop_timed_out"

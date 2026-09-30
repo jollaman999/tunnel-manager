@@ -46,6 +46,9 @@ type tunnelManager interface {
 	// SocksStatuses reports what every running SOCKS5 proxy says about
 	// itself, keyed by Host, for the reason LocalForwardStatuses is asked for.
 	SocksStatuses() map[uint]tunnel.SocksState
+	// RequestReconnect asks the loop to drop every connection of one Host and
+	// make it again, and reports what was running over it when it was asked.
+	RequestReconnect(hostID uint) tunnel.ReconnectCounts
 }
 
 type Handler struct {
