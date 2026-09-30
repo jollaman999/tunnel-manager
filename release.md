@@ -1,3 +1,11 @@
+# v4.1.3
+
+## Add/fix features:
+
+- **A Host can be reconnected from its row, and the checked Hosts together.** Reconnect drops every connection of the Host, its service port tunnels, its local forwards and its SOCKS5 proxy, and has them made again at once, without changing anything about the Host. Reconnect the checked Hosts above the list does the same for every Host ticked. It is what a change to the SSH server of a Host needs, GatewayPorts among them: the server reads its configuration once for each connection, so a forward that stands keeps the addresses it was opened on until the connection is made again. The box under a forward that names GatewayPorts now says to press Reconnect rather than to switch the Host off and on.
+- **`POST /api/host/:id/reconnect`** does the same through the API, and answers how many tunnels, local forwards and SOCKS5 proxies were running over the Host. A token needs the tunnels scope.
+- The demo shows the reach list beside each Host in the Hosts panel of a service port.
+
 # v4.1.2
 
 ## Add/fix features:
