@@ -5540,8 +5540,7 @@ async function deleteHost(host) {
 // rather than read off the controls at the end. picks.served is what the server
 // said about each service port on the pages that were read and picks.wanted
 // holds the boxes the operator touched; picks.scopes and picks.scoped are the
-// same pair for the scope, and picks.running and picks.switched for whether the
-// tunnel of the assignment runs. A control is drawn from what was touched where there
+// same pair for the scope. A control is drawn from what was touched where there
 // is an entry for it and from what the server said otherwise, which is what
 // keeps a tick made on the first page while the second one is being read and
 // after coming back.
@@ -5559,11 +5558,7 @@ async function openHostServicePorts(host) {
   // lists holds the scope list of every row on the page that is on the screen
   // now. It is what lets an apply over the ticked rows show up on the ones
   // being looked at, and it is emptied whenever the list is built again.
-  // switches holds the running box of those rows the same way, so that a row
-  // whose assignment tick is cleared can have its box put out of reach.
-  const picks = {
-    served: {}, wanted: {}, scopes: {}, scoped: {}, running: {}, switched: {}, lists: {}, switches: {}
-  };
+  const picks = { served: {}, wanted: {}, scopes: {}, scoped: {}, lists: {} };
 
   const list = document.createElement("div");
 
@@ -5600,7 +5595,6 @@ async function openHostServicePorts(host) {
     // the backdrop cannot take the panel down and this cannot draw over it.
     list.textContent = "";
     picks.lists = {};
-    picks.switches = {};
 
     if (shown.length === 0) {
       list.appendChild(statusLine(t("service-ports.none.empty"), "empty"));
@@ -5615,7 +5609,6 @@ async function openHostServicePorts(host) {
     for (const item of shown) {
       picks.served[item.id] = Boolean(item.assigned);
       picks.scopes[item.id] = bindScopeStored(item.bind_scope);
-      picks.running[item.id] = item.enabled === true;
     }
 
     const column = assignPickColumn(shown, picks);
@@ -5625,12 +5618,12 @@ async function openHostServicePorts(host) {
     // the identifier, where the service is, which port it is opened on and
     // what somebody wrote it down as. The address is one column rather than
     // two because this table is read inside a panel, where every column costs
-    // width the sentence above it needs. The reach and whether it runs are
-    // last because they are the columns that are not read but answered.
+    // width the sentence above it needs. The reach is last because it is the
+    // column that is not read but answered.
     list.appendChild(buildTable(
       [t("service-ports.id.column"), t("hosts.assign-service.column"),
         t("service-ports.local-port.column"), t("service-ports.description.column"),
-        t("hosts.assign-scope.column"), t("hosts.assign-enabled.column")],
+        t("hosts.assign-scope.column")],
       shown.map(function (item) {
         return { cells: servicePortAssignRow(item, picks), pick: column.box(item) };
       }),
@@ -5691,7 +5684,6 @@ async function openHostServicePorts(host) {
     body: [
       element("p", t("hosts.assign.text")),
       element("p", t("hosts.assign-scope.text")),
-      element("p", t("hosts.assign-enabled.text")),
       problem,
       said,
       scopeToTheTicked(picks, said),
@@ -5812,10 +5804,6 @@ function assignPickColumn(items, picks, rowAria) {
     if (id in picks.lists) {
       picks.lists[id].disabled = !on;
     }
-
-    if (id in picks.switches) {
-      picks.switches[id].disabled = !on;
-    }
   }
 
   head.type = "checkbox";
@@ -5859,8 +5847,8 @@ function assignPickColumn(items, picks, rowAria) {
 }
 
 // servicePortAssignRow is the cells of one service port in that panel: which
-// one it is, where it is, what it was written down as, how far it reaches on
-// this Host, and whether its tunnel runs.
+// one it is, where it is, what it was written down as, and how far it reaches
+// on this Host.
 //
 // The tick of the row is not in here. It is in the column the head of the
 // table opened, which is where the tick of a row is on the two lists as well,
@@ -5888,23 +5876,6 @@ function servicePortAssignRow(item, picks) {
 
   picks.lists[item.id] = scope;
 
-  // Whether the tunnel of the assignment runs is a box beside the scope,
-  // held until Save the way the scope is. It is out of reach on a row that is
-  // not ticked for the reason the scope list is.
-  const running = document.createElement("input");
-
-  running.type = "checkbox";
-  running.className = "assign-enabled";
-  running.dataset.field = "enabled-" + item.id;
-  running.checked = assignmentRuns(item.id, picks);
-  running.disabled = scope.disabled;
-  running.setAttribute("aria-label", t("hosts.assign-row-enabled.aria", { id: item.id }));
-  running.addEventListener("change", function () {
-    picks.switched[item.id] = running.checked;
-  });
-
-  picks.switches[item.id] = running;
-
   // The address is a value and not a sentence, so it is put together here
   // rather than being a catalog string a translator is handed with two numbers
   // in it. It is one cell because it is read as one thing, and nothing in it
@@ -5916,23 +5887,11 @@ function servicePortAssignRow(item, picks) {
     ? ""
     : String(item.description);
 
-  return [item.id, service, item.local_port, description, scope, running];
+  return [item.id, service, item.local_port, description, scope];
 }
 
-// assignmentRuns is whether the tunnel of one row of that panel is to run: what
-// the operator set where there is an entry for it, what the server said about
-// an assignment the Host carries, and on for one it does not carry yet, since
-// a service port that is ticked is ticked to be carried.
-function assignmentRuns(id, picks) {
-  if (id in picks.switched) {
-    return picks.switched[id];
-  }
-
-  return picks.served[id] ? picks.running[id] : true;
-}
-
-// saveHostServicePorts sends what was ticked, what was rescoped and what was
-// switched on or off, as the change it is.
+// saveHostServicePorts sends what was ticked and what was rescoped, as the
+// change it is.
 //
 // A panel that was not changed sends nothing at all. The request would carry
 // empty lists, write no row and answer that it wrote none, so the round trip
@@ -5946,30 +5905,21 @@ async function saveHostServicePorts(host, picks, button, close, problem) {
   const add = [];
   const remove = [];
   const rescope = [];
-  const switches = [];
 
   for (const id of Object.keys(picks.served)) {
     const carried = picks.served[id];
     const ticked = id in picks.wanted ? picks.wanted[id] : carried;
     const scope = id in picks.scoped ? picks.scoped[id] : picks.scopes[id];
-    const runs = assignmentRuns(id, picks);
 
     if (ticked && !carried) {
-      add.push({ id: Number(id), scope: scope, runs: runs });
+      add.push({ id: Number(id), scope: scope });
     } else if (!ticked && carried) {
       remove.push(Number(id));
-    } else if (ticked) {
+    } else if (ticked && scope !== picks.scopes[id]) {
       // An assignment that is already there is named here and nowhere else.
       // The API leaves one it is only asked to add exactly as it is, on
-      // purpose, so a row moves or is switched when and only when the request
-      // points at it.
-      if (scope !== picks.scopes[id]) {
-        rescope.push({ id: Number(id), scope: scope });
-      }
-
-      if (runs !== picks.running[id]) {
-        switches.push({ id: Number(id), runs: runs });
-      }
+      // purpose, so a row moves when and only when the request points at it.
+      rescope.push({ id: Number(id), scope: scope });
     }
   }
 
@@ -5986,29 +5936,20 @@ async function saveHostServicePorts(host, picks, button, close, problem) {
   // scope it is already on writes the value it is already carrying. Sending the
   // half that landed a second time leaves the same rows behind.
   //
-  // Whether the rows run splits it the same way. A request carries a single
-  // enabled, which is what its added rows are written with and what the ones
-  // it names to switch are switched to, so the rows to switch ride on the
-  // requests of the wildcard, one for each way, and the moves ride on the
-  // request that switches on, which is the one a request without the field
-  // would have been.
+  // enabled is not sent, so an added row runs, which is what the API writes
+  // for a request that leaves the field out, and a row already there keeps
+  // whether it runs.
   const changes = [];
 
   for (const scope of [bindScopeWildcard, bindScopeLoopback]) {
-    for (const runs of [true, false]) {
-      const change = {
-        add: idsScoped(add.filter(function (entry) {
-          return entry.runs === runs;
-        }), scope),
-        rescope: runs ? idsScoped(rescope, scope) : [],
-        switch: scope === bindScopeWildcard ? idsRunning(switches, runs) : [],
-        bind_scope: scope,
-        enabled: runs
-      };
+    const change = {
+      add: idsScoped(add, scope),
+      rescope: idsScoped(rescope, scope),
+      bind_scope: scope
+    };
 
-      if (change.add.length > 0 || change.rescope.length > 0 || change.switch.length > 0) {
-        changes.push(change);
-      }
+    if (change.add.length > 0 || change.rescope.length > 0) {
+      changes.push(change);
     }
   }
 
@@ -6026,7 +5967,7 @@ async function saveHostServicePorts(host, picks, button, close, problem) {
   // assignment away says nothing about a scope. Where there is no other
   // request, they are the whole of one.
   if (changes.length === 0) {
-    changes.push({ add: [], rescope: [], switch: [], bind_scope: bindScopeWildcard });
+    changes.push({ add: [], rescope: [], bind_scope: bindScopeWildcard });
   }
 
   changes[0].remove = remove;
@@ -6043,7 +5984,6 @@ async function saveHostServicePorts(host, picks, button, close, problem) {
   let added = 0;
   let removed = 0;
   let rescoped = 0;
-  let switched = 0;
 
   try {
     for (const change of changes) {
@@ -6052,15 +5992,9 @@ async function saveHostServicePorts(host, picks, button, close, problem) {
       added += countedRows(answer, "added");
       removed += countedRows(answer, "removed");
       rescoped += countedRows(answer, "rescoped");
-      switched += countedRows(answer, "switched");
     }
 
     setToast(function () {
-      if (switched > 0) {
-        return t("hosts.assign-switched.notice",
-          { id: host.id, added: added, removed: removed, rescoped: rescoped, switched: switched });
-      }
-
       return rescoped > 0
         ? t("hosts.assign-scoped.notice",
           { id: host.id, added: added, removed: removed, rescoped: rescoped })
@@ -6089,16 +6023,6 @@ async function saveHostServicePorts(host, picks, button, close, problem) {
 function idsScoped(entries, scope) {
   return entries.filter(function (entry) {
     return entry.scope === scope;
-  }).map(function (entry) {
-    return entry.id;
-  });
-}
-
-// idsRunning are the identifiers of the entries that are to be switched one
-// way, in the order they were read.
-function idsRunning(entries, runs) {
-  return entries.filter(function (entry) {
-    return entry.runs === runs;
   }).map(function (entry) {
     return entry.id;
   });
@@ -7287,23 +7211,19 @@ async function sendPickedAssignments(ports, picks, scope, button, close, problem
 // openServicePortHosts puts up the panel that says which Hosts carry one
 // service port, and is the panel a Host opens turned round: the same table,
 // the same tick in its head that takes and releases the rows of the page, a
-// reach and an Enabled box beside each row, and the row above the table that
+// reach beside each row, and the row above the table that
 // sets one reach on everything ticked. A service port wanted on a Host is one
 // row to tick here rather than a panel to open on that Host, and a Host can
 // be taken off it here as well.
 //
 // The maps are the ones the panel of a Host holds, keyed by the Host rather
 // than by the service port: picks.served is what the server said each Host
-// carries and picks.wanted what the operator ticked, picks.scopes and
-// picks.scoped the same pair for the reach, and picks.running and
-// picks.switched for whether the tunnel runs. What is sent is the difference,
+// carries and picks.wanted what the operator ticked, and picks.scopes and
+// picks.scoped the same pair for the reach. What is sent is the difference,
 // one request per Host, because an assignment is changed under its Host.
 async function openServicePortHosts(port) {
   const page = { number: 1, size: listSizes[0] };
-  const picks = {
-    served: {}, wanted: {}, scopes: {}, scoped: {}, running: {}, switched: {}, lists: {}, switches: {},
-    hosts: {}
-  };
+  const picks = { served: {}, wanted: {}, scopes: {}, scoped: {}, lists: {}, hosts: {} };
 
   const list = document.createElement("div");
 
@@ -7337,7 +7257,6 @@ async function openServicePortHosts(port) {
   function drawList() {
     list.textContent = "";
     picks.lists = {};
-    picks.switches = {};
 
     if (shown.length === 0) {
       list.appendChild(statusLine(t("hosts.none.empty"), "empty"));
@@ -7348,7 +7267,6 @@ async function openServicePortHosts(port) {
     for (const host of shown) {
       picks.served[host.id] = Boolean(host.assigned);
       picks.scopes[host.id] = bindScopeStored(host.bind_scope);
-      picks.running[host.id] = host.enabled === true;
       picks.hosts[host.id] = host;
     }
 
@@ -7356,7 +7274,7 @@ async function openServicePortHosts(port) {
 
     list.appendChild(buildTable(
       [t("hosts.id.column"), t("hosts.address.column"), t("hosts.description.column"),
-        t("hosts.assign-scope.column"), t("hosts.assign-enabled.column")],
+        t("hosts.assign-scope.column")],
       shown.map(function (host) {
         return { cells: servicePortHostRow(host, picks), pick: column.box(host) };
       }),
@@ -7416,7 +7334,6 @@ async function openServicePortHosts(port) {
     body: [
       element("p", t("service-ports.hosts.text")),
       element("p", t("service-ports.hosts-scope.text")),
-      element("p", t("service-ports.hosts-enabled.text")),
       problem,
       said,
       scopeToTheTicked(picks, said, {
@@ -7455,10 +7372,10 @@ async function openServicePortHosts(port) {
 }
 
 // servicePortHostRow is the cells of one Host in that panel: which one it is,
-// where it is, what was written down about it, how far this service port
-// reaches on it, and whether its tunnel runs there. The tick is in the column
-// assignPickColumn opened, as it is in the panel of a Host, and the reach and
-// the Enabled box are out of reach while the row is not ticked.
+// where it is, what was written down about it, and how far this service port
+// reaches on it. The tick is in the column assignPickColumn opened, as it is in
+// the panel of a Host, and the reach is out of reach while the row is not
+// ticked.
 function servicePortHostRow(host, picks) {
   const ticked = host.id in picks.wanted ? picks.wanted[host.id] : picks.served[host.id];
 
@@ -7476,20 +7393,6 @@ function servicePortHostRow(host, picks) {
   });
 
   picks.lists[host.id] = scope;
-
-  const running = document.createElement("input");
-
-  running.type = "checkbox";
-  running.className = "assign-enabled";
-  running.dataset.field = "service-port-host-enabled-" + host.id;
-  running.checked = assignmentRuns(host.id, picks);
-  running.disabled = !ticked;
-  running.setAttribute("aria-label", t("service-ports.hosts-row-enabled.aria", { id: host.id }));
-  running.addEventListener("change", function () {
-    picks.switched[host.id] = running.checked;
-  });
-
-  picks.switches[host.id] = running;
 
   const description = host.description === undefined || host.description === null
     ? ""
@@ -7510,17 +7413,17 @@ function servicePortHostRow(host, picks) {
     said.appendChild(off);
   }
 
-  return [host.id, joinAddress(host.address, String(host.port)), said, scope, running];
+  return [host.id, joinAddress(host.address, String(host.port)), said, scope];
 }
 
-// saveServicePortHosts sends what was ticked, cleared, moved and switched, one
-// request per Host that changed.
+// saveServicePortHosts sends what was ticked, cleared and moved, one request
+// per Host that changed.
 //
 // A Host that carried nothing and is ticked is given the service port on the
-// reach and with the Enabled its row says. One that carried it and is cleared
-// has it taken away. One that carries it and stays ticked is named in rescope
-// where its reach changed and in switch where Enabled changed, which is the
-// only way the API moves or switches an assignment that is already there.
+// reach its row says, and it runs, which is what the API writes where enabled
+// is left out. One that carried it and is cleared has it taken away. One that
+// carries it and stays ticked is named in rescope where its reach changed,
+// which is the only way the API moves an assignment that is already there.
 //
 // A refusal stops that Host and nothing else, for the reason it does in
 // sendPickedAssignments, and the panel stays up holding the Hosts that are
@@ -7535,29 +7438,13 @@ async function saveServicePortHosts(port, picks, button, close, problem,
     const carried = picks.served[id];
     const ticked = id in picks.wanted ? picks.wanted[id] : carried;
     const scope = id in picks.scoped ? picks.scoped[id] : picks.scopes[id];
-    const runs = assignmentRuns(id, picks);
 
     if (ticked && !carried) {
-      changes.push({ host: picks.hosts[id], body: { add: [port.id], bind_scope: scope, enabled: runs } });
+      changes.push({ host: picks.hosts[id], body: { add: [port.id], bind_scope: scope } });
     } else if (!ticked && carried) {
       changes.push({ host: picks.hosts[id], body: { remove: [port.id] } });
-    } else if (ticked) {
-      const body = { bind_scope: scope, enabled: runs };
-      let moved = false;
-
-      if (scope !== picks.scopes[id]) {
-        body.rescope = [port.id];
-        moved = true;
-      }
-
-      if (runs !== picks.running[id]) {
-        body.switch = [port.id];
-        moved = true;
-      }
-
-      if (moved) {
-        changes.push({ host: picks.hosts[id], body: body });
-      }
+    } else if (ticked && scope !== picks.scopes[id]) {
+      changes.push({ host: picks.hosts[id], body: { rescope: [port.id], bind_scope: scope } });
     }
   }
 
@@ -7579,7 +7466,6 @@ async function saveServicePortHosts(port, picks, button, close, problem,
   let added = 0;
   let removed = 0;
   let rescoped = 0;
-  let switched = 0;
 
   try {
     for (const change of changes) {
@@ -7602,7 +7488,6 @@ async function saveServicePortHosts(port, picks, button, close, problem,
       added += countedRows(answer, "added");
       removed += countedRows(answer, "removed");
       rescoped += countedRows(answer, "rescoped");
-      switched += countedRows(answer, "switched");
 
       // The Host has taken the change, so the row the panel was drawn from is
       // changed with it: a list drawn again after a refusal reads the rows and
@@ -7611,13 +7496,10 @@ async function saveServicePortHosts(port, picks, button, close, problem,
 
       change.host.assigned = !("remove" in change.body);
       change.host.bind_scope = change.host.assigned ? change.body.bind_scope : "";
-      change.host.enabled = change.host.assigned ? change.body.enabled : false;
       picks.served[id] = change.host.assigned;
       picks.scopes[id] = bindScopeStored(change.host.bind_scope);
-      picks.running[id] = change.host.enabled;
       delete picks.wanted[id];
       delete picks.scoped[id];
-      delete picks.switched[id];
       picks.changed = true;
     }
   } finally {
@@ -7627,7 +7509,7 @@ async function saveServicePortHosts(port, picks, button, close, problem,
   if (failures.length === 0) {
     setToast(function () {
       return t("service-ports.hosts-saved.notice",
-        { id: port.id, added: added, removed: removed, rescoped: rescoped, switched: switched });
+        { id: port.id, added: added, removed: removed, rescoped: rescoped });
     });
 
     close("saved");
