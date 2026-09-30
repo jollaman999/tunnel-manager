@@ -1,3 +1,9 @@
+# v4.1.2
+
+## Add/fix features:
+
+- **The box under a forward says which GatewayPorts put the port elsewhere than asked.** Where the Host is listening at the loopback although every interface was asked for, the box says that an SSH server does this with `GatewayPorts no`, the default of OpenSSH, and that setting `GatewayPorts clientspecified` on the Host, reloading sshd and switching the Host off and on makes the port open where it was asked. Where the Host is listening at every interface although the loopback was asked for, it says the same of `GatewayPorts yes`. The sentence that an answer to a request is not a measurement is no longer drawn where the Host has said what is listening, since that is the measurement.
+
 # v4.1.1
 
 ## Add/fix features:
