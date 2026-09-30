@@ -2324,6 +2324,36 @@ curl -s -b cookies.txt -X PUT "$BASE/api/host/1/service-port" \
 変更は全部が通るか、全部が通らないかのどちらかです。コミットされると調整ループが起動される
 ので、トンネルはその場で追従します。
 
+### サービスポートを持つ Host
+
+**`GET /api/service-port/:id/host` は同じ一覧を反対側から見たものです。**
+Host の 1 ページを `GET /api/host` と同じ id 順で返し、各行の `assigned` が、その
+Host がこのサービスポートを持つかどうかを示します。`page` と `size` を受け取り
+([ページング](#ページング)を参照)、存在しないサービスポートには `404` を返します。
+サービスポート画面で行の **Host** ボタンが開く一覧がこれです。
+
+```json
+{
+  "success": true,
+  "data": {
+    "items": [
+      { "id": 1, "address": "198.51.100.10", "port": 22, "user": "demo",
+        "description": "", "host_enabled": true, "assigned": true,
+        "bind_scope": "wildcard", "enabled": true }
+    ],
+    "total": 1,
+    "page": 1,
+    "size": 10
+  }
+}
+```
+
+行には Host を見分ける値だけがあり、パスワード、鍵、ホストキーは含まれません。
+`host_enabled` は Host 自体が有効かどうかです。`assigned`、`bind_scope`、`enabled`
+は割り当ての値で、`GET /api/host/:id/service-port` と同じ意味です。このパスに
+書き込みはありません。割り当ては `PUT /api/host/:id/service-port` で Host ごとに
+1 回ずつ変更し、パネルもそのように送ります。
+
 ### ホストキーの承認
 
 **Host は、その SSH サーバーの鍵が承認されるまでどこにも届きません。** この確認はハンドシェイク
@@ -2534,6 +2564,7 @@ curl -s -b cookies.txt -X PUT "$BASE/api/host/1/local-forward/1" \
 | `GET` | `/api/service-port/:id` | サービスポートを 1 つ読みます |
 | `PUT` | `/api/service-port/:id` | サービスポートを更新します。`service_address`, `service_port`, `local_port` はすべて必須です |
 | `DELETE` | `/api/service-port/:id` | サービスポートと、それを指す割り当てを削除します |
+| `GET` | `/api/service-port/:id/host` | Host の 1 ページに、このサービスポートの割り当てを重ねて返します。[サービスポートを持つ Host](#サービスポートを持つ-host)を参照してください |
 
 作成の `bind_scope` は、`assign_to_all_hosts` が作る割り当ての一括分をどの範囲で開くかで、
 `POST /api/host` と同じです。`PUT /api/service-port/:id` は受け取りません。1 つの答えが

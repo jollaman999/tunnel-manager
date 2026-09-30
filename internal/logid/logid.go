@@ -349,6 +349,7 @@ const (
 	ServicePortUpdateFailed                ID = "service_port.update_failed"
 	ServicePortDeleteFailed                ID = "service_port.delete_failed"
 	ServicePortHostAssignmentsDeleteFailed ID = "service_port.host_assignments_delete_failed"
+	ServicePortHostAssignmentsFetchFailed  ID = "service_port.host_assignments_fetch_failed"
 )
 
 // local_forward: the local forwards the screens add, change and remove.

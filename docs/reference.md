@@ -2594,6 +2594,38 @@ is answered, not refused.
 The whole of the change lands or none of it does, and the reconcile loop is
 woken once it is committed, so the tunnels follow within the moment.
 
+### The Hosts that carry a service port
+
+**`GET /api/service-port/:id/host` is the same list from the other side**: one
+page of the Hosts, ordered by id the way `GET /api/host` is, with `assigned` on
+each saying whether that Host carries this service port. It takes `page` and
+`size`, see [Paging](#paging), and a service port that is not there is answered
+with `404`. It is what the **Hosts** button of a row on the Service Ports screen
+opens.
+
+```json
+{
+  "success": true,
+  "data": {
+    "items": [
+      { "id": 1, "address": "198.51.100.10", "port": 22, "user": "demo",
+        "description": "", "host_enabled": true, "assigned": true,
+        "bind_scope": "wildcard", "enabled": true }
+    ],
+    "total": 1,
+    "page": 1,
+    "size": 10
+  }
+}
+```
+
+A row names the Host and no more of it: no password, key or host key.
+`host_enabled` is whether the Host is enabled. `assigned`, `bind_scope` and
+`enabled` are the assignment, and mean what they mean on
+`GET /api/host/:id/service-port`. There is no write under this path: the
+assignments are changed through `PUT /api/host/:id/service-port`, one request
+per Host, which is what the panel sends.
+
 ### Host keys
 
 **A Host reaches nothing until the key of its SSH server has been approved.**
@@ -2822,6 +2854,7 @@ list again to see what it did.
 | `GET` | `/api/service-port/:id` | Reads one service port |
 | `PUT` | `/api/service-port/:id` | Updates a service port. `service_address`, `service_port` and `local_port` are all required |
 | `DELETE` | `/api/service-port/:id` | Deletes a service port, and the assignments naming it |
+| `GET` | `/api/service-port/:id/host` | One page of the Hosts with the assignments of this service port laid over them, see [The Hosts that carry a service port](#the-hosts-that-carry-a-service-port) |
 
 `bind_scope` on the create is what the batch of assignments `assign_to_all_hosts`
 makes is opened to, the way it is on `POST /api/host`, and

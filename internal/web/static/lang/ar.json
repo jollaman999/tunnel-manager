@@ -719,6 +719,7 @@
   "log.service_port.fetch_failed.text": "تعذّر جلب منفذ خدمة",
   "log.service_port.host_assign_failed.text": "تعذّر إسناد منفذ خدمة جديد إلى Host",
   "log.service_port.host_assignments_delete_failed.text": "تعذّر حذف إسنادات الـ Hosts لمنفذ خدمة",
+  "log.service_port.host_assignments_fetch_failed.text": "تعذّر جلب إسنادات الـ Hosts لمنفذ خدمة",
   "log.service_port.hosts_read_failed.text": "تعذّرت قراءة الـ Hosts لإسناد منفذ خدمة جديد إليها",
   "log.service_port.list_fetch_failed.text": "تعذّر جلب منافذ الخدمة",
   "log.service_port.update_failed.text": "تعذّر تحديث منفذ خدمة",

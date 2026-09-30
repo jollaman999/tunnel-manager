@@ -719,6 +719,7 @@
   "log.service_port.fetch_failed.text": "không lấy được cổng dịch vụ",
   "log.service_port.host_assign_failed.text": "không gán được cổng dịch vụ mới cho một Host",
   "log.service_port.host_assignments_delete_failed.text": "không xóa được các phép gán Host của một cổng dịch vụ",
+  "log.service_port.host_assignments_fetch_failed.text": "không lấy được các phép gán Host của một cổng dịch vụ",
   "log.service_port.hosts_read_failed.text": "không đọc được danh sách Host để gán cổng dịch vụ mới",
   "log.service_port.list_fetch_failed.text": "không lấy được danh sách cổng dịch vụ",
   "log.service_port.update_failed.text": "không cập nhật được cổng dịch vụ",

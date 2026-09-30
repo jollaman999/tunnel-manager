@@ -118,6 +118,7 @@ var tokenRouteScopes = map[string]string{
 	"GET /api/host/:id/local-forward/:number": TokenScopeRead,
 	"GET /api/service-port":                   TokenScopeRead,
 	"GET /api/service-port/:id":               TokenScopeRead,
+	"GET /api/service-port/:id/host":          TokenScopeRead,
 	"GET /api/status":                         TokenScopeRead,
 	"GET /api/status/:hostId":                 TokenScopeRead,
 	"GET /api/metrics":                        TokenScopeRead,

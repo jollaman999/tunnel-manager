@@ -719,6 +719,7 @@
   "log.service_port.fetch_failed.text": "सर्विस पोर्ट लाया नहीं जा सका",
   "log.service_port.host_assign_failed.text": "नया सर्विस पोर्ट Host को असाइन नहीं किया जा सका",
   "log.service_port.host_assignments_delete_failed.text": "सर्विस पोर्ट के Host असाइनमेंट मिटाए नहीं जा सके",
+  "log.service_port.host_assignments_fetch_failed.text": "सर्विस पोर्ट के Host असाइनमेंट लाए नहीं जा सके",
   "log.service_port.hosts_read_failed.text": "नया सर्विस पोर्ट असाइन करने के लिए Host पढ़े नहीं जा सके",
   "log.service_port.list_fetch_failed.text": "सर्विस पोर्ट की सूची लाई नहीं जा सकी",
   "log.service_port.update_failed.text": "सर्विस पोर्ट बदला नहीं जा सका",

@@ -1796,6 +1796,147 @@ func (h *Handler) ListHostServicePorts(c echo.Context) error {
 	})
 }
 
+// servicePortHostItem is one row of the list the assignment panel of a service
+// port draws: a Host, with whether it is assigned to carry this service port.
+// It is the other direction of hostServicePortItem, and the Hosts that do not
+// carry it are on the list for the same reason the service ports a Host does
+// not carry are on that one.
+//
+// The Host is not the whole record the Host list answers with. The panel names
+// a Host and ticks it, and the rest of what that list carries - the jump route,
+// the host key, the SOCKS5 proxy - is read from other tables and would be work
+// nothing on this panel is drawn from.
+type servicePortHostItem struct {
+	ID          uint   `json:"id"`
+	Address     string `json:"address"`
+	Port        int    `json:"port"`
+	User        string `json:"user"`
+	Description string `json:"description"`
+	// HostEnabled is whether the Host itself is enabled. It is not called
+	// enabled because that name is taken by the assignment, the way it is on
+	// the list a Host opens, so a client reads the same field the same way on
+	// both lists.
+	HostEnabled bool `json:"host_enabled"`
+	Assigned    bool `json:"assigned"`
+	// BindScope and Enabled are the assignment of this Host, and are empty and
+	// false on a row the Host does not carry, for the reasons they are on
+	// hostServicePortItem.
+	BindScope string `json:"bind_scope"`
+	Enabled   bool   `json:"enabled"`
+}
+
+// ListServicePortHosts answers one page of the Hosts with the assignments of
+// one service port laid over them.
+//
+// The page is taken over the Hosts and not over the assignments, and ordered by
+// id as ListHosts is, so that a row sits on the same page of both lists whether
+// it carries this service port or not.
+//
+// @Summary      One page of the Hosts, with assigned saying whether each carries this service port
+// @Description  The page is taken over the Hosts and not over the assignments, so a row sits on the same page of this list and of GET /api/host whether the Host carries this service port or not.
+// @Description  host_enabled is whether the Host is enabled. enabled is whether the tunnel of the assignment runs, as it is on GET /api/host/{id}/service-port, and is false on a row that does not carry this service port.
+// @Description  bind_scope is what the assignment of the Host is opened to, and is empty on a row that does not carry this service port.
+// @Description  The assignments are changed through PUT /api/host/{id}/service-port, one Host at a time.
+// @Tags         assignments
+// @Produce  json
+// @Param   page  query  int  false  "The page, counted from 1. Below 1 is read as 1, and a page past the last one is answered with the last page"
+// @Param   size  query  int  false  "How many rows a page holds"  Enums(10, 20, 30, 50, 100)
+// @Param   id  path  int  true  "The id of the service port"
+// @Success  200  {object}  models.Response{data=api.listPageOf{items=[]api.servicePortHostItem}}
+// @Failure  400  {object}  api.errorBody  "page is not a number, or size is not one of the sizes taken"
+// @Failure  404  {object}  api.errorBody  "No such service port"
+// @Router       /service-port/{id}/host [get]
+func (h *Handler) ListServicePortHosts(c echo.Context) error {
+	id, err := strconv.ParseUint(c.Param("id"), 10, 32)
+	if err != nil {
+		return failure(c, http.StatusBadRequest, errServicePortIDInvalid, errorArgs{"reason": err.Error()})
+	}
+
+	page, refused := readListPage(c)
+	if refused != nil {
+		return badListPage(c, refused)
+	}
+
+	// The service port is read first, for the reason ListHostServicePorts
+	// reads the Host: without it a service port that is not there would be
+	// answered as every Host carrying nothing.
+	var sp models.ServicePort
+	err = h.db.First(&sp, id).Error
+	if err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return failure(c, http.StatusNotFound, errServicePortNotFound)
+		}
+		h.logger.Error("failed to fetch service port", logid.ServicePortFetchFailed.Field(), zap.Error(err))
+		return failure(c, http.StatusInternalServerError, errServicePortFetchFailed)
+	}
+
+	var total int64
+	err = h.db.Model(&models.Host{}).Count(&total).Error
+	if err != nil {
+		h.logger.Error("failed to count the Hosts", logid.HostCountFailed.Field(), zap.Error(err))
+		return failure(c, http.StatusInternalServerError, errHostListFailed)
+	}
+
+	page = page.fitTo(total)
+
+	var hosts []models.Host
+	err = h.db.Order("id").Limit(page.size).Offset(page.offset()).Find(&hosts).Error
+	if err != nil {
+		h.logger.Error("failed to fetch Hosts", logid.HostListFetchFailed.Field(), zap.Error(err))
+		return failure(c, http.StatusInternalServerError, errHostListFailed)
+	}
+
+	// Only the assignments of the Hosts on this page are read, for the reason
+	// ListHostServicePorts reads only those of its page.
+	ids := make([]uint, 0, len(hosts))
+	for _, host := range hosts {
+		ids = append(ids, host.ID)
+	}
+
+	assigned := make(map[uint]models.HostServicePort, len(ids))
+	if len(ids) > 0 {
+		var rows []models.HostServicePort
+		err = h.db.Where("sp_id = ? AND host_id IN ?", sp.ID, ids).Find(&rows).Error
+		if err != nil {
+			h.logger.Error("failed to fetch the Host assignments of a service port",
+				logid.ServicePortHostAssignmentsFetchFailed.Field(),
+				zap.Error(err), zap.Uint64("service_port_id", id))
+			return failure(c, http.StatusInternalServerError, errHostListFailed)
+		}
+
+		for _, row := range rows {
+			assigned[row.HostID] = row
+		}
+	}
+
+	// An empty page is an array and not null, for the reason ListHosts says.
+	items := make([]servicePortHostItem, 0, len(hosts))
+	for _, host := range hosts {
+		row, carried := assigned[host.ID]
+		items = append(items, servicePortHostItem{
+			ID:          host.ID,
+			Address:     host.Address,
+			Port:        host.Port,
+			User:        host.User,
+			Description: host.Description,
+			HostEnabled: host.Enabled,
+			Assigned:    carried,
+			BindScope:   row.BindScope,
+			Enabled:     row.Enabled,
+		})
+	}
+
+	return c.JSON(http.StatusOK, models.Response{
+		Success: true,
+		Data: listPageOf{
+			Items: items,
+			Total: total,
+			Page:  page.number,
+			Size:  page.size,
+		},
+	})
+}
+
 // hostServicePortChange is the change a request makes to the assignments of one
 // Host: the service ports to give it, and the ones to take away.
 //

@@ -719,6 +719,7 @@
   "log.service_port.fetch_failed.text": "failed to fetch service port",
   "log.service_port.host_assign_failed.text": "failed to assign a new service port to a Host",
   "log.service_port.host_assignments_delete_failed.text": "failed to delete the Host assignments of a service port",
+  "log.service_port.host_assignments_fetch_failed.text": "failed to fetch the Host assignments of a service port",
   "log.service_port.hosts_read_failed.text": "failed to read the Hosts to assign a new service port to",
   "log.service_port.list_fetch_failed.text": "failed to fetch service ports",
   "log.service_port.update_failed.text": "failed to update service port",

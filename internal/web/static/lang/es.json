@@ -719,6 +719,7 @@
   "log.service_port.fetch_failed.text": "no se pudo obtener el puerto de servicio",
   "log.service_port.host_assign_failed.text": "no se pudo asignar un puerto de servicio nuevo a un Host",
   "log.service_port.host_assignments_delete_failed.text": "no se pudieron borrar las asignaciones a Hosts de un puerto de servicio",
+  "log.service_port.host_assignments_fetch_failed.text": "no se pudieron obtener las asignaciones a Hosts de un puerto de servicio",
   "log.service_port.hosts_read_failed.text": "no se pudieron leer los Hosts a los que asignar un puerto de servicio nuevo",
   "log.service_port.list_fetch_failed.text": "no se pudieron obtener los puertos de servicio",
   "log.service_port.update_failed.text": "no se pudo actualizar el puerto de servicio",

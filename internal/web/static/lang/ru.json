@@ -719,6 +719,7 @@
   "log.service_port.fetch_failed.text": "не удалось получить сервисный порт",
   "log.service_port.host_assign_failed.text": "не удалось привязать новый сервисный порт к Host",
   "log.service_port.host_assignments_delete_failed.text": "не удалось удалить привязки сервисного порта к Host",
+  "log.service_port.host_assignments_fetch_failed.text": "не удалось получить привязки сервисного порта к Host",
   "log.service_port.hosts_read_failed.text": "не удалось прочитать Host, к которым привязывается новый сервисный порт",
   "log.service_port.list_fetch_failed.text": "не удалось получить сервисные порты",
   "log.service_port.update_failed.text": "не удалось изменить сервисный порт",

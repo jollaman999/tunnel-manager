@@ -2096,6 +2096,12 @@ func serve() {
 	g.PUT("/service-port/:id", h.UpdateServicePort)
 	g.DELETE("/service-port/:id", h.DeleteServicePort)
 
+	// The Hosts that carry a service port, read from the side of the service
+	// port. It is a read alone: the change is made through the route under the
+	// Host, one Host at a time, so an assignment is written by one route
+	// whichever list it was ticked on.
+	g.GET("/service-port/:id/host", h.ListServicePortHosts)
+
 	g.GET("/status", h.GetStatus)
 	g.GET("/status/:hostId", h.GetHostStatus)
 

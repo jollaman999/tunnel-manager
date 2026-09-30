@@ -719,6 +719,7 @@
   "log.service_port.fetch_failed.text": "获取服务端口失败",
   "log.service_port.host_assign_failed.text": "把新服务端口分配给 Host 失败",
   "log.service_port.host_assignments_delete_failed.text": "删除这个服务端口的 Host 分配关系失败",
+  "log.service_port.host_assignments_fetch_failed.text": "获取这个服务端口的 Host 分配关系失败",
   "log.service_port.hosts_read_failed.text": "读取要分配新服务端口的 Host 失败",
   "log.service_port.list_fetch_failed.text": "获取服务端口列表失败",
   "log.service_port.update_failed.text": "更新服务端口失败",

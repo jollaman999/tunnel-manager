@@ -719,6 +719,7 @@
   "log.service_port.fetch_failed.text": "échec de la récupération du port de service",
   "log.service_port.host_assign_failed.text": "échec de l'attribution d'un nouveau port de service à un Host",
   "log.service_port.host_assignments_delete_failed.text": "échec de la suppression des attributions de Hosts d'un port de service",
+  "log.service_port.host_assignments_fetch_failed.text": "échec de la récupération des attributions de Hosts d'un port de service",
   "log.service_port.hosts_read_failed.text": "échec de la lecture des Hosts auxquels attribuer un nouveau port de service",
   "log.service_port.list_fetch_failed.text": "échec de la récupération des ports de service",
   "log.service_port.update_failed.text": "échec de la mise à jour du port de service",

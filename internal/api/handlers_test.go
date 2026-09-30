@@ -4394,6 +4394,115 @@ func TestListHostServicePortsPagesOverTheServicePorts(t *testing.T) {
 	}
 }
 
+// TestListServicePortHostsCarriesTheHostsThatDoNotHaveIt pins the other
+// direction of the list above: every Host of the page, each saying whether it
+// carries this service port, with the assignment of the ones that do.
+func TestListServicePortHostsCarriesTheHostsThatDoNotHaveIt(t *testing.T) {
+	hosts := []models.Host{statusHost(1, true), statusHost(2, false), statusHost(3, true)}
+	sps := []models.ServicePort{statusServicePort(1), statusServicePort(2)}
+
+	db := newAssignmentDB(t, hosts, sps, [2]uint{2, 1}, [2]uint{3, 2})
+
+	err := db.Model(&models.HostServicePort{}).Where("host_id = ? AND sp_id = ?", 2, 1).
+		Updates(map[string]interface{}{"bind_scope": "loopback", "enabled": false}).Error
+	if err != nil {
+		t.Fatalf("failed to move the assignment: %v", err)
+	}
+
+	h := NewHandler(db, &wakeRecorder{tx: &txConnPool{}}, zap.NewNop(), newTestCipher(t))
+
+	c, rec := getRequest(t, "/api/service-port/1/host", "id", "1")
+
+	err = h.ListServicePortHosts(c)
+	if err != nil {
+		t.Fatalf("ListServicePortHosts returned an error: %v", err)
+	}
+
+	ids, assigned, total, page, size := hostServicePortPage(t, rec)
+
+	if fmt.Sprint(ids) != "[1 2 3]" {
+		t.Fatalf("the page carries %v, want every Host", ids)
+	}
+	if assigned[1] || !assigned[2] || assigned[3] {
+		t.Fatalf("the page says %v is assigned, want the Host that carries it", assigned)
+	}
+	if total != 3 || page != 1 || size != 10 {
+		t.Errorf("total = %d, page = %d and size = %d, want 3 rows on the first page of ten", total, page, size)
+	}
+
+	_, data := decodeResponse(t, rec)
+	rows := data["items"].([]interface{})
+	carrier := rows[1].(map[string]interface{})
+
+	if carrier["bind_scope"] != "loopback" || carrier["enabled"] != false || carrier["host_enabled"] != false {
+		t.Errorf("the row of the Host that carries it is %v, want its assignment on the loopback, switched off, "+
+			"on a Host that is disabled", carrier)
+	}
+
+	for _, row := range rows {
+		fields := row.(map[string]interface{})
+		for _, secret := range []string{"password", "private_key", "key_passphrase"} {
+			if _, there := fields[secret]; there {
+				t.Errorf("a row carries %s, body: %s", secret, rec.Body.String())
+			}
+		}
+	}
+}
+
+// TestListServicePortHostsPagesOverTheHosts pins that the list is paged over
+// the Hosts, with the assignments following the rows onto the second page.
+func TestListServicePortHostsPagesOverTheHosts(t *testing.T) {
+	hosts := make([]models.Host, 0, 12)
+	for id := 1; id <= 12; id++ {
+		hosts = append(hosts, statusHost(uint(id), true))
+	}
+
+	db := newAssignmentDB(t, hosts, []models.ServicePort{statusServicePort(1)}, [2]uint{12, 1})
+
+	h := NewHandler(db, &wakeRecorder{tx: &txConnPool{}}, zap.NewNop(), newTestCipher(t))
+
+	c, rec := getRequest(t, "/api/service-port/1/host?page=2", "id", "1")
+
+	err := h.ListServicePortHosts(c)
+	if err != nil {
+		t.Fatalf("ListServicePortHosts returned an error: %v", err)
+	}
+
+	ids, assigned, total, page, _ := hostServicePortPage(t, rec)
+
+	if fmt.Sprint(ids) != "[11 12]" {
+		t.Fatalf("the second page carries %v, want the Hosts the first one does not", ids)
+	}
+	if assigned[11] || !assigned[12] {
+		t.Errorf("the second page says %v is assigned, want the Host that carries it", assigned)
+	}
+	if total != 12 || page != 2 {
+		t.Errorf("total = %d and page = %d, want 12 rows on the second page", total, page)
+	}
+}
+
+// TestListServicePortHostsAnswersAServicePortThatIsNotThere pins the 404: a
+// service port that is gone is not answered as one that no Host carries.
+func TestListServicePortHostsAnswersAServicePortThatIsNotThere(t *testing.T) {
+	db := newAssignmentDB(t, []models.Host{statusHost(1, true)}, []models.ServicePort{statusServicePort(1)})
+
+	h := NewHandler(db, &wakeRecorder{tx: &txConnPool{}}, zap.NewNop(), newTestCipher(t))
+
+	c, rec := getRequest(t, "/api/service-port/9/host", "id", "9")
+
+	err := h.ListServicePortHosts(c)
+	if err != nil {
+		t.Fatalf("ListServicePortHosts returned an error: %v", err)
+	}
+
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("status = %d, want %d, body: %s", rec.Code, http.StatusNotFound, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), string(errServicePortNotFound)) {
+		t.Errorf("the refusal does not name %s, body: %s", errServicePortNotFound, rec.Body.String())
+	}
+}
+
 // TestUpdateHostServicePortsWritesTheChangeItWasGiven pins that the change is
 // what it says: the named service ports are added, the named one is removed,
 // and the assignments of another Host are left alone.

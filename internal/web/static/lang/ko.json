@@ -719,6 +719,7 @@
   "log.service_port.fetch_failed.text": "서비스 포트를 가져오지 못했습니다",
   "log.service_port.host_assign_failed.text": "새 서비스 포트를 Host 에 할당하지 못했습니다",
   "log.service_port.host_assignments_delete_failed.text": "서비스 포트의 Host 할당을 지우지 못했습니다",
+  "log.service_port.host_assignments_fetch_failed.text": "서비스 포트의 Host 할당을 가져오지 못했습니다",
   "log.service_port.hosts_read_failed.text": "새 서비스 포트를 할당할 Host 를 읽지 못했습니다",
   "log.service_port.list_fetch_failed.text": "서비스 포트 목록을 가져오지 못했습니다",
   "log.service_port.update_failed.text": "서비스 포트를 수정하지 못했습니다",

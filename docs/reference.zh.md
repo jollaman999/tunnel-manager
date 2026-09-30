@@ -2061,6 +2061,34 @@ curl -s -b cookies.txt -X PUT "$BASE/api/host/1/service-port" \
 
 这次改动要么全部生效，要么完全不生效；提交之后会唤醒调谐循环，所以隧道随即跟进。
 
+### 负责一个服务端口的 Host
+
+**`GET /api/service-port/:id/host` 是从另一侧看同一张列表。** 它按 `GET /api/host`
+的 id 顺序返回一页 Host，每行的 `assigned` 表示这台 Host 是否负责这个服务端口。它接受
+`page` 和 `size`（见[分页](#分页)），不存在的服务端口返回 `404`。服务端口页面上每行的
+**Host** 按钮打开的就是这张列表。
+
+```json
+{
+  "success": true,
+  "data": {
+    "items": [
+      { "id": 1, "address": "198.51.100.10", "port": 22, "user": "demo",
+        "description": "", "host_enabled": true, "assigned": true,
+        "bind_scope": "wildcard", "enabled": true }
+    ],
+    "total": 1,
+    "page": 1,
+    "size": 10
+  }
+}
+```
+
+每行只带能认出 Host 的值，不带密码、私钥和主机密钥。`host_enabled` 表示 Host 本身是否启用。
+`assigned`、`bind_scope` 和 `enabled` 是分配关系的值，含义与
+`GET /api/host/:id/service-port` 中相同。这个路径下没有写操作：分配关系通过
+`PUT /api/host/:id/service-port` 逐台 Host 修改，面板也是这样发送的。
+
 ### 主机密钥的批准
 
 **一台 Host 在它 SSH 服务器的密钥被批准之前，哪里也到不了。** 这项检查在握手里做，早于任何
@@ -2258,6 +2286,7 @@ curl -s -b cookies.txt -X PUT "$BASE/api/host/1/local-forward/1" \
 | `GET` | `/api/service-port/:id` | 读一个服务端口 |
 | `PUT` | `/api/service-port/:id` | 更新一个服务端口。`service_address`、`service_port` 和 `local_port` 都是必填的 |
 | `DELETE` | `/api/service-port/:id` | 删除一个服务端口，以及涉及它的分配关系 |
+| `GET` | `/api/service-port/:id/host` | Host 的一页，附带这个服务端口的分配关系，见[负责一个服务端口的 Host](#负责一个服务端口的-host) |
 
 创建时的 `bind_scope` 是 `assign_to_all_hosts` 所建立的那批分配关系开在哪个范围上，和
 `POST /api/host` 一样；`PUT /api/service-port/:id` 不收它。一个答案之所以能代表一批横跨所有

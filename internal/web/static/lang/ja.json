@@ -719,6 +719,7 @@
   "log.service_port.fetch_failed.text": "サービスポートを取得できませんでした",
   "log.service_port.host_assign_failed.text": "新しいサービスポートを Host に割り当てられませんでした",
   "log.service_port.host_assignments_delete_failed.text": "サービスポートの Host への割り当てを削除できませんでした",
+  "log.service_port.host_assignments_fetch_failed.text": "サービスポートの Host への割り当てを取得できませんでした",
   "log.service_port.hosts_read_failed.text": "新しいサービスポートを割り当てる Host を読めませんでした",
   "log.service_port.list_fetch_failed.text": "サービスポートの一覧を取得できませんでした",
   "log.service_port.update_failed.text": "サービスポートを更新できませんでした",

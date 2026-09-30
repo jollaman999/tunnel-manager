@@ -719,6 +719,7 @@
   "log.service_port.fetch_failed.text": "falha ao buscar a porta de serviço",
   "log.service_port.host_assign_failed.text": "falha ao atribuir uma porta de serviço nova a um Host",
   "log.service_port.host_assignments_delete_failed.text": "falha ao excluir as atribuições de Hosts de uma porta de serviço",
+  "log.service_port.host_assignments_fetch_failed.text": "falha ao buscar as atribuições de Hosts de uma porta de serviço",
   "log.service_port.hosts_read_failed.text": "falha ao ler os Hosts aos quais atribuir uma porta de serviço nova",
   "log.service_port.list_fetch_failed.text": "falha ao buscar as portas de serviço",
   "log.service_port.update_failed.text": "falha ao atualizar a porta de serviço",

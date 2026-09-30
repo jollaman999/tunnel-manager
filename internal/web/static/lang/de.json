@@ -719,6 +719,7 @@
   "log.service_port.fetch_failed.text": "der Service-Port konnte nicht geladen werden",
   "log.service_port.host_assign_failed.text": "ein neuer Service-Port konnte keinem Host zugeordnet werden",
   "log.service_port.host_assignments_delete_failed.text": "die Host-Zuordnungen eines Service-Ports konnten nicht gelöscht werden",
+  "log.service_port.host_assignments_fetch_failed.text": "die Host-Zuordnungen eines Service-Ports konnten nicht geladen werden",
   "log.service_port.hosts_read_failed.text": "die Hosts, denen ein neuer Service-Port zuzuordnen ist, konnten nicht gelesen werden",
   "log.service_port.list_fetch_failed.text": "die Service-Ports konnten nicht geladen werden",
   "log.service_port.update_failed.text": "der Service-Port konnte nicht aktualisiert werden",

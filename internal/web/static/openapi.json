@@ -2207,6 +2207,93 @@
                 }
             }
         },
+        "/service-port/{id}/host": {
+            "get": {
+                "description": "The page is taken over the Hosts and not over the assignments, so a row sits on the same page of this list and of GET /api/host whether the Host carries this service port or not.\nhost_enabled is whether the Host is enabled. enabled is whether the tunnel of the assignment runs, as it is on GET /api/host/{id}/service-port, and is false on a row that does not carry this service port.\nbind_scope is what the assignment of the Host is opened to, and is empty on a row that does not carry this service port.\nThe assignments are changed through PUT /api/host/{id}/service-port, one Host at a time.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "assignments"
+                ],
+                "summary": "One page of the Hosts, with assigned saying whether each carries this service port",
+                "parameters": [
+                    {
+                        "type": "integer",
+                        "description": "The page, counted from 1. Below 1 is read as 1, and a page past the last one is answered with the last page",
+                        "name": "page",
+                        "in": "query"
+                    },
+                    {
+                        "enum": [
+                            10,
+                            20,
+                            30,
+                            50,
+                            100
+                        ],
+                        "type": "integer",
+                        "description": "How many rows a page holds",
+                        "name": "size",
+                        "in": "query"
+                    },
+                    {
+                        "type": "integer",
+                        "description": "The id of the service port",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/models.Response"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "data": {
+                                            "allOf": [
+                                                {
+                                                    "$ref": "#/definitions/api.listPageOf"
+                                                },
+                                                {
+                                                    "type": "object",
+                                                    "properties": {
+                                                        "items": {
+                                                            "type": "array",
+                                                            "items": {
+                                                                "$ref": "#/definitions/api.servicePortHostItem"
+                                                            }
+                                                        }
+                                                    }
+                                                }
+                                            ]
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "400": {
+                        "description": "page is not a number, or size is not one of the sizes taken",
+                        "schema": {
+                            "$ref": "#/definitions/api.errorBody"
+                        }
+                    },
+                    "404": {
+                        "description": "No such service port",
+                        "schema": {
+                            "$ref": "#/definitions/api.errorBody"
+                        }
+                    }
+                }
+            }
+        },
         "/settings": {
             "get": {
                 "produces": [
@@ -4194,6 +4281,40 @@
                 "exit_in_sec": {
                     "description": "ExitInSec is how long the process stays up after the answer. The screen\nsays it and waits it out, so the number comes from the side that decides\nit.",
                     "type": "integer"
+                }
+            }
+        },
+        "api.servicePortHostItem": {
+            "type": "object",
+            "properties": {
+                "address": {
+                    "type": "string"
+                },
+                "assigned": {
+                    "type": "boolean"
+                },
+                "bind_scope": {
+                    "description": "BindScope and Enabled are the assignment of this Host, and are empty and\nfalse on a row the Host does not carry, for the reasons they are on\nhostServicePortItem.",
+                    "type": "string"
+                },
+                "description": {
+                    "type": "string"
+                },
+                "enabled": {
+                    "type": "boolean"
+                },
+                "host_enabled": {
+                    "description": "HostEnabled is whether the Host itself is enabled. It is not called\nenabled because that name is taken by the assignment, the way it is on\nthe list a Host opens, so a client reads the same field the same way on\nboth lists.",
+                    "type": "boolean"
+                },
+                "id": {
+                    "type": "integer"
+                },
+                "port": {
+                    "type": "integer"
+                },
+                "user": {
+                    "type": "string"
                 }
             }
         },

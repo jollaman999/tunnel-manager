@@ -719,6 +719,7 @@
   "log.service_port.fetch_failed.text": "ดึงข้อมูลพอร์ตบริการไม่สำเร็จ",
   "log.service_port.host_assign_failed.text": "ผูกพอร์ตบริการใหม่เข้ากับ Host ไม่สำเร็จ",
   "log.service_port.host_assignments_delete_failed.text": "ลบการผูก Host ของพอร์ตบริการไม่สำเร็จ",
+  "log.service_port.host_assignments_fetch_failed.text": "ดึงการผูก Host ของพอร์ตบริการไม่สำเร็จ",
   "log.service_port.hosts_read_failed.text": "อ่านรายการ Host ที่จะผูกพอร์ตบริการใหม่เข้าไปไม่สำเร็จ",
   "log.service_port.list_fetch_failed.text": "ดึงรายการพอร์ตบริการไม่สำเร็จ",
   "log.service_port.update_failed.text": "แก้ไขพอร์ตบริการไม่สำเร็จ",

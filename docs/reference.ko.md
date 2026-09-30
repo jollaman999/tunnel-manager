@@ -2257,6 +2257,35 @@ curl -s -b cookies.txt -X PUT "$BASE/api/host/1/service-port" \
 변경은 전부 반영되거나 하나도 반영되지 않습니다. 커밋되면 조정 루프를 깨우므로 터널도 곧
 따라옵니다.
 
+### 서비스 포트를 담당하는 Host
+
+**`GET /api/service-port/:id/host` 는 같은 목록을 반대쪽에서 본 것입니다.**
+Host 한 페이지를 `GET /api/host` 와 같은 id 순으로 주고, 각 행의 `assigned` 가 그 Host 가
+이 서비스 포트를 담당하는지 알려줍니다. `page` 와 `size` 를 받습니다. [페이징](#페이징)을
+보십시오. 없는 서비스 포트는 `404` 로 답합니다. 서비스 포트 화면에서 행의 **Host** 버튼이
+여는 목록이 이것입니다.
+
+```json
+{
+  "success": true,
+  "data": {
+    "items": [
+      { "id": 1, "address": "198.51.100.10", "port": 22, "user": "demo",
+        "description": "", "host_enabled": true, "assigned": true,
+        "bind_scope": "wildcard", "enabled": true }
+    ],
+    "total": 1,
+    "page": 1,
+    "size": 10
+  }
+}
+```
+
+행에는 Host 를 알아볼 값만 있고 비밀번호, 키, 호스트 키는 없습니다. `host_enabled` 는
+Host 자체가 활성인지입니다. `assigned`, `bind_scope`, `enabled` 는 할당의 값이고
+`GET /api/host/:id/service-port` 에서와 뜻이 같습니다. 이 경로에는 쓰기가 없습니다. 할당은
+`PUT /api/host/:id/service-port` 로 Host 마다 한 번씩 바꾸며, 패널도 그렇게 보냅니다.
+
 ### 호스트 키 승인
 
 **Host 는 그 SSH 서버의 키가 승인되기 전까지 아무 데도 닿지 못합니다.** 검사는 핸드셰이크
@@ -2465,6 +2494,7 @@ curl -s -b cookies.txt -X PUT "$BASE/api/host/1/local-forward/1" \
 | `GET` | `/api/service-port/:id` | 특정 서비스 포트 조회 |
 | `PUT` | `/api/service-port/:id` | 서비스 포트 수정. `service_address`, `service_port`, `local_port` 가 모두 필수 |
 | `DELETE` | `/api/service-port/:id` | 서비스 포트 삭제. 그것을 가리키는 할당도 같이 지움 |
+| `GET` | `/api/service-port/:id/host` | Host 한 페이지에 이 서비스 포트의 할당을 얹어서 조회, [서비스 포트를 담당하는 Host](#서비스-포트를-담당하는-host) 참고 |
 
 생성의 `bind_scope` 는 `assign_to_all_hosts` 가 만드는 할당 일괄을 어느 범위에 열지이고,
 `POST /api/host` 와 같습니다. `PUT /api/service-port/:id` 는 받지 않습니다. 답 하나가 모든
