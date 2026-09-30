@@ -709,7 +709,7 @@ func sceneServicePortHosts(r *recorder, cfg config, _ string) error {
 
 	if err := r.run(chromedp.Evaluate(fmt.Sprintf(`(function (name) {
   for (const row of document.querySelectorAll('[data-modal-panel="service-port-hosts"] tbody tr')) {
-    const said = row.querySelector(".assign-text > span");
+    const said = row.querySelector(".desc-text");
     if (said !== null && said.textContent.trim() === name) {
       return row.querySelector('input[type="checkbox"][data-field^="assign-"]').dataset.field;
     }

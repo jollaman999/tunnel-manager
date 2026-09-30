@@ -1152,16 +1152,28 @@ button.copy {
   white-space: nowrap;
 }
 
-/* The description in the two assignment panels: of a Host in the Hosts panel
-   of a service port, and of a service port in the service ports panel of a
-   Host. It is the one column of either table that may wrap, so a table held
-   to the width of the panel gave it what the addresses and the reach left,
-   which was a few letters a line. It keeps a width a sentence reads in, and
-   the table scrolls sideways where the panel is narrower than that, as it does
-   for the rest. */
-.assign-list[data-list="service-port-hosts"] td:nth-child(4),
-.assign-list[data-list="host-service-ports"] td:nth-child(5) {
-  min-width: 14rem;
+/* A description in the Host list, the service port list and the two
+   assignment panels. Its width is set on it from its length (descriptionCell),
+   so it wraps at word boundaries into two lines at most. One too long for two
+   lines of the widest such cell is cut there with an ellipsis, and a press
+   opens it to the whole of it. */
+.desc-text {
+  display: block;
+}
+
+.desc-clamped {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
+  overflow: hidden;
+  cursor: pointer;
+}
+
+.desc-clamped.desc-open {
+  display: block;
+  -webkit-line-clamp: unset;
+  line-clamp: unset;
 }
 
 /* The scope may take two lines, the name on one and the addresses on the

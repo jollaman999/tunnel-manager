@@ -1113,6 +1113,70 @@ function addressPort(address) {
   return at < 0 ? "" : address.slice(at + 1);
 }
 
+// descriptionCell is the Description column of the Host list, the service
+// port list and the two assignment panels.
+//
+// Its width follows the text. A short description is as wide as it is, and a
+// longer one is given a width at which it takes two lines, so that a table
+// squeezed to the screen does not break it into a word a line; past what two
+// lines of the widest such cell hold, it is cut to two lines with an ellipsis
+// and pressing it shows the rest. The width is counted from the characters
+// rather than measured, because the cell is built before it is on the page:
+// a letter of the Latin or Cyrillic scripts is taken as one ch and a Han,
+// Hangul or Kana character, which is drawn about twice as wide, as two.
+function descriptionCell(text) {
+  const value = text === undefined || text === null ? "" : String(text);
+  const cell = element("span", value);
+
+  cell.className = "desc-text";
+
+  let units = 0;
+
+  for (const ch of value) {
+    units += ch.codePointAt(0) >= 0x2e80 ? 2 : 1;
+  }
+
+  if (units === 0) {
+    return cell;
+  }
+
+  // Half the line the text would take on its own, and a little over for the
+  // word that does not fit at the end of the first line.
+  cell.style.minWidth = "min(" + descriptionWidestCh + "ch, " + (Math.ceil(units / 2) + 2) + "ch)";
+
+  if (units <= descriptionWidestCh * 2) {
+    return cell;
+  }
+
+  // Too long for two lines of the widest cell: two lines and the ellipsis,
+  // with the whole of it on a press, on Enter, and under the pointer.
+  cell.classList.add("desc-clamped");
+  cell.title = value;
+  cell.tabIndex = 0;
+  cell.setAttribute("role", "button");
+  cell.setAttribute("aria-expanded", "false");
+
+  function toggle() {
+    const open = cell.classList.toggle("desc-open");
+
+    cell.setAttribute("aria-expanded", open ? "true" : "false");
+  }
+
+  cell.addEventListener("click", toggle);
+  cell.addEventListener("keydown", function (event) {
+    if (event.key === "Enter" || event.key === " ") {
+      event.preventDefault();
+      toggle();
+    }
+  });
+
+  return cell;
+}
+
+// descriptionWidestCh is how wide a description cell grows, in ch: about 24rem
+// at the size the tables are drawn in.
+const descriptionWidestCh = 48;
+
 // joinAddress writes a host and a port the way a client takes them. An IPv6
 // address carries colons of its own and goes in brackets, for the reason the
 // server joins its addresses with net.JoinHostPort.
@@ -3347,7 +3411,7 @@ function hostRow(host, known) {
     host.port,
     jumpRouteCell(host, known),
     host.user,
-    host.description,
+    descriptionCell(host.description),
     host.enabled ? t("common.yes.text") : t("common.no.text"),
     socksCell(host),
     timeCell(host.updated_at),
@@ -5887,7 +5951,7 @@ function servicePortAssignRow(item, picks) {
     ? ""
     : String(item.description);
 
-  return [item.id, service, item.local_port, description, scope];
+  return [item.id, service, item.local_port, descriptionCell(description), scope];
 }
 
 // saveHostServicePorts sends what was ticked and what was rescoped, as the
@@ -7401,17 +7465,18 @@ function servicePortHostRow(host, picks) {
   // A Host that is switched off carries its assignments and runs none of
   // them. Ticking it here is not wrong, but without this line the tick reads
   // as a tunnel that is about to come up.
-  const said = document.createElement("span");
-
-  said.className = "assign-text";
-  said.appendChild(element("span", description));
-
-  if (host.host_enabled === false) {
-    const off = element("small", t("service-ports.hosts-host-disabled.text"));
-
-    off.className = "assign-said";
-    said.appendChild(off);
+  if (host.host_enabled !== false) {
+    return [host.id, joinAddress(host.address, String(host.port)), descriptionCell(description), scope];
   }
+
+  const said = document.createElement("div");
+
+  said.appendChild(descriptionCell(description));
+
+  const off = element("div", t("service-ports.hosts-host-disabled.text"));
+
+  off.className = "assign-said";
+  said.appendChild(off);
 
   return [host.id, joinAddress(host.address, String(host.port)), said, scope];
 }
@@ -7664,7 +7729,7 @@ function servicePortRow(port) {
     port.service_address,
     port.service_port,
     port.local_port,
-    port.description,
+    descriptionCell(port.description),
     timeCell(port.updated_at),
     buttons
   ];
