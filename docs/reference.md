@@ -404,7 +404,7 @@ words an assignment does and names the same pairs of addresses.
 
 | `bind_scope` | Where `local_port` is opened on the Tunnel Manager server |
 |--------------|-----------------------------------------------------------|
-| `wildcard`, and the empty value | `0.0.0.0` and `::`. This is the default |
+| `wildcard`, and the empty value | `0.0.0.0` and `::`. This is what a request that leaves the field out gets. The add form on the screen opens on `loopback` |
 | `loopback` | `127.0.0.1` and `::1` |
 
 **The wildcard makes the Tunnel Manager server a door into the network of the

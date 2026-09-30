@@ -6556,10 +6556,15 @@ function localForwardForm(item, onSubmit, onCancel) {
     submitLabel: item === null ? t("common.add.button") : t("common.save.button"),
     fields: [
       localPort,
+      // A new forward opens on the loopback. The wildcard lets anybody who
+      // reaches this server into the network of the Host without logging in to
+      // it, which is a door to be opened on purpose. The API keeps the wildcard
+      // for a request that leaves the field out, and an edit opens on what is
+      // stored.
       {
         name: "bind_scope",
         label: t("local-forwards.scope.label"),
-        value: bindScopeStored(stored.bind_scope),
+        value: item === null ? bindScopeLoopback : bindScopeStored(stored.bind_scope),
         options: localForwardScopeOptions(),
         note: t("local-forwards.scope.hint")
       },

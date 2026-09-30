@@ -350,7 +350,7 @@ Hosts 화면에서 그 Host 행의 **Local forwards** 버튼이나 API 로 추�
 
 | `bind_scope` | Tunnel Manager 서버에서 `local_port` 를 여는 곳 |
 |--------------|--------------------------------------|
-| `wildcard`, 그리고 빈 값 | `0.0.0.0` 과 `::`. 기본값입니다 |
+| `wildcard`, 그리고 빈 값 | `0.0.0.0` 과 `::`. 요청이 이 필드를 빼면 이 값입니다. 화면의 추가 폼은 `loopback` 으로 열립니다 |
 | `loopback` | `127.0.0.1` 과 `::1` |
 
 **와일드카드는 Tunnel Manager 서버를 Host 쪽 망으로 들어가는 문으로 만듭니다.** Tunnel Manager 서버의 `local_port`
