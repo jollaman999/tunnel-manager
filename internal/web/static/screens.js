@@ -7167,13 +7167,13 @@ async function sendPickedAssignments(ports, picks, scope, button, close, problem
 // said about each Host on the pages that were read, and picks.wanted holds the
 // boxes the operator touched. What is sent is the difference.
 //
-// The reach and whether the tunnel runs are not set here per Host. They are
-// on the assignment, and the panel of the Host is where each of them is set;
-// what this panel asks for is the reach the assignments it writes start on,
-// the way the press over the ticks asks for it.
+// The reach is set per Host, beside its box, the way the panel of a Host sets
+// it per service port: picks.scopes is what the server said each carried
+// assignment is opened to and picks.scoped what the operator chose. Whether
+// the tunnel runs is not set here; the panel of the Host is where it is.
 async function openServicePortHosts(port) {
   const page = { number: 1, size: listSizes[0] };
-  const picks = { served: {}, wanted: {}, hosts: {} };
+  const picks = { served: {}, wanted: {}, scopes: {}, scoped: {}, hosts: {} };
 
   const list = document.createElement("div");
 
@@ -7194,22 +7194,6 @@ async function openServicePortHosts(port) {
   refused.dataset.list = "service-port-hosts-refused";
   refused.hidden = true;
 
-  const scope = listControl({ options: bindScopeOptions(), value: bindScopeWildcard });
-
-  scope.className = "assign-bulk-scope";
-  scope.dataset.field = "service-port-hosts-scope";
-  scope.setAttribute("aria-label", t("service-ports.assign-picked-scope.label"));
-
-  const scopeRow = document.createElement("div");
-
-  scopeRow.className = "assign-bulk";
-
-  const scopeLabel = element("span", t("service-ports.assign-picked-scope.label"));
-
-  scopeLabel.className = "assign-bulk-label";
-  scopeRow.appendChild(scopeLabel);
-  scopeRow.appendChild(scope);
-
   let shown = [];
   let total = 0;
 
@@ -7224,6 +7208,7 @@ async function openServicePortHosts(port) {
 
     for (const host of shown) {
       picks.served[host.id] = Boolean(host.assigned);
+      picks.scopes[host.id] = bindScopeStored(host.bind_scope);
       picks.hosts[host.id] = host;
       list.appendChild(servicePortHostRow(host, picks));
     }
@@ -7280,7 +7265,6 @@ async function openServicePortHosts(port) {
     body: [
       element("p", t("service-ports.hosts.text")),
       element("p", t("service-ports.hosts-scope.text")),
-      scopeRow,
       problem,
       refused,
       list
@@ -7291,7 +7275,7 @@ async function openServicePortHosts(port) {
         name: "save",
         variant: "primary",
         press: function (button, close) {
-          return saveServicePortHosts(port, picks, scope.value, button, close,
+          return saveServicePortHosts(port, picks, button, close,
             problem, refused, drawList);
         }
       },
@@ -7313,14 +7297,25 @@ async function openServicePortHosts(port) {
   return drawServicePorts();
 }
 
-// servicePortHostRow is one Host in that panel: the box, which Host it is, and
-// what was written down about it. The whole row is a label, for the reason it
-// is in the panel the press over the ticks opens.
+// servicePortHostRow is one Host in that panel: the box, which Host it is and
+// what was written down about it, and beside them how far its assignment
+// reaches. The box and the text are a label, so that part of the row is the
+// press; the reach is outside it, for the reason the row of the panel a Host
+// opens keeps its controls apart from the tick.
+//
+// The reach is out of reach while the box is clear: a Host that is not to
+// carry the service port opens no port anywhere, so there is nothing for the
+// answer to be about. A Host ticked for the first time starts on every
+// interface, which is what the column stores where nothing else is chosen.
 function servicePortHostRow(host, picks) {
-  const row = document.createElement("label");
+  const row = document.createElement("div");
 
-  row.className = "assign-row assign-pick";
+  row.className = "assign-row";
   row.dataset.assign = String(host.id);
+
+  const pick = document.createElement("label");
+
+  pick.className = "assign-pick";
 
   const box = document.createElement("input");
 
@@ -7354,12 +7349,28 @@ function servicePortHostRow(host, picks) {
     text.appendChild(off);
   }
 
-  box.addEventListener("change", function () {
-    picks.wanted[host.id] = box.checked;
+  const scope = listControl({
+    options: bindScopeOptions(),
+    value: host.id in picks.scoped ? picks.scoped[host.id] : picks.scopes[host.id]
   });
 
-  row.appendChild(box);
-  row.appendChild(text);
+  scope.className = "assign-scope";
+  scope.dataset.field = "service-port-host-scope-" + host.id;
+  scope.disabled = !box.checked;
+  scope.setAttribute("aria-label", t("service-ports.hosts-row-scope.aria", { id: host.id }));
+  scope.addEventListener("change", function () {
+    picks.scoped[host.id] = scope.value;
+  });
+
+  box.addEventListener("change", function () {
+    picks.wanted[host.id] = box.checked;
+    scope.disabled = !box.checked;
+  });
+
+  pick.appendChild(box);
+  pick.appendChild(text);
+  row.appendChild(pick);
+  row.appendChild(scope);
 
   return row;
 }
@@ -7371,7 +7382,7 @@ function servicePortHostRow(host, picks) {
 // refusal stops that Host and nothing else, for the reason it does in
 // sendPickedAssignments, and the panel stays up holding the Hosts that are
 // left.
-async function saveServicePortHosts(port, picks, scope, button, close, problem,
+async function saveServicePortHosts(port, picks, button, close, problem,
   refused, redraw) {
   const changes = [];
 
@@ -7380,11 +7391,16 @@ async function saveServicePortHosts(port, picks, scope, button, close, problem,
   })) {
     const carried = picks.served[id];
     const ticked = id in picks.wanted ? picks.wanted[id] : carried;
+    const scope = id in picks.scoped ? picks.scoped[id] : picks.scopes[id];
 
     if (ticked && !carried) {
       changes.push({ host: picks.hosts[id], body: { add: [port.id], bind_scope: scope } });
     } else if (!ticked && carried) {
       changes.push({ host: picks.hosts[id], body: { remove: [port.id] } });
+    } else if (ticked && scope !== picks.scopes[id]) {
+      // An assignment that is already there is moved only when the request
+      // names it in rescope: add leaves one that is there as it is.
+      changes.push({ host: picks.hosts[id], body: { rescope: [port.id], bind_scope: scope } });
     }
   }
 
@@ -7405,6 +7421,7 @@ async function saveServicePortHosts(port, picks, scope, button, close, problem,
   const failures = [];
   let added = 0;
   let removed = 0;
+  let rescoped = 0;
 
   try {
     for (const change of changes) {
@@ -7426,15 +7443,21 @@ async function saveServicePortHosts(port, picks, scope, button, close, problem,
 
       added += countedRows(answer, "added");
       removed += countedRows(answer, "removed");
+      rescoped += countedRows(answer, "rescoped");
 
       // The Host has taken the change, so what the server holds for it is
       // what was ticked. A second press after a partial run then sends the
       // Hosts that are left and not the ones that are done.
       // The row the panel was drawn from is changed with it, because a list
       // drawn again after a refusal reads the rows and not the maps.
-      change.host.assigned = "add" in change.body;
+      change.host.assigned = !("remove" in change.body);
+      if ("bind_scope" in change.body) {
+        change.host.bind_scope = change.body.bind_scope;
+      }
       picks.served[change.host.id] = change.host.assigned;
+      picks.scopes[change.host.id] = bindScopeStored(change.host.bind_scope);
       delete picks.wanted[change.host.id];
+      delete picks.scoped[change.host.id];
       picks.changed = true;
     }
   } finally {
@@ -7443,7 +7466,8 @@ async function saveServicePortHosts(port, picks, scope, button, close, problem,
 
   if (failures.length === 0) {
     setToast(function () {
-      return t("service-ports.hosts-saved.notice", { id: port.id, added: added, removed: removed });
+      return t("service-ports.hosts-saved.notice",
+        { id: port.id, added: added, removed: removed, rescoped: rescoped });
     });
 
     close("saved");
