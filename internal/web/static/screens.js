@@ -7061,6 +7061,321 @@ async function sendPickedAssignments(ports, picks, scope, button, close, problem
     { added: written, reached: reached, failed: failures.length }));
 }
 
+// openServicePortHosts puts up the panel that says which Hosts carry one
+// service port, and lets them be ticked and cleared.
+//
+// It is the panel a Host opens, turned round. That one lists the service ports
+// with the ones the Host carries ticked; this lists the Hosts with the ones
+// that carry this service port ticked, so a service port wanted on a Host is
+// one row to tick here rather than a panel to open on that Host. The press
+// over the ticks of the list gives several service ports away at once and adds
+// only; this is the one place that shows who carries a service port already,
+// and so the one where a Host can be taken off it.
+//
+// The list is a page at a time, and the ticks are held in two maps for the
+// reason they are in the panel a Host opens: picks.served is what the server
+// said about each Host on the pages that were read, and picks.wanted holds the
+// boxes the operator touched. What is sent is the difference.
+//
+// The reach and whether the tunnel runs are not set here per Host. They are
+// on the assignment, and the panel of the Host is where each of them is set;
+// what this panel asks for is the reach the assignments it writes start on,
+// the way the press over the ticks asks for it.
+async function openServicePortHosts(port) {
+  const page = { number: 1, size: listSizes[0] };
+  const picks = { served: {}, wanted: {}, hosts: {} };
+
+  const list = document.createElement("div");
+
+  list.className = "assign-list";
+  list.dataset.list = "service-port-hosts";
+
+  const problem = element("p", "");
+
+  problem.className = "notice error";
+  problem.dataset.problem = "service-port-hosts";
+  problem.hidden = true;
+
+  // The Hosts that would not take the change, each with what it met, the way
+  // the press over the ticks names them.
+  const refused = document.createElement("div");
+
+  refused.className = "picked-list";
+  refused.dataset.list = "service-port-hosts-refused";
+  refused.hidden = true;
+
+  const scope = listControl({ options: bindScopeOptions(), value: bindScopeWildcard });
+
+  scope.className = "assign-bulk-scope";
+  scope.dataset.field = "service-port-hosts-scope";
+  scope.setAttribute("aria-label", t("service-ports.assign-picked-scope.label"));
+
+  const scopeRow = document.createElement("div");
+
+  scopeRow.className = "assign-bulk";
+
+  const scopeLabel = element("span", t("service-ports.assign-picked-scope.label"));
+
+  scopeLabel.className = "assign-bulk-label";
+  scopeRow.appendChild(scopeLabel);
+  scopeRow.appendChild(scope);
+
+  let shown = [];
+  let total = 0;
+
+  function drawList() {
+    list.textContent = "";
+
+    if (shown.length === 0) {
+      list.appendChild(statusLine(t("hosts.none.empty"), "empty"));
+
+      return;
+    }
+
+    for (const host of shown) {
+      picks.served[host.id] = Boolean(host.assigned);
+      picks.hosts[host.id] = host;
+      list.appendChild(servicePortHostRow(host, picks));
+    }
+
+    const controls = pageControls("service-port-hosts", page, total, turnPage);
+    if (controls !== null) {
+      list.appendChild(controls);
+    }
+  }
+
+  async function drawPage() {
+    const answer = await apiCall("GET",
+      "/api/service-port/" + port.id + "/host?" + pageQuery(page));
+
+    takeListPage(page, answer);
+
+    shown = answer === null || answer.items === null || answer.items === undefined
+      ? []
+      : answer.items;
+    total = answer === null || typeof answer.total !== "number" ? shown.length : answer.total;
+
+    drawList();
+  }
+
+  // drawn is the page the list on the screen was built from, for the reason
+  // the panel a Host opens keeps it.
+  let drawn = { number: page.number, size: page.size };
+
+  function turnPage() {
+    return drawPage().then(function () {
+      drawn = { number: page.number, size: page.size };
+    }, function (error) {
+      if (error instanceof Redirected) {
+        throw error;
+      }
+
+      page.number = drawn.number;
+      page.size = drawn.size;
+
+      showPanelProblem(problem, error.message);
+    });
+  }
+
+  // The first page is fetched before the panel goes up, so a refusal is
+  // answered with the line over the screen rather than with an empty panel.
+  await drawPage();
+
+  drawn = { number: page.number, size: page.size };
+
+  const outcome = await openModal({
+    name: "service-port-hosts",
+    title: t("service-ports.hosts.title",
+      { id: port.id, ip: port.service_address, port: port.service_port }),
+    body: [
+      element("p", t("service-ports.hosts.text")),
+      element("p", t("service-ports.hosts-scope.text")),
+      scopeRow,
+      problem,
+      refused,
+      list
+    ],
+    buttons: [
+      {
+        label: t("common.save.button"),
+        name: "save",
+        variant: "primary",
+        press: function (button, close) {
+          return saveServicePortHosts(port, picks, scope.value, button, close,
+            problem, refused, drawList);
+        }
+      },
+      { label: t("common.close.button"), name: "close" }
+    ]
+  });
+
+  // A panel that was closed or dismissed changed nothing, unless a save was
+  // refused in part before it was closed: the Hosts that took that change
+  // carry it now, so the list behind is drawn again for those as well.
+  if (outcome !== "saved" && !picks.changed) {
+    return;
+  }
+
+  if (currentScreen !== "service-ports") {
+    return;
+  }
+
+  return drawServicePorts();
+}
+
+// servicePortHostRow is one Host in that panel: the box, which Host it is, and
+// what was written down about it. The whole row is a label, for the reason it
+// is in the panel the press over the ticks opens.
+function servicePortHostRow(host, picks) {
+  const row = document.createElement("label");
+
+  row.className = "assign-row assign-pick";
+  row.dataset.assign = String(host.id);
+
+  const box = document.createElement("input");
+
+  box.type = "checkbox";
+  box.dataset.field = "service-port-host-" + host.id;
+  box.checked = host.id in picks.wanted ? picks.wanted[host.id] : picks.served[host.id];
+
+  const text = document.createElement("span");
+
+  text.className = "assign-text";
+  text.appendChild(element("span", t("hosts.picked-row.text", { id: host.id, ip: host.address })));
+
+  const description = host.description === undefined || host.description === null
+    ? ""
+    : String(host.description);
+
+  if (description !== "") {
+    const saidAbout = element("small", description);
+
+    saidAbout.className = "assign-said";
+    text.appendChild(saidAbout);
+  }
+
+  // A Host that is switched off carries its assignments and runs none of
+  // them. Ticking it here is not wrong, but without this line the tick reads
+  // as a tunnel that is about to come up.
+  if (host.host_enabled === false) {
+    const off = element("small", t("service-ports.hosts-host-disabled.text"));
+
+    off.className = "assign-said";
+    text.appendChild(off);
+  }
+
+  box.addEventListener("change", function () {
+    picks.wanted[host.id] = box.checked;
+  });
+
+  row.appendChild(box);
+  row.appendChild(text);
+
+  return row;
+}
+
+// saveServicePortHosts sends what was ticked and cleared, one Host at a time.
+//
+// One request per Host because the change is made under the Host: an
+// assignment is written by one route whichever list it was ticked on. A
+// refusal stops that Host and nothing else, for the reason it does in
+// sendPickedAssignments, and the panel stays up holding the Hosts that are
+// left.
+async function saveServicePortHosts(port, picks, scope, button, close, problem,
+  refused, redraw) {
+  const changes = [];
+
+  for (const id of Object.keys(picks.served).map(Number).sort(function (one, other) {
+    return one - other;
+  })) {
+    const carried = picks.served[id];
+    const ticked = id in picks.wanted ? picks.wanted[id] : carried;
+
+    if (ticked && !carried) {
+      changes.push({ host: picks.hosts[id], body: { add: [port.id], bind_scope: scope } });
+    } else if (!ticked && carried) {
+      changes.push({ host: picks.hosts[id], body: { remove: [port.id] } });
+    }
+  }
+
+  if (changes.length === 0) {
+    setToast(function () {
+      return t("service-ports.hosts-unchanged.notice", { id: port.id });
+    });
+
+    close("unchanged");
+
+    return;
+  }
+
+  button.disabled = true;
+  problem.hidden = true;
+  refused.hidden = true;
+
+  const failures = [];
+  let added = 0;
+  let removed = 0;
+
+  try {
+    for (const change of changes) {
+      let answer = null;
+
+      try {
+        answer = await apiCall("PUT", "/api/host/" + change.host.id + "/service-port", change.body);
+      } catch (error) {
+        if (error instanceof Redirected) {
+          close(null);
+
+          throw error;
+        }
+
+        failures.push({ host: change.host, reason: error.message });
+
+        continue;
+      }
+
+      added += countedRows(answer, "added");
+      removed += countedRows(answer, "removed");
+
+      // The Host has taken the change, so what the server holds for it is
+      // what was ticked. A second press after a partial run then sends the
+      // Hosts that are left and not the ones that are done.
+      // The row the panel was drawn from is changed with it, because a list
+      // drawn again after a refusal reads the rows and not the maps.
+      change.host.assigned = "add" in change.body;
+      picks.served[change.host.id] = change.host.assigned;
+      delete picks.wanted[change.host.id];
+      picks.changed = true;
+    }
+  } finally {
+    button.disabled = false;
+  }
+
+  if (failures.length === 0) {
+    setToast(function () {
+      return t("service-ports.hosts-saved.notice", { id: port.id, added: added, removed: removed });
+    });
+
+    close("saved");
+
+    return;
+  }
+
+  refused.textContent = "";
+
+  for (const failure of failures) {
+    refused.appendChild(pickedAssignRow(failure.host.id,
+      t("hosts.picked-row.text", { id: failure.host.id, ip: failure.host.address }),
+      failure.reason));
+  }
+
+  refused.hidden = false;
+  redraw();
+
+  showPanelProblem(problem, t("service-ports.hosts-some.notice",
+    { done: changes.length - failures.length, failed: failures.length }));
+}
+
 function enterServicePorts() {
   editingServicePortID = null;
 
@@ -7180,6 +7495,9 @@ function servicePortRow(port) {
     await drawServicePorts();
 
     focusFormField("service-port-edit", "service_address");
+  }));
+  buttons.appendChild(actionButton(t("service-ports.hosts.button"), "service-port-hosts-" + port.id, function () {
+    return openServicePortHosts(port);
   }));
   buttons.appendChild(actionButton(t("common.delete.button"), "service-port-delete-" + port.id, function () {
     return deleteServicePort(port);
