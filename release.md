@@ -1,3 +1,14 @@
+# v4.1.5
+
+## Add/fix features:
+
+- **The Enabled box of an assignment is gone from both panels**, the service ports panel of a Host and the Hosts panel of a service port. A service port is given to a Host by ticking it and taken away by clearing it, so the panels have one box to a row. An assignment given from either panel runs.
+- **The Description column of both assignment panels keeps a width a sentence reads in**, in the Hosts panel of a service port and in the service ports panel of a Host. It is the one column of either table that wraps, and it was left what the addresses and the reach did not take, a few letters a line; the table scrolls sideways where the panel is narrower, as it does for the rest.
+
+## Notes:
+
+- **The API keeps `enabled` and `switch`** on `PUT /api/host/:id/service-port`, and `enabled` on both lists, so a script that pauses an assignment goes on working. An assignment switched off through the API can no longer be switched on from the screen: clear it and tick it again, or send `switch` with `enabled` true.
+
 # v4.1.4
 
 ## Add/fix features:
