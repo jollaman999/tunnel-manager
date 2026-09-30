@@ -900,15 +900,34 @@ function kindCell(forward) {
   return node;
 }
 
-// openedCell is the address in the Opened column, the address the port was
-// asked to be opened on and nothing else. Where to connect to it is the column
-// beside it, which is also where the copy buttons are: the address a port is
-// opened on, 0.0.0.0:9000 and the like, is not one a client can be pointed at.
+// openedCell is the address in the Opened column: the addresses the Host said
+// the port is listening on, where it said, and the address the port was asked
+// to be opened on otherwise. Where to connect to it is the column beside it,
+// which is also where the copy buttons are: the address a port is opened on,
+// 0.0.0.0:9000 and the like, is not one a client can be pointed at.
+//
+// What the Host said comes first because it is what is open. An SSH server
+// with GatewayPorts off binds the loopback whatever is asked for, and a column
+// that went on naming 0.0.0.0 over a port that is on 127.0.0.1 alone says the
+// port is open to a network it is closed to. What was asked is still in the
+// box under the row, which is drawn wherever the two differ.
 function openedCell(row) {
   const address = row.local === null || row.local === undefined ? "" : String(row.local);
 
   if (address === "") {
     return "";
+  }
+
+  const measured = listeningHosts(row);
+  if (measured !== null) {
+    const port = addressPort(address);
+    const cell = element("span", measured.map(function (host) {
+      return joinAddress(host, port);
+    }).join(", "));
+
+    cell.className = "opened";
+
+    return cell;
   }
 
   const cell = element("span", address);
@@ -926,6 +945,10 @@ function openedCell(row) {
 // opened on loopback only from inside the Host. A local forward opens its port
 // here, on the machine this page was loaded from, so the address that stands
 // for this machine is the one the browser used to get to it.
+//
+// Where the Host said what is listening on the port, that is what the column is
+// drawn from, for the reason openedCell draws from it: the scope is what was
+// asked for, and an SSH server decides for itself what it binds.
 function reachableCell(row) {
   const local = row.local === null || row.local === undefined ? "" : String(row.local);
   const pair = bindScopePairOf(local);
@@ -936,11 +959,17 @@ function reachableCell(row) {
 
   const forward = isLocalForward(row);
   const reach = typeof row.open_reach === "string" ? row.open_reach : "";
+  const server = requestedHost(String(row.server === null || row.server === undefined ? "" : row.server));
+
+  const measured = forward ? null : listeningHosts(row);
+  if (measured !== null) {
+    return reachableAddresses(measuredReach(measured, addressPort(local), server));
+  }
 
   return reachableAddresses({
     scope: pair.scope,
     port: addressPort(local),
-    host: forward ? pageHost() : requestedHost(String(row.server === null || row.server === undefined ? "" : row.server)),
+    host: forward ? pageHost() : server,
     // A service port row says which of the two addresses went up. A row that
     // says neither, one not measured yet or a local forward, is drawn with the
     // two the scope asked for.
@@ -948,6 +977,53 @@ function reachableCell(row) {
     v6: forward || reach !== "ipv4",
     here: forward
   });
+}
+
+// listeningHosts is the addresses the Host said are listening on the forwarded
+// port of a connected tunnel, and null where it said nothing. They are read
+// only while the tunnel is up, for the reason forwardAddresses reads them only
+// then: a row that is reconnecting carries what the last connection left.
+function listeningHosts(row) {
+  if (row.status !== "connected" || typeof row.listen_addresses !== "string") {
+    return null;
+  }
+
+  const hosts = row.listen_addresses.split(",").map(function (one) {
+    return one.trim();
+  }).filter(function (one) {
+    return one !== "";
+  });
+
+  return hosts.length === 0 ? null : hosts;
+}
+
+// measuredReach is the Reachable at cell of the addresses the Host named. A
+// wildcard among them is the port open on every interface, reached at the
+// address the Host is registered under. The loopback addresses are the port
+// open inside the Host alone. Any other address is an interface of the Host,
+// and is where a client connects.
+function measuredReach(hosts, port, server) {
+  const wildcard = hosts.some(function (host) {
+    return host === "0.0.0.0" || host === "::";
+  });
+
+  if (wildcard) {
+    return { scope: bindScopeWildcard, port: port, host: server, here: false };
+  }
+
+  const others = hosts.filter(function (host) {
+    return host !== "127.0.0.1" && host !== "::1";
+  });
+
+  return {
+    scope: bindScopeLoopback,
+    port: port,
+    host: "",
+    v4: hosts.indexOf("127.0.0.1") !== -1,
+    v6: hosts.indexOf("::1") !== -1,
+    here: false,
+    others: others
+  };
 }
 
 // reachableAddresses is the lines of a Reachable at cell, each an address and
@@ -967,6 +1043,12 @@ function reachableAddresses(spec) {
   }
 
   const lines = [];
+
+  // Addresses the Host named that are neither a wildcard nor the loopback, an
+  // address of one of its interfaces, are each a line of their own.
+  for (const host of spec.others === undefined ? [] : spec.others) {
+    lines.push({ address: joinAddress(host, spec.port), notice: "" });
+  }
 
   if (spec.scope === bindScopeLoopback) {
     const notice = spec.here ? "status.loopback-here-copied.notice" : "status.loopback-host-copied.notice";
