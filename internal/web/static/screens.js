@@ -5010,16 +5010,19 @@ function hostCreateForm(known) {
         note: t("hosts.password-add.hint")
       },
       { name: "description", label: t("hosts.description.label") },
-      // Ticked to begin with, because a Host with no assignment runs no tunnel
-      // at all and carrying everything is what the API does with a request that
-      // does not mention the field. It is on the add form alone: it says what a
-      // Host starts with, and what it carries after that is changed with the
-      // Service ports button in its row.
+      // Clear to begin with, so that a Host is added carrying nothing until
+      // somebody says what it is to carry: every service port on every new
+      // Host opens ports on it that nobody may have meant to open there. The
+      // API still gives everything to a request that does not mention the
+      // field, which is what a client written before this form changed sends.
+      // It is on the add form alone: it says what a Host starts with, and what
+      // it carries after that is changed with the Service ports button in its
+      // row.
       {
         name: "assign_all_service_ports",
         label: t("hosts.assign-all.label"),
         type: "checkbox",
-        value: true,
+        value: false,
         note: t("hosts.assign-all.hint")
       },
       // The scope rides on that tick, and it is the scope of the assignments
@@ -7530,13 +7533,14 @@ function servicePortCreateForm() {
       portField("local_port", t("service-ports.local-port.label"), undefined,
         privilegedPortAdvice),
       { name: "description", label: t("service-ports.description.label") },
-      // The other half of the pair on the host form, ticked to begin with for
-      // the same reason, and on the add form alone for the same reason.
+      // The other half of the pair on the host form, clear to begin with for
+      // the same reason, and on the add form alone for the same reason. The
+      // Hosts are picked afterwards with the Hosts button in its row.
       {
         name: "assign_to_all_hosts",
         label: t("service-ports.assign-all.label"),
         type: "checkbox",
-        value: true,
+        value: false,
         note: t("service-ports.assign-all.hint")
       },
       // The scope of this batch of assignments, asked for on the same terms as

@@ -63,8 +63,8 @@ flowchart LR
 ```
 
 What the Tunnel Manager server runs is made of three things. You register a Host and a
-service port, the assignment between them is made for you unless you say
-otherwise, and one assignment is what one tunnel is built from.
+service port, tick which Hosts carry which service port, and one assignment is
+what one tunnel is built from.
 
 | Part | What it is |
 |------|------------|
