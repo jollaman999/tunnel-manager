@@ -1,3 +1,13 @@
+# v4.1.7
+
+## Add/fix features:
+
+- **Every dependency is at its newest release**, x/crypto 0.58.0, x/sys 0.49.0, x/net 0.61.0 and the SQLite driver 1.60.1 among them. The image is still built on golang:1.27.1-trixie and runs on alpine:3.24.2, both pinned by digest.
+
+## Notes:
+
+- For those building from the repository: the demo recorder in tools/demo moves to chromedp 0.21.0.
+
 # v4.1.6
 
 ## Add/fix features:
