@@ -142,6 +142,25 @@ chmod +x tunnel-manager-linux-amd64
 ./tunnel-manager-linux-amd64
 ```
 
+**macOS 에서는 격리 속성도 지워야 합니다.** 브라우저로 내려받은 파일에는
+`com.apple.quarantine` 이 붙고, macOS 는 이 속성이 붙은 채 Apple 공증을 받지 않은 바이너리를
+실행하지 않습니다. Apple silicon 은 `darwin-arm64`, Intel Mac 은 `darwin-amd64` 바이너리를 받습니다.
+
+```bash
+chmod +x tunnel-manager-darwin-arm64
+xattr -d com.apple.quarantine tunnel-manager-darwin-arm64
+./tunnel-manager-darwin-arm64
+```
+
+`curl` 로 받은 파일에는 이 속성이 붙지 않습니다. 그때 `xattr` 가 `No such xattr` 라고 답하는데
+무시해도 됩니다.
+
+Windows 에서는 실행 권한을 줄 것이 없습니다. PowerShell 에서 띄웁니다.
+
+```powershell
+.\tunnel-manager-windows-amd64.exe
+```
+
 첫 기동이 데이터베이스와 계정과 인증서를 만들고, 그 계정의 비밀번호가 어디에 있는지를 로그에
 남깁니다.
 
@@ -152,9 +171,7 @@ copy of the password  {"log_id": "account.created_with_initial_password",
 "initial_password_file": "<dir>/initial-password"}
 ```
 
-```bash
-cat <dir>/initial-password
-```
+그 파일이 플랫폼마다 어디에 있고 어떻게 읽는지는 [초기 비밀번호 보기](#초기-비밀번호-보기)에 있습니다.
 
 브라우저로 `https://127.0.0.1:8888/` 를 엽니다. 인증서는 Tunnel Manager 서버가 스스로에게 발급한 것이라
 브라우저가 경고합니다. 그 경고에서 확인할 지문은 기동 로그와 Settings 화면에 있습니다.
@@ -195,6 +212,30 @@ Windows 에서는 **관리자 권한으로 실행**한 PowerShell 이나 명령 
 `sudo tunnel-manager -uninstall` 이 다시 걷어냅니다. 서비스를 멈추고, 등록을 지우고, 설치된
 실행 파일을 지웁니다. **데이터는 남깁니다.** 어디에 남았는지는 보고에 나옵니다. 데이터
 디렉터리까지 지우려면 `-purge` 를 붙이는데, `-purge` 가 지운 것은 되돌릴 수 없습니다.
+
+## 초기 비밀번호 보기
+
+`initial-password` 파일은 데이터베이스 파일이 있는 디렉터리에 생깁니다. 그 디렉터리가 어디인지는
+Tunnel Manager 서버를 어떻게 띄웠는지에 따라 다르고, 명령줄에 `-db` 를 주면 그 데이터베이스 파일 옆에
+생깁니다.
+
+| 띄운 방법 | 파일 | 읽는 명령 |
+|-----------|------|-----------|
+| Linux, 직접 실행 | `~/.config/tunnel-manager/initial-password` | `cat ~/.config/tunnel-manager/initial-password` |
+| macOS, 직접 실행 | `~/Library/Application Support/tunnel-manager/initial-password` | `cat ~/Library/Application\ Support/tunnel-manager/initial-password` |
+| Windows, 직접 실행 | `%AppData%\tunnel-manager\initial-password` | `Get-Content "$env:APPDATA\tunnel-manager\initial-password"` |
+| Linux, `-install` | `/var/lib/tunnel-manager/initial-password` | `sudo cat /var/lib/tunnel-manager/initial-password` |
+| macOS, `-install` | `/Library/Application Support/tunnel-manager/initial-password` | `sudo cat '/Library/Application Support/tunnel-manager/initial-password'` |
+| Windows, `-install` | `C:\ProgramData\tunnel-manager\initial-password` | **관리자 권한으로 실행**한 PowerShell 에서 `Get-Content C:\ProgramData\tunnel-manager\initial-password` |
+| Docker Compose | `./_data/initial-password` | `docker compose exec tunnel-manager cat /data/initial-password` |
+
+Linux 에서 `$XDG_CONFIG_HOME` 이 설정돼 있으면 `~/.config/tunnel-manager/` 대신
+`$XDG_CONFIG_HOME/tunnel-manager/` 에 생깁니다.
+
+**서비스로 설치하면 그 파일은 root 만 읽을 수 있습니다.** 서비스는 `root`(Windows 는 `LocalSystem`)로
+돌고 데이터 디렉터리는 권한 `0700` 으로 만들어지므로, 일반 계정에서 그 디렉터리로 `cd` 하거나 `cat` 하면
+`Permission denied` 가 납니다. `sudo cat` 이면 root 셸로 바꾸지 않고도 읽힙니다.
+Windows 에서는 그 파일을 소유자와 SYSTEM 과 Administrators 만 읽을 수 있습니다.
 
 ## 어디서 더 읽나
 

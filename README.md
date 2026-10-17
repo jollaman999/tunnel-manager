@@ -168,6 +168,26 @@ chmod +x tunnel-manager-linux-amd64
 ./tunnel-manager-linux-amd64
 ```
 
+**On macOS, remove the quarantine attribute as well.** A file downloaded with a
+browser carries `com.apple.quarantine`, and macOS refuses to start a binary that
+carries it and is not notarized by Apple. Take the `darwin-arm64` binary on
+Apple silicon and the `darwin-amd64` one on an Intel Mac:
+
+```bash
+chmod +x tunnel-manager-darwin-arm64
+xattr -d com.apple.quarantine tunnel-manager-darwin-arm64
+./tunnel-manager-darwin-arm64
+```
+
+A file fetched with `curl` carries no such attribute, and `xattr` then answers
+`No such xattr`, which can be ignored.
+
+On Windows there is nothing to make executable. Start it from a PowerShell:
+
+```powershell
+.\tunnel-manager-windows-amd64.exe
+```
+
 The first start creates the database, the account and the certificate, and
 writes where the password of that account is:
 
@@ -178,9 +198,8 @@ copy of the password  {"log_id": "account.created_with_initial_password",
 "initial_password_file": "<dir>/initial-password"}
 ```
 
-```bash
-cat <dir>/initial-password
-```
+Where that file is on each platform, and how to read it, is in
+[Reading the initial password](#reading-the-initial-password).
 
 Open `https://127.0.0.1:8888/` in a browser. The certificate is one the
 Tunnel Manager server signed for itself, so the browser warns about it; the fingerprint
@@ -228,6 +247,31 @@ instead, and the report says which of the two landed.
 registration goes and the installed executable is removed. **The data is kept**,
 and the report says where it was left. `-purge` removes the data directory as
 well, and what `-purge` removes cannot be brought back.
+
+## Reading the initial password
+
+The file `initial-password` is written in the directory the database file is
+in. Which directory that is depends on how the Tunnel Manager server was
+started; a `-db` given on the command line puts it beside that database file.
+
+| How it was started | The file | Read it with |
+|--------------------|----------|--------------|
+| Linux, started directly | `~/.config/tunnel-manager/initial-password` | `cat ~/.config/tunnel-manager/initial-password` |
+| macOS, started directly | `~/Library/Application Support/tunnel-manager/initial-password` | `cat ~/Library/Application\ Support/tunnel-manager/initial-password` |
+| Windows, started directly | `%AppData%\tunnel-manager\initial-password` | `Get-Content "$env:APPDATA\tunnel-manager\initial-password"` |
+| Linux, `-install` | `/var/lib/tunnel-manager/initial-password` | `sudo cat /var/lib/tunnel-manager/initial-password` |
+| macOS, `-install` | `/Library/Application Support/tunnel-manager/initial-password` | `sudo cat '/Library/Application Support/tunnel-manager/initial-password'` |
+| Windows, `-install` | `C:\ProgramData\tunnel-manager\initial-password` | `Get-Content C:\ProgramData\tunnel-manager\initial-password`, from a PowerShell started with **Run as administrator** |
+| Docker Compose | `./_data/initial-password` | `docker compose exec tunnel-manager cat /data/initial-password` |
+
+On Linux, `$XDG_CONFIG_HOME/tunnel-manager/` takes the place of
+`~/.config/tunnel-manager/` when that variable is set.
+
+**An installed service keeps the file where only root reads it.** The service
+runs as `root` (`LocalSystem` on Windows), and the data directory is made with
+permission `0700`, so `cd` into it or `cat` from an ordinary account answers
+`Permission denied`. `sudo cat` reads the file without switching to a root shell.
+On Windows the file lets only its owner, SYSTEM and Administrators read it.
 
 ## Where to read more
 

@@ -128,6 +128,24 @@ chmod +x tunnel-manager-linux-amd64
 ./tunnel-manager-linux-amd64
 ```
 
+**在 macOS 上还要去掉隔离属性。** 用浏览器下载的文件会带上 `com.apple.quarantine`，
+带着这个属性又没有经过 Apple 公证的可执行文件，macOS 不让它运行。Apple 芯片用 `darwin-arm64`，
+Intel Mac 用 `darwin-amd64`：
+
+```bash
+chmod +x tunnel-manager-darwin-arm64
+xattr -d com.apple.quarantine tunnel-manager-darwin-arm64
+./tunnel-manager-darwin-arm64
+```
+
+用 `curl` 下载的文件不会带这个属性，这时 `xattr` 会回答 `No such xattr`，不用理会。
+
+Windows 上不需要加执行权限，在 PowerShell 里启动：
+
+```powershell
+.\tunnel-manager-windows-amd64.exe
+```
+
 第一次启动会创建数据库、账号和证书，并告诉你这个账号的密码写在哪里：
 
 ```text
@@ -137,9 +155,7 @@ copy of the password  {"log_id": "account.created_with_initial_password",
 "initial_password_file": "<dir>/initial-password"}
 ```
 
-```bash
-cat <dir>/initial-password
-```
+这个文件在各个平台上的位置和读取方法见[查看初始密码](#查看初始密码)。
 
 在浏览器里打开 `https://127.0.0.1:8888/`。证书是Tunnel Manager 服务器自签的，所以浏览器会警告；核对这个
 警告要用的指纹在启动日志里，登录之后也在 Settings 页面上。
@@ -179,6 +195,29 @@ sudo ./tunnel-manager-linux-amd64 -install
 `sudo tunnel-manager -uninstall` 把它撤掉：停掉服务，删掉注册，删掉装上去的可执行文件。
 **数据保留**，报告里会说留在哪里。要把数据目录也删掉就加 `-purge`，`-purge` 删掉的东西拿不
 回来。
+
+## 查看初始密码
+
+`initial-password` 文件写在数据库文件所在的目录里。这个目录在哪里，取决于Tunnel Manager 服务器是
+怎么启动的；命令行上给了 `-db` 的话，它就写在那个数据库文件旁边。
+
+| 启动方式 | 文件 | 读取命令 |
+|----------|------|----------|
+| Linux，直接运行 | `~/.config/tunnel-manager/initial-password` | `cat ~/.config/tunnel-manager/initial-password` |
+| macOS，直接运行 | `~/Library/Application Support/tunnel-manager/initial-password` | `cat ~/Library/Application\ Support/tunnel-manager/initial-password` |
+| Windows，直接运行 | `%AppData%\tunnel-manager\initial-password` | `Get-Content "$env:APPDATA\tunnel-manager\initial-password"` |
+| Linux，`-install` | `/var/lib/tunnel-manager/initial-password` | `sudo cat /var/lib/tunnel-manager/initial-password` |
+| macOS，`-install` | `/Library/Application Support/tunnel-manager/initial-password` | `sudo cat '/Library/Application Support/tunnel-manager/initial-password'` |
+| Windows，`-install` | `C:\ProgramData\tunnel-manager\initial-password` | 在用**以管理员身份运行**打开的 PowerShell 里执行 `Get-Content C:\ProgramData\tunnel-manager\initial-password` |
+| Docker Compose | `./_data/initial-password` | `docker compose exec tunnel-manager cat /data/initial-password` |
+
+在 Linux 上设置了 `$XDG_CONFIG_HOME` 的话，文件写在 `$XDG_CONFIG_HOME/tunnel-manager/`，而不是
+`~/.config/tunnel-manager/`。
+
+**作为服务安装后，这个文件只有 root 能读。** 服务以 `root`（Windows 上是 `LocalSystem`）运行，
+数据目录以权限 `0700` 创建，所以普通账号 `cd` 进去或者 `cat` 都会得到 `Permission denied`。
+用 `sudo cat` 就能读，不必切换到 root 的 shell。
+在 Windows 上，这个文件只有所有者、SYSTEM 和 Administrators 能读。
 
 ## 更多内容在哪里
 
