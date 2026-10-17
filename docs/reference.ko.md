@@ -655,6 +655,19 @@ chmod +x tunnel-manager-linux-amd64
 ./tunnel-manager-linux-amd64
 ```
 
+**macOS 에서는 격리 속성도 지워야 합니다.** 브라우저로 내려받은 파일에는
+`com.apple.quarantine` 이 붙고, macOS 는 이 속성이 붙은 채 Apple 공증을 받지 않은 바이너리를
+실행하지 않습니다. Apple silicon 은 `darwin-arm64`, Intel Mac 은 `darwin-amd64` 바이너리를 받습니다.
+
+```bash
+chmod +x tunnel-manager-darwin-arm64
+xattr -d com.apple.quarantine tunnel-manager-darwin-arm64
+./tunnel-manager-darwin-arm64
+```
+
+`curl` 로 받은 파일에는 이 속성이 붙지 않습니다. 그때 `xattr` 가 `No such xattr` 라고 답하는데
+무시해도 됩니다.
+
 플래그는 이것이 전부입니다.
 
 | 플래그 | 하는 일 |

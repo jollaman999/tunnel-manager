@@ -773,6 +773,20 @@ chmod +x tunnel-manager-linux-amd64
 ./tunnel-manager-linux-amd64
 ```
 
+**On macOS, remove the quarantine attribute as well.** A file downloaded with a
+browser carries `com.apple.quarantine`, and macOS refuses to start a binary that
+carries it and is not notarized by Apple. Take the `darwin-arm64` binary on
+Apple silicon and the `darwin-amd64` one on an Intel Mac:
+
+```bash
+chmod +x tunnel-manager-darwin-arm64
+xattr -d com.apple.quarantine tunnel-manager-darwin-arm64
+./tunnel-manager-darwin-arm64
+```
+
+A file fetched with `curl` carries no such attribute, and `xattr` then answers
+`No such xattr`, which can be ignored.
+
 A release carries a `SHA256SUMS` file beside the binaries, and it says what
 each download should be. Releases made before that file was added carry none,
 and there is then nothing to check a download against. Check it before the first start: a download that was

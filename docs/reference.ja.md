@@ -679,6 +679,19 @@ chmod +x tunnel-manager-linux-amd64
 ./tunnel-manager-linux-amd64
 ```
 
+**macOS では隔離属性も外します。** ブラウザでダウンロードしたファイルには
+`com.apple.quarantine` が付き、macOS はこの属性が付いたまま Apple の公証を受けていないバイナリを
+起動しません。Apple シリコンなら `darwin-arm64`、Intel Mac なら `darwin-amd64` のバイナリを使います。
+
+```bash
+chmod +x tunnel-manager-darwin-arm64
+xattr -d com.apple.quarantine tunnel-manager-darwin-arm64
+./tunnel-manager-darwin-arm64
+```
+
+`curl` で取ってきたファイルにはこの属性が付きません。そのとき `xattr` は `No such xattr` と
+答えますが、無視してかまいません。
+
 フラグはこれですべてです。
 
 | フラグ | 何をするか |

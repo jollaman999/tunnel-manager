@@ -589,6 +589,18 @@ chmod +x tunnel-manager-linux-amd64
 ./tunnel-manager-linux-amd64
 ```
 
+**在 macOS 上还要去掉隔离属性。** 用浏览器下载的文件会带上 `com.apple.quarantine`，
+带着这个属性又没有经过 Apple 公证的可执行文件，macOS 不让它运行。Apple 芯片用 `darwin-arm64`，
+Intel Mac 用 `darwin-amd64`：
+
+```bash
+chmod +x tunnel-manager-darwin-arm64
+xattr -d com.apple.quarantine tunnel-manager-darwin-arm64
+./tunnel-manager-darwin-arm64
+```
+
+用 `curl` 下载的文件不会带这个属性，这时 `xattr` 会回答 `No such xattr`，不用理会。
+
 命令行参数就这几个：
 
 | 参数 | 做什么 |
