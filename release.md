@@ -1,3 +1,15 @@
+# v4.1.8
+
+## Add/fix features:
+
+- **Every dependency is at its newest release**, Echo 4.16.2, mimetype 1.4.16 and the SQLite driver 1.61.0 with libc 1.79.1 among them. The image is still built on golang:1.27.1-trixie and runs on alpine:3.24.2, both pinned by digest.
+
+## Notes:
+
+- **The READMEs and the reference say how to start the binary on macOS**: which of the two darwin binaries to take, and that a file downloaded with a browser has its `com.apple.quarantine` attribute removed with `xattr` before it starts. The READMEs also say how to start it on Windows.
+- **The READMEs say where the initial password is** for each way the server is started, directly or as an installed service on Linux, macOS and Windows, or with Docker Compose, and how to read it; an installed service keeps it where only root reads it.
+- For those building from the repository: the demo recorder in tools/demo moves to cdproto 0.158.6.
+
 # v4.1.7
 
 ## Add/fix features:
