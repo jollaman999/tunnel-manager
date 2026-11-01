@@ -1,3 +1,13 @@
+# v4.1.9
+
+## Add/fix features:
+
+- **Every dependency is at its newest release**, Echo 4.16.3, x/net 0.62.0 and the SQLite driver 1.61.1 among them. The image is now built on golang:1.27.2-trixie and runs on alpine:3.24.3, both pinned by digest.
+
+## Notes:
+
+- For those building from the repository: the demo recorder in tools/demo moves to cdproto 0.159.0 and its image to alpine:3.24.3.
+
 # v4.1.8
 
 ## Add/fix features:
