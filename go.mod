@@ -6,7 +6,7 @@ toolchain go1.27.1
 
 require (
 	github.com/glebarez/sqlite v1.11.0
-	github.com/go-playground/validator/v10 v10.30.5
+	github.com/go-playground/validator/v10 v10.30.6
 	github.com/labstack/echo/v4 v4.16.3
 	go.uber.org/zap v1.28.0
 	golang.org/x/crypto v0.58.0
