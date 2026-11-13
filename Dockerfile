@@ -3,7 +3,7 @@
 # program is built with CGO_ENABLED=0, so a Go toolchain cross-compiles it by
 # being told where it is going. Left to run on the target instead, an image for
 # another architecture would compile the whole program under emulation.
-FROM --platform=$BUILDPLATFORM golang:1.27.2-trixie@sha256:47667934874913a449b96faa7ef4777fa285d9ec29126ee80ed61c45b7cccf0e AS builder
+FROM --platform=$BUILDPLATFORM golang:1.27.4-trixie@sha256:b54b2639de8c1bfe538ec5ffc45f29b1932235ac5f6d63c059853646677112d9 AS builder
 
 RUN apt-get update && apt-get install -y make bash
 
