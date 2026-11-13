@@ -2,7 +2,7 @@ module github.com/jollaman999/tunnel-manager/tools/demo
 
 go 1.26.0
 
-require github.com/chromedp/chromedp v0.21.0
+require github.com/chromedp/chromedp v0.23.0
 
 require (
 	github.com/chromedp/cdproto v0.159.0 // indirect
