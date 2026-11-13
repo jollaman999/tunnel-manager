@@ -1,3 +1,14 @@
+# v4.1.10
+
+## Add/fix features:
+
+- **Every dependency is at its newest release**, Echo 5.4.5, validator 10.30.6, x/crypto 0.59.0, x/sys 0.50.0 and the SQLite driver 1.62.0 among them. The image is now built on golang:1.27.4-trixie and still runs on alpine:3.24.3, both pinned by digest. The image workflow logs in with docker/login-action 4.8.0.
+- **Echo moves from v4 to v5**, since v4 receives bug fixes only until the end of 2026. The API, the screens and the line the access log writes for a request are what they were, with two differences. A JSON body larger than the body limit is now refused with 413 even when everything past the limit is whitespace, because the body is read whole before it is decoded. And the reason given with `request.body.invalid` for a body that is not valid JSON is worded by the new decoder, for example `unexpected end of JSON input`.
+
+## Notes:
+
+- For those building from the repository: the demo recorder in tools/demo moves to chromedp 0.23.0 and cdproto 0.160.1 and follows the new API of chromedp, which it had not built against since 0.21.0.
+
 # v4.1.9
 
 ## Add/fix features:
