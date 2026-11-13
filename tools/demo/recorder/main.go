@@ -219,7 +219,7 @@ func record(cfg config) error {
 
 	r := &recorder{ctx: ctx, dir: cfg.frames, options: options, width: cfg.width, height: cfg.height, pace: cfg.pace}
 
-	if err := chromedp.Run(ctx, chromedp.EmulateViewport(int64(cfg.width), int64(cfg.height))); err != nil {
+	if err := chromedp.Do(ctx, chromedp.EmulateViewport(int64(cfg.width), int64(cfg.height))); err != nil {
 		return fmt.Errorf("starting Chrome: %w", err)
 	}
 
@@ -261,9 +261,9 @@ func sceneSignIn(r *recorder, cfg config, initial string) error {
 	}
 
 	if err := r.run(
-		chromedp.Evaluate(`localStorage.setItem("tm_lang", "en")`, nil),
+		chromedp.Evaluate[chromedp.Void](`localStorage.setItem("tm_lang", "en")`),
 		chromedp.Reload(),
-		chromedp.WaitVisible(`#login-password`, chromedp.ByQuery),
+		chromedp.WaitVisible(chromedp.CSS(`#login-password`)),
 	); err != nil {
 		return err
 	}
@@ -422,7 +422,7 @@ func (r *recorder) addHost(cfg config, name string) error {
 	}
 
 	if port != "22" {
-		if err := r.run(chromedp.SetValue(`#host-create-port`, "", chromedp.ByQuery)); err != nil {
+		if err := r.run(chromedp.SetValue(chromedp.CSS(`#host-create-port`), "")); err != nil {
 			return err
 		}
 
@@ -549,7 +549,7 @@ func hostIDExpr(name string) string {
 func (r *recorder) hostID(name string) (string, error) {
 	var id string
 
-	if err := r.run(chromedp.Evaluate(hostIDExpr(name), &id)); err != nil {
+	if err := r.run(into(chromedp.Evaluate[string](hostIDExpr(name)), &id)); err != nil {
 		return "", err
 	}
 
@@ -608,7 +608,7 @@ func sceneStatus(r *recorder, cfg config, _ string) error {
 
 		var done bool
 
-		if err := r.run(chromedp.Evaluate(all, &done)); err != nil {
+		if err := r.run(into(chromedp.Evaluate[bool](all), &done)); err != nil {
 			return err
 		}
 
@@ -642,7 +642,7 @@ func sceneStatus(r *recorder, cfg config, _ string) error {
 		// everything ticked.
 		var open bool
 
-		if err := r.run(chromedp.Evaluate(`document.querySelector('[data-modal-panel="host-keys"]') !== null`, &open)); err != nil {
+		if err := r.run(into(chromedp.Evaluate[bool](`document.querySelector('[data-modal-panel="host-keys"]') !== null`), &open)); err != nil {
 			return err
 		}
 
@@ -693,7 +693,7 @@ func sceneServicePortHosts(r *recorder, cfg config, _ string) error {
 
 	var id string
 
-	if err := r.run(chromedp.Evaluate(`document.querySelector('[data-action^="service-port-hosts-"]').dataset.action.slice("service-port-hosts-".length)`, &id)); err != nil {
+	if err := r.run(into(chromedp.Evaluate[string](`document.querySelector('[data-action^="service-port-hosts-"]').dataset.action.slice("service-port-hosts-".length)`), &id)); err != nil {
 		return err
 	}
 
@@ -707,7 +707,7 @@ func sceneServicePortHosts(r *recorder, cfg config, _ string) error {
 
 	var box string
 
-	if err := r.run(chromedp.Evaluate(fmt.Sprintf(`(function (name) {
+	if err := r.run(into(chromedp.Evaluate[string](fmt.Sprintf(`(function (name) {
   for (const row of document.querySelectorAll('[data-modal-panel="service-port-hosts"] tbody tr')) {
     const said = row.querySelector(".desc-text");
     if (said !== null && said.textContent.trim() === name) {
@@ -715,7 +715,7 @@ func sceneServicePortHosts(r *recorder, cfg config, _ string) error {
     }
   }
   return "";
-})(%q)`, name), &box)); err != nil {
+})(%q)`, name)), &box)); err != nil {
 		return err
 	}
 
@@ -836,7 +836,7 @@ func sceneJumpRoutes(r *recorder, cfg config, _ string) error {
 		}
 	}
 
-	if err := r.overlay("window.__demo.hide()", nil); err != nil {
+	if err := r.overlay("window.__demo.hide()"); err != nil {
 		return err
 	}
 
@@ -860,9 +860,9 @@ func sceneService(r *recorder, cfg config, _ string) error {
 		var heading, port string
 
 		if err := r.run(
-			chromedp.WaitVisible(`h1`, chromedp.ByQuery),
-			chromedp.Text(`h1`, &heading, chromedp.ByQuery),
-			chromedp.Text(`main p code`, &port, chromedp.ByQuery),
+			chromedp.WaitVisible(chromedp.CSS(`h1`)),
+			into(chromedp.Text(chromedp.CSS(`h1`)), &heading),
+			into(chromedp.Text(chromedp.CSS(`main p code`)), &port),
 		); err != nil {
 			return err
 		}
@@ -970,8 +970,8 @@ func sceneLocalForward(r *recorder, cfg config, _ string) error {
 	var heading string
 
 	if err := r.run(
-		chromedp.WaitVisible(`h1`, chromedp.ByQuery),
-		chromedp.Text(`h1`, &heading, chromedp.ByQuery),
+		chromedp.WaitVisible(chromedp.CSS(`h1`)),
+		into(chromedp.Text(chromedp.CSS(`h1`)), &heading),
 	); err != nil {
 		return err
 	}
@@ -997,7 +997,7 @@ func sceneStatusBoth(r *recorder, cfg config, _ string) error {
 
 	// The last of the four count boxes, so that seeing it means the row of
 	// them has been drawn rather than only begun.
-	if err := r.run(chromedp.WaitVisible(`[data-count="errors"]`, chromedp.ByQuery)); err != nil {
+	if err := r.run(chromedp.WaitVisible(chromedp.CSS(`[data-count="errors"]`))); err != nil {
 		return err
 	}
 
@@ -1080,7 +1080,7 @@ func sceneHopOff(r *recorder, cfg config, _ string) error {
 		return err
 	}
 
-	if err := r.run(chromedp.WaitVisible(`[data-count="errors"]`, chromedp.ByQuery)); err != nil {
+	if err := r.run(chromedp.WaitVisible(chromedp.CSS(`[data-count="errors"]`))); err != nil {
 		return err
 	}
 
@@ -1188,7 +1188,7 @@ func sceneSOCKS(r *recorder, cfg config, _ string) error {
 
 		var found bool
 
-		if err := r.run(chromedp.Evaluate(fmt.Sprintf("document.querySelector(%q) !== null", connected), &found)); err != nil {
+		if err := r.run(into(chromedp.Evaluate[bool](fmt.Sprintf("document.querySelector(%q) !== null", connected)), &found)); err != nil {
 			return err
 		}
 
@@ -1206,8 +1206,8 @@ func sceneSOCKS(r *recorder, cfg config, _ string) error {
 
 		time.Sleep(time.Second)
 
-		if err := r.run(chromedp.Click(`nav a[data-screen="hosts"]`, chromedp.ByQuery),
-			chromedp.WaitVisible(`[data-socks]`, chromedp.ByQuery)); err != nil {
+		if err := r.run(chromedp.Click(chromedp.CSS(`nav a[data-screen="hosts"]`)),
+			chromedp.WaitVisible(chromedp.CSS(`[data-socks]`))); err != nil {
 			return err
 		}
 	}
@@ -1264,8 +1264,8 @@ func (r *recorder) throughProxy(cfg config) error {
 	var heading string
 
 	if err := r.run(
-		chromedp.WaitVisible(`h1`, chromedp.ByQuery),
-		chromedp.Text(`h1`, &heading, chromedp.ByQuery),
+		chromedp.WaitVisible(chromedp.CSS(`h1`)),
+		into(chromedp.Text(chromedp.CSS(`h1`)), &heading),
 	); err != nil {
 		return err
 	}
@@ -1305,8 +1305,23 @@ type recorder struct {
 	pace float64
 }
 
-func (r *recorder) run(actions ...chromedp.Action) error {
-	return chromedp.Run(r.ctx, actions...)
+func (r *recorder) run(steps ...chromedp.Action[chromedp.Void]) error {
+	return chromedp.Do(r.ctx, steps...)
+}
+
+// into is action with its value put in v rather than returned, so that it runs
+// in one r.run with the steps around it.
+func into[T any](action chromedp.Action[T], v *T) chromedp.Action[chromedp.Void] {
+	return func(ctx context.Context, t *chromedp.Target) (chromedp.Void, error) {
+		value, err := action(ctx, t)
+		if err != nil {
+			return chromedp.Void{}, err
+		}
+
+		*v = value
+
+		return chromedp.Void{}, nil
+	}
 }
 
 // navigate loads url, and loads it again when Chrome gave up on it because the
@@ -1335,7 +1350,7 @@ func (r *recorder) shot(hold time.Duration) error {
 
 	var png []byte
 
-	if err := r.run(chromedp.CaptureScreenshot(&png)); err != nil {
+	if err := r.run(into(chromedp.CaptureScreenshot(), &png)); err != nil {
 		return err
 	}
 
@@ -1429,18 +1444,18 @@ const overlay = `(function () {
   };
 })();`
 
-func (r *recorder) overlay(call string, result any) error {
-	return r.run(chromedp.Evaluate(overlay+call, result))
+func (r *recorder) overlay(call string) error {
+	return r.run(chromedp.Evaluate[chromedp.Void](overlay + call))
 }
 
 func (r *recorder) caption(text string) error {
-	return r.overlay(fmt.Sprintf("window.__demo.caption(%q)", text), nil)
+	return r.overlay(fmt.Sprintf("window.__demo.caption(%q)", text))
 }
 
 func (r *recorder) point(sel string) error {
 	var found bool
 
-	if err := r.overlay(fmt.Sprintf("window.__demo.point(%q)", sel), &found); err != nil {
+	if err := r.run(into(chromedp.Evaluate[bool](overlay+fmt.Sprintf("window.__demo.point(%q)", sel)), &found)); err != nil {
 		return err
 	}
 
@@ -1452,7 +1467,7 @@ func (r *recorder) point(sel string) error {
 }
 
 func (r *recorder) scrollTo(sel string) error {
-	return r.overlay(fmt.Sprintf("window.__demo.scrollTo(%q)", sel), nil)
+	return r.overlay(fmt.Sprintf("window.__demo.scrollTo(%q)", sel))
 }
 
 // typeInto types text a few characters at a time, with a frame after each, so
@@ -1466,7 +1481,7 @@ func (r *recorder) typeInto(sel, text string, chunk int) error {
 		return err
 	}
 
-	if err := r.run(chromedp.Focus(sel, chromedp.ByQuery)); err != nil {
+	if err := r.run(chromedp.Focus(chromedp.CSS(sel))); err != nil {
 		return err
 	}
 
@@ -1479,7 +1494,7 @@ func (r *recorder) typeInto(sel, text string, chunk int) error {
 	for start := 0; start < len(runes); start += chunk {
 		end := min(start+chunk, len(runes))
 
-		if err := r.run(chromedp.SendKeys(sel, string(runes[start:end]), chromedp.ByQuery)); err != nil {
+		if err := r.run(chromedp.SendKeys(chromedp.CSS(sel), string(runes[start:end]))); err != nil {
 			return err
 		}
 
@@ -1508,7 +1523,7 @@ func (r *recorder) click(sel, then string) error {
 		return err
 	}
 
-	if err := r.run(chromedp.Click(sel, chromedp.ByQuery)); err != nil {
+	if err := r.run(chromedp.Click(chromedp.CSS(sel))); err != nil {
 		return err
 	}
 
@@ -1516,14 +1531,14 @@ func (r *recorder) click(sel, then string) error {
 		ctx, cancel := context.WithTimeout(r.ctx, 20*time.Second)
 		defer cancel()
 
-		if err := chromedp.Run(ctx, chromedp.WaitVisible(then, chromedp.ByQuery)); err != nil {
+		if err := chromedp.Do(ctx, chromedp.WaitVisible(chromedp.CSS(then))); err != nil {
 			return fmt.Errorf("waiting for %s after clicking %s: %w", then, sel, err)
 		}
 	}
 
 	time.Sleep(300 * time.Millisecond)
 
-	if err := r.overlay("window.__demo.hide()", nil); err != nil {
+	if err := r.overlay("window.__demo.hide()"); err != nil {
 		return err
 	}
 
@@ -1539,7 +1554,7 @@ func (r *recorder) rowAction(action, then string) error {
 
 	var folded bool
 
-	if err := r.run(chromedp.Evaluate(fmt.Sprintf(`(function (sel) {
+	if err := r.run(into(chromedp.Evaluate[bool](fmt.Sprintf(`(function (sel) {
   const button = document.querySelector(sel);
   if (button === null || button.getClientRects().length > 0) { return false; }
   const old = document.getElementById("demo-menu");
@@ -1548,7 +1563,7 @@ func (r *recorder) rowAction(action, then string) error {
   if (menu === null) { return false; }
   menu.id = "demo-menu";
   return true;
-})(%q)`, sel), &folded)); err != nil {
+})(%q)`, sel)), &folded)); err != nil {
 		return err
 	}
 
@@ -1570,7 +1585,7 @@ func (r *recorder) waitVisible(sel string, limit time.Duration) error {
 	ctx, cancel := context.WithTimeout(r.ctx, limit)
 	defer cancel()
 
-	if err := chromedp.Run(ctx, chromedp.WaitVisible(sel, chromedp.ByQuery)); err != nil {
+	if err := chromedp.Do(ctx, chromedp.WaitVisible(chromedp.CSS(sel))); err != nil {
 		return fmt.Errorf("waiting for %s: %w", sel, err)
 	}
 
@@ -1590,7 +1605,7 @@ func (r *recorder) waitTrueWhileShooting(expr, what string, limit time.Duration)
 	for time.Now().Before(deadline) {
 		var found bool
 
-		if err := r.run(chromedp.Evaluate(expr, &found)); err != nil {
+		if err := r.run(into(chromedp.Evaluate[bool](expr), &found)); err != nil {
 			return err
 		}
 
@@ -1615,7 +1630,7 @@ func (r *recorder) waitTrue(expr, what string, limit time.Duration) error {
 	for time.Now().Before(deadline) {
 		var found bool
 
-		if err := r.run(chromedp.Evaluate(expr, &found)); err != nil {
+		if err := r.run(into(chromedp.Evaluate[bool](expr), &found)); err != nil {
 			return err
 		}
 
@@ -1658,7 +1673,7 @@ func (r *recorder) waitGone(sel string, limit time.Duration) error {
 	for time.Now().Before(deadline) {
 		var found bool
 
-		if err := r.run(chromedp.Evaluate(fmt.Sprintf("document.querySelector(%q) !== null", sel), &found)); err != nil {
+		if err := r.run(into(chromedp.Evaluate[bool](fmt.Sprintf("document.querySelector(%q) !== null", sel)), &found)); err != nil {
 			return err
 		}
 
