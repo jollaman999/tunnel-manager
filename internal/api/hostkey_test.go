@@ -20,7 +20,7 @@ import (
 	"github.com/jollaman999/tunnel-manager/internal/logid"
 	"github.com/jollaman999/tunnel-manager/internal/models"
 	"github.com/jollaman999/tunnel-manager/internal/tunnel"
-	"github.com/labstack/echo/v4"
+	"github.com/labstack/echo/v5"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zaptest/observer"
 	"golang.org/x/crypto/ssh"
@@ -158,8 +158,7 @@ func approveHostKeyLogged(t *testing.T, db *gorm.DB, body string,
 
 	rec := httptest.NewRecorder()
 	c := e.NewContext(req, rec)
-	c.SetParamNames("id")
-	c.SetParamValues("1")
+	c.SetPathValues(echo.PathValues{{Name: "id", Value: "1"}})
 
 	if withAccount {
 		leaveSessionOnContext(c, 1)

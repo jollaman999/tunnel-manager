@@ -10,7 +10,7 @@ import (
 	"github.com/jollaman999/tunnel-manager/internal/logid"
 	"github.com/jollaman999/tunnel-manager/internal/models"
 	"github.com/jollaman999/tunnel-manager/internal/tunnel"
-	"github.com/labstack/echo/v4"
+	"github.com/labstack/echo/v5"
 	"go.uber.org/zap"
 )
 
@@ -190,7 +190,7 @@ func portOf(address string) string {
 // @Failure  403  {object}  api.errorBody  "The token does not carry the read scope"
 // @Failure  500  {object}  api.errorBody  "A count or a row could not be read"
 // @Router       /metrics [get]
-func (m *MetricsHandler) GetMetrics(c echo.Context) error {
+func (m *MetricsHandler) GetMetrics(c *echo.Context) error {
 	h := m.status
 
 	desiredTunnels, err := h.manager.DesiredTunnelCount()

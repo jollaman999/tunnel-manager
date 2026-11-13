@@ -12,7 +12,7 @@ import (
 
 	"github.com/jollaman999/tunnel-manager/internal/logid"
 	"github.com/jollaman999/tunnel-manager/internal/models"
-	"github.com/labstack/echo/v4"
+	"github.com/labstack/echo/v5"
 	"go.uber.org/zap"
 	"gorm.io/gorm"
 )
@@ -160,7 +160,7 @@ func NewLogsHandler(logger *zap.Logger, path string, db *gorm.DB, empty func() e
 // @Param   lines  query  int  false  "How many lines, up to 2000"
 // @Success  200  {object}  models.Response{data=api.logsAnswer}
 // @Router       /logs [get]
-func (h *LogsHandler) GetLogs(c echo.Context) error {
+func (h *LogsHandler) GetLogs(c *echo.Context) error {
 	count, refused := logsLineCount(c.QueryParam("lines"))
 	if refused != nil {
 		return refused.answer(c)
@@ -239,7 +239,7 @@ type logsClearRequest struct {
 // @Success  200  {object}  models.Response{data=api.logsClearedAnswer}
 // @Failure  401  {object}  api.errorBody  "The password does not open this account"
 // @Router       /logs/clear [post]
-func (h *LogsHandler) ClearLogs(c echo.Context) error {
+func (h *LogsHandler) ClearLogs(c *echo.Context) error {
 	var req logsClearRequest
 
 	err := c.Bind(&req)

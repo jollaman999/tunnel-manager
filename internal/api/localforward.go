@@ -11,7 +11,7 @@ import (
 	"github.com/jollaman999/tunnel-manager/internal/models"
 	"github.com/jollaman999/tunnel-manager/internal/settings"
 	"github.com/jollaman999/tunnel-manager/internal/tunnel"
-	"github.com/labstack/echo/v4"
+	"github.com/labstack/echo/v5"
 	"go.uber.org/zap"
 	"gorm.io/gorm"
 )
@@ -207,7 +207,7 @@ func nextLocalForwardNumber(tx *gorm.DB, hostID uint) (uint, error) {
 // names. The three handlers that answer under such a path read them here, so
 // the two refusals a path that names neither of them with a number is answered
 // with are raised in one place.
-func localForwardPath(c echo.Context) (uint, uint, *refusal) {
+func localForwardPath(c *echo.Context) (uint, uint, *refusal) {
 	hostID, err := strconv.ParseUint(c.Param("id"), 10, 32)
 	if err != nil {
 		return 0, 0, refuse(http.StatusBadRequest, errHostIDInvalid, errorArgs{"reason": err.Error()})
@@ -391,7 +391,7 @@ func freeLocalPort(tx *gorm.DB, taken int, storedPort int, runningPort int) (int
 // @Failure  400  {object}  api.errorBody  "page is not a number, or size is not one of the sizes taken"
 // @Failure  404  {object}  api.errorBody  "No such Host"
 // @Router       /host/{id}/local-forward [get]
-func (h *Handler) ListHostLocalForwards(c echo.Context) error {
+func (h *Handler) ListHostLocalForwards(c *echo.Context) error {
 	id, err := strconv.ParseUint(c.Param("id"), 10, 32)
 	if err != nil {
 		return failure(c, http.StatusBadRequest, errHostIDInvalid, errorArgs{"reason": err.Error()})
@@ -464,7 +464,7 @@ func (h *Handler) ListHostLocalForwards(c echo.Context) error {
 // @Failure  404  {object}  api.errorBody  "No such Host"
 // @Failure  409  {object}  api.errorBody  "local_port is taken by another local forward or a SOCKS5 proxy, or is the port of this server"
 // @Router       /host/{id}/local-forward [post]
-func (h *Handler) CreateHostLocalForward(c echo.Context) error {
+func (h *Handler) CreateHostLocalForward(c *echo.Context) error {
 	id, err := strconv.ParseUint(c.Param("id"), 10, 32)
 	if err != nil {
 		return failure(c, http.StatusBadRequest, errHostIDInvalid, errorArgs{"reason": err.Error()})
@@ -588,7 +588,7 @@ func (h *Handler) CreateHostLocalForward(c echo.Context) error {
 // @Success  200  {object}  models.Response{data=api.localForwardView}
 // @Failure  404  {object}  api.errorBody  "The Host carries no forward with that number"
 // @Router       /host/{id}/local-forward/{number} [get]
-func (h *Handler) GetLocalForward(c echo.Context) error {
+func (h *Handler) GetLocalForward(c *echo.Context) error {
 	hostID, number, refused := localForwardPath(c)
 	if refused != nil {
 		return refused.answer(c)
@@ -636,7 +636,7 @@ func (h *Handler) GetLocalForward(c echo.Context) error {
 // @Failure  404  {object}  api.errorBody  "The Host carries no forward with that number"
 // @Failure  409  {object}  api.errorBody  "local_port is taken by another local forward or a SOCKS5 proxy, or is the port of this server"
 // @Router       /host/{id}/local-forward/{number} [put]
-func (h *Handler) UpdateLocalForward(c echo.Context) error {
+func (h *Handler) UpdateLocalForward(c *echo.Context) error {
 	hostID, number, refusedPath := localForwardPath(c)
 	if refusedPath != nil {
 		return refusedPath.answer(c)
@@ -756,7 +756,7 @@ func (h *Handler) UpdateLocalForward(c echo.Context) error {
 // @Success  200  {object}  models.Response{data=string}
 // @Failure  404  {object}  api.errorBody  "The Host carries no forward with that number"
 // @Router       /host/{id}/local-forward/{number} [delete]
-func (h *Handler) DeleteLocalForward(c echo.Context) error {
+func (h *Handler) DeleteLocalForward(c *echo.Context) error {
 	hostID, number, refused := localForwardPath(c)
 	if refused != nil {
 		return refused.answer(c)

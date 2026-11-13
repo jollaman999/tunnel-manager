@@ -12,7 +12,7 @@ import (
 
 	"github.com/jollaman999/tunnel-manager/internal/models"
 	"github.com/jollaman999/tunnel-manager/internal/tunnel"
-	"github.com/labstack/echo/v4"
+	"github.com/labstack/echo/v5"
 	"go.uber.org/zap"
 	"gorm.io/gorm"
 )
@@ -28,7 +28,7 @@ type searchPage struct {
 
 // listSearch runs one of the two list handlers over db with the given query
 // string and hands back the page.
-func listSearch(t *testing.T, db *gorm.DB, list func(*Handler) func(echo.Context) error, query string) searchPage {
+func listSearch(t *testing.T, db *gorm.DB, list func(*Handler) func(*echo.Context) error, query string) searchPage {
 	t.Helper()
 
 	c, rec := getRequest(t, "/api/list?"+query, "", "")
@@ -69,8 +69,8 @@ func listSearch(t *testing.T, db *gorm.DB, list func(*Handler) func(echo.Context
 	return got
 }
 
-func listHosts(h *Handler) func(echo.Context) error        { return h.ListHosts }
-func listServicePorts(h *Handler) func(echo.Context) error { return h.ListServicePorts }
+func listHosts(h *Handler) func(*echo.Context) error        { return h.ListHosts }
+func listServicePorts(h *Handler) func(*echo.Context) error { return h.ListServicePorts }
 
 // searchCase is one search and the ids it is to find, all on the first page.
 type searchCase struct {
@@ -79,7 +79,7 @@ type searchCase struct {
 	want []uint
 }
 
-func runSearchCases(t *testing.T, db *gorm.DB, list func(*Handler) func(echo.Context) error, cases []searchCase) {
+func runSearchCases(t *testing.T, db *gorm.DB, list func(*Handler) func(*echo.Context) error, cases []searchCase) {
 	t.Helper()
 
 	for _, tc := range cases {

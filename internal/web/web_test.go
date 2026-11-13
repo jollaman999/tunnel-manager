@@ -18,7 +18,7 @@ import (
 	"github.com/jollaman999/tunnel-manager/internal/api"
 	"github.com/jollaman999/tunnel-manager/internal/models"
 	"github.com/jollaman999/tunnel-manager/internal/settings"
-	"github.com/labstack/echo/v4"
+	"github.com/labstack/echo/v5"
 	"go.uber.org/zap"
 )
 
@@ -445,7 +445,7 @@ func TestTheAPIStaysBehindTheSession(t *testing.T) {
 
 	g := e.Group("/api")
 	g.Use(authHandler.RequireSession())
-	g.GET("/host", func(c echo.Context) error {
+	g.GET("/host", func(c *echo.Context) error {
 		return c.NoContent(http.StatusOK)
 	})
 

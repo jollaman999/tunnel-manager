@@ -12,7 +12,7 @@ import (
 	"github.com/jollaman999/tunnel-manager/internal/auth"
 	"github.com/jollaman999/tunnel-manager/internal/logid"
 	"github.com/jollaman999/tunnel-manager/internal/models"
-	"github.com/labstack/echo/v4"
+	"github.com/labstack/echo/v5"
 	"go.uber.org/zap"
 	"gorm.io/gorm"
 )
@@ -156,7 +156,7 @@ type uninstallResult struct {
 // @Success  200  {object}  models.Response{data=api.uninstallResult}
 // @Failure  401  {object}  api.errorBody  "The password does not open this account. Nothing was stopped and nothing was removed"
 // @Router       /uninstall [post]
-func (h *UninstallHandler) Uninstall(c echo.Context) error {
+func (h *UninstallHandler) Uninstall(c *echo.Context) error {
 	var req uninstallRequest
 
 	err := c.Bind(&req)

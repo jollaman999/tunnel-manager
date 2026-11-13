@@ -10,7 +10,7 @@ import (
 	"github.com/jollaman999/tunnel-manager/internal/logid"
 	"github.com/jollaman999/tunnel-manager/internal/models"
 	"github.com/jollaman999/tunnel-manager/internal/tunnel"
-	"github.com/labstack/echo/v4"
+	"github.com/labstack/echo/v5"
 	"go.uber.org/zap"
 	"gorm.io/gorm"
 )
@@ -231,7 +231,7 @@ func hostKeyWaitingOf(host models.Host) hostKeyWaiting {
 // @Success  200  {object}  models.Response{data=api.listPageOf{items=[]api.hostKeyWaiting}}
 // @Failure  400  {object}  api.errorBody  "page is not a number, or size is not one of the sizes taken"
 // @Router       /host-key [get]
-func (h *Handler) ListHostKeysWaiting(c echo.Context) error {
+func (h *Handler) ListHostKeysWaiting(c *echo.Context) error {
 	page, refused := readListPage(c)
 	if refused != nil {
 		return badListPage(c, refused)
@@ -318,7 +318,7 @@ type hostKeyApproval struct {
 // @Failure  401  {object}  api.errorBody  "The password does not open this account"
 // @Failure  404  {object}  api.errorBody  "No such Host, or no key is waiting on it"
 // @Router       /host/{id}/host-key [post]
-func (h *Handler) ApproveHostKey(c echo.Context) error {
+func (h *Handler) ApproveHostKey(c *echo.Context) error {
 	id, err := strconv.ParseUint(c.Param("id"), 10, 32)
 	if err != nil {
 		return failure(c, http.StatusBadRequest, errHostIDInvalid, errorArgs{"reason": err.Error()})
@@ -685,7 +685,7 @@ func hostKeysChangedAmong(db *gorm.DB, ids []uint) ([]uint, error) {
 // @Failure  400  {object}  api.errorBody  "A fingerprint does not match the one waiting"
 // @Failure  401  {object}  api.errorBody  "The password does not open this account"
 // @Router       /host-key [post]
-func (h *Handler) ApproveHostKeys(c echo.Context) error {
+func (h *Handler) ApproveHostKeys(c *echo.Context) error {
 	var req hostKeyApprovals
 
 	err := c.Bind(&req)
@@ -900,6 +900,6 @@ func (h *Handler) ApproveHostKeys(c echo.Context) error {
 
 // accountPasswordRefused is the check the two approvals share, under the code a
 // wrong password is refused with on this screen. What it does is in auth.go.
-func (h *Handler) accountPasswordRefused(c echo.Context, password string) *refusal {
+func (h *Handler) accountPasswordRefused(c *echo.Context, password string) *refusal {
 	return accountPasswordRefused(c, h.db, h.logger, password, errHostKeyPasswordWrong)
 }

@@ -16,7 +16,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/labstack/echo/v4"
+	"github.com/labstack/echo/v5"
 )
 
 // The tests in this file are what keeps a refusal from reaching a screen

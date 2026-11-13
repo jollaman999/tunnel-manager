@@ -15,7 +15,7 @@ import (
 	"github.com/jollaman999/tunnel-manager/internal/logid"
 	"github.com/jollaman999/tunnel-manager/internal/models"
 	"github.com/jollaman999/tunnel-manager/internal/tunnel"
-	"github.com/labstack/echo/v4"
+	"github.com/labstack/echo/v5"
 	"go.uber.org/zap"
 	"gorm.io/gorm"
 )
@@ -144,7 +144,7 @@ type listPageOf struct {
 // size, and a screen that shows either in its own language has to be able to
 // tell them apart. The value is quoted where it is handed over, because the
 // English sentence quotes it and the quoting is what marks where it ends.
-func readListPage(c echo.Context) (listPage, *refusal) {
+func readListPage(c *echo.Context) (listPage, *refusal) {
 	page := listPage{number: 1, size: defaultPageSize}
 
 	raw := c.QueryParam("page")
@@ -205,7 +205,7 @@ func pageSizeList() string {
 // readListPage hands back the refusal already named, rather than an error this
 // would have to read the text of, so that the two ways a page can be wrong stay
 // two refusals on the way out.
-func badListPage(c echo.Context, refused *refusal) error {
+func badListPage(c *echo.Context, refused *refusal) error {
 	return refused.answer(c)
 }
 
@@ -266,7 +266,7 @@ func (h *Handler) sealPrivateKey(keyPEM string, passphrase string) (string, stri
 // The code is handed in rather than a prefix, because the sentence a create
 // and an update are refused with differ in more than a language that is not
 // this one can be expected to put back together.
-func (h *Handler) keyRefused(c echo.Context, err error, code errorCode) error {
+func (h *Handler) keyRefused(c *echo.Context, err error, code errorCode) error {
 	var refused *tunnel.KeyError
 	if errors.As(err, &refused) {
 		return failure(c, http.StatusBadRequest, code, errorArgs{"reason": refused.Error()})
@@ -312,7 +312,7 @@ func wantsAssignments(asked *bool) bool {
 // and it is left to do so.
 // Keys are matched without regard to case, because that is how encoding/json
 // matched them to the old field.
-func renamedFieldRefused(c echo.Context, old string, current string) *refusal {
+func renamedFieldRefused(c *echo.Context, old string, current string) *refusal {
 	key, refused := bodyFieldKey(c, old)
 	if refused != nil {
 		return refused
@@ -332,7 +332,7 @@ func renamedFieldRefused(c echo.Context, old string, current string) *refusal {
 //
 // It reads the body the way renamedFieldRefused says: once and put back, only a
 // JSON object under application/json, and keys matched without regard to case.
-func bodyFieldKey(c echo.Context, name string) (string, *refusal) {
+func bodyFieldKey(c *echo.Context, name string) (string, *refusal) {
 	request := c.Request()
 	if request.Body == nil || request.ContentLength == 0 {
 		return "", nil
@@ -485,7 +485,7 @@ func hostWriteRefused(tx *gorm.DB, writeErr error, self uint, address string, po
 // @Failure  400  {object}  api.errorBody  "The body is refused, carries the old name ip in place of address, the private key cannot be read, the SOCKS5 proxy is switched on without a port or with allowed sources that do not read, or the jump route names a Host that is not registered, names one twice or is longer than 8"
 // @Failure  409  {object}  api.errorBody  "Another Host is registered on the address and SSH port, the addresses compared without regard to case or to how an IP address is written, or socks_port is the port of this server, of the SOCKS5 proxy of another Host or of a local forward"
 // @Router       /host [post]
-func (h *Handler) CreateHost(c echo.Context) error {
+func (h *Handler) CreateHost(c *echo.Context) error {
 	refusedField := renamedFieldRefused(c, "ip", "address")
 	if refusedField != nil {
 		return refusedField.answer(c)
@@ -723,7 +723,7 @@ func (h *Handler) CreateHost(c echo.Context) error {
 // @Success  200  {object}  models.Response{data=api.listPageOf{items=[]api.hostView}}
 // @Failure  400  {object}  api.errorBody  "page is not a number, size is not one of the sizes taken, or ids is not a list of at most 1000 Host ids"
 // @Router       /host [get]
-func (h *Handler) ListHosts(c echo.Context) error {
+func (h *Handler) ListHosts(c *echo.Context) error {
 	ids, listed, refused := readListHostIDs(c)
 	if refused != nil {
 		return refused.answer(c)
@@ -794,7 +794,7 @@ const maxListHostIDs = 1000
 //
 // The entries are counted before they are read, so that a request that names
 // too many is refused without every one of them being parsed.
-func readListHostIDs(c echo.Context) (ids []uint, listed bool, refused *refusal) {
+func readListHostIDs(c *echo.Context) (ids []uint, listed bool, refused *refusal) {
 	raw := strings.Join(c.QueryParams()["ids"], ",")
 	if raw == "" {
 		return nil, false, nil
@@ -830,7 +830,7 @@ func readListHostIDs(c echo.Context) (ids []uint, listed bool, refused *refusal)
 // one page. It is what a screen reads the Hosts by that it has to name and that
 // are not on the page it shows, the jump Hosts of a route among them, so that
 // however many there are they cost it one request.
-func (h *Handler) listHostsByID(c echo.Context, ids []uint) error {
+func (h *Handler) listHostsByID(c *echo.Context, ids []uint) error {
 	var hosts []models.Host
 	err := h.db.Scopes(hostsMatching(readListSearch(c))).Where("id IN ?", ids).Order("id").Find(&hosts).Error
 	if err != nil {
@@ -867,7 +867,7 @@ func (h *Handler) listHostsByID(c echo.Context, ids []uint) error {
 // @Success  200  {object}  models.Response{data=api.hostView}
 // @Failure  404  {object}  api.errorBody  "No such Host"
 // @Router       /host/{id} [get]
-func (h *Handler) GetHost(c echo.Context) error {
+func (h *Handler) GetHost(c *echo.Context) error {
 	id, err := strconv.ParseUint(c.Param("id"), 10, 32)
 	if err != nil {
 		return failure(c, http.StatusBadRequest, errHostIDInvalid, errorArgs{"reason": err.Error()})
@@ -916,7 +916,7 @@ func (h *Handler) GetHost(c echo.Context) error {
 // @Failure  404  {object}  api.errorBody  "No such Host"
 // @Failure  409  {object}  api.errorBody  "The address or the SSH port is changed to the two another Host is registered on, the addresses compared without regard to case or to how an IP address is written, or the SOCKS5 proxy is switched on or moved to the port of this server, of the SOCKS5 proxy of another Host or of a local forward"
 // @Router       /host/{id} [put]
-func (h *Handler) UpdateHost(c echo.Context) error {
+func (h *Handler) UpdateHost(c *echo.Context) error {
 	id, err := strconv.ParseUint(c.Param("id"), 10, 32)
 	if err != nil {
 		return failure(c, http.StatusBadRequest, errHostIDInvalid, errorArgs{"reason": err.Error()})
@@ -1136,7 +1136,7 @@ func (h *Handler) UpdateHost(c echo.Context) error {
 // @Failure  404  {object}  api.errorBody  "No such Host"
 // @Failure  409  {object}  api.errorBody{data=[]api.jumpUser}  "The Host is on the jump route of other Hosts"
 // @Router       /host/{id} [delete]
-func (h *Handler) DeleteHost(c echo.Context) error {
+func (h *Handler) DeleteHost(c *echo.Context) error {
 	id, err := strconv.ParseUint(c.Param("id"), 10, 32)
 	if err != nil {
 		return failure(c, http.StatusBadRequest, errHostIDInvalid, errorArgs{"reason": err.Error()})
@@ -1309,7 +1309,7 @@ func servicePortWriteRefused(tx *gorm.DB, writeErr error, sp *models.ServicePort
 // @Failure  400  {object}  api.errorBody  "The body is refused, or carries the old name service_ip in place of service_address"
 // @Failure  409  {object}  api.errorBody  "Another service port is registered on the service address and service port, the addresses compared without regard to case or to how an IP address is written, or on the local port"
 // @Router       /service-port [post]
-func (h *Handler) CreateServicePort(c echo.Context) error {
+func (h *Handler) CreateServicePort(c *echo.Context) error {
 	refusedField := renamedFieldRefused(c, "service_ip", "service_address")
 	if refusedField != nil {
 		return refusedField.answer(c)
@@ -1427,7 +1427,7 @@ func (h *Handler) CreateServicePort(c echo.Context) error {
 // @Success  200  {object}  models.Response{data=api.listPageOf{items=[]models.ServicePort}}
 // @Failure  400  {object}  api.errorBody  "page is not a number, or size is not one of the sizes taken"
 // @Router       /service-port [get]
-func (h *Handler) ListServicePorts(c echo.Context) error {
+func (h *Handler) ListServicePorts(c *echo.Context) error {
 	page, refused := readListPage(c)
 	if refused != nil {
 		return badListPage(c, refused)
@@ -1473,7 +1473,7 @@ func (h *Handler) ListServicePorts(c echo.Context) error {
 // @Success  200  {object}  models.Response{data=models.ServicePort}
 // @Failure  404  {object}  api.errorBody  "No such service port"
 // @Router       /service-port/{id} [get]
-func (h *Handler) GetServicePort(c echo.Context) error {
+func (h *Handler) GetServicePort(c *echo.Context) error {
 	id, err := strconv.ParseUint(c.Param("id"), 10, 32)
 	if err != nil {
 		return failure(c, http.StatusBadRequest, errServicePortIDInvalid, errorArgs{"reason": err.Error()})
@@ -1508,7 +1508,7 @@ func (h *Handler) GetServicePort(c echo.Context) error {
 // @Failure  404  {object}  api.errorBody  "No such service port"
 // @Failure  409  {object}  api.errorBody  "Another service port is registered on the service address and service port, the addresses compared without regard to case or to how an IP address is written, or on the local port"
 // @Router       /service-port/{id} [put]
-func (h *Handler) UpdateServicePort(c echo.Context) error {
+func (h *Handler) UpdateServicePort(c *echo.Context) error {
 	id, err := strconv.ParseUint(c.Param("id"), 10, 32)
 	if err != nil {
 		return failure(c, http.StatusBadRequest, errServicePortIDInvalid, errorArgs{"reason": err.Error()})
@@ -1602,7 +1602,7 @@ func (h *Handler) UpdateServicePort(c echo.Context) error {
 // @Success  200  {object}  models.Response{data=string}
 // @Failure  404  {object}  api.errorBody  "No such service port"
 // @Router       /service-port/{id} [delete]
-func (h *Handler) DeleteServicePort(c echo.Context) error {
+func (h *Handler) DeleteServicePort(c *echo.Context) error {
 	id, err := strconv.ParseUint(c.Param("id"), 10, 32)
 	if err != nil {
 		return failure(c, http.StatusBadRequest, errServicePortIDInvalid, errorArgs{"reason": err.Error()})
@@ -1706,7 +1706,7 @@ type hostServicePortItem struct {
 // @Failure  400  {object}  api.errorBody  "page is not a number, or size is not one of the sizes taken"
 // @Failure  404  {object}  api.errorBody  "No such Host"
 // @Router       /host/{id}/service-port [get]
-func (h *Handler) ListHostServicePorts(c echo.Context) error {
+func (h *Handler) ListHostServicePorts(c *echo.Context) error {
 	id, err := strconv.ParseUint(c.Param("id"), 10, 32)
 	if err != nil {
 		return failure(c, http.StatusBadRequest, errHostIDInvalid, errorArgs{"reason": err.Error()})
@@ -1849,7 +1849,7 @@ type servicePortHostItem struct {
 // @Failure  400  {object}  api.errorBody  "page is not a number, or size is not one of the sizes taken"
 // @Failure  404  {object}  api.errorBody  "No such service port"
 // @Router       /service-port/{id}/host [get]
-func (h *Handler) ListServicePortHosts(c echo.Context) error {
+func (h *Handler) ListServicePortHosts(c *echo.Context) error {
 	id, err := strconv.ParseUint(c.Param("id"), 10, 32)
 	if err != nil {
 		return failure(c, http.StatusBadRequest, errServicePortIDInvalid, errorArgs{"reason": err.Error()})
@@ -2031,7 +2031,7 @@ type hostServicePortChanged struct {
 // @Failure  400  {object}  api.errorBody  "The same service port is in both lists, an id is not stored, or bind_scope is neither loopback nor wildcard"
 // @Failure  404  {object}  api.errorBody  "No such Host"
 // @Router       /host/{id}/service-port [put]
-func (h *Handler) UpdateHostServicePorts(c echo.Context) error {
+func (h *Handler) UpdateHostServicePorts(c *echo.Context) error {
 	id, err := strconv.ParseUint(c.Param("id"), 10, 32)
 	if err != nil {
 		return failure(c, http.StatusBadRequest, errHostIDInvalid, errorArgs{"reason": err.Error()})
@@ -2343,7 +2343,7 @@ func idList(ids []uint) string {
 // @Success  200  {object}  models.Response  "counts, and tunnels holding one page of the status rows"
 // @Failure  400  {object}  api.errorBody  "page is not a number, or size is not one of the sizes taken"
 // @Router       /status [get]
-func (h *Handler) GetStatus(c echo.Context) error {
+func (h *Handler) GetStatus(c *echo.Context) error {
 	page, refused := readListPage(c)
 	if refused != nil {
 		return badListPage(c, refused)
@@ -2572,7 +2572,7 @@ func (h *Handler) hostsOfLocalForwards(forwards []models.LocalForward) (map[uint
 // @Success  200  {object}  models.Response  "host, total_tunnels, connected_tunnels and tunnels"
 // @Failure  404  {object}  api.errorBody  "No such Host"
 // @Router       /status/{hostId} [get]
-func (h *Handler) GetHostStatus(c echo.Context) error {
+func (h *Handler) GetHostStatus(c *echo.Context) error {
 	hostID, err := strconv.ParseUint(c.Param("hostId"), 10, 32)
 	if err != nil {
 		return failure(c, http.StatusBadRequest, errHostIDInvalid, errorArgs{"reason": err.Error()})

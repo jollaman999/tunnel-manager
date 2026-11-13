@@ -6,7 +6,7 @@ import (
 
 	"github.com/jollaman999/tunnel-manager/internal/logid"
 	"github.com/jollaman999/tunnel-manager/internal/models"
-	"github.com/labstack/echo/v4"
+	"github.com/labstack/echo/v5"
 	"go.uber.org/zap"
 )
 
@@ -85,7 +85,7 @@ type restartView struct {
 // @Produce  json
 // @Success  200  {object}  models.Response{data=api.restartView}
 // @Router       /restart [get]
-func (h *RestartHandler) GetRestart(c echo.Context) error {
+func (h *RestartHandler) GetRestart(c *echo.Context) error {
 	return c.JSON(http.StatusOK, models.Response{
 		Success: true,
 		Data:    h.view(),
@@ -106,7 +106,7 @@ func (h *RestartHandler) GetRestart(c echo.Context) error {
 // @Success  200  {object}  models.Response{data=api.restartView}
 // @Failure  409  {object}  api.errorBody  "This build cannot restart itself"
 // @Router       /restart [post]
-func (h *RestartHandler) Restart(c echo.Context) error {
+func (h *RestartHandler) Restart(c *echo.Context) error {
 	h.logger.Warn("a restart was asked for on the Settings screen. The API stops answering, "+
 		"every tunnel comes down and this program runs again",
 		logid.RestartAsked.Field(),

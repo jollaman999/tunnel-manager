@@ -6,14 +6,14 @@ import (
 
 	"github.com/jollaman999/tunnel-manager/internal/models"
 	"github.com/jollaman999/tunnel-manager/internal/tunnel"
-	"github.com/labstack/echo/v4"
+	"github.com/labstack/echo/v5"
 	"gorm.io/gorm"
 )
 
 // readListSearch reads the text a list request narrows its rows by, which is
 // q on the query string. No q, or an empty one, narrows nothing: the list is
 // answered exactly as it was before the parameter was there.
-func readListSearch(c echo.Context) string {
+func readListSearch(c *echo.Context) string {
 	return c.QueryParam("q")
 }
 

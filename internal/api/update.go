@@ -9,7 +9,7 @@ import (
 	"github.com/jollaman999/tunnel-manager/internal/install"
 	"github.com/jollaman999/tunnel-manager/internal/logid"
 	"github.com/jollaman999/tunnel-manager/internal/models"
-	"github.com/labstack/echo/v4"
+	"github.com/labstack/echo/v5"
 	"go.uber.org/zap"
 	"gorm.io/gorm"
 )
@@ -177,7 +177,7 @@ func (h *UpdateHandler) StartInstall() error {
 // @Produce  json
 // @Success  200  {object}  models.Response{data=api.updateView}
 // @Router       /update [get]
-func (h *UpdateHandler) GetUpdate(c echo.Context) error {
+func (h *UpdateHandler) GetUpdate(c *echo.Context) error {
 	return c.JSON(http.StatusOK, models.Response{Success: true, Data: h.view()})
 }
 
@@ -190,7 +190,7 @@ func (h *UpdateHandler) GetUpdate(c echo.Context) error {
 // @Security  CSRFToken
 // @Success  200  {object}  models.Response{data=api.updateView}
 // @Router       /update/check [post]
-func (h *UpdateHandler) CheckUpdate(c echo.Context) error {
+func (h *UpdateHandler) CheckUpdate(c *echo.Context) error {
 	result := h.Look(c.Request().Context())
 
 	if result.Problem != "" {
@@ -228,7 +228,7 @@ type updateInstallRequest struct {
 // @Failure  401  {object}  api.errorBody  "The password does not open this account"
 // @Failure  409  {object}  api.errorBody  "There is nothing newer, or this build cannot install one"
 // @Router       /update/install [post]
-func (h *UpdateHandler) InstallUpdate(c echo.Context) error {
+func (h *UpdateHandler) InstallUpdate(c *echo.Context) error {
 	var req updateInstallRequest
 
 	err := c.Bind(&req)

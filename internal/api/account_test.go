@@ -11,7 +11,7 @@ import (
 	"github.com/glebarez/sqlite"
 	"github.com/jollaman999/tunnel-manager/internal/auth"
 	"github.com/jollaman999/tunnel-manager/internal/models"
-	"github.com/labstack/echo/v4"
+	"github.com/labstack/echo/v5"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zaptest/observer"
 	"gorm.io/gorm"

@@ -16,7 +16,7 @@ import (
 	"github.com/jollaman999/tunnel-manager/internal/auth"
 	"github.com/jollaman999/tunnel-manager/internal/logid"
 	"github.com/jollaman999/tunnel-manager/internal/models"
-	"github.com/labstack/echo/v4"
+	"github.com/labstack/echo/v5"
 	"go.uber.org/zap"
 	"gorm.io/gorm"
 )
@@ -415,7 +415,7 @@ type setupRequest struct {
 // Path is / and Domain is left empty, which is what the guarded name asks for
 // on top of Secure. The whole API and the page that calls it live under this
 // one host, so neither one gives anything up.
-func (h *AuthHandler) sessionCookie(c echo.Context, token string, maxAge int) *http.Cookie {
+func (h *AuthHandler) sessionCookie(c *echo.Context, token string, maxAge int) *http.Cookie {
 	secure := h.cookieIsSecure(c)
 
 	return &http.Cookie{
@@ -452,7 +452,7 @@ func cookieName(base string, secure bool) string {
 // worth saying plainly: the bare name is the one an outsider can write, and a
 // token from there opens nothing it did not already open, since it still has to
 // name a session this server made.
-func cookieValue(c echo.Context, base string) string {
+func cookieValue(c *echo.Context, base string) string {
 	cookie, err := c.Cookie(hostCookiePrefix + base)
 	if err == nil {
 		return cookie.Value
@@ -479,7 +479,7 @@ func cookieValue(c echo.Context, base string) string {
 // only when the operator has said there is a proxy. Unasked for, it is a
 // header any client can put on a request, and believing it would let a client
 // on plain HTTP ask for Secure cookies and lock itself out of its own session.
-func (h *AuthHandler) cookieIsSecure(c echo.Context) bool {
+func (h *AuthHandler) cookieIsSecure(c *echo.Context) bool {
 	if c.IsTLS() {
 		return true
 	}
@@ -507,7 +507,7 @@ func (h *AuthHandler) cookieIsSecure(c echo.Context) bool {
 // page has to read the value to send it back in a header. That costs nothing,
 // since the value is not a credential on its own: it is only accepted next to
 // the session it was made for.
-func (h *AuthHandler) csrfCookie(c echo.Context, token string, maxAge int) *http.Cookie {
+func (h *AuthHandler) csrfCookie(c *echo.Context, token string, maxAge int) *http.Cookie {
 	secure := h.cookieIsSecure(c)
 
 	return &http.Cookie{
@@ -549,7 +549,7 @@ func (h *AuthHandler) readUser(conds ...interface{}) (*models.User, error) {
 // @Failure  401  {object}  api.errorBody  "Invalid username or password"
 // @Failure  429  {object}  api.errorBody  "Too many failed attempts: the login is held"
 // @Router       /login [post]
-func (h *AuthHandler) Login(c echo.Context) error {
+func (h *AuthHandler) Login(c *echo.Context) error {
 	var req loginRequest
 
 	err := c.Bind(&req)
@@ -628,7 +628,7 @@ func (h *AuthHandler) Login(c echo.Context) error {
 // @Success  200  {object}  models.Response
 // @Failure  403  {object}  api.errorBody  "The request carries no valid X-CSRF-Token header"
 // @Router       /logout [post]
-func (h *AuthHandler) Logout(c echo.Context) error {
+func (h *AuthHandler) Logout(c *echo.Context) error {
 	token := cookieValue(c, sessionCookieName)
 	if token != "" {
 		h.sessions.Delete(token)
@@ -660,7 +660,7 @@ type setupState struct {
 // @Produce  json
 // @Success  200  {object}  models.Response{data=api.setupState}
 // @Router       /setup [get]
-func (h *AuthHandler) GetSetup(c echo.Context) error {
+func (h *AuthHandler) GetSetup(c *echo.Context) error {
 	user, err := h.readUser()
 	if err != nil {
 		h.logger.Error("failed to read the account", logid.AccountReadFailed.Field(), zap.Error(err))
@@ -684,7 +684,7 @@ func (h *AuthHandler) GetSetup(c echo.Context) error {
 // @Failure  400  {object}  api.errorBody  "The password is too short or too long"
 // @Failure  403  {object}  api.errorBody  "The setup is already done, or no valid X-CSRF-Token header"
 // @Router       /setup [post]
-func (h *AuthHandler) Setup(c echo.Context) error {
+func (h *AuthHandler) Setup(c *echo.Context) error {
 	var req setupRequest
 
 	err := c.Bind(&req)
@@ -823,7 +823,7 @@ func (h *AuthHandler) removeInitialPasswordFile() {
 // twice or depend on being ordered correctly to work at all.
 func (h *AuthHandler) RequireSession() echo.MiddlewareFunc {
 	return func(next echo.HandlerFunc) echo.HandlerFunc {
-		return func(c echo.Context) error {
+		return func(c *echo.Context) error {
 			path := c.Request().URL.Path
 
 			// The login is how a session and its CSRF token are got, so it
@@ -948,7 +948,7 @@ func isSafeMethod(method string) bool {
 // from being a way to guess at the password as fast as the network carries
 // requests. loginlimit.go says what is counted and why it is the one set of
 // counters.
-func accountPasswordRefused(c echo.Context, db *gorm.DB, logger *zap.Logger, password string,
+func accountPasswordRefused(c *echo.Context, db *gorm.DB, logger *zap.Logger, password string,
 	wrong errorCode) *refusal {
 	userID, limiter, ok := sessionOnContext(c)
 	if !ok {

@@ -13,7 +13,7 @@ import (
 	"github.com/jollaman999/tunnel-manager/internal/auth"
 	"github.com/jollaman999/tunnel-manager/internal/install"
 	"github.com/jollaman999/tunnel-manager/internal/models"
-	"github.com/labstack/echo/v4"
+	"github.com/labstack/echo/v5"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zaptest/observer"
 	"gorm.io/gorm"
@@ -90,7 +90,7 @@ func (call *updateCall) handler(t *testing.T, core zap.Option) (*UpdateHandler, 
 	return h, logs
 }
 
-func updateRequest(t *testing.T, target string, body string, withAccount bool) (echo.Context, *httptest.ResponseRecorder) {
+func updateRequest(t *testing.T, target string, body string, withAccount bool) (*echo.Context, *httptest.ResponseRecorder) {
 	t.Helper()
 
 	e := echo.New()

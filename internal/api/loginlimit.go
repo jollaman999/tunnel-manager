@@ -7,7 +7,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/labstack/echo/v4"
+	"github.com/labstack/echo/v5"
 )
 
 // The login is the one place in this API where a request that carries no
@@ -482,7 +482,7 @@ func (l *loginLimiter) prune(now time.Time) {
 // on every request, and it would also let them pin the failures on somebody
 // else's address. Reading it through echo rather than here keeps the counter,
 // the access log and every other log line on one address.
-func (h *AuthHandler) loginAddress(c echo.Context) string {
+func (h *AuthHandler) loginAddress(c *echo.Context) string {
 	return c.RealIP()
 }
 
@@ -500,7 +500,7 @@ func (h *AuthHandler) loginAddress(c echo.Context) string {
 // to wait or to go and restart the service. A client that is not a browser gets
 // the same number in the sentence, so neither has to guess at a number by
 // retrying, which is the traffic this is here to stop.
-func (h *AuthHandler) refuseHeldLogin(c echo.Context, wait time.Duration) error {
+func (h *AuthHandler) refuseHeldLogin(c *echo.Context, wait time.Duration) error {
 	seconds := retryAfterSeconds(wait)
 
 	c.Response().Header().Set(echo.HeaderRetryAfter, strconv.Itoa(seconds))
@@ -554,7 +554,7 @@ type accountPasswordLimiter interface {
 	// passwordBegin reserves a place for one password check the way begin
 	// does for a login. It returns the attempt to end, or what to answer a
 	// call whose password is not being checked.
-	passwordBegin(c echo.Context, accountID uint) (*loginAttempt, *refusal)
+	passwordBegin(c *echo.Context, accountID uint) (*loginAttempt, *refusal)
 }
 
 // contextPasswordLimiterKey is where the session middleware leaves the limiter,
@@ -573,7 +573,7 @@ const contextPasswordLimiterKey = "auth_password_limiter"
 // that session are counted on. ok is false where the route was hung outside
 // that middleware, which is a bug in the wiring rather than anything the
 // request did.
-func sessionOnContext(c echo.Context) (uint, accountPasswordLimiter, bool) {
+func sessionOnContext(c *echo.Context) (uint, accountPasswordLimiter, bool) {
 	userID, haveUser := c.Get(contextUserIDKey).(uint)
 	limiter, haveLimiter := c.Get(contextPasswordLimiterKey).(accountPasswordLimiter)
 
@@ -599,7 +599,7 @@ func sessionOnContext(c echo.Context) (uint, accountPasswordLimiter, bool) {
 // number is the same number, but whoever meets this is logged in already and
 // was asked for their password on the way to something else; a sentence that
 // told them signing in was blocked would name a thing they are not doing.
-func (h *AuthHandler) passwordBegin(c echo.Context, accountID uint) (*loginAttempt, *refusal) {
+func (h *AuthHandler) passwordBegin(c *echo.Context, accountID uint) (*loginAttempt, *refusal) {
 	attempt, wait, held := h.logins.begin(h.loginAddress(c), accountID)
 	if !held {
 		return attempt, nil

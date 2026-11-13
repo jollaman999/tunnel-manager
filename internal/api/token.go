@@ -13,7 +13,7 @@ import (
 
 	"github.com/jollaman999/tunnel-manager/internal/logid"
 	"github.com/jollaman999/tunnel-manager/internal/models"
-	"github.com/labstack/echo/v4"
+	"github.com/labstack/echo/v5"
 	"go.uber.org/zap"
 	"gorm.io/gorm"
 )
@@ -278,7 +278,7 @@ func newAPIToken() (string, error) {
 // case, which is how RFC 9110 says a scheme is read. A header of another
 // scheme is not a token and is left alone: the request is then served as one
 // that brought no header at all.
-func bearerToken(c echo.Context) (string, bool) {
+func bearerToken(c *echo.Context) (string, bool) {
 	header := c.Request().Header.Get(echo.HeaderAuthorization)
 
 	scheme, token, _ := strings.Cut(header, " ")
@@ -310,7 +310,7 @@ func bearerToken(c echo.Context) (string, bool) {
 // A token that has run out is refused without being counted. It is a token
 // this server made, so whoever sends it is not guessing, and a cron job left
 // running with an old token would otherwise hold its host out of the login.
-func (h *AuthHandler) serveToken(c echo.Context, next echo.HandlerFunc, token string) error {
+func (h *AuthHandler) serveToken(c *echo.Context, next echo.HandlerFunc, token string) error {
 	var found models.APIToken
 
 	result := h.db.Where("hash = ?", hashAPIToken(token)).Limit(1).Find(&found)
@@ -381,7 +381,7 @@ func (h *AuthHandler) serveToken(c echo.Context, next echo.HandlerFunc, token st
 // reservation is taken and turned into a failure in one call, so it is never
 // held past this function. An address that is already held is answered the
 // way a held login is, with Retry-After, and is not counted again.
-func (h *AuthHandler) refuseUnknownToken(c echo.Context) error {
+func (h *AuthHandler) refuseUnknownToken(c *echo.Context) error {
 	attempt, wait, held := h.logins.beginAddress(h.loginAddress(c))
 	if held {
 		return h.refuseHeldLogin(c, wait)
@@ -473,7 +473,7 @@ func viewOfToken(token models.APIToken) tokenView {
 // @Success  200  {object}  models.Response{data=[]api.tokenView}
 // @Failure  401  {object}  api.errorBody  "Authentication required"
 // @Router       /token [get]
-func (h *AuthHandler) ListTokens(c echo.Context) error {
+func (h *AuthHandler) ListTokens(c *echo.Context) error {
 	var tokens []models.APIToken
 
 	err := h.db.Order("id").Find(&tokens).Error
@@ -513,7 +513,7 @@ func (h *AuthHandler) ListTokens(c echo.Context) error {
 // @Failure  409  {object}  api.errorBody  "There is a token of that name already"
 // @Failure  429  {object}  api.errorBody  "Too many passwords that do not open this account were tried. Retry-After says when to try again"
 // @Router       /token [post]
-func (h *AuthHandler) CreateToken(c echo.Context) error {
+func (h *AuthHandler) CreateToken(c *echo.Context) error {
 	var req tokenRequest
 
 	err := c.Bind(&req)
@@ -702,7 +702,7 @@ func tokenExpiryChoices() string {
 // @Success  200  {object}  models.Response
 // @Failure  404  {object}  api.errorBody  "No such token"
 // @Router       /token/{id} [delete]
-func (h *AuthHandler) DeleteToken(c echo.Context) error {
+func (h *AuthHandler) DeleteToken(c *echo.Context) error {
 	id, err := strconv.ParseUint(c.Param("id"), 10, 32)
 	if err != nil {
 		return failure(c, http.StatusBadRequest, errTokenIDInvalid, errorArgs{"reason": err.Error()})

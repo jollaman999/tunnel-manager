@@ -2,14 +2,14 @@ package api
 
 import (
 	"bytes"
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
 
-	"github.com/labstack/echo/v4"
-	"github.com/labstack/echo/v4/middleware"
+	"github.com/labstack/echo/v5"
 )
 
 // loginForwardedFrom sends one login over a connection from socket, carrying
@@ -31,8 +31,7 @@ func loginForwardedFrom(e *echo.Echo, socket string, forwardedFor []string, body
 }
 
 // newForwardedServer is the login server of the other tests with the address
-// rule main puts on it, and an access log written the way main writes one
-// but kept in a buffer, one remote_ip per line.
+// rule main puts on it, and the access log main writes kept in a buffer.
 func newForwardedServer(t *testing.T, trust bool) (*echo.Echo, *bytes.Buffer) {
 	t.Helper()
 
@@ -41,17 +40,33 @@ func newForwardedServer(t *testing.T, trust bool) (*echo.Echo, *bytes.Buffer) {
 	authHandler.TrustProxyHeaders(trust)
 
 	var accessLog bytes.Buffer
-	e.Use(middleware.LoggerWithConfig(middleware.LoggerConfig{
-		Format: "${remote_ip}\n",
-		Output: &accessLog,
-	}))
+	e.Use(AccessLog(&accessLog))
 
 	return e, &accessLog
 }
 
-// loggedAddresses is what the access log above holds, one address per request.
-func loggedAddresses(accessLog *bytes.Buffer) []string {
-	return strings.Fields(accessLog.String())
+// loggedAddresses is the remote_ip of every line the access log above holds,
+// one address per request.
+func loggedAddresses(t *testing.T, accessLog *bytes.Buffer) []string {
+	t.Helper()
+
+	var addresses []string
+
+	decoder := json.NewDecoder(accessLog)
+	for decoder.More() {
+		var line struct {
+			RemoteIP string `json:"remote_ip"`
+		}
+
+		err := decoder.Decode(&line)
+		if err != nil {
+			t.Fatalf("the access log holds a line that is not JSON: %v", err)
+		}
+
+		addresses = append(addresses, line.RemoteIP)
+	}
+
+	return addresses
 }
 
 func TestClientAddressReadsTheSocketOrTheRightmostEntry(t *testing.T) {
@@ -117,7 +132,7 @@ func TestAForgedForwardedForIsNotBelievedWithoutTheFlag(t *testing.T) {
 			loginAddressFailureLimit+1, rec.Code, http.StatusTooManyRequests, rec.Body.String())
 	}
 
-	logged := loggedAddresses(accessLog)
+	logged := loggedAddresses(t, accessLog)
 	if len(logged) != loginAddressFailureLimit+1 {
 		t.Fatalf("the access log has %d lines, want %d: %q", len(logged), loginAddressFailureLimit+1, logged)
 	}
@@ -161,7 +176,7 @@ func TestTheRightmostForwardedForIsWhatIsCountedWithTheFlag(t *testing.T) {
 			rec.Code, http.StatusUnauthorized, rec.Body.String())
 	}
 
-	logged := loggedAddresses(accessLog)
+	logged := loggedAddresses(t, accessLog)
 	if len(logged) != loginAddressFailureLimit+2 {
 		t.Fatalf("the access log has %d lines, want %d: %q", len(logged), loginAddressFailureLimit+2, logged)
 	}
@@ -202,7 +217,7 @@ func TestAMissingOrUnreadableForwardedForIsCountedByTheSocket(t *testing.T) {
 			loginAddressFailureLimit+1, rec.Code, http.StatusTooManyRequests, rec.Body.String())
 	}
 
-	for i, address := range loggedAddresses(accessLog) {
+	for i, address := range loggedAddresses(t, accessLog) {
 		if address != socket {
 			t.Errorf("access log line %d: remote_ip = %q, want %q", i+1, address, socket)
 		}

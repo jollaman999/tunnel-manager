@@ -22,7 +22,7 @@ import (
 	"github.com/glebarez/sqlite"
 	"github.com/jollaman999/tunnel-manager/internal/crypto"
 	"github.com/jollaman999/tunnel-manager/internal/tlsserve"
-	"github.com/labstack/echo/v4"
+	"github.com/labstack/echo/v5"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
 	"go.uber.org/zap/zaptest/observer"

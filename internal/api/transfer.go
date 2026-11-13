@@ -15,7 +15,7 @@ import (
 	"github.com/jollaman999/tunnel-manager/internal/models"
 	"github.com/jollaman999/tunnel-manager/internal/settings"
 	"github.com/jollaman999/tunnel-manager/internal/tunnel"
-	"github.com/labstack/echo/v4"
+	"github.com/labstack/echo/v5"
 	"go.uber.org/zap"
 	"gorm.io/gorm"
 )
@@ -849,7 +849,7 @@ func NewTransferHandler(hosts *Handler, version string, databaseFile string) *Tr
 // importing tells the import of the tunnels from the two exports, which are
 // refused under codes of their own so that the screen says what was not done.
 // kind is what the call moves, for the log line.
-func (h *TransferHandler) accountPasswordRefused(c echo.Context, password string, importing bool,
+func (h *TransferHandler) accountPasswordRefused(c *echo.Context, password string, importing bool,
 	kind string) *refusal {
 	required, wrong := errExportAccountPasswordRequired, errExportAccountPasswordWrong
 	if importing {
@@ -1217,7 +1217,7 @@ func localForwardsByHost(db *gorm.DB) (map[uint][]localForwardContent, error) {
 // @Failure  401  {object}  api.errorBody  "account_password does not open this account"
 // @Failure  429  {object}  api.errorBody  "Too many passwords that do not open this account were tried. Retry-After says when to try again"
 // @Router       /export/tunnels [post]
-func (h *TransferHandler) ExportTunnels(c echo.Context) error {
+func (h *TransferHandler) ExportTunnels(c *echo.Context) error {
 	var req exportRequest
 
 	err := c.Bind(&req)
@@ -1385,7 +1385,7 @@ func (h *TransferHandler) ExportTunnels(c echo.Context) error {
 // @Failure  429  {object}  api.errorBody  "Too many passwords that do not open this account were tried. Retry-After says when to try again"
 // @Failure  409  {object}  api.errorBody  "A local forward or a SOCKS5 proxy of the file opens the port this server listens on. Nothing was stored"
 // @Router       /import/tunnels [post]
-func (h *TransferHandler) ImportTunnels(c echo.Context) error {
+func (h *TransferHandler) ImportTunnels(c *echo.Context) error {
 	overwrite, refused := bodyFieldKey(c, "overwrite")
 	if refused != nil {
 		return refused.answer(c)
@@ -1588,7 +1588,7 @@ func timeOf(at *time.Time) time.Time {
 // them to the rules, so that a file that is refused is refused before anything
 // stored is deleted. withIDs is whether the file carries the ids of its rows; a
 // file that does not is given ids counted from 1 in the order it lists them.
-func (h *TransferHandler) planImport(c echo.Context, withIDs bool, content tunnelsContent,
+func (h *TransferHandler) planImport(c *echo.Context, withIDs bool, content tunnelsContent,
 	apiPort int) (importPlan, *refusal) {
 	var plan importPlan
 
@@ -1728,7 +1728,7 @@ func (h *TransferHandler) planImport(c echo.Context, withIDs bool, content tunne
 // secrets with the key of this installation. A file with ids is stored with the
 // SOCKS5 scope it carries, an empty one included, since it is the scope the
 // row it was exported from held.
-func (h *TransferHandler) planHost(c echo.Context, host hostContent, withIDs bool) (models.Host, *refusal) {
+func (h *TransferHandler) planHost(c *echo.Context, host hostContent, withIDs bool) (models.Host, *refusal) {
 	name := host.Address
 
 	// The rules of a create are run on what the file carries, so that a file
@@ -2187,7 +2187,7 @@ func carriesLocalForwards(content tunnelsContent) bool {
 // create, and refuses a file that opens one local port twice. It runs before
 // anything is written, because two rows of the file meeting each other is a
 // fault of the file wherever in it they are.
-func checkLocalForwards(c echo.Context, content tunnelsContent) *refusal {
+func checkLocalForwards(c *echo.Context, content tunnelsContent) *refusal {
 	openedBy := make(map[int]bool)
 
 	for _, host := range content.Hosts {
@@ -2280,7 +2280,7 @@ func checkSocksPorts(content tunnelsContent) *refusal {
 // @Failure  401  {object}  api.errorBody  "account_password does not open this account"
 // @Failure  429  {object}  api.errorBody  "Too many passwords that do not open this account were tried. Retry-After says when to try again"
 // @Router       /export/settings [post]
-func (h *TransferHandler) ExportSettings(c echo.Context) error {
+func (h *TransferHandler) ExportSettings(c *echo.Context) error {
 	var req exportRequest
 
 	err := c.Bind(&req)
@@ -2378,7 +2378,7 @@ func (h *TransferHandler) ExportSettings(c echo.Context) error {
 // @Failure  400  {object}  api.errorBody  "The file does not open, or its settings do not pass the rules of the Settings screen"
 // @Failure  409  {object}  api.errorBody{data=api.apiPortTaken}  "The api_port of the file is the local port of a local forward or the port of a SOCKS5 proxy. Nothing was stored"
 // @Router       /import/settings [post]
-func (h *TransferHandler) ImportSettings(c echo.Context) error {
+func (h *TransferHandler) ImportSettings(c *echo.Context) error {
 	var req importRequest
 
 	err := c.Bind(&req)

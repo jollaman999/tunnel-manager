@@ -11,7 +11,7 @@ import (
 	"github.com/jollaman999/tunnel-manager/internal/logid"
 	"github.com/jollaman999/tunnel-manager/internal/models"
 	"github.com/jollaman999/tunnel-manager/internal/settings"
-	"github.com/labstack/echo/v4"
+	"github.com/labstack/echo/v5"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
 	"gorm.io/gorm"
@@ -158,7 +158,7 @@ type settingsView struct {
 // @Produce  json
 // @Success  200  {object}  models.Response{data=api.settingsView}
 // @Router       /settings [get]
-func (h *SettingsHandler) GetSettings(c echo.Context) error {
+func (h *SettingsHandler) GetSettings(c *echo.Context) error {
 	stored, err := settings.LoadOpened(h.db, h.cipher)
 	if err != nil {
 		h.logger.Error("failed to read the settings", logid.SettingsReadFailed.Field(), zap.Error(err))
@@ -487,7 +487,7 @@ func settingsRefusal(err error, updated *settings.Settings, fallback errorCode) 
 // @Failure  400  {object}  api.errorBody  "A setting broke one of the rules. Nothing was stored"
 // @Failure  409  {object}  api.errorBody{data=api.apiPortTaken}  "api_port is the local port of a local forward or the port of a SOCKS5 proxy. Nothing was stored"
 // @Router       /settings [put]
-func (h *SettingsHandler) UpdateSettings(c echo.Context) error {
+func (h *SettingsHandler) UpdateSettings(c *echo.Context) error {
 	stored, err := settings.LoadOpened(h.db, h.cipher)
 	if err != nil {
 		h.logger.Error("failed to read the settings", logid.SettingsReadFailed.Field(), zap.Error(err))

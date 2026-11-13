@@ -7,7 +7,7 @@ import (
 
 	"github.com/jollaman999/tunnel-manager/internal/logid"
 	"github.com/jollaman999/tunnel-manager/internal/models"
-	"github.com/labstack/echo/v4"
+	"github.com/labstack/echo/v5"
 	"go.uber.org/zap"
 	"gorm.io/gorm"
 )
@@ -36,7 +36,7 @@ import (
 // @Failure  400  {object}  api.errorBody  "The id is not a number"
 // @Failure  404  {object}  api.errorBody  "No such Host"
 // @Router       /host/{id}/reconnect [post]
-func (h *Handler) ReconnectHost(c echo.Context) error {
+func (h *Handler) ReconnectHost(c *echo.Context) error {
 	id, err := strconv.ParseUint(c.Param("id"), 10, 32)
 	if err != nil {
 		return failure(c, http.StatusBadRequest, errHostIDInvalid, errorArgs{"reason": err.Error()})

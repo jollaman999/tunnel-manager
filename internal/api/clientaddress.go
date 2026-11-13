@@ -5,7 +5,7 @@ import (
 	"net/netip"
 	"strings"
 
-	"github.com/labstack/echo/v4"
+	"github.com/labstack/echo/v5"
 )
 
 // ClientAddress is the rule the address of a request is read by, and it is

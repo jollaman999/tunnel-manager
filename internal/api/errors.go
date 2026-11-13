@@ -7,7 +7,7 @@ import (
 	"strings"
 
 	"github.com/jollaman999/tunnel-manager/internal/models"
-	"github.com/labstack/echo/v4"
+	"github.com/labstack/echo/v5"
 )
 
 // This file is the one place a refusal is written from. Every answer that says
@@ -640,7 +640,7 @@ var errorMessages = map[errorCode]string{
 // args is variadic so that the refusals with nothing written into them, which
 // are most of them, are raised without a nil. Only the first is read; a second
 // one is a call that meant to pass one map.
-func failure(c echo.Context, status int, code errorCode, args ...errorArgs) error {
+func failure(c *echo.Context, status int, code errorCode, args ...errorArgs) error {
 	var values errorArgs
 	if len(args) > 0 {
 		values = args[0]
@@ -652,15 +652,15 @@ func failure(c echo.Context, status int, code errorCode, args ...errorArgs) erro
 // writeFailure is failure with the data a refusal may carry beside its
 // sentence. data is left out of the body when it is nil, so a refusal without
 // any goes out in the shape it always did.
-func writeFailure(c echo.Context, status int, code errorCode, values errorArgs, data interface{}) error {
+func writeFailure(c *echo.Context, status int, code errorCode, values errorArgs, data interface{}) error {
 	template, known := errorMessages[code]
 	if !known {
 		// A code with no sentence behind it is a bug in this package, and the
 		// answer still has to say something. What goes out is the code itself,
 		// marked as unnamed so that a screen does not go looking for it in a
 		// phrase book, and the line in the log is what says where to look.
-		c.Logger().Errorf("a refusal was raised under the error code %q, which no message is "+
-			"registered for. The answer carries the code as its own text", code)
+		c.Logger().Error("a refusal was raised under an error code which no message is "+
+			"registered for. The answer carries the code as its own text", "code", string(code))
 
 		return c.JSON(status, errorBody{
 			Response: models.Response{Success: false, Data: data, Error: string(code)},
@@ -673,8 +673,8 @@ func writeFailure(c echo.Context, status int, code errorCode, values errorArgs, 
 	if !filled {
 		// The sentence went out with {name} still in it, which is a value the
 		// call site did not hand over under the name the sentence asks for.
-		c.Logger().Errorf("the message of the error code %q was written with a value missing, so "+
-			"the answer carries a placeholder", code)
+		c.Logger().Error("the message of an error code was written with a value missing, so "+
+			"the answer carries a placeholder", "code", string(code))
 	}
 
 	return c.JSON(status, errorBody{
@@ -687,7 +687,7 @@ func writeFailure(c echo.Context, status int, code errorCode, values errorArgs, 
 // refusal is an answer that says no, held as a value rather than written out on
 // the spot. The step that found the problem is sometimes inside a transaction
 // that has to be rolled back before anything reaches the client, and sometimes
-// it is a helper with no echo.Context to write through.
+// it is a helper with no *echo.Context to write through.
 type refusal struct {
 	status   int
 	code     errorCode
@@ -743,7 +743,7 @@ func (r *refusal) carrying(data interface{}) *refusal {
 }
 
 // answer writes the refusal out.
-func (r *refusal) answer(c echo.Context) error {
+func (r *refusal) answer(c *echo.Context) error {
 	if r.tooLarge {
 		return echo.ErrStatusRequestEntityTooLarge
 	}
@@ -857,6 +857,6 @@ func errorCodePlaceholders(code errorCode) []string {
 }
 
 // unauthenticated answers a request that carries no usable session.
-func unauthenticated(c echo.Context) error {
+func unauthenticated(c *echo.Context) error {
 	return failure(c, http.StatusUnauthorized, errAuthRequired)
 }

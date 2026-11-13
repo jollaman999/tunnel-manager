@@ -20,7 +20,7 @@ import (
 	"github.com/jollaman999/tunnel-manager/internal/models"
 	"github.com/jollaman999/tunnel-manager/internal/settings"
 	"github.com/jollaman999/tunnel-manager/internal/tunnel"
-	"github.com/labstack/echo/v4"
+	"github.com/labstack/echo/v5"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
 	"go.uber.org/zap/zaptest/observer"
@@ -186,7 +186,7 @@ func (i *transferInstall) count(t *testing.T, model interface{}) int64 {
 // wrote. The account and the limiter are left on the context the way the
 // session middleware leaves them, since three of the four ask for the password
 // of the account.
-func (i *transferInstall) call(t *testing.T, handler func(echo.Context) error, body string) *httptest.ResponseRecorder {
+func (i *transferInstall) call(t *testing.T, handler func(*echo.Context) error, body string) *httptest.ResponseRecorder {
 	t.Helper()
 
 	e := echo.New()
@@ -3607,7 +3607,7 @@ func TestTheAllowedSourcesOfALocalForwardCrossWithIt(t *testing.T) {
 type accountPasswordCase struct {
 	name     string
 	path     string
-	handler  func(*transferInstall) func(echo.Context) error
+	handler  func(*transferInstall) func(*echo.Context) error
 	body     func(t *testing.T, i *transferInstall, accountPassword *string) string
 	required string
 	wrong    string
@@ -3643,7 +3643,7 @@ func accountPasswordCases() []accountPasswordCase {
 		{
 			name: "the export of the tunnels",
 			path: "/api/export/tunnels",
-			handler: func(i *transferInstall) func(echo.Context) error {
+			handler: func(i *transferInstall) func(*echo.Context) error {
 				return i.handler.ExportTunnels
 			},
 			body: func(t *testing.T, _ *transferInstall, accountPassword *string) string {
@@ -3656,7 +3656,7 @@ func accountPasswordCases() []accountPasswordCase {
 		{
 			name: "the export of the settings",
 			path: "/api/export/settings",
-			handler: func(i *transferInstall) func(echo.Context) error {
+			handler: func(i *transferInstall) func(*echo.Context) error {
 				return i.handler.ExportSettings
 			},
 			body: func(t *testing.T, _ *transferInstall, accountPassword *string) string {
@@ -3669,7 +3669,7 @@ func accountPasswordCases() []accountPasswordCase {
 		{
 			name: "the import of the tunnels",
 			path: "/api/import/tunnels",
-			handler: func(i *transferInstall) func(echo.Context) error {
+			handler: func(i *transferInstall) func(*echo.Context) error {
 				return i.handler.ImportTunnels
 			},
 			body: func(t *testing.T, i *transferInstall, accountPassword *string) string {

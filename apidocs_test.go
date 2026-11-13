@@ -8,7 +8,7 @@ import (
 	"testing"
 
 	"github.com/jollaman999/tunnel-manager/internal/web"
-	"github.com/labstack/echo/v4"
+	"github.com/labstack/echo/v5"
 )
 
 // documentationPath is the page of the Swagger UI, and uiPath is a screen of

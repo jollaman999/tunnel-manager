@@ -12,7 +12,7 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/labstack/echo/v4"
+	"github.com/labstack/echo/v5"
 )
 
 // staticFS holds the UI as it was at build time. It is embedded rather than
@@ -86,7 +86,7 @@ func RegisterRoutes(e *echo.Echo, version string) {
 	// The version route is added before the wildcard so that echo matches it
 	// first. A request for it would otherwise be looked up as a file and
 	// answered with a 404, since it carries an extension.
-	e.GET(versionPath, func(c echo.Context) error {
+	e.GET(versionPath, func(c *echo.Context) error {
 		return c.JSON(http.StatusOK, map[string]string{"version": version})
 	})
 
@@ -97,13 +97,13 @@ func RegisterRoutes(e *echo.Echo, version string) {
 // 302 rather than a 301, because a permanent redirect is cached by the browser
 // and would keep sending clients to /ui/ even after the root is given
 // something else to serve.
-func redirectToUI(c echo.Context) error {
+func redirectToUI(c *echo.Context) error {
 	return c.Redirect(http.StatusFound, uiPrefix)
 }
 
 // serveRootIcon answers rootIconPath with the icon under /ui/icons/, through
 // the same headers every other built-in file goes out with.
-func serveRootIcon(c echo.Context) error {
+func serveRootIcon(c *echo.Context) error {
 	body, err := fs.ReadFile(staticFS, path.Join(staticRoot, rootIconAsset))
 	if err != nil {
 		return err
@@ -159,7 +159,7 @@ var pageWithIconVersions = sync.OnceValues(func() ([]byte, error) {
 })
 
 // serveAsset answers everything under /ui/.
-func serveAsset(c echo.Context) error {
+func serveAsset(c *echo.Context) error {
 	name := assetName(c.Param("*"))
 
 	if name == indexFile {
@@ -173,7 +173,7 @@ func serveAsset(c echo.Context) error {
 		// instead would answer a script request with HTML, and the failure
 		// would then surface far away from the name that was wrong.
 		if path.Ext(name) != "" {
-			return echo.NewHTTPError(http.StatusNotFound)
+			return echo.NewHTTPError(http.StatusNotFound, http.StatusText(http.StatusNotFound))
 		}
 
 		// Anything else is a path the page routes on its own, so the page is
@@ -187,7 +187,7 @@ func serveAsset(c echo.Context) error {
 
 // servePage answers with the page, its icon links carrying the hashes
 // pageWithIconVersions adds.
-func servePage(c echo.Context) error {
+func servePage(c *echo.Context) error {
 	body, err := pageWithIconVersions()
 	if err != nil {
 		return err
@@ -210,7 +210,7 @@ func servePage(c echo.Context) error {
 // stored, and the answer to that question is 304 and no body whenever the file
 // has not moved, which is nearly always. The cost of being right here is one
 // conditional request per file per page load.
-func serveBody(c echo.Context, contentType string, body []byte) error {
+func serveBody(c *echo.Context, contentType string, body []byte) error {
 	sum := sha256.Sum256(body)
 	tag := `"` + hex.EncodeToString(sum[:16]) + `"`
 

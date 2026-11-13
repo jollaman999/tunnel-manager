@@ -21,7 +21,7 @@ import (
 	"github.com/go-playground/validator/v10"
 	"github.com/jollaman999/tunnel-manager/internal/auth"
 	"github.com/jollaman999/tunnel-manager/internal/models"
-	"github.com/labstack/echo/v4"
+	"github.com/labstack/echo/v5"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zaptest/observer"
 	"gorm.io/gorm"
@@ -121,7 +121,7 @@ func newServer(t *testing.T, db *gorm.DB, logger *zap.Logger, passwordFile strin
 // counted against the call before it arrives. It is given no database because
 // the counters read none: what it is here for is the address the request came
 // from and the failures counted against it.
-func leaveSessionOnContext(c echo.Context, userID uint) {
+func leaveSessionOnContext(c *echo.Context, userID uint) {
 	c.Set(contextUserIDKey, userID)
 	c.Set(contextPasswordLimiterKey, accountPasswordLimiter(NewAuthHandler(nil, zap.NewNop(), "")))
 }
@@ -1844,7 +1844,7 @@ type csrfProbe struct {
 	calls int
 }
 
-func (p *csrfProbe) handle(c echo.Context) error {
+func (p *csrfProbe) handle(c *echo.Context) error {
 	p.calls++
 
 	return c.JSON(http.StatusOK, models.Response{Success: true})
@@ -2024,7 +2024,7 @@ func TestCsrfReadsNeedNoToken(t *testing.T) {
 // causeOnlySetupRequest builds the setup request the handler is called with
 // directly, carrying the account that the session middleware would have left on
 // the context.
-func causeOnlySetupRequest(t *testing.T) (echo.Context, *httptest.ResponseRecorder) {
+func causeOnlySetupRequest(t *testing.T) (*echo.Context, *httptest.ResponseRecorder) {
 	t.Helper()
 
 	e := echo.New()

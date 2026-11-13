@@ -13,7 +13,7 @@ import (
 	"github.com/jollaman999/tunnel-manager/internal/logid"
 	"github.com/jollaman999/tunnel-manager/internal/models"
 	"github.com/jollaman999/tunnel-manager/internal/tlsserve"
-	"github.com/labstack/echo/v4"
+	"github.com/labstack/echo/v5"
 	"go.uber.org/zap"
 	"gorm.io/gorm"
 )
@@ -125,7 +125,7 @@ type certificateInstall struct {
 // @Success  200  {object}  models.Response{data=api.certificateView}
 // @Failure  409  {object}  api.errorBody  "api_https_enabled is off, so no certificate is in use"
 // @Router       /certificate [get]
-func (h *CertificateHandler) GetCertificate(c echo.Context) error {
+func (h *CertificateHandler) GetCertificate(c *echo.Context) error {
 	current := h.holder.Current()
 	if current == nil {
 		return h.noCertificate(c)
@@ -157,7 +157,7 @@ func (h *CertificateHandler) GetCertificate(c echo.Context) error {
 // @Success  200  {object}  models.Response{data=api.certificateReplaced}
 // @Failure  409  {object}  api.errorBody  "api_https_enabled is off, so no certificate is in use"
 // @Router       /certificate/renew [post]
-func (h *CertificateHandler) RenewCertificate(c echo.Context) error {
+func (h *CertificateHandler) RenewCertificate(c *echo.Context) error {
 	previous := h.holder.Current()
 	if previous == nil {
 		return h.noCertificate(c)
@@ -189,7 +189,7 @@ func (h *CertificateHandler) RenewCertificate(c echo.Context) error {
 // @Failure  400  {object}  api.errorBody  "The PEM could not be read, or the key does not match the certificate"
 // @Failure  409  {object}  api.errorBody  "api_https_enabled is off, so no certificate is in use"
 // @Router       /certificate [put]
-func (h *CertificateHandler) InstallCertificate(c echo.Context) error {
+func (h *CertificateHandler) InstallCertificate(c *echo.Context) error {
 	previous := h.holder.Current()
 	if previous == nil {
 		return h.noCertificate(c)
@@ -231,7 +231,7 @@ func (h *CertificateHandler) InstallCertificate(c echo.Context) error {
 // own fingerprint changed and to what cannot tell the two apart afterwards.
 // Both fingerprints are on the line, because the old one is what the warning on
 // the client is comparing against.
-func (h *CertificateHandler) replaced(c echo.Context, previous *tls.Certificate,
+func (h *CertificateHandler) replaced(c *echo.Context, previous *tls.Certificate,
 	keyPair *tls.Certificate, info *tlsserve.Info, now time.Time, how string) error {
 	leaf, err := leafOf(keyPair)
 	if err != nil {
@@ -317,7 +317,7 @@ func certificateWarning(info *tlsserve.Info, now time.Time) (textCode, textArgs)
 // conflict rather than a 404, because the route is there and the thing it acts
 // on is not: the setting that decides it is on the same screen, and the message
 // says so.
-func (h *CertificateHandler) noCertificate(c echo.Context) error {
+func (h *CertificateHandler) noCertificate(c *echo.Context) error {
 	return failure(c, http.StatusConflict, errCertificateHTTPSOff)
 }
 

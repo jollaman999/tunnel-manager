@@ -7,7 +7,7 @@ import (
 	"github.com/jollaman999/tunnel-manager/internal/logid"
 	"github.com/jollaman999/tunnel-manager/internal/models"
 	"github.com/jollaman999/tunnel-manager/internal/settings"
-	"github.com/labstack/echo/v4"
+	"github.com/labstack/echo/v5"
 	"go.uber.org/zap"
 )
 
@@ -27,7 +27,7 @@ type alertTestSent struct {
 // is held to guardStoredPassword the way a save is, since a test that sent the
 // stored password to a server named in the body would hand it to whoever named
 // the server. The webhook test sends no password and is not held to it.
-func (h *SettingsHandler) alertTestSettings(c echo.Context, mail bool) (*settings.Settings, *refusal) {
+func (h *SettingsHandler) alertTestSettings(c *echo.Context, mail bool) (*settings.Settings, *refusal) {
 	stored, err := settings.LoadOpened(h.db, h.cipher)
 	if err != nil {
 		h.logger.Error("failed to read the settings", logid.SettingsReadFailed.Field(), zap.Error(err))
@@ -89,7 +89,7 @@ func testEvent() alert.Event {
 // @Failure  400  {object}  api.errorBody  "A setting broke one of the rules, or no webhook address is set"
 // @Failure  502  {object}  api.errorBody  "The webhook was not reached or did not take the alert"
 // @Router       /settings/alert/test-webhook [post]
-func (h *SettingsHandler) TestAlertWebhook(c echo.Context) error {
+func (h *SettingsHandler) TestAlertWebhook(c *echo.Context) error {
 	asked, refused := h.alertTestSettings(c, false)
 	if refused != nil {
 		return refused.answer(c)
@@ -130,7 +130,7 @@ func (h *SettingsHandler) TestAlertWebhook(c echo.Context) error {
 // @Failure  400  {object}  api.errorBody  "A setting broke one of the rules, no mail server is set, or the body moves the mail target without a new password"
 // @Failure  502  {object}  api.errorBody  "The mail server was not reached or did not take the message"
 // @Router       /settings/alert/test-smtp [post]
-func (h *SettingsHandler) TestAlertSMTP(c echo.Context) error {
+func (h *SettingsHandler) TestAlertSMTP(c *echo.Context) error {
 	asked, refused := h.alertTestSettings(c, true)
 	if refused != nil {
 		return refused.answer(c)

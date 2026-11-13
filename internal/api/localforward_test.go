@@ -15,7 +15,7 @@ import (
 	"github.com/jollaman999/tunnel-manager/internal/models"
 	"github.com/jollaman999/tunnel-manager/internal/settings"
 	"github.com/jollaman999/tunnel-manager/internal/tunnel"
-	"github.com/labstack/echo/v4"
+	"github.com/labstack/echo/v5"
 	"go.uber.org/zap"
 	"gorm.io/gorm"
 	gormlogger "gorm.io/gorm/logger"
@@ -134,7 +134,7 @@ func readLocalForwardPage(t *testing.T, rec *httptest.ResponseRecorder) localFor
 
 // localForwardRequest builds a request with a JSON body and one path
 // parameter, the way echo hands one to a handler.
-func localForwardRequest(t *testing.T, method, target, body, value string) (echo.Context, *httptest.ResponseRecorder) {
+func localForwardRequest(t *testing.T, method, target, body, value string) (*echo.Context, *httptest.ResponseRecorder) {
 	t.Helper()
 
 	e := echo.New()
@@ -150,8 +150,7 @@ func localForwardRequest(t *testing.T, method, target, body, value string) (echo
 
 	rec := httptest.NewRecorder()
 	c := e.NewContext(req, rec)
-	c.SetParamNames("id")
-	c.SetParamValues(value)
+	c.SetPathValues(echo.PathValues{{Name: "id", Value: value}})
 
 	return c, rec
 }
@@ -160,13 +159,12 @@ func localForwardRequest(t *testing.T, method, target, body, value string) (echo
 // answer under the path of one forward, which names the Host and the number on
 // it. Both are set, because a handler that read only one of them would find a
 // row of another Host.
-func localForwardRowRequest(t *testing.T, method, target, body, hostID, number string) (echo.Context,
+func localForwardRowRequest(t *testing.T, method, target, body, hostID, number string) (*echo.Context,
 	*httptest.ResponseRecorder) {
 	t.Helper()
 
 	c, rec := localForwardRequest(t, method, target, body, hostID)
-	c.SetParamNames("id", "number")
-	c.SetParamValues(hostID, number)
+	c.SetPathValues(echo.PathValues{{Name: "id", Value: hostID}, {Name: "number", Value: number}})
 
 	return c, rec
 }
@@ -934,8 +932,8 @@ func TestLocalForwardWritesAreRefused(t *testing.T) {
 			}
 
 			var (
-				call func(echo.Context) error
-				c    echo.Context
+				call func(*echo.Context) error
+				c    *echo.Context
 				rec  *httptest.ResponseRecorder
 			)
 

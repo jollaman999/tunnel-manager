@@ -19,12 +19,12 @@ import (
 	"github.com/jollaman999/tunnel-manager/internal/alert"
 	"github.com/jollaman999/tunnel-manager/internal/crypto"
 	"github.com/jollaman999/tunnel-manager/internal/settings"
-	"github.com/labstack/echo/v4"
+	"github.com/labstack/echo/v5"
 	"gorm.io/gorm"
 )
 
 // alertCall runs one of the two test presses against the handler.
-func alertCall(t *testing.T, handler func(echo.Context) error, body string) *httptest.ResponseRecorder {
+func alertCall(t *testing.T, handler func(*echo.Context) error, body string) *httptest.ResponseRecorder {
 	t.Helper()
 
 	e := echo.New()

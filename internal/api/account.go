@@ -8,7 +8,7 @@ import (
 	"github.com/jollaman999/tunnel-manager/internal/auth"
 	"github.com/jollaman999/tunnel-manager/internal/logid"
 	"github.com/jollaman999/tunnel-manager/internal/models"
-	"github.com/labstack/echo/v4"
+	"github.com/labstack/echo/v5"
 	"go.uber.org/zap"
 )
 
@@ -90,7 +90,7 @@ type accountChanged struct {
 // @Success  200  {object}  models.Response{data=api.accountView}
 // @Failure  401  {object}  api.errorBody  "Authentication required"
 // @Router       /account [get]
-func (h *AuthHandler) GetAccount(c echo.Context) error {
+func (h *AuthHandler) GetAccount(c *echo.Context) error {
 	userID, ok := c.Get(contextUserIDKey).(uint)
 	if !ok {
 		// The middleware is what puts it there, so getting here means the route
@@ -132,7 +132,7 @@ func (h *AuthHandler) GetAccount(c echo.Context) error {
 // @Failure  400  {object}  api.errorBody  "Nothing was asked for, or the new password is refused"
 // @Failure  401  {object}  api.errorBody  "The current password is wrong"
 // @Router       /account [put]
-func (h *AuthHandler) ChangeAccount(c echo.Context) error {
+func (h *AuthHandler) ChangeAccount(c *echo.Context) error {
 	var req accountRequest
 
 	err := c.Bind(&req)

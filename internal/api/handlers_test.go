@@ -23,7 +23,7 @@ import (
 	"github.com/jollaman999/tunnel-manager/internal/crypto"
 	"github.com/jollaman999/tunnel-manager/internal/models"
 	"github.com/jollaman999/tunnel-manager/internal/tunnel"
-	"github.com/labstack/echo/v4"
+	"github.com/labstack/echo/v5"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
 	"go.uber.org/zap/zaptest/observer"
@@ -322,7 +322,7 @@ func TestWriteHandlersWakeTheReconcileLoopAfterTheCommit(t *testing.T) {
 		body   string
 		param  string
 		status int
-		call   func(*Handler, echo.Context) error
+		call   func(*Handler, *echo.Context) error
 	}{
 		{
 			name:   "create host",
@@ -388,8 +388,7 @@ func TestWriteHandlersWakeTheReconcileLoopAfterTheCommit(t *testing.T) {
 			rec := httptest.NewRecorder()
 			c := e.NewContext(req, rec)
 			if tt.param != "" {
-				c.SetParamNames("id")
-				c.SetParamValues(tt.param)
+				c.SetPathValues(echo.PathValues{{Name: "id", Value: tt.param}})
 			}
 
 			h := NewHandler(db, manager, zap.NewNop(), newTestCipher(t))
@@ -691,7 +690,7 @@ func TestWriteHandlersReadTheirRowInsideTheTransaction(t *testing.T) {
 		body   string
 		param  string
 		table  string
-		call   func(*Handler, echo.Context) error
+		call   func(*Handler, *echo.Context) error
 	}{
 		{
 			name:   "update host",
@@ -740,8 +739,7 @@ func TestWriteHandlersReadTheirRowInsideTheTransaction(t *testing.T) {
 			req.Header.Set(echo.HeaderContentType, echo.MIMEApplicationJSON)
 			rec := httptest.NewRecorder()
 			c := e.NewContext(req, rec)
-			c.SetParamNames("id")
-			c.SetParamValues(tt.param)
+			c.SetPathValues(echo.PathValues{{Name: "id", Value: tt.param}})
 
 			h := NewHandler(db, manager, zap.NewNop(), newTestCipher(t))
 
@@ -811,7 +809,7 @@ func TestCreateHandlersReadOnlyWhatTheyAssign(t *testing.T) {
 		// They are matched on the whole statement, so a read of that table
 		// which is not one of these fails the case.
 		ownReads []string
-		call     func(*Handler, echo.Context) error
+		call     func(*Handler, *echo.Context) error
 	}{
 		{
 			name:     "create host",
@@ -918,7 +916,7 @@ func TestWriteHandlersRollBackWhenTheRowIsGone(t *testing.T) {
 		method string
 		target string
 		body   string
-		call   func(*Handler, echo.Context) error
+		call   func(*Handler, *echo.Context) error
 	}{
 		{
 			name:   "update host",
@@ -959,8 +957,7 @@ func TestWriteHandlersRollBackWhenTheRowIsGone(t *testing.T) {
 			req.Header.Set(echo.HeaderContentType, echo.MIMEApplicationJSON)
 			rec := httptest.NewRecorder()
 			c := e.NewContext(req, rec)
-			c.SetParamNames("id")
-			c.SetParamValues("1")
+			c.SetPathValues(echo.PathValues{{Name: "id", Value: "1"}})
 
 			h := NewHandler(db, manager, zap.NewNop(), newTestCipher(t))
 
@@ -1338,7 +1335,7 @@ func storedHost() models.Host {
 
 // getRequest builds a GET request with one path parameter, the way echo hands
 // one to a handler.
-func getRequest(t *testing.T, target, param, value string) (echo.Context, *httptest.ResponseRecorder) {
+func getRequest(t *testing.T, target, param, value string) (*echo.Context, *httptest.ResponseRecorder) {
 	t.Helper()
 
 	e := echo.New()
@@ -1348,8 +1345,7 @@ func getRequest(t *testing.T, target, param, value string) (echo.Context, *httpt
 	c := e.NewContext(req, rec)
 
 	if param != "" {
-		c.SetParamNames(param)
-		c.SetParamValues(value)
+		c.SetPathValues(echo.PathValues{{Name: param, Value: value}})
 	}
 
 	return c, rec
@@ -1597,7 +1593,7 @@ func TestListServicePortsReportsAReadThatFailed(t *testing.T) {
 type readHandler struct {
 	name  string
 	param string
-	call  func(*Handler, echo.Context) error
+	call  func(*Handler, *echo.Context) error
 }
 
 // readHandlers are the reads that take an id. GetHostStatus reads it from
@@ -1821,7 +1817,7 @@ type errPathHandler struct {
 	body   string
 	param  string
 	inTx   bool
-	call   func(*Handler, echo.Context) error
+	call   func(*Handler, *echo.Context) error
 }
 
 // errPathHandlers are the reads of a single row. What is pinned over them is
@@ -1873,7 +1869,7 @@ func errPathDB(t *testing.T, readErr error) (*gorm.DB, *txConnPool) {
 
 // errPathRequest builds the request of one handler, body and path parameter
 // included.
-func errPathRequest(t *testing.T, tt errPathHandler) (echo.Context, *httptest.ResponseRecorder) {
+func errPathRequest(t *testing.T, tt errPathHandler) (*echo.Context, *httptest.ResponseRecorder) {
 	t.Helper()
 
 	e := echo.New()
@@ -1882,8 +1878,7 @@ func errPathRequest(t *testing.T, tt errPathHandler) (echo.Context, *httptest.Re
 	req.Header.Set(echo.HeaderContentType, echo.MIMEApplicationJSON)
 	rec := httptest.NewRecorder()
 	c := e.NewContext(req, rec)
-	c.SetParamNames(tt.param)
-	c.SetParamValues("1")
+	c.SetPathValues(echo.PathValues{{Name: tt.param, Value: "1"}})
 
 	return c, rec
 }
@@ -2354,7 +2349,7 @@ func TestReadHandlersKeepTheCauseOutOfTheAnswer(t *testing.T) {
 		manager func() tunnelManager
 		target  string
 		param   string
-		call    func(*Handler, echo.Context) error
+		call    func(*Handler, *echo.Context) error
 	}{
 		{
 			name:    "list hosts",
@@ -3011,7 +3006,7 @@ func newHostFixture(t *testing.T) *hostFixture {
 
 // call sends one request to a handler and hands back what it answered.
 func (f *hostFixture) call(t *testing.T, method, target, body, param, value string,
-	handler func(echo.Context) error) *httptest.ResponseRecorder {
+	handler func(*echo.Context) error) *httptest.ResponseRecorder {
 	t.Helper()
 
 	req := httptest.NewRequest(method, target, strings.NewReader(body))
@@ -3020,8 +3015,7 @@ func (f *hostFixture) call(t *testing.T, method, target, body, param, value stri
 	c := f.e.NewContext(req, rec)
 
 	if param != "" {
-		c.SetParamNames(param)
-		c.SetParamValues(value)
+		c.SetPathValues(echo.PathValues{{Name: param, Value: value}})
 	}
 
 	err := handler(c)
@@ -3494,7 +3488,7 @@ func TestHostAnswersNeverCarryThePrivateKey(t *testing.T) {
 type listEndpoint struct {
 	name     string
 	target   string
-	call     func(*Handler, echo.Context) error
+	call     func(*Handler, *echo.Context) error
 	itemsKey string
 	totalKey string
 	idKey    string
@@ -4056,7 +4050,7 @@ func TestGetStatusCarriesTheBannerAndNoReach(t *testing.T) {
 
 // deleteRequest builds one delete request for a handler, the way getRequest
 // builds a read.
-func deleteRequest(t *testing.T, target, param, value string) (echo.Context, *httptest.ResponseRecorder) {
+func deleteRequest(t *testing.T, target, param, value string) (*echo.Context, *httptest.ResponseRecorder) {
 	t.Helper()
 
 	e := echo.New()
@@ -4065,8 +4059,7 @@ func deleteRequest(t *testing.T, target, param, value string) (echo.Context, *ht
 	rec := httptest.NewRecorder()
 	c := e.NewContext(req, rec)
 
-	c.SetParamNames(param)
-	c.SetParamValues(value)
+	c.SetPathValues(echo.PathValues{{Name: param, Value: value}})
 
 	return c, rec
 }
@@ -4203,7 +4196,7 @@ func TestDeleteHandlersLeaveTheAssignmentsWhenTheRowIsGone(t *testing.T) {
 	tests := []struct {
 		name   string
 		target string
-		call   func(*Handler, echo.Context) error
+		call   func(*Handler, *echo.Context) error
 	}{
 		{name: "host", target: "/api/host/9", call: (*Handler).DeleteHost},
 		{name: "service port", target: "/api/service-port/9", call: (*Handler).DeleteServicePort},
@@ -4262,7 +4255,7 @@ func newAssignmentDB(t *testing.T, hosts []models.Host, sps []models.ServicePort
 
 // hostServicePortRequest builds one request to the service ports of a Host, the
 // way echo hands it to a handler.
-func hostServicePortRequest(t *testing.T, method, target, id, body string) (echo.Context, *httptest.ResponseRecorder) {
+func hostServicePortRequest(t *testing.T, method, target, id, body string) (*echo.Context, *httptest.ResponseRecorder) {
 	t.Helper()
 
 	e := echo.New()
@@ -4272,8 +4265,7 @@ func hostServicePortRequest(t *testing.T, method, target, id, body string) (echo
 	rec := httptest.NewRecorder()
 	c := e.NewContext(req, rec)
 
-	c.SetParamNames("id")
-	c.SetParamValues(id)
+	c.SetPathValues(echo.PathValues{{Name: "id", Value: id}})
 
 	return c, rec
 }
@@ -4888,7 +4880,7 @@ func TestHostServicePortHandlersAnswerNotFoundForAHostThatIsGone(t *testing.T) {
 
 // createRequest builds one create request for a handler, the way deleteRequest
 // builds a delete.
-func createRequest(t *testing.T, target, body string) (echo.Context, *httptest.ResponseRecorder) {
+func createRequest(t *testing.T, target, body string) (*echo.Context, *httptest.ResponseRecorder) {
 	t.Helper()
 
 	e := echo.New()
@@ -5028,7 +5020,7 @@ func TestCreateHandlersLeaveNoRowWhenTheAssignmentsFail(t *testing.T) {
 		target string
 		body   string
 		count  func(*gorm.DB) *gorm.DB
-		call   func(*Handler, echo.Context) error
+		call   func(*Handler, *echo.Context) error
 	}{
 		{
 			name:   "create host",
@@ -5374,8 +5366,7 @@ func TestHostAndServicePortRequestsRefuseTheOldFieldNames(t *testing.T) {
 			req.Header.Set(echo.HeaderContentType, contentType)
 			rec := httptest.NewRecorder()
 			c := f.e.NewContext(req, rec)
-			c.SetParamNames("id")
-			c.SetParamValues("1")
+			c.SetPathValues(echo.PathValues{{Name: "id", Value: "1"}})
 
 			err := f.h.UpdateHost(c)
 			if err != nil {

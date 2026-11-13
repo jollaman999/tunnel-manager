@@ -41,8 +41,8 @@ import (
 	"github.com/jollaman999/tunnel-manager/internal/tlsserve"
 	"github.com/jollaman999/tunnel-manager/internal/tunnel"
 	"github.com/jollaman999/tunnel-manager/internal/web"
-	"github.com/labstack/echo/v4"
-	"github.com/labstack/echo/v4/middleware"
+	"github.com/labstack/echo/v5"
+	"github.com/labstack/echo/v5/middleware"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
 	"gopkg.in/natefinch/lumberjack.v2"
@@ -972,7 +972,7 @@ func securityHeaders(policy string, servedCertificate func() *tls.Certificate) e
 	hsts := fmt.Sprintf("max-age=%d", hstsMaxAgeSeconds)
 
 	return func(next echo.HandlerFunc) echo.HandlerFunc {
-		return func(c echo.Context) error {
+		return func(c *echo.Context) error {
 			header := c.Response().Header()
 
 			header.Set(echo.HeaderXFrameOptions, "DENY")
@@ -992,7 +992,7 @@ func securityHeaders(policy string, servedCertificate func() *tls.Certificate) e
 // own size. It reads the registered path and not the one that was asked for,
 // so a request that spells the path some other way is measured against the
 // general limit.
-func isImportRoute(c echo.Context) bool {
+func isImportRoute(c *echo.Context) bool {
 	switch c.Path() {
 	case apiPrefix + importTunnelsPath, apiPrefix + importSettingsPath:
 		return true
@@ -1024,7 +1024,7 @@ func importBodyLimitMiddleware() echo.MiddlewareFunc {
 // refusal for a body they could not read do the same there.
 func bodyLimit(limit int64, skipper middleware.Skipper) echo.MiddlewareFunc {
 	return func(next echo.HandlerFunc) echo.HandlerFunc {
-		return func(c echo.Context) error {
+		return func(c *echo.Context) error {
 			if skipper != nil && skipper(c) {
 				return next(c)
 			}
@@ -1051,22 +1051,28 @@ func bodyLimit(limit int64, skipper middleware.Skipper) echo.MiddlewareFunc {
 	}
 }
 
-// applyServerTimeouts puts the deadlines on the servers echo would otherwise
-// run with none. Both are set: e.Server is what serves while HTTPS is off and
-// e.TLSServer is what serves while it is on, and which of them main starts is
-// decided several hundred lines later.
-func applyServerTimeouts(servers ...*http.Server) {
-	for _, server := range servers {
-		server.ReadHeaderTimeout = apiReadHeaderTimeout
-		server.ReadTimeout = apiReadTimeout
-		server.IdleTimeout = apiIdleTimeout
+// newAPIServer is the one http.Server the API and the UI are served by, in the
+// clear and over TLS alike, with the deadlines a bare http.Server would run
+// without. It is built here rather than in main so that the test of the
+// deadlines reads the server main starts.
+//
+// Errors the server itself runs into, a TLS handshake that failed among them,
+// are written to the standard output under the "echo: " prefix, which is where
+// and how they were written while echo held the server.
+func newAPIServer(handler http.Handler) *http.Server {
+	return &http.Server{
+		Handler:           handler,
+		ReadHeaderTimeout: apiReadHeaderTimeout,
+		ReadTimeout:       apiReadTimeout,
+		IdleTimeout:       apiIdleTimeout,
+		ErrorLog:          log.New(os.Stdout, "echo: ", 0),
 	}
 }
 
 // harden is everything this file does to the HTTP server that is not a route:
-// the body limits, the headers and the deadlines. It is one function so that a
-// test serves through the same wiring main does rather than through a copy of
-// it that has drifted.
+// the body limits and the headers. It is one function so that a test serves
+// through the same wiring main does rather than through a copy of it that has
+// drifted.
 //
 // The headers go on before the body limit and not after it. Everything put on
 // the response before the handler runs is carried by whatever answer leaves,
@@ -1076,8 +1082,6 @@ func applyServerTimeouts(servers ...*http.Server) {
 func harden(e *echo.Echo, servedCertificate func() *tls.Certificate) {
 	e.Use(securityHeaders(contentSecurityPolicy(indexHTML), servedCertificate))
 	e.Use(bodyLimit(generalBodyLimit, isImportRoute))
-
-	applyServerTimeouts(e.Server, e.TLSServer)
 }
 
 func (cv *CustomValidator) Validate(i interface{}) error {
@@ -1879,12 +1883,8 @@ func serve() {
 	}
 
 	e := echo.New()
-	// The framework draws a banner of its own and announces the port it
-	// listens on. The logo above is what this program says for itself.
-	e.HideBanner = true
-	e.HidePort = true
 	e.Validator = &CustomValidator{validator: validator.New()}
-	e.Use(middleware.Logger())
+	e.Use(api.AccessLog(os.Stdout))
 	e.Use(middleware.Recover())
 
 	// There is no CORS middleware on purpose. The UI is built into this binary
@@ -2194,6 +2194,10 @@ func serve() {
 	// logger.Fatal would leave both behind.
 	serverErr := make(chan error, 1)
 
+	// One server serves the API and the UI whether HTTPS is on or off, and the
+	// shutdown at the bottom of main takes it down either way.
+	apiServer := newAPIServer(e)
+
 	// While HTTPS is on there is still one port, and two servers behind it.
 	// portSplit accepts on the port and sorts the connections by their first
 	// byte: the ones that opened a TLS handshake go to echo, and everything
@@ -2246,13 +2250,13 @@ func serve() {
 			portSplit = tlsserve.NewSplitter(listener, logger)
 			redirectServer = tlsserve.NewRedirectServer(apiPort, certHolder, logger)
 
-			// echo is handed a listener that is already wrapped in TLS, which
-			// is what it does for itself in StartTLS. It keeps its own server
-			// and with it the graceful shutdown the rest of main relies on.
+			// The server is handed the connections that opened a handshake,
+			// wrapped in TLS here, and serves them the way it serves the
+			// plain ones while HTTPS is off.
 			certHolder.Set(cert)
 
-			e.TLSServer.TLSConfig = tlsserve.ServerConfig(certHolder)
-			e.TLSListener = tls.NewListener(portSplit.TLS(), e.TLSServer.TLSConfig)
+			apiServer.TLSConfig = tlsserve.ServerConfig(certHolder)
+			tlsListener := tls.NewListener(portSplit.TLS(), apiServer.TLSConfig)
 
 			go func() {
 				err := redirectServer.Serve(portSplit.Plain())
@@ -2266,7 +2270,7 @@ func serve() {
 			}()
 
 			go func() {
-				err := e.StartServer(e.TLSServer)
+				err := apiServer.Serve(tlsListener)
 				if err != nil && !errors.Is(err, http.ErrServerClosed) {
 					serverErr <- err
 				}
@@ -2281,15 +2285,12 @@ func serve() {
 	} else {
 		// The port was taken above for the same reason, and so that the line
 		// below can name the address the listener bound instead of the one
-		// that was asked for. echo serves on a listener that is already open
-		// when it is handed one.
+		// that was asked for.
 		if listenErr != nil {
 			serverErr <- fmt.Errorf("failed to listen on %s: %w", address, listenErr)
 		} else {
-			e.Listener = listener
-
 			go func() {
-				err := e.Start(address)
+				err := apiServer.Serve(listener)
 				if err != nil && !errors.Is(err, http.ErrServerClosed) {
 					serverErr <- err
 				}
@@ -2338,7 +2339,7 @@ func serve() {
 	// left to serve and answers right away.
 	ctx, cancel := context.WithTimeout(context.Background(), shutdownTimeout)
 	defer cancel()
-	err = e.Shutdown(ctx)
+	err = apiServer.Shutdown(ctx)
 	if err != nil {
 		logger.Error("failed to shut down API server gracefully", logid.ApiServerShutdownFailed.Field(), zap.Error(err))
 	}

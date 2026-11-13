@@ -7,7 +7,7 @@ toolchain go1.27.4
 require (
 	github.com/glebarez/sqlite v1.11.0
 	github.com/go-playground/validator/v10 v10.30.6
-	github.com/labstack/echo/v4 v4.16.4
+	github.com/labstack/echo/v5 v5.4.5
 	go.uber.org/zap v1.28.0
 	golang.org/x/crypto v0.59.0
 	golang.org/x/sys v0.50.0
@@ -24,16 +24,11 @@ require (
 	github.com/google/uuid v1.6.0 // indirect
 	github.com/jinzhu/inflection v1.0.0 // indirect
 	github.com/jinzhu/now v1.1.5 // indirect
-	github.com/labstack/gommon v0.5.0 // indirect
 	github.com/leodido/go-urn v1.5.0 // indirect
-	github.com/mattn/go-colorable v0.1.16 // indirect
 	github.com/mattn/go-isatty v0.0.24 // indirect
 	github.com/ncruces/go-strftime v1.1.0 // indirect
 	github.com/remyoudompheng/bigfft v0.0.0-20230129092748-24d4a6f8daec // indirect
-	github.com/valyala/bytebufferpool v1.0.0 // indirect
-	github.com/valyala/fasttemplate v1.2.2 // indirect
 	go.uber.org/multierr v1.11.0 // indirect
-	golang.org/x/net v0.62.0 // indirect
 	golang.org/x/text v0.44.0 // indirect
 	golang.org/x/time v0.16.0 // indirect
 	modernc.org/libc v1.81.0 // indirect

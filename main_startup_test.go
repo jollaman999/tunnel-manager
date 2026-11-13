@@ -35,7 +35,7 @@ import (
 	"github.com/jollaman999/tunnel-manager/internal/models"
 	"github.com/jollaman999/tunnel-manager/internal/settings"
 	"github.com/jollaman999/tunnel-manager/internal/web"
-	"github.com/labstack/echo/v4"
+	"github.com/labstack/echo/v5"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
 	"go.uber.org/zap/zaptest/observer"
@@ -1313,7 +1313,7 @@ func TestTheProxyHeadersAreTrustedOnlyWhenTheFlagIsGiven(t *testing.T) {
 // the whole body, read to its end, counted. Nothing here is the real handler,
 // because what is under test is the middleware in front of it, and the count is
 // how a body that arrived whole is told from one the limit cut short.
-func readBackHandler(c echo.Context) error {
+func readBackHandler(c *echo.Context) error {
 	body, err := io.ReadAll(c.Request().Body)
 	if err != nil {
 		return err
@@ -1330,8 +1330,6 @@ func readBackHandler(c echo.Context) error {
 // wiring that is served.
 func newHardenedServer(servedCertificate func() *tls.Certificate) *echo.Echo {
 	e := echo.New()
-	e.HideBanner = true
-	e.HidePort = true
 
 	harden(e, servedCertificate)
 
@@ -1504,7 +1502,7 @@ func TestACertificateRegistrationStillFitsTheGeneralLimit(t *testing.T) {
 // bindBackHandler binds the body the way every handler in internal/api does and
 // answers with how long the field it bound came out. The read error is handed
 // back as it is, so what the client is told is what the body limit makes of it.
-func bindBackHandler(c echo.Context) error {
+func bindBackHandler(c *echo.Context) error {
 	var body struct {
 		File string `json:"file"`
 	}
@@ -1524,8 +1522,6 @@ func bindBackHandler(c echo.Context) error {
 // it is the one route anybody who can reach the port can send a body to.
 func newBindingServer() *httptest.Server {
 	e := echo.New()
-	e.HideBanner = true
-	e.HidePort = true
 
 	harden(e, noCertificate)
 
@@ -1650,12 +1646,11 @@ func TestAChunkedBodyOfExactlyTheGeneralLimitIsBoundWhole(t *testing.T) {
 	}
 }
 
-// TestAChunkedBodyPaddedPastTheLimitWithWhitespaceIsStillBound covers the other
-// side of the decoder. It stops once it has read one whole value, so whatever
-// follows the value past the limit is never read and nothing trips. That is
-// harmless, since what was held in memory stayed under the limit, and it is
-// allowed rather than refused.
-func TestAChunkedBodyPaddedPastTheLimitWithWhitespaceIsStillBound(t *testing.T) {
+// TestAChunkedBodyPaddedPastTheLimitWithWhitespaceIsRefused covers the other
+// side of the decoder. c.Bind reads the whole body before it decodes any of it,
+// so a body past the limit is refused even when all that follows the value is
+// whitespace: the limit is on the body, not on the value inside it.
+func TestAChunkedBodyPaddedPastTheLimitWithWhitespaceIsRefused(t *testing.T) {
 	server := newBindingServer()
 	defer server.Close()
 
@@ -1663,9 +1658,9 @@ func TestAChunkedBodyPaddedPastTheLimitWithWhitespaceIsStillBound(t *testing.T) 
 
 	status, answer := postChunked(t, server, apiPrefix+"/bind", body)
 
-	if status != http.StatusOK {
-		t.Fatalf("a small object padded with whitespace was answered %d, want %d: %s",
-			status, http.StatusOK, answer)
+	if status != http.StatusRequestEntityTooLarge {
+		t.Fatalf("a small object padded with whitespace past the limit was answered %d, want %d: %s",
+			status, http.StatusRequestEntityTooLarge, answer)
 	}
 }
 
@@ -1722,40 +1717,27 @@ func readCount(t *testing.T, recorder *httptest.ResponseRecorder) int {
 	return answer.Read
 }
 
-// TestBothServersCarryTheDeadlines pins the timeouts onto the two http.Servers
-// echo holds. Which of them is started is decided by api.https_enabled several
-// hundred lines into main, so a value put on one of them only is a deployment
-// that is covered and another that is not.
-func TestBothServersCarryTheDeadlines(t *testing.T) {
-	e := echo.New()
+// TestTheAPIServerCarriesTheDeadlines pins the timeouts onto the http.Server
+// main serves the API through. It is the same server whether api.https_enabled
+// is on or off, so the deadlines cover both deployments.
+func TestTheAPIServerCarriesTheDeadlines(t *testing.T) {
+	server := newAPIServer(echo.New())
 
-	harden(e, noCertificate)
-
-	servers := map[string]*http.Server{
-		"the plaintext server": e.Server,
-		"the TLS server":       e.TLSServer,
+	if server.ReadHeaderTimeout != apiReadHeaderTimeout {
+		t.Errorf("ReadHeaderTimeout = %v, want %v", server.ReadHeaderTimeout, apiReadHeaderTimeout)
+	}
+	if server.ReadTimeout != apiReadTimeout {
+		t.Errorf("ReadTimeout = %v, want %v", server.ReadTimeout, apiReadTimeout)
+	}
+	if server.IdleTimeout != apiIdleTimeout {
+		t.Errorf("IdleTimeout = %v, want %v", server.IdleTimeout, apiIdleTimeout)
 	}
 
-	for name, server := range servers {
-		t.Run(name, func(t *testing.T) {
-			if server.ReadHeaderTimeout != apiReadHeaderTimeout {
-				t.Errorf("ReadHeaderTimeout = %v, want %v", server.ReadHeaderTimeout, apiReadHeaderTimeout)
-			}
-			if server.ReadTimeout != apiReadTimeout {
-				t.Errorf("ReadTimeout = %v, want %v", server.ReadTimeout, apiReadTimeout)
-			}
-			if server.IdleTimeout != apiIdleTimeout {
-				t.Errorf("IdleTimeout = %v, want %v", server.IdleTimeout, apiIdleTimeout)
-			}
-
-			// No WriteTimeout, and it is checked here so that one added
-			// without reading why there is none fails as a test rather than
-			// as an import that is cut off half way: see the note under the
-			// timeouts in main.go.
-			if server.WriteTimeout != 0 {
-				t.Errorf("WriteTimeout = %v, want none", server.WriteTimeout)
-			}
-		})
+	// No WriteTimeout, and it is checked here so that one added without
+	// reading why there is none fails as a test rather than as an import that
+	// is cut off half way: see the note under the timeouts in main.go.
+	if server.WriteTimeout != 0 {
+		t.Errorf("WriteTimeout = %v, want none", server.WriteTimeout)
 	}
 }
 

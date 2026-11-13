@@ -6,7 +6,7 @@ import (
 	"path"
 	"strings"
 
-	"github.com/labstack/echo/v4"
+	"github.com/labstack/echo/v5"
 )
 
 // This file serves the API documentation: the OpenAPI description of /api/**
@@ -69,14 +69,14 @@ func RegisterAPIDocs(e *echo.Echo, policy string) {
 	// operator UI. It is a 302 and not a 301 for the reason redirectToUI is: a
 	// permanent redirect is cached, and it would keep sending clients here
 	// after the path is given something else to serve.
-	e.GET(strings.TrimSuffix(apiDocsPrefix, "/"), func(c echo.Context) error {
+	e.GET(strings.TrimSuffix(apiDocsPrefix, "/"), func(c *echo.Context) error {
 		return c.Redirect(http.StatusFound, apiDocsPrefix)
 	})
 
 	// The prefix itself names no file, and serveAsset reads a path with no
 	// extension as one the operator UI routes on its own. Left to the wildcard
 	// it would hand back the operator UI, so the page is named here.
-	e.GET(apiDocsPrefix, func(c echo.Context) error {
+	e.GET(apiDocsPrefix, func(c *echo.Context) error {
 		return serveAPIDocsFile(c, apiDocsIndex)
 	}, header)
 
@@ -86,7 +86,7 @@ func RegisterAPIDocs(e *echo.Echo, policy string) {
 	// beside the operator UI rather than inside this directory. It is
 	// registered rather than left alone so that the policy below reaches the
 	// files as well as the page.
-	e.GET(apiDocsPrefix+"*", func(c echo.Context) error {
+	e.GET(apiDocsPrefix+"*", func(c *echo.Context) error {
 		return serveAPIDocsFile(c, assetName(c.Param("*")))
 	}, header)
 }
@@ -94,14 +94,14 @@ func RegisterAPIDocs(e *echo.Echo, policy string) {
 // serveAPIDocsFile hands back one file of the documentation directory. The
 // name has already been cleaned against a root by assetName, so it cannot
 // climb out of the embedded tree.
-func serveAPIDocsFile(c echo.Context, name string) error {
+func serveAPIDocsFile(c *echo.Context, name string) error {
 	body, err := fs.ReadFile(staticFS, path.Join(staticRoot, apiDocsDir, name))
 	if err != nil {
 		// Unlike the operator UI there is nothing here that routes paths of
 		// its own, so a name that is not a file is a name that is wrong and is
 		// reported as missing. Handing back the page instead would answer a
 		// script request with HTML and move the failure away from the name.
-		return echo.NewHTTPError(http.StatusNotFound)
+		return echo.NewHTTPError(http.StatusNotFound, http.StatusText(http.StatusNotFound))
 	}
 
 	return serveBody(c, contentTypeOf(name, body), body)
@@ -116,7 +116,7 @@ func serveAPIDocsFile(c echo.Context, name string) error {
 // it: what is widened here is widened for this prefix and for nothing else.
 func apiDocsPolicy(header string) echo.MiddlewareFunc {
 	return func(next echo.HandlerFunc) echo.HandlerFunc {
-		return func(c echo.Context) error {
+		return func(c *echo.Context) error {
 			c.Response().Header().Set(echo.HeaderContentSecurityPolicy, header)
 
 			return next(c)
