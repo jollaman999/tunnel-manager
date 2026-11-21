@@ -915,6 +915,10 @@ func (t *SSHTunnel) establishConnection(m *Manager, tunnel *models.Tunnel) error
 		t.tunnelMu.Lock()
 		tunnel.Status = connectFailureStatus(err)
 		tunnel.LastError = err.Error()
+		// The kind is of the last error, and a connection that was not made
+		// asked for no forward, so a refusal left from an earlier attempt is
+		// no longer what LastError says.
+		tunnel.ErrorKind = ""
 		jumpFailureOf(err).setOn(tunnel)
 		t.saveTunnelStatus(m, tunnel)
 		t.tunnelMu.Unlock()

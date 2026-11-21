@@ -2813,6 +2813,37 @@ func TestEstablishConnectionFailsWhenNeitherAddressOpens(t *testing.T) {
 	}
 }
 
+// TestEstablishConnectionForgetsADeniedForwardWhenTheConnectionFails is a
+// tunnel whose last failure was a refused forward and whose next attempt does
+// not get as far as asking for one: the server is gone, or its host key is no
+// longer the trusted one. The kind names what LastError is, and LastError is
+// now the connection, so a kind left at forward_denied would put the advice
+// about a refused port under an error that has nothing to do with a port.
+func TestEstablishConnectionForgetsADeniedForwardWhenTheConnectionFails(t *testing.T) {
+	m := newSSHTestManager(t, 1)
+
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("failed to listen: %v", err)
+	}
+
+	gone := ln.Addr().String()
+	_ = ln.Close()
+
+	tun, tunnel := newScopedSSHTestTunnel(t, gone, "0.0.0.0:18205", "[::]:18205")
+	tunnel.Status = "error"
+	tunnel.ErrorKind = errorKindForwardDenied
+
+	if err := tun.establishConnection(m, tunnel); err == nil {
+		t.Fatal("establishConnection returned no error although nothing listens on the server address")
+	}
+
+	if tunnel.ErrorKind != "" {
+		t.Errorf("error kind = %q after a failed connection, want it emptied: the last error %q is not a refused forward",
+			tunnel.ErrorKind, tunnel.LastError)
+	}
+}
+
 // A connection whose forwards were all refused is handed to nobody, so the
 // failure has to close it. Left open it would stay with the SSH server for as
 // long as this process runs, one more for every retry of the tunnel.
