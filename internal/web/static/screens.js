@@ -9230,11 +9230,12 @@ function settingsForm(set) {
     fields: [
       settingsField(portField("api_port", t("settings.api-port.label"), set.api_port),
         t("settings.api-port.hint")),
-      settingsField(secondsField("monitoring_interval_sec", t("settings.monitoring.label"),
-        set.monitoring_interval_sec), t("settings.monitoring.hint")),
-      settingsField(reconnectMaxField(set.reconnect_max_interval_sec), t("settings.reconnect-max.hint")),
-      settingsField(secondsField("reconcile_interval_sec", t("settings.reconcile.label"),
-        set.reconcile_interval_sec), t("settings.reconcile.hint")),
+      settingsField(hourBoundField("monitoring_interval_sec", t("settings.monitoring.label"),
+        set.monitoring_interval_sec, t("settings.monitoring.error")), t("settings.monitoring.hint")),
+      settingsField(hourBoundField("reconnect_max_interval_sec", t("settings.reconnect-max.label"),
+        set.reconnect_max_interval_sec, t("settings.reconnect-max.error")), t("settings.reconnect-max.hint")),
+      settingsField(hourBoundField("reconcile_interval_sec", t("settings.reconcile.label"),
+        set.reconcile_interval_sec, t("settings.reconcile.error")), t("settings.reconcile.hint")),
       {
         name: "security_key_file",
         label: t("settings.key-file.label"),
@@ -9635,10 +9636,11 @@ function secondsField(name, label, value) {
   };
 }
 
-// reconnectMaxField is a period with a ceiling as well as a floor. The server
-// refuses a wait past an hour, so the box says so before the save does.
-function reconnectMaxField(value) {
-  const field = secondsField("reconnect_max_interval_sec", t("settings.reconnect-max.label"), value);
+// hourBoundField is a period with a ceiling as well as a floor. The server
+// refuses any of the three periods past an hour, so the box says so before the
+// save does, in the words of the box it is under.
+function hourBoundField(name, label, value, error) {
+  const field = secondsField(name, label, value);
 
   field.check = function (text) {
     const empty = checkSeconds(text);
@@ -9646,7 +9648,7 @@ function reconnectMaxField(value) {
       return empty;
     }
 
-    return Number(String(text).trim()) > 3600 ? t("settings.reconnect-max.error") : "";
+    return Number(String(text).trim()) > 3600 ? error : "";
   };
 
   return field;

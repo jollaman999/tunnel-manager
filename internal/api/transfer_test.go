@@ -3515,6 +3515,120 @@ func TestADroppedPathNamesItsReason(t *testing.T) {
 	})
 }
 
+// TestAnIntervalAboveTheHourIsImportedAsTheHour is what keeps a file from a
+// version that held the monitoring and reconcile intervals to no ceiling
+// importable. Refused, the whole file would move nothing because of one long
+// interval; the startup lowers such a stored interval to the hour, and the
+// import does the same and says so in the answer and the log.
+func TestAnIntervalAboveTheHourIsImportedAsTheHour(t *testing.T) {
+	source := newTransferInstall(t)
+	target := newTransferInstall(t)
+
+	stored, err := settings.Load(source.db)
+	if err != nil {
+		t.Fatalf("failed to read the settings: %v", err)
+	}
+
+	// Built rather than exported, since this installation cannot store them.
+	content := settingsOf(stored)
+	content.MonitoringIntervalSec = 10000000000
+	content.ReconcileIntervalSec = 7200
+	content.LoggingLevel = "debug"
+
+	file, err := source.handler.seal(transferKindSettings, content, testExportPassword, time.Now())
+	if err != nil {
+		t.Fatalf("failed to seal a file: %v", err)
+	}
+
+	request, err := json.Marshal(importRequest{Password: testExportPassword, File: file})
+	if err != nil {
+		t.Fatalf("failed to write the import request: %v", err)
+	}
+
+	rec := target.call(t, target.handler.ImportSettings, string(request))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("the import answered %d, want %d: %s", rec.Code, http.StatusOK, rec.Body.String())
+	}
+
+	after, err := settings.Load(target.db)
+	if err != nil {
+		t.Fatalf("failed to read the settings: %v", err)
+	}
+	if after.MonitoringIntervalSec != settings.MaxIntervalSec || after.ReconcileIntervalSec != settings.MaxIntervalSec {
+		t.Errorf("the intervals were stored as %d and %d, want %d",
+			after.MonitoringIntervalSec, after.ReconcileIntervalSec, settings.MaxIntervalSec)
+	}
+	if after.LoggingLevel != "debug" {
+		t.Errorf("logging.level = %q, want the debug the file names", after.LoggingLevel)
+	}
+
+	checkNamedItems(t, decodeTransfer(t, rec).Data, []namedItem{
+		{
+			kind: "setting", name: "monitoring.interval_sec", action: transferSkipped,
+			reason: "the file carries 10000000000 seconds, which is longer than the hour this setting " +
+				"is held to, so 3600 was stored instead",
+			reasonCode:   textImportReasonIntervalOverCeiling,
+			reasonValues: textArgs{"carried": "10000000000", "stored": "3600"},
+		},
+		{
+			kind: "setting", name: "reconcile.interval_sec", action: transferSkipped,
+			reason: "the file carries 7200 seconds, which is longer than the hour this setting " +
+				"is held to, so 3600 was stored instead",
+			reasonCode:   textImportReasonIntervalOverCeiling,
+			reasonValues: textArgs{"carried": "7200", "stored": "3600"},
+		},
+	})
+
+	lowered := target.logs.FilterField(zap.String(logid.FieldKey,
+		string(logid.SettingsSettingLoweredToCeiling)))
+	if lowered.Len() != 2 {
+		t.Errorf("the log holds %d lines about a lowered interval, want 2", lowered.Len())
+	}
+}
+
+// TestAnImportedIntervalOfZeroIsRefused is the value the lowering is not for.
+// No version stored it, so a file that carries it is refused like any other
+// setting that does not pass, and nothing is stored.
+func TestAnImportedIntervalOfZeroIsRefused(t *testing.T) {
+	source := newTransferInstall(t)
+	target := newTransferInstall(t)
+
+	stored, err := settings.Load(source.db)
+	if err != nil {
+		t.Fatalf("failed to read the settings: %v", err)
+	}
+
+	content := settingsOf(stored)
+	content.ReconcileIntervalSec = 0
+	content.LoggingLevel = "debug"
+
+	file, err := source.handler.seal(transferKindSettings, content, testExportPassword, time.Now())
+	if err != nil {
+		t.Fatalf("failed to seal a file: %v", err)
+	}
+
+	request, err := json.Marshal(importRequest{Password: testExportPassword, File: file})
+	if err != nil {
+		t.Fatalf("failed to write the import request: %v", err)
+	}
+
+	rec := target.call(t, target.handler.ImportSettings, string(request))
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("the import answered %d, want %d: %s", rec.Code, http.StatusBadRequest, rec.Body.String())
+	}
+	if code := errorCodeOf(t, rec); code != errImportSettingsRefused {
+		t.Errorf("error_code = %q, want %q", code, errImportSettingsRefused)
+	}
+
+	after, err := settings.Load(target.db)
+	if err != nil {
+		t.Fatalf("failed to read the settings: %v", err)
+	}
+	if after.LoggingLevel == "debug" {
+		t.Errorf("a refused import stored the rest of the file")
+	}
+}
+
 // TestTheAllowedSourcesOfALocalForwardCrossWithIt is the list on the round
 // trip: the export writes it, the import stores it, and a file from before the
 // list, which carries no field, stores every forward with an empty list, which

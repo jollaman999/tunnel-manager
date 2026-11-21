@@ -222,6 +222,49 @@ func TestSaveRefusesAPortOutsideTheRange(t *testing.T) {
 	}
 }
 
+// TestSaveRefusesAnIntervalPastTheHour is the save that used to be taken: an
+// interval of ten billion seconds was stored, and the next start panicked on
+// the ticker built from it. Each of the two is refused on its own, by name, and
+// nothing is stored.
+func TestSaveRefusesAnIntervalPastTheHour(t *testing.T) {
+	cases := []struct {
+		body string
+		want string
+	}{
+		{`{"monitoring_interval_sec":3601}`, "monitoring interval"},
+		{`{"monitoring_interval_sec":10000000000}`, "monitoring interval"},
+		{`{"reconcile_interval_sec":3601}`, "reconcile interval"},
+		{`{"reconcile_interval_sec":10000000000}`, "reconcile interval"},
+	}
+
+	for _, c := range cases {
+		t.Run(c.body, func(t *testing.T) {
+			db := newSettingsDB(t)
+			h, _, _, _ := newSettingsHandler(t, db)
+
+			rec := settingsRequest(t, h, c.body)
+
+			if rec.Code != http.StatusBadRequest {
+				t.Fatalf("status = %d, want %d, body: %s", rec.Code, http.StatusBadRequest, rec.Body.String())
+			}
+			if !strings.Contains(rec.Body.String(), c.want) {
+				t.Errorf("the answer does not name the %s: %s", c.want, rec.Body.String())
+			}
+
+			stored, err := settings.Load(db)
+			if err != nil {
+				t.Fatalf("failed to read the settings: %v", err)
+			}
+			defaults := settings.Defaults()
+			if stored.MonitoringIntervalSec != defaults.MonitoringIntervalSec ||
+				stored.ReconcileIntervalSec != defaults.ReconcileIntervalSec {
+				t.Fatalf("the intervals are %d and %d after a refused save, want the defaults",
+					stored.MonitoringIntervalSec, stored.ReconcileIntervalSec)
+			}
+		})
+	}
+}
+
 // TestSaveRefusesALevelTheLoggerDoesNotKnow covers the other half of the rules:
 // a level outside the list is refused rather than reaching the logger.
 func TestSaveRefusesALevelTheLoggerDoesNotKnow(t *testing.T) {

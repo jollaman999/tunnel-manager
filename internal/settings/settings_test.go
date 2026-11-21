@@ -300,6 +300,32 @@ func TestTheReconnectCeilingTakesItsBounds(t *testing.T) {
 	}
 }
 
+// TestTheIntervalsTakeTheirBounds stores both ends of what the monitoring and
+// the reconcile interval may be: a second, and the hour that is their ceiling.
+func TestTheIntervalsTakeTheirBounds(t *testing.T) {
+	db := newDB(t)
+
+	for _, sec := range []int{1, MaxIntervalSec} {
+		s := Defaults()
+		s.MonitoringIntervalSec = sec
+		s.ReconcileIntervalSec = sec
+
+		err := Save(db, &s, nil)
+		if err != nil {
+			t.Fatalf("Save refused the intervals at %d: %v", sec, err)
+		}
+
+		loaded, err := Load(db)
+		if err != nil {
+			t.Fatalf("Load: %v", err)
+		}
+		if loaded.MonitoringIntervalSec != sec || loaded.ReconcileIntervalSec != sec {
+			t.Fatalf("the intervals read back as %d and %d, want %d",
+				loaded.MonitoringIntervalSec, loaded.ReconcileIntervalSec, sec)
+		}
+	}
+}
+
 // TestSaveRefusesASetThatWouldNotStart is why the validation moved here with
 // the settings. A stored api.port of 0 keeps the process from serving the very
 // screen the setting is changed on, so the save is refused and what is stored
@@ -349,6 +375,16 @@ func TestValidateRejects(t *testing.T) {
 			"reconnect max interval"},
 		{"zero reconcile interval", func(s *Settings) { s.ReconcileIntervalSec = 0 }, "reconcile interval"},
 		{"negative reconcile interval", func(s *Settings) { s.ReconcileIntervalSec = -1 }, "reconcile interval"},
+		{"monitoring interval over an hour", func(s *Settings) { s.MonitoringIntervalSec = 3601 },
+			"monitoring interval"},
+		{"reconcile interval over an hour", func(s *Settings) { s.ReconcileIntervalSec = 3601 },
+			"reconcile interval"},
+		// The number that turns into a negative time.Duration once it is
+		// multiplied by a second, which is what time.NewTicker panics on.
+		{"monitoring interval past what a duration holds", func(s *Settings) { s.MonitoringIntervalSec = 10000000000 },
+			"monitoring interval"},
+		{"reconcile interval past what a duration holds", func(s *Settings) { s.ReconcileIntervalSec = 10000000000 },
+			"reconcile interval"},
 		{"empty key file", func(s *Settings) { s.SecurityKeyFile = "" }, "encryption key file"},
 		{"empty log file", func(s *Settings) { s.LoggingFilePath = "" }, "log file"},
 		// The two paths name a place inside the installation directory. An
@@ -1271,6 +1307,168 @@ func TestRepairPathsHasNothingToDoBeforeAFirstStartup(t *testing.T) {
 	}
 	if len(changes) != 0 {
 		t.Fatalf("RepairPaths changed %+v in an empty database", changes)
+	}
+}
+
+// TestRepairIntervalsLowersAStoredIntervalAboveTheHour is the installation that
+// is upgraded from a version that held the two intervals to no ceiling. One
+// interval is the number that ended every start, the other is merely long, and
+// both come up on the hour rather than stopping the startup at Load.
+func TestRepairIntervalsLowersAStoredIntervalAboveTheHour(t *testing.T) {
+	db := newDB(t)
+
+	_, err := Load(db)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+
+	storeByHand(t, db, map[string]interface{}{
+		"monitoring_interval_sec": 10000000000,
+		"reconcile_interval_sec":  7200,
+	})
+
+	_, err = Load(db)
+	if err == nil {
+		t.Fatal("Load accepted intervals above the hour, so there is nothing for the repair to do")
+	}
+
+	changes, err := RepairIntervals(db)
+	if err != nil {
+		t.Fatalf("RepairIntervals: %v", err)
+	}
+
+	want := []Change{
+		{Name: "monitoring.interval_sec", From: "10000000000", To: "3600"},
+		{Name: "reconcile.interval_sec", From: "7200", To: "3600"},
+	}
+	if len(changes) != len(want) {
+		t.Fatalf("RepairIntervals reported %+v, want %+v", changes, want)
+	}
+	for i := range want {
+		if changes[i] != want[i] {
+			t.Errorf("change %d is %+v, want %+v", i, changes[i], want[i])
+		}
+	}
+
+	reloaded, err := Load(db)
+	if err != nil {
+		t.Fatalf("Load after the repair: %v", err)
+	}
+	if reloaded.MonitoringIntervalSec != MaxIntervalSec || reloaded.ReconcileIntervalSec != MaxIntervalSec {
+		t.Fatalf("the intervals are %d and %d after the repair, want %d",
+			reloaded.MonitoringIntervalSec, reloaded.ReconcileIntervalSec, MaxIntervalSec)
+	}
+}
+
+// TestRepairIntervalsWritesOnlyTheIntervalItLowers holds the repair to its
+// column. The other interval sits on the ceiling, which is allowed and stays,
+// and a path that is refused stays refused for RepairPaths and Load to deal
+// with rather than being written over here.
+func TestRepairIntervalsWritesOnlyTheIntervalItLowers(t *testing.T) {
+	db := newDB(t)
+
+	_, err := Load(db)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+
+	logFile := platformAbsolutePath("/etc/cron.d/x")
+
+	storeByHand(t, db, map[string]interface{}{
+		"monitoring_interval_sec": MaxIntervalSec,
+		"reconcile_interval_sec":  MaxIntervalSec + 1,
+		"logging_file_path":       logFile,
+	})
+
+	changes, err := RepairIntervals(db)
+	if err != nil {
+		t.Fatalf("RepairIntervals: %v", err)
+	}
+	if len(changes) != 1 || changes[0].Name != "reconcile.interval_sec" {
+		t.Fatalf("RepairIntervals reported %+v, want the reconcile interval alone", changes)
+	}
+
+	stored, err := read(db)
+	if err != nil {
+		t.Fatalf("read: %v", err)
+	}
+	if stored.MonitoringIntervalSec != MaxIntervalSec {
+		t.Errorf("the monitoring interval is %d, want it left at %d", stored.MonitoringIntervalSec, MaxIntervalSec)
+	}
+	if stored.ReconcileIntervalSec != MaxIntervalSec {
+		t.Errorf("the reconcile interval is %d, want it lowered to %d", stored.ReconcileIntervalSec, MaxIntervalSec)
+	}
+	if stored.LoggingFilePath != logFile {
+		t.Errorf("the log file is %q, want the refused %q left for the path repair", stored.LoggingFilePath, logFile)
+	}
+}
+
+// TestRepairIntervalsLeavesAnIntervalItDidNotAllowAlone covers the value the
+// repair is not for. No version stored an interval of zero, so one in the row
+// is not lowered or raised but left for Load to refuse.
+func TestRepairIntervalsLeavesAnIntervalItDidNotAllowAlone(t *testing.T) {
+	db := newDB(t)
+
+	_, err := Load(db)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+
+	storeByHand(t, db, map[string]interface{}{"monitoring_interval_sec": 0})
+
+	changes, err := RepairIntervals(db)
+	if err != nil {
+		t.Fatalf("RepairIntervals: %v", err)
+	}
+	if len(changes) != 0 {
+		t.Fatalf("RepairIntervals changed %+v, want a zero interval left alone", changes)
+	}
+
+	_, err = Load(db)
+	if err == nil || !strings.Contains(err.Error(), "monitoring interval") {
+		t.Fatalf("Load = %v, want it to refuse the zero monitoring interval", err)
+	}
+}
+
+// TestRepairIntervalsLeavesASetThatPassesAlone covers every installation but
+// the upgraded one: nothing is lowered and the row is not written.
+func TestRepairIntervalsLeavesASetThatPassesAlone(t *testing.T) {
+	db := newDB(t)
+
+	stored, err := Load(db)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+
+	changes, err := RepairIntervals(db)
+	if err != nil {
+		t.Fatalf("RepairIntervals: %v", err)
+	}
+	if len(changes) != 0 {
+		t.Fatalf("RepairIntervals changed %+v in a set that passes", changes)
+	}
+
+	again, err := Load(db)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if !again.UpdatedAt.Equal(stored.UpdatedAt) {
+		t.Errorf("the row was written although there was nothing to lower: %v became %v",
+			stored.UpdatedAt, again.UpdatedAt)
+	}
+}
+
+// TestRepairIntervalsHasNothingToDoBeforeAFirstStartup covers the empty
+// database, where the row the repair looks for is not there yet.
+func TestRepairIntervalsHasNothingToDoBeforeAFirstStartup(t *testing.T) {
+	db := newDB(t)
+
+	changes, err := RepairIntervals(db)
+	if err != nil {
+		t.Fatalf("RepairIntervals: %v", err)
+	}
+	if len(changes) != 0 {
+		t.Fatalf("RepairIntervals changed %+v in an empty database", changes)
 	}
 }
 

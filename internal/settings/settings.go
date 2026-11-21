@@ -673,6 +673,20 @@ func (s *Settings) validateAlerts() error {
 	return nil
 }
 
+// MaxIntervalSec is the ceiling of the three periods the tunnels run on: the
+// monitoring interval, the longest wait before reconnecting and the reconcile
+// interval. It is an hour. Past it a tunnel that died, a Host that came back
+// or a Host that was added would sit unnoticed for longer than anybody would
+// wait on it without going to look, so a number beyond it is a typo rather
+// than a choice.
+//
+// A ceiling is also what keeps the period a period. Each is turned into a
+// time.Duration by multiplying it by a second, and past 9223372036 seconds
+// that product no longer fits and comes out negative, which time.NewTicker
+// answers by panicking. The reconcile loop builds its ticker as the process
+// comes up, so a stored number that large would end every start.
+const MaxIntervalSec = 3600
+
 // Validate holds the rules the configuration file was checked against before
 // the settings moved into the database. They matter more here than they did
 // there: a file that refuses to start can be edited, while a stored setting
@@ -688,20 +702,19 @@ func (s *Settings) Validate() error {
 	// cannot be read back, is not a property of this set and is reported where
 	// the certificate is read.
 
-	if s.MonitoringIntervalSec <= 0 {
-		return fmt.Errorf("invalid monitoring interval: %d", s.MonitoringIntervalSec)
+	if s.MonitoringIntervalSec < 1 || s.MonitoringIntervalSec > MaxIntervalSec {
+		return fmt.Errorf("invalid monitoring interval: %d. It is in seconds, from 1 to %d",
+			s.MonitoringIntervalSec, MaxIntervalSec)
 	}
 
-	// The ceiling is an hour. Past it a Host that came back would sit unused
-	// for longer than anybody would wait on it without going to look, so a
-	// number beyond it is a typo rather than a choice.
-	if s.ReconnectMaxIntervalSec < 1 || s.ReconnectMaxIntervalSec > 3600 {
-		return fmt.Errorf("invalid reconnect max interval: %d. It is in seconds, from 1 to 3600",
-			s.ReconnectMaxIntervalSec)
+	if s.ReconnectMaxIntervalSec < 1 || s.ReconnectMaxIntervalSec > MaxIntervalSec {
+		return fmt.Errorf("invalid reconnect max interval: %d. It is in seconds, from 1 to %d",
+			s.ReconnectMaxIntervalSec, MaxIntervalSec)
 	}
 
-	if s.ReconcileIntervalSec <= 0 {
-		return fmt.Errorf("invalid reconcile interval: %d", s.ReconcileIntervalSec)
+	if s.ReconcileIntervalSec < 1 || s.ReconcileIntervalSec > MaxIntervalSec {
+		return fmt.Errorf("invalid reconcile interval: %d. It is in seconds, from 1 to %d",
+			s.ReconcileIntervalSec, MaxIntervalSec)
 	}
 
 	// The key file is the one rule that was not in the configuration file. An
@@ -1216,6 +1229,107 @@ func RepairPaths(db *gorm.DB, databaseFile string) ([]Change, error) {
 	err = db.Model(&Settings{}).Where("id = ?", settingsID).Updates(repaired).Error
 	if err != nil {
 		return nil, fmt.Errorf("failed to store the repaired path settings: %w", err)
+	}
+
+	return changes, nil
+}
+
+// unboundedIntervals are the two periods that were stored with no ceiling
+// before MaxIntervalSec held them to one. The longest wait before reconnecting
+// is not among them: it carried the ceiling from the version that added it, so
+// no installation holds it above.
+var unboundedIntervals = []struct {
+	name   string
+	column string
+	field  func(*Settings) *int
+}{
+	{
+		name:   "monitoring.interval_sec",
+		column: "monitoring_interval_sec",
+		field:  func(s *Settings) *int { return &s.MonitoringIntervalSec },
+	},
+	{
+		name:   "reconcile.interval_sec",
+		column: "reconcile_interval_sec",
+		field:  func(s *Settings) *int { return &s.ReconcileIntervalSec },
+	},
+}
+
+// LowerIntervals puts a monitoring or reconcile interval above MaxIntervalSec
+// down to it, and reports each one it lowered as a Change from the value it
+// held to the ceiling.
+//
+// The ceiling rather than the default is what it lands on. Somebody who stored
+// two hours asked for the tunnels to be looked at seldom, and an hour is the
+// nearest the rule allows to that; five seconds would be the opposite of what
+// was chosen. A value of zero or below is left alone, since no version ever
+// stored one, and it stays for Validate to refuse.
+func LowerIntervals(s *Settings) []Change {
+	changes, _ := lowerIntervals(s)
+
+	return changes
+}
+
+// lowerIntervals is LowerIntervals that also hands back the columns it changed,
+// for RepairIntervals to write and nothing else.
+func lowerIntervals(s *Settings) ([]Change, map[string]interface{}) {
+	var changes []Change
+
+	lowered := map[string]interface{}{}
+
+	for _, interval := range unboundedIntervals {
+		field := interval.field(s)
+		if *field <= MaxIntervalSec {
+			continue
+		}
+
+		changes = append(changes, Change{
+			Name: interval.name,
+			From: strconv.Itoa(*field),
+			To:   strconv.Itoa(MaxIntervalSec),
+		})
+		lowered[interval.column] = MaxIntervalSec
+		*field = MaxIntervalSec
+	}
+
+	return changes, lowered
+}
+
+// RepairIntervals lowers a stored monitoring or reconcile interval above
+// MaxIntervalSec to it, and reports what it changed so the caller can log it.
+// It is run by the startup before the settings are read, for the reason
+// RepairPaths is: the ceiling is newer than the installations it applies to,
+// and a number stored while there was none is one the server used to start on.
+// Refused by Load, it would leave that installation with no server and so with
+// no screen to correct the setting on, and -reset-settings would put back
+// every other setting as well.
+//
+// It is a function of its own rather than a part of RepairPaths because the
+// two repairs say different things. A path is put back to its default for
+// where it points; an interval is lowered to the ceiling for how large it is,
+// and the line the startup writes for it has to say that rather than that a
+// default was put back.
+//
+// Only the columns that were lowered are written, so a row that is refused for
+// some other reason is left for Load to report.
+func RepairIntervals(db *gorm.DB) ([]Change, error) {
+	stored, err := read(db)
+	if err != nil {
+		return nil, err
+	}
+
+	if stored == nil {
+		return nil, nil
+	}
+
+	changes, lowered := lowerIntervals(stored)
+	if len(lowered) == 0 {
+		return nil, nil
+	}
+
+	err = db.Model(&Settings{}).Where("id = ?", settingsID).Updates(lowered).Error
+	if err != nil {
+		return nil, fmt.Errorf("failed to store the lowered interval settings: %w", err)
 	}
 
 	return changes, nil

@@ -34,6 +34,7 @@ import (
 	"github.com/jollaman999/tunnel-manager/internal/crypto"
 	"github.com/jollaman999/tunnel-manager/internal/models"
 	"github.com/jollaman999/tunnel-manager/internal/settings"
+	"github.com/jollaman999/tunnel-manager/internal/tunnel"
 	"github.com/jollaman999/tunnel-manager/internal/web"
 	"github.com/labstack/echo/v5"
 	"go.uber.org/zap"
@@ -1245,6 +1246,103 @@ func TestTheStartupSaysNothingAboutPathsItDoesNotRepair(t *testing.T) {
 
 	if logs.Len() != 0 {
 		t.Fatalf("a startup with nothing to repair logged %v", logs.All())
+	}
+}
+
+// TestTheStartupLowersAStoredIntervalAboveTheHour is the installation that
+// stored a reconcile and a monitoring interval of ten billion seconds while
+// nothing held them to a ceiling. Multiplied by a second that number no longer
+// fits a time.Duration and comes out negative, and the reconcile loop the
+// startup runs panicked on the ticker it built from it, so every start ended
+// there. The startup now lowers both to the hour, says so, and the loop it
+// goes on to run is built from what was read.
+func TestTheStartupLowersAStoredIntervalAboveTheHour(t *testing.T) {
+	db := newSettingsDB(t)
+
+	_, err := settings.Load(db)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+
+	err = db.Model(&settings.Settings{}).Where("id = ?", 1).
+		Updates(map[string]interface{}{
+			"monitoring_interval_sec": 10000000000,
+			"reconcile_interval_sec":  10000000000,
+		}).Error
+	if err != nil {
+		t.Fatalf("storing the intervals by hand: %v", err)
+	}
+
+	core, logs := observer.New(zapcore.DebugLevel)
+	logger := zap.New(core)
+
+	repairStoredPaths(db, databaseFileName, logger)
+	repairStoredIntervals(db, logger)
+
+	lowered := map[string]bool{}
+
+	for _, entry := range logs.All() {
+		if entry.Level != zapcore.WarnLevel {
+			continue
+		}
+
+		fields := entry.ContextMap()
+		if fields["log_id"] != "settings.setting_lowered_to_ceiling" {
+			continue
+		}
+
+		lowered[fmt.Sprint(fields["setting"])] = true
+
+		if fields["from"] != "10000000000" || fields["to"] != "3600" {
+			t.Errorf("the line for %v says %v -> %v, want 10000000000 -> 3600",
+				fields["setting"], fields["from"], fields["to"])
+		}
+	}
+
+	if !lowered["monitoring.interval_sec"] || !lowered["reconcile.interval_sec"] || len(lowered) != 2 {
+		t.Fatalf("the warnings named %v, want both intervals once each; what was logged is %v",
+			lowered, logs.All())
+	}
+
+	set, err := settings.Load(db)
+	if err != nil {
+		t.Fatalf("Load after the repair: %v", err)
+	}
+	if set.MonitoringIntervalSec != 3600 || set.ReconcileIntervalSec != 3600 {
+		t.Fatalf("the startup runs on intervals %d and %d, want 3600",
+			set.MonitoringIntervalSec, set.ReconcileIntervalSec)
+	}
+
+	manager, err := tunnel.NewManager(db, logger, nil, set.MonitoringIntervalSec)
+	if err != nil {
+		t.Fatalf("NewManager: %v", err)
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	// The context is over before the loop starts, so the loop builds its
+	// ticker, sees the context and returns. The ticker is the step that
+	// panicked.
+	manager.RunReconcileLoop(ctx, set.ReconcileIntervalSec)
+}
+
+// TestTheStartupSaysNothingAboutIntervalsItDoesNotLower covers every
+// installation but the upgraded one: nothing is lowered, nothing is logged.
+func TestTheStartupSaysNothingAboutIntervalsItDoesNotLower(t *testing.T) {
+	db := newSettingsDB(t)
+
+	_, err := settings.Load(db)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+
+	core, logs := observer.New(zapcore.DebugLevel)
+
+	repairStoredIntervals(db, zap.New(core))
+
+	if logs.Len() != 0 {
+		t.Fatalf("a startup with nothing to lower logged %v", logs.All())
 	}
 }
 

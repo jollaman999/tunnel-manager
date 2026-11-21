@@ -1207,7 +1207,7 @@ Settings 页面。同样的值通过 `GET /api/settings` 和 `PUT /api/settings`
 | 设置 | 规则 |
 |------|------|
 | `api_port` | 1 到 65535。改成某个本地转发或 SOCKS5 代理打开的端口会被 `409` 拒绝，见[本地转发](#本地转发) |
-| `monitoring_interval_sec`、`reconcile_interval_sec` | 大于零 |
+| `monitoring_interval_sec`、`reconcile_interval_sec` | 1 到 3600。以前的版本没有上限，那时存下的大于 3600 的值会在下次启动时降到 3600，并在日志里留下一条警告，写明设置名和前后两个值。设置导入也会这样降低这类值，并列在 `items` 里 |
 | `reconnect_max_interval_sec` | 1 到 3600 |
 | `security_key_file`、`logging_file_path` | 不能为空，而且要是数据库文件所在的目录底下的路径：绝对路径和用 `..` 爬出去的路径都会被拒绝。两者都不能指向数据库文件、它的 `-wal`、`-shm` 或 `-journal`、`initial-password`，或者另一个，比较时忽略大小写。见[文件放在哪里](#文件放在哪里) |
 | `logging_level` | `debug`、`info`、`warn`、`error`、`dpanic`、`panic` 或 `fatal` |
@@ -2486,7 +2486,7 @@ Tunnel Manager 服务器的加密密钥，而这把密钥从不离开那台服�
 也不例外。保存的是下次启动使用的值，在那之前 `GET /api/settings` 会把差别报在
 `pending_restart` 里，所以一次导入不会把正在处理它的那个请求所用的端口改掉。设置不符合 Settings
 页面那些规则的文件会被拒绝，不保存任何内容；`api_port` 要改成这里某个本地转发打开的端口的文件也一样，
-和保存一样用 `409` 拒绝。设置导入没有照文件原样保存的路径会列在 `items` 里，那里英文句子形式的
+和保存一样用 `409` 拒绝。设置导入没有照文件原样保存的路径和间隔会列在 `items` 里，那里英文句子形式的
 `reason` 会附带 `reason_code` 与 `reason_values`，界面据此用自己的语言写出这句话。
 
 打不开的文件会说明是四种情况里的哪一种：密码错误、这不是这个程序写出来的文件、文件损坏了，或者

@@ -588,8 +588,9 @@ type transferItem struct {
 const (
 	textImportNameServicePort textCode = "import.name.service_port"
 
-	textImportReasonPathOutside      textCode = "import.reason.path_outside"
-	textImportReasonEmptyPathOutside textCode = "import.reason.empty_path_outside"
+	textImportReasonPathOutside         textCode = "import.reason.path_outside"
+	textImportReasonEmptyPathOutside    textCode = "import.reason.empty_path_outside"
+	textImportReasonIntervalOverCeiling textCode = "import.reason.interval_over_ceiling"
 )
 
 // transferTexts is the English of each of those codes, written with {name} for
@@ -607,6 +608,8 @@ var transferTexts = map[textCode]string{
 		"directory the database file is in, so {stored} was stored instead",
 	textImportReasonEmptyPathOutside: "the file carries an empty path, which does not name a file under the " +
 		"directory the database file is in, so {stored} was stored instead",
+	textImportReasonIntervalOverCeiling: "the file carries {carried} seconds, which is longer than the hour " +
+		"this setting is held to, so {stored} was stored instead",
 }
 
 // transferText is one of those sentences with its values.
@@ -783,6 +786,25 @@ func droppedPathItems(dropped []settings.Change) []transferItem {
 	return items
 }
 
+// loweredIntervalItems says in the answer what became of each interval the
+// import lowered to the ceiling, as a row of the same list droppedPathItems
+// writes to and for the same reason: the file asked for one number and this
+// installation stored another.
+func loweredIntervalItems(lowered []settings.Change) []transferItem {
+	items := make([]transferItem, 0, len(lowered))
+
+	for _, change := range lowered {
+		items = append(items, transferItem{
+			Kind:   "setting",
+			Name:   change.Name,
+			Action: transferSkipped,
+		}.because(transferText{textImportReasonIntervalOverCeiling,
+			textArgs{"carried": change.From, "stored": change.To}}))
+	}
+
+	return items
+}
+
 // importedSettings is the answer to an import of the settings of the manager.
 // It carries what is stored now and what the import changed, the way a save on
 // the Settings screen does.
@@ -794,11 +816,12 @@ func droppedPathItems(dropped []settings.Change) []transferItem {
 //
 // Items is what the import did not take from the file, carried the way an
 // import of the tunnel configuration carries it: one row per thing, with the
-// reason on the ones that were skipped. Only the two path settings can land
-// there, and Changes is not the place for them, because a change says what the
-// stored value went from and to while these say what the file asked for and
-// did not get - a file whose path is dropped onto the value this installation
-// already holds changes nothing and still has to be reported.
+// reason on the ones that were skipped. Only the two path settings and the two
+// intervals that were once stored with no ceiling can land there, and Changes
+// is not the place for them, because a change says what the stored value went
+// from and to while these say what the file asked for and did not get - a file
+// whose path is dropped onto the value this installation already holds changes
+// nothing and still has to be reported.
 type importedSettings struct {
 	Settings        *settings.Settings `json:"settings"`
 	Changes         []settingsChange   `json:"changes"`
@@ -2436,6 +2459,13 @@ func (h *TransferHandler) ImportSettings(c *echo.Context) error {
 	// dropPathsOutsideTheInstallation.
 	dropped := dropPathsOutsideTheInstallation(&updated)
 
+	// Before the rules as well, and for the same reason. A file written by a
+	// version that held the monitoring and reconcile intervals to no ceiling
+	// may carry one above the hour, which that installation ran on; it is
+	// lowered to the hour here, as the startup lowers a stored one
+	// (settings.RepairIntervals), rather than failing the whole import.
+	lowered := settings.LowerIntervals(&updated)
+
 	// The rules are run here as well as inside Save, so that a value they
 	// refuse is answered as a bad request while a database that could not be
 	// written to stays a 500. It is the same split UpdateSettings makes.
@@ -2544,6 +2574,15 @@ func (h *TransferHandler) ImportSettings(c *echo.Context) error {
 			zap.String("to", change.To))
 	}
 
+	for _, change := range lowered {
+		h.hosts.logger.Warn("an interval setting of an imported file is longer than the hour it is held to, "+
+			"and was stored as the hour",
+			logid.SettingsSettingLoweredToCeiling.Field(),
+			zap.String("setting", change.Name),
+			zap.String("from", change.From),
+			zap.String("to", change.To))
+	}
+
 	h.hosts.logger.Info("imported the settings of the manager",
 		logid.TransferSettingsImported.Field(),
 		zap.Int("changed", len(changes)))
@@ -2553,7 +2592,7 @@ func (h *TransferHandler) ImportSettings(c *echo.Context) error {
 		Data: importedSettings{
 			Settings:        &updated,
 			Changes:         changes,
-			Items:           droppedPathItems(dropped),
+			Items:           append(droppedPathItems(dropped), loweredIntervalItems(lowered)...),
 			RestartRequired: len(changes) > 0,
 		},
 	})

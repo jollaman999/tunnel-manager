@@ -245,6 +245,7 @@ const (
 	SettingsAlreadyAtDefault         ID = "settings.already_at_default"
 	SettingsMissingSettingStored     ID = "settings.missing_setting_stored"
 	SettingsSettingPutBackToDefault  ID = "settings.setting_put_back_to_default"
+	SettingsSettingLoweredToCeiling  ID = "settings.setting_lowered_to_ceiling"
 	SettingsReadFailed               ID = "settings.read_failed"
 	SettingsRead                     ID = "settings.read"
 	SettingsStoreFailed              ID = "settings.store_failed"

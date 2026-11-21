@@ -1130,6 +1130,36 @@ func repairStoredPaths(db *gorm.DB, databaseFile string, logger *zap.Logger) {
 	}
 }
 
+// repairStoredIntervals lowers a stored monitoring or reconcile interval above
+// the hour the settings hold them to, and says in the log what it lowered. It
+// runs before the settings are read for the reason repairStoredPaths does: the
+// read refuses such a row, and the row is one an earlier version stored and
+// started on.
+//
+// The line is a warning, carrying the value that was stored as well as the one
+// the process goes on with, since the stored one is gone after this. A write
+// that fails is reported and left there, and the read that follows stops the
+// startup naming -reset-settings.
+func repairStoredIntervals(db *gorm.DB, logger *zap.Logger) {
+	changes, err := settings.RepairIntervals(db)
+	if err != nil {
+		logger.Warn("failed to lower a stored interval setting to its ceiling",
+			logid.SettingsStoreFailed.Field(),
+			zap.Error(err))
+
+		return
+	}
+
+	for _, change := range changes {
+		logger.Warn("a stored interval setting is longer than the hour it is now held to, "+
+			"and was lowered to the hour",
+			logid.SettingsSettingLoweredToCeiling.Field(),
+			zap.String("setting", change.Name),
+			zap.String("from", change.From),
+			zap.String("to", change.To))
+	}
+}
+
 // resetStoredSettings puts every stored setting back to its default and ends
 // the process. It is the way out of a stored set that keeps the process from
 // starting: the settings are changed on a screen this binary serves, and a
@@ -1687,6 +1717,10 @@ func serve() {
 	// its default here, above the read that would refuse it. An installation
 	// that was working goes on working, on a path inside its own directory.
 	repairStoredPaths(db, databaseFile, logger)
+
+	// An interval stored while there was no ceiling on it is lowered to the
+	// ceiling here, for the same reason and above the same read.
+	repairStoredIntervals(db, logger)
 
 	set, err := settings.Load(db)
 	if err != nil {

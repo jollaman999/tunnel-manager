@@ -1564,7 +1564,7 @@ A save is refused before it is stored when a value would not hold:
 | Setting | Rule |
 |---------|------|
 | `api_port` | 1 to 65535. A new port a local forward or a SOCKS5 proxy opens is refused with `409`, see [Local forwards](#local-forwards) |
-| `monitoring_interval_sec`, `reconcile_interval_sec` | Above zero |
+| `monitoring_interval_sec`, `reconcile_interval_sec` | 1 to 3600. An earlier version held them to no ceiling, and one it stored above 3600 is lowered to 3600 at the next start, with a warning in the log that names the setting and both values. A settings import lowers one the same way and lists it in `items` |
 | `reconnect_max_interval_sec` | 1 to 3600 |
 | `security_key_file`, `logging_file_path` | Not empty, and a path under the directory the database file is in: an absolute path and one that climbs out with `..` are refused. Neither may name the database file, its `-wal`, `-shm` or `-journal`, `initial-password`, or the other one, with the case ignored. See [Where the files go](#where-the-files-go) |
 | `logging_level` | `debug`, `info`, `warn`, `error`, `dpanic`, `panic` or `fatal` |
@@ -3123,11 +3123,11 @@ what the next startup runs on, and `GET /api/settings` reports the difference in
 `pending_restart` until then, so an import cannot move the port out from under
 the request that carries it. A file whose settings do not pass the rules of the
 Settings screen is refused, and nothing is stored; so is a file whose `api_port`
-is a new port a local forward opens here, with `409` as a save is. A path the
-settings import stored other than the file had it is listed in `items`, and a
-`reason` there that is an English sentence comes with `reason_code` and
-`reason_values`, the code and the values a screen says it from in its own
-language.
+is a new port a local forward opens here, with `409` as a save is. A path or an
+interval the settings import stored other than the file had it is listed in
+`items`, and a `reason` there that is an English sentence comes with
+`reason_code` and `reason_values`, the code and the values a screen says it from
+in its own language.
 
 A file that does not open says which of the four it is: the password is wrong,
 it is not a file this program wrote, it is damaged, or it holds the other kind.
