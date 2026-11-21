@@ -239,8 +239,16 @@ func (h *AuthHandler) ChangeAccount(c *echo.Context) error {
 		return failure(c, http.StatusBadRequest, errAccountPasswordUnchanged)
 	}
 
+	// Only the columns this request changes are written, and they are
+	// written over the row as it stands inside the transaction rather than
+	// over the copy read above. Two changes that meet, a name from one tab and
+	// a password from another, would otherwise each write the whole row they
+	// read, and the second would put back the value the first one changed
+	// while both answered that the change was made.
+	changed := map[string]interface{}{}
+
 	if changeUsername {
-		user.Username = username
+		changed["username"] = username
 	}
 
 	if changePassword {
@@ -250,7 +258,7 @@ func (h *AuthHandler) ChangeAccount(c *echo.Context) error {
 			return failure(c, http.StatusInternalServerError, errAccountHashFailed)
 		}
 
-		user.PasswordHash = hash
+		changed["password_hash"] = hash
 	}
 
 	// The row and the API tokens are written in one transaction, so that the
@@ -270,7 +278,31 @@ func (h *AuthHandler) ChangeAccount(c *echo.Context) error {
 	}
 	defer rollbackUnlessDone(tx)
 
-	err = tx.Save(user).Error
+	// The row is read again inside the transaction, through it. The single
+	// connection the pool holds keeps a second change waiting here until the
+	// first has committed, so what is read is what the first one wrote. A
+	// password that was changed in between is not the password this request
+	// proved: the current password it carried no longer opens the account,
+	// and it is answered the way any other password that does not open it is.
+	var current models.User
+
+	err = tx.First(&current, user.ID).Error
+	if err != nil {
+		tx.Rollback()
+		h.logger.Error("failed to read the account", logid.AccountReadFailed.Field(), zap.Error(err))
+		return failure(c, http.StatusInternalServerError, errAccountReadFailed)
+	}
+
+	if current.PasswordHash != user.PasswordHash {
+		tx.Rollback()
+		h.logger.Warn("the account was asked to be changed with a password that does not open "+
+			"it, so nothing was changed and no session was ended",
+			logid.AccountChangePasswordWrong.Field())
+
+		return failure(c, http.StatusUnauthorized, errAccountPasswordWrong)
+	}
+
+	err = tx.Model(&current).Updates(changed).Error
 	if err != nil {
 		tx.Rollback()
 		h.logger.Error("failed to store the changed account", logid.AccountStoreFailed.Field(), zap.Error(err))
@@ -335,7 +367,7 @@ func (h *AuthHandler) ChangeAccount(c *echo.Context) error {
 	return c.JSON(http.StatusOK, models.Response{
 		Success: true,
 		Data: accountChanged{
-			Username:        user.Username,
+			Username:        current.Username,
 			UsernameChanged: changeUsername,
 			PasswordChanged: changePassword,
 			SessionsEnded:   ended,
