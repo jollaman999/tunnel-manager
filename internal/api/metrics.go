@@ -121,15 +121,17 @@ func writeMetricFamilies(b *strings.Builder, families []metricFamily) {
 
 // metricForward is one running forward as the metrics name it.
 //
-// kind, host and local_port are what tells one series from another, and every
-// one of them is unique over its sort: the Host address is unique over the
-// Hosts, the local port of a service port is unique over the service ports, the
-// local port of a local forward is unique over the local forwards, and a Host
-// runs one SOCKS5 proxy. So there is one series per forward and never two,
-// which a scraper would refuse the whole answer for.
+// kind, host_id and local_port are what tells one series from another, and
+// every one of them is unique over its sort: the id is unique over the Hosts,
+// the local port of a service port is unique over the service ports, the local
+// port of a local forward is unique over the local forwards, and a Host runs one
+// SOCKS5 proxy. So there is one series per forward and never two, which a
+// scraper would refuse the whole answer for. host, the address, cannot stand in
+// for the id: two Hosts may share an address and differ by SSH port.
 type metricForward struct {
 	kind       string
 	host       string
+	hostID     uint
 	localPort  string
 	remote     string
 	status     string
@@ -143,6 +145,7 @@ func (f metricForward) labels(withRemote bool) []metricLabel {
 	labels := []metricLabel{
 		{name: "kind", value: f.kind},
 		{name: "host", value: f.host},
+		{name: "host_id", value: metricHostID(f.hostID)},
 		{name: "local_port", value: f.localPort},
 	}
 
@@ -151,6 +154,11 @@ func (f metricForward) labels(withRemote bool) []metricLabel {
 	}
 
 	return labels
+}
+
+// metricHostID is the id of a Host as the host_id label writes it.
+func metricHostID(id uint) string {
+	return strconv.FormatUint(uint64(id), 10)
 }
 
 // portOf is the port of an address written as host:port, or the address as
@@ -182,7 +190,7 @@ func portOf(address string) string {
 //
 // @Summary      The state of the Tunnel Manager server in the Prometheus text format
 // @Description  Answers in the Prometheus text exposition format, version 0.0.4, rather than in the JSON every other route answers with, so that Prometheus, telegraf and anything else that scrapes that format can read it as it is. A token needs the read scope.
-// @Description  tunnel_manager_forwards counts the running forwards by kind and status; it is one series per status, so over service_port and local_forward the connected and reconnecting series are connected_tunnels and reconnecting_tunnels of GET /status, and error_tunnels is the error series and the jump_host_disabled series added together. tunnel_manager_forwards_desired is desired_tunnels of GET /status, by kind. tunnel_manager_forward_up and tunnel_manager_forward_retries have one series per running forward. tunnel_manager_host_info carries the description of each Host, to be joined on host.
+// @Description  tunnel_manager_forwards counts the running forwards by kind and status; it is one series per status, so over service_port and local_forward the connected and reconnecting series are connected_tunnels and reconnecting_tunnels of GET /status, and error_tunnels is the error series and the jump_host_disabled series added together. tunnel_manager_forwards_desired is desired_tunnels of GET /status, by kind. tunnel_manager_forward_up and tunnel_manager_forward_retries have one series per running forward. tunnel_manager_host_info carries the description of each Host, to be joined on host_id. host is the address of the Host, which two Hosts on different SSH ports can share.
 // @Tags         status
 // @Produce  plain
 // @Success  200  {string}  string  "The metrics"
@@ -270,6 +278,7 @@ func (m *MetricsHandler) GetMetrics(c *echo.Context) error {
 		running = append(running, metricForward{
 			kind:       statusKindServicePort,
 			host:       host,
+			hostID:     t.HostID,
 			localPort:  portOf(t.Local),
 			remote:     t.Remote,
 			status:     t.Status,
@@ -293,6 +302,7 @@ func (m *MetricsHandler) GetMetrics(c *echo.Context) error {
 		running = append(running, metricForward{
 			kind:       statusKindLocalForward,
 			host:       owner.Address,
+			hostID:     lf.HostID,
 			localPort:  strconv.Itoa(lf.LocalPort),
 			remote:     target,
 			status:     state.Status,
@@ -318,6 +328,7 @@ func (m *MetricsHandler) GetMetrics(c *echo.Context) error {
 		running = append(running, metricForward{
 			kind:       statusKindSocks,
 			host:       owner.Address,
+			hostID:     hostID,
 			localPort:  strconv.Itoa(owner.SocksPort),
 			status:     state.Status,
 			retryCount: state.RetryCount,
@@ -394,7 +405,7 @@ func (m *MetricsHandler) GetMetrics(c *echo.Context) error {
 		},
 		{
 			name:    "tunnel_manager_host_info",
-			help:    "The description of each Host, to be joined to the forward series on host. Always 1.",
+			help:    "The description of each Host, to be joined to the forward series on host_id. Always 1.",
 			kind:    "gauge",
 			samples: make([]metricSample, 0, len(hosts)),
 		},
@@ -422,6 +433,7 @@ func (m *MetricsHandler) GetMetrics(c *echo.Context) error {
 		hostInfo.samples = append(hostInfo.samples, metricSample{
 			labels: []metricLabel{
 				{name: "host", value: host.Address},
+				{name: "host_id", value: metricHostID(host.ID)},
 				{name: "description", value: host.Description},
 			},
 			value: 1,

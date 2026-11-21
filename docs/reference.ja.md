@@ -1929,10 +1929,15 @@ jq -r '.data.token'
 | `tunnel_manager_info{version}` | バージョン。値は常に `1` |
 | `tunnel_manager_forwards{kind,status}` | 動作中のフォワードを状態ごとに数えた数。`kind` は `service_port`、`local_forward`、`socks`。前の 2 つで `connected`、`reconnecting`、そして `jump_host_disabled` を足した `error` が `GET /api/status` の数と一致します |
 | `tunnel_manager_forwards_desired{kind}` | 最後の調整パスの時点で動作しているべき数。`GET /api/status` の `desired_tunnels` を種類ごとに分けたもの |
-| `tunnel_manager_forward_up{kind,host,local_port,remote}` | 動作中のフォワードが接続していれば `1`、していなければ `0`。動作中のフォワードごとに系列が 1 つ。オフにしたフォワードには系列がありません |
-| `tunnel_manager_forward_retries{kind,host,local_port}` | そのフォワードが最後に接続してから再試行した回数 |
+| `tunnel_manager_forward_up{kind,host,host_id,local_port,remote}` | 動作中のフォワードが接続していれば `1`、していなければ `0`。動作中のフォワードごとに系列が 1 つ。オフにしたフォワードには系列がありません |
+| `tunnel_manager_forward_retries{kind,host,host_id,local_port}` | そのフォワードが最後に接続してから再試行した回数 |
 | `tunnel_manager_host_keys_waiting{reason}` | Host キーの承認を待つ Host の数。`unapproved` か `mismatched` |
-| `tunnel_manager_host_info{host,description}` | Host ごとの説明。値は常に `1`。`host` で結合します |
+| `tunnel_manager_host_info{host,host_id,description}` | Host ごとの説明。値は常に `1`。`host_id` で結合します |
+
+`host` は Host のアドレス、`host_id` は Host の id です。アドレスが同じで SSH ポートだけが違う Host が
+ありうるので、結合とグループ化は `host_id` で行ってください。`host_id` のないバージョンから上げると、
+この 3 つのメトリクスにラベルが加わり、系列は新しいラベルの組で始まり直します。`host` で絞り込む
+クエリはそのまま動きます。
 
 証明書を別に登録していなければ自己署名証明書なので、設定画面の PEM を収集ツールに渡してください。
 この証明書は `localhost`、マシンのホスト名、各インターフェースのアドレスに向けて発行されるので、

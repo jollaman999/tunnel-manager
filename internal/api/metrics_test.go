@@ -549,6 +549,98 @@ func TestMetricsEscapeTheLabelValues(t *testing.T) {
 	}
 }
 
+// TestMetricsTellApartHostsThatShareAnAddress stores two Hosts on one address
+// and two SSH ports, with the same description and the same service port
+// running on both, which the address alone names as one Host. Every sample
+// line has to be written once, and the series of each Host have to be found by
+// host_id: its host_info, its tunnel, its local forward and its proxy. A tunnel
+// whose Host row is gone is named by the host_id its row still carries.
+func TestMetricsTellApartHostsThatShareAnAddress(t *testing.T) {
+	first := models.Host{ID: 1, Address: "192.0.2.1", Port: 22, User: "root", Description: "rack A", Enabled: true}
+	second := models.Host{ID: 2, Address: "192.0.2.1", Port: 2222, User: "root", Description: "rack A", Enabled: true,
+		SocksEnabled: true, SocksPort: 1080}
+
+	db := newRowsDB(t, []models.Host{first, second}, []models.ServicePort{statusServicePort(1), statusServicePort(2)},
+		[]models.Tunnel{
+			{HostID: 1, SPID: 1, Status: "connected", Server: "192.0.2.1:22", Local: "127.0.0.1:18081", Remote: "198.51.100.10:8081"},
+			{HostID: 2, SPID: 1, Status: "reconnecting", RetryCount: 5, Server: "192.0.2.1:2222",
+				Local: "127.0.0.1:18081", Remote: "198.51.100.10:8081"},
+			{HostID: 9, SPID: 2, Status: "error", Server: "203.0.113.9:22", Local: "127.0.0.1:18082", Remote: "198.51.100.10:8082"},
+		})
+	storeLocalForwards(t, db, []models.LocalForward{
+		statusLocalForward(1, 1, 19000, models.BindScopeWildcard, true),
+	})
+
+	manager := newMetricsManager(t, db,
+		map[tunnel.LocalForwardKey]tunnel.LocalForwardState{{HostID: 1, Number: 1}: {Status: "connected"}},
+		map[uint]tunnel.SocksState{2: {Status: "connected"}})
+
+	body := metricsOf(t, db, manager)
+
+	written := map[string][]string{}
+	for _, line := range strings.Split(strings.TrimSuffix(body, "\n"), "\n") {
+		if !strings.HasPrefix(line, "#") {
+			series := line[:strings.LastIndex(line, " ")]
+			written[series] = append(written[series], line)
+		}
+	}
+
+	for series, lines := range written {
+		if len(lines) > 1 {
+			t.Errorf("the series %s is written %d times: %q", series, len(lines), lines)
+		}
+	}
+
+	if t.Failed() {
+		t.FailNow()
+	}
+
+	samples := parseExposition(t, body)
+
+	for _, id := range []string{"1", "2"} {
+		info := findSample(t, samples, "tunnel_manager_host_info", map[string]string{"host_id": id})
+		if info.labels["host"] != "192.0.2.1" || info.labels["description"] != "rack A" {
+			t.Errorf("host_info of Host %s reads %v, want 192.0.2.1 and rack A", id, info.labels)
+		}
+	}
+
+	up := findSample(t, samples, "tunnel_manager_forward_up",
+		map[string]string{"kind": "service_port", "host_id": "1", "local_port": "18081"})
+	if up.value != 1 || up.labels["host"] != "192.0.2.1" {
+		t.Errorf("the tunnel of Host 1 reads %v, want 1 on 192.0.2.1", up)
+	}
+
+	up = findSample(t, samples, "tunnel_manager_forward_up",
+		map[string]string{"kind": "service_port", "host_id": "2", "local_port": "18081"})
+	if up.value != 0 || up.labels["host"] != "192.0.2.1" {
+		t.Errorf("the tunnel of Host 2 reads %v, want 0 on 192.0.2.1", up)
+	}
+
+	retries := findSample(t, samples, "tunnel_manager_forward_retries",
+		map[string]string{"kind": "service_port", "host_id": "2"})
+	if retries.value != 5 {
+		t.Errorf("the retries of the tunnel of Host 2 read %v, want 5", retries.value)
+	}
+
+	orphan := findSample(t, samples, "tunnel_manager_forward_up",
+		map[string]string{"kind": "service_port", "local_port": "18082"})
+	if orphan.labels["host_id"] != "9" || orphan.labels["host"] != "203.0.113.9" {
+		t.Errorf("the tunnel with no Host row reads %v, want host_id 9 on 203.0.113.9", orphan.labels)
+	}
+
+	for _, name := range []string{"tunnel_manager_forward_up", "tunnel_manager_forward_retries"} {
+		forward := findSample(t, samples, name, map[string]string{"kind": "local_forward"})
+		if forward.labels["host_id"] != "1" {
+			t.Errorf("%s of the local forward carries host_id %q, want 1", name, forward.labels["host_id"])
+		}
+
+		proxy := findSample(t, samples, name, map[string]string{"kind": "socks"})
+		if proxy.labels["host_id"] != "2" {
+			t.Errorf("%s of the proxy carries host_id %q, want 2", name, proxy.labels["host_id"])
+		}
+	}
+}
+
 // metricsAuthServer is the server wired the way main wires it, with the
 // session middleware in front of the metrics and the token routes, over the
 // fixture state.

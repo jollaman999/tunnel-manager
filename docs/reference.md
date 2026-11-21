@@ -2169,10 +2169,16 @@ logged-in browser.
 | `tunnel_manager_info{version}` | The version, always `1` |
 | `tunnel_manager_forwards{kind,status}` | How many running forwards are in each status. `kind` is `service_port`, `local_forward` or `socks`. Over the first two, `connected`, `reconnecting`, and `error` together with `jump_host_disabled`, add up to the counts `GET /api/status` answers with |
 | `tunnel_manager_forwards_desired{kind}` | What should be running as of the last reconcile pass: `desired_tunnels` of `GET /api/status`, by kind |
-| `tunnel_manager_forward_up{kind,host,local_port,remote}` | `1` for a running forward that is connected, `0` for one that is not. One series per running forward; one that is switched off has none |
-| `tunnel_manager_forward_retries{kind,host,local_port}` | How many times that forward has retried since it last connected |
+| `tunnel_manager_forward_up{kind,host,host_id,local_port,remote}` | `1` for a running forward that is connected, `0` for one that is not. One series per running forward; one that is switched off has none |
+| `tunnel_manager_forward_retries{kind,host,host_id,local_port}` | How many times that forward has retried since it last connected |
 | `tunnel_manager_host_keys_waiting{reason}` | Hosts waiting for a host key approval, `unapproved` or `mismatched` |
-| `tunnel_manager_host_info{host,description}` | The description of each Host, always `1`, to join on `host` |
+| `tunnel_manager_host_info{host,host_id,description}` | The description of each Host, always `1`, to join on `host_id` |
+
+`host` is the address of the Host and `host_id` is its id. Two Hosts can share an
+address and differ by SSH port, so join and group on `host_id`. Upgrading from a
+version without `host_id` adds the label to these three metrics, so their series
+start again under the new label sets; a query that filters on `host` works as
+before.
 
 The certificate is the self-signed one unless you registered your own, so give
 the scraper the PEM from the Settings screen. It is made out to `localhost`, the

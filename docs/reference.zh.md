@@ -1699,10 +1699,14 @@ jq -r '.data.token'
 | `tunnel_manager_info{version}` | 版本，值恒为 `1` |
 | `tunnel_manager_forwards{kind,status}` | 按状态统计的运行中转发数。`kind` 为 `service_port`、`local_forward` 或 `socks`。前两种里 `connected`、`reconnecting`，以及加上 `jump_host_disabled` 的 `error` 相加，等于 `GET /api/status` 返回的计数 |
 | `tunnel_manager_forwards_desired{kind}` | 截至上一轮调谐应当运行的数量，即按种类拆开的 `GET /api/status` 的 `desired_tunnels` |
-| `tunnel_manager_forward_up{kind,host,local_port,remote}` | 运行中的转发已连接为 `1`，否则为 `0`。每个运行中的转发一条时间序列，已关闭的转发没有 |
-| `tunnel_manager_forward_retries{kind,host,local_port}` | 该转发自上次连上以来的重试次数 |
+| `tunnel_manager_forward_up{kind,host,host_id,local_port,remote}` | 运行中的转发已连接为 `1`，否则为 `0`。每个运行中的转发一条时间序列，已关闭的转发没有 |
+| `tunnel_manager_forward_retries{kind,host,host_id,local_port}` | 该转发自上次连上以来的重试次数 |
 | `tunnel_manager_host_keys_waiting{reason}` | 等待批准 Host 密钥的 Host 数，`unapproved` 或 `mismatched` |
-| `tunnel_manager_host_info{host,description}` | 每台 Host 的描述，值恒为 `1`，按 `host` 关联 |
+| `tunnel_manager_host_info{host,host_id,description}` | 每台 Host 的描述，值恒为 `1`，按 `host_id` 关联 |
+
+`host` 是 Host 的地址，`host_id` 是 Host 的 id。可能有地址相同、只有 SSH 端口不同的 Host，
+所以关联和分组请用 `host_id`。从没有 `host_id` 的版本升级后，这三个指标会多出这个标签，
+时间序列按新的标签组合重新开始；按 `host` 过滤的查询照常可用。
 
 如果没有注册自己的证书，用的就是自签名证书，请把设置页面上的 PEM 交给采集工具。这张证书签给
 `localhost`、Tunnel Manager 服务器主机名以及各网卡上的地址，请用其中之一来采集。Prometheus 的 `scrape_config`：

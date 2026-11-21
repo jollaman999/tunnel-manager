@@ -1871,10 +1871,15 @@ jq -r '.data.token'
 | `tunnel_manager_info{version}` | 버전. 값은 항상 `1` |
 | `tunnel_manager_forwards{kind,status}` | 실행 중인 포워딩을 상태별로 센 수. `kind` 는 `service_port`, `local_forward`, `socks`. 앞의 둘에서 `connected`, `reconnecting`, 그리고 `jump_host_disabled` 를 더한 `error` 가 `GET /api/status` 의 숫자와 같습니다 |
 | `tunnel_manager_forwards_desired{kind}` | 마지막 조정 패스 기준으로 실행돼야 하는 수. `GET /api/status` 의 `desired_tunnels` 를 종류별로 나눈 것 |
-| `tunnel_manager_forward_up{kind,host,local_port,remote}` | 실행 중인 포워딩이 연결돼 있으면 `1`, 아니면 `0`. 실행 중인 포워딩마다 시계열 하나. 꺼 둔 포워딩은 시계열이 없습니다 |
-| `tunnel_manager_forward_retries{kind,host,local_port}` | 그 포워딩이 마지막으로 연결된 뒤 재시도한 횟수 |
+| `tunnel_manager_forward_up{kind,host,host_id,local_port,remote}` | 실행 중인 포워딩이 연결돼 있으면 `1`, 아니면 `0`. 실행 중인 포워딩마다 시계열 하나. 꺼 둔 포워딩은 시계열이 없습니다 |
+| `tunnel_manager_forward_retries{kind,host,host_id,local_port}` | 그 포워딩이 마지막으로 연결된 뒤 재시도한 횟수 |
 | `tunnel_manager_host_keys_waiting{reason}` | Host 키 승인을 기다리는 Host 수. `unapproved` 또는 `mismatched` |
-| `tunnel_manager_host_info{host,description}` | Host 마다 설명. 값은 항상 `1`. `host` 로 조인합니다 |
+| `tunnel_manager_host_info{host,host_id,description}` | Host 마다 설명. 값은 항상 `1`. `host_id` 로 조인합니다 |
+
+`host` 는 Host 의 주소이고 `host_id` 는 Host 의 id 입니다. 주소가 같고 SSH 포트만 다른 Host 가
+있을 수 있으니 조인과 묶기는 `host_id` 로 하십시오. `host_id` 가 없던 버전에서 올리면 이 세
+메트릭에 라벨이 더해져 시계열이 새 라벨 집합으로 다시 시작합니다. `host` 로 거르는 질의는
+그대로 동작합니다.
 
 인증서를 따로 등록하지 않았다면 자체 서명 인증서이므로, 설정 화면의 PEM 을 수집기에
 넘기십시오. 이 인증서는 `localhost`, Tunnel Manager 서버의 호스트명, 인터페이스들의 주소 앞으로 발급되니
