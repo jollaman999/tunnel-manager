@@ -864,10 +864,14 @@ func TestClosingTheEndOfARouteClosesTheWholeOfIt(t *testing.T) {
 				t.Fatalf("failed to connect over the route: %v", err)
 			}
 
-			if jump.active.Load() != 1 || target.active.Load() != 1 {
-				t.Fatalf("the route holds %d and %d connections, want one each",
-					jump.active.Load(), target.active.Load())
-			}
+			// Waited for rather than read once. A server counts a connection
+			// after ssh.NewServerConn returns on its side, and the client can
+			// return from its own half of the handshake before that goroutine
+			// has run, so a read straight after the dial finds the Host at the
+			// end of the route still at none on some runs.
+			waitFor(t, localTestTimeout, "each Host of the route to hold one connection", func() bool {
+				return jump.active.Load() == 1 && target.active.Load() == 1
+			})
 
 			if how == "closed here" {
 				_ = client.Close()
