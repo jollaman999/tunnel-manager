@@ -726,13 +726,13 @@ func (f *localTunnel) Stop() {
 // read the Host and its jump route already, and a Host that is not enabled is
 // not asked for.
 func (m *Manager) startLocalForward(host *models.Host, lf *models.LocalForward, jumps []jumpHop) error {
-	m.localMu.Lock()
-	defer m.localMu.Unlock()
-
-	if _, exists := m.localForwards[localForwardKeyOf(lf)]; exists {
+	if m.localForwardRegistered(localForwardKeyOf(lf)) {
 		return fmt.Errorf("local forward already exists")
 	}
 
+	// The forward is built before m.localMu is taken, for the reason
+	// StartTunnel builds a tunnel before it takes m.mu: reading the keys can
+	// take a good part of a second, and the status calls wait on the lock.
 	auth, creds, err := m.hostAuth(host)
 	if err != nil {
 		return err
@@ -755,11 +755,27 @@ func (m *Manager) startLocalForward(host *models.Host, lf *models.LocalForward, 
 	f.connFP = localForwardFingerprint(host, lf, creds, jumps)
 	f.maxInterval = time.Duration(m.reconnectMaxIntervalSec) * time.Second
 
+	m.localMu.Lock()
+	defer m.localMu.Unlock()
+
+	if _, exists := m.localForwards[localForwardKeyOf(lf)]; exists {
+		return fmt.Errorf("local forward already exists")
+	}
+
 	m.localForwards[localForwardKeyOf(lf)] = f
 
 	go f.Start()
 
 	return nil
+}
+
+// localForwardRegistered reports whether a local forward runs under key.
+func (m *Manager) localForwardRegistered(key LocalForwardKey) bool {
+	m.localMu.RLock()
+	defer m.localMu.RUnlock()
+
+	_, exists := m.localForwards[key]
+	return exists
 }
 
 // stopLocalForward stops the forward of one row. It returns ErrTunnelNotExist

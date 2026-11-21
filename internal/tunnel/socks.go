@@ -773,13 +773,13 @@ func (p *socksTunnel) Stop() {
 // startSocks builds and starts the proxy of one Host. The caller has checked
 // that the Host is enabled and asks for one, and has read its jump route.
 func (m *Manager) startSocks(host *models.Host, jumps []jumpHop) error {
-	m.socksMu.Lock()
-	defer m.socksMu.Unlock()
-
-	if _, exists := m.socksProxies[host.ID]; exists {
+	if m.socksRegistered(host.ID) {
 		return fmt.Errorf("SOCKS5 proxy already exists")
 	}
 
+	// The proxy is built before m.socksMu is taken, for the reason StartTunnel
+	// builds a tunnel before it takes m.mu: reading the keys can take a good
+	// part of a second, and the status calls wait on the lock.
 	auth, creds, err := m.hostAuth(host)
 	if err != nil {
 		return err
@@ -802,11 +802,27 @@ func (m *Manager) startSocks(host *models.Host, jumps []jumpHop) error {
 	p.connFP = socksFingerprint(host, creds, jumps)
 	p.maxInterval = time.Duration(m.reconnectMaxIntervalSec) * time.Second
 
+	m.socksMu.Lock()
+	defer m.socksMu.Unlock()
+
+	if _, exists := m.socksProxies[host.ID]; exists {
+		return fmt.Errorf("SOCKS5 proxy already exists")
+	}
+
 	m.socksProxies[host.ID] = p
 
 	go p.Start()
 
 	return nil
+}
+
+// socksRegistered reports whether a SOCKS5 proxy runs for the Host.
+func (m *Manager) socksRegistered(hostID uint) bool {
+	m.socksMu.RLock()
+	defer m.socksMu.RUnlock()
+
+	_, exists := m.socksProxies[hostID]
+	return exists
 }
 
 // stopSocks stops the proxy of one Host, and returns ErrTunnelNotExist for one

@@ -297,6 +297,10 @@ func (m *Manager) Reconcile() (ReconcileResult, error) {
 		return result, err
 	}
 
+	// The keys of Hosts that have been removed are let go here, since nothing
+	// connects with them any more.
+	m.signers.retain(hostByID)
+
 	desired, err := m.desiredTunnelsOf(hostByID)
 	if err != nil {
 		return result, err

@@ -145,6 +145,98 @@ type Manager struct {
 	// pass takes the set and empties it, so a request is served once.
 	reconnectHosts map[uint]bool
 	reconnectMu    sync.Mutex
+
+	// signers holds the private key of every Host as it was last read, so
+	// that the key is read once rather than once for every connection made
+	// with it. What is kept and when it is read again is at signerCache.
+	signers signerCache
+}
+
+// parseHostKey is what a stored private key is read with, rather than
+// ParsePrivateKey straight, so that a test can count how often a key is read
+// and hold a read open. A key with a passphrase is run through bcrypt to be
+// opened, which takes a sizeable part of a second, and how often that happens
+// and what waits on it are what those tests are about.
+var parseHostKey = ParsePrivateKey
+
+// signerCache keeps, for every Host, the signer its stored private key was
+// read into, along with the stored key and passphrase it was read from.
+//
+// The stored values are what an entry is matched against, sealed as they are
+// in the row. A key or a passphrase that is replaced is sealed afresh and no
+// longer matches, so it is read again without anything having to say it
+// changed. Matching the sealed values rather than the opened ones also means a
+// lookup opens nothing.
+//
+// A key that could not be read is kept as well, with the reason. Reading a key
+// gives the same answer every time for the same key and passphrase, and a
+// wrong passphrase costs the full bcrypt run to find out, so without this a
+// Host with a wrong passphrase would pay that run for every forward of it on
+// every pass. A value that could not be opened by the cipher is not kept,
+// since that is not a reading of the key and opening is cheap.
+//
+// It has a lock of its own, which is held only to look an entry up or to put
+// one in. The key is read outside it, so reading the key of one Host never
+// holds up another.
+type signerCache struct {
+	mu      sync.Mutex
+	entries map[uint]signerEntry
+}
+
+type signerEntry struct {
+	privateKey string
+	passphrase string
+	signer     ssh.Signer
+	err        error
+}
+
+// lookup returns what the key of the Host was read into when it was read from
+// these stored values, and false when it has not been.
+func (c *signerCache) lookup(hostID uint, privateKey, passphrase string) (signerEntry, bool) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	entry, ok := c.entries[hostID]
+	if !ok || entry.privateKey != privateKey || entry.passphrase != passphrase {
+		return signerEntry{}, false
+	}
+
+	return entry, true
+}
+
+// keep records what the key of the Host was read into from these stored
+// values, in place of whatever was kept for the Host before.
+func (c *signerCache) keep(hostID uint, privateKey, passphrase string, signer ssh.Signer, err error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	if c.entries == nil {
+		c.entries = make(map[uint]signerEntry)
+	}
+
+	c.entries[hostID] = signerEntry{privateKey: privateKey, passphrase: passphrase, signer: signer, err: err}
+}
+
+// forget drops what was kept for the Host, which is a Host that carries no
+// key any more.
+func (c *signerCache) forget(hostID uint) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	delete(c.entries, hostID)
+}
+
+// retain drops what was kept for every Host that is not among hosts, which is
+// a Host that was removed. A reconcile pass calls it with the Hosts it read.
+func (c *signerCache) retain(hosts map[uint]*models.Host) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	for hostID := range c.entries {
+		if _, ok := hosts[hostID]; !ok {
+			delete(c.entries, hostID)
+		}
+	}
 }
 
 // desiredCounts is how many of each sort of forward should be running.
@@ -346,22 +438,33 @@ func (m *Manager) hostAuth(host *models.Host) ([]ssh.AuthMethod, hostCreds, erro
 // Nothing of the key reaches the log. What is written is which Host it belongs
 // to and what is wrong with it, never a line of the key itself and never the
 // passphrase.
+//
+// The key is read once for the stored values it is read from and kept in
+// m.signers. A key that cannot be read is reported every time it is asked for
+// all the same, so that each connection that goes without it says why in the
+// log next to it.
 func (m *Manager) hostSigner(host *models.Host) (ssh.Signer, error) {
 	if host.PrivateKey == "" {
+		m.signers.forget(host.ID)
 		return nil, nil
 	}
 
-	keyPEM, err := m.hostSealed(host, "private key", host.PrivateKey)
-	if err != nil {
-		return nil, err
-	}
+	kept, ok := m.signers.lookup(host.ID, host.PrivateKey, host.KeyPassphrase)
+	signer, err := kept.signer, kept.err
+	if !ok {
+		keyPEM, sealErr := m.hostSealed(host, "private key", host.PrivateKey)
+		if sealErr != nil {
+			return nil, sealErr
+		}
 
-	passphrase, err := m.hostSealed(host, "key passphrase", host.KeyPassphrase)
-	if err != nil {
-		return nil, err
-	}
+		passphrase, sealErr := m.hostSealed(host, "key passphrase", host.KeyPassphrase)
+		if sealErr != nil {
+			return nil, sealErr
+		}
 
-	signer, err := ParsePrivateKey(keyPEM, passphrase)
+		signer, err = parseHostKey(keyPEM, passphrase)
+		m.signers.keep(host.ID, host.PrivateKey, host.KeyPassphrase, signer, err)
+	}
 	if err != nil {
 		m.logger.Error("the stored private key of the Host cannot be read",
 			logid.TunnelHostKeyUnreadable.Field(),
@@ -895,14 +998,18 @@ func (m *Manager) StartTunnel(host *models.Host, sp *models.ServicePort, bindSco
 		return nil
 	}
 
-	m.mu.Lock()
-	defer m.mu.Unlock()
-
 	key := tunnelKey(host.ID, sp.ID)
-	if _, exists := m.tunnels[key]; exists {
+	if m.tunnelRegistered(key) {
 		return fmt.Errorf("tunnel already exists")
 	}
 
+	// Everything the tunnel is built from is made before m.mu is taken.
+	// Reading the private key of the Host and of every Host its route passes
+	// through can take a good part of a second for a key with a passphrase, and m.mu
+	// is what the status calls wait on. None of it reads m.tunnels, which is
+	// all m.mu guards: the credentials come off the Host rows the caller read,
+	// the signer is kept under a lock of its own, and the rest is the cipher,
+	// the logger and the database, each of which is safe to share.
 	auth, creds, err := m.hostAuth(host)
 	if err != nil {
 		return err
@@ -957,6 +1064,15 @@ func (m *Manager) StartTunnel(host *models.Host, sp *models.ServicePort, bindSco
 	// whether the ones it should have are still the same.
 	t.connFP = connectionFingerprint(host, sp, bindScope, creds, jumps)
 
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	// Asked again under the lock, since another start of the same tunnel can
+	// have registered it while this one was being built.
+	if _, exists := m.tunnels[key]; exists {
+		return fmt.Errorf("tunnel already exists")
+	}
+
 	err = m.db.Where("host_id = ? AND sp_id = ?", host.ID, sp.ID).
 		Attrs(tunnel).
 		FirstOrCreate(&tunnel).Error
@@ -973,6 +1089,17 @@ func (m *Manager) StartTunnel(host *models.Host, sp *models.ServicePort, bindSco
 	}(m, t, &tunnel)
 
 	return nil
+}
+
+// tunnelRegistered reports whether a tunnel runs under key. StartTunnel asks
+// it before building anything, so that a tunnel that is running costs no
+// reading of its key, and asks again under the lock before it registers one.
+func (m *Manager) tunnelRegistered(key string) bool {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	_, exists := m.tunnels[key]
+	return exists
 }
 
 func (m *Manager) StopTunnel(hostID uint, spID uint) error {
