@@ -950,6 +950,23 @@ func (h *Handler) UpdateHost(c *echo.Context) error {
 		}
 	}
 
+	// A new key is parsed and sealed before the transaction, as CreateHost
+	// does. Parsing a key under a passphrase runs its key derivation, which
+	// takes from a tenth of a second to seconds, and the pool holds a single
+	// connection: inside the transaction that time would stop every other
+	// query of the process, the reconcile pass and the status reads included.
+	newKey := strings.TrimSpace(req.PrivateKey) != ""
+	privateKey, keyPassphrase := "", ""
+
+	if newKey {
+		privateKey, keyPassphrase, err = h.sealPrivateKey(req.PrivateKey, req.KeyPassphrase)
+		if err != nil {
+			return h.keyRefused(c, err, errHostUpdateKeyRefused)
+		}
+	} else if req.KeyPassphrase != "" {
+		return failure(c, http.StatusBadRequest, errHostUpdatePassphraseAlone)
+	}
+
 	tx := h.db.Begin()
 	err = tx.Error
 	if err != nil {
@@ -1002,18 +1019,9 @@ func (h *Handler) UpdateHost(c *echo.Context) error {
 	// box keeps the password. A key that is sent replaces both halves at once,
 	// because the two were checked as a pair: a new key left beside the
 	// passphrase of the old one is a pair nothing checked.
-	if strings.TrimSpace(req.PrivateKey) != "" {
-		privateKey, keyPassphrase, err := h.sealPrivateKey(req.PrivateKey, req.KeyPassphrase)
-		if err != nil {
-			tx.Rollback()
-			return h.keyRefused(c, err, errHostUpdateKeyRefused)
-		}
-
+	if newKey {
 		host.PrivateKey = privateKey
 		host.KeyPassphrase = keyPassphrase
-	} else if req.KeyPassphrase != "" {
-		tx.Rollback()
-		return failure(c, http.StatusBadRequest, errHostUpdatePassphraseAlone)
 	}
 	if req.Description != "" {
 		host.Description = req.Description
