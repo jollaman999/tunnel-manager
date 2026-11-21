@@ -878,16 +878,20 @@ type chainedConn struct {
 	once    sync.Once
 }
 
+// Once the hop stands, the connection underneath is closed before the channel.
+// Closing the channel writes its close message to that connection, and the
+// write waits behind any other write on it: a Host passed through that stopped
+// reading leaves such a write blocked on a full socket buffer for as long as
+// it does not read, and the close with it. Closing the socket first fails that
+// write, and the channel close after it then returns at once.
 func (c *chainedConn) Close() error {
-	err := c.Conn.Close()
-
 	if c.owned.Load() {
 		c.once.Do(func() {
 			_ = c.through.Close()
 		})
 	}
 
-	return err
+	return c.Conn.Close()
 }
 
 // connectFailureStatus is the status a connection that was not made leaves on
