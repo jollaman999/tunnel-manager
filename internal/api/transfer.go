@@ -2391,10 +2391,23 @@ func (h *TransferHandler) ImportSettings(c *echo.Context) error {
 		return refused.answer(c)
 	}
 
+	// Read inside the transaction the write goes into, and through it, for
+	// the reason UpdateSettings gives: the row is written whole, and a set
+	// read before the transaction would put back what a save that landed in
+	// between changed.
+	tx := h.hosts.db.Begin()
+
+	err = tx.Error
+	if err != nil {
+		h.hosts.logger.Error("failed to start the transaction", logid.DatabaseTransactionStartFailed.Field(), zap.Error(err))
+		return failure(c, http.StatusInternalServerError, errTransactionBeginFailed)
+	}
+	defer rollbackUnlessDone(tx)
+
 	// Opened so that a file that leaves the webhook address and the mail
 	// settings out keeps them as they are stored, and so that they are held
 	// against what the file names in the clear.
-	stored, err := settings.LoadOpened(h.hosts.db, h.hosts.cipher)
+	stored, err := settings.LoadOpened(tx, h.hosts.cipher)
 	if err != nil {
 		h.hosts.logger.Error("failed to read the settings for an import",
 			logid.TransferSettingsReadForImportFailed.Field(),
@@ -2465,17 +2478,6 @@ func (h *TransferHandler) ImportSettings(c *echo.Context) error {
 		// is the one setting that has to be typed again either way.
 		updated.SMTPPassword = ""
 	}
-
-	// The settings were read above, before the transaction, for the reason
-	// storedAPIPort gives: the pool holds one connection.
-	tx := h.hosts.db.Begin()
-
-	err = tx.Error
-	if err != nil {
-		h.hosts.logger.Error("failed to start the transaction", logid.DatabaseTransactionStartFailed.Field(), zap.Error(err))
-		return failure(c, http.StatusInternalServerError, errTransactionBeginFailed)
-	}
-	defer rollbackUnlessDone(tx)
 
 	// Held to the local forwards the way a save on the Settings screen is, and
 	// only when the port changes, for the same reason.

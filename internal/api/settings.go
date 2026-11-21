@@ -488,14 +488,6 @@ func settingsRefusal(err error, updated *settings.Settings, fallback errorCode) 
 // @Failure  409  {object}  api.errorBody{data=api.apiPortTaken}  "api_port is the local port of a local forward or the port of a SOCKS5 proxy. Nothing was stored"
 // @Router       /settings [put]
 func (h *SettingsHandler) UpdateSettings(c *echo.Context) error {
-	stored, err := settings.LoadOpened(h.db, h.cipher)
-	if err != nil {
-		h.logger.Error("failed to read the settings", logid.SettingsReadFailed.Field(), zap.Error(err))
-		return failure(c, http.StatusInternalServerError, errSettingsReadFailed)
-	}
-
-	before := *stored
-
 	// The body is read into a request of its own and put onto what is stored,
 	// so a request that names some of the settings changes those and leaves the
 	// rest alone, and a field the request does not carry is one no body can
@@ -504,10 +496,35 @@ func (h *SettingsHandler) UpdateSettings(c *echo.Context) error {
 	// whatever settings.Settings spells in JSON.
 	var req updateSettingsRequest
 
-	err = c.Bind(&req)
+	err := c.Bind(&req)
 	if err != nil {
 		return unreadableBody(err).answer(c)
 	}
+
+	// The stored set is read inside the transaction the write goes into, and
+	// through it. The row is written whole, so a set read before the
+	// transaction is a set another save may have changed by the time this one
+	// writes, and its change would be put back without a word while both saves
+	// answered that they stored what they were sent. The single connection the
+	// pool holds keeps a second transaction waiting until the first commits,
+	// which is what makes the read below see what the first one wrote. The
+	// read goes through tx and not h.db, which would wait on that connection
+	// forever.
+	tx := h.db.Begin()
+	err = tx.Error
+	if err != nil {
+		h.logger.Error("failed to start the transaction", logid.DatabaseTransactionStartFailed.Field(), zap.Error(err))
+		return failure(c, http.StatusInternalServerError, errTransactionBeginFailed)
+	}
+	defer rollbackUnlessDone(tx)
+
+	stored, err := settings.LoadOpened(tx, h.cipher)
+	if err != nil {
+		h.logger.Error("failed to read the settings", logid.SettingsReadFailed.Field(), zap.Error(err))
+		return failure(c, http.StatusInternalServerError, errSettingsReadFailed)
+	}
+
+	before := *stored
 
 	updated := *stored
 	req.apply(&updated)
@@ -538,16 +555,6 @@ func (h *SettingsHandler) UpdateSettings(c *echo.Context) error {
 		h.logger.Error("failed to encrypt the mail password", logid.SettingsSmtpPasswordSealFailed.Field(), zap.Error(err))
 		return failure(c, http.StatusInternalServerError, errSettingsSMTPPasswordSeal)
 	}
-
-	// The settings were read above, before the transaction, for the reason
-	// storedAPIPort gives: the pool holds one connection.
-	tx := h.db.Begin()
-	err = tx.Error
-	if err != nil {
-		h.logger.Error("failed to start the transaction", logid.DatabaseTransactionStartFailed.Field(), zap.Error(err))
-		return failure(c, http.StatusInternalServerError, errTransactionBeginFailed)
-	}
-	defer rollbackUnlessDone(tx)
 
 	// Only a port that changes is held to the local forwards, so a save of
 	// another setting is not refused over a port that is already stored.
