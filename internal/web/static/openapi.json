@@ -721,7 +721,7 @@
                         "CSRFToken": []
                     }
                 ],
-                "description": "Every field is optional; enabled false stops its tunnels.\nA SOCKS5 field left out keeps what is stored. socks_allowed_sources sent empty lets every address in; socks_bind_scope left empty keeps the stored scope.\njump_host_ids replaces the jump route: left out or null keeps the stored route, and an empty list takes it away.",
+                "description": "Every field is optional; enabled false stops its tunnels.\nA SOCKS5 field left out keeps what is stored. socks_allowed_sources sent empty lets every address in; socks_bind_scope left empty keeps the stored scope.\njump_host_ids replaces the jump route: left out or null keeps the stored route, and an empty list takes it away.\naccount_password is the password of the account. It is asked for when the Host has no approved host key and carries a stored password or private key, and the request changes its address, its SSH port or its jump route; a value sent again as it is stored is not a change. Without it that request is refused with 400 under host.update.account_password.required, with one that does not open the account with 401 under host.update.account_password.wrong, and after too many of those with 429, on the counters the login uses.",
                 "consumes": [
                     "application/json"
                 ],
@@ -770,7 +770,13 @@
                         }
                     },
                     "400": {
-                        "description": "The body is refused, carries the old name ip in place of address, or the jump route names a Host that is not registered, the Host itself, one Host twice or is longer than 8",
+                        "description": "The body is refused, carries the old name ip in place of address, the jump route names a Host that is not registered, the Host itself, one Host twice or is longer than 8, or account_password is empty where it is asked for",
+                        "schema": {
+                            "$ref": "#/definitions/api.errorBody"
+                        }
+                    },
+                    "401": {
+                        "description": "account_password does not open this account",
                         "schema": {
                             "$ref": "#/definitions/api.errorBody"
                         }
@@ -783,6 +789,12 @@
                     },
                     "409": {
                         "description": "The address or the SSH port is changed to the two another Host is registered on, the addresses compared without regard to case or to how an IP address is written, or the SOCKS5 proxy is switched on or moved to the port of this server, of the SOCKS5 proxy of another Host or of a local forward",
+                        "schema": {
+                            "$ref": "#/definitions/api.errorBody"
+                        }
+                    },
+                    "429": {
+                        "description": "Too many passwords that do not open this account were tried. Retry-After says when to try again",
                         "schema": {
                             "$ref": "#/definitions/api.errorBody"
                         }
@@ -3378,6 +3390,8 @@
                 "host.jump.too_many",
                 "host.delete.used_as_jump",
                 "host.address.taken",
+                "host.update.account_password.required",
+                "host.update.account_password.wrong",
                 "service_port.id.invalid",
                 "service_port.not_found",
                 "service_port.fetch_failed",
@@ -3588,6 +3602,8 @@
                 "errHostJumpTooMany",
                 "errHostDeleteUsedAsJump",
                 "errHostAddressTaken",
+                "errHostUpdateAccountPasswordRequired",
+                "errHostUpdateAccountPasswordWrong",
                 "errServicePortIDInvalid",
                 "errServicePortNotFound",
                 "errServicePortFetchFailed",
@@ -5032,6 +5048,10 @@
         "models.UpdateHostRequest": {
             "type": "object",
             "properties": {
+                "account_password": {
+                    "description": "AccountPassword is the password of the account. It is read only where\nthe change moves a Host that trusts no key yet and carries a login: a\nchange of its address, its SSH port or its jump route.",
+                    "type": "string"
+                },
                 "address": {
                     "type": "string"
                 },

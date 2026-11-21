@@ -427,6 +427,10 @@ type UpdateHostRequest struct {
 	// keeps the one that is stored, and one that sends an empty list takes it
 	// away.
 	JumpHostIDs *[]uint `json:"jump_host_ids"`
+	// AccountPassword is the password of the account. It is read only where
+	// the change moves a Host that trusts no key yet and carries a login: a
+	// change of its address, its SSH port or its jump route.
+	AccountPassword string `json:"account_password"`
 }
 
 type CreateServicePortRequest struct {

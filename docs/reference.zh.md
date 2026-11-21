@@ -1910,6 +1910,7 @@ curl -s -b cookies.txt "$BASE/api/host?q=example&page=1&size=20"
 | `socks_bind_scope` | 可不填。取 `loopback` 或 `wildcard`，不填或发成空就是 `loopback` | 可不填；不填或发成空，保留已保存的范围 |
 | `socks_allowed_sources` | 可不填。留空则接受所有地址 | 可不填；不填则保留已保存的列表，发成 `""` 则接受所有地址 |
 | `jump_host_ids` | 可选。用作跳板机的已注册 Host 的 id，按顺序，最多 8 个。不给或给 `[]` 就直接连接 | 可选；不给或给 `null` 保留已保存的路线，给 `[]` 则清除路线 |
+| `account_password` | 不读 | 是**这个账号**的密码，不是 Host 的密码。修改一台没有已批准主机密钥、又保存着密码或私钥的 Host 的 `address`、`port` 或 `jump_host_ids` 时需要，见下文 |
 
 既没有密钥又没有密码的创建会被拒绝，无法使用的密钥也一样。拒绝时会说明是哪一种：这个值不是
 PEM、密钥有密码保护但没把密码发来、或者密码打不开这把密钥。这几种情况下什么都不会被保存。
@@ -1969,6 +1970,23 @@ curl -s -b cookies.txt -X PUT "$BASE/api/host/5" \
   -H 'Content-Type: application/json' \
   -H "X-CSRF-Token: $CSRF" \
   -d '{"jump_host_ids":[2,3]}'
+```
+
+**迁移一台没有已批准主机密钥的 Host，需要账号密码。** 一台保存着密码或私钥、又还没有信任任何
+主机密钥的 Host，修改它的 `address`、`port` 或 `jump_host_ids` 的请求，不带 `account_password` 就会
+被拒绝：没给或给空值时以 `host.update.account_password.required` 返回 `400`，密码与账号不符时以
+`host.update.account_password.wrong` 返回 `401`，错得太多次时按登录用的同一套计数返回 `429`。这些
+情况下都不保存任何内容。服务器第一次出示的密钥凭会话就能批准（见[主机密钥的批准](#主机密钥的批准)），
+所以没有这项检查的话，只有会话的人就能把 Host 指向自己的服务器，批准那台服务器的密钥，让隧道用
+保存的密码登录过去。跳板机就在登录信息经过的路上，能顶替 Host 应答，所以路线和地址同样对待。原样
+重发已保存的值不算修改，信任着密钥的 Host 和没有登录信息的 Host 都不会被要求输入。
+
+```bash
+# 把还没批准过主机密钥的 Host 4 迁到另一个地址。
+curl -s -b cookies.txt -X PUT "$BASE/api/host/4" \
+  -H 'Content-Type: application/json' \
+  -H "X-CSRF-Token: $CSRF" \
+  -d '{"address":"192.0.2.20","account_password":"<账号密码>"}'
 ```
 
 **在别的 Host 的跳板路线上的 Host 不会被删除。** 删除会以 `host.delete.used_as_jump` 被 `409`
@@ -2170,7 +2188,8 @@ curl -s -b cookies.txt -X POST "$BASE/api/host/1/host-key" \
 
 **还没有密钥的 Host，凭会话就能批准**，因为没有需要推翻的信任，而且这一下操作本来就在注册每台
 Host 的路上。换掉一把受信任的密钥是另一回事：没有密码的话，一个开着没人看的会话，一下操作就会
-让人去信任那个顶替服务器在应答的东西。
+让人去信任那个顶替服务器在应答的东西。还没有密钥的 Host 要求密码的时候，是迁移它的时候，也就是
+修改它的地址、SSH 端口或跳板路线时，见 [Host](#host)。
 
 `POST /api/host-key` 就是把同一个批准施加到一个列表上，它的存在是因为升级之后的样子：在这项
 检查出现之前注册的 Host，会在同一刻全都等着第一次批准。一台 Host 的指纹说明不了另一台，所以

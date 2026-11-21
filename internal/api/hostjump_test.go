@@ -143,6 +143,7 @@ func TestAHostWithNoRouteAnswersAnEmptyList(t *testing.T) {
 func TestAnUpdateKeepsTheRouteItLeavesOutAndClearsAnEmptyOne(t *testing.T) {
 	f := newHostFixture(t)
 	registerJumpHosts(t, f, 3)
+	trustHostKeys(t, f)
 
 	rec := f.updateHost(t, "3", `{"jump_host_ids":[2,1]}`)
 	if rec.Code != http.StatusOK {
@@ -211,6 +212,7 @@ func TestAJumpRouteThatCannotBeTakenIsRefused(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			f := newHostFixture(t)
 			registerJumpHosts(t, f, 10)
+			trustHostKeys(t, f)
 
 			var rec *httptest.ResponseRecorder
 			if tt.create {
@@ -252,6 +254,7 @@ func TestARouteOfEightIsTaken(t *testing.T) {
 func TestAHostOnARouteIsNotDeleted(t *testing.T) {
 	f := newHostFixture(t)
 	registerJumpHosts(t, f, 3)
+	trustHostKeys(t, f)
 
 	for _, id := range []string{"2", "3"} {
 		rec := f.updateHost(t, id, `{"jump_host_ids":[1]}`)
@@ -294,6 +297,7 @@ func TestAHostOnARouteIsNotDeleted(t *testing.T) {
 func TestADeletedHostTakesItsRouteWithIt(t *testing.T) {
 	f := newHostFixture(t)
 	registerJumpHosts(t, f, 3)
+	trustHostKeys(t, f)
 
 	for _, update := range []struct{ id, route string }{{"2", "[1]"}, {"3", "[1]"}} {
 		rec := f.updateHost(t, update.id, `{"jump_host_ids":`+update.route+`}`)
@@ -361,6 +365,7 @@ func wantAddressTaken(t *testing.T, rec *httptest.ResponseRecorder, address, por
 func TestAHostOnTheAddressAndPortOfAnotherIsRefused(t *testing.T) {
 	f := newHostFixture(t)
 	registerJumpHosts(t, f, 2)
+	trustHostKeys(t, f)
 
 	before := storedHostAddresses(t, f)
 
@@ -431,6 +436,8 @@ func TestAnAddressWrittenAnotherWayIsTheSameHost(t *testing.T) {
 			if rec.Code != http.StatusCreated {
 				t.Fatalf("%s on another port: status = %d, want %d, body: %s", tt.asked, rec.Code, http.StatusCreated, rec.Body.String())
 			}
+
+			trustHostKeys(t, f)
 
 			rec = f.updateHost(t, "2", `{"port":22}`)
 			wantAddressTaken(t, rec, tt.asked, "22", "1")

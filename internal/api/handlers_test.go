@@ -5344,6 +5344,8 @@ func TestHostAndServicePortRequestsRefuseTheOldFieldNames(t *testing.T) {
 			t.Fatalf("the Host was not created: %s", rec.Body.String())
 		}
 
+		trustHostKeys(t, f)
+
 		readRenamedRefusal(t, f.updateHost(t, "1", `{"ip":"192.0.2.11"}`), "ip", "address")
 		readRenamedRefusal(t, f.updateHost(t, "1", `{"ip":"192.0.2.11","address":"192.0.2.12"}`), "ip", "address")
 

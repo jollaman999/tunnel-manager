@@ -2407,6 +2407,7 @@ The body of a create and of an update takes these fields.
 | `socks_bind_scope` | Optional. `loopback` or `wildcard`, and left out or sent empty it is `loopback` | Optional; left out or sent empty, the stored scope stays |
 | `socks_allowed_sources` | Optional. Empty lets every address in | Optional; left out, the stored list stays, and sent as `""` it lets every address in |
 | `jump_host_ids` | Optional. The ids of the registered Hosts to use as jump hosts, in order, at most 8. Left out or `[]`, the Host is reached directly | Optional; left out or `null`, the stored route stays, and `[]` takes it away |
+| `account_password` | Not read | The password of **this account**, not of the Host. Asked for on a change of `address`, `port` or `jump_host_ids` of a Host that has no approved host key and carries a password or a private key, see below |
 
 A create that carries neither a key nor a password is refused, and so is a key
 that cannot be used. The refusal says which of them it is: that the value is not
@@ -2481,6 +2482,29 @@ curl -s -b cookies.txt -X PUT "$BASE/api/host/5" \
   -H 'Content-Type: application/json' \
   -H "X-CSRF-Token: $CSRF" \
   -d '{"jump_host_ids":[2,3]}'
+```
+
+**Moving a Host that has no approved host key asks for the password of the
+account.** Where a Host carries a stored password or private key and trusts no
+host key yet, an update that changes `address`, `port` or `jump_host_ids` is
+refused unless it carries `account_password`: with `400` under
+`host.update.account_password.required` when that is left out or empty, with
+`401` under `host.update.account_password.wrong` when it does not open the
+account, and with `429` after too many of those, on the counters the login uses.
+Nothing is stored in any of those cases. The first key a server presents is
+approved on the session alone, see [Host keys](#host-keys), so without this a
+session could point the Host at a server of its own, approve the key of that
+server and have the tunnel log in to it with the stored password. A jump host is
+on the path the login travels and can answer in place of the Host, so the route
+counts as the address does. A value sent again as it is stored is not a change,
+and a Host that trusts a key, or carries no login, is not asked.
+
+```bash
+# Move Host 4, which has not had a host key approved yet, to another address.
+curl -s -b cookies.txt -X PUT "$BASE/api/host/4" \
+  -H 'Content-Type: application/json' \
+  -H "X-CSRF-Token: $CSRF" \
+  -d '{"address":"192.0.2.20","account_password":"<the account password>"}'
 ```
 
 **A Host on the jump route of another is not deleted.** The delete is refused
@@ -2724,7 +2748,9 @@ curl -s -b cookies.txt -X POST "$BASE/api/host/1/host-key" \
 there is no trust to overturn and because that press is on the path of
 registering every Host. Replacing a trusted key is the other thing: without the
 password, a session left open on an unattended screen would be one press away
-from trusting whatever is answering in place of the server.
+from trusting whatever is answering in place of the server. What asks for the
+password on a Host that carries no key yet is moving it: a change of its
+address, its SSH port or its jump route, see [Hosts](#hosts).
 
 `POST /api/host-key` is the same approval given over a list, and it is there for
 what an upgrade looks like: every Host that was registered before this check

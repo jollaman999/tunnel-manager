@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 	"net/netip"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -905,6 +906,7 @@ func (h *Handler) GetHost(c *echo.Context) error {
 // @Description  Every field is optional; enabled false stops its tunnels.
 // @Description  A SOCKS5 field left out keeps what is stored. socks_allowed_sources sent empty lets every address in; socks_bind_scope left empty keeps the stored scope.
 // @Description  jump_host_ids replaces the jump route: left out or null keeps the stored route, and an empty list takes it away.
+// @Description  account_password is the password of the account. It is asked for when the Host has no approved host key and carries a stored password or private key, and the request changes its address, its SSH port or its jump route; a value sent again as it is stored is not a change. Without it that request is refused with 400 under host.update.account_password.required, with one that does not open the account with 401 under host.update.account_password.wrong, and after too many of those with 429, on the counters the login uses.
 // @Tags         hosts
 // @Accept   json
 // @Produce  json
@@ -912,9 +914,11 @@ func (h *Handler) GetHost(c *echo.Context) error {
 // @Param   id    path  int  true  "The id of the Host"
 // @Param   body  body  models.UpdateHostRequest  true  "The fields to change"
 // @Success  200  {object}  models.Response{data=api.hostView}
-// @Failure  400  {object}  api.errorBody  "The body is refused, carries the old name ip in place of address, or the jump route names a Host that is not registered, the Host itself, one Host twice or is longer than 8"
+// @Failure  400  {object}  api.errorBody  "The body is refused, carries the old name ip in place of address, the jump route names a Host that is not registered, the Host itself, one Host twice or is longer than 8, or account_password is empty where it is asked for"
+// @Failure  401  {object}  api.errorBody  "account_password does not open this account"
 // @Failure  404  {object}  api.errorBody  "No such Host"
 // @Failure  409  {object}  api.errorBody  "The address or the SSH port is changed to the two another Host is registered on, the addresses compared without regard to case or to how an IP address is written, or the SOCKS5 proxy is switched on or moved to the port of this server, of the SOCKS5 proxy of another Host or of a local forward"
+// @Failure  429  {object}  api.errorBody  "Too many passwords that do not open this account were tried. Retry-After says when to try again"
 // @Router       /host/{id} [put]
 func (h *Handler) UpdateHost(c *echo.Context) error {
 	id, err := strconv.ParseUint(c.Param("id"), 10, 32)
@@ -936,6 +940,26 @@ func (h *Handler) UpdateHost(c *echo.Context) error {
 	err = c.Validate(&req)
 	if err != nil {
 		return failure(c, http.StatusBadRequest, errRequestValidationFailed, errorArgs{"reason": err.Error()})
+	}
+
+	// The password of the account is checked here, before the transaction is
+	// opened, for the reason ApproveHostKey states at length: the database is
+	// run on a single connection, accountPasswordRefused reads the account
+	// through the default handle, and inside the transaction that read would
+	// wait forever for the connection this request is holding. The row and the
+	// route read here are read for no other reason than to find out whether
+	// the password has to be asked for; what is written is decided on the row
+	// read again inside the transaction. A request that names none of the
+	// three fields a move is made of reads nothing here.
+	passwordWasChecked := false
+
+	if req.Address != "" || req.Port != nil || req.JumpHostIDs != nil {
+		var refused *refusal
+
+		passwordWasChecked, refused = h.hostMovePasswordRefused(c, uint(id), &req)
+		if refused != nil {
+			return refused.answer(c)
+		}
 	}
 
 	// Read before the transaction for the reason storedAPIPort gives, and only
@@ -995,6 +1019,25 @@ func (h *Handler) UpdateHost(c *echo.Context) error {
 		}
 		h.logger.Error("failed to fetch Host", logid.HostFetchFailed.Field(), zap.Error(err))
 		return failure(c, http.StatusInternalServerError, errHostFetchFailed)
+	}
+
+	// The row the password was decided on was read before the transaction,
+	// and a Host that has since lost its trusted key or gained a login, or
+	// whose route has moved under the request, is a Host whose move would go
+	// through a check that was never made. It is refused under the code of a
+	// missing password, because that is what the client has to do about it:
+	// send one.
+	if !passwordWasChecked {
+		needed, err := hostMoveNeedsPassword(tx, host, &req)
+		if err != nil {
+			tx.Rollback()
+			h.logger.Error("failed to fetch Host", logid.HostFetchFailed.Field(), zap.Error(err))
+			return failure(c, http.StatusInternalServerError, errHostFetchFailed)
+		}
+		if needed {
+			tx.Rollback()
+			return failure(c, http.StatusBadRequest, errHostUpdateAccountPasswordRequired)
+		}
 	}
 
 	if req.Address != "" {
@@ -1132,6 +1175,108 @@ func (h *Handler) UpdateHost(c *echo.Context) error {
 		Success: true,
 		Data:    hostViewOf(host, route, h.manager.SocksStatuses()),
 	})
+}
+
+// hostMovePasswordRefused reads the Host a change is about and, where the
+// change moves it the way hostMoveNeedsPassword describes, checks the password
+// of the account the change carries. It answers whether the password was
+// checked, and what to refuse the change with, or nil to go on. A Host that is
+// not there at all is left to the read inside the transaction, which is what
+// answers with the not found.
+//
+// It reads through the default handle and is not to be called from inside a
+// transaction, for the reason accountPasswordRefused gives.
+func (h *Handler) hostMovePasswordRefused(c *echo.Context, id uint,
+	req *models.UpdateHostRequest) (bool, *refusal) {
+	var current models.Host
+
+	err := h.db.First(&current, id).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return false, nil
+	}
+	if err != nil {
+		h.logger.Error("failed to fetch Host", logid.HostFetchFailed.Field(), zap.Error(err))
+		return false, refuse(http.StatusInternalServerError, errHostFetchFailed)
+	}
+
+	needed, err := hostMoveNeedsPassword(h.db, current, req)
+	if err != nil {
+		h.logger.Error("failed to fetch Host", logid.HostFetchFailed.Field(), zap.Error(err))
+		return false, refuse(http.StatusInternalServerError, errHostFetchFailed)
+	}
+	if !needed {
+		return false, nil
+	}
+
+	// An empty box is refused ahead of the check, so that a save with nothing
+	// typed is not counted as a guess, and under a code of its own, which is
+	// what the screen opens the box on.
+	if req.AccountPassword == "" {
+		return false, refuse(http.StatusBadRequest, errHostUpdateAccountPasswordRequired)
+	}
+
+	refused := accountPasswordRefused(c, h.db, h.logger, req.AccountPassword, errHostUpdateAccountPasswordWrong)
+	if refused != nil {
+		// Written down for the reason the refused host key approval is: the
+		// move is what would hand the stored login to another server, and
+		// somebody working through a session that is not theirs leaves nothing
+		// else behind. The password that was sent is on no line of it.
+		if refused.code == errHostUpdateAccountPasswordWrong {
+			h.logger.Warn("a change of the address, the SSH port or the jump route of a Host that trusts "+
+				"no host key yet was refused: the password does not open the account",
+				logid.HostUpdateAccountPasswordWrong.Field(), zap.Uint("host_id", current.ID))
+		}
+
+		return false, refused
+	}
+
+	return true, nil
+}
+
+// hostMoveNeedsPassword reports whether a change of host has to carry the
+// password of the account. db is what the jump route is read through: the
+// default handle before the transaction, and the transaction inside it.
+//
+// It is asked for where the change sends the stored login somewhere it was not
+// being sent: the address, the SSH port or the jump route changes, on a Host
+// that carries a password or a private key and has no approved host key. Such
+// a Host is approved on the session alone the first time a server presents a
+// key (ApproveHostKey says why), so a session that could move it could point
+// it at a server of its own, approve that server's key and have the tunnel log
+// in to it with the stored password. A jump host is on the path the login
+// travels and can answer in place of the Host, so the route is the same as the
+// address. A Host that trusts a key is not asked: the key stays when it is
+// moved, and the server at the end of the new path has to present it. A Host
+// with no login has nothing to send.
+//
+// A value sent as it is stored is no change, so that a form that sends every
+// field back does not ask for the password on a change of the description.
+// The address is compared as it was typed and not as hostAddressKey reads it,
+// because a name with and without its trailing dot can resolve to different
+// machines.
+func hostMoveNeedsPassword(db *gorm.DB, host models.Host, req *models.UpdateHostRequest) (bool, error) {
+	if host.HostKey != "" || (host.Password == "" && host.PrivateKey == "") {
+		return false, nil
+	}
+
+	if req.Address != "" && req.Address != host.Address {
+		return true, nil
+	}
+
+	if req.Port != nil && *req.Port != host.Port {
+		return true, nil
+	}
+
+	if req.JumpHostIDs == nil {
+		return false, nil
+	}
+
+	route, err := jumpRouteOf(db, host.ID)
+	if err != nil {
+		return false, err
+	}
+
+	return !slices.Equal(route, *req.JumpHostIDs), nil
 }
 
 // @Summary      Delete a Host, and the assignments naming it

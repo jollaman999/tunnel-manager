@@ -3649,7 +3649,7 @@ function jumpRouteCell(host, known) {
 // of its edit form.
 function jumpRouteSaver(host) {
   return async function (ids) {
-    await apiCall("PUT", "/api/host/" + host.id, { jump_host_ids: ids });
+    await putHost(host, { jump_host_ids: ids });
 
     setToast(function () {
       return t(ids.length === 0 ? "hosts.jump-saved-direct.notice" : "hosts.jump-saved.notice",
@@ -3674,7 +3674,7 @@ async function clearJumpRoute(host) {
   if (host === null) {
     hostCreateJumps = [];
   } else {
-    await apiCall("PUT", "/api/host/" + host.id, { jump_host_ids: [] });
+    await putHost(host, { jump_host_ids: [] });
 
     setToast(function () {
       return t("hosts.jump-saved-direct.notice", { id: host.id });
@@ -5519,7 +5519,7 @@ async function updateHost(host, values) {
     body.socks_allowed_sources = values.socks_allowed_sources.trim();
   }
 
-  await apiCall("PUT", "/api/host/" + host.id, body);
+  await putHost(host, body);
 
   editingHostID = null;
   setToast(function () {
@@ -5527,6 +5527,99 @@ async function updateHost(host, values) {
   });
 
   return drawHosts();
+}
+
+// putHost sends a change of a stored Host from the edit form and the jump route
+// panel, the two places the address, the SSH port and the route are changed.
+//
+// The server takes a change of one of those on a Host that has no approved
+// host key and carries a login only with the password of the account: the first
+// key a server presents is approved without it, so a session alone could
+// otherwise send the stored login to a server of its choosing. Whether a Host
+// carries a login is in no answer the screen reads, so the change is sent as it
+// is, and the box is put up only when the server answers that it wants one. A
+// panel put away without a save hands that refusal back to the caller, which
+// shows it where the change was made: nothing was saved.
+async function putHost(host, body) {
+  try {
+    return await apiCall("PUT", "/api/host/" + host.id, body);
+  } catch (error) {
+    if (error instanceof Redirected || error.code !== hostMovePasswordRequiredCode) {
+      throw error;
+    }
+
+    return hostMovePasswordPanel(host, body, error);
+  }
+}
+
+// hostMovePasswordPanel asks for that password and sends the change again with
+// it. A refusal is shown inside the panel and the panel stays up, for the
+// reason sendLogClear gives: the box is the thing most likely to be refused.
+async function hostMovePasswordPanel(host, body, refusal) {
+  const problem = element("p", "");
+
+  problem.className = "notice error";
+  problem.dataset.problem = "host-move";
+  problem.hidden = true;
+
+  const password = accountPasswordField("host-move-password", t("hosts.move-password.label"),
+    t("hosts.move-password.hint"));
+
+  let saved = false;
+  let answer = null;
+
+  await openModal({
+    name: "host-move",
+    title: t("hosts.move-password.title", { id: host.id }),
+    body: [element("p", t("hosts.move-password.text")), problem, password.row],
+    buttons: [
+      {
+        label: t("common.save.button"),
+        name: "save",
+        variant: "primary",
+        press: async function (button, close) {
+          // An empty box is answered here rather than by a round trip, the way
+          // a form answers a value the server would refuse anyway.
+          if (password.input.value === "") {
+            password.input.classList.add("bad");
+            showPanelProblem(problem, t("hosts.move-password.error"));
+
+            return;
+          }
+
+          password.input.classList.remove("bad");
+          problem.hidden = true;
+          button.disabled = true;
+
+          try {
+            answer = await apiCall("PUT", "/api/host/" + host.id,
+              Object.assign({}, body, { account_password: password.input.value }));
+          } catch (error) {
+            if (error instanceof Redirected) {
+              close(null);
+
+              throw error;
+            }
+
+            button.disabled = false;
+            showPanelProblem(problem, error.message);
+
+            return;
+          }
+
+          saved = true;
+          close("save");
+        }
+      },
+      { label: t("common.cancel.button"), name: "cancel" }
+    ]
+  });
+
+  if (!saved) {
+    throw refusal;
+  }
+
+  return answer;
 }
 
 async function toggleHost(host) {

@@ -337,6 +337,11 @@ const (
 	// secret, and never the password that was asked for.
 	HostHostKeyApproved              ID = "host.host_key_approved"
 	HostHostKeyApprovalPasswordWrong ID = "host.host_key_approval_password_wrong"
+	// A move of a Host that trusts no key yet, refused for a password that
+	// does not open the account. The move is what would send the stored
+	// login to another server, so the attempt is written down the way the
+	// refused approval is.
+	HostUpdateAccountPasswordWrong ID = "host.update_account_password_wrong"
 )
 
 // service_port: the service ports the screens add, change and remove.

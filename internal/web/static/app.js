@@ -99,6 +99,7 @@ const updatePasswordWrongCode = "update.password_wrong";
 const exportAccountPasswordWrongCode = "export.account_password.wrong";
 const importAccountPasswordWrongCode = "import.account_password.wrong";
 const tokenAccountPasswordWrongCode = "token.account_password.wrong";
+const hostMovePasswordWrongCode = "host.update.account_password.wrong";
 
 const passwordWrongCodes = [
   hostKeyPasswordWrongCode,
@@ -106,8 +107,14 @@ const passwordWrongCodes = [
   updatePasswordWrongCode,
   exportAccountPasswordWrongCode,
   importAccountPasswordWrongCode,
-  tokenAccountPasswordWrongCode
+  tokenAccountPasswordWrongCode,
+  hostMovePasswordWrongCode
 ];
+
+// The refusal of a change that moves a Host which trusts no key yet and carries
+// a login, sent without the password of the account. The screens answer it by
+// putting up the box and sending the change again with what is typed in it.
+const hostMovePasswordRequiredCode = "host.update.account_password.required";
 
 // The refusal of an api_port that a local forward opens, from a save on the
 // Settings screen and from an import of settings. The screen answers either

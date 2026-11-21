@@ -156,6 +156,9 @@ const (
 	errHostDeleteUsedAsJump        errorCode = "host.delete.used_as_jump"
 	errHostAddressTaken            errorCode = "host.address.taken"
 
+	errHostUpdateAccountPasswordRequired errorCode = "host.update.account_password.required"
+	errHostUpdateAccountPasswordWrong    errorCode = "host.update.account_password.wrong"
+
 	errServicePortIDInvalid        errorCode = "service_port.id.invalid"
 	errServicePortNotFound         errorCode = "service_port.not_found"
 	errServicePortFetchFailed      errorCode = "service_port.fetch_failed"
@@ -447,6 +450,13 @@ var errorMessages = map[errorCode]string{
 	errHostJumpTooMany:           "The jump route is refused: it has more than {max} jump hosts",
 	errHostDeleteUsedAsJump:      "The Host was not deleted: the Hosts {hosts} (id {host_ids}) use it as a jump host. Take it off those routes first",
 	errHostAddressTaken:          "The address {address} with the SSH port {port} is already registered as the Host {host_id}",
+
+	// The two refusals of a move of a Host that trusts no key yet and carries a
+	// login. They are told apart because the screen answers them differently:
+	// the first opens the box the password is typed into, the second shows
+	// what is wrong with what was typed in it.
+	errHostUpdateAccountPasswordRequired: "The Host was not updated: it has no approved host key and it carries a password or a private key, so a change of its address, its SSH port or its jump route asks for the password of your account. The first key a server presents is approved without that password, and the tunnel logs in to that server with what is stored. Send account_password",
+	errHostUpdateAccountPasswordWrong:    "The Host was not updated: the password does not open this account",
 
 	// The service ports.
 	errServicePortIDInvalid:        "Invalid service port ID: {reason}",

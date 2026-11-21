@@ -2094,6 +2094,7 @@ curl -s -b cookies.txt "$BASE/api/host?q=example&page=1&size=20"
 | `socks_bind_scope` | 선택. `loopback` 또는 `wildcard` 이고, 빼거나 빈 값으로 보내면 `loopback` 입니다 | 선택. 빼거나 빈 값으로 보내면 저장된 범위를 그대로 둡니다 |
 | `socks_allowed_sources` | 선택. 비우면 모든 주소를 받습니다 | 선택. 빼면 저장된 목록을 그대로 두고, `""` 로 보내면 모든 주소를 받습니다 |
 | `jump_host_ids` | 선택. 점프 호스트로 쓸 등록된 Host 의 id 를 순서대로, 최대 8개. 빼거나 `[]` 면 바로 접속합니다 | 선택. 빼거나 `null` 이면 저장된 경로를 그대로 두고, `[]` 면 경로를 지웁니다 |
+| `account_password` | 읽지 않음 | Host 의 비밀번호가 아니라 **이 계정**의 비밀번호. 승인된 호스트 키가 없고 비밀번호나 개인키가 저장된 Host 의 `address`, `port`, `jump_host_ids` 를 바꿀 때 필요합니다. 아래를 보십시오 |
 
 키도 비밀번호도 없는 생성은 거부하고, 쓸 수 없는 키도 거부합니다. 거부 응답은 셋 중 무엇인지를
 알려줍니다. PEM 이 아니다, 암호가 걸렸는데 암호를 안 보냈다, 보낸 암호로 키가 안 열린다.
@@ -2158,6 +2159,26 @@ curl -s -b cookies.txt -X PUT "$BASE/api/host/5" \
   -H 'Content-Type: application/json' \
   -H "X-CSRF-Token: $CSRF" \
   -d '{"jump_host_ids":[2,3]}'
+```
+
+**승인된 호스트 키가 없는 Host 를 옮기려면 계정 비밀번호가 필요합니다.** 비밀번호나 개인키가
+저장돼 있고 아직 신뢰하는 호스트 키가 없는 Host 에서 `address`, `port`, `jump_host_ids` 를 바꾸는
+수정은 `account_password` 가 없으면 거부됩니다. 빠졌거나 비었으면
+`host.update.account_password.required` 로 `400`, 계정 비밀번호가 맞지 않으면
+`host.update.account_password.wrong` 로 `401`, 틀린 비밀번호가 너무 많으면 로그인과 같은 횟수
+제한으로 `429` 입니다. 어느 경우에도 아무것도 저장하지 않습니다. 서버가 처음 내미는 키는
+세션만으로 승인되므로([호스트 키 승인](#호스트-키-승인) 참고), 이 검사가 없으면 세션만 가진 사람이
+Host 를 자기 서버로 돌려놓고 그 서버의 키를 승인해 터널이 저장된 비밀번호로 그 서버에 로그인하게
+만들 수 있습니다. 점프 호스트는 로그인 정보가 지나가는 길에 있고 Host 대신 응답할 수 있으므로
+경로도 주소와 같이 다룹니다. 저장된 값을 그대로 다시 보낸 것은 변경이 아니며, 키를 신뢰하는 Host 와
+로그인 정보가 없는 Host 는 묻지 않습니다.
+
+```bash
+# 아직 호스트 키를 승인하지 않은 Host 4 를 다른 주소로 옮긴다.
+curl -s -b cookies.txt -X PUT "$BASE/api/host/4" \
+  -H 'Content-Type: application/json' \
+  -H "X-CSRF-Token: $CSRF" \
+  -d '{"address":"192.0.2.20","account_password":"<계정 비밀번호>"}'
 ```
 
 **다른 Host 의 점프 경로에 있는 Host 는 지우지 않습니다.** 삭제는
@@ -2372,7 +2393,8 @@ curl -s -b cookies.txt -X POST "$BASE/api/host/1/host-key" \
 **아직 키가 없는 Host 는 세션만으로 승인합니다.** 뒤집을 신뢰가 없고, 그 누름이 Host 를
 등록하는 길목에 있기 때문입니다. 신뢰하는 키를 갈아 끼우는 것은 다른 일입니다. 비밀번호가
 없으면, 자리를 비운 화면에 열려 있는 세션이 서버 대신 응답하고 있는 무언가를 누름 한 번으로
-신뢰하게 됩니다.
+신뢰하게 됩니다. 아직 키가 없는 Host 에서 비밀번호를 묻는 것은 그 Host 를 옮길 때, 곧 주소, SSH
+포트, 점프 경로를 바꿀 때입니다. [Host 관리](#host-관리)를 보십시오.
 
 `POST /api/host-key` 는 같은 승인을 목록에 대고 하는 것이고, 업그레이드의 모습 때문에
 있습니다. 이 검사가 생기기 전에 등록된 Host 가 같은 순간에 전부 첫 승인을 기다립니다. 한 Host
