@@ -1708,11 +1708,31 @@ td.pick input[type="checkbox"] {
 }
 
 td > .badge[data-status]:only-child,
-.socks-cell > .badge[data-status] {
+.socks-cell > .badge[data-status],
+.state-cell > .badge[data-status] {
   display: block;
   box-sizing: border-box;
   width: 100%;
   text-align: center;
+}
+
+/* A state that waits on a host key carries the press that answers it under its
+   badge. The empty track over the badge is as tall as the press under it, so
+   the badge stays on the middle of its row the way the badge of a row with no
+   press does, and the column reads as one line of badges down the table. */
+.state-cell {
+  display: grid;
+  grid-template-rows: 1fr auto 1fr;
+  row-gap: 0.4rem;
+}
+
+.state-cell > .badge[data-status] {
+  grid-row: 2;
+}
+
+.state-cell > button {
+  grid-row: 3;
+  white-space: nowrap;
 }
 
 .socks-cell {

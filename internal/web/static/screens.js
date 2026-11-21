@@ -705,6 +705,25 @@ async function drawStatus() {
   } else {
     const rows = tunnels.map(function (tunnel) {
       const forward = isLocalForward(tunnel);
+      let state = statusBadge(tunnel.status);
+
+      if (hostKeyState(tunnel.status) !== null) {
+        const badge = state;
+
+        state = document.createElement("div");
+        state.className = "state-cell";
+        state.appendChild(badge);
+        state.appendChild(actionButton(t("hosts.jump-approve.button"),
+          "status-approve-" + tunnel.host_id + "-" + (forward ? "lf-" + tunnel.number : "sp-" + tunnel.sp_id),
+          async function () {
+            const approved = await openHostKeyPanel(tunnel.host_id);
+
+            if (approved) {
+              await drawStatus();
+            }
+          }, "primary"));
+      }
+
       const cells = [
         tunnel.host_id,
         kindCell(forward),
@@ -712,7 +731,7 @@ async function drawStatus() {
         // a dash rather than a blank: a blank cell in a column of numbers
         // reads as a number that failed to come through.
         forward ? "-" : tunnel.sp_id,
-        statusBadge(tunnel.status),
+        state,
         tunnel.server,
         openedCell(tunnel),
         reachableCell(tunnel),
@@ -733,7 +752,8 @@ async function drawStatus() {
       // such tunnels, all refused by the one key, so the notice was the same
       // question drawn four times over and a Host whose tunnels sit on a later
       // page asked it nowhere. The row still says which state it is in through
-      // its badge, and the question is asked once, over the table.
+      // its badge, with the press that answers it beside the badge, and the
+      // question is asked once, over the table.
 
       const failure = typeof tunnel.last_error === "string" ? tunnel.last_error : "";
       if (failure !== "") {
@@ -3378,6 +3398,17 @@ function hostRow(host, known) {
   const buttons = document.createElement("div");
 
   buttons.className = "buttons";
+
+  if (typeof host.pending_host_key_fingerprint === "string" && host.pending_host_key_fingerprint !== "") {
+    buttons.appendChild(actionButton(t("hosts.jump-approve.button"), "host-approve-" + host.id, async function () {
+      const approved = await openHostKeyPanel(host.id);
+
+      if (approved) {
+        await drawHosts();
+      }
+    }, "primary"));
+  }
+
   buttons.appendChild(actionButton(t("common.edit.button"), "host-edit-" + host.id, async function () {
     editingHostID = host.id;
 
@@ -6336,7 +6367,7 @@ async function openHostLocalForwards(host) {
         t("local-forwards.description.column"), t("local-forwards.status.column"),
         t("local-forwards.reach.column"), ""],
       shown.map(function (item) {
-        const row = localForwardRow(item, known, openForm, flipOne, remove);
+        const row = localForwardRow(item, known, openForm, flipOne, remove, approve);
 
         row.pick = picks.box(item.number);
 
@@ -6663,6 +6694,24 @@ async function openHostLocalForwards(host) {
     return reread(true);
   }
 
+  async function approve() {
+    problem.hidden = true;
+
+    let approved = false;
+
+    try {
+      approved = await openHostKeyPanel(host.id);
+    } catch (error) {
+      refuse(error, problem);
+
+      return;
+    }
+
+    if (approved) {
+      return reread(true);
+    }
+  }
+
   async function remove(item) {
     const sure = await askDanger({
       name: "local-forward-delete-ask",
@@ -6724,10 +6773,18 @@ async function openHostLocalForwards(host) {
 // localForwardRow is the cells of one local forward in that panel. The last
 // error goes under the row, as it does on the status screen, because a
 // sentence in a column of a table this narrow is a column of single words.
-function localForwardRow(item, known, edit, flip, remove) {
+function localForwardRow(item, known, edit, flip, remove, approve) {
   const buttons = document.createElement("div");
 
   buttons.className = "buttons";
+
+  if (hostKeyState(item.status) !== null) {
+    buttons.appendChild(actionButton(t("hosts.jump-approve.button"), "local-forward-approve-" + item.number,
+      function () {
+        return approve(item);
+      }, "primary"));
+  }
+
   buttons.appendChild(actionButton(t("common.edit.button"), "local-forward-edit-" + item.number,
     function () {
       return edit(item);
