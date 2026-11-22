@@ -222,28 +222,13 @@ func fetchFrom(ctx context.Context, dir string, latestURL string) (*Fetched, err
 	// The signature is checked before anything in the checksums is believed.
 	// Until then they are only what the release says about itself, and the same
 	// hands that could swap the binary could have written them to match.
-	sig := latest.asset(signatureAsset)
-	if sig == nil {
-		// Releases made before the build signed SHA256SUMS are what land here,
-		// and they are taken the way a release without SHA256SUMS is: nothing
-		// says the checksums are the ones that were published, so the executable
-		// this process is already running, which was checked when it was put in
-		// place, is installed instead.
-		return runningExecutable(fmt.Sprintf("release %s carries no %s", latest.TagName, signatureAsset))
-	}
-
-	signature, err := readBody(ctx, client, sig.BrowserDownloadURL, maxSignatureBytes)
+	fallback, err := checkSignature(ctx, client, latest, body)
 	if err != nil {
-		return runningExecutable(fmt.Sprintf("the %s of release %s could not be read: %v", signatureAsset, latest.TagName, err))
+		return nil, err
 	}
 
-	if !ed25519.Verify(releaseKey, body, signature) {
-		// The release carries a signature and it is not one the release key
-		// made over these checksums. Either the checksums or the signature were
-		// changed after the release was signed, and the binary is not fetched
-		// at all: there is nothing left that says what it should be.
-		return nil, fmt.Errorf("the %s of release %s is not signed by the release key: its %s does not match it",
-			sha256SumsAsset, latest.TagName, signatureAsset)
+	if fallback != "" {
+		return runningExecutable(fallback)
 	}
 
 	want := sumFor(body, name)
@@ -285,6 +270,42 @@ func fetchFrom(ctx context.Context, dir string, latestURL string) (*Fetched, err
 		Verified: true,
 		cleanup:  func() { _ = os.Remove(path) },
 	}, nil
+}
+
+// checkSignature holds the checksums of a release to the signature the release
+// key made over them.
+//
+// It answers in the two ways fetchFrom ends on. A reason, with no error, is a
+// release whose signature is not there to check, which goes to the running
+// executable the way a release without checksums does. An error is a signature
+// that is there and does not match, which stops the install. Neither, and the
+// checksums are the ones the release was signed with.
+func checkSignature(ctx context.Context, client *http.Client, latest *releaseInfo, sums []byte) (string, error) {
+	sig := latest.asset(signatureAsset)
+	if sig == nil {
+		// Releases made before the build signed SHA256SUMS are what land here,
+		// and they are taken the way a release without SHA256SUMS is: nothing
+		// says the checksums are the ones that were published, so the executable
+		// this process is already running, which was checked when it was put in
+		// place, is installed instead.
+		return fmt.Sprintf("release %s carries no %s", latest.TagName, signatureAsset), nil
+	}
+
+	signature, err := readBody(ctx, client, sig.BrowserDownloadURL, maxSignatureBytes)
+	if err != nil {
+		return fmt.Sprintf("the %s of release %s could not be read: %v", signatureAsset, latest.TagName, err), nil
+	}
+
+	if !ed25519.Verify(releaseKey, sums, signature) {
+		// The release carries a signature and it is not one the release key
+		// made over these checksums. Either the checksums or the signature were
+		// changed after the release was signed, and the binary is not fetched
+		// at all: there is nothing left that says what it should be.
+		return "", fmt.Errorf("the %s of release %s is not signed by the release key: its %s does not match it",
+			sha256SumsAsset, latest.TagName, signatureAsset)
+	}
+
+	return "", nil
 }
 
 // runningExecutable is the fallback: install the file this process was started
