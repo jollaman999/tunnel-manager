@@ -1167,39 +1167,45 @@ func (t *SSHTunnel) acceptForwards(m *Manager, tunnel *models.Tunnel, client *ss
 	opened.close()
 	accepting.Wait()
 
-	if errors.Is(err, io.EOF) {
+	closed := errors.Is(err, io.EOF)
+	if closed {
 		t.logger.Info("connection closed",
 			logid.TunnelConnectionClosed.Field(),
 			zap.String("local", t.Local.String()),
 			zap.String("server", t.Server),
 			zap.String("remote", t.Remote))
-
-		// Drop the dead client, or the monitor keeps checking it and
-		// tears down the connection the Start loop establishes next.
-		//
-		// A client that is no longer the current one was dropped by
-		// reconnect, which already reported the tunnel as reconnecting,
-		// and reporting it here again would count one drop twice.
-		t.clientMu.Lock()
-		current := t.client == client
-		if current {
-			_ = t.client.Close()
-			t.client = nil
-		}
-		t.clientMu.Unlock()
-
-		if current {
-			t.markReconnecting(m, tunnel)
-		}
-
-		return errConnectionClosed
+	} else {
+		m.logger.Error("listener accept error",
+			logid.TunnelListenerAcceptFailed.Field(),
+			zap.String("local", t.Local.String()),
+			zap.String("server", t.Server),
+			zap.String("remote", t.Remote), zap.Error(err))
 	}
 
-	m.logger.Error("listener accept error",
-		logid.TunnelListenerAcceptFailed.Field(),
-		zap.String("local", t.Local.String()),
-		zap.String("server", t.Server),
-		zap.String("remote", t.Remote), zap.Error(err))
+	// Either way the connection is gone (acceptForward), so the dead client
+	// is dropped and the tunnel reported as reconnecting for the wait before
+	// the next attempt. Otherwise the row would say connected for that wait,
+	// and the monitor would keep checking the client and tear down the
+	// connection the Start loop establishes next.
+	//
+	// A client that is no longer the current one was dropped by reconnect,
+	// which already reported the tunnel as reconnecting, and reporting it
+	// here again would count one drop twice.
+	t.clientMu.Lock()
+	current := t.client == client
+	if current {
+		_ = t.client.Close()
+		t.client = nil
+	}
+	t.clientMu.Unlock()
+
+	if current {
+		t.markReconnecting(m, tunnel)
+	}
+
+	if closed {
+		return errConnectionClosed
+	}
 
 	return fmt.Errorf("listener accept error: %w", err)
 }
