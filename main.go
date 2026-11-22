@@ -2332,11 +2332,14 @@ func serve() {
 	// a test drives the handler without reaching GitHub or replacing anything.
 	//
 	// The install reports its end back to the handler, which holds one install
-	// out at a time and is otherwise never told that one is over.
+	// out at a time and is otherwise never told that one is over. Every look
+	// leaves its time in the data directory, which the loop below measures its
+	// interval from after a restart.
 	var updateHandler *api.UpdateHandler
 
+	updateDataDir := install.Defaults().WithDatabase(databaseFile).DataDir
 	updateHandler = api.NewUpdateHandler(logger, db, version, canInstallUpdate(databaseFile),
-		install.Check, func() error {
+		keptUpdateChecks(logger, updateDataDir, install.Check), func() error {
 			return startUpdateInstall(logger, databaseFile, updateHandler.InstallEnded)
 		})
 	// An install that failed after it stopped this service started it again,
@@ -2479,7 +2482,7 @@ func serve() {
 	// The look for a newer release runs on the same context the reconcile loop
 	// does, so the shutdown that stops one stops the other. It is started after
 	// the handler exists because both of them keep the one answer.
-	go runUpdateChecks(reconcileCtx, logger, db, updateHandler, canInstallUpdate(databaseFile))
+	go runUpdateChecks(reconcileCtx, logger, db, updateHandler, canInstallUpdate(databaseFile), updateDataDir)
 
 	// The alert watcher runs on the same context, so the shutdown that stops
 	// the tunnels stops the scans of them as well. It reads the stored alert

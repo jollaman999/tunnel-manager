@@ -893,6 +893,8 @@
   "log.update.auto_install_starting.text": "une version plus récente est installée parce que les réglages le demandent",
   "log.update.check_failed.text": "la dernière version n'a pas pu être lue",
   "log.update.check_loop_started.text": "une version plus récente est recherchée par une minuterie",
+  "log.update.check_time_not_kept.text": "l'heure de cette recherche d'une version plus récente n'a pas pu être conservée, donc un redémarrage compte l'intervalle à partir de son démarrage",
+  "log.update.check_time_not_read.text": "l'heure de la dernière recherche d'une version plus récente n'a pas pu être utilisée, donc l'intervalle est compté à partir de ce démarrage",
   "log.update.checked.text": "la dernière version a été lue",
   "log.update.install_asked.text": "une mise à jour a été demandée dans l'onglet Mise à jour des Paramètres",
   "log.update.install_password_wrong.text": "une mise à jour a été demandée avec un mot de passe qui n'ouvre pas le compte",

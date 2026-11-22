@@ -893,6 +893,8 @@
   "log.update.auto_install_starting.text": "يجري تثبيت إصدار أحدث لأن الإعدادات تطلب ذلك",
   "log.update.check_failed.text": "تعذّرت قراءة أحدث إصدار",
   "log.update.check_loop_started.text": "يُبحث عن إصدار أحدث على مؤقّت",
+  "log.update.check_time_not_kept.text": "تعذّر حفظ وقت هذا البحث عن إصدار أحدث، لذا تُحسب الفترة بعد إعادة التشغيل من بدء التشغيل",
+  "log.update.check_time_not_read.text": "تعذّر استخدام وقت آخر بحث عن إصدار أحدث، لذا تُحسب الفترة من بدء التشغيل هذا",
   "log.update.checked.text": "قُرئ أحدث إصدار",
   "log.update.install_asked.text": "طُلب تحديث من تبويب التحديث في الإعدادات",
   "log.update.install_password_wrong.text": "طُلب تحديث بكلمة مرور لا تفتح الحساب",

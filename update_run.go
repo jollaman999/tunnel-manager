@@ -401,12 +401,16 @@ func answerInstallProblemLeft(logger *zap.Logger, dataDir string, left func(prob
 // startup, so that turning the check off on the Settings screen stops it
 // without a restart, the way the log level takes hold without one.
 //
-// The first look is one interval in and not at startup. A machine that has just
-// come up is doing everything else it does at startup, and a release that
-// appeared while it was down is not a thing that has to be known in the first
-// second. It also keeps a restart loop from making a request every time round.
+// The first look is one interval after the last one, which a restart does not
+// forget: the time of every look is kept in dataDir (keptUpdateChecks), and
+// where none is kept the start stands in for it. A machine that has just come
+// up is doing everything else it does at startup, and a release that appeared
+// while it was down is not a thing that has to be known in the first second.
+// It also keeps a restart loop from making a request every time round. And a
+// machine that is stopped every night, with a day between looks, still looks
+// once a day: counted from every start, it would never look at all.
 func runUpdateChecks(ctx context.Context, logger *zap.Logger, db *gorm.DB,
-	handler *api.UpdateHandler, installable bool) {
+	handler *api.UpdateHandler, installable bool, dataDir string) {
 	logger.Info("looking for a newer release on a timer",
 		logid.UpdateCheckLoopStarted.Field())
 
@@ -417,10 +421,9 @@ func runUpdateChecks(ctx context.Context, logger *zap.Logger, db *gorm.DB,
 	ticker := time.NewTicker(updateCheckTick)
 	defer ticker.Stop()
 
-	// The start stands in for a last look, which is what puts the first one an
-	// interval in. The interval is read on every pass and measured from it, so
-	// a day shortened to an hour after startup is due an hour after the start.
-	last := updateCheckNow()
+	// The interval is read on every pass and measured from the last look, so a
+	// day shortened to an hour after startup is due an hour after that look.
+	last := lastUpdateCheck(logger, dataDir, updateCheckNow())
 
 	for {
 		select {
@@ -477,3 +480,97 @@ var updateCheckTick = time.Minute
 // time.Now outside tests; a test that waited out an interval of an hour could
 // not be run.
 var updateCheckNow = time.Now
+
+// updateCheckPath is where the time of the last look for a newer release is
+// kept, in the data directory beside the lock.
+func updateCheckPath(dataDir string) string {
+	return filepath.Join(dataDir, "update-check.last")
+}
+
+// keptUpdateChecks is check with the time of every call written into
+// updateCheckPath before the request goes out, for the loop to measure its
+// interval from after a restart (lastUpdateCheck).
+//
+// It is wrapped round the check the Update handler is handed rather than put
+// in the loop, so that a look the Update screen asks for is kept as well: the
+// handler is where the screen and the loop both land.
+//
+// Every request counts, whether it read a release or failed. What the time is
+// kept for is a service that restarts within the interval, and one going round
+// a restart loop with the network down or the API refusing it is one of those:
+// counting only the looks that worked would have it make a request every time
+// round, which is what measuring from the last look is there to stop. A look
+// that failed is not tried again before the interval without a restart either.
+func keptUpdateChecks(logger *zap.Logger, dataDir string,
+	check func(context.Context, string) (install.Latest, error)) func(context.Context, string) (install.Latest, error) {
+	return func(ctx context.Context, version string) (install.Latest, error) {
+		keepUpdateCheck(logger, dataDir, updateCheckNow())
+
+		return check(ctx, version)
+	}
+}
+
+// keepUpdateCheck writes at into updateCheckPath.
+//
+// A time that cannot be kept is said in the log and the look goes ahead. The
+// look is what was asked for; what is lost is only that a restart before the
+// next one counts the interval from its start.
+func keepUpdateCheck(logger *zap.Logger, dataDir string, at time.Time) {
+	path := updateCheckPath(dataDir)
+
+	// On Windows the file is made with the DACL of the owner, SYSTEM and
+	// Administrators first, as the reason an install leaves beside it is. On
+	// Unix this does nothing.
+	err := crypto.ReservePrivateFile(path)
+	if err == nil {
+		err = os.WriteFile(path, []byte(at.UTC().Format(time.RFC3339Nano)), installReportMode)
+	}
+
+	if err != nil {
+		logger.Warn("the time of this look for a newer release could not be kept. A restart before "+
+			"the interval has gone by counts the interval from its start",
+			logid.UpdateCheckTimeNotKept.Field(),
+			zap.String("path", path),
+			zap.Error(err))
+	}
+}
+
+// lastUpdateCheck is the time keepUpdateCheck kept in dataDir, or start where
+// there is none to go by.
+//
+// No file is a service that has never looked, and it starts from start
+// without a word. A file that cannot be read, or that does not hold a time,
+// is said in the log and starts from start as well. So is a time after start:
+// the clock has been put back since it was written, and measured from it the
+// next look would wait out the interval and however far the clock went back.
+func lastUpdateCheck(logger *zap.Logger, dataDir string, start time.Time) time.Time {
+	path := updateCheckPath(dataDir)
+
+	said, err := os.ReadFile(path)
+	if errors.Is(err, fs.ErrNotExist) {
+		return start
+	}
+
+	var last time.Time
+
+	if err == nil {
+		last, err = time.Parse(time.RFC3339Nano, strings.TrimSpace(string(said)))
+	}
+
+	if err == nil && last.After(start) {
+		err = fmt.Errorf("it says %s, which is after this start at %s",
+			last.Format(time.RFC3339), start.UTC().Format(time.RFC3339))
+	}
+
+	if err != nil {
+		logger.Warn("the time of the last look for a newer release could not be used. The interval "+
+			"is counted from this start",
+			logid.UpdateCheckTimeNotRead.Field(),
+			zap.String("path", path),
+			zap.Error(err))
+
+		return start
+	}
+
+	return last
+}

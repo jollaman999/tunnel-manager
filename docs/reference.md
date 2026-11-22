@@ -861,6 +861,7 @@ in.
     initial-password           written on the first startup, deleted by the setup
     install.lock               held by an -install while it runs, removed when it ends
     update-install.problem     why the last update the service started failed, removed when the next install starts
+    update-check.last          when the last look for a newer release was made, written at every look
     keys/tunnel-manager.key    the key the SSH passwords are encrypted with
     logs/tunnel-manager.log    the log file and the rotated files beside it
 ```
@@ -882,7 +883,7 @@ open.
 
 **Neither may name a file tunnel-manager keeps something else in:** the
 database file, its `-wal`, `-shm` and `-journal`, `initial-password`,
-`install.lock`, `update-install.problem`, or the other of the two. The comparison ignores case and reads `./x` and `x` as the
+`install.lock`, `update-install.problem`, `update-check.last`, or the other of the two. The comparison ignores case and reads `./x` and `x` as the
 same file, and the database file is named by the file `-db` names, not by the
 default. The logger is opened before the key is read, so a log file on the key
 file writes into the key and the next start stops on a key it cannot read.
@@ -1683,7 +1684,7 @@ A save is refused before it is stored when a value would not hold:
 | `api_port` | 1 to 65535. A new port a local forward or a SOCKS5 proxy opens is refused with `409`, see [Local forwards](#local-forwards) |
 | `monitoring_interval_sec`, `reconcile_interval_sec` | 1 to 3600. An earlier version held them to no ceiling, and one it stored above 3600 is lowered to 3600 at the next start, with a warning in the log that names the setting and both values. A settings import lowers one the same way and lists it in `items` |
 | `reconnect_max_interval_sec` | 1 to 3600 |
-| `security_key_file`, `logging_file_path` | Not empty, and a path under the directory the database file is in: an absolute path and one that climbs out with `..` are refused. Neither may name the database file, its `-wal`, `-shm` or `-journal`, `initial-password`, `install.lock`, `update-install.problem`, or the other one, with the case ignored. See [Where the files go](#where-the-files-go) |
+| `security_key_file`, `logging_file_path` | Not empty, and a path under the directory the database file is in: an absolute path and one that climbs out with `..` are refused. Neither may name the database file, its `-wal`, `-shm` or `-journal`, `initial-password`, `install.lock`, `update-install.problem`, `update-check.last`, or the other one, with the case ignored. See [Where the files go](#where-the-files-go) |
 | `logging_level` | `debug`, `info`, `warn`, `error`, `dpanic`, `panic` or `fatal` |
 | `logging_format` | `json` or `console` |
 | `logging_file_max_size`, `logging_file_max_backups`, `logging_file_max_age` | Zero or more |
@@ -1975,6 +1976,16 @@ look found, with the time it was taken. The **Look now** button takes it again.
 `update_check_enabled` turns the timer off and `update_check_interval_hours`
 says how often it fires. Both take hold as they are saved: an interval changed
 from a day to an hour does not wait out the day that was already running.
+
+**A restart does not start the interval again.** The time of every look, by the
+timer or by **Look now**, whether it read a release or failed, is kept in
+`update-check.last` beside the database file, and a server that restarts counts
+the interval from it. A server stopped every night still looks once a day with
+the interval at a day; counted from every start, it would never look at all.
+Where the file is not there, cannot be read or holds a time ahead of the clock,
+the interval is counted from the start, and the first look is one interval
+after it. Only the time is kept: until the first look after a restart, the tab
+says that nothing has been looked at yet.
 
 **A check that failed is not the same as being up to date**, and the screen says
 which of the two it is. A failure is kept and drawn as a failure rather than

@@ -893,6 +893,8 @@
   "log.update.auto_install_starting.text": "đang cài đặt bản phát hành mới hơn vì thiết lập yêu cầu",
   "log.update.check_failed.text": "không đọc được bản phát hành mới nhất",
   "log.update.check_loop_started.text": "tìm bản phát hành mới hơn theo bộ hẹn giờ",
+  "log.update.check_time_not_kept.text": "không lưu được thời điểm của lần tìm bản phát hành mới hơn này, nên khi khởi động lại khoảng thời gian được tính từ lúc khởi động",
+  "log.update.check_time_not_read.text": "không dùng được thời điểm của lần tìm bản phát hành mới hơn gần nhất, nên khoảng thời gian được tính từ lần khởi động này",
   "log.update.checked.text": "đã đọc bản phát hành mới nhất",
   "log.update.install_asked.text": "có yêu cầu cập nhật từ tab Cập nhật trong Cài đặt",
   "log.update.install_password_wrong.text": "việc cập nhật được yêu cầu với mật khẩu không mở được tài khoản",

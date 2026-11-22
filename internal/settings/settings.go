@@ -408,6 +408,12 @@ const installLockFileName = "install.lock"
 // there would be gone after the next one.
 const installProblemFileName = "update-install.problem"
 
+// updateCheckFileName is the name the time of the last look for a newer
+// release is kept under, beside the database file, spelled again here for the
+// same reason as installLockFileName. The service writes it over on every
+// look, so a key or a log kept there would be replaced by a time at the next.
+const updateCheckFileName = "update-check.last"
+
 // installFile is a file this installation keeps beside the database file under
 // a name no setting chooses, together with the words it is named by in a
 // refusal.
@@ -431,6 +437,7 @@ func installFiles(databaseFile string) []installFile {
 		{name: initialPasswordFileName, what: "the initial password file"},
 		{name: installLockFileName, what: "the lock an install holds while it runs"},
 		{name: installProblemFileName, what: "the reason a failed update leaves for the Update screen"},
+		{name: updateCheckFileName, what: "the time of the last look for a newer release"},
 	}
 }
 

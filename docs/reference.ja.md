@@ -759,6 +759,7 @@ MCowBQYDK2VwAyEA57QsNFJidOS2ncMcnBU4nAiWvuw+M1+M9UKsIjdsvLw=
     initial-password           初回起動で書かれ、初期設定で削除される
     install.lock               -install が動いている間持ち、終われば削除される
     update-install.problem     サービスが始めた最後のアップデートが失敗した理由。次のインストールが始まるときに削除される
+    update-check.last          新しいリリースを最後に確認した時刻。確認のたびに書き込まれる
     keys/tunnel-manager.key    SSH パスワードを暗号化するキー
     logs/tunnel-manager.log    ログファイルと、その隣のローテート済みファイル
 ```
@@ -776,7 +777,7 @@ MCowBQYDK2VwAyEA57QsNFJidOS2ncMcnBU4nAiWvuw+M1+M9UKsIjdsvLw=
 開けるファイルならどれでも読ませる通り道にしてしまいます。
 
 **どちらも、tunnel-manager がほかのものを入れているファイルを指せません。** データベースファイル、
-その `-wal`、`-shm`、`-journal`、`initial-password`、`install.lock`、`update-install.problem`、そして 2 つのうちのもう一方です。比較は
+その `-wal`、`-shm`、`-journal`、`initial-password`、`install.lock`、`update-install.problem`、`update-check.last`、そして 2 つのうちのもう一方です。比較は
 大文字と小文字を区別せず、`./x` と `x` を同じファイルとして読みます。データベースファイルは既定値
 ではなく `-db` が指すファイルです。ロガーはキーを読むより前に開かれるので、キーファイルを指す
 ログファイルはキーに書き込み、次の起動は読めないキーで止まります。
@@ -1491,7 +1492,7 @@ Tunnel Manager サーバーが表示する言語であり、言語を選んだ�
 | `api_port` | 1 から 65535。ローカルフォワードか SOCKS5 プロキシが開くポートに変えると `409` で拒否されます。[ローカルフォワード](#ローカルフォワード)を参照してください |
 | `monitoring_interval_sec`, `reconcile_interval_sec` | 1 から 3600。以前のバージョンには上限がなく、そのとき 3600 より大きく保存された値は次の起動で 3600 に下げられ、設定の名前と前後の値が警告としてログに残る。設定のインポートも同じ値を同じように下げ、`items` に載せる |
 | `reconnect_max_interval_sec` | 1 から 3600 |
-| `security_key_file`, `logging_file_path` | 空でなく、データベースファイルがあるディレクトリの下のパスであること。絶対パスと `..` で外へ出るパスは拒否されます。大文字と小文字を区別せず、データベースファイル、その `-wal`、`-shm`、`-journal`、`initial-password`、`install.lock`、`update-install.problem`、またはもう一方を指すこともできません。[ファイルが置かれる場所](#ファイルが置かれる場所)を参照してください |
+| `security_key_file`, `logging_file_path` | 空でなく、データベースファイルがあるディレクトリの下のパスであること。絶対パスと `..` で外へ出るパスは拒否されます。大文字と小文字を区別せず、データベースファイル、その `-wal`、`-shm`、`-journal`、`initial-password`、`install.lock`、`update-install.problem`、`update-check.last`、またはもう一方を指すこともできません。[ファイルが置かれる場所](#ファイルが置かれる場所)を参照してください |
 | `logging_level` | `debug`, `info`, `warn`, `error`, `dpanic`, `panic`, `fatal` のいずれか |
 | `logging_format` | `json` か `console` |
 | `logging_file_max_size`, `logging_file_max_backups`, `logging_file_max_age` | 0 以上 |
@@ -1748,6 +1749,13 @@ fatal  failed to read the settings  {"error": "the stored settings are refused: 
 
 `update_check_enabled` がタイマーを止め、`update_check_interval_hours` が間隔を決めます。どちらも
 保存した時点で効きます。1 日から 1 時間に変えても、すでに動いていた 1 日を待ちません。
+
+**再起動しても間隔は数え直しになりません。** タイマーでも **今すぐ確認** でも、リリースを読めても
+失敗しても、確認のたびにその時刻をデータベースファイルの隣の `update-check.last` に残し、再起動した
+サーバーはその時刻から間隔を数えます。毎晩止めるサーバーでも、間隔が 1 日なら 1 日に 1 回確認します。
+起動のたびに数え直すと一度も確認しません。ファイルがない、読めない、時計より先の時刻が書かれている
+ときは起動時から数え、最初の確認は起動から一周期あとです。残すのは時刻だけなので、再起動後の最初の
+確認までは、タブはまだ何も確認していないと言います。
 
 **確認に失敗したことと最新であることは別です。** 画面はどちらなのかを言います。失敗は失敗として
 残して描き、直前の成功した答えをそのままにはしません。

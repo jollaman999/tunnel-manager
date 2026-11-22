@@ -893,6 +893,8 @@
   "log.update.auto_install_starting.text": "กำลังติดตั้งรุ่นที่ใหม่กว่าเพราะการตั้งค่ากำหนดไว้",
   "log.update.check_failed.text": "อ่านรุ่นล่าสุดไม่ได้",
   "log.update.check_loop_started.text": "ตรวจหารุ่นที่ใหม่กว่าตามรอบเวลา",
+  "log.update.check_time_not_kept.text": "เก็บเวลาของการตรวจหารุ่นที่ใหม่กว่าครั้งนี้ไม่ได้ เมื่อรีสตาร์ตจะนับรอบเวลาจากตอนเริ่มทำงาน",
+  "log.update.check_time_not_read.text": "ใช้เวลาของการตรวจหารุ่นที่ใหม่กว่าครั้งล่าสุดไม่ได้ จึงนับรอบเวลาจากการเริ่มทำงานครั้งนี้",
   "log.update.checked.text": "อ่านรุ่นล่าสุดแล้ว",
   "log.update.install_asked.text": "มีการขออัปเดตจากแท็บอัปเดตในหน้าตั้งค่า",
   "log.update.install_password_wrong.text": "มีการขออัปเดตด้วยรหัสผ่านที่ไม่ตรงกับบัญชี",

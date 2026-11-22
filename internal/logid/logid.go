@@ -189,6 +189,8 @@ const (
 	UpdateChecked              ID = "update.checked"
 	UpdateCheckFailed          ID = "update.check_failed"
 	UpdateCheckLoopStarted     ID = "update.check_loop_started"
+	UpdateCheckTimeNotKept     ID = "update.check_time_not_kept"
+	UpdateCheckTimeNotRead     ID = "update.check_time_not_read"
 	UpdateAutoInstallStarting  ID = "update.auto_install_starting"
 	UpdateInstallAsked         ID = "update.install_asked"
 	UpdateInstallPasswordWrong ID = "update.install_password_wrong"

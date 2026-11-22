@@ -22,8 +22,10 @@ import (
 //
 // It is held in memory and not in the database. What it says is true of a
 // moment that has passed, a restart is the one thing that makes it certainly
-// stale, and the loop looks again as it starts: a row would be a stored answer
-// about the outside world that nothing keeps true.
+// stale, and the loop looks again an interval after the last look: a row would
+// be a stored answer about the outside world that nothing keeps true. Only the
+// time of the last look outlives a restart, in a file of its own that main
+// keeps for the loop to measure the interval from, and it is not drawn here.
 type checkResult struct {
 	At         time.Time
 	Tag        string

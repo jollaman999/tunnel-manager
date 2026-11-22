@@ -893,6 +893,8 @@
   "log.update.auto_install_starting.text": "a newer release is being installed because the settings say to",
   "log.update.check_failed.text": "the newest release could not be read",
   "log.update.check_loop_started.text": "checking for a newer release on a timer",
+  "log.update.check_time_not_kept.text": "the time of this look for a newer release could not be kept, so a restart counts the interval from its start",
+  "log.update.check_time_not_read.text": "the time of the last look for a newer release could not be used, so the interval is counted from this start",
   "log.update.checked.text": "read the newest release",
   "log.update.install_asked.text": "an update was asked for on the Update tab of Settings",
   "log.update.install_password_wrong.text": "an update was asked for with a password that does not open the account",

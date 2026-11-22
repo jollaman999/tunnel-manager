@@ -893,6 +893,8 @@
   "log.update.auto_install_starting.text": "eine neuere Veröffentlichung wird installiert, weil die Einstellungen es verlangen",
   "log.update.check_failed.text": "die neueste Veröffentlichung konnte nicht gelesen werden",
   "log.update.check_loop_started.text": "es wird in festen Abständen nach einer neueren Veröffentlichung gesehen",
+  "log.update.check_time_not_kept.text": "die Zeit dieser Suche nach einer neueren Veröffentlichung konnte nicht festgehalten werden, daher zählt ein Neustart den Abstand ab seinem Start",
+  "log.update.check_time_not_read.text": "die Zeit der letzten Suche nach einer neueren Veröffentlichung konnte nicht verwendet werden, daher wird der Abstand ab diesem Start gezählt",
   "log.update.checked.text": "die neueste Veröffentlichung wurde gelesen",
   "log.update.install_asked.text": "auf dem Reiter Aktualisierung der Einstellungen wurde eine Aktualisierung verlangt",
   "log.update.install_password_wrong.text": "eine Aktualisierung wurde mit einem Passwort verlangt, das das Konto nicht öffnet",

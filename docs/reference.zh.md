@@ -660,6 +660,7 @@ MCowBQYDK2VwAyEA57QsNFJidOS2ncMcnBU4nAiWvuw+M1+M9UKsIjdsvLw=
     initial-password           第一次启动时写出，初始化完成后删除
     install.lock               -install 运行期间持有，结束时删除
     update-install.problem     服务启动的上一次更新失败的原因，下一次安装开始时删除
+    update-check.last          上次查看新发布的时间，每次查看时写入
     keys/tunnel-manager.key    用来加密 SSH 密码的密钥
     logs/tunnel-manager.log    日志文件，轮转后的文件也在旁边
 ```
@@ -675,7 +676,7 @@ Logs 页面又把它的末尾读回来，所以一个能离开那个目录的路
 任何一个文件里写、并读取它能打开的任何一个文件的通道。
 
 **两者都不能指向 tunnel-manager 用来存放别的东西的文件：** 数据库文件，它的 `-wal`、`-shm` 和
-`-journal`，`initial-password`，`install.lock`，`update-install.problem`，或者两者中的另一个。比较时忽略大小写，并把 `./x` 和 `x` 当作同一个
+`-journal`，`initial-password`，`install.lock`，`update-install.problem`，`update-check.last`，或者两者中的另一个。比较时忽略大小写，并把 `./x` 和 `x` 当作同一个
 文件；数据库文件指的是 `-db` 给的那个文件，不是默认值。日志器在读取密钥之前就打开了，所以指向密钥
 文件的日志文件会写进密钥里，下次启动就会停在一个读不了的密钥上。
 
@@ -1296,7 +1297,7 @@ Settings 页面。同样的值通过 `GET /api/settings` 和 `PUT /api/settings`
 | `api_port` | 1 到 65535。改成某个本地转发或 SOCKS5 代理打开的端口会被 `409` 拒绝，见[本地转发](#本地转发) |
 | `monitoring_interval_sec`、`reconcile_interval_sec` | 1 到 3600。以前的版本没有上限，那时存下的大于 3600 的值会在下次启动时降到 3600，并在日志里留下一条警告，写明设置名和前后两个值。设置导入也会这样降低这类值，并列在 `items` 里 |
 | `reconnect_max_interval_sec` | 1 到 3600 |
-| `security_key_file`、`logging_file_path` | 不能为空，而且要是数据库文件所在的目录底下的路径：绝对路径和用 `..` 爬出去的路径都会被拒绝。两者都不能指向数据库文件、它的 `-wal`、`-shm` 或 `-journal`、`initial-password`、`install.lock`、`update-install.problem`，或者另一个，比较时忽略大小写。见[文件放在哪里](#文件放在哪里) |
+| `security_key_file`、`logging_file_path` | 不能为空，而且要是数据库文件所在的目录底下的路径：绝对路径和用 `..` 爬出去的路径都会被拒绝。两者都不能指向数据库文件、它的 `-wal`、`-shm` 或 `-journal`、`initial-password`、`install.lock`、`update-install.problem`、`update-check.last`，或者另一个，比较时忽略大小写。见[文件放在哪里](#文件放在哪里) |
 | `logging_level` | `debug`、`info`、`warn`、`error`、`dpanic`、`panic` 或 `fatal` |
 | `logging_format` | `json` 或 `console` |
 | `logging_file_max_size`、`logging_file_max_backups`、`logging_file_max_age` | 零或更大 |
@@ -1523,6 +1524,12 @@ fatal  failed to read the settings  {"error": "the stored settings are refused: 
 
 `update_check_enabled` 关闭计时器，`update_check_interval_hours` 决定多久触发一次。两者保存即生效：
 把间隔从一天改成一小时，不会等完那个已经在走的一天。
+
+**重启不会让间隔重新计算。** 每次查看，不论是计时器还是 **立即查看**，也不论读到了发布还是失败了，
+都会把那个时间记在数据库文件旁边的 `update-check.last` 里，重启后的服务器从这个时间开始计算间隔。
+每晚关机的服务器在间隔为一天时，依然每天查看一次；如果每次启动都重新计算，就永远不会查看。
+文件不存在、读不了，或者里面的时间比时钟还靠后时，从启动时开始计算，第一次查看在启动后一个周期。
+只记时间：重启后第一次查看之前，标签页会说还没有查看过。
 
 **查看失败与已是最新并不相同**，页面会说明是哪一种。失败会作为失败保留并显示，而不是让上一次的
 成功结果继续留在那里。

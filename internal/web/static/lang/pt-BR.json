@@ -893,6 +893,8 @@
   "log.update.auto_install_starting.text": "uma versão mais recente está sendo instalada porque as configurações pedem",
   "log.update.check_failed.text": "não foi possível ler a versão mais recente",
   "log.update.check_loop_started.text": "uma versão mais recente é procurada por um temporizador",
+  "log.update.check_time_not_kept.text": "não foi possível guardar a hora desta busca por uma versão mais recente, então uma reinicialização conta o intervalo a partir do seu início",
+  "log.update.check_time_not_read.text": "não foi possível usar a hora da última busca por uma versão mais recente, então o intervalo é contado a partir deste início",
   "log.update.checked.text": "a versão mais recente foi lida",
   "log.update.install_asked.text": "uma atualização foi pedida na aba Atualização das Configurações",
   "log.update.install_password_wrong.text": "uma atualização foi pedida com uma senha que não abre a conta",

@@ -735,6 +735,7 @@ tunnel-manager 가 쓰는 나머지 전부가 그 파일이 있는 디렉터리�
     initial-password           첫 기동이 쓰고 계정 설정이 지웁니다
     install.lock               -install 이 도는 동안 잡고 끝나면 지웁니다
     update-install.problem     서비스가 시작한 마지막 업데이트가 실패한 이유, 다음 설치가 시작될 때 지웁니다
+    update-check.last          새 릴리즈를 마지막으로 확인한 시각, 확인할 때마다 씁니다
     keys/tunnel-manager.key    SSH 비밀번호를 암호화하는 키
     logs/tunnel-manager.log    로그 파일과 그 옆의 회전된 파일들
 ```
@@ -751,7 +752,7 @@ tunnel-manager 가 쓰는 나머지 전부가 그 파일이 있는 디렉터리�
 파일이나 읽게 하는 통로가 됩니다.
 
 **둘 다 tunnel-manager 가 다른 것을 담아 두는 파일을 가리킬 수 없습니다.** 데이터베이스 파일, 그
-`-wal`, `-shm`, `-journal`, `initial-password`, `install.lock`, `update-install.problem`, 그리고 둘 중 다른 쪽입니다. 비교는 대소문자를
+`-wal`, `-shm`, `-journal`, `initial-password`, `install.lock`, `update-install.problem`, `update-check.last`, 그리고 둘 중 다른 쪽입니다. 비교는 대소문자를
 무시하고 `./x` 와 `x` 를 같은 파일로 읽으며, 데이터베이스 파일은 기본값이 아니라 `-db` 가
 가리키는 파일입니다. 로거는 키를 읽기 전에 열리므로, 로그 파일이 키 파일을 가리키면 로그가
 키에 써지고 다음 기동은 읽을 수 없는 키에서 멈춥니다.
@@ -1447,7 +1448,7 @@ Tunnel Manager 서버가 보여주는 언어이고, 언어를 고른 사람은 �
 | `api_port` | 1 에서 65535. 로컬 포워딩이나 SOCKS5 프록시가 여는 포트로 바꾸면 `409` 로 거부됨. [로컬 포워딩](#로컬-포워딩) 참조 |
 | `monitoring_interval_sec`, `reconcile_interval_sec` | 1 에서 3600. 이전 버전은 상한이 없었고, 그때 3600 보다 크게 저장된 값은 다음 기동 때 3600 으로 낮춰지며 설정 이름과 이전 값, 새 값이 경고로 로그에 남음. 설정 가져오기도 같은 값을 같은 식으로 낮추고 `items` 에 적음 |
 | `reconnect_max_interval_sec` | 1 에서 3600 |
-| `security_key_file`, `logging_file_path` | 비어 있으면 안 되고, 데이터베이스 파일이 있는 디렉터리 아래의 경로여야 함. 절대 경로와 `..` 로 밖으로 나가는 경로는 거부됨. 대소문자를 무시하고, 데이터베이스 파일, 그 `-wal`, `-shm`, `-journal`, `initial-password`, `install.lock`, `update-install.problem`, 또는 다른 쪽을 가리킬 수 없음. [파일이 어디에 생기나](#파일이-어디에-생기나) 참조 |
+| `security_key_file`, `logging_file_path` | 비어 있으면 안 되고, 데이터베이스 파일이 있는 디렉터리 아래의 경로여야 함. 절대 경로와 `..` 로 밖으로 나가는 경로는 거부됨. 대소문자를 무시하고, 데이터베이스 파일, 그 `-wal`, `-shm`, `-journal`, `initial-password`, `install.lock`, `update-install.problem`, `update-check.last`, 또는 다른 쪽을 가리킬 수 없음. [파일이 어디에 생기나](#파일이-어디에-생기나) 참조 |
 | `logging_level` | `debug`, `info`, `warn`, `error`, `dpanic`, `panic`, `fatal` 중 하나 |
 | `logging_format` | `json` 또는 `console` |
 | `logging_file_max_size`, `logging_file_max_backups`, `logging_file_max_age` | 0 이상 |
@@ -1695,6 +1696,13 @@ fatal  failed to read the settings  {"error": "the stored settings are refused: 
 
 `update_check_enabled` 가 주기를 끄고 `update_check_interval_hours` 가 얼마마다 볼지를 정합니다.
 둘 다 저장하는 즉시 반영됩니다. 하루에서 한 시간으로 바꾸면 이미 돌던 하루를 기다리지 않습니다.
+
+**재기동해도 주기를 처음부터 세지 않습니다.** 주기든 `지금 확인` 이든, 릴리즈를 읽었든 실패했든
+확인할 때마다 그 시각을 데이터베이스 파일 옆의 `update-check.last` 에 남기고, 재기동한 서버는 그
+시각부터 주기를 셉니다. 매일 밤 끄는 서버도 주기가 하루면 하루에 한 번 확인합니다. 기동할 때마다
+처음부터 세면 한 번도 확인하지 않습니다. 파일이 없거나 읽을 수 없거나 시계보다 앞선 시각이면 기동
+시각부터 세고, 첫 확인은 기동하고 한 주기 뒤입니다. 남기는 것은 시각뿐이라, 재기동 뒤 첫 확인
+전까지 탭은 아직 아무것도 확인하지 않았다고 말합니다.
 
 **확인에 실패한 것과 최신인 것은 다릅니다.** 화면이 둘 중 무엇인지 말합니다. 실패는 실패로
 남겨 그리며, 직전의 성공한 답을 그대로 두지 않습니다.

@@ -319,8 +319,16 @@ func storeUpdateSettings(t *testing.T, db *gorm.DB, check, autoInstall bool, hou
 }
 
 // runUpdateLoop runs the update loop on a tick short enough for a test, until
-// the test ends.
+// the test ends, with a data directory that holds no time of a last look.
 func runUpdateLoop(t *testing.T, clock *updateClock, db *gorm.DB, handler *api.UpdateHandler) {
+	t.Helper()
+
+	runUpdateLoopIn(t, clock, db, handler, t.TempDir())
+}
+
+// runUpdateLoopIn is runUpdateLoop with the data directory dataDir.
+func runUpdateLoopIn(t *testing.T, clock *updateClock, db *gorm.DB, handler *api.UpdateHandler,
+	dataDir string) {
 	t.Helper()
 
 	tick := updateCheckTick
@@ -338,7 +346,7 @@ func runUpdateLoop(t *testing.T, clock *updateClock, db *gorm.DB, handler *api.U
 	clock.started(t, func() {
 		go func() {
 			defer close(done)
-			runUpdateChecks(ctx, zap.NewNop(), db, handler, true)
+			runUpdateChecks(ctx, zap.NewNop(), db, handler, true, dataDir)
 		}()
 	})
 }
@@ -497,11 +505,15 @@ func TestARestartDoesNotLookAgainBeforeAnInterval(t *testing.T) {
 
 	var looks, starts atomic.Int32
 
-	check := func(context.Context, string) (install.Latest, error) {
+	// Every life of the service keeps the time of its looks where the next
+	// one reads it, as the data directory of an installation does.
+	dataDir := t.TempDir()
+
+	check := keptUpdateChecks(zap.NewNop(), dataDir, func(context.Context, string) (install.Latest, error) {
 		looks.Add(1)
 
 		return install.Latest{Tag: "v99.0.0", Newer: true, Comparable: true}, nil
-	}
+	})
 
 	installed := make(chan struct{}, 100)
 
@@ -528,7 +540,7 @@ func TestARestartDoesNotLookAgainBeforeAnInterval(t *testing.T) {
 		clock.started(t, func() {
 			go func() {
 				defer close(done)
-				runUpdateChecks(ctx, zap.NewNop(), db, handler, true)
+				runUpdateChecks(ctx, zap.NewNop(), db, handler, true, dataDir)
 			}()
 		})
 
@@ -574,6 +586,238 @@ wait:
 	if looks.Load() != 2 {
 		t.Errorf("the restarted service looked %d times in all an interval after it came up, want two",
 			looks.Load())
+	}
+}
+
+// lookingTimer is a handler whose look counts into looks and finds a newer
+// release, kept the way main keeps it, in dataDir.
+func lookingTimer(db *gorm.DB, dataDir string, looks *atomic.Int32) *api.UpdateHandler {
+	check := keptUpdateChecks(zap.NewNop(), dataDir, func(context.Context, string) (install.Latest, error) {
+		looks.Add(1)
+
+		return install.Latest{Tag: "v99.0.0", Newer: true, Comparable: true}, nil
+	})
+
+	return api.NewUpdateHandler(zap.NewNop(), db, "3.0.0", true, check, func() error { return nil })
+}
+
+// TestAStartMeasuresTheIntervalFromTheLastLook is a machine stopped every
+// night: it looked 23 hours before this start and the interval is a day. The
+// look is due an hour in. Measured from every start instead, a machine that is
+// never up for a whole interval never looked at all.
+func TestAStartMeasuresTheIntervalFromTheLastLook(t *testing.T) {
+	db := newSettingsDB(t)
+	storeUpdateSettings(t, db, true, false, 24)
+
+	var looks atomic.Int32
+
+	dataDir := t.TempDir()
+	handler := lookingTimer(db, dataDir, &looks)
+
+	clock := stopUpdateClock(t)
+	start := time.Unix(0, clock.now.Load())
+	keepUpdateCheck(zap.NewNop(), dataDir, start.Add(-23*time.Hour))
+
+	runUpdateLoopIn(t, clock, db, handler, dataDir)
+
+	clock.advance(time.Hour - time.Minute)
+	time.Sleep(100 * time.Millisecond)
+
+	if looks.Load() != 0 {
+		t.Fatalf("the loop looked %d times a minute short of a day after the last look, want none",
+			looks.Load())
+	}
+
+	clock.advance(time.Minute)
+	waitForLooks(&looks, 1)
+
+	if looks.Load() != 1 {
+		t.Fatalf("the loop looked %d times a day after the last look and an hour after the start, "+
+			"want one", looks.Load())
+	}
+
+	kept := lastUpdateCheck(zap.NewNop(), dataDir, start.Add(48*time.Hour))
+	if !kept.Equal(start.Add(time.Hour)) {
+		t.Errorf("the time kept after the look is %v, want the time of the look, %v", kept, start.Add(time.Hour))
+	}
+}
+
+// TestALastLookAheadOfTheClockIsMeasuredFromTheStart is a clock put back after
+// the last look was kept, here to an hour before it. The look is due a day
+// after the start, not a day after a time the clock has not reached.
+func TestALastLookAheadOfTheClockIsMeasuredFromTheStart(t *testing.T) {
+	db := newSettingsDB(t)
+	storeUpdateSettings(t, db, true, false, 24)
+
+	var looks atomic.Int32
+
+	dataDir := t.TempDir()
+	handler := lookingTimer(db, dataDir, &looks)
+
+	clock := stopUpdateClock(t)
+	keepUpdateCheck(zap.NewNop(), dataDir, time.Unix(0, clock.now.Load()).Add(time.Hour))
+
+	runUpdateLoopIn(t, clock, db, handler, dataDir)
+
+	clock.advance(24*time.Hour - time.Minute)
+	time.Sleep(100 * time.Millisecond)
+
+	if looks.Load() != 0 {
+		t.Fatalf("the loop looked %d times a minute short of a day after the start, want none", looks.Load())
+	}
+
+	clock.advance(time.Minute)
+	waitForLooks(&looks, 1)
+
+	if looks.Load() != 1 {
+		t.Fatalf("the loop looked %d times a day after the start, want one: the time ahead of the "+
+			"clock was measured from", looks.Load())
+	}
+}
+
+// TestLastUpdateCheckFallsBackToTheStart is every file the loop can find in
+// place of the time of the last look, and what it measures from for each.
+func TestLastUpdateCheckFallsBackToTheStart(t *testing.T) {
+	start := time.Date(2026, 1, 2, 3, 4, 5, 6, time.UTC)
+
+	cases := []struct {
+		name  string
+		write func(t *testing.T, dataDir string)
+		want  time.Time
+		said  bool
+	}{
+		{
+			name:  "no file",
+			write: func(*testing.T, string) {},
+			want:  start,
+		},
+		{
+			name: "a time before the start",
+			write: func(_ *testing.T, dataDir string) {
+				keepUpdateCheck(zap.NewNop(), dataDir, start.Add(-5*time.Hour))
+			},
+			want: start.Add(-5 * time.Hour),
+		},
+		{
+			name: "the start itself",
+			write: func(_ *testing.T, dataDir string) {
+				keepUpdateCheck(zap.NewNop(), dataDir, start)
+			},
+			want: start,
+		},
+		{
+			name: "a time after the start",
+			write: func(_ *testing.T, dataDir string) {
+				keepUpdateCheck(zap.NewNop(), dataDir, start.Add(time.Second))
+			},
+			want: start,
+			said: true,
+		},
+		{
+			name: "not a time",
+			write: func(t *testing.T, dataDir string) {
+				err := os.WriteFile(updateCheckPath(dataDir), []byte("yesterday"), 0o600)
+				if err != nil {
+					t.Fatalf("failed to write the file: %v", err)
+				}
+			},
+			want: start,
+			said: true,
+		},
+		{
+			name: "empty",
+			write: func(t *testing.T, dataDir string) {
+				err := os.WriteFile(updateCheckPath(dataDir), nil, 0o600)
+				if err != nil {
+					t.Fatalf("failed to write the file: %v", err)
+				}
+			},
+			want: start,
+			said: true,
+		},
+		{
+			name: "a directory in its place",
+			write: func(t *testing.T, dataDir string) {
+				err := os.Mkdir(updateCheckPath(dataDir), 0o700)
+				if err != nil {
+					t.Fatalf("failed to make the directory: %v", err)
+				}
+			},
+			want: start,
+			said: true,
+		},
+	}
+
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			dataDir := t.TempDir()
+			c.write(t, dataDir)
+
+			core, logs := observer.New(zap.WarnLevel)
+
+			got := lastUpdateCheck(zap.New(core), dataDir, start)
+			if !got.Equal(c.want) {
+				t.Errorf("lastUpdateCheck = %v, want %v", got, c.want)
+			}
+
+			said := logs.FilterField(logid.UpdateCheckTimeNotRead.Field()).Len() == 1
+			if said != c.said {
+				t.Errorf("a warning was said: %v, want %v (%v)", said, c.said, logs.All())
+			}
+		})
+	}
+}
+
+// TestEveryLookIsKeptWhetherItWorkedOrNot is a look that failed, which counts
+// the same as one that read a release. A restart loop with the network down
+// would otherwise make a request every time round.
+func TestEveryLookIsKeptWhetherItWorkedOrNot(t *testing.T) {
+	dataDir := t.TempDir()
+	clock := stopUpdateClock(t)
+
+	failing := keptUpdateChecks(zap.NewNop(), dataDir, func(context.Context, string) (install.Latest, error) {
+		return install.Latest{}, errors.New("the network is down")
+	})
+
+	handler := api.NewUpdateHandler(zap.NewNop(), newSettingsDB(t), "3.0.0", true, failing, func() error { return nil })
+
+	looked := time.Unix(0, clock.now.Load())
+
+	result := handler.Look(context.Background())
+	if result.Problem == "" {
+		t.Fatal("the look worked, want one that failed")
+	}
+
+	kept := lastUpdateCheck(zap.NewNop(), dataDir, looked.Add(time.Hour))
+	if !kept.Equal(looked) {
+		t.Errorf("the time kept after a look that failed is %v, want %v", kept, looked)
+	}
+
+	if runtime.GOOS != "windows" {
+		info, err := os.Stat(updateCheckPath(dataDir))
+		if err != nil {
+			t.Fatalf("failed to read the file the time is kept in: %v", err)
+		}
+
+		if info.Mode().Perm() != 0o600 {
+			t.Errorf("the file the time is kept in is %v, want -rw-------", info.Mode().Perm())
+		}
+	}
+
+	clock.advance(3 * time.Hour)
+
+	working := keptUpdateChecks(zap.NewNop(), dataDir, func(context.Context, string) (install.Latest, error) {
+		return install.Latest{Tag: "v3.0.0", Comparable: true}, nil
+	})
+
+	_, err := working(context.Background(), "3.0.0")
+	if err != nil {
+		t.Fatalf("the look failed: %v", err)
+	}
+
+	kept = lastUpdateCheck(zap.NewNop(), dataDir, looked.Add(4*time.Hour))
+	if !kept.Equal(looked.Add(3 * time.Hour)) {
+		t.Errorf("the time kept after a look that worked is %v, want %v", kept, looked.Add(3*time.Hour))
 	}
 }
 
@@ -1104,7 +1348,7 @@ func TestAnUpdateWhoseReleaseCannotBeCheckedDoesNotRestartTheService(t *testing.
 		clock.started(t, func() {
 			go func() {
 				defer close(done)
-				runUpdateChecks(ctx, zap.NewNop(), db, handler, true)
+				runUpdateChecks(ctx, zap.NewNop(), db, handler, true, t.TempDir())
 			}()
 		})
 

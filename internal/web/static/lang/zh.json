@@ -893,6 +893,8 @@
   "log.update.auto_install_starting.text": "按照设置安装新发布",
   "log.update.check_failed.text": "无法读取最新发布",
   "log.update.check_loop_started.text": "按计时查看是否有新发布",
+  "log.update.check_time_not_kept.text": "无法保存本次查看新发布的时间，重启后将从启动时开始计算间隔",
+  "log.update.check_time_not_read.text": "无法使用上次查看新发布的时间，间隔从本次启动开始计算",
   "log.update.checked.text": "已读取最新发布",
   "log.update.install_asked.text": "在设置的“更新”标签页请求了更新",
   "log.update.install_password_wrong.text": "有人用与账号不匹配的密码请求更新",

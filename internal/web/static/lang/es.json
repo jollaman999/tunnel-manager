@@ -893,6 +893,8 @@
   "log.update.auto_install_starting.text": "se instala una versión más reciente porque los ajustes lo piden",
   "log.update.check_failed.text": "no se pudo leer la versión publicada más reciente",
   "log.update.check_loop_started.text": "se busca una versión más reciente con un temporizador",
+  "log.update.check_time_not_kept.text": "no se pudo guardar la hora de esta búsqueda de una versión más reciente, así que un reinicio cuenta el intervalo desde su arranque",
+  "log.update.check_time_not_read.text": "no se pudo usar la hora de la última búsqueda de una versión más reciente, así que el intervalo se cuenta desde este arranque",
   "log.update.checked.text": "se leyó la versión publicada más reciente",
   "log.update.install_asked.text": "se pidió una actualización desde la pestaña Actualización de Ajustes",
   "log.update.install_password_wrong.text": "se pidió una actualización con una contraseña que no abre la cuenta",

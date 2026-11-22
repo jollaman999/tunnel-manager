@@ -893,6 +893,8 @@
   "log.update.auto_install_starting.text": "設定によりリリースをインストールします",
   "log.update.check_failed.text": "最新のリリースを読めませんでした",
   "log.update.check_loop_started.text": "定期的に新しいリリースを確認します",
+  "log.update.check_time_not_kept.text": "今回の新しいリリースの確認時刻を残せませんでした。再起動すると間隔は起動時から数えます",
+  "log.update.check_time_not_read.text": "前回の新しいリリースの確認時刻を使えないため、間隔は今回の起動から数えます",
   "log.update.checked.text": "最新のリリースを読みました",
   "log.update.install_asked.text": "設定の「アップデート」タブからアップデートが要求されました",
   "log.update.install_password_wrong.text": "アカウントのものと一致しないパスワードでアップデートが要求されました",

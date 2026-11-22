@@ -893,6 +893,8 @@
   "log.update.auto_install_starting.text": "सेटिंग के कहने पर नई रिलीज़ इंस्टॉल की जा रही है",
   "log.update.check_failed.text": "नवीनतम रिलीज़ पढ़ी नहीं जा सकी",
   "log.update.check_loop_started.text": "टाइमर पर नई रिलीज़ खोजी जा रही है",
+  "log.update.check_time_not_kept.text": "नई रिलीज़ की इस खोज का समय सहेजा नहीं जा सका, इसलिए पुनरारंभ पर अंतराल शुरू होने के समय से गिना जाता है",
+  "log.update.check_time_not_read.text": "नई रिलीज़ की पिछली खोज का समय उपयोग नहीं किया जा सका, इसलिए अंतराल इस शुरुआत से गिना जाता है",
   "log.update.checked.text": "नवीनतम रिलीज़ पढ़ी गई",
   "log.update.install_asked.text": "सेटिंग्स के अपडेट टैब से अपडेट माँगा गया",
   "log.update.install_password_wrong.text": "अपडेट ऐसे पासवर्ड के साथ माँगा गया जो खाता नहीं खोलता",

@@ -893,6 +893,8 @@
   "log.update.auto_install_starting.text": "설정에 따라 새 릴리즈를 설치합니다",
   "log.update.check_failed.text": "최신 릴리즈를 읽지 못했습니다",
   "log.update.check_loop_started.text": "주기적으로 새 릴리즈를 확인합니다",
+  "log.update.check_time_not_kept.text": "이번 새 릴리즈 확인 시각을 남기지 못했습니다. 재시작하면 주기를 시작 시각부터 셉니다",
+  "log.update.check_time_not_read.text": "마지막 새 릴리즈 확인 시각을 쓸 수 없어 이번 시작부터 주기를 셉니다",
   "log.update.checked.text": "최신 릴리즈를 읽었습니다",
   "log.update.install_asked.text": "설정의 업데이트 탭에서 설치를 요청했습니다",
   "log.update.install_password_wrong.text": "업데이트를 요청했는데 비밀번호가 맞지 않았습니다",
