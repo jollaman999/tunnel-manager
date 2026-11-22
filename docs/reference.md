@@ -999,18 +999,22 @@ sudo ./tunnel-manager-linux-amd64 -install -bin /opt/tunnel-manager/tunnel-manag
 
 **The binary that is installed is the latest release, and not necessarily the
 file that was run.** `-install` reads the newest release from GitHub and
-downloads the asset for this platform and architecture. When that release carries
-a `SHA256SUMS` file, the download is checked against the line for that asset, and
-a checksum that does not match stops the install rather than putting the file in
-place. Everything else - a release that cannot be read, a release with no asset
-for this platform, a download that failed - installs the executable of the
-running process instead, with the reason. Which of the two landed is in the
-report:
+downloads the asset for this platform and architecture. First it checks
+`SHA256SUMS.sig`, the signature of the release's `SHA256SUMS`, against the
+release key the program carries, and only then reads the line for that asset
+out of `SHA256SUMS` and checks the download against it. A signature that does
+not match stops the install before the asset is downloaded at all, and a
+checksum that does not match stops it rather than putting the file in place.
+Everything else - a release that cannot be read, a release with no asset for
+this platform, a release with no `SHA256SUMS` or no `SHA256SUMS.sig`, which is
+what releases made before the checksums were signed look like, a download that
+failed - installs the executable of the running process instead, with the
+reason. Which of the two landed is in the report:
 
 ```text
 tunnel-manager install
   executable    /usr/local/bin/tunnel-manager
-  taken from    the v3.5.1 release, checksum verified
+  taken from    the v3.5.1 release, signature and checksum verified
   md5 before    no file was there
   md5 after     0b7f4b1c9d2e5a6f8c3d1e4b7a9f2c5d
   data          /var/lib/tunnel-manager
@@ -1955,7 +1959,12 @@ every tunnel.
 run again as a process of its own, with the flag. A process cannot replace its
 own file and then run itself again, so the work is handed to one that has not.
 The release is downloaded, checked against the `SHA256SUMS` the release
-publishes, put in place, and the service manager restarts the service.
+publishes once the signature over that file has been checked, put in place, and
+the service manager restarts the service. A release whose signature does not
+match stops the install. One made before releases were signed, which carries no
+`SHA256SUMS.sig`, is not installed either: the executable that is already
+running is installed in its place, so the service comes back on the version it
+had.
 
 **The answer says the install started and never that it finished.** The process
 that would report the end is the one being restarted. The screen says so and

@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"crypto/ed25519"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -32,6 +33,37 @@ const latestReleaseURL = "https://api.github.com/repos/jollaman999/tunnel-manage
 // binaries (Makefile, release target). Releases made before that target existed
 // do not carry it.
 const sha256SumsAsset = "SHA256SUMS"
+
+// signatureAsset is the ed25519 signature of SHA256SUMS, made over every byte of
+// that file with the key whose public half is releaseKeyBytes (Makefile, release
+// target, through tools/releasesign). Releases made before the build signed
+// anything do not carry it.
+const signatureAsset = sha256SumsAsset + ".sig"
+
+// releaseKeyBytes is the public half of the key releases are signed with, as
+// the 32 raw bytes ed25519 works on.
+//
+// It is what makes SHA256SUMS worth reading. The checksums and the binaries come
+// from the same place, so whoever can change one file of a release can change
+// both, and a checksum that matches says only that the two agree. A signature
+// is something only the holder of the private key can make, and the key is not
+// kept anywhere a release is.
+const releaseKeyBytes = "\xe7\xb4\x2c\x34\x52\x62\x74\xe4" +
+	"\xb6\x9d\xc3\x1c\x9c\x15\x38\x9c" +
+	"\x08\x96\xbe\xec\x3e\x33\x5f\x8c" +
+	"\xf5\x42\xac\x22\x37\x6c\xbc\xbc"
+
+// releaseKey is the key a signature is checked against. It is a variable so the
+// tests can sign their fake releases with a key of their own; nothing else may
+// write to it, because what it holds decides whose releases get installed.
+var releaseKey = ed25519.PublicKey(releaseKeyBytes)
+
+// ReleasePublicKey is the key releases are checked against, for the tool that
+// signs them to hold its private key up to. It is a fresh copy of the constant
+// on every call, so nothing a caller does to it reaches the key Fetch checks.
+func ReleasePublicKey() ed25519.PublicKey {
+	return ed25519.PublicKey([]byte(releaseKeyBytes))
+}
 
 // fetchTimeout bounds the whole of Fetch: reading the release, the checksums
 // and the binary together.
@@ -66,9 +98,15 @@ var retryWaits = []time.Duration{2 * time.Second, 5 * time.Second, 10 * time.Sec
 // cap, a body that never ends fills the disk the install is staged on. The
 // binary is around fifteen megabytes and the two text files are a few kilobytes,
 // so both caps are far above anything a real release carries.
+//
+// maxSignatureBytes is the same cap for the signature, which is sixty-four
+// bytes. It is not exactly that, so that a file of the wrong length is read and
+// refused as a signature that does not match, rather than cut off as a read
+// that failed, which would send the install to the fallback instead.
 const (
-	maxAssetBytes = 256 << 20
-	maxMetaBytes  = 4 << 20
+	maxAssetBytes     = 256 << 20
+	maxMetaBytes      = 4 << 20
+	maxSignatureBytes = 4 << 10
 )
 
 // sha256HexLen is how long a SHA-256 digest is when written as hex. A line of
@@ -94,7 +132,7 @@ type Fetched struct {
 	Path     string // a file on disk, ready to be copied into place
 	Source   Source
 	Tag      string // the release tag, empty when Source is SourceRunning
-	Verified bool   // true when a SHA256SUMS entry matched
+	Verified bool   // true when SHA256SUMS carried the release signature and its entry matched
 	Why      string // why the release was not used, empty when it was
 	cleanup  func()
 }
@@ -122,14 +160,15 @@ func (f *Fetched) Close() {
 // the process holds a binary that works, and refusing to install because GitHub
 // could not be reached would be a worse answer than installing what is running.
 //
-// A checksum that does not match is the one case that is an error. There the
-// release was read and the file it named hashes to something else, and putting
-// that file in place would be installing content nobody published.
+// A signature or a checksum that does not match is the one case that is an
+// error. There the release was read and either its checksums were not signed
+// with the release key or the file they named hashes to something else, and
+// putting that file in place would be installing content nobody published.
 //
-// A release that publishes no checksums at all, or none for this platform's
-// file, ends on the fallback too. Without them there is nothing that tells the
-// published file apart from whatever answered the request, and an install has
-// to know what it is putting in place.
+// A release that publishes no checksums at all, no signature over them, or no
+// checksum for this platform's file, ends on the fallback too. Without them
+// there is nothing that tells the published file apart from whatever answered
+// the request, and an install has to know what it is putting in place.
 //
 // dir is where a downloaded file is put. Close removes what was written into
 // it; the directory itself belongs to the caller that made it.
@@ -180,6 +219,33 @@ func fetchFrom(ctx context.Context, dir string, latestURL string) (*Fetched, err
 		return runningExecutable(fmt.Sprintf("the %s of release %s could not be read: %v", sha256SumsAsset, latest.TagName, err))
 	}
 
+	// The signature is checked before anything in the checksums is believed.
+	// Until then they are only what the release says about itself, and the same
+	// hands that could swap the binary could have written them to match.
+	sig := latest.asset(signatureAsset)
+	if sig == nil {
+		// Releases made before the build signed SHA256SUMS are what land here,
+		// and they are taken the way a release without SHA256SUMS is: nothing
+		// says the checksums are the ones that were published, so the executable
+		// this process is already running, which was checked when it was put in
+		// place, is installed instead.
+		return runningExecutable(fmt.Sprintf("release %s carries no %s", latest.TagName, signatureAsset))
+	}
+
+	signature, err := readBody(ctx, client, sig.BrowserDownloadURL, maxSignatureBytes)
+	if err != nil {
+		return runningExecutable(fmt.Sprintf("the %s of release %s could not be read: %v", signatureAsset, latest.TagName, err))
+	}
+
+	if !ed25519.Verify(releaseKey, body, signature) {
+		// The release carries a signature and it is not one the release key
+		// made over these checksums. Either the checksums or the signature were
+		// changed after the release was signed, and the binary is not fetched
+		// at all: there is nothing left that says what it should be.
+		return nil, fmt.Errorf("the %s of release %s is not signed by the release key: its %s does not match it",
+			sha256SumsAsset, latest.TagName, signatureAsset)
+	}
+
 	want := sumFor(body, name)
 	if want == "" {
 		// The release publishes checksums and this file is not among them.
@@ -209,9 +275,9 @@ func fetchFrom(ctx context.Context, dir string, latestURL string) (*Fetched, err
 			name, latest.TagName, got, sha256SumsAsset, want)
 	}
 
-	// The download got here only by hashing to what the release said it would,
-	// because the paths where there was nothing to compare it against all left
-	// on the fallback above.
+	// The download got here only by hashing to what the signed checksums said
+	// it would, because the paths where there was nothing to compare it against
+	// all left on the fallback above.
 	return &Fetched{
 		Path:     path,
 		Source:   SourceRelease,

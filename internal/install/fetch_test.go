@@ -3,7 +3,10 @@ package install
 import (
 	"bytes"
 	"context"
+	"crypto/ed25519"
 	"crypto/sha256"
+	"crypto/x509"
+	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
@@ -28,10 +31,17 @@ import (
 // the loopback address over plain http, which is what the rule on every address
 // turns away; the rule itself still decides every address that is not one of
 // those, so an address a test puts in a release document meets the real thing.
+//
+// And it puts the public half of testSigningKey where the release key goes, so
+// that the fake releases can carry a signature the way a real one does. The
+// private half of the real key is nowhere a test can reach, which is the point
+// of it.
 func TestMain(m *testing.M) {
 	retryWaits = []time.Duration{time.Millisecond, time.Millisecond, time.Millisecond, time.Millisecond}
 
 	checkTarget = allowLoopback
+
+	releaseKey = testSigningKey.Public().(ed25519.PublicKey)
 
 	os.Exit(m.Run())
 }
@@ -82,6 +92,20 @@ func onlyThisServer(t *testing.T, serverURL string) {
 // disk is this and that its hash is what SHA256SUMS is written from.
 var testBinary = []byte("#!/bin/sh\necho a release binary\n")
 
+// testSigningKey signs the fake releases in place of the release key, and
+// otherSigningKey is a key that is not the one an install checks against. Both
+// come from fixed seeds so a failure reads the same on every run.
+var (
+	testSigningKey  = ed25519.NewKeyFromSeed(bytes.Repeat([]byte{1}, ed25519.SeedSize))
+	otherSigningKey = ed25519.NewKeyFromSeed(bytes.Repeat([]byte{2}, ed25519.SeedSize))
+)
+
+// signed is the release signature of sums, the file the release build writes
+// beside them as SHA256SUMS.sig.
+func signed(sums []byte) []byte {
+	return ed25519.Sign(testSigningKey, sums)
+}
+
 // fakeRelease stands in for the release API. It answers the latest release with
 // the assets it is given and serves each of them, so a test drives Fetch the
 // whole way through without a real network.
@@ -91,11 +115,23 @@ var testBinary = []byte("#!/bin/sh\necho a release binary\n")
 func fakeRelease(t *testing.T, tag string, assets map[string][]byte) string {
 	t.Helper()
 
+	url, _ := countedRelease(t, tag, assets)
+
+	return url
+}
+
+// countedRelease is fakeRelease that also says how many times each asset was
+// asked for, which is how a test tells a binary that was never fetched from
+// one that was fetched and then thrown away.
+func countedRelease(t *testing.T, tag string, assets map[string][]byte) (string, func(name string) int32) {
+	t.Helper()
+
 	mux := http.NewServeMux()
 	server := httptest.NewServer(mux)
 	t.Cleanup(server.Close)
 
 	info := releaseInfo{TagName: tag}
+	asked := make(map[string]*atomic.Int32)
 
 	for name, body := range assets {
 		info.Assets = append(info.Assets, releaseAsset{
@@ -103,7 +139,11 @@ func fakeRelease(t *testing.T, tag string, assets map[string][]byte) string {
 			BrowserDownloadURL: server.URL + "/download/" + name,
 		})
 
+		count := new(atomic.Int32)
+		asked[name] = count
+
 		mux.HandleFunc("/download/"+name, func(w http.ResponseWriter, _ *http.Request) {
+			count.Add(1)
 			_, _ = w.Write(body)
 		})
 	}
@@ -117,7 +157,16 @@ func fakeRelease(t *testing.T, tag string, assets map[string][]byte) string {
 		}
 	})
 
-	return server.URL + "/releases/latest"
+	times := func(name string) int32 {
+		count, ok := asked[name]
+		if !ok {
+			return 0
+		}
+
+		return count.Load()
+	}
+
+	return server.URL + "/releases/latest", times
 }
 
 // platformAsset is the name the release carries for the platform the tests run
@@ -148,6 +197,7 @@ func TestFetchTakesTheReleaseWhenTheChecksumMatches(t *testing.T) {
 	url := fakeRelease(t, "v9.9.9", map[string][]byte{
 		name:            testBinary,
 		sha256SumsAsset: sums,
+		signatureAsset:  signed(sums),
 	})
 
 	dir := t.TempDir()
@@ -159,11 +209,11 @@ func TestFetchTakesTheReleaseWhenTheChecksumMatches(t *testing.T) {
 	defer fetched.Close()
 
 	if fetched.Source != SourceRelease {
-		t.Errorf("source = %v, want SourceRelease", fetched.Source)
+		t.Fatalf("source = %v, want SourceRelease. Why: %s", fetched.Source, fetched.Why)
 	}
 
 	if !fetched.Verified {
-		t.Error("the checksum matched, so Verified should be true")
+		t.Error("the signature and the checksum matched, so Verified should be true")
 	}
 
 	if fetched.Tag != "v9.9.9" {
@@ -271,9 +321,12 @@ func TestFetchFallsBackWhenTheReleaseHasNoChecksumFile(t *testing.T) {
 func TestFetchFailsWhenTheChecksumDoesNotMatch(t *testing.T) {
 	name := platformAsset(t)
 
+	sums := sha256Line([]byte("a different binary"), name)
+
 	url := fakeRelease(t, "v9.9.9", map[string][]byte{
 		name:            testBinary,
-		sha256SumsAsset: sha256Line([]byte("a different binary"), name),
+		sha256SumsAsset: sums,
+		signatureAsset:  signed(sums),
 	})
 
 	dir := t.TempDir()
@@ -302,6 +355,213 @@ func TestFetchFailsWhenTheChecksumDoesNotMatch(t *testing.T) {
 
 	if len(left) != 0 {
 		t.Errorf("the download that failed its checksum was left behind: %v", left[0].Name())
+	}
+}
+
+// TestFetchFallsBackWhenTheReleaseHasNoSignature is a release published before
+// the build signed SHA256SUMS. Its checksums are only what the release says
+// about itself, so it is taken the way a release with no checksums is: the
+// running executable is installed and the binary is never asked for.
+func TestFetchFallsBackWhenTheReleaseHasNoSignature(t *testing.T) {
+	name := platformAsset(t)
+
+	url, asked := countedRelease(t, "v3.6.1", map[string][]byte{
+		name:            testBinary,
+		sha256SumsAsset: sha256Line(testBinary, name),
+	})
+
+	dir := t.TempDir()
+
+	fetched, err := fetchFrom(context.Background(), dir, url)
+	if err != nil {
+		t.Fatalf("a release without a signature is not an error: %v", err)
+	}
+	defer fetched.Close()
+
+	if fetched.Source != SourceRunning {
+		t.Fatalf("source = %v, want SourceRunning. Why: %s", fetched.Source, fetched.Why)
+	}
+
+	if fetched.Verified {
+		t.Error("nothing was signed, so Verified should be false")
+	}
+
+	if !strings.Contains(fetched.Why, signatureAsset) {
+		t.Errorf("Why should name the file the release is missing, got %q", fetched.Why)
+	}
+
+	if got := asked(name); got != 0 {
+		t.Errorf("the binary was asked for %d times, want 0", got)
+	}
+
+	left, err := os.ReadDir(dir)
+	if err != nil {
+		t.Fatalf("read the staging directory: %v", err)
+	}
+
+	if len(left) != 0 {
+		t.Errorf("the release was downloaded although its checksums were not signed: %v", left[0].Name())
+	}
+}
+
+// TestFetchFallsBackWhenTheSignatureCannotBeRead is a release that names a
+// signature the server will not hand over. That is the network failing and not
+// the release lying, so it ends where a SHA256SUMS that cannot be read does.
+func TestFetchFallsBackWhenTheSignatureCannotBeRead(t *testing.T) {
+	name := platformAsset(t)
+	sums := sha256Line(testBinary, name)
+
+	mux := http.NewServeMux()
+	server := httptest.NewServer(mux)
+	t.Cleanup(server.Close)
+
+	info := releaseInfo{TagName: "v9.9.9", Assets: []releaseAsset{
+		{Name: name, BrowserDownloadURL: server.URL + "/download/" + name},
+		{Name: sha256SumsAsset, BrowserDownloadURL: server.URL + "/download/" + sha256SumsAsset},
+		{Name: signatureAsset, BrowserDownloadURL: server.URL + "/download/" + signatureAsset},
+	}}
+
+	var binaryAsked atomic.Int32
+
+	mux.HandleFunc("/releases/latest", func(w http.ResponseWriter, _ *http.Request) {
+		_ = json.NewEncoder(w).Encode(info)
+	})
+
+	mux.HandleFunc("/download/"+name, func(w http.ResponseWriter, _ *http.Request) {
+		binaryAsked.Add(1)
+		_, _ = w.Write(testBinary)
+	})
+
+	mux.HandleFunc("/download/"+sha256SumsAsset, func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write(sums)
+	})
+
+	mux.HandleFunc("/download/"+signatureAsset, func(w http.ResponseWriter, r *http.Request) {
+		http.NotFound(w, r)
+	})
+
+	fetched, err := fetchFrom(context.Background(), t.TempDir(), server.URL+"/releases/latest")
+	if err != nil {
+		t.Fatalf("a signature that cannot be read is not an error: %v", err)
+	}
+	defer fetched.Close()
+
+	if fetched.Source != SourceRunning {
+		t.Fatalf("source = %v, want SourceRunning. Why: %s", fetched.Source, fetched.Why)
+	}
+
+	if !strings.Contains(fetched.Why, signatureAsset) || !strings.Contains(fetched.Why, "404") {
+		t.Errorf("Why should name the signature and what the server said, got %q", fetched.Why)
+	}
+
+	if got := binaryAsked.Load(); got != 0 {
+		t.Errorf("the binary was asked for %d times, want 0", got)
+	}
+}
+
+// TestFetchFailsWhenTheSignatureDoesNotMatch is the release somebody changed
+// after it was signed. In each case the checksums agree with the binary, which
+// is all a release without a signature could be held to; what gives it away is
+// the signature alone, and that has to stop the install before the binary is
+// even asked for.
+func TestFetchFailsWhenTheSignatureDoesNotMatch(t *testing.T) {
+	name := platformAsset(t)
+	sums := sha256Line(testBinary, name)
+
+	flipped := signed(sums)
+	flipped[10] ^= 0x01
+
+	cases := []struct {
+		name      string
+		signature []byte
+	}{
+		{"checksums changed after they were signed", signed(sha256Line([]byte("the binary that was released"), name))},
+		{"signed with a key that is not the release key", ed25519.Sign(otherSigningKey, sums)},
+		{"a signature with one bit turned", flipped},
+		{"a file that is not a signature at all", []byte("not a signature\n")},
+		{"an empty file", []byte{}},
+	}
+
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			url, asked := countedRelease(t, "v9.9.9", map[string][]byte{
+				name:            testBinary,
+				sha256SumsAsset: sums,
+				signatureAsset:  c.signature,
+			})
+
+			dir := t.TempDir()
+
+			fetched, err := fetchFrom(context.Background(), dir, url)
+			if err == nil {
+				source := fetched.Source
+				fetched.Close()
+				t.Fatalf("a signature the release key did not make has to be an error, got source %v", source)
+			}
+
+			// Falling back here would install the running executable and call
+			// the install a success, with nobody told that the release they
+			// asked for was changed after it was signed.
+			if fetched != nil {
+				t.Errorf("a bad signature must not fall back, got source %v", fetched.Source)
+			}
+
+			if !strings.Contains(err.Error(), signatureAsset) {
+				t.Errorf("the error should name the signature, got %v", err)
+			}
+
+			if got := asked(name); got != 0 {
+				t.Errorf("the binary was asked for %d times, want 0", got)
+			}
+
+			left, err := os.ReadDir(dir)
+			if err != nil {
+				t.Fatalf("read the staging directory: %v", err)
+			}
+
+			if len(left) != 0 {
+				t.Errorf("something was downloaded for a release whose signature failed: %v", left[0].Name())
+			}
+		})
+	}
+}
+
+// TestReleaseKeyIsTheOnePublished holds the raw bytes in the program to the
+// release key as it is published, in the form openssl writes a public key. The
+// bytes were copied out of that by hand, and a byte copied wrong is every
+// release refused.
+//
+// It reads the constant through ReleasePublicKey and not releaseKey, which
+// TestMain has pointed at the tests' own key.
+func TestReleaseKeyIsTheOnePublished(t *testing.T) {
+	const published = "MCowBQYDK2VwAyEA57QsNFJidOS2ncMcnBU4nAiWvuw+M1+M9UKsIjdsvLw="
+
+	der, err := base64.StdEncoding.DecodeString(published)
+	if err != nil {
+		t.Fatalf("decode the published key: %v", err)
+	}
+
+	parsed, err := x509.ParsePKIXPublicKey(der)
+	if err != nil {
+		t.Fatalf("parse the published key: %v", err)
+	}
+
+	want, ok := parsed.(ed25519.PublicKey)
+	if !ok {
+		t.Fatalf("the published key is a %T, want an ed25519 key", parsed)
+	}
+
+	got := ReleasePublicKey()
+	if !got.Equal(want) {
+		t.Errorf("the key in the program is %x, the published key is %x", []byte(got), []byte(want))
+	}
+
+	// A caller that writes into what it was handed must not reach the key the
+	// next caller gets.
+	got[0] ^= 0xff
+
+	if !ReleasePublicKey().Equal(want) {
+		t.Error("changing the key ReleasePublicKey returned changed the key it returns next")
 	}
 }
 
@@ -395,9 +655,12 @@ func TestFetchFallsBackWhenTheReleaseHasNoAssetForThisPlatform(t *testing.T) {
 func TestFetchFallsBackWhenTheChecksumsDoNotListTheAsset(t *testing.T) {
 	name := platformAsset(t)
 
+	sums := sha256Line(testBinary, "tunnel-manager-some-other-platform")
+
 	url := fakeRelease(t, "v9.9.9", map[string][]byte{
 		name:            testBinary,
-		sha256SumsAsset: sha256Line(testBinary, "tunnel-manager-some-other-platform"),
+		sha256SumsAsset: sums,
+		signatureAsset:  signed(sums),
 	})
 
 	fetched, err := fetchFrom(context.Background(), t.TempDir(), url)
@@ -410,7 +673,7 @@ func TestFetchFallsBackWhenTheChecksumsDoNotListTheAsset(t *testing.T) {
 		t.Errorf("source = %v, want SourceRunning", fetched.Source)
 	}
 
-	if !strings.Contains(fetched.Why, sha256SumsAsset) {
+	if !strings.Contains(fetched.Why, "lists no checksum") {
 		t.Errorf("Why should say the checksums did not list it, got %q", fetched.Why)
 	}
 }
@@ -432,6 +695,7 @@ func TestFetchRetriesAServerThatIsBusy(t *testing.T) {
 	info := releaseInfo{TagName: "v9.9.9", Assets: []releaseAsset{
 		{Name: name, BrowserDownloadURL: server.URL + "/download/" + name},
 		{Name: sha256SumsAsset, BrowserDownloadURL: server.URL + "/download/" + sha256SumsAsset},
+		{Name: signatureAsset, BrowserDownloadURL: server.URL + "/download/" + signatureAsset},
 	}}
 
 	mux.HandleFunc("/releases/latest", func(w http.ResponseWriter, _ *http.Request) {
@@ -440,6 +704,10 @@ func TestFetchRetriesAServerThatIsBusy(t *testing.T) {
 
 	mux.HandleFunc("/download/"+name, func(w http.ResponseWriter, _ *http.Request) {
 		_, _ = w.Write(testBinary)
+	})
+
+	mux.HandleFunc("/download/"+signatureAsset, func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write(signed(sums))
 	})
 
 	// The checksums are what the CDN is behind on. The first two asks get the
@@ -817,9 +1085,12 @@ func TestFetchFallsBackWhenTheReleaseNamesAnAssetOffGitHub(t *testing.T) {
 	server := httptest.NewServer(mux)
 	t.Cleanup(server.Close)
 
+	sums := sha256Line(testBinary, name)
+
 	info := releaseInfo{TagName: "v9.9.9", Assets: []releaseAsset{
 		{Name: name, BrowserDownloadURL: "https://example.com/download/" + name},
 		{Name: sha256SumsAsset, BrowserDownloadURL: server.URL + "/download/" + sha256SumsAsset},
+		{Name: signatureAsset, BrowserDownloadURL: server.URL + "/download/" + signatureAsset},
 	}}
 
 	mux.HandleFunc("/releases/latest", func(w http.ResponseWriter, _ *http.Request) {
@@ -827,7 +1098,11 @@ func TestFetchFallsBackWhenTheReleaseNamesAnAssetOffGitHub(t *testing.T) {
 	})
 
 	mux.HandleFunc("/download/"+sha256SumsAsset, func(w http.ResponseWriter, _ *http.Request) {
-		_, _ = w.Write(sha256Line(testBinary, name))
+		_, _ = w.Write(sums)
+	})
+
+	mux.HandleFunc("/download/"+signatureAsset, func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write(signed(sums))
 	})
 
 	onlyThisServer(t, server.URL)

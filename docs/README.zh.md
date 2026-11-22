@@ -188,9 +188,10 @@ sudo ./tunnel-manager-linux-amd64 -install
 | macOS | `/usr/local/bin/tunnel-manager` | `/Library/Application Support/tunnel-manager/` |
 | Windows | `C:\Program Files\tunnel-manager\tunnel-manager.exe` | `C:\ProgramData\tunnel-manager\` |
 
-**装上去的是最新的发布版本**，从 GitHub 下载；这个发布版本带 `SHA256SUMS` 的话，下载下来的
-文件会拿里面的校验和核对。连不上发布页面也不算失败：那时改装当前运行的这个文件，报告里会说
-装上的是哪一个。
+**装上去的是最新的发布版本**，从 GitHub 下载；先用程序里带的发布公钥核对这个发布版本
+`SHA256SUMS` 的签名（`SHA256SUMS.sig`），再拿里面的校验和核对下载下来的文件。签名或校验和对不上，
+安装到此为止。连不上发布页面、或是开始签名之前做的发布版本，都不算失败：那时改装当前运行的这个
+文件，报告里会说装上的是哪一个。
 
 `sudo tunnel-manager -uninstall` 把它撤掉：停掉服务，删掉注册，删掉装上去的可执行文件。
 **数据保留**，报告里会说留在哪里。要把数据目录也删掉就加 `-purge`，`-purge` 删掉的东西拿不

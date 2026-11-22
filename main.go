@@ -1557,11 +1557,13 @@ func installSource(fetched *install.Fetched) string {
 	}
 
 	// A release that reaches here was checked against the SHA256SUMS of the
-	// release. Fetch leaves on the fallback above whenever there was nothing
-	// to check the download against - a release without that file, or without
-	// an entry for this one in it - so a binary that came from a release is
-	// one whose checksum matched.
-	return "the " + fetched.Tag + " release, checksum verified"
+	// release, and that file against the signature the release key made over
+	// it. Fetch leaves on the fallback above whenever there was nothing to check
+	// the download against - a release without that file, without its
+	// signature, or without an entry for this one in it - and stops with an
+	// error when either does not match, so a binary that came from a release is
+	// one whose signature and checksum matched.
+	return "the " + fetched.Tag + " release, signature and checksum verified"
 }
 
 // usage is what -help prints and what an unknown flag prints. It says where the

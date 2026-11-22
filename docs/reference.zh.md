@@ -769,15 +769,17 @@ sudo ./tunnel-manager-linux-amd64 -install -bin /opt/tunnel-manager/tunnel-manag
 ```
 
 **装上去的是最新的发布版本，不一定是刚才运行的那个文件。** `-install` 从 GitHub 读取最新的
-发布版本，下载对应这个平台和架构的文件。这个发布版本带 `SHA256SUMS` 的话，下载下来的文件会
-和里面对应的那一行核对，校验和对不上就不放文件，安装到此为止。其余情况 - 读不到发布版本、
-发布版本里没有这个平台的文件、下载失败 - 都改装当前运行的这个文件，并把原因一起打印出来。
-装上的是哪一个，报告里写着：
+发布版本，下载对应这个平台和架构的文件。它先用程序里带的发布公钥核对 `SHA256SUMS.sig`，也就是
+这个发布版本的 `SHA256SUMS` 的签名，之后才从 `SHA256SUMS` 里读出这个文件对应的那一行，拿来和
+下载下来的文件核对。签名对不上，连文件都不下载，安装到此为止；校验和对不上，就不放文件，安装
+到此为止。其余情况 - 读不到发布版本、发布版本里没有这个平台的文件、发布版本里没有 `SHA256SUMS`
+或 `SHA256SUMS.sig`（开始给校验和签名之前做的发布版本就是这样）、下载失败 - 都改装当前运行的
+这个文件，并把原因一起打印出来。装上的是哪一个，报告里写着：
 
 ```text
 tunnel-manager install
   executable    /usr/local/bin/tunnel-manager
-  taken from    the v3.5.1 release, checksum verified
+  taken from    the v3.5.1 release, signature and checksum verified
   md5 before    no file was there
   md5 after     0b7f4b1c9d2e5a6f8c3d1e4b7a9f2c5d
   data          /var/lib/tunnel-manager
@@ -1499,7 +1501,9 @@ fatal  failed to read the settings  {"error": "the stored settings are refused: 
 
 **它与 `-install` 所做的是同一件事，实际上它就是 `-install`。** 本程序会作为独立进程再次启动，并
 带上该标志。一个进程无法在替换掉自己的文件之后再启动自己，所以这项工作交给一个尚未被替换的进程。
-发布会被下载、与发布公布的 `SHA256SUMS` 比对、放到位，然后由服务管理器重启服务。
+发布会被下载、与核对过签名的发布 `SHA256SUMS` 比对、放到位，然后由服务管理器重启服务。签名对不上
+的发布版本，安装到此为止。开始签名之前做的发布版本，也就是没有 `SHA256SUMS.sig` 的，也不会装上：
+那时装到原位的是当前运行的这个文件，服务回来时还是原来的版本。
 
 **响应只说安装已开始，绝不说已完成。** 本该报告结束的那个进程，正是被重启的那个。页面会这样说明，
 并提示在服务回来之后重新打开页面：角落里的版本才是真正生效的那个。

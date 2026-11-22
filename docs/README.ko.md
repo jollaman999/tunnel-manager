@@ -205,9 +205,11 @@ Windows 에서는 **관리자 권한으로 실행**한 PowerShell 이나 명령 
 | macOS | `/usr/local/bin/tunnel-manager` | `/Library/Application Support/tunnel-manager/` |
 | Windows | `C:\Program Files\tunnel-manager\tunnel-manager.exe` | `C:\ProgramData\tunnel-manager\` |
 
-**설치되는 바이너리는 최신 릴리즈입니다.** GitHub 에서 내려받고, 그 릴리즈에 `SHA256SUMS` 가
-들어 있으면 내려받은 파일을 그 체크섬으로 검증합니다. 릴리즈에 접속하지 못해도 실패로 끝나지
-않습니다. 그때는 방금 실행한 파일을 대신 설치하고, 둘 중 무엇이 설치됐는지 보고에 찍습니다.
+**설치되는 바이너리는 최신 릴리즈입니다.** GitHub 에서 내려받고, 그 릴리즈의 `SHA256SUMS` 에
+대한 서명(`SHA256SUMS.sig`)을 프로그램에 든 릴리즈 공개키로 확인한 뒤 내려받은 파일을 그
+체크섬으로 검증합니다. 서명이나 체크섬이 맞지 않으면 설치를 멈춥니다. 릴리즈에 접속하지 못했거나
+서명하기 전에 만든 릴리즈여도 실패로 끝나지 않습니다. 그때는 방금 실행한 파일을 대신 설치하고,
+둘 중 무엇이 설치됐는지 보고에 찍습니다.
 
 `sudo tunnel-manager -uninstall` 이 다시 걷어냅니다. 서비스를 멈추고, 등록을 지우고, 설치된
 실행 파일을 지웁니다. **데이터는 남깁니다.** 어디에 남았는지는 보고에 나옵니다. 데이터

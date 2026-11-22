@@ -239,9 +239,12 @@ started with **Run as administrator**:
 | Windows | `C:\Program Files\tunnel-manager\tunnel-manager.exe` | `C:\ProgramData\tunnel-manager\` |
 
 **What is installed is the latest release**, downloaded from GitHub and checked
-against the `SHA256SUMS` of that release when the release carries one. A release
-that cannot be reached is not a failure: the executable that was run is installed
-instead, and the report says which of the two landed.
+against the `SHA256SUMS` of that release, once the signature over that file
+(`SHA256SUMS.sig`) has been checked against the release key the program
+carries. A signature or a checksum that does not match stops the install. A
+release that cannot be reached, or one made before releases were signed, is not
+a failure: the executable that was run is installed instead, and the report says
+which of the two landed.
 
 `sudo tunnel-manager -uninstall` takes it away again. The service is stopped, the
 registration goes and the installed executable is removed. **The data is kept**,
