@@ -307,6 +307,16 @@ func TestLaunchctlCommands(t *testing.T) {
 			got:  printArgs(),
 			want: []string{"print", "system/io.github.jollaman999.tunnel-manager"},
 		},
+		{
+			name: "Register enables the job a web uninstall disabled",
+			got:  enableArgs(),
+			want: []string{"enable", "system/io.github.jollaman999.tunnel-manager"},
+		},
+		{
+			name: "the uninstall on the Settings screen disables the job and does not boot it out",
+			got:  disableArgs(),
+			want: []string{"disable", "system/io.github.jollaman999.tunnel-manager"},
+		},
 	}
 
 	for _, c := range cases {

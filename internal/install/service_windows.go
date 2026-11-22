@@ -68,6 +68,7 @@ const (
 
 func init() {
 	newService = newSCMService
+	startedByServiceManager = svc.IsWindowsService
 }
 
 // scmService registers the service with the Windows service control manager.
@@ -326,6 +327,77 @@ func (scmService) Stop() error {
 	}
 
 	return awaitState(opened.service, svc.Stopped)
+}
+
+// ServicePID answers the process id the SCM reports for the service, which it
+// reports as 0 while the service is not running. A service that is not
+// registered is not running either.
+func (scmService) ServicePID() (int, error) {
+	opened, err := openService()
+
+	switch {
+	case errors.Is(err, ErrNotInstalled):
+		return 0, nil
+	case err != nil:
+		return 0, err
+	}
+
+	defer opened.close()
+
+	status, err := opened.service.Query()
+	if err != nil {
+		return 0, fmt.Errorf("failed to read the state of the %s service: %w", serviceName, err)
+	}
+
+	return int(status.ProcessId), nil
+}
+
+// DisableAtBoot sets the start type of the service to disabled and changes
+// nothing else about it.
+//
+// ChangeServiceConfig is called straight rather than through UpdateConfig,
+// which takes a whole configuration and writes every field of it back. A
+// disabled service that is running goes on running: the start type is read
+// when something asks the SCM to start the service, and the process asking is
+// the service, which ends a moment later and is reported to the SCM as having
+// stopped. Register writes the automatic start back. (The documented behaviour
+// of ChangeServiceConfig, not run on Windows.)
+func (scmService) DisableAtBoot() error {
+	opened, err := openService()
+	if err != nil {
+		return err
+	}
+
+	defer opened.close()
+
+	change := disabledAtBoot()
+
+	err = windows.ChangeServiceConfig(opened.service.Handle, change.serviceType, change.startType,
+		change.errorControl, nil, nil, nil, nil, nil, nil, nil)
+	if err != nil {
+		return fmt.Errorf("failed to set the start type of the %s service to disabled: %w", serviceName, err)
+	}
+
+	return nil
+}
+
+// startTypeChange is the three numbers ChangeServiceConfig is handed ahead of
+// its strings, which are all left out (nil) here.
+type startTypeChange struct {
+	serviceType  uint32
+	startType    uint32
+	errorControl uint32
+}
+
+// disabledAtBoot is what DisableAtBoot hands ChangeServiceConfig, apart so
+// that a test holds it without an SCM. SERVICE_NO_CHANGE is how that call is
+// told to leave a number as it is.
+func disabledAtBoot() startTypeChange {
+	return startTypeChange{
+		serviceType:  windows.SERVICE_NO_CHANGE,
+		startType:    windows.SERVICE_DISABLED,
+		errorControl: windows.SERVICE_NO_CHANGE,
+	}
 }
 
 // awaitState polls the service until it reports want.

@@ -2,6 +2,7 @@ package api
 
 import (
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -144,6 +145,16 @@ type uninstallSteps struct {
 	// the step ran.
 	fileWasThere []bool
 	databaseFile string
+	// isService and disableErr are what turning off the start at boot of the
+	// service answers.
+	isService  bool
+	disableErr error
+}
+
+func (s *uninstallSteps) disableService() (bool, error) {
+	s.record("disable")
+
+	return s.isService, s.disableErr
 }
 
 func (s *uninstallSteps) record(name string) {
@@ -222,14 +233,14 @@ func newUninstallHandler(t *testing.T, inst *installation) (*UninstallHandler, *
 	writeFile(t, inst.paths.DatabaseFile+"-wal")
 	writeFile(t, inst.paths.DatabaseFile+"-shm")
 
-	steps := &uninstallSteps{databaseFile: inst.paths.DatabaseFile}
+	steps := &uninstallSteps{databaseFile: inst.paths.DatabaseFile, isService: true}
 	exited := make(chan struct{})
 
 	h := NewUninstallHandler(db, zap.NewNop(), steps, func() {
 		steps.record("reconcile")
 	}, inst.paths, func() {
 		steps.record("begin")
-	}, func() {
+	}, steps.disableService, func() {
 		close(exited)
 	})
 
@@ -582,7 +593,9 @@ func TestUninstallLeavesFilesThatTheRotationDidNotWrite(t *testing.T) {
 
 // TestUninstallStopsTheLoopAndTheTunnelsBeforeTheFilesGo is the order the whole
 // thing turns on. A loop that is still running builds again what was stopped,
-// and a tunnel that is left up holds a listener on a remote host.
+// and a tunnel that is left up holds a listener on a remote host. The start at
+// boot of the service is turned off last, once the files are gone, and before
+// the answer, which says what became of it.
 func TestUninstallStopsTheLoopAndTheTunnelsBeforeTheFilesGo(t *testing.T) {
 	inst := newInstallation(t)
 	h, steps, _, _ := newUninstallHandler(t, inst)
@@ -596,15 +609,91 @@ func TestUninstallStopsTheLoopAndTheTunnelsBeforeTheFilesGo(t *testing.T) {
 
 	names, fileWasThere := steps.taken()
 
-	if strings.Join(names, ",") != "begin,reconcile,tunnels" {
-		t.Fatalf("the uninstall took the steps %v, want the loop stopped and then the tunnels",
-			names)
+	if strings.Join(names, ",") != "begin,reconcile,tunnels,disable" {
+		t.Fatalf("the uninstall took the steps %v, want the loop stopped, then the tunnels, "+
+			"and the start at boot of the service turned off last", names)
 	}
 
 	for index, there := range fileWasThere {
+		if names[index] == "disable" {
+			if there {
+				t.Fatalf("the start at boot of the service was turned off before the files went")
+			}
+
+			continue
+		}
+
 		if !there {
 			t.Fatalf("%s was stopped after the database file was already removed", names[index])
 		}
+	}
+}
+
+// TestUninstallSaysWhatBecameOfTheService covers the three answers the last
+// screen tells apart. A start at boot that could not be turned off does not
+// take back the files that went: the uninstall answers 200 with what it
+// removed, and says the service may start again so that the operator runs
+// -uninstall.
+func TestUninstallSaysWhatBecameOfTheService(t *testing.T) {
+	cases := []struct {
+		name       string
+		isService  bool
+		disableErr error
+		wantState  string
+		wantError  string
+	}{
+		{name: "a service whose start at boot was turned off", isService: true,
+			wantState: uninstallServiceDisabled},
+		{name: "a process no service manager runs", isService: false,
+			wantState: uninstallServiceNone},
+		{name: "a start at boot that could not be turned off", isService: true,
+			disableErr: errors.New("systemctl disable tunnel-manager.service failed: exit status 1"),
+			wantState:  uninstallServiceDisableFailed,
+			wantError:  "systemctl disable tunnel-manager.service failed: exit status 1"},
+		{name: "a service manager that could not be asked", isService: false,
+			disableErr: errors.New("failed to ask the service manager"),
+			wantState:  uninstallServiceDisableFailed,
+			wantError:  "failed to ask the service manager"},
+	}
+
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			inst := newInstallation(t)
+			h, steps, exited, _ := newUninstallHandler(t, inst)
+
+			steps.isService = c.isService
+			steps.disableErr = c.disableErr
+
+			rec := postUninstall(t, h, `{"password":"`+uninstallPassword+`"}`)
+
+			if rec.Code != http.StatusOK {
+				t.Fatalf("POST /api/uninstall = %d (%s), want %d", rec.Code, rec.Body.String(),
+					http.StatusOK)
+			}
+
+			result := decodeUninstall(t, rec)
+
+			if result.Service.State != c.wantState || result.Service.Error != c.wantError {
+				t.Fatalf("the service is reported as %+v, want state %q and error %q",
+					result.Service, c.wantState, c.wantError)
+			}
+
+			if len(result.Removed) == 0 {
+				t.Fatalf("the answer names no removed file")
+			}
+
+			for _, path := range inst.installedFilePaths() {
+				if exists(t, path) {
+					t.Fatalf("%s is still there", path)
+				}
+			}
+
+			select {
+			case <-exited:
+			case <-time.After(uninstallExitWait):
+				t.Fatalf("the process did not end within %s of the answer", uninstallExitWait)
+			}
+		})
 	}
 }
 

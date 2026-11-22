@@ -448,4 +448,7 @@ const (
 	UninstallFileNotThere              ID = "uninstall.file_not_there"
 	UninstallFileRemoveFailed          ID = "uninstall.file_remove_failed"
 	UninstallLogDirectoryReadFailed    ID = "uninstall.log_directory_read_failed"
+	UninstallServiceDisabled           ID = "uninstall.service_disabled"
+	UninstallServiceDisableFailed      ID = "uninstall.service_disable_failed"
+	UninstallNotAService               ID = "uninstall.not_a_service"
 )

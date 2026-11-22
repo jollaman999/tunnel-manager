@@ -26,6 +26,31 @@ func init() {
 	newService = func() (service, error) {
 		return systemd{unit: serviceName + unitSuffix}, nil
 	}
+
+	startedByServiceManager = bootedWithSystemd
+}
+
+// systemdRuntimeDir is the directory systemd makes when it is the init of the
+// system. sd_booted(3) says that is all it checks: "Internally, this function
+// checks whether the directory /run/systemd/system/ exists." It is a variable
+// so that a test can point it somewhere else.
+var systemdRuntimeDir = "/run/systemd/system"
+
+// bootedWithSystemd answers whether systemd runs the services of this system,
+// the way sd_booted(3) does. A container that runs this program as its own
+// first process has no such directory, and a systemctl there would only fail
+// to reach a systemd that is not there.
+func bootedWithSystemd() (bool, error) {
+	info, err := os.Stat(systemdRuntimeDir)
+	if err != nil {
+		if errors.Is(err, fs.ErrNotExist) {
+			return false, nil
+		}
+
+		return false, fmt.Errorf("failed to look at %s: %w", systemdRuntimeDir, err)
+	}
+
+	return info.IsDir(), nil
 }
 
 // unitSuffix is what systemd calls a service unit. It is spelled out because
@@ -75,8 +100,8 @@ const unitFileDescriptorLimit = 65535
 // has no idea whether the machine is halfway through or done.
 const (
 	// commandTimeout covers the calls that only read or that rewrite systemd's
-	// own state - show, daemon-reload, enable, is-active. None of them waits on
-	// this service doing anything.
+	// own state - show, daemon-reload, enable, disable, is-active. None of them
+	// waits on this service doing anything.
 	commandTimeout = 30 * time.Second
 	// jobTimeout covers start, stop and disable --now, which wait for a systemd
 	// job to finish. It is above the TimeoutStopSec=90 of the unit on purpose:
@@ -270,6 +295,40 @@ func (s systemd) Stop() error {
 	}
 
 	return nil
+}
+
+// ServicePID answers the process id systemd has for the unit. systemctl
+// answers 0 for a unit that is not running and for a unit it has no file for,
+// without failing, and both are the "none" this answers 0 for.
+func (s systemd) ServicePID() (int, error) {
+	value, err := s.property("MainPID")
+	if err != nil {
+		return 0, err
+	}
+
+	pid, err := strconv.Atoi(value)
+	if err != nil {
+		return 0, fmt.Errorf("systemctl answered %q for the main process of %s, which is not a number",
+			value, s.unit)
+	}
+
+	return pid, nil
+}
+
+// DisableAtBoot removes the links that start the unit at boot. It is disable
+// without --now: --now stops the unit as well, and the process asking is the
+// unit, so it would be killed before the answer it is in the middle of was
+// written. Register enables the unit again.
+func (s systemd) DisableAtBoot() error {
+	_, err := s.run(commandTimeout, disableArgs(s.unit)...)
+
+	return err
+}
+
+// disableArgs is the systemctl argv of DisableAtBoot, apart so that a test
+// holds it without running it.
+func disableArgs(unit string) []string {
+	return []string{"disable", unit}
 }
 
 // waitActive polls until the service is up, it has clearly failed, or the poll

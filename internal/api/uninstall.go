@@ -102,6 +102,11 @@ type UninstallHandler struct {
 	// this one would, and does not run this program again on the files that
 	// are about to go.
 	begin func()
+	// disableService turns off the start at boot of the service this process
+	// runs as, and answers whether it runs as one. It is the last step before
+	// the answer, after the files have gone. See install.DisableThisService for
+	// why it is turned off and not stopped or unregistered.
+	disableService func() (bool, error)
 	// exit ends the process. It is a function of the startup rather than
 	// os.Exit, so that the process goes down the same way a signal takes it
 	// down and so that a test is not ended by the code it is testing.
@@ -112,16 +117,18 @@ type UninstallHandler struct {
 }
 
 func NewUninstallHandler(db *gorm.DB, logger *zap.Logger, manager tunnelStopper,
-	stopReconcile func(), paths UninstallPaths, begin func(), exit func()) *UninstallHandler {
+	stopReconcile func(), paths UninstallPaths, begin func(), disableService func() (bool, error),
+	exit func()) *UninstallHandler {
 	return &UninstallHandler{
-		db:            db,
-		logger:        logger,
-		manager:       manager,
-		stopReconcile: stopReconcile,
-		paths:         paths,
-		begin:         begin,
-		exit:          exit,
-		exitAfter:     uninstallExitDelay,
+		db:             db,
+		logger:         logger,
+		manager:        manager,
+		stopReconcile:  stopReconcile,
+		paths:          paths,
+		begin:          begin,
+		disableService: disableService,
+		exit:           exit,
+		exitAfter:      uninstallExitDelay,
 	}
 }
 
@@ -144,6 +151,35 @@ type removedFile struct {
 	Error string `json:"error,omitempty"`
 }
 
+// What became of the service this process runs as, as uninstallService.State
+// says it.
+const (
+	// uninstallServiceNone is a process no service manager runs: one started
+	// by hand, or a container. There is no start at boot of its own to turn
+	// off.
+	uninstallServiceNone = "none"
+	// uninstallServiceDisabled is a service whose start at boot was turned
+	// off. Its registration and the executable are left for -uninstall.
+	uninstallServiceDisabled = "disabled"
+	// uninstallServiceDisableFailed is a start at boot that could not be
+	// turned off, or a service manager that could not be asked whether this
+	// process is its service. Either way the next boot may start an empty
+	// installation, which is what the screen has to say.
+	uninstallServiceDisableFailed = "disable_failed"
+)
+
+// uninstallService is what became of the service this process runs as.
+//
+// It is apart from the lists of files because it is not a file: on Windows the
+// registration is in the registry, and on every platform what was done to it
+// is a setting turned off rather than something removed.
+type uninstallService struct {
+	// State is none, disabled or disable_failed.
+	State string `json:"state"`
+	// Error is what went wrong, filled in only for disable_failed.
+	Error string `json:"error,omitempty"`
+}
+
 // uninstallResult is what the uninstall answers with. The files that could not
 // be removed are carried apart from the ones that went, because they are the
 // ones left for the operator to deal with by hand, and after this answer there
@@ -151,6 +187,9 @@ type removedFile struct {
 type uninstallResult struct {
 	Removed []removedFile `json:"removed"`
 	Failed  []removedFile `json:"failed"`
+	// Service is what became of the start at boot of the service this process
+	// runs as.
+	Service uninstallService `json:"service"`
 	// ExitInSec is how long the process stays up after this answer. The screen
 	// says it, so the number comes from the side that waits it out.
 	ExitInSec int `json:"exit_in_sec"`
@@ -161,11 +200,12 @@ type uninstallResult struct {
 // The order is the whole of it. The password is checked before anything is
 // touched, the tunnels are taken down before the files go so that no listener
 // is left on a remote host, and the loop that would build them again is stopped
-// first of all. The answer is written while the process is still up, and the
-// process ends a few seconds later.
+// first of all. The start at boot of the service this process runs as is turned
+// off last, once the files are gone. The answer is written while the process is
+// still up, and the process ends a few seconds later.
 //
 // @Summary      Uninstall tunnel-manager and end the process
-// @Description  Takes the account password. The tunnels come down, the files tunnel-manager keeps are removed, and the answer is written before the process goes.
+// @Description  Takes the account password. The tunnels come down, the files tunnel-manager keeps are removed, and where a service manager runs this process the service is disabled so that it does not start at boot. Its registration and the executable stay for -uninstall. The answer is written before the process goes.
 // @Tags         uninstall
 // @Accept   json
 // @Produce  json
@@ -256,6 +296,7 @@ func (h *UninstallHandler) Uninstall(c *echo.Context) error {
 	h.closeDatabase()
 
 	result := h.removeFiles()
+	result.Service = h.disableTheService()
 	result.ExitInSec = int(h.exitAfter / time.Second)
 
 	// The answer is written before the timer starts, so the wait is the time the
@@ -275,6 +316,37 @@ func (h *UninstallHandler) Uninstall(c *echo.Context) error {
 	time.AfterFunc(h.exitAfter, h.exit)
 
 	return err
+}
+
+// disableTheService turns off the start at boot of the service this process
+// runs as, and says what became of it.
+//
+// A failure here does not take back what was done: the files are gone, and the
+// operator is told on the screen and in the log that the next boot may start
+// an empty installation, which -uninstall takes away.
+func (h *UninstallHandler) disableTheService() uninstallService {
+	isService, err := h.disableService()
+
+	switch {
+	case err != nil:
+		h.logger.Error("failed to turn off the start at boot of the service this process runs as, so "+
+			"the next boot may start an empty installation. -uninstall takes the registration out",
+			logid.UninstallServiceDisableFailed.Field(),
+			zap.Error(err))
+
+		return uninstallService{State: uninstallServiceDisableFailed, Error: err.Error()}
+	case isService:
+		h.logger.Info("turned off the start at boot of the service this process runs as. Its "+
+			"registration and the executable are left for -uninstall",
+			logid.UninstallServiceDisabled.Field())
+
+		return uninstallService{State: uninstallServiceDisabled}
+	default:
+		h.logger.Info("no service manager runs this process, so there is no start at boot to turn off",
+			logid.UninstallNotAService.Field())
+
+		return uninstallService{State: uninstallServiceNone}
+	}
 }
 
 // closeDatabase closes the handle before the file is removed.

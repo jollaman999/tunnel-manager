@@ -12116,7 +12116,8 @@ function settingsDangerZone() {
         t("uninstall.file-logs.text"),
         t("uninstall.file-updates.text")
       ]),
-      element("p", t("uninstall.program.text"))
+      element("p", t("uninstall.program.text")),
+      element("p", t("uninstall.service.text", uninstallCommands))
     ],
     submitLabel: t("uninstall.submit.button"),
     submitVariant: "danger",
@@ -12191,7 +12192,9 @@ function drawUninstalled() {
       { seconds: seconds })
     : t("uninstalled.stopped-soon.text")));
 
-  nodes.push(element("p", t("uninstalled.program.text")));
+  for (const node of uninstalledService(uninstallResult.service)) {
+    nodes.push(node);
+  }
 
   const removed = listOfFiles(uninstallResult.removed);
 
@@ -12219,6 +12222,41 @@ function drawUninstalled() {
   }
 
   render(t("uninstalled.screen.title"), nodes);
+}
+
+// uninstallCommands are the commands the uninstall screens name. They go in as
+// values rather than as words of the sentence, so that a page drawn right to
+// left does not carry the dash of the flag to the other end of it.
+const uninstallCommands = {
+  command: "tunnel-manager -uninstall",
+  install: "tunnel-manager -install"
+};
+
+// uninstalledService is what the last screen says about the service the
+// process ran as. The start at boot of a service is turned off and its entry
+// and program file stay for -uninstall; one that could not be turned off may
+// come back empty at the next boot, which is the warning. An answer that says
+// nothing of it is drawn as a process no service manager ran.
+function uninstalledService(service) {
+  const state = service !== null && typeof service === "object" ? service.state : "";
+
+  if (state === "disabled") {
+    return [element("p", t("uninstalled.service-disabled.text", uninstallCommands))];
+  }
+
+  if (state === "disable_failed") {
+    const nodes = [statusLine(t("uninstalled.service-failed.notice", uninstallCommands), "warning")];
+
+    // What the service manager said, as it came. There is nothing left to ask
+    // about it afterwards.
+    if (typeof service.error === "string" && service.error !== "") {
+      nodes.push(element("p", service.error));
+    }
+
+    return nodes;
+  }
+
+  return [element("p", t("uninstalled.program.text"))];
 }
 
 // listOfFiles is one of the two lists the uninstall answered with. A list the

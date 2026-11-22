@@ -206,6 +206,62 @@ func TestTheUnitLeavesDownWhatTheUninstallEndsWith(t *testing.T) {
 	}
 }
 
+// TestTheStartAtBootIsTurnedOffWithoutAStop holds the systemctl argv of
+// DisableAtBoot. --now would stop the unit, and the process asking is the unit,
+// so it would be killed before the uninstall wrote its answer.
+func TestTheStartAtBootIsTurnedOffWithoutAStop(t *testing.T) {
+	got := disableArgs(serviceName + unitSuffix)
+	want := []string{"disable", "tunnel-manager.service"}
+
+	if strings.Join(got, " ") != strings.Join(want, " ") {
+		t.Fatalf("the command is systemctl %s, want systemctl %s",
+			strings.Join(got, " "), strings.Join(want, " "))
+	}
+}
+
+// TestBootedWithSystemdReadsTheRuntimeDirectory covers the check that keeps a
+// process in a container from asking a systemctl there is no systemd behind.
+func TestBootedWithSystemdReadsTheRuntimeDirectory(t *testing.T) {
+	was := systemdRuntimeDir
+
+	t.Cleanup(func() {
+		systemdRuntimeDir = was
+	})
+
+	dir := t.TempDir()
+	file := filepath.Join(dir, "a-file")
+
+	err := os.WriteFile(file, nil, 0o600)
+	if err != nil {
+		t.Fatalf("failed to write %s: %v", file, err)
+	}
+
+	cases := []struct {
+		name string
+		path string
+		want bool
+	}{
+		{name: "the directory is there", path: dir, want: true},
+		{name: "nothing is there", path: filepath.Join(dir, "missing"), want: false},
+		{name: "a file is there instead", path: file, want: false},
+	}
+
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			systemdRuntimeDir = c.path
+
+			got, err := bootedWithSystemd()
+			if err != nil {
+				t.Fatalf("bootedWithSystemd: %v", err)
+			}
+
+			if got != c.want {
+				t.Fatalf("bootedWithSystemd answered %v for %s, want %v", got, c.path, c.want)
+			}
+		})
+	}
+}
+
 // TestStateDirectoryName covers the answers the unit above is built on, for the
 // paths that are on the edge of the rule rather than plainly one side of it.
 func TestStateDirectoryName(t *testing.T) {

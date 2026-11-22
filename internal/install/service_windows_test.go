@@ -243,6 +243,33 @@ func TestServiceConfig(t *testing.T) {
 		config.DisplayName, config.Description, config.BinaryPathName)
 }
 
+// TestDisabledAtBootChangesTheStartTypeAlone holds what the uninstall on the
+// Settings screen hands ChangeServiceConfig: the start type set to disabled,
+// and SERVICE_NO_CHANGE for the two numbers beside it, which is how that call
+// is told to leave them as they are.
+func TestDisabledAtBootChangesTheStartTypeAlone(t *testing.T) {
+	change := disabledAtBoot()
+
+	if change.startType != windows.SERVICE_DISABLED {
+		t.Errorf("start type is %d, want SERVICE_DISABLED (%d)", change.startType, windows.SERVICE_DISABLED)
+	}
+
+	if change.serviceType != windows.SERVICE_NO_CHANGE {
+		t.Errorf("service type is %#x, want SERVICE_NO_CHANGE (%#x)", change.serviceType, windows.SERVICE_NO_CHANGE)
+	}
+
+	if change.errorControl != windows.SERVICE_NO_CHANGE {
+		t.Errorf("error control is %#x, want SERVICE_NO_CHANGE (%#x)", change.errorControl,
+			uint32(windows.SERVICE_NO_CHANGE))
+	}
+
+	// Register writes the automatic start back, which is what lets -install
+	// bring up a service this turned off.
+	if serviceConfig(plannedFor("windows")).StartType == change.startType {
+		t.Errorf("Register writes the start type this turns the service off with")
+	}
+}
+
 // TestFailureActions holds what the service does after it fails, which is the
 // design's sc failure restart/5000 line.
 //

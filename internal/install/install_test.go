@@ -130,6 +130,11 @@ type fakeService struct {
 	// service is not running.
 	openFiles    []string
 	openFilesErr error
+	// servicePID is the process the service manager is said to run the
+	// service as, and disableErr what turning off its start at boot answers.
+	servicePID    int
+	servicePIDErr error
+	disableErr    error
 
 	calls          []string
 	checkedPlan    Plan
@@ -192,6 +197,18 @@ func (f *fakeService) Stop() error {
 	f.calls = append(f.calls, "stop")
 
 	return nil
+}
+
+func (f *fakeService) ServicePID() (int, error) {
+	f.calls = append(f.calls, "servicepid")
+
+	return f.servicePID, f.servicePIDErr
+}
+
+func (f *fakeService) DisableAtBoot() error {
+	f.calls = append(f.calls, "disable")
+
+	return f.disableErr
 }
 
 // allowPrivilege runs the flow as if this process were root. The check itself

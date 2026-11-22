@@ -2110,7 +2110,7 @@ tunnel, deletes the files tunnel-manager keeps and ends the process.
 | Removed | Left alone |
 |---------|------------|
 | The database file, with the `-wal` and `-shm` files SQLite keeps beside it | **The program file** |
-| The encryption key file | The service entry that starts it |
+| The encryption key file | The service entry that starts it, with its start at boot turned off |
 | The initial password file, if it is still there | The directories the files were in |
 | The log file and the rotated log files beside it | |
 | What the updates leave beside the database file, where there is any: `update-install.problem`, `update-check.last` and `logs/update-install.log` | |
@@ -2129,8 +2129,8 @@ answers `401` and stops nothing.
 The order matters and is fixed: the reconcile loop is stopped first, because it
 is what starts tunnels again; then the tunnels come down, so no listener is left
 behind on a remote host; then the database is closed and the files go; then the
-answer is written; and the process ends about three seconds later, so the browser
-has the time to receive it.
+start at boot of the service is turned off; then the answer is written; and the
+process ends about three seconds later, so the browser has the time to receive it.
 
 **The service manager does not start it again.** The service entry is left in
 place, and on its own it would start tunnel-manager again a few seconds later on
@@ -2152,17 +2152,28 @@ still started again.
   are in the entry from the release that wrote them on. Running `-install` again
   writes the current entry, and so does an update installed from the Update
   screen, since it runs `-install`.
-- **The machine booting starts it again**, as a new installation with an empty
-  database, since the service is still enabled. To keep it down, remove the
-  entry with `-uninstall`, or turn off the start at boot
-  (`systemctl disable tunnel-manager` on Linux).
+- **Booting does not start it again either.** Where a service manager runs the
+  process, the uninstall turns off the start at boot of that service as its last
+  step, after the files are gone and before the answer. It turns off and does
+  not stop: the process asking is the service, and it ends on its own a moment
+  later. The service entry and the executable stay, and `-uninstall` removes
+  them. A process started by hand or in a container has nothing to turn off.
+
+  | | What is turned off |
+  |---|--------------------|
+  | Linux | `systemctl disable tunnel-manager.service`, without `--now` |
+  | macOS | `launchctl disable system/io.github.jollaman999.tunnel-manager`, which launchd keeps across boots. `bootout` is not used, since it would take the process down before the answer |
+  | Windows | the start type of the service, set to disabled |
+
+  Only the Linux one has been run; the macOS and the Windows ones are built and
+  unit tested. `-install` turns the start at boot back on.
 - **Docker Compose starts the container again.** `restart: always` in the
   compose file starts it whatever it exited with, so run `docker compose down`
   once the uninstall is over.
-- **`-install` is refused until `-uninstall` has run.** It reads which database
-  a registered service uses from the running process, and after this nothing
-  runs. `-uninstall` takes out the entry and the executable, and an `-install`
-  after it installs afresh.
+- **`-install` is refused until `-uninstall` has run**, before a reboot and after
+  one. It reads which database a registered service uses from the running
+  process, and after this nothing runs. `-uninstall` takes out the entry and the
+  executable, and an `-install` after it installs afresh.
 
 An uninstall pressed in the seconds a restart waits before it goes takes the
 place of the restart: the process ends as an uninstall ends and does not run the
@@ -2185,6 +2196,7 @@ curl -s -b cookies.txt -X POST "$BASE/api/uninstall" \
       { "path": "/var/lib/tunnel-manager/logs/tunnel-manager.log", "what": "the log file" }
     ],
     "failed": [],
+    "service": { "state": "disabled" },
     "exit_in_sec": 3
   }
 }
@@ -2195,6 +2207,14 @@ is left on disk for you to deal with. It does not stop the rest: on Windows the
 log file this process is writing to cannot be deleted while it is open, and a run
 that stopped there would leave the database and the key behind over the one file
 that was never going to go.
+
+`service.state` says what became of the start at boot:
+
+| `state` | Meaning |
+|---------|---------|
+| `disabled` | The service this process ran as no longer starts at boot. Its entry and the executable are left for `-uninstall` |
+| `none` | No service manager ran this process, so there was nothing to turn off |
+| `disable_failed` | It could not be turned off, or the service manager could not be asked whether this process is its service. `service.error` says why. The files are gone all the same, and the next boot may start an empty installation with a new initial password: run `-uninstall` |
 
 ## Calling the API from a script
 

@@ -101,6 +101,14 @@ const plistDirMode fs.FileMode = 0o755
 
 func init() {
 	newService = newLaunchdService
+	startedByServiceManager = launchdIsAlwaysThere
+}
+
+// launchdIsAlwaysThere answers yes. launchd is the first process of every
+// macOS, so it is there to be asked on every machine this runs on, and whether
+// it is what runs this process is read off the process id it holds for the job.
+func launchdIsAlwaysThere() (bool, error) {
+	return true, nil
 }
 
 func newLaunchdService() (service, error) {
@@ -167,11 +175,23 @@ func (launchdService) CheckPlan(Plan) error {
 	return nil
 }
 
-// Register writes the plist. It does not load it: Start does that, and an
-// install that has not yet copied the executable would otherwise have launchd
-// starting a file that is half written.
+// Register writes the plist and enables the job. It does not load it: Start
+// does that, and an install that has not yet copied the executable would
+// otherwise have launchd starting a file that is half written.
+//
+// The enable is for a job DisableAtBoot turned off. launchctl(1) says of a
+// disabled service that "it cannot be loaded in the specified domain until it
+// is once again enabled", so Start would fail to bootstrap it, and the state is
+// kept by launchd apart from the plist, which -uninstall removes and this
+// writes afresh. Enabling a job that was never disabled asks for the state it
+// was already in. (Read from the manual of launchctl and not run on a Mac.)
 func (launchdService) Register(plan Plan, existing *Installed) error {
-	return writePlist(plistPathFor(existing), launchdPlist(plan))
+	err := writePlist(plistPathFor(existing), launchdPlist(plan))
+	if err != nil {
+		return err
+	}
+
+	return runLaunchctlFor(enableArgs())
 }
 
 // plistPathFor is where the plist goes.
@@ -317,8 +337,55 @@ func (launchdService) Stop() error {
 	return bootout()
 }
 
-// bootstrapArgs, bootoutArgs and printArgs are the launchctl argv of this
-// backend, in one place.
+// ServicePID answers the process id launchd holds for the job, read out of
+// the same print Start waits on. A job launchd does not hold, and one it holds
+// with no process running, both answer 0.
+func (launchdService) ServicePID() (int, error) {
+	up, output, err := loaded()
+	if err != nil {
+		return 0, err
+	}
+
+	if !up {
+		return 0, nil
+	}
+
+	pid, _ := servicePID(output)
+
+	return pid, nil
+}
+
+// DisableAtBoot turns the job off in the system domain, which is what keeps
+// launchd from loading it when the machine boots.
+//
+// The manual of launchctl says of disable: "Once a service is disabled, it
+// cannot be loaded in the specified domain until it is once again enabled.
+// This state persists across boots of the device." It does not take a job that
+// is loaded out of launchd, which is what is wanted here: the process asking
+// is the job, and bootout would kill it before the answer it is in the middle
+// of was written. The exit that follows leaves it down through KeepAlive
+// (launchdPlist). (Read from the manual and not run on a Mac.)
+func (launchdService) DisableAtBoot() error {
+	return runLaunchctlFor(disableArgs())
+}
+
+// runLaunchctlFor runs one launchctl command whose output only matters when it
+// fails, and puts that output into the error.
+func runLaunchctlFor(arguments []string) error {
+	ctx, cancel := context.WithTimeout(context.Background(), launchctlTimeout)
+	defer cancel()
+
+	output, err := runLaunchctl(ctx, arguments...)
+	if err != nil {
+		return fmt.Errorf("launchctl %s failed: %w\n%s",
+			strings.Join(arguments, " "), err, strings.TrimSpace(output))
+	}
+
+	return nil
+}
+
+// bootstrapArgs, bootoutArgs, printArgs, enableArgs and disableArgs are the
+// launchctl argv of this backend, in one place.
 //
 // They are functions rather than lines inside the methods so that the commands
 // this package runs as root can be read off in a test on a machine that has no
@@ -333,6 +400,14 @@ func bootoutArgs() []string {
 
 func printArgs() []string {
 	return []string{"print", launchdTarget}
+}
+
+func enableArgs() []string {
+	return []string{"enable", launchdTarget}
+}
+
+func disableArgs() []string {
+	return []string{"disable", launchdTarget}
 }
 
 // bootout removes the job from the system domain.
@@ -544,7 +619,8 @@ func launchctlPath() string {
 // the launchd.plist manual and was not watched on a Mac.)
 //
 // RunAtLoad is what makes it come up when the machine boots, since the plist is
-// loaded then, and that holds after the uninstall too.
+// loaded then. The uninstall on the Settings screen turns that off through
+// DisableAtBoot, which launchd keeps apart from this file.
 func launchdPlist(plan Plan) []byte {
 	var document bytes.Buffer
 

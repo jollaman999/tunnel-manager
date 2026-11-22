@@ -2929,7 +2929,7 @@
                         "CSRFToken": []
                     }
                 ],
-                "description": "Takes the account password. The tunnels come down, the files tunnel-manager keeps are removed, and the answer is written before the process goes.",
+                "description": "Takes the account password. The tunnels come down, the files tunnel-manager keeps are removed, and where a service manager runs this process the service is disabled so that it does not start at boot. Its registration and the executable stay for -uninstall. The answer is written before the process goes.",
                 "consumes": [
                     "application/json"
                 ],
@@ -4857,6 +4857,27 @@
                     "items": {
                         "$ref": "#/definitions/api.removedFile"
                     }
+                },
+                "service": {
+                    "description": "Service is what became of the start at boot of the service this process\nruns as.",
+                    "allOf": [
+                        {
+                            "$ref": "#/definitions/api.uninstallService"
+                        }
+                    ]
+                }
+            }
+        },
+        "api.uninstallService": {
+            "type": "object",
+            "properties": {
+                "error": {
+                    "description": "Error is what went wrong, filled in only for disable_failed.",
+                    "type": "string"
+                },
+                "state": {
+                    "description": "State is none, disabled or disable_failed.",
+                    "type": "string"
                 }
             }
         },

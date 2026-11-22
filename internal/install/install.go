@@ -77,8 +77,9 @@ const uninstalledExitStatus = 5
 // UninstalledExitCode is the status the process ends with once the uninstall
 // on the Settings screen has removed the installation.
 //
-// That uninstall removes the data and leaves the registration in place, and a
-// registration is what starts the process again after it ends. What it would
+// That uninstall removes the data and leaves the registration in place, with
+// its start at boot turned off (DisableThisService), and a registration is
+// what starts the process again after it ends. What it would
 // start is an empty database with a new initial password, a few seconds after
 // the screen told the operator that the installation is gone. So the status is
 // the one each service manager is told to leave down, and that differs:
@@ -255,6 +256,17 @@ type service interface {
 	// service before overwriting its executable, and one that was already down
 	// is exactly the state that was wanted.
 	Stop() error
+
+	// ServicePID answers the process id the service manager has for the
+	// running service, and 0 when no process of it is running or nothing is
+	// registered. It is how the uninstall on the Settings screen tells the
+	// process the service manager runs from a copy started by hand.
+	ServicePID() (int, error)
+
+	// DisableAtBoot keeps the service manager from starting the service when
+	// the system boots, and leaves the registration in place and a running
+	// process running. Register is what turns the start at boot on again.
+	DisableAtBoot() error
 }
 
 // newService builds the backend for this platform. Each backend file sets it
