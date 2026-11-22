@@ -1371,9 +1371,11 @@ func TestTheStartupNamesTheSocksProxiesStoredWithoutAScope(t *testing.T) {
 	}
 
 	for start := 1; start <= 2; start++ {
+		repair := repairSocksBindScopes(db)
+
 		core, logs := observer.New(zapcore.DebugLevel)
 
-		repairSocksBindScopes(db, zap.New(core))
+		repair.log(zap.New(core))
 
 		said := map[string]string{}
 		for _, entry := range logs.All() {

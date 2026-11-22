@@ -1160,27 +1160,44 @@ func repairStoredIntervals(db *gorm.DB, logger *zap.Logger) {
 	}
 }
 
+// socksScopeRepair is what repairSocksBindScopes found, held until the log
+// file is open: the Hosts whose proxy it gave loopback, the Hosts whose proxy
+// it left running on the wildcard without a scope, and the write that failed.
+type socksScopeRepair struct {
+	narrowed []models.Host
+	open     []models.Host
+	err      error
+}
+
 // repairSocksBindScopes writes loopback into the scope of every SOCKS5 proxy
-// that has none and does not run, and says in the log which Hosts it wrote it
-// for and which proxies it left running on the wildcard without a scope. It
-// runs before the tunnel manager starts the proxies, so that what they open on
-// is what the screen shows.
+// that has none and does not run, and hands back what it found. It runs before
+// the tunnel manager starts the proxies, so that what they open on is what the
+// screen shows. A write that fails is handed back as well, and the startup goes
+// on, since the proxies that run are read the way they were.
 //
-// A narrowed proxy is an info line: it opens nothing now, and what changed is
-// where it will open once it is switched on. A proxy left open is a warning,
-// written on every startup until somebody picks a scope for it: it asks for no
-// password and is open to every machine that reaches this one, and nobody
-// chose that for it. A write that fails is reported and the startup goes on,
-// since the proxies that run are read the way they were.
-func repairSocksBindScopes(db *gorm.DB, logger *zap.Logger) {
+// It says nothing itself. It runs before the settings are read, where the
+// logger writes to the console alone, and a proxy left open is something the
+// operator has to find on the Logs screen and in the log file, so the lines are
+// written by log once the logger the settings describe is in place.
+func repairSocksBindScopes(db *gorm.DB) socksScopeRepair {
 	narrowed, open, err := database.RepairSocksBindScopes(db)
-	if err != nil {
+
+	return socksScopeRepair{narrowed: narrowed, open: open, err: err}
+}
+
+// log writes what the repair found. A narrowed proxy is an info line: it opens
+// nothing now, and what changed is where it will open once it is switched on.
+// A proxy left open is a warning, written on every startup until somebody picks
+// a scope for it: it asks for no password and is open to every machine that
+// reaches this one, and nobody chose that for it.
+func (r socksScopeRepair) log(logger *zap.Logger) {
+	if r.err != nil {
 		logger.Warn("failed to store the SOCKS5 proxies that have no scope on loopback",
 			logid.DatabaseSocksScopeRepairFailed.Field(),
-			zap.Error(err))
+			zap.Error(r.err))
 	}
 
-	for _, host := range narrowed {
+	for _, host := range r.narrowed {
 		logger.Info("the SOCKS5 proxy of a Host had no scope and was not running, "+
 			"and was given loopback, which is where it opens once it is switched on",
 			logid.DatabaseSocksScopeNarrowed.Field(),
@@ -1189,7 +1206,7 @@ func repairSocksBindScopes(db *gorm.DB, logger *zap.Logger) {
 			zap.Int("host_port", host.Port))
 	}
 
-	for _, host := range open {
+	for _, host := range r.open {
 		logger.Warn("the SOCKS5 proxy of a Host has no scope and runs on every address of this machine "+
 			"without a password, as it did before the scope was stored; choose a scope for it on the Hosts screen",
 			logid.DatabaseSocksScopeLeftOpen.Field(),
@@ -1802,8 +1819,9 @@ func serve() {
 	repairStoredIntervals(db, logger)
 
 	// A SOCKS5 proxy stored with no scope is written down as loopback here
-	// while it does not run, before the tunnel manager reads the Hosts.
-	repairSocksBindScopes(db, logger)
+	// while it does not run, before the tunnel manager reads the Hosts. What
+	// was found is logged below, once the log file is open.
+	socksRepair := repairSocksBindScopes(db)
 
 	set, err := settings.Load(db)
 	if err != nil {
@@ -1839,6 +1857,8 @@ func serve() {
 		zap.Int("monitoring_interval_sec", set.MonitoringIntervalSec),
 		zap.Int("reconnect_max_interval_sec", set.ReconnectMaxIntervalSec),
 		zap.Int("reconcile_interval_sec", set.ReconcileIntervalSec))
+
+	socksRepair.log(logger)
 
 	warnIfNotPrivileged(logger)
 
