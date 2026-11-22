@@ -893,6 +893,7 @@
   "log.update.install_asked.text": "có yêu cầu cập nhật từ tab Cập nhật trong Cài đặt",
   "log.update.install_password_wrong.text": "việc cập nhật được yêu cầu với mật khẩu không mở được tài khoản",
   "log.update.install_start_failed.text": "không bắt đầu được việc cài đặt",
+  "log.update.install_wait_gave_up.text": "khóa cài đặt bị giữ lâu hơn thời gian một lần cài đặt cần, nên lần cài đặt được coi là đã kết thúc",
   "login.form.title": "Đăng nhập",
   "login.password.label": "Mật khẩu",
   "login.signed-out.notice": "Bạn đã đăng xuất.",

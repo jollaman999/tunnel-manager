@@ -127,7 +127,15 @@ func startUpdateInstall(logger *zap.Logger, databaseFile string, ended func()) e
 		// started, and the install is then over when the unit lets the lock
 		// go. A systemd-run that failed started no unit at all.
 		if apart && err == nil {
-			waitForInstallEnd(dataDir, installLockAppearWait, installLockPoll)
+			over := waitForInstallEnd(dataDir, installLockAppearWait, installLockHeldWait, installLockPoll)
+			if !over {
+				logger.Warn("the lock of this installation has been held for longer than an install takes. "+
+					"The install is taken as over so that another one can be started; if one is still "+
+					"running, the lock refuses the next",
+					logid.UpdateInstallWaitGaveUp.Field(),
+					zap.String("lock", install.InstallLockFile(dataDir)),
+					zap.Duration("waited", installLockHeldWait))
+			}
 		}
 
 		if apart && err != nil {
@@ -150,33 +158,55 @@ func startUpdateInstall(logger *zap.Logger, databaseFile string, ended func()) e
 // seen holding it in this long has ended, refused or failed before it took the
 // lock or so soon after that no look fell in between, which is an install that
 // is over either way.
+//
+// installLockHeldWait is how long the lock is waited on once it has been
+// taken. An install puts a bound on every step it takes: two minutes for the
+// whole download (fetchTimeout), two for the stop and two for the start of the
+// service (jobTimeout), and thirty seconds for each of the few other calls to
+// systemctl (commandTimeout), which adds up to under ten minutes. Thirty is
+// three times that. What it is there for is a lock that never reads as let go:
+// one that holds something other than a process id, or names a process id the
+// system has handed to another process since. Waited on without an end, that
+// lock would keep the Update screen refusing every install until the service
+// restarted. Giving up here does not let two installs run at once: the lock is
+// still what an install has to take, and a second one is refused by it.
 var (
 	installLockAppearWait = time.Minute
+	installLockHeldWait   = 30 * time.Minute
 	installLockPoll       = 2 * time.Second
 )
 
 // waitForInstallEnd waits for an install of the installation whose data
 // directory is dataDir to take the lock and let it go again, or for appear to
-// pass without it having taken the lock.
+// pass without it having taken the lock. It answers false where it gave up on
+// a lock that was still held after held.
 //
 // Both halves are needed because the wait starts before the install has run.
 // Read only as "is the lock held", the moment between systemd-run ending and
 // the install taking the lock reads as an install that is over, and a press
 // in that moment would start a second one.
-func waitForInstallEnd(dataDir string, appear time.Duration, poll time.Duration) {
+func waitForInstallEnd(dataDir string, appear time.Duration, held time.Duration, poll time.Duration) bool {
 	deadline := time.Now().Add(appear)
 
 	for !install.InstallRunning(dataDir) {
 		if time.Now().After(deadline) {
-			return
+			return true
 		}
 
 		time.Sleep(poll)
 	}
 
+	deadline = time.Now().Add(held)
+
 	for install.InstallRunning(dataDir) {
+		if time.Now().After(deadline) {
+			return false
+		}
+
 		time.Sleep(poll)
 	}
+
+	return true
 }
 
 // startInstall starts the command installCommand made and then lets go of what

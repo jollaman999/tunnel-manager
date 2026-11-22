@@ -893,6 +893,7 @@
   "log.update.install_asked.text": "auf dem Reiter Aktualisierung der Einstellungen wurde eine Aktualisierung verlangt",
   "log.update.install_password_wrong.text": "eine Aktualisierung wurde mit einem Passwort verlangt, das das Konto nicht öffnet",
   "log.update.install_start_failed.text": "die Installation konnte nicht gestartet werden",
+  "log.update.install_wait_gave_up.text": "die Installationssperre wurde länger gehalten, als eine Installation dauert, daher gilt die Installation als beendet",
   "login.form.title": "Anmelden",
   "login.password.label": "Passwort",
   "login.signed-out.notice": "Sie sind abgemeldet.",

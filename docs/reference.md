@@ -1964,7 +1964,9 @@ is answered `409` with `update.install_running` and starts nothing until that
 install is over: one that goes well ends with the restart, and one that is
 refused or fails makes way for the next press. An install typed as `-install` at a
 terminal holds the same lock (see [Installing as a service](#installing-as-a-service))
-and is answered the same way.
+and is answered the same way. An install whose lock is still held after thirty
+minutes, three times what the bounds on its steps add up to, is taken as over
+and the log says so; a second `-install` is still refused by the lock itself.
 
 ### Installing without being asked
 

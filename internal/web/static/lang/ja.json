@@ -893,6 +893,7 @@
   "log.update.install_asked.text": "設定の「アップデート」タブからアップデートが要求されました",
   "log.update.install_password_wrong.text": "アカウントのものと一致しないパスワードでアップデートが要求されました",
   "log.update.install_start_failed.text": "インストールを開始できませんでした",
+  "log.update.install_wait_gave_up.text": "インストールのロックがインストールにかかる時間より長く持たれているため、インストールは終わったものとみなします",
   "login.form.title": "ログイン",
   "login.password.label": "パスワード",
   "login.signed-out.notice": "ログアウトしました。",

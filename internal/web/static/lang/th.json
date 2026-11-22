@@ -893,6 +893,7 @@
   "log.update.install_asked.text": "มีการขออัปเดตจากแท็บอัปเดตในหน้าตั้งค่า",
   "log.update.install_password_wrong.text": "มีการขออัปเดตด้วยรหัสผ่านที่ไม่ตรงกับบัญชี",
   "log.update.install_start_failed.text": "เริ่มการติดตั้งไม่สำเร็จ",
+  "log.update.install_wait_gave_up.text": "ล็อกการติดตั้งถูกถือไว้นานกว่าเวลาที่การติดตั้งใช้ จึงถือว่าการติดตั้งจบแล้ว",
   "login.form.title": "เข้าสู่ระบบ",
   "login.password.label": "รหัสผ่าน",
   "login.signed-out.notice": "คุณออกจากระบบแล้ว",

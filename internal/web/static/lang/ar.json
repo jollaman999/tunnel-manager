@@ -893,6 +893,7 @@
   "log.update.install_asked.text": "طُلب تحديث من تبويب التحديث في الإعدادات",
   "log.update.install_password_wrong.text": "طُلب تحديث بكلمة مرور لا تفتح الحساب",
   "log.update.install_start_failed.text": "تعذّر بدء التثبيت",
+  "log.update.install_wait_gave_up.text": "ظلّ قفل التثبيت محجوزًا مدة أطول مما يستغرقه التثبيت، فيُعدّ التثبيت منتهيًا",
   "login.form.title": "تسجيل الدخول",
   "login.password.label": "كلمة المرور",
   "login.signed-out.notice": "سُجِّل خروجك.",

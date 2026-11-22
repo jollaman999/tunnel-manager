@@ -186,6 +186,7 @@ const (
 	UpdateInstallAsked         ID = "update.install_asked"
 	UpdateInstallPasswordWrong ID = "update.install_password_wrong"
 	UpdateInstallStartFailed   ID = "update.install_start_failed"
+	UpdateInstallWaitGaveUp    ID = "update.install_wait_gave_up"
 )
 
 // encryption: the key the stored secrets are encrypted with.

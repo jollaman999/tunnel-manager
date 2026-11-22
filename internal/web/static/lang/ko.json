@@ -893,6 +893,7 @@
   "log.update.install_asked.text": "설정의 업데이트 탭에서 설치를 요청했습니다",
   "log.update.install_password_wrong.text": "업데이트를 요청했는데 비밀번호가 맞지 않았습니다",
   "log.update.install_start_failed.text": "설치를 시작하지 못했습니다",
+  "log.update.install_wait_gave_up.text": "설치 잠금이 설치에 걸리는 시간보다 오래 잡혀 있어, 설치가 끝난 것으로 봅니다",
   "login.form.title": "로그인",
   "login.password.label": "비밀번호",
   "login.signed-out.notice": "로그아웃했습니다.",

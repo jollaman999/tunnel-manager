@@ -893,6 +893,7 @@
   "log.update.install_asked.text": "обновление запрошено с вкладки Обновление в настройках",
   "log.update.install_password_wrong.text": "обновление запрошено с паролем, который не открывает учётную запись",
   "log.update.install_start_failed.text": "не удалось начать установку",
+  "log.update.install_wait_gave_up.text": "блокировка установки удерживается дольше, чем длится установка, поэтому установка считается завершённой",
   "login.form.title": "Вход",
   "login.password.label": "Пароль",
   "login.signed-out.notice": "Вы вышли из системы.",

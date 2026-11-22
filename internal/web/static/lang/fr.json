@@ -893,6 +893,7 @@
   "log.update.install_asked.text": "une mise à jour a été demandée dans l'onglet Mise à jour des Paramètres",
   "log.update.install_password_wrong.text": "une mise à jour a été demandée avec un mot de passe qui n'ouvre pas le compte",
   "log.update.install_start_failed.text": "l'installation n'a pas pu être lancée",
+  "log.update.install_wait_gave_up.text": "le verrou d'installation a été tenu plus longtemps que ne dure une installation, l'installation est donc considérée comme terminée",
   "login.form.title": "Connexion",
   "login.password.label": "Mot de passe",
   "login.signed-out.notice": "Vous êtes déconnecté.",

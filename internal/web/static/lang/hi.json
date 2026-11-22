@@ -893,6 +893,7 @@
   "log.update.install_asked.text": "सेटिंग्स के अपडेट टैब से अपडेट माँगा गया",
   "log.update.install_password_wrong.text": "अपडेट ऐसे पासवर्ड के साथ माँगा गया जो खाता नहीं खोलता",
   "log.update.install_start_failed.text": "इंस्टॉल शुरू नहीं किया जा सका",
+  "log.update.install_wait_gave_up.text": "इंस्टॉल का लॉक किसी इंस्टॉल में लगने वाले समय से ज़्यादा देर तक रखा रहा, इसलिए इंस्टॉल को खत्म माना गया",
   "login.form.title": "लॉगिन",
   "login.password.label": "पासवर्ड",
   "login.signed-out.notice": "आप लॉगआउट हो गए हैं।",

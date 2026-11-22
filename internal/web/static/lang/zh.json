@@ -893,6 +893,7 @@
   "log.update.install_asked.text": "在设置的“更新”标签页请求了更新",
   "log.update.install_password_wrong.text": "有人用与账号不匹配的密码请求更新",
   "log.update.install_start_failed.text": "无法开始安装",
+  "log.update.install_wait_gave_up.text": "安装锁被持有的时间超过了一次安装所需的时间，因此视为安装已结束",
   "login.form.title": "登录",
   "login.password.label": "密码",
   "login.signed-out.notice": "你已退出登录。",

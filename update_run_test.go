@@ -14,9 +14,11 @@ import (
 	"time"
 
 	"go.uber.org/zap"
+	"go.uber.org/zap/zaptest/observer"
 
 	"github.com/jollaman999/tunnel-manager/internal/api"
 	"github.com/jollaman999/tunnel-manager/internal/install"
+	"github.com/jollaman999/tunnel-manager/internal/logid"
 	"github.com/jollaman999/tunnel-manager/internal/settings"
 )
 
@@ -354,7 +356,7 @@ func TestTheWaitForAnInstallCoversTheMomentBeforeItTakesTheLock(t *testing.T) {
 	done := make(chan struct{})
 
 	go func() {
-		waitForInstallEnd(dir, 10*time.Second, 5*time.Millisecond)
+		waitForInstallEnd(dir, 10*time.Second, 10*time.Second, 5*time.Millisecond)
 		close(done)
 	}()
 
@@ -390,9 +392,88 @@ func TestTheWaitForAnInstallCoversTheMomentBeforeItTakesTheLock(t *testing.T) {
 func TestTheWaitForAnInstallThatNeverTookTheLockEnds(t *testing.T) {
 	start := time.Now()
 
-	waitForInstallEnd(t.TempDir(), 50*time.Millisecond, 5*time.Millisecond)
+	waitForInstallEnd(t.TempDir(), 50*time.Millisecond, 10*time.Second, 5*time.Millisecond)
 
 	if waited := time.Since(start); waited < 50*time.Millisecond || waited > 5*time.Second {
 		t.Errorf("the wait took %v, want about the 50ms it was given", waited)
+	}
+}
+
+// TestTheWaitForAnInstallGivesUpOnALockThatIsNeverLetGo is a lock that reads
+// as held for good: it holds something other than a process id, or names an id
+// the system has handed to another process since. Waited on without an end,
+// it kept the Update screen refusing every install until the service
+// restarted.
+func TestTheWaitForAnInstallGivesUpOnALockThatIsNeverLetGo(t *testing.T) {
+	dir := t.TempDir()
+
+	err := os.WriteFile(install.InstallLockFile(dir), []byte("not a process id"), 0o600)
+	if err != nil {
+		t.Fatalf("failed to write the lock: %v", err)
+	}
+
+	done := make(chan bool, 1)
+
+	go func() {
+		done <- waitForInstallEnd(dir, 10*time.Second, 100*time.Millisecond, 5*time.Millisecond)
+	}()
+
+	select {
+	case over := <-done:
+		if over {
+			t.Error("a lock still held when the wait gave up was reported as let go")
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("the wait did not give up on a lock that is never let go")
+	}
+}
+
+// TestAnInstallWhoseLockIsNeverLetGoIsTakenAsOver follows the start handed to
+// systemd as far as the Update screen is concerned: systemd-run ends, the unit
+// takes the lock, and the lock never reads as let go. The screen is told the
+// install is over once the wait gives up, and the log says why.
+func TestAnInstallWhoseLockIsNeverLetGoIsTakenAsOver(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("systemd-run is the linux path")
+	}
+
+	// The stand-in for systemd-run does what the unit would: it takes the lock,
+	// here with something in it that names no process, and it ends. PATH holds
+	// nothing but this file, so only what the shell has built in is used.
+	runner := filepath.Join(t.TempDir(), "systemd-run")
+
+	script := "#!/bin/sh\nfor last in \"$@\"; do :; done\n" +
+		"printf 'not a process id' > \"${last%/*}/install.lock\"\nexit 0\n"
+
+	err := os.WriteFile(runner, []byte(script), 0o755)
+	if err != nil {
+		t.Fatalf("failed to write the stand-in for systemd-run: %v", err)
+	}
+
+	t.Setenv("PATH", filepath.Dir(runner))
+
+	appear, held, poll := installLockAppearWait, installLockHeldWait, installLockPoll
+	installLockAppearWait, installLockHeldWait, installLockPoll = 10*time.Second, 100*time.Millisecond, 5*time.Millisecond
+
+	t.Cleanup(func() {
+		installLockAppearWait, installLockHeldWait, installLockPoll = appear, held, poll
+	})
+
+	core, logs := observer.New(zap.InfoLevel)
+	ended := make(chan struct{})
+
+	err = startUpdateInstall(zap.New(core), filepath.Join(t.TempDir(), "tunnel-manager.db"), func() { close(ended) })
+	if err != nil {
+		t.Fatalf("the start failed: %v", err)
+	}
+
+	select {
+	case <-ended:
+	case <-time.After(10 * time.Second):
+		t.Fatal("the install was never reported as over")
+	}
+
+	if logs.FilterField(logid.UpdateInstallWaitGaveUp.Field()).Len() != 1 {
+		t.Errorf("no line says the wait gave up. Lines: %v", logs.All())
 	}
 }

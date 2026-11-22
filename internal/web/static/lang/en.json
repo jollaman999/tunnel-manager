@@ -893,6 +893,7 @@
   "log.update.install_asked.text": "an update was asked for on the Update tab of Settings",
   "log.update.install_password_wrong.text": "an update was asked for with a password that does not open the account",
   "log.update.install_start_failed.text": "failed to start the install",
+  "log.update.install_wait_gave_up.text": "the install lock was held for longer than an install takes, so the install is taken as over",
   "login.form.title": "Sign in",
   "login.password.label": "Password",
   "login.signed-out.notice": "You are signed out.",

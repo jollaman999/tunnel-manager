@@ -893,6 +893,7 @@
   "log.update.install_asked.text": "se pidió una actualización desde la pestaña Actualización de Ajustes",
   "log.update.install_password_wrong.text": "se pidió una actualización con una contraseña que no abre la cuenta",
   "log.update.install_start_failed.text": "no se pudo iniciar la instalación",
+  "log.update.install_wait_gave_up.text": "el bloqueo de instalación se mantuvo más tiempo del que dura una instalación, así que la instalación se da por terminada",
   "login.form.title": "Iniciar sesión",
   "login.password.label": "Contraseña",
   "login.signed-out.notice": "Ha cerrado la sesión.",
