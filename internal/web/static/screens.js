@@ -3399,16 +3399,6 @@ function hostRow(host, known) {
 
   buttons.className = "buttons";
 
-  if (typeof host.pending_host_key_fingerprint === "string" && host.pending_host_key_fingerprint !== "") {
-    buttons.appendChild(actionButton(t("hosts.jump-approve.button"), "host-approve-" + host.id, async function () {
-      const approved = await openHostKeyPanel(host.id);
-
-      if (approved) {
-        await drawHosts();
-      }
-    }, "primary"));
-  }
-
   buttons.appendChild(actionButton(t("common.edit.button"), "host-edit-" + host.id, async function () {
     editingHostID = host.id;
 
@@ -3443,11 +3433,41 @@ function hostRow(host, known) {
     jumpRouteCell(host, known),
     host.user,
     descriptionCell(host.description),
-    host.enabled ? t("common.yes.text") : t("common.no.text"),
+    hostStateCell(host),
     socksCell(host),
     timeCell(host.updated_at),
     buttons
   ];
+}
+
+// hostStateCell is the enabled column of a Host. A Host that was presented a
+// key it does not trust says so there instead, with the press that answers it
+// under the badge, the way a row of the status screen does. The press is not
+// one of the buttons at the end of the row: those fold into a menu wherever
+// the table is wider than its box, and a Host that cannot connect until
+// somebody looks at its key would then read like every other row.
+//
+// Which of the two questions it is follows from whether the Host trusts a key
+// already: none is a Host never approved, and one is a key that changed.
+function hostStateCell(host) {
+  if (typeof host.pending_host_key_fingerprint !== "string" || host.pending_host_key_fingerprint === "") {
+    return host.enabled ? t("common.yes.text") : t("common.no.text");
+  }
+
+  const trusted = typeof host.host_key_fingerprint === "string" && host.host_key_fingerprint !== "";
+  const cell = document.createElement("div");
+
+  cell.className = "state-cell";
+  cell.appendChild(statusBadge(trusted ? "host_key_mismatch" : "host_key_unapproved"));
+  cell.appendChild(actionButton(t("hosts.jump-approve.button"), "host-approve-" + host.id, async function () {
+    const approved = await openHostKeyPanel(host.id);
+
+    if (approved) {
+      await drawHosts();
+    }
+  }, "primary"));
+
+  return cell;
 }
 
 function socksCell(host) {
