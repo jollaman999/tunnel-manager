@@ -7,6 +7,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -308,5 +309,90 @@ func TestTheUpdateLoopTakesUpAChangedSettingWithoutARestart(t *testing.T) {
 	if looks.Load() != 1 || installs.Load() != 1 {
 		t.Fatalf("looks = %d, installs = %d after both were turned on, want one of each",
 			looks.Load(), installs.Load())
+	}
+}
+
+// holdInstallLockFor leaves the lock of the installation in dir as an install
+// that is running holds it: under the id of a process that is there and is not
+// this one, which the parent of the test binary is.
+func holdInstallLockFor(t *testing.T, dir string) {
+	t.Helper()
+
+	err := os.WriteFile(install.InstallLockFile(dir), []byte(strconv.Itoa(os.Getppid())), 0o600)
+	if err != nil {
+		t.Fatalf("failed to write the lock: %v", err)
+	}
+}
+
+// TestAnInstallRunningIsNotStartedAgain is an install somebody typed at a
+// terminal while the Update screen is pressed. The second one would only be
+// refused by the lock once it ran, out of sight of the press, which would have
+// been told that it started.
+func TestAnInstallRunningIsNotStartedAgain(t *testing.T) {
+	dir := t.TempDir()
+	holdInstallLockFor(t, dir)
+
+	ended := false
+
+	err := startUpdateInstall(zap.NewNop(), filepath.Join(dir, "tunnel-manager.db"), func() { ended = true })
+	if !errors.Is(err, install.ErrInstallRunning) {
+		t.Fatalf("the start answered %v, want install.ErrInstallRunning", err)
+	}
+
+	if ended {
+		t.Error("an install that was never started was reported as ended")
+	}
+}
+
+// TestTheWaitForAnInstallCoversTheMomentBeforeItTakesTheLock is the install
+// handed to systemd: systemd-run ends as soon as the unit has started, which is
+// before the install has taken the lock. Read as "the lock is not held", that
+// moment would be an install that is over.
+func TestTheWaitForAnInstallCoversTheMomentBeforeItTakesTheLock(t *testing.T) {
+	dir := t.TempDir()
+
+	done := make(chan struct{})
+
+	go func() {
+		waitForInstallEnd(dir, 10*time.Second, 5*time.Millisecond)
+		close(done)
+	}()
+
+	select {
+	case <-done:
+		t.Fatal("the wait ended before the install had taken the lock")
+	case <-time.After(100 * time.Millisecond):
+	}
+
+	holdInstallLockFor(t, dir)
+
+	select {
+	case <-done:
+		t.Fatal("the wait ended while the install held the lock")
+	case <-time.After(100 * time.Millisecond):
+	}
+
+	err := os.Remove(install.InstallLockFile(dir))
+	if err != nil {
+		t.Fatalf("failed to let the lock go: %v", err)
+	}
+
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("the wait did not end once the install let the lock go")
+	}
+}
+
+// TestTheWaitForAnInstallThatNeverTookTheLockEnds is a unit that ended before
+// it took the lock, refused or failed. The press is let go once the time it
+// had to take it is up, rather than held until the service restarts.
+func TestTheWaitForAnInstallThatNeverTookTheLockEnds(t *testing.T) {
+	start := time.Now()
+
+	waitForInstallEnd(t.TempDir(), 50*time.Millisecond, 5*time.Millisecond)
+
+	if waited := time.Since(start); waited < 50*time.Millisecond || waited > 5*time.Second {
+		t.Errorf("the wait took %v, want about the 50ms it was given", waited)
 	}
 }

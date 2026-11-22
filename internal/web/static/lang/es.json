@@ -344,6 +344,7 @@
   "error.uninstall.password.wrong.error": "La contraseña no coincide con la de esta cuenta",
   "error.update.check_failed.error": "No se pudo leer la versión publicada más reciente: {reason}",
   "error.update.install_failed.error": "No se pudo iniciar la instalación: {reason}",
+  "error.update.install_running.error": "Ya hay una instalación en curso, así que no se inició nada más. Al terminar, este servicio se reinicia; vuelva a cargar la página cuando responda de nuevo",
   "error.update.not_installable.error": "No se puede instalar una actualización desde esta pantalla. tunnel-manager se ejecuta en el servidor de Tunnel Manager como un programa que alguien inició y no como un servicio registrado, así que no hay nada que lo reinicie después",
   "error.update.nothing_newer.error": "No hay una versión más reciente que instalar. La última consulta no encontró ninguna posterior a la versión en ejecución, así que no se instaló nada. Consulte de nuevo e instale cuando se encuentre una más reciente",
   "error.update.password_missing.error": "Escriba la contraseña de su cuenta para instalar la actualización",

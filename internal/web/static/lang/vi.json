@@ -344,6 +344,7 @@
   "error.uninstall.password.wrong.error": "Mật khẩu không mở được tài khoản này",
   "error.update.check_failed.error": "Không đọc được bản phát hành mới nhất: {reason}",
   "error.update.install_failed.error": "Không bắt đầu được việc cài đặt: {reason}",
+  "error.update.install_running.error": "Đã có một lần cài đặt đang chạy nên không bắt đầu thêm gì. Dịch vụ này được khởi động lại khi việc cài đặt kết thúc, hãy tải lại trang khi nó phản hồi trở lại",
   "error.update.not_installable.error": "Không thể cài cập nhật từ màn hình này. tunnel-manager đang chạy trên máy chủ Tunnel Manager như một chương trình ai đó khởi động chứ không phải dịch vụ đã đăng ký, nên không có gì khởi động lại nó sau đó",
   "error.update.nothing_newer.error": "Không có bản phát hành mới hơn để cài đặt. Lần xem gần nhất không tìm thấy bản nào mới hơn phiên bản đang chạy, nên không có gì được cài đặt. Hãy xem lại và cài đặt khi tìm thấy bản mới hơn",
   "error.update.password_missing.error": "Hãy nhập mật khẩu tài khoản của bạn để cài đặt bản cập nhật",

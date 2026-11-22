@@ -236,6 +236,7 @@ const (
 	errUpdatePasswordMissing errorCode = "update.password_missing"
 	errUpdatePasswordWrong   errorCode = "update.password_wrong"
 	errUpdateInstallFailed   errorCode = "update.install_failed"
+	errUpdateInstallRunning  errorCode = "update.install_running"
 
 	errExportPasswordRequired        errorCode = "export.password.required"
 	errExportPasswordTooShort        errorCode = "export.password.too_short"
@@ -564,6 +565,7 @@ var errorMessages = map[errorCode]string{
 	errUpdatePasswordMissing: "Enter the password of your account to install the update",
 	errUpdatePasswordWrong:   "That is not the password of this account. Nothing was installed",
 	errUpdateInstallFailed:   "The install could not be started: {reason}",
+	errUpdateInstallRunning:  "An install is already running, and nothing else was started. This service is restarted at the end of it, so load the page again once it answers",
 
 	// The export half of the transfer screens.
 	errExportPasswordRequired:        "A password is required. It is what encrypts the file, and the file cannot be opened without it",

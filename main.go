@@ -2063,9 +2063,14 @@ func serve() {
 	// The update screen is handed what it needs to look and what it needs to
 	// install. Both are functions rather than the packages themselves, so that
 	// a test drives the handler without reaching GitHub or replacing anything.
-	updateHandler := api.NewUpdateHandler(logger, db, version, canInstallUpdate(databaseFile),
+	//
+	// The install reports its end back to the handler, which holds one install
+	// out at a time and is otherwise never told that one is over.
+	var updateHandler *api.UpdateHandler
+
+	updateHandler = api.NewUpdateHandler(logger, db, version, canInstallUpdate(databaseFile),
 		install.Check, func() error {
-			return startUpdateInstall(logger, databaseFile)
+			return startUpdateInstall(logger, databaseFile, updateHandler.InstallEnded)
 		})
 	// The export and the import are handed the handler that serves the Hosts,
 	// because an imported Host has to be stored the way a created one is. The

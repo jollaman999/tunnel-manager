@@ -81,7 +81,18 @@ func canInstallUpdate(databaseFile string) bool {
 // So on a systemd machine the install is handed to systemd as a transient unit
 // of its own. Stopping this service then does not touch it, and it runs the
 // same steps in the same order as the install an operator types by hand.
-func startUpdateInstall(logger *zap.Logger, databaseFile string) error {
+//
+// ended is called once the install is over without having ended this process,
+// which is what lets the Update screen start another one. An install that
+// holds the lock of this installation already, one typed at a terminal, is
+// refused here with install.ErrInstallRunning rather than started to be
+// refused by that lock out of sight of the press that asked for it.
+func startUpdateInstall(logger *zap.Logger, databaseFile string, ended func()) error {
+	dataDir := install.Defaults().WithDatabase(databaseFile).DataDir
+	if install.InstallRunning(dataDir) {
+		return fmt.Errorf("%w: %s is held", install.ErrInstallRunning, install.InstallLockFile(dataDir))
+	}
+
 	running, err := os.Executable()
 	if err != nil {
 		return fmt.Errorf("failed to find the file this process was started from: %w", err)
@@ -104,14 +115,68 @@ func startUpdateInstall(logger *zap.Logger, databaseFile string) error {
 		zap.Bool("outside_this_service", apart),
 		zap.String("writes_its_report_to", installReportPath(databaseFile, apart)))
 
-	// The child is not waited for. It outlives the wait by design: what it does
-	// last is restart this service, and a wait would be this process sitting on
-	// the answer to a request while the thing it is waiting for takes it down.
+	// The child is not waited for here. It outlives the wait by design: what it
+	// does last is restart this service, and a wait would be this process
+	// sitting on the answer to a request while the thing it is waiting for
+	// takes it down. It is waited for on the side, only to say when it ended.
 	go func() {
-		_ = command.Wait()
+		err := command.Wait()
+
+		// A plain child is the install, so its end is the install's. On
+		// systemd the child is systemd-run, which ends once the unit has
+		// started, and the install is then over when the unit lets the lock
+		// go. A systemd-run that failed started no unit at all.
+		if apart && err == nil {
+			waitForInstallEnd(dataDir, installLockAppearWait, installLockPoll)
+		}
+
+		if apart && err != nil {
+			logger.Error("systemd-run did not start the install",
+				logid.UpdateInstallStartFailed.Field(), zap.Error(err))
+		}
+
+		ended()
 	}()
 
 	return nil
+}
+
+// installLockAppearWait is how long an install handed to systemd is given to
+// take the lock of the installation, and installLockPoll is how often the lock
+// is looked at meanwhile and afterwards.
+//
+// The lock is the first thing -install takes once it has checked its
+// privilege, so it takes the time a process needs to start. A unit that is not
+// seen holding it in this long has ended, refused or failed before it took the
+// lock or so soon after that no look fell in between, which is an install that
+// is over either way.
+var (
+	installLockAppearWait = time.Minute
+	installLockPoll       = 2 * time.Second
+)
+
+// waitForInstallEnd waits for an install of the installation whose data
+// directory is dataDir to take the lock and let it go again, or for appear to
+// pass without it having taken the lock.
+//
+// Both halves are needed because the wait starts before the install has run.
+// Read only as "is the lock held", the moment between systemd-run ending and
+// the install taking the lock reads as an install that is over, and a press
+// in that moment would start a second one.
+func waitForInstallEnd(dataDir string, appear time.Duration, poll time.Duration) {
+	deadline := time.Now().Add(appear)
+
+	for !install.InstallRunning(dataDir) {
+		if time.Now().After(deadline) {
+			return
+		}
+
+		time.Sleep(poll)
+	}
+
+	for install.InstallRunning(dataDir) {
+		time.Sleep(poll)
+	}
 }
 
 // startInstall starts the command installCommand made and then lets go of what

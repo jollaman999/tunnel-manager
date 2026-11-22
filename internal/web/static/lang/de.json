@@ -344,6 +344,7 @@
   "error.uninstall.password.wrong.error": "Das Passwort öffnet dieses Konto nicht",
   "error.update.check_failed.error": "Die neueste Veröffentlichung konnte nicht gelesen werden: {reason}",
   "error.update.install_failed.error": "Die Installation konnte nicht gestartet werden: {reason}",
+  "error.update.install_running.error": "Es läuft bereits eine Installation, deshalb wurde nichts Weiteres gestartet. An ihrem Ende wird dieser Dienst neu gestartet; laden Sie die Seite neu, sobald er wieder antwortet",
   "error.update.not_installable.error": "Eine Aktualisierung lässt sich von dieser Seite aus nicht installieren. tunnel-manager läuft auf dem Tunnel-Manager-Server als Programm, das jemand gestartet hat, und nicht als registrierter Dienst, daher gibt es nichts, was es danach neu startet",
   "error.update.nothing_newer.error": "Es gibt keine neuere Veröffentlichung zum Installieren. Beim letzten Nachsehen wurde keine gefunden, die neuer ist als die laufende Version, daher wurde nichts installiert. Sehen Sie erneut nach und installieren Sie, sobald eine neuere gefunden wird",
   "error.update.password_missing.error": "Geben Sie das Passwort Ihres Kontos ein, um die Aktualisierung zu installieren",

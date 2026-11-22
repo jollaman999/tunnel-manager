@@ -344,6 +344,7 @@
   "error.uninstall.password.wrong.error": "A senha não abre esta conta",
   "error.update.check_failed.error": "Não foi possível ler a versão mais recente: {reason}",
   "error.update.install_failed.error": "Não foi possível iniciar a instalação: {reason}",
+  "error.update.install_running.error": "Já há uma instalação em andamento, então nada mais foi iniciado. Ao final dela este serviço é reiniciado; carregue a página de novo quando ele voltar a responder",
   "error.update.not_installable.error": "Não é possível instalar uma atualização a partir desta tela. O tunnel-manager roda no servidor do Tunnel Manager como um programa que alguém iniciou e não como um serviço registrado, então não há nada que o reinicie depois",
   "error.update.nothing_newer.error": "Não há uma versão mais nova para instalar. A última consulta não encontrou nenhuma posterior à versão em execução, então nada foi instalado. Consulte de novo e instale quando uma mais nova for encontrada",
   "error.update.password_missing.error": "Digite a senha da sua conta para instalar a atualização",

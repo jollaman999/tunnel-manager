@@ -1958,6 +1958,14 @@ running, so a call that went through there would put the running release in
 place again, or an older one over a build that is ahead of it, and take every
 tunnel down to do so.
 
+**One install is started at a time.** Once a press has handed an install over,
+another press, and the loop under [Installing without being asked](#installing-without-being-asked),
+is answered `409` with `update.install_running` and starts nothing until that
+install is over: one that goes well ends with the restart, and one that is
+refused or fails makes way for the next press. An install typed as `-install` at a
+terminal holds the same lock (see [Installing as a service](#installing-as-a-service))
+and is answered the same way.
+
 ### Installing without being asked
 
 `update_auto_install` is off unless it is turned on. With it on, a release that

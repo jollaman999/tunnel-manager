@@ -344,6 +344,7 @@
   "error.uninstall.password.wrong.error": "كلمة المرور لا تطابق هذا الحساب",
   "error.update.check_failed.error": "تعذّرت قراءة أحدث إصدار: {reason}",
   "error.update.install_failed.error": "تعذّر بدء التثبيت: {reason}",
+  "error.update.install_running.error": "هناك تثبيت قيد التشغيل بالفعل، فلم يُبدأ شيء آخر. تُعاد تشغيل هذه الخدمة في نهايته، فأعد تحميل الصفحة حين تستجيب من جديد",
   "error.update.not_installable.error": "لا يمكن تثبيت تحديث من هذه الشاشة. فـ tunnel-manager يعمل على خادم Tunnel Manager كبرنامج شغّله أحدهم لا كخدمة مسجَّلة، فلا شيء يعيد تشغيله بعد ذلك",
   "error.update.nothing_newer.error": "لا يوجد إصدار أحدث لتثبيته. لم يعثر آخر بحث على إصدار أحدث من الإصدار الذي يعمل، فلم يُثبَّت شيء. ابحث مرة أخرى، وثبّت حين يُعثر على إصدار أحدث",
   "error.update.password_missing.error": "أدخل كلمة مرور حسابك لتثبيت التحديث",

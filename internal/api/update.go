@@ -2,6 +2,8 @@ package api
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"net/http"
 	"sync"
 	"time"
@@ -52,6 +54,21 @@ type UpdateHandler struct {
 
 	mu   sync.Mutex
 	last *checkResult
+	// installing is up from the moment an install is handed to start until
+	// InstallEnded is called, or until start fails. A press and the loop that
+	// installs on its own both go through it, so that one install this process
+	// started is out at a time: two would each stop the service and copy over
+	// the other, and on systemd the second collided with the unit of the first
+	// and failed while the press answered that it had started.
+	//
+	// Nothing in this process sees an install that went well end, because
+	// what it ends with is a restart that ends this process too, and the flag
+	// goes with it. What does have to bring it down is an install that ended
+	// without that restart, refused or failed, or every press after it would
+	// be refused until the service was restarted by hand. The caller of start
+	// reports that through InstallEnded, since it holds the process the
+	// install runs in and this does not.
+	installing bool
 }
 
 func NewUpdateHandler(logger *zap.Logger, db *gorm.DB, version string, installable bool,
@@ -166,7 +183,40 @@ func (h *UpdateHandler) NewerAvailable() bool {
 // here and there is nobody to ask: what stands in its place is the setting,
 // which is off unless an operator turned it on.
 func (h *UpdateHandler) StartInstall() error {
-	return h.start()
+	if !h.beginInstall() {
+		return fmt.Errorf("an install started from this process has not ended yet: %w", install.ErrInstallRunning)
+	}
+
+	err := h.start()
+	if err != nil {
+		h.InstallEnded()
+	}
+
+	return err
+}
+
+// beginInstall raises the flag that one install is out and says whether it was
+// down, which is whether this caller may start one.
+func (h *UpdateHandler) beginInstall() bool {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+
+	if h.installing {
+		return false
+	}
+
+	h.installing = true
+
+	return true
+}
+
+// InstallEnded says that the install handed to start has ended without ending
+// this process, so another one may be started. main calls it once the install
+// it started is over; see the installing field for why nothing else can.
+func (h *UpdateHandler) InstallEnded() {
+	h.mu.Lock()
+	h.installing = false
+	h.mu.Unlock()
 }
 
 // GetUpdate answers with what is known, without looking again.
@@ -226,7 +276,7 @@ type updateInstallRequest struct {
 // @Param   body  body  api.updateInstallRequest  true  "The account password"
 // @Success  200  {object}  models.Response{data=api.updateView}
 // @Failure  401  {object}  api.errorBody  "The password does not open this account"
-// @Failure  409  {object}  api.errorBody  "There is nothing newer, or this build cannot install one"
+// @Failure  409  {object}  api.errorBody  "There is nothing newer, this build cannot install one, or an install is already running"
 // @Router       /update/install [post]
 func (h *UpdateHandler) InstallUpdate(c *echo.Context) error {
 	var req updateInstallRequest
@@ -265,14 +315,29 @@ func (h *UpdateHandler) InstallUpdate(c *echo.Context) error {
 		return refused.answer(c)
 	}
 
+	// The flag is raised after the password, so that a press with the wrong
+	// one is told about the password and not about an install it could not
+	// have started anyway.
+	if !h.beginInstall() {
+		return failure(c, http.StatusConflict, errUpdateInstallRunning)
+	}
+
 	h.logger.Warn("an update was asked for on the Update tab of Settings. The newest release is being "+
 		"installed and this service is restarted at the end of it, which takes every tunnel down",
 		logid.UpdateInstallAsked.Field(), zap.String("running", h.version))
 
 	err = h.start()
 	if err != nil {
+		h.InstallEnded()
+
 		h.logger.Error("failed to start the install",
 			logid.UpdateInstallStartFailed.Field(), zap.Error(err))
+
+		// An install this process did not start, such as one an operator typed
+		// at a terminal, is found by start, and it is the same answer.
+		if errors.Is(err, install.ErrInstallRunning) {
+			return failure(c, http.StatusConflict, errUpdateInstallRunning)
+		}
 
 		return failure(c, http.StatusInternalServerError, errUpdateInstallFailed,
 			errorArgs{"reason": err.Error()})

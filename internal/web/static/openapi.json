@@ -3096,7 +3096,7 @@
                         }
                     },
                     "409": {
-                        "description": "There is nothing newer, or this build cannot install one",
+                        "description": "There is nothing newer, this build cannot install one, or an install is already running",
                         "schema": {
                             "$ref": "#/definitions/api.errorBody"
                         }
@@ -3461,6 +3461,7 @@
                 "update.password_missing",
                 "update.password_wrong",
                 "update.install_failed",
+                "update.install_running",
                 "export.password.required",
                 "export.password.too_short",
                 "export.password.too_long",
@@ -3674,6 +3675,7 @@
                 "errUpdatePasswordMissing",
                 "errUpdatePasswordWrong",
                 "errUpdateInstallFailed",
+                "errUpdateInstallRunning",
                 "errExportPasswordRequired",
                 "errExportPasswordTooShort",
                 "errExportPasswordTooLong",

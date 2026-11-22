@@ -7,7 +7,9 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/glebarez/sqlite"
 	"github.com/jollaman999/tunnel-manager/internal/auth"
@@ -380,5 +382,184 @@ func TestAnInstallWithNothingNewerIsRefused(t *testing.T) {
 				t.Errorf("the install was started %d times with nothing newer, want 0", call.started)
 			}
 		})
+	}
+}
+
+// TestASecondInstallIsRefusedWhileTheFirstStarts sends two presses that meet.
+// The first is held inside the start, which is where the install is handed
+// over; the second arrives then. Two installs handed over at once each stop
+// the service and copy over the other, and on a systemd machine the second
+// collided with the unit of the first and failed while the press answered 200.
+func TestASecondInstallIsRefusedWhileTheFirstStarts(t *testing.T) {
+	var started atomic.Int32
+
+	entered := make(chan struct{}, 2)
+	release := make(chan struct{})
+
+	recorded, _ := observer.New(zap.DebugLevel)
+	h := NewUpdateHandler(zap.New(recorded), updateAccountDB(t), "3.7.4", true,
+		func(ctx context.Context, version string) (install.Latest, error) {
+			return install.Latest{Tag: "v3.7.5", Newer: true, Comparable: true}, nil
+		},
+		func() error {
+			started.Add(1)
+			entered <- struct{}{}
+			<-release
+
+			return nil
+		})
+	h.Look(context.Background())
+
+	press := func() chan *httptest.ResponseRecorder {
+		done := make(chan *httptest.ResponseRecorder, 1)
+
+		go func() {
+			e := echo.New()
+			req := httptest.NewRequest(http.MethodPost, "/api/update/install",
+				strings.NewReader(`{"password":"`+hostKeyAccountPassword+`"}`))
+			req.Header.Set(echo.HeaderContentType, echo.MIMEApplicationJSON)
+
+			rec := httptest.NewRecorder()
+			c := e.NewContext(req, rec)
+			leaveSessionOnContext(c, 1)
+
+			err := h.InstallUpdate(c)
+			if err != nil {
+				rec.Code = -1
+			}
+
+			done <- rec
+		}()
+
+		return done
+	}
+
+	first := press()
+	<-entered
+
+	second := press()
+
+	var secondRec *httptest.ResponseRecorder
+
+	select {
+	case secondRec = <-second:
+	case <-entered:
+		t.Error("the second press started an install while the first was being handed over")
+	case <-time.After(10 * time.Second):
+		t.Fatal("the second press neither answered nor started an install")
+	}
+
+	close(release)
+
+	firstRec := <-first
+	if secondRec == nil {
+		secondRec = <-second
+	}
+
+	if firstRec.Code != http.StatusOK {
+		t.Errorf("the first press answered %d, want 200. Body: %s", firstRec.Code, firstRec.Body.String())
+	}
+
+	if secondRec.Code != http.StatusConflict {
+		t.Errorf("the second press answered %d, want 409. Body: %s", secondRec.Code, secondRec.Body.String())
+	}
+
+	if !strings.Contains(secondRec.Body.String(), `"error_code":"`+string(errUpdateInstallRunning)+`"`) {
+		t.Errorf("the second press is not refused as an install running: %s", secondRec.Body.String())
+	}
+
+	if got := started.Load(); got != 1 {
+		t.Errorf("the install was started %d times, want once", got)
+	}
+}
+
+// pressInstall sends one press with the right password and answers the status
+// and the error code it came back with.
+func pressInstall(t *testing.T, h *UpdateHandler) (int, string) {
+	t.Helper()
+
+	c, rec := updateRequest(t, "/api/update/install", `{"password":"`+hostKeyAccountPassword+`"}`, true)
+
+	err := h.InstallUpdate(c)
+	if err != nil {
+		t.Fatalf("InstallUpdate returned an error: %v", err)
+	}
+
+	var body struct {
+		Code string `json:"error_code"`
+	}
+
+	_ = json.Unmarshal(rec.Body.Bytes(), &body)
+
+	return rec.Code, body.Code
+}
+
+// TestAnInstallThatEndedMakesWayForTheNext walks the flag through what brings
+// it down. An install that went well ends this process and the flag with it;
+// the ones that did not are what would otherwise leave every press after them
+// refused until the service was restarted by hand.
+func TestAnInstallThatEndedMakesWayForTheNext(t *testing.T) {
+	call := &updateCall{
+		latest:      install.Latest{Tag: "v3.7.5", Newer: true, Comparable: true},
+		installable: true,
+	}
+	h, _ := call.handler(t, nil)
+	h.Look(context.Background())
+
+	status, _ := pressInstall(t, h)
+	if status != http.StatusOK || call.started != 1 {
+		t.Fatalf("the first press answered %d and started %d installs, want 200 and one", status, call.started)
+	}
+
+	// Handed over and not yet ended: the press and the loop are both refused,
+	// and neither reaches start.
+	status, code := pressInstall(t, h)
+	if status != http.StatusConflict || code != string(errUpdateInstallRunning) {
+		t.Errorf("a press while an install is out answered %d %q, want 409 %q", status, code, errUpdateInstallRunning)
+	}
+
+	err := h.StartInstall()
+	if !errors.Is(err, install.ErrInstallRunning) {
+		t.Errorf("the loop was not refused while an install is out: %v", err)
+	}
+
+	if call.started != 1 {
+		t.Fatalf("the install was started %d times while one was out, want once", call.started)
+	}
+
+	// The install ended without the restart.
+	h.InstallEnded()
+
+	// A start that fails brings the flag down on its own.
+	call.startErr = errors.New("systemd-run is not where it was")
+
+	status, code = pressInstall(t, h)
+	if status != http.StatusInternalServerError || code != string(errUpdateInstallFailed) {
+		t.Errorf("a start that failed answered %d %q, want 500 %q", status, code, errUpdateInstallFailed)
+	}
+
+	err = h.StartInstall()
+	if err == nil {
+		t.Error("the loop was told a failed start worked")
+	}
+
+	// An install that start found running, which this process did not start,
+	// is answered as one that it did.
+	call.startErr = install.ErrInstallRunning
+
+	status, code = pressInstall(t, h)
+	if status != http.StatusConflict || code != string(errUpdateInstallRunning) {
+		t.Errorf("an install found running answered %d %q, want 409 %q", status, code, errUpdateInstallRunning)
+	}
+
+	call.startErr = nil
+
+	status, _ = pressInstall(t, h)
+	if status != http.StatusOK {
+		t.Errorf("a press after the failed starts answered %d, want 200", status)
+	}
+
+	if call.started != 5 {
+		t.Errorf("the install was started %d times, want 5: the first, the two that failed, the one found running and the last", call.started)
 	}
 }
