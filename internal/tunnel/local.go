@@ -60,6 +60,17 @@ type LocalForwardState struct {
 	// models.Tunnel.ForwardReach. It is "unknown" from the moment a connection
 	// stands until the probe of that connection answers.
 	ForwardReach string `json:"forward_reach"`
+	// OpenReach is which of the two addresses of the bind scope the listen
+	// pair of the connection that stands opened on this machine, in the words
+	// models.Tunnel.OpenReach carries: "both", "ipv4" or "ipv6". It is empty
+	// until a connection has opened the pair, and emptied when the pair could
+	// not be opened at all. Unlike on a tunnel it is a measurement and not an
+	// answer: the listeners are opened here, so a half that is missing is one
+	// this machine refused, most often because something else holds the port
+	// on that address. It is only a fact about a forward that is connected; one
+	// that is reconnecting has closed its listeners and keeps what the last
+	// connection opened.
+	OpenReach string `json:"open_reach"`
 }
 
 // localTunnel carries one local forward: an SSH connection to the Host, and
@@ -287,6 +298,7 @@ func (f *localTunnel) establish() error {
 			state.Status = localStatusError
 			state.LastError = err.Error()
 			jumpFailure{}.setOnLocalForward(state)
+			state.OpenReach = ""
 		})
 
 		return fmt.Errorf("failed to open the local port: %w", err)
@@ -308,6 +320,7 @@ func (f *localTunnel) establish() error {
 		state.LastError = ""
 		jumpFailure{}.setOnLocalForward(state)
 		state.LastConnectedAt = time.Now()
+		state.OpenReach = opened.reach
 		// What the last connection measured says nothing about this one, which
 		// may go to a Host that was reconfigured or to a target that came back
 		// in between, so the reading goes back to unknown until the probe below

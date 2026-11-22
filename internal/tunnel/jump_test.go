@@ -549,11 +549,13 @@ func TestAJumpRouteCarriesARemoteTunnel(t *testing.T) {
 		t.Fatalf("the first pass reported %+v, want one started", result)
 	}
 
-	f.waitTunnelRow(t, "the tunnel to connect", func(row models.Tunnel) bool {
+	row := f.waitTunnelRow(t, "the tunnel to connect", func(row models.Tunnel) bool {
 		return row.Status == statusConnected
 	})
 
-	if got := exchange(t, net.JoinHostPort("127.0.0.1", strconv.Itoa(localPort)), "ping"); got != "echo:ping" {
+	// The row says which of the pair was opened, for the reason
+	// openedLoopback gives for a local forward.
+	if got := exchange(t, row.Local, "ping"); got != "echo:ping" {
 		t.Fatalf("the answer through the tunnel was %q, want %q", got, "echo:ping")
 	}
 
@@ -579,9 +581,9 @@ func TestAJumpRouteCarriesALocalForward(t *testing.T) {
 		t.Fatalf("the first pass reported %+v, want one started", result)
 	}
 
-	waitLocalStatus(t, f.m, LocalForwardKey{HostID: 1, Number: 1}, "the local forward to connect", isConnected)
+	state := waitLocalStatus(t, f.m, LocalForwardKey{HostID: 1, Number: 1}, "the local forward to connect", isConnected)
 
-	if got := exchange(t, net.JoinHostPort("127.0.0.1", strconv.Itoa(localPort)), "ping"); got != "echo:ping" {
+	if got := exchange(t, openedLoopback(t, state.OpenReach, localPort), "ping"); got != "echo:ping" {
 		t.Fatalf("the answer through the local forward was %q, want %q", got, "echo:ping")
 	}
 
@@ -606,11 +608,11 @@ func TestAJumpRouteCarriesASocksProxy(t *testing.T) {
 		t.Fatalf("the first pass reported %+v, want one started", result)
 	}
 
-	waitSocksConnected(t, f.m, 1)
+	state := waitSocksConnected(t, f.m, 1)
 
 	ip := netip.MustParseAddr(targetIP).As4()
 
-	conn := dialSocks(t, socksPort)
+	conn := dialSocks(t, state, socksPort)
 	socksGreet(t, conn)
 	if rep := socksRequest(t, conn, socksCmdConnect, socksAtypIPv4, ip[:], targetPort); rep != socksRepSucceeded {
 		t.Fatalf("CONNECT to %s:%d was answered with %d", targetIP, targetPort, rep)

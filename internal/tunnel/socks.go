@@ -66,6 +66,8 @@ type SocksState struct {
 	JumpSeq    int    `json:"jump_seq"`
 	JumpHostID uint   `json:"jump_host_id"`
 	JumpReason string `json:"jump_reason"`
+	// OpenReach is LocalForwardState.OpenReach for the proxy port.
+	OpenReach string `json:"open_reach"`
 }
 
 // ParseAllowedSources reads models.Host.SocksAllowedSources: addresses and
@@ -481,6 +483,7 @@ func (p *socksTunnel) establish() error {
 			state.Status = localStatusError
 			state.LastError = err.Error()
 			jumpFailure{}.setOnSocks(state)
+			state.OpenReach = ""
 		})
 
 		return fmt.Errorf("failed to open the proxy port: %w", err)
@@ -502,6 +505,7 @@ func (p *socksTunnel) establish() error {
 		state.LastError = ""
 		jumpFailure{}.setOnSocks(state)
 		state.LastConnectedAt = time.Now()
+		state.OpenReach = opened.reach
 	})
 
 	p.logger.Info("SOCKS5 proxy connected",

@@ -414,6 +414,56 @@ func portIsFree(port int) bool {
 	return true
 }
 
+// openedLoopback is the loopback address a client of a forward or a proxy on
+// port connects to: 127.0.0.1 where the IPv4 half of the pair opened, and ::1
+// where only the IPv6 half did. reach is the OpenReach the forward reports.
+//
+// The port was free when it was picked and is opened on both addresses of the
+// pair. A listener something else opens on one of them in between leaves the
+// forward connected on the other alone, and a client of the half that did not
+// open reaches that listener instead, which a test would then read as the
+// forward.
+func openedLoopback(t *testing.T, reach string, port int) string {
+	t.Helper()
+
+	switch reach {
+	case openReachBoth, openReachV4:
+		return net.JoinHostPort("127.0.0.1", strconv.Itoa(port))
+	case openReachV6:
+		return net.JoinHostPort("::1", strconv.Itoa(port))
+	}
+
+	t.Fatalf("the forward reports open_reach %q, want one of %q, %q and %q",
+		reach, openReachBoth, openReachV4, openReachV6)
+
+	return ""
+}
+
+// skipWhereTheOtherHalfIsHeld is for a test that means to reach both halves of
+// the pair of a forward that opened one of them. Where the half that did not
+// open is held by another listener, the port was taken in between being picked
+// and being opened, and the test is skipped. Where that half is free, nothing
+// was in the way of the forward and it failed to open it, which is a failure.
+func skipWhereTheOtherHalfIsHeld(t *testing.T, scope, reach string, port int) {
+	t.Helper()
+
+	v4, v6 := bindScopeAddresses(scope)
+	network, host := "tcp4", v4
+	if reach == openReachV4 {
+		network, host = "tcp6", v6
+	}
+
+	address := net.JoinHostPort(host, strconv.Itoa(port))
+
+	ln, err := net.Listen(network, address)
+	if err != nil {
+		t.Skipf("the forward opened %s alone because %s is held by another listener: %v", reach, address, err)
+	}
+	_ = ln.Close()
+
+	t.Fatalf("the forward opened %s alone although %s was free", reach, address)
+}
+
 // TestALocalForwardCarriesAConnectionThroughTheHost is the forward end to end:
 // a client of the local port reaches the target the Host dials, and the answer
 // comes back the same way, for both scopes.
@@ -435,7 +485,11 @@ func TestALocalForwardCarriesAConnectionThroughTheHost(t *testing.T) {
 				t.Fatalf("a connected forward reports %+v", state)
 			}
 
-			local := net.JoinHostPort("127.0.0.1", strconv.Itoa(localPort))
+			if ipv6LoopbackAvailable() && state.OpenReach != openReachBoth {
+				skipWhereTheOtherHalfIsHeld(t, scope, state.OpenReach, localPort)
+			}
+
+			local := openedLoopback(t, state.OpenReach, localPort)
 			if got := exchange(t, local, "ping"); got != "echo:ping" {
 				t.Fatalf("the answer through the local port was %q, want %q", got, "echo:ping")
 			}
@@ -533,7 +587,6 @@ func TestReconcileFollowsTheLocalForwardRows(t *testing.T) {
 	targetIP, targetPort := startEchoService(t, "first:")
 	_, otherPort := startEchoService(t, "second:")
 	localPort := freeDualStackPort(t)
-	local := net.JoinHostPort("127.0.0.1", strconv.Itoa(localPort))
 
 	f := newLocalForwardFixture(t, models.BindScopeLoopback, localPort, targetIP, targetPort)
 
@@ -590,9 +643,9 @@ func TestReconcileFollowsTheLocalForwardRows(t *testing.T) {
 		t.Fatal("the forward kept running on the target it was built with")
 	}
 
-	waitLocalStatus(t, f.m, f.key(), "the rebuilt local forward to connect", isConnected)
+	state := waitLocalStatus(t, f.m, f.key(), "the rebuilt local forward to connect", isConnected)
 
-	if got := exchange(t, local, "ping"); got != "second:ping" {
+	if got := exchange(t, openedLoopback(t, state.OpenReach, localPort), "ping"); got != "second:ping" {
 		t.Fatalf("the answer after the target changed was %q, want %q", got, "second:ping")
 	}
 
@@ -648,9 +701,9 @@ func TestAForwardWhoseLocalPortChangedIsRebuiltInPlace(t *testing.T) {
 		t.Fatal("the port the forward was moved off is still held")
 	}
 
-	waitLocalStatus(t, f.m, f.key(), "the moved local forward to connect", isConnected)
+	state := waitLocalStatus(t, f.m, f.key(), "the moved local forward to connect", isConnected)
 
-	moved := net.JoinHostPort("127.0.0.1", strconv.Itoa(movedPort))
+	moved := openedLoopback(t, state.OpenReach, movedPort)
 	if got := exchange(t, moved, "ping"); got != "moved:ping" {
 		t.Fatalf("the answer through the port it was moved to was %q, want %q", got, "moved:ping")
 	}
@@ -672,7 +725,6 @@ func (s *directSSHServer) accepted() int {
 func TestASwitchedOffLocalForwardOpensNothing(t *testing.T) {
 	targetIP, targetPort := startEchoService(t, "echo:")
 	localPort := freeDualStackPort(t)
-	local := net.JoinHostPort("127.0.0.1", strconv.Itoa(localPort))
 
 	f := newLocalForwardFixture(t, models.BindScopeLoopback, localPort, targetIP, targetPort)
 	f.change(func(_ []models.Host, forwards *[]models.LocalForward) {
@@ -701,9 +753,9 @@ func TestASwitchedOffLocalForwardOpensNothing(t *testing.T) {
 	if result.Started != 1 {
 		t.Fatalf("switching the forward on reported %+v, want one started", result)
 	}
-	waitLocalStatus(t, f.m, f.key(), "the local forward to connect", isConnected)
+	state := waitLocalStatus(t, f.m, f.key(), "the local forward to connect", isConnected)
 
-	if got := exchange(t, local, "ping"); got != "echo:ping" {
+	if got := exchange(t, openedLoopback(t, state.OpenReach, localPort), "ping"); got != "echo:ping" {
 		t.Fatalf("the answer through the switched on forward was %q, want %q", got, "echo:ping")
 	}
 
@@ -750,8 +802,65 @@ func TestALocalPortInUseLeavesTheForwardInError(t *testing.T) {
 	if !strings.Contains(state.LastError, ":"+strconv.Itoa(localPort)) {
 		t.Fatalf("the forward reports the error %q, want the port in use named", state.LastError)
 	}
+	if state.OpenReach != "" {
+		t.Fatalf("a forward that opened neither half reports open_reach %q, want it empty", state.OpenReach)
+	}
 	if f.server.handled.Load() == 0 {
 		t.Fatal("the error was reported before the SSH connection was made")
+	}
+}
+
+// holdIPv4Loopback opens a listener of its own on 127.0.0.1 at port, which is
+// another program holding the IPv4 half of a loopback pair. Whatever connects
+// to it is answered with "held:" and closed, so a test that reaches it rather
+// than the forward can tell.
+func holdIPv4Loopback(t *testing.T, port int) {
+	t.Helper()
+
+	ln, err := net.Listen("tcp4", net.JoinHostPort("127.0.0.1", strconv.Itoa(port)))
+	if err != nil {
+		t.Fatalf("failed to hold 127.0.0.1:%d: %v", port, err)
+	}
+	t.Cleanup(func() {
+		_ = ln.Close()
+	})
+
+	go func() {
+		for {
+			conn, err := ln.Accept()
+			if err != nil {
+				return
+			}
+
+			_, _ = conn.Write([]byte("held:"))
+			_ = conn.Close()
+		}
+	}()
+}
+
+// TestALocalForwardReportsTheHalfOfThePairItOpened is the IPv4 half of a
+// loopback forward held by another program. The forward opens the IPv6 half
+// alone and stands, it says so on open_reach, and the address that reports
+// gives is the one that carries a client to the target.
+func TestALocalForwardReportsTheHalfOfThePairItOpened(t *testing.T) {
+	if !ipv6LoopbackAvailable() {
+		t.Skip("::1 cannot be listened on here, so there is no IPv6 half to open")
+	}
+
+	targetIP, targetPort := startEchoService(t, "echo:")
+	localPort := freeDualStackPort(t)
+	holdIPv4Loopback(t, localPort)
+
+	f := newLocalForwardFixture(t, models.BindScopeLoopback, localPort, targetIP, targetPort)
+	f.reconcile(t)
+
+	state := waitLocalStatus(t, f.m, f.key(), "the local forward to connect", isConnected)
+	if state.OpenReach != openReachV6 {
+		t.Fatalf("the forward reports open_reach %q with 127.0.0.1 held, want %q", state.OpenReach, openReachV6)
+	}
+
+	if got := exchange(t, openedLoopback(t, state.OpenReach, localPort), "ping"); got != "echo:ping" {
+		t.Fatalf("the answer through the half that opened was %q, want %q", got, "echo:ping")
 	}
 }
 
@@ -788,7 +897,6 @@ func TestALocalForwardRefusedOnItsHostKeyStopsTrying(t *testing.T) {
 func TestALocalForwardReconnectsAfterTheHostDropsIt(t *testing.T) {
 	targetIP, targetPort := startEchoService(t, "echo:")
 	localPort := freeDualStackPort(t)
-	local := net.JoinHostPort("127.0.0.1", strconv.Itoa(localPort))
 
 	f := newLocalForwardFixture(t, models.BindScopeLoopback, localPort, targetIP, targetPort)
 	f.reconcile(t)
@@ -797,11 +905,11 @@ func TestALocalForwardReconnectsAfterTheHostDropsIt(t *testing.T) {
 
 	f.server.drop()
 
-	waitLocalStatus(t, f.m, f.key(), "the local forward to connect again", func(state LocalForwardState) bool {
+	again := waitLocalStatus(t, f.m, f.key(), "the local forward to connect again", func(state LocalForwardState) bool {
 		return state.Status == localStatusConnected && state.LastConnectedAt.After(first.LastConnectedAt)
 	})
 
-	if got := exchange(t, local, "again"); got != "echo:again" {
+	if got := exchange(t, openedLoopback(t, again.OpenReach, localPort), "again"); got != "echo:again" {
 		t.Fatalf("the answer after reconnecting was %q, want %q", got, "echo:again")
 	}
 	if handled := f.server.handled.Load(); handled < 2 {
@@ -857,8 +965,16 @@ func TestStopLeavesTheLocalPortFreeWhateverTheAttemptWasDoing(t *testing.T) {
 		time.Sleep(time.Duration(i%30) * 100 * time.Microsecond)
 		f.Stop()
 
+		// The attempt that kept the port closes it a moment after Stop
+		// returned. A port that is still held well after that is held by a
+		// listener of something else, which opened it in between the port
+		// being picked and being taken back, and says nothing about Stop.
 		if !portIsFree(localPort) {
-			held++
+			time.Sleep(100 * time.Millisecond)
+
+			if portIsFree(localPort) {
+				held++
+			}
 		}
 	}
 
@@ -912,16 +1028,15 @@ func TestALocalForwardClosesASourceThatIsNotAllowed(t *testing.T) {
 	})
 
 	f.reconcile(t)
-	waitLocalStatus(t, f.m, f.key(), "the local forward to connect and measure the target",
+	state := waitLocalStatus(t, f.m, f.key(), "the local forward to connect and measure the target",
 		func(state LocalForwardState) bool {
 			return isConnected(state) && state.ForwardReach != forwardReachUnknown
 		})
 
 	// The probe is the one dial made so far. A refused client adds none.
 	probed := len(f.server.targets())
-	local := net.JoinHostPort("127.0.0.1", strconv.Itoa(localPort))
 
-	if waited := dialRefused(t, local); waited >= forwardDialTimeout/2 {
+	if waited := dialRefused(t, openedLoopback(t, state.OpenReach, localPort)); waited >= forwardDialTimeout/2 {
 		t.Fatalf("the connection was held for %v before it was closed", waited)
 	}
 	if dialed := f.server.targets(); len(dialed) != probed {
@@ -937,9 +1052,9 @@ func TestALocalForwardClosesASourceThatIsNotAllowed(t *testing.T) {
 			t.Fatalf("changing the allowed sources to %q reported %+v, want one restarted", allowed, result)
 		}
 
-		waitLocalStatus(t, f.m, f.key(), "the rebuilt local forward to connect", isConnected)
+		state := waitLocalStatus(t, f.m, f.key(), "the rebuilt local forward to connect", isConnected)
 
-		if got := exchange(t, local, "ping"); got != "echo:ping" {
+		if got := exchange(t, openedLoopback(t, state.OpenReach, localPort), "ping"); got != "echo:ping" {
 			t.Fatalf("with the allowed sources %q the answer through the local port was %q, want %q",
 				allowed, got, "echo:ping")
 		}

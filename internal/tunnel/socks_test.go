@@ -92,10 +92,12 @@ func waitSocksConnected(t *testing.T, m *Manager, hostID uint) SocksState {
 	return last
 }
 
-func dialSocks(t *testing.T, port int) net.Conn {
+// dialSocks connects to the proxy on port, at the loopback address of the half
+// of the pair state says was opened, for the reason openedLoopback gives.
+func dialSocks(t *testing.T, state SocksState, port int) net.Conn {
 	t.Helper()
 
-	conn, err := net.DialTimeout("tcp", net.JoinHostPort("127.0.0.1", strconv.Itoa(port)), localTestTimeout)
+	conn, err := net.DialTimeout("tcp", openedLoopback(t, state.OpenReach, port), localTestTimeout)
 	if err != nil {
 		t.Fatalf("failed to connect to the SOCKS5 port %d: %v", port, err)
 	}
@@ -189,7 +191,7 @@ func TestSocksConnectCarriesAnIPv4AndADomainTarget(t *testing.T) {
 	targetIP, targetPort := startEchoService(t, "echo:")
 	port := freeDualStackPort(t)
 
-	f := newSocksFixture(t, port, "198.51.100.0/24, 127.0.0.0/8")
+	f := newSocksFixture(t, port, "198.51.100.0/24, 127.0.0.0/8, ::1")
 
 	result := f.reconcile(t)
 	if result.Started != 1 || result.Failed != 0 {
@@ -203,7 +205,7 @@ func TestSocksConnectCarriesAnIPv4AndADomainTarget(t *testing.T) {
 
 	ip := netip.MustParseAddr(targetIP).As4()
 
-	conn := dialSocks(t, port)
+	conn := dialSocks(t, state, port)
 	socksGreet(t, conn)
 	if rep := socksRequest(t, conn, socksCmdConnect, socksAtypIPv4, ip[:], targetPort); rep != socksRepSucceeded {
 		t.Fatalf("CONNECT to %s:%d was answered with %d", targetIP, targetPort, rep)
@@ -212,7 +214,7 @@ func TestSocksConnectCarriesAnIPv4AndADomainTarget(t *testing.T) {
 		t.Fatalf("the answer through the proxy was %q, want %q", got, "echo:ping")
 	}
 
-	conn = dialSocks(t, port)
+	conn = dialSocks(t, state, port)
 	socksGreet(t, conn)
 	if rep := socksRequest(t, conn, socksCmdConnect, socksAtypDomain, []byte("localhost"), targetPort); rep != socksRepSucceeded {
 		t.Fatalf("CONNECT to localhost:%d was answered with %d", targetPort, rep)
@@ -242,9 +244,9 @@ func TestSocksRefusesAClientWithoutTheNoAuthMethod(t *testing.T) {
 	port := freeDualStackPort(t)
 	f := newSocksFixture(t, port, "")
 	f.reconcile(t)
-	waitSocksConnected(t, f.m, 3)
+	state := waitSocksConnected(t, f.m, 3)
 
-	conn := dialSocks(t, port)
+	conn := dialSocks(t, state, port)
 	_, err := conn.Write([]byte{0x05, 0x01, 0x02})
 	if err != nil {
 		t.Fatalf("failed to send the greeting: %v", err)
@@ -266,9 +268,9 @@ func TestSocksRefusesACommandOtherThanConnect(t *testing.T) {
 	port := freeDualStackPort(t)
 	f := newSocksFixture(t, port, "")
 	f.reconcile(t)
-	waitSocksConnected(t, f.m, 3)
+	state := waitSocksConnected(t, f.m, 3)
 
-	conn := dialSocks(t, port)
+	conn := dialSocks(t, state, port)
 	socksGreet(t, conn)
 
 	if rep := socksRequest(t, conn, 0x02, socksAtypIPv4, []byte{127, 0, 0, 1}, 80); rep != socksRepCommandNotSupported {
@@ -286,9 +288,9 @@ func TestSocksClosesASourceThatIsNotAllowed(t *testing.T) {
 	port := freeDualStackPort(t)
 	f := newSocksFixture(t, port, "192.0.2.0/24")
 	f.reconcile(t)
-	waitSocksConnected(t, f.m, 3)
+	state := waitSocksConnected(t, f.m, 3)
 
-	conn := dialSocks(t, port)
+	conn := dialSocks(t, state, port)
 
 	// Nothing is sent, so a proxy that let the source in would wait for the
 	// greeting until its handshake timeout rather than close at once.
@@ -317,9 +319,9 @@ func TestSocksAnswersATargetTheHostCannotReach(t *testing.T) {
 
 	f := newSocksFixture(t, port, "")
 	f.reconcile(t)
-	waitSocksConnected(t, f.m, 3)
+	state := waitSocksConnected(t, f.m, 3)
 
-	conn := dialSocks(t, port)
+	conn := dialSocks(t, state, port)
 	socksGreet(t, conn)
 
 	rep := socksRequest(t, conn, socksCmdConnect, socksAtypIPv4, []byte{127, 0, 0, 1}, closed)
@@ -342,10 +344,10 @@ func TestSocksReconcileFollowsTheHost(t *testing.T) {
 
 	f := newSocksFixture(t, port, "")
 
-	roundTrip := func(port int) {
+	roundTrip := func(state SocksState, port int) {
 		t.Helper()
 
-		conn := dialSocks(t, port)
+		conn := dialSocks(t, state, port)
 		socksGreet(t, conn)
 		if rep := socksRequest(t, conn, socksCmdConnect, socksAtypIPv4, ip[:], targetPort); rep != socksRepSucceeded {
 			t.Fatalf("CONNECT through port %d was answered with %d", port, rep)
@@ -358,8 +360,7 @@ func TestSocksReconcileFollowsTheHost(t *testing.T) {
 	if result := f.reconcile(t); result.Started != 1 {
 		t.Fatalf("a Host asking for a proxy reported %+v, want one started", result)
 	}
-	waitSocksConnected(t, f.m, 3)
-	roundTrip(port)
+	roundTrip(waitSocksConnected(t, f.m, 3), port)
 
 	if result := f.reconcile(t); result != (ReconcileResult{}) {
 		t.Fatalf("a pass over nothing that changed reported %+v", result)
@@ -375,8 +376,7 @@ func TestSocksReconcileFollowsTheHost(t *testing.T) {
 	if !portIsFree(port) {
 		t.Fatal("the old port is still held after the proxy moved")
 	}
-	waitSocksConnected(t, f.m, 3)
-	roundTrip(moved)
+	roundTrip(waitSocksConnected(t, f.m, 3), moved)
 
 	f.change(func(host *models.Host) {
 		host.SocksAllowedSources = "192.0.2.0/24"
@@ -440,6 +440,37 @@ func TestSocksReconcileFollowsTheHost(t *testing.T) {
 	}
 	if !portIsFree(moved) {
 		t.Fatal("the port is still held after StopAllTunnels")
+	}
+}
+
+// TestSocksReportsTheHalfOfThePairItOpened is
+// TestALocalForwardReportsTheHalfOfThePairItOpened for the proxy.
+func TestSocksReportsTheHalfOfThePairItOpened(t *testing.T) {
+	if !ipv6LoopbackAvailable() {
+		t.Skip("::1 cannot be listened on here, so there is no IPv6 half to open")
+	}
+
+	targetIP, targetPort := startEchoService(t, "echo:")
+	port := freeDualStackPort(t)
+	holdIPv4Loopback(t, port)
+
+	f := newSocksFixture(t, port, "")
+	f.reconcile(t)
+
+	state := waitSocksConnected(t, f.m, 3)
+	if state.OpenReach != openReachV6 {
+		t.Fatalf("the proxy reports open_reach %q with 127.0.0.1 held, want %q", state.OpenReach, openReachV6)
+	}
+
+	ip := netip.MustParseAddr(targetIP).As4()
+
+	conn := dialSocks(t, state, port)
+	socksGreet(t, conn)
+	if rep := socksRequest(t, conn, socksCmdConnect, socksAtypIPv4, ip[:], targetPort); rep != socksRepSucceeded {
+		t.Fatalf("CONNECT through the half that opened was answered with %d", rep)
+	}
+	if got := socksExchange(t, conn, "ping"); got != "echo:ping" {
+		t.Fatalf("the answer through the half that opened was %q, want %q", got, "echo:ping")
 	}
 }
 
