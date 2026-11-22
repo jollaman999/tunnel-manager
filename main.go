@@ -1386,12 +1386,20 @@ func installRelease(plan install.Plan, steps installSteps, out io.Writer) error 
 	// can each start one, and two that overlap would each stop the service and
 	// copy over the other. The lock is taken before the download, so that the
 	// second is refused before it has done anything at all.
+	//
+	// What the release is told is whether the install went through. Anything
+	// else, a refusal or a failed download among them, takes away the data
+	// directory the lock made, so that a refusal leaves nothing behind.
 	unlock, err := install.LockInstall(plan.DataDir)
 	if err != nil {
 		return err
 	}
 
-	defer unlock()
+	installed := false
+
+	defer func() {
+		unlock(installed)
+	}()
 
 	dir, err := os.MkdirTemp("", "tunnel-manager-install-")
 	if err != nil {
@@ -1410,6 +1418,7 @@ func installRelease(plan install.Plan, steps installSteps, out io.Writer) error 
 	defer fetched.Close()
 
 	_, err = steps.put(plan, fetched.Path, installSource(fetched), out)
+	installed = err == nil
 
 	return err
 }

@@ -42,7 +42,7 @@ func TestInstallLockHelperProcess(t *testing.T) {
 
 	_, _ = io.Copy(io.Discard, os.Stdin)
 
-	unlock()
+	unlock(true)
 }
 
 // holdInstallLockElsewhere has another process take the install lock in dir,
@@ -134,7 +134,7 @@ func TestASecondInstallIsRefusedWhileOneRuns(t *testing.T) {
 
 	unlock, err := LockInstall(dir)
 	if err == nil {
-		unlock()
+		unlock(true)
 		t.Fatal("a second install took the lock while the first one held it")
 	}
 
@@ -159,7 +159,7 @@ func TestASecondInstallIsRefusedWhileOneRuns(t *testing.T) {
 		t.Fatalf("the lock could not be taken after the first install let it go: %v", err)
 	}
 
-	unlock()
+	unlock(true)
 
 	_, err = os.Stat(InstallLockFile(dir))
 	if !errors.Is(err, os.ErrNotExist) {
@@ -191,7 +191,7 @@ func TestALockLeftByAnInstallThatEndedIsTakenOver(t *testing.T) {
 		t.Fatalf("a lock left by a process that ended was not taken over: %v", err)
 	}
 
-	defer unlock()
+	defer unlock(true)
 
 	content, err := os.ReadFile(InstallLockFile(dir))
 	if err != nil {
@@ -213,7 +213,7 @@ func TestALockThatNamesNoProcessIsHeldForAWhile(t *testing.T) {
 
 		unlock, err := LockInstall(dir)
 		if err == nil {
-			unlock()
+			unlock(true)
 			t.Fatal("a lock that is still being written was taken over")
 		}
 
@@ -231,7 +231,7 @@ func TestALockThatNamesNoProcessIsHeldForAWhile(t *testing.T) {
 			t.Fatalf("a lock that named no process for longer than the grace was not taken over: %v", err)
 		}
 
-		unlock()
+		unlock(true)
 	})
 }
 
@@ -244,7 +244,7 @@ func TestAFileThatIsNotALockIsLeftAlone(t *testing.T) {
 
 	unlock, err := LockInstall(dir)
 	if err == nil {
-		unlock()
+		unlock(true)
 		t.Fatal("a file that is not a lock was taken over")
 	}
 
@@ -269,7 +269,74 @@ func TestALockThatNamesThisProcessWasLeftByAnother(t *testing.T) {
 		t.Fatalf("a lock that names this process was not taken over: %v", err)
 	}
 
-	unlock()
+	unlock(true)
+}
+
+// TestTheLockTakesAwayWhatItMadeForAnInstallThatDidNotGoThrough holds the
+// release to what it removes. A refused install says it touched nothing, so
+// the directories made for its lock go; an install that went through keeps
+// them, and a directory that was there before, or that something has been
+// put in since, is never removed.
+func TestTheLockTakesAwayWhatItMadeForAnInstallThatDidNotGoThrough(t *testing.T) {
+	t.Run("not installed", func(t *testing.T) {
+		root := t.TempDir()
+		top := filepath.Join(root, "opt")
+
+		unlock, err := LockInstall(filepath.Join(top, "tm"))
+		if err != nil {
+			t.Fatalf("LockInstall failed: %v", err)
+		}
+
+		unlock(false)
+
+		if _, err := os.Stat(top); !errors.Is(err, os.ErrNotExist) {
+			t.Errorf("%s is still there after an install that did not go through: %v", top, err)
+		}
+
+		if _, err := os.Stat(root); err != nil {
+			t.Errorf("the directory that was there before was removed: %v", err)
+		}
+	})
+
+	t.Run("installed", func(t *testing.T) {
+		dataDir := filepath.Join(t.TempDir(), "opt", "tm")
+
+		unlock, err := LockInstall(dataDir)
+		if err != nil {
+			t.Fatalf("LockInstall failed: %v", err)
+		}
+
+		unlock(true)
+
+		if _, err := os.Stat(dataDir); err != nil {
+			t.Errorf("the data directory of an install that went through was removed: %v", err)
+		}
+	})
+
+	t.Run("written to meanwhile", func(t *testing.T) {
+		top := filepath.Join(t.TempDir(), "opt")
+		dataDir := filepath.Join(top, "tm")
+
+		unlock, err := LockInstall(dataDir)
+		if err != nil {
+			t.Fatalf("LockInstall failed: %v", err)
+		}
+
+		err = os.WriteFile(filepath.Join(dataDir, "tm.db"), []byte("rows"), 0o600)
+		if err != nil {
+			t.Fatalf("failed to write into the data directory: %v", err)
+		}
+
+		unlock(false)
+
+		if _, err := os.Stat(filepath.Join(dataDir, "tm.db")); err != nil {
+			t.Errorf("a file put in the data directory went with it: %v", err)
+		}
+
+		if _, err := os.Stat(InstallLockFile(dataDir)); !errors.Is(err, os.ErrNotExist) {
+			t.Errorf("the lock is still there: %v", err)
+		}
+	})
 }
 
 // writeInstallLock leaves a lock in dir carrying content, as if made at made.

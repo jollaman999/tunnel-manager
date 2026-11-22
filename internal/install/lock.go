@@ -66,49 +66,112 @@ func InstallLockFile(dataDir string) string {
 //
 // The data directory is made here if it is not there yet, because the lock
 // has to be taken before the release is downloaded, and on a first install
-// nothing has made the directory by then.
-func LockInstall(dataDir string) (func(), error) {
+// nothing has made the directory by then. An install that is refused, by this
+// lock or by anything after it, says that it touched nothing, so what was made
+// for the lock is taken away again unless the install went through: the
+// release is told so with installed. Only what this call made and what is
+// empty is removed, so a directory that was there before, the installation
+// being upgraded, stays, and so does one the service has started writing to.
+func LockInstall(dataDir string) (func(installed bool), error) {
+	made := missingDirs(dataDir)
+
 	err := crypto.MkdirAllPrivate(dataDir, dataDirMode)
 	if err != nil {
+		removeEmptyDirs(made)
+
 		return nil, fmt.Errorf("failed to make the data directory %s: %w", dataDir, err)
 	}
 
 	path := InstallLockFile(dataDir)
 
+	err = takeInstallLock(path)
+	if err != nil {
+		removeEmptyDirs(made)
+
+		return nil, err
+	}
+
+	return func(installed bool) {
+		_ = os.Remove(path)
+
+		if !installed {
+			removeEmptyDirs(made)
+		}
+	}, nil
+}
+
+// takeInstallLock makes the lock at path, taking over one that was left
+// behind.
+func takeInstallLock(path string) error {
 	// The second pass is for a lock that was left behind and has just been
 	// removed. A lock that is there again after that was made by another
 	// install in between, which is the refusal and not a third try.
 	for range 2 {
 		taken, err := createInstallLock(path)
 		if err != nil {
-			return nil, err
+			return err
 		}
 
 		if taken {
-			return func() {
-				_ = os.Remove(path)
-			}, nil
+			return nil
 		}
 
 		holder, held := installLockHolder(path, time.Now())
 		if held {
 			if holder > 0 {
-				return nil, fmt.Errorf("%w: process %d holds %s. If no install is running, remove that file",
+				return fmt.Errorf("%w: process %d holds %s. If no install is running, remove that file",
 					ErrInstallRunning, holder, path)
 			}
 
-			return nil, fmt.Errorf("%w: %s names no process yet, or holds something other than a process id. "+
+			return fmt.Errorf("%w: %s names no process yet, or holds something other than a process id. "+
 				"If no install is running, look at what is in it and remove it", ErrInstallRunning, path)
 		}
 
 		err = os.Remove(path)
 		if err != nil && !errors.Is(err, fs.ErrNotExist) {
-			return nil, fmt.Errorf("failed to remove %s, which an install that is no longer running left behind: %w",
+			return fmt.Errorf("failed to remove %s, which an install that is no longer running left behind: %w",
 				path, err)
 		}
 	}
 
-	return nil, fmt.Errorf("%w: %s was taken by another install", ErrInstallRunning, path)
+	return fmt.Errorf("%w: %s was taken by another install", ErrInstallRunning, path)
+}
+
+// missingDirs is dir and each of its parents that is not there, the deepest
+// first, which is what making dir is going to make and the order they can be
+// removed in.
+func missingDirs(dir string) []string {
+	var missing []string
+
+	for current := filepath.Clean(dir); ; {
+		_, err := os.Lstat(current)
+		if !errors.Is(err, fs.ErrNotExist) {
+			return missing
+		}
+
+		missing = append(missing, current)
+
+		parent := filepath.Dir(current)
+		if parent == current {
+			return missing
+		}
+
+		current = parent
+	}
+}
+
+// removeEmptyDirs removes the directories, the deepest first, and stops at the
+// first that cannot go. os.Remove takes only an empty directory, so one that
+// something has been put in since stays, and every one above it holds it and
+// stays as well. Two installs that met here each made the directory as far as
+// they know; the one that holds the lock has its lock in it, so the other one
+// cannot take it away.
+func removeEmptyDirs(dirs []string) {
+	for _, dir := range dirs {
+		if os.Remove(dir) != nil {
+			return
+		}
+	}
 }
 
 // InstallRunning reports whether an install of the installation whose data
