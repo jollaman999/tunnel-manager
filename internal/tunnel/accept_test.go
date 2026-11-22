@@ -306,7 +306,7 @@ func TestAcceptErrorPassesOnlyForWhatNetHTTPWaitsOut(t *testing.T) {
 		{"ENFILE", &net.OpError{Op: "accept", Net: "tcp", Err: os.NewSyscallError("accept4", syscall.ENFILE)}, runtime.GOOS != "windows"},
 		{"EINTR", &net.OpError{Op: "accept", Net: "tcp", Err: os.NewSyscallError("accept4", syscall.EINTR)}, true},
 		{"ECONNRESET", &net.OpError{Op: "accept", Net: "tcp", Err: os.NewSyscallError("accept4", syscall.ECONNRESET)}, false},
-		{"bare ECONNRESET", &net.OpError{Op: "accept", Net: "tcp", Err: syscall.ECONNRESET}, true},
+		{"bare connection reset", &net.OpError{Op: "accept", Net: "tcp", Err: acceptResetErrno}, true},
 		{"EINVAL", &net.OpError{Op: "accept", Net: "tcp", Err: os.NewSyscallError("accept4", syscall.EINVAL)}, false},
 		{"closed", &net.OpError{Op: "accept", Net: "tcp", Err: net.ErrClosed}, false},
 		{"EOF", io.EOF, false},
