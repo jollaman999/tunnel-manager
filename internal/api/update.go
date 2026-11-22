@@ -69,6 +69,10 @@ type UpdateHandler struct {
 	// reports that through InstallEnded, since it holds the process the
 	// install runs in and this does not.
 	installing bool
+	// installProblem is why the last install ended without going through, as
+	// InstallEnded was told it. It stays until the next install is begun, so
+	// that the screen still says it when it is opened after the press.
+	installProblem string
 }
 
 func NewUpdateHandler(logger *zap.Logger, db *gorm.DB, version string, installable bool,
@@ -102,6 +106,12 @@ type updateView struct {
 	// Installable says whether the press that installs is offered. See the
 	// field of the same name on the handler.
 	Installable bool `json:"installable"`
+	// InstallProblem is why the last install started from this process ended
+	// without going through, left out where none has, where it went through, or
+	// where another has been started since. An install that went through ends
+	// with a restart, and the process that answers after it has never started
+	// one.
+	InstallProblem string `json:"install_problem,omitempty"`
 	// DevBuild says this process is the development build, which installs a
 	// release on its checksum without checking the signature over it
 	// (install.DevBuild). The version is the same string either way, so this is
@@ -113,7 +123,8 @@ func (h *UpdateHandler) view() updateView {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 
-	view := updateView{Version: h.version, Installable: h.installable, DevBuild: install.DevBuild}
+	view := updateView{Version: h.version, Installable: h.installable, InstallProblem: h.installProblem,
+		DevBuild: install.DevBuild}
 
 	if h.last != nil {
 		view.Checked = h.last.At
@@ -200,12 +211,16 @@ func (h *UpdateHandler) StartInstall() error {
 // which goes on up once the flag is down. A start that panicked started
 // nothing that could report its end, so the flag would otherwise stay up and
 // refuse every install after it until the service restarted.
+//
+// No reason is kept for a start that failed. The error is the answer to the
+// press, or the log line of the loop, and an install that never ran has no end
+// to report.
 func (h *UpdateHandler) handOver() error {
 	handed := false
 
 	defer func() {
 		if !handed {
-			h.InstallEnded()
+			h.InstallEnded("")
 		}
 	}()
 
@@ -216,7 +231,9 @@ func (h *UpdateHandler) handOver() error {
 }
 
 // beginInstall raises the flag that one install is out and says whether it was
-// down, which is whether this caller may start one.
+// down, which is whether this caller may start one. The reason the last one
+// ended with goes with it, since it is about an install that is no longer the
+// last.
 func (h *UpdateHandler) beginInstall() bool {
 	h.mu.Lock()
 	defer h.mu.Unlock()
@@ -226,6 +243,7 @@ func (h *UpdateHandler) beginInstall() bool {
 	}
 
 	h.installing = true
+	h.installProblem = ""
 
 	return true
 }
@@ -233,16 +251,20 @@ func (h *UpdateHandler) beginInstall() bool {
 // InstallEnded says that the install handed to start has ended without ending
 // this process, so another one may be started. main calls it once the install
 // it started is over; see the installing field for why nothing else can.
-func (h *UpdateHandler) InstallEnded() {
+//
+// problem is why the install did not go through, as the install left it, and
+// empty where it left nothing. GET /api/update answers it as install_problem.
+func (h *UpdateHandler) InstallEnded(problem string) {
 	h.mu.Lock()
 	h.installing = false
+	h.installProblem = problem
 	h.mu.Unlock()
 }
 
 // GetUpdate answers with what is known, without looking again.
 //
 // @Summary      What the last look for a newer release found
-// @Description  The version running, the newest release, whether it is newer, and whether an install can be started from here.
+// @Description  The version running, the newest release, whether it is newer, whether an install can be started from here, and why the last install started from here did not go through.
 // @Tags         update
 // @Produce  json
 // @Success  200  {object}  models.Response{data=api.updateView}

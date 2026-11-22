@@ -2986,7 +2986,7 @@
         },
         "/update": {
             "get": {
-                "description": "The version running, the newest release, whether it is newer, and whether an install can be started from here.",
+                "description": "The version running, the newest release, whether it is newer, whether an install can be started from here, and why the last install started from here did not go through.",
                 "produces": [
                     "application/json"
                 ],
@@ -4985,6 +4985,10 @@
                 "dev_build": {
                     "description": "DevBuild says this process is the development build, which installs a\nrelease on its checksum without checking the signature over it\n(install.DevBuild). The version is the same string either way, so this is\nthe one place the screen can learn it from.",
                     "type": "boolean"
+                },
+                "install_problem": {
+                    "description": "InstallProblem is why the last install started from this process ended\nwithout going through, left out where none has, where it went through, or\nwhere another has been started since. An install that went through ends\nwith a restart, and the process that answers after it has never started\none.",
+                    "type": "string"
                 },
                 "installable": {
                     "description": "Installable says whether the press that installs is offered. See the\nfield of the same name on the handler.",

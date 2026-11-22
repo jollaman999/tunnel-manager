@@ -1459,11 +1459,6 @@ func runInstallation(asked installation, in io.Reader, out io.Writer) int {
 // operator who cannot install anything is told so before a release is
 // downloaded for an install that is going to be refused.
 func (a installation) runInstall(out io.Writer) error {
-	err := install.CheckPrivilege()
-	if err != nil {
-		return err
-	}
-
 	plan := install.Defaults()
 
 	// Only what was actually named is taken. A named -db takes the data
@@ -1478,6 +1473,15 @@ func (a installation) runInstall(out io.Writer) error {
 
 	if a.databaseNamed {
 		plan = plan.WithDatabase(a.database)
+	}
+
+	err := install.CheckPrivilege()
+	if err != nil {
+		if a.fromUpdate {
+			leaveInstallProblem(plan.DataDir, err, out)
+		}
+
+		return err
 	}
 
 	return installRelease(plan, installSteps{fetch: install.Fetch, put: install.Install}, a.fromUpdate, out)
@@ -1495,7 +1499,12 @@ type installSteps struct {
 // installRelease is runInstall once the privilege has been checked and the plan
 // worked out: the lock, the download and the install. fromUpdate is an install
 // this service started, which takes a release or nothing; see fromUpdateFlag.
-func installRelease(plan install.Plan, steps installSteps, fromUpdate bool, out io.Writer) error {
+//
+// An update that fails leaves its error where the service that started it reads
+// it (leaveInstallProblem), and it does so before the lock is let go. On systemd
+// the lock going is how the service learns the install is over, and a reason
+// written after it would be looked for a moment before it was there.
+func installRelease(plan install.Plan, steps installSteps, fromUpdate bool, out io.Writer) (err error) {
 	// One install of an installation runs at a time. A press on the Update
 	// screen, the loop that installs on its own and an operator at a terminal
 	// can each start one, and two that overlap would each stop the service and
@@ -1507,12 +1516,20 @@ func installRelease(plan install.Plan, steps installSteps, fromUpdate bool, out 
 	// directory the lock made, so that a refusal leaves nothing behind.
 	unlock, err := install.LockInstall(plan.DataDir)
 	if err != nil {
+		if fromUpdate {
+			leaveInstallProblem(plan.DataDir, err, out)
+		}
+
 		return err
 	}
 
 	installed := false
 
 	defer func() {
+		if fromUpdate && err != nil {
+			leaveInstallProblem(plan.DataDir, err, out)
+		}
+
 		unlock(installed)
 	}()
 
@@ -1543,6 +1560,35 @@ func installRelease(plan install.Plan, steps installSteps, fromUpdate bool, out 
 	installed = err == nil
 
 	return err
+}
+
+// leaveInstallProblem writes why an install this service started failed into
+// installProblemPath, for the service to read once the install is over and show
+// on the Update screen.
+//
+// The report of the install says the same and more, but it is in the journal or
+// in a file beside the log, and the screen that started the install reads
+// neither. Without this, all the screen had to go on was a version that did not
+// change, three minutes later.
+//
+// A reason that cannot be written is said in the report, which is the one place
+// left to say it. The install has failed either way, and that is the error it
+// ends with.
+func leaveInstallProblem(dataDir string, problem error, out io.Writer) {
+	path := installProblemPath(dataDir)
+
+	// On Windows the file is made with the DACL of the owner, SYSTEM and
+	// Administrators first, as the report beside it is. On Unix this does
+	// nothing.
+	err := crypto.ReservePrivateFile(path)
+	if err == nil {
+		err = os.WriteFile(path, []byte(problem.Error()), installReportMode)
+	}
+
+	if err != nil {
+		fmt.Fprintf(out, "failed to leave the reason the install failed for the Update screen in %s: %v\n",
+			path, err)
+	}
 }
 
 // runUninstall takes the service of this system away.

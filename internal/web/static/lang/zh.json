@@ -1427,6 +1427,7 @@
   "update.current.notice": "正在运行最新的发布。",
   "update.dev-build.notice": "这是不校验签名的开发用构建。它只凭校验和安装更新，不校验发布的签名，因此不应在需要信任发布的环境中运行。",
   "update.install-failed.notice": "安装没有完成，仍在运行 {version}。",
+  "update.install-problem.notice": "上一次安装没有完成：{reason}",
   "update.install.button": "安装更新",
   "update.installed-other.notice": "开始安装的是 {wanted}，而现在运行的是 {version}。",
   "update.installed.notice": "安装已完成，正在运行 {version}。",

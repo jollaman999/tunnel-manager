@@ -1427,6 +1427,7 @@
   "update.current.notice": "La dernière version publiée est en cours d'exécution.",
   "update.dev-build.notice": "Ceci est une compilation de développement. Elle installe une mise à jour sur sa seule somme de contrôle et ne vérifie pas la signature de la version, elle ne doit donc pas tourner là où il faut pouvoir faire confiance à une version.",
   "update.install-failed.notice": "L'installation n'a pas abouti : {version} tourne toujours.",
+  "update.install-problem.notice": "La dernière installation n'a pas abouti : {reason}",
   "update.install.button": "Installer la mise à jour",
   "update.installed-other.notice": "L'installation a été lancée pour {wanted}, et ce qui tourne maintenant est {version}.",
   "update.installed.notice": "L'installation a abouti : {version} est en cours d'exécution.",

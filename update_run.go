@@ -2,11 +2,14 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"time"
 
 	"github.com/jollaman999/tunnel-manager/internal/api"
@@ -83,14 +86,23 @@ func canInstallUpdate(databaseFile string) bool {
 // same steps in the same order as the install an operator types by hand.
 //
 // ended is called once the install is over without having ended this process,
-// which is what lets the Update screen start another one. An install that
-// holds the lock of this installation already, one typed at a terminal, is
-// refused here with install.ErrInstallRunning rather than started to be
-// refused by that lock out of sight of the press that asked for it.
-func startUpdateInstall(logger *zap.Logger, databaseFile string, ended func()) error {
+// which is what lets the Update screen start another one, with why the install
+// failed where it says (installProblem). An install that holds the lock of this
+// installation already, one typed at a terminal, is refused here with
+// install.ErrInstallRunning rather than started to be refused by that lock out
+// of sight of the press that asked for it.
+func startUpdateInstall(logger *zap.Logger, databaseFile string, ended func(problem string)) error {
 	dataDir := install.Defaults().WithDatabase(databaseFile).DataDir
 	if install.InstallRunning(dataDir) {
 		return fmt.Errorf("%w: %s is held", install.ErrInstallRunning, install.InstallLockFile(dataDir))
+	}
+
+	// A reason left by an install before this one would be read as this one's
+	// once it is over, so it goes before this one starts.
+	err := os.Remove(installProblemPath(dataDir))
+	if err != nil && !errors.Is(err, fs.ErrNotExist) {
+		return fmt.Errorf("failed to remove %s, which an install before this one left: %w",
+			installProblemPath(dataDir), err)
 	}
 
 	running, err := os.Executable()
@@ -141,9 +153,13 @@ func startUpdateInstall(logger *zap.Logger, databaseFile string, ended func()) e
 		if apart && err != nil {
 			logger.Error("systemd-run did not start the install",
 				logid.UpdateInstallStartFailed.Field(), zap.Error(err))
+
+			ended("systemd-run did not start the install: " + err.Error())
+
+			return
 		}
 
-		ended()
+		ended(installProblem(dataDir))
 	}()
 
 	return nil
@@ -185,11 +201,16 @@ var (
 // Read only as "is the lock held", the moment between systemd-run ending and
 // the install taking the lock reads as an install that is over, and a press
 // in that moment would start a second one.
+//
+// A reason left in installProblemPath ends the first half as well. It is
+// written by an install that has failed, before it lets the lock go, and one
+// that took the lock and let it go between two looks would otherwise be waited
+// on for the whole of appear while the Update screen waited on it.
 func waitForInstallEnd(dataDir string, appear time.Duration, held time.Duration, poll time.Duration) bool {
 	deadline := time.Now().Add(appear)
 
 	for !install.InstallRunning(dataDir) {
-		if time.Now().After(deadline) {
+		if time.Now().After(deadline) || installProblemLeft(dataDir) {
 			return true
 		}
 
@@ -292,6 +313,42 @@ func installReportPath(databaseFile string, apart bool) string {
 	}
 
 	return filepath.Join(filepath.Dir(databaseFile), "logs", "update-install.log")
+}
+
+// installProblemPath is where an install this service started leaves why it
+// failed (leaveInstallProblem), for the service to read once it is over. It
+// sits in the data directory beside the lock, which the install and the service
+// both work out from the same -db.
+func installProblemPath(dataDir string) string {
+	return filepath.Join(dataDir, "update-install.problem")
+}
+
+// installProblemLeft says whether an install has left a reason.
+func installProblemLeft(dataDir string) bool {
+	_, err := os.Lstat(installProblemPath(dataDir))
+
+	return err == nil
+}
+
+// installProblem is the reason an install left, empty where it left none. An
+// install that went through leaves none, and neither does one that never ran.
+//
+// A reason that is there and cannot be read is said as that. The file is only
+// there because the install failed, and an empty answer would be the Update
+// screen saying nothing about an install that did not go through.
+func installProblem(dataDir string) string {
+	path := installProblemPath(dataDir)
+
+	said, err := os.ReadFile(path)
+	if errors.Is(err, fs.ErrNotExist) {
+		return ""
+	}
+
+	if err != nil {
+		return fmt.Sprintf("the install failed, and why could not be read from %s: %v", path, err)
+	}
+
+	return strings.TrimSpace(string(said))
 }
 
 // runUpdateChecks looks for a newer release on a timer, and installs one where

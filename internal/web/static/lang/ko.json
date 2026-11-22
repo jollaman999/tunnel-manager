@@ -1427,6 +1427,7 @@
   "update.current.notice": "최신 릴리즈를 실행 중입니다.",
   "update.dev-build.notice": "서명을 확인하지 않는 개발용 빌드입니다. 업데이트를 체크섬만으로 설치하고 릴리즈의 서명은 확인하지 않으므로, 릴리즈를 믿어야 하는 곳에서 돌릴 빌드가 아닙니다.",
   "update.install-failed.notice": "설치가 되지 않았습니다. 지금도 {version} 을 실행 중입니다.",
+  "update.install-problem.notice": "직전 설치가 되지 않았습니다: {reason}",
   "update.install.button": "업데이트 설치",
   "update.installed-other.notice": "{wanted} 설치를 시작했는데, 지금 실행 중인 버전은 {version} 입니다.",
   "update.installed.notice": "설치를 마쳤습니다. 지금 실행 중인 버전은 {version} 입니다.",

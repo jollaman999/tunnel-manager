@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"io"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"strings"
@@ -171,6 +172,108 @@ func TestAnUpdateInstallsTheReleaseOrNothing(t *testing.T) {
 				t.Errorf("the install answered %v, want an error that carries %q", err, why)
 			}
 		})
+	}
+}
+
+// TestAnUpdateThatFailedLeavesWhyForTheUpdateScreen is the reason an install
+// the service started ends with, left in the data directory for the service to
+// read. An install somebody typed has a terminal to say it on and leaves
+// nothing.
+func TestAnUpdateThatFailedLeavesWhyForTheUpdateScreen(t *testing.T) {
+	cases := []struct {
+		name       string
+		source     install.Source
+		fetchErr   error
+		fromUpdate bool
+		wantLeft   bool
+	}{
+		{"an update, the release cannot be used", install.SourceRunning, nil, true, true},
+		{"an update, the download failed", install.SourceRelease, errors.New("the release could not be read"), true, true},
+		{"an update that went through", install.SourceRelease, nil, true, false},
+		{"typed, the download failed", install.SourceRelease, errors.New("the release could not be read"), false, false},
+		{"typed, the release cannot be used", install.SourceRunning, nil, false, false},
+	}
+
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			plan := install.Defaults().WithDatabase(filepath.Join(t.TempDir(), "tm.db"))
+
+			steps := installSteps{
+				fetch: func(context.Context, string) (*install.Fetched, error) {
+					if c.fetchErr != nil {
+						return nil, c.fetchErr
+					}
+
+					return &install.Fetched{Path: "/usr/local/bin/tunnel-manager", Source: c.source,
+						Tag: "v3.7.5", Verified: true, Why: "release v3.7.5 carries no SHA256SUMS.sig"}, nil
+				},
+				put: func(install.Plan, string, string, io.Writer) (install.Outcome, error) {
+					return install.Outcome{}, nil
+				},
+			}
+
+			err := installRelease(plan, steps, c.fromUpdate, io.Discard)
+
+			left := installProblemPath(plan.DataDir)
+
+			said, readErr := os.ReadFile(left)
+
+			if !c.wantLeft {
+				if !errors.Is(readErr, fs.ErrNotExist) {
+					t.Errorf("the install left %q in %s (read: %v), want nothing there", said, left, readErr)
+				}
+
+				return
+			}
+
+			if err == nil {
+				t.Fatal("the install went through, want it to fail")
+			}
+
+			if readErr != nil {
+				t.Fatalf("the install left no reason in %s: %v", left, readErr)
+			}
+
+			if string(said) != err.Error() {
+				t.Errorf("the reason left is %q, want the error the install ended with, %q", said, err.Error())
+			}
+
+			requireReportKeptToTheOwner(t, left)
+
+			if install.InstallRunning(plan.DataDir) {
+				t.Error("the lock was still held once the install had returned")
+			}
+		})
+	}
+}
+
+// TestAnUpdateRefusedItsPrivilegeLeavesWhy is the one failure that comes
+// before installRelease. It is followed only where this test cannot install,
+// since where it can the same call would put a service on the machine.
+func TestAnUpdateRefusedItsPrivilegeLeavesWhy(t *testing.T) {
+	if install.CheckPrivilege() == nil {
+		t.Skip("this test runs with the privilege an install needs, and would install")
+	}
+
+	for _, fromUpdate := range []bool{true, false} {
+		dir := t.TempDir()
+		asked := installation{install: true, database: filepath.Join(dir, "tm.db"), databaseNamed: true,
+			fromUpdate: fromUpdate}
+
+		err := asked.runInstall(io.Discard)
+		if err == nil {
+			t.Fatal("an install without the privilege went through")
+		}
+
+		said, readErr := os.ReadFile(installProblemPath(dir))
+
+		if fromUpdate && string(said) != err.Error() {
+			t.Errorf("the update left %q (read: %v), want %q", said, readErr, err.Error())
+		}
+
+		if !fromUpdate && !errors.Is(readErr, fs.ErrNotExist) {
+			t.Errorf("a typed install left %q (read: %v), want nothing", said, readErr)
+		}
 	}
 }
 

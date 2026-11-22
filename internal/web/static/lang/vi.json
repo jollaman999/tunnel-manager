@@ -1427,6 +1427,7 @@
   "update.current.notice": "Đang chạy bản phát hành mới nhất.",
   "update.dev-build.notice": "Đây là bản dựng dành cho phát triển. Bản dựng này cài bản cập nhật chỉ dựa trên giá trị kiểm tra và không kiểm tra chữ ký của bản phát hành, nên không dùng để chạy ở nơi cần tin cậy bản phát hành.",
   "update.install-failed.notice": "Việc cài đặt không hoàn tất: {version} vẫn đang chạy.",
+  "update.install-problem.notice": "Lần cài đặt gần nhất không hoàn tất: {reason}",
   "update.install.button": "Cài đặt bản cập nhật",
   "update.installed-other.notice": "Việc cài đặt được bắt đầu cho {wanted}, còn thứ đang chạy bây giờ là {version}.",
   "update.installed.notice": "Việc cài đặt đã hoàn tất: {version} đang chạy.",

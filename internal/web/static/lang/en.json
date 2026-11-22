@@ -1427,6 +1427,7 @@
   "update.current.notice": "Running the newest release.",
   "update.dev-build.notice": "This is a development build. It installs an update on its checksum alone and does not check the signature of the release, so it is not a build to run where a release has to be trusted.",
   "update.install-failed.notice": "The install did not go through: {version} is still running.",
+  "update.install-problem.notice": "The last install did not go through: {reason}",
   "update.install.button": "Install the update",
   "update.installed-other.notice": "The install was started for {wanted}, and what is running now is {version}.",
   "update.installed.notice": "The install went through: {version} is running.",

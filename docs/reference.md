@@ -860,6 +860,7 @@ in.
     tunnel-manager.db-shm      the shared memory file SQLite keeps beside it
     initial-password           written on the first startup, deleted by the setup
     install.lock               held by an -install while it runs, removed when it ends
+    update-install.problem     why the last update the service started failed, removed when the next starts
     keys/tunnel-manager.key    the key the SSH passwords are encrypted with
     logs/tunnel-manager.log    the log file and the rotated files beside it
 ```
@@ -2012,9 +2013,9 @@ version the service already runs: the service would be stopped and started
 again for nothing, the newer release would still be there, and the process the
 restart started would find it again in its first minute and start the same
 install. The update stops before the service is stopped, so the service goes on
-running the version it had, and the reason is in the report of the install: the
-journal on systemd, `logs/update-install.log` beside the database file
-elsewhere. With nothing restarted, the loop under
+running the version it had, and the reason is on the Update tab (see below) and
+in the report of the install: the journal on systemd, `logs/update-install.log`
+beside the database file elsewhere. With nothing restarted, the loop under
 [Installing without being asked](#installing-without-being-asked) looks again
 one interval later, not at once.
 
@@ -2022,6 +2023,16 @@ one interval later, not at once.
 that would report the end is the one being restarted. The screen says so and
 says to load the page again once the service is back, where the version in the
 corner is what went through.
+
+**An install that fails says why on the Update tab.** An install the service
+started leaves the error it ended with in `update-install.problem` beside the
+database file before it lets `install.lock` go. The service reads it once the
+install is over, and `GET /api/update` answers it as `install_problem` until the
+next install starts; the field is left out where there is nothing to say. The
+page that pressed stops waiting as soon as the reason is there and draws the tab
+with it, rather than waiting out the three minutes for a version that is not
+going to change. An install that went through restarts the service, and the
+process that answers after it has started no install, so the field is not there.
 
 Where this program is running as something somebody started rather than as a
 registered service, the press is not offered at all: `-install` would register
@@ -3118,7 +3129,7 @@ refused with `409` under `service_port.local_port.taken`, with `local_port` and
 | `POST` | `/api/uninstall` | Takes `password`, uninstalls tunnel-manager and ends the process |
 | `GET` | `/api/logs` | The end of the log file. `lines` says how many, up to 2000 |
 | `POST` | `/api/logs/clear` | Takes `password`, empties the file the log is being written to and leaves the rotated files beside it alone |
-| `GET` | `/api/update` | What the last look found: the version running, the newest release, whether it is newer, whether an install can be started from here, and whether this is the development build, which does not check the signature of a release (`dev_build`) |
+| `GET` | `/api/update` | What the last look found: the version running, the newest release, whether it is newer, whether an install can be started from here, why the last install started from here did not go through (`install_problem`), and whether this is the development build, which does not check the signature of a release (`dev_build`) |
 | `POST` | `/api/update/check` | Reads the newest release now and answers what `GET /api/update` would then answer |
 | `POST` | `/api/update/install` | Takes `password` and starts the install. It answers that the install started and never that it finished: what the install ends with is a restart of the service answering the request |
 

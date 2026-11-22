@@ -1427,6 +1427,7 @@
   "update.current.notice": "Em execução com a versão mais recente.",
   "update.dev-build.notice": "Este é um build de desenvolvimento. Ele instala uma atualização apenas pela soma de verificação e não verifica a assinatura da versão, então não deve ser executado onde for preciso confiar em uma versão.",
   "update.install-failed.notice": "A instalação não foi concluída: {version} continua em execução.",
+  "update.install-problem.notice": "A última instalação não foi concluída: {reason}",
   "update.install.button": "Instalar a atualização",
   "update.installed-other.notice": "A instalação foi iniciada para {wanted}, e o que está em execução agora é {version}.",
   "update.installed.notice": "A instalação foi concluída: {version} está em execução.",

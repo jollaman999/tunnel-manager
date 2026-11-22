@@ -1427,6 +1427,7 @@
   "update.current.notice": "กำลังใช้รุ่นที่เผยแพร่ล่าสุด",
   "update.dev-build.notice": "นี่คือบิลด์สำหรับการพัฒนา บิลด์นี้ติดตั้งอัปเดตโดยดูแค่ค่าตรวจสอบ และไม่ตรวจลายเซ็นของรุ่น จึงไม่ควรใช้รันในที่ที่ต้องเชื่อถือรุ่นที่เผยแพร่",
   "update.install-failed.notice": "ติดตั้งไม่สำเร็จ ยังใช้ {version} อยู่",
+  "update.install-problem.notice": "การติดตั้งครั้งล่าสุดไม่สำเร็จ: {reason}",
   "update.install.button": "ติดตั้งอัปเดต",
   "update.installed-other.notice": "เริ่มติดตั้ง {wanted} ไว้ แต่ที่กำลังใช้อยู่ตอนนี้คือ {version}",
   "update.installed.notice": "ติดตั้งเสร็จแล้ว กำลังใช้ {version} อยู่",

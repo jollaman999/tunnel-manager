@@ -1427,6 +1427,7 @@
   "update.current.notice": "最新のリリースを実行中です。",
   "update.dev-build.notice": "署名を確認しない開発用ビルドです。アップデートをチェックサムだけでインストールし、リリースの署名は確認しないため、リリースを信頼する必要がある環境で動かすビルドではありません。",
   "update.install-failed.notice": "インストールは行われませんでした。今も {version} が動いています。",
+  "update.install-problem.notice": "前回のインストールは行われませんでした: {reason}",
   "update.install.button": "アップデートをインストール",
   "update.installed-other.notice": "{wanted} のインストールを始めましたが、今動いているのは {version} です。",
   "update.installed.notice": "インストールが終わりました。今は {version} が動いています。",

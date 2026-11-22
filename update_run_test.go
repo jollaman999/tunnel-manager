@@ -2,8 +2,11 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"io"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -23,6 +26,7 @@ import (
 	"github.com/jollaman999/tunnel-manager/internal/install"
 	"github.com/jollaman999/tunnel-manager/internal/logid"
 	"github.com/jollaman999/tunnel-manager/internal/settings"
+	"github.com/labstack/echo/v5"
 )
 
 // TestInstallCommandRunsOutsideThisServiceOnSystemd covers the one thing that
@@ -595,13 +599,150 @@ func TestAnInstallRunningIsNotStartedAgain(t *testing.T) {
 
 	ended := false
 
-	err := startUpdateInstall(zap.NewNop(), filepath.Join(dir, "tunnel-manager.db"), func() { ended = true })
+	err := startUpdateInstall(zap.NewNop(), filepath.Join(dir, "tunnel-manager.db"), func(string) { ended = true })
 	if !errors.Is(err, install.ErrInstallRunning) {
 		t.Fatalf("the start answered %v, want install.ErrInstallRunning", err)
 	}
 
 	if ended {
 		t.Error("an install that was never started was reported as ended")
+	}
+}
+
+// TestWhyAnUpdateFailedReachesTheUpdateScreen follows the reason an install
+// leaves from the data directory to GET /api/update, on the start handed to
+// systemd, which is the one where this process does not see the install end
+// but only the lock.
+//
+// The stand-in for systemd-run does what a failed update does: it leaves the
+// reason and ends without ever being seen holding the lock, which is an install
+// that took it and let it go between two looks. The reason is what ends the
+// wait then, and the screen is not kept waiting the whole minute an install has
+// to take the lock.
+func TestWhyAnUpdateFailedReachesTheUpdateScreen(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("systemd-run is the linux path")
+	}
+
+	runner := filepath.Join(t.TempDir(), "systemd-run")
+
+	stand := func(script string) {
+		t.Helper()
+
+		err := os.WriteFile(runner, []byte("#!/bin/sh\nfor last in \"$@\"; do :; done\n"+script+"exit 0\n"), 0o755)
+		if err != nil {
+			t.Fatalf("failed to write the stand-in for systemd-run: %v", err)
+		}
+	}
+
+	t.Setenv("PATH", filepath.Dir(runner))
+
+	appear, held, poll := installLockAppearWait, installLockHeldWait, installLockPoll
+	installLockAppearWait, installLockHeldWait, installLockPoll = 30*time.Second, time.Second, 5*time.Millisecond
+
+	t.Cleanup(func() {
+		installLockAppearWait, installLockHeldWait, installLockPoll = appear, held, poll
+	})
+
+	dir := t.TempDir()
+	database := filepath.Join(dir, "tunnel-manager.db")
+
+	err := os.WriteFile(installProblemPath(dir), []byte("an install before this one failed"), 0o600)
+	if err != nil {
+		t.Fatalf("failed to leave the reason of an install before: %v", err)
+	}
+
+	ended := make(chan struct{}, 1)
+
+	var handler *api.UpdateHandler
+
+	handler = api.NewUpdateHandler(zap.NewNop(), nil, "3.0.0", true,
+		func(context.Context, string) (install.Latest, error) {
+			return install.Latest{}, nil
+		},
+		func() error {
+			return startUpdateInstall(zap.NewNop(), database, func(problem string) {
+				handler.InstallEnded(problem)
+				ended <- struct{}{}
+			})
+		})
+
+	read := func() string {
+		t.Helper()
+
+		rec := httptest.NewRecorder()
+		c := echo.New().NewContext(httptest.NewRequest(http.MethodGet, "/api/update", nil), rec)
+
+		err := handler.GetUpdate(c)
+		if err != nil {
+			t.Fatalf("GetUpdate returned an error: %v", err)
+		}
+
+		var resp struct {
+			Data map[string]any `json:"data"`
+		}
+
+		err = json.Unmarshal(rec.Body.Bytes(), &resp)
+		if err != nil {
+			t.Fatalf("failed to read the answer: %v, body: %s", err, rec.Body.String())
+		}
+
+		problem, _ := resp.Data["install_problem"].(string)
+
+		return problem
+	}
+
+	waitEnded := func(within time.Duration) time.Duration {
+		t.Helper()
+
+		start := time.Now()
+
+		select {
+		case <-ended:
+		case <-time.After(within):
+			t.Fatalf("the install was not reported as over within %v", within)
+		}
+
+		return time.Since(start)
+	}
+
+	why := "the update was not installed and nothing was stopped or replaced: the release was not used " +
+		"(release v99.0.0 carries no SHA256SUMS.sig), and an update installs a release or nothing"
+
+	stand("printf '%s' '" + why + "' > \"${last%/*}/update-install.problem\"\n")
+
+	err = handler.StartInstall()
+	if err != nil {
+		t.Fatalf("the start failed: %v", err)
+	}
+
+	took := waitEnded(10 * time.Second)
+
+	t.Logf("the failed install was reported as over %v after the start", took)
+
+	if got := read(); got != why {
+		t.Errorf("install_problem = %q, want %q", got, why)
+	}
+
+	// The next install leaves nothing. Neither the reason of the one before
+	// nor the one left before that may be read as its own.
+	stand("")
+
+	installLockAppearWait = 100 * time.Millisecond
+
+	err = handler.StartInstall()
+	if err != nil {
+		t.Fatalf("the second start failed: %v", err)
+	}
+
+	if got := read(); got != "" {
+		t.Errorf("install_problem = %q while the next install runs, want none", got)
+	}
+
+	waitEnded(10 * time.Second)
+
+	if got := read(); got != "" {
+		t.Errorf("install_problem = %q after an install that left nothing, want none", got)
 	}
 }
 
@@ -721,7 +862,7 @@ func TestAnInstallWhoseLockIsNeverLetGoIsTakenAsOver(t *testing.T) {
 	core, logs := observer.New(zap.InfoLevel)
 	ended := make(chan struct{})
 
-	err = startUpdateInstall(zap.New(core), filepath.Join(t.TempDir(), "tunnel-manager.db"), func() { close(ended) })
+	err = startUpdateInstall(zap.New(core), filepath.Join(t.TempDir(), "tunnel-manager.db"), func(string) { close(ended) })
 	if err != nil {
 		t.Fatalf("the start failed: %v", err)
 	}
@@ -872,7 +1013,7 @@ wait:
 			}
 
 			failures = append(failures, end.err)
-			handler.InstallEnded()
+			handler.InstallEnded("")
 		case <-deadline:
 			break wait
 		}

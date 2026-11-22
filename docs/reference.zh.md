@@ -659,6 +659,7 @@ MCowBQYDK2VwAyEA57QsNFJidOS2ncMcnBU4nAiWvuw+M1+M9UKsIjdsvLw=
     tunnel-manager.db-shm      SQLite 在旁边留的共享内存文件
     initial-password           第一次启动时写出，初始化完成后删除
     install.lock               -install 运行期间持有，结束时删除
+    update-install.problem     服务启动的上一次更新失败的原因，下一次开始时删除
     keys/tunnel-manager.key    用来加密 SSH 密码的密钥
     logs/tunnel-manager.log    日志文件，轮转后的文件也在旁边
 ```
@@ -1545,12 +1546,18 @@ fatal  failed to read the settings  {"error": "the stored settings are refused: 
 开始签名之前做的发布版本，也就是没有 `SHA256SUMS.sig` 的、没有 `SHA256SUMS` 或其中没有这个平台
 那一行的、读不到或下载不下来的 - 更新都会停下。把那个文件放上去，放上的就是服务正在运行的同一个
 版本：服务白白停下又重启，更新的发布版本仍然在那里，重启起来的进程在最初一分钟内又会找到它，
-再开始同一次安装。更新在停止服务之前就停下，所以服务继续运行原来的版本，原因留在安装报告里：
-在 systemd 上是日志（journal），其他地方是数据库文件旁边的 `logs/update-install.log`。因为没有
+再开始同一次安装。更新在停止服务之前就停下，所以服务继续运行原来的版本，原因留在更新标签页（见下文）和安装报告里。
+安装报告在 systemd 上是日志（journal），其他地方是数据库文件旁边的 `logs/update-install.log`。因为没有
 重启，[不询问就安装](#不询问就安装)的循环不会立刻再查，而是过一个周期之后再查。
 
 **响应只说安装已开始，绝不说已完成。** 本该报告结束的那个进程，正是被重启的那个。页面会这样说明，
 并提示在服务回来之后重新打开页面：角落里的版本才是真正生效的那个。
+
+**失败的安装会在更新标签页上说明原因。** 由服务启动的安装失败时，会在放开 `install.lock` 之前，
+把它结束时的错误写进数据库文件旁边的 `update-install.problem`。服务在安装结束后读取它，
+`GET /api/update` 在下一次安装开始之前都会以 `install_problem` 答出它；没有可说的时候这个字段不出现。
+按下安装的页面一拿到原因就停止等待，并在标签页上显示这个原因，而不是为一个不会改变的版本等满三分钟。
+安装生效时服务会重启，之后应答的进程没有启动过安装，所以这个字段不会出现。
 
 如果本程序是以某人直接启动的方式运行，而不是注册的服务，按钮根本不会出现：`-install` 会去注册一个
 服务，而此后没有东西会再次启动该进程。页面会在按钮的位置说明这一点，`POST /api/update/install`
@@ -2481,7 +2488,7 @@ Host 的地址一样，比较时不区分大小写，也不管 IP 地址怎么�
 | `POST` | `/api/uninstall` | 收 `password`，卸载 tunnel-manager 并结束进程 |
 | `GET` | `/api/logs` | 日志文件的末尾。`lines` 说要多少行，最多 2000 |
 | `POST` | `/api/logs/clear` | 接收 `password`，清空当前正在写入的日志文件，旁边已轮转的文件不动 |
-| `GET` | `/api/update` | 上次查看的结果：正在运行的版本、最新发布、它是否更新、能否从这里开始安装，以及这是不是不校验发布签名的开发用构建（`dev_build`） |
+| `GET` | `/api/update` | 上次查看的结果：正在运行的版本、最新发布、它是否更新、能否从这里开始安装，从这里启动的上一次安装为什么没有生效（`install_problem`），以及这是不是不校验发布签名的开发用构建（`dev_build`） |
 | `POST` | `/api/update/check` | 立刻读取最新发布，并返回 `GET /api/update` 随后会返回的内容 |
 | `POST` | `/api/update/install` | 接收 `password` 并开始安装。它只回答安装已开始，绝不回答已完成：安装最后做的事，正是重启那个在回答本请求的服务 |
 

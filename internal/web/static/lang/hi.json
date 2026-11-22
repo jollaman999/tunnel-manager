@@ -1427,6 +1427,7 @@
   "update.current.notice": "नवीनतम रिलीज़ चल रही है।",
   "update.dev-build.notice": "यह विकास के लिए बना बिल्ड है। यह अपडेट को केवल उसके चेकसम के आधार पर इंस्टॉल करता है और रिलीज़ के हस्ताक्षर की जाँच नहीं करता, इसलिए इसे वहाँ नहीं चलाना चाहिए जहाँ रिलीज़ पर भरोसा करना ज़रूरी हो।",
   "update.install-failed.notice": "इंस्टॉल पूरा नहीं हुआ: अब भी {version} चल रही है।",
+  "update.install-problem.notice": "पिछला इंस्टॉल पूरा नहीं हुआ: {reason}",
   "update.install.button": "अपडेट इंस्टॉल करें",
   "update.installed-other.notice": "इंस्टॉल {wanted} के लिए शुरू किया गया था, और अभी चल रही है {version}।",
   "update.installed.notice": "इंस्टॉल पूरा हो गया: {version} चल रही है।",

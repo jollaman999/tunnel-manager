@@ -538,7 +538,7 @@ func TestAnInstallThatEndedMakesWayForTheNext(t *testing.T) {
 	}
 
 	// The install ended without the restart.
-	h.InstallEnded()
+	h.InstallEnded("")
 
 	// A start that fails brings the flag down on its own.
 	call.startErr = errors.New("systemd-run is not where it was")
@@ -571,6 +571,84 @@ func TestAnInstallThatEndedMakesWayForTheNext(t *testing.T) {
 
 	if call.started != 5 {
 		t.Errorf("the install was started %d times, want 5: the first, the two that failed, the one found running and the last", call.started)
+	}
+}
+
+// TestWhyAnInstallEndedIsAnsweredUntilTheNextStarts is the reason an install
+// left, from the moment main reports it to the moment the next install is
+// begun. Before the reason was kept, all the Update screen had to go on was a
+// version that did not change, three minutes later.
+func TestWhyAnInstallEndedIsAnsweredUntilTheNextStarts(t *testing.T) {
+	call := &updateCall{
+		latest:      install.Latest{Tag: "v3.7.5", Newer: true, Comparable: true},
+		installable: true,
+	}
+	h, _ := call.handler(t, nil)
+	h.Look(context.Background())
+
+	read := func() (updateView, string) {
+		t.Helper()
+
+		c, rec := updateRequest(t, "/api/update", "", true)
+
+		err := h.GetUpdate(c)
+		if err != nil {
+			t.Fatalf("GetUpdate returned an error: %v", err)
+		}
+
+		return decodeUpdate(t, rec), rec.Body.String()
+	}
+
+	why := "the update was not installed and nothing was stopped or replaced: the release was not used " +
+		"(release v3.7.5 carries no SHA256SUMS.sig), and an update installs a release or nothing"
+
+	status, _ := pressInstall(t, h)
+	if status != http.StatusOK {
+		t.Fatalf("the first press answered %d, want 200", status)
+	}
+
+	h.InstallEnded(why)
+
+	view, _ := read()
+	if view.InstallProblem != why {
+		t.Errorf("install_problem = %q once the install ended, want %q", view.InstallProblem, why)
+	}
+
+	// Read again, it is still there: the screen may be opened after the press.
+	view, _ = read()
+	if view.InstallProblem != why {
+		t.Errorf("install_problem = %q on a second read, want %q", view.InstallProblem, why)
+	}
+
+	status, _ = pressInstall(t, h)
+	if status != http.StatusOK {
+		t.Fatalf("the second press answered %d, want 200", status)
+	}
+
+	view, body := read()
+	if view.InstallProblem != "" || strings.Contains(body, "install_problem") {
+		t.Errorf("the reason of the install before stayed once the next began: %s", body)
+	}
+
+	// An install that left nothing says nothing.
+	h.InstallEnded("")
+
+	_, body = read()
+	if strings.Contains(body, "install_problem") {
+		t.Errorf("an install that left no reason is answered with one: %s", body)
+	}
+
+	// The loop begins an install the same way the press does.
+	h.InstallEnded(why)
+
+	err := h.StartInstall()
+	if err != nil {
+		t.Fatalf("the loop failed to start an install: %v", err)
+	}
+
+	view, _ = read()
+	if view.InstallProblem != "" {
+		t.Errorf("install_problem = %q once the loop began an install, want none", view.InstallProblem)
 	}
 }
 

@@ -8840,6 +8840,14 @@ function updateVersions(update) {
     card.appendChild(statusLine(t("update.current.notice"), "ok"));
   }
 
+  // Why the last install did not go through, in the words the install left it
+  // in. The server keeps it until the next install starts, so it is here for
+  // whoever opens the tab afterwards and not only for the page that pressed.
+  if (typeof update.install_problem === "string" && update.install_problem !== "") {
+    card.appendChild(statusLine(t("update.install-problem.notice",
+      { reason: update.install_problem }), "warning"));
+  }
+
   // formatTime answers the word for never on the zero time, which is what the
   // server sends where nothing has looked yet. That case is the empty line
   // above, so the sentence is left off here rather than reading "last looked:
@@ -8962,6 +8970,13 @@ async function updateInstallPanel(update) {
 // The version this end already has is the one the corner was drawn from. It is
 // read before the wait starts rather than during it, because during it is when
 // it changes.
+//
+// An install that failed is the other way the wait ends. The process being
+// replaced is still the one answering then, and it says why the install did not
+// go through, so the Update tab is drawn again with that reason on it rather
+// than the page waiting out the three minutes to show a version that did not
+// change. The mark is taken with it: the tab says what happened, and the load
+// after it has nothing left to say.
 async function waitOutTheInstall() {
   const was = loadedVersion;
   const until = Date.now() + updateWaitLimitSec * 1000;
@@ -8982,6 +8997,12 @@ async function waitOutTheInstall() {
 
     if (await theVersionChanged(was)) {
       break;
+    }
+
+    if (await theInstallProblem() !== "") {
+      takeUpdateMark();
+
+      return drawSettings();
     }
   }
 
@@ -9023,6 +9044,36 @@ async function theVersionChanged(was) {
       payload.version !== was;
   } catch (error) {
     return false;
+  }
+}
+
+// theInstallProblem is one ask of whether the install has ended without going
+// through, answering why it did or nothing.
+//
+// It is a fetch of its own and not apiCall. Over the restart that ends an
+// install that went well, every session goes and the answer is a 401, which
+// apiCall takes as a session that ended and answers with the sign in screen,
+// in the middle of a wait that is going fine. Anything other than a reason
+// that is there reads as none yet, for the reason theVersionChanged reads it
+// that way.
+async function theInstallProblem() {
+  try {
+    const response = await fetch("/api/update", {
+      headers: { Accept: "application/json" },
+      credentials: "same-origin",
+      cache: "no-store"
+    });
+
+    if (!response.ok) {
+      return "";
+    }
+
+    const payload = await response.json();
+    const problem = payload && payload.data ? payload.data.install_problem : undefined;
+
+    return typeof problem === "string" ? problem : "";
+  } catch (error) {
+    return "";
   }
 }
 

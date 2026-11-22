@@ -1427,6 +1427,7 @@
   "update.current.notice": "Die neueste Veröffentlichung läuft.",
   "update.dev-build.notice": "Dies ist ein Entwicklungs-Build. Er installiert eine Aktualisierung allein anhand ihrer Prüfsumme und prüft die Signatur der Veröffentlichung nicht. Er ist daher nicht für den Betrieb dort gedacht, wo einer Veröffentlichung vertraut werden muss.",
   "update.install-failed.notice": "Die Installation ist nicht durchgelaufen: es läuft weiterhin {version}.",
+  "update.install-problem.notice": "Die letzte Installation ist nicht durchgelaufen: {reason}",
   "update.install.button": "Aktualisierung installieren",
   "update.installed-other.notice": "Die Installation wurde für {wanted} gestartet, und was jetzt läuft, ist {version}.",
   "update.installed.notice": "Die Installation ist durchgelaufen: {version} läuft.",

@@ -1427,6 +1427,7 @@
   "update.current.notice": "أحدث إصدار قيد التشغيل.",
   "update.dev-build.notice": "هذا بناء للتطوير. يثبّت التحديث بالاعتماد على مجموع التحقّق وحده ولا يتحقّق من توقيع الإصدار، لذا لا ينبغي تشغيله حيث يجب الوثوق بالإصدار.",
   "update.install-failed.notice": "لم يكتمل التثبيت: ما زال {version} قيد التشغيل.",
+  "update.install-problem.notice": "لم يكتمل آخر تثبيت: {reason}",
   "update.install.button": "ثبّت التحديث",
   "update.installed-other.notice": "بدأ التثبيت من أجل {wanted}، والذي يعمل الآن هو {version}.",
   "update.installed.notice": "اكتمل التثبيت: {version} قيد التشغيل.",

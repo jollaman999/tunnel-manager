@@ -1427,6 +1427,7 @@
   "update.current.notice": "Выполняется самый новый выпуск.",
   "update.dev-build.notice": "Это сборка для разработки. Она устанавливает обновление только по контрольной сумме и не проверяет подпись выпуска, поэтому её не следует запускать там, где выпуску нужно доверять.",
   "update.install-failed.notice": "Установка не прошла: по-прежнему выполняется {version}.",
+  "update.install-problem.notice": "Последняя установка не прошла: {reason}",
   "update.install.button": "Установить обновление",
   "update.installed-other.notice": "Установка была начата для {wanted}, а выполняется сейчас {version}.",
   "update.installed.notice": "Установка прошла: выполняется {version}.",
