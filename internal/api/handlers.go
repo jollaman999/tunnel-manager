@@ -2597,6 +2597,11 @@ func (h *Handler) GetStatus(c *echo.Context) error {
 		return failure(c, http.StatusInternalServerError, errStatusFetchFailed)
 	}
 
+	// What the running forwards report is read once, before the search, so
+	// that the rows a search finds by their listen address and the rows the
+	// page then draws say the same thing about which half each one opened.
+	states := h.manager.LocalForwardStatuses()
+
 	var (
 		forwardRefs     []statusRef
 		matchedForwards []models.LocalForward
@@ -2605,7 +2610,7 @@ func (h *Handler) GetStatus(c *echo.Context) error {
 	if q == "" {
 		forwardRefs, err = statusLocalForwardRefs(h.db)
 	} else {
-		matchedForwards, err = localForwardsMatching(h.db, q)
+		matchedForwards, err = localForwardsMatching(h.db, q, states)
 		forwardRefs = localForwardRefsOf(matchedForwards)
 	}
 
@@ -2654,8 +2659,6 @@ func (h *Handler) GetStatus(c *echo.Context) error {
 		h.logger.Error("failed to fetch Host", logid.HostFetchFailed.Field(), zap.Error(err))
 		return failure(c, http.StatusInternalServerError, errStatusFetchFailed)
 	}
-
-	states := h.manager.LocalForwardStatuses()
 
 	tunnelRows := make([]statusPageRow, 0, len(tunnels))
 	for _, t := range tunnels {

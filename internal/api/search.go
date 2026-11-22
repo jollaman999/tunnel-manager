@@ -87,7 +87,10 @@ func tunnelsMatching(q string) func(*gorm.DB) *gorm.DB {
 
 // localForwardsMatching reads every local forward whose Host matches q, or
 // whose listen address or target holds it, in the order the table is paged
-// in.
+// in. The listen address is the one the status row shows, which
+// localForwardListenShown picks from what the running forward in states
+// opened, so the Hosts that are enabled are read as well: the row of a forward
+// under a Host that is not says nothing of what it opened.
 //
 // The addresses of a forward are not columns. They are what
 // tunnel.LocalForwardAddresses makes of the bind scope and the ports, and
@@ -99,7 +102,8 @@ func tunnelsMatching(q string) func(*gorm.DB) *gorm.DB {
 //
 // The addresses hold nothing but ASCII, so folding them with strings.ToLower
 // matches them the way LIKE matches the Hosts.
-func localForwardsMatching(db *gorm.DB, q string) ([]models.LocalForward, error) {
+func localForwardsMatching(db *gorm.DB, q string,
+	states map[tunnel.LocalForwardKey]tunnel.LocalForwardState) ([]models.LocalForward, error) {
 	var hostIDs []uint
 
 	err := db.Raw(statusHostsMatchingSQL, sql.Named("q", likeContaining(q))).Scan(&hostIDs).Error
@@ -110,6 +114,18 @@ func localForwardsMatching(db *gorm.DB, q string) ([]models.LocalForward, error)
 	hostMatches := make(map[uint]bool, len(hostIDs))
 	for _, id := range hostIDs {
 		hostMatches[id] = true
+	}
+
+	var enabledIDs []uint
+
+	err = db.Model(&models.Host{}).Where("enabled = ?", true).Pluck("id", &enabledIDs).Error
+	if err != nil {
+		return nil, err
+	}
+
+	hostEnabled := make(map[uint]bool, len(enabledIDs))
+	for _, id := range enabledIDs {
+		hostEnabled[id] = true
 	}
 
 	var forwards []models.LocalForward
@@ -131,8 +147,10 @@ func localForwardsMatching(db *gorm.DB, q string) ([]models.LocalForward, error)
 			continue
 		}
 
-		listenV4, _, _, target := tunnel.LocalForwardAddresses(&models.Host{}, &lf)
-		if strings.Contains(strings.ToLower(listenV4), folded) || strings.Contains(strings.ToLower(target), folded) {
+		listenV4, listenV6, _, target := tunnel.LocalForwardAddresses(&models.Host{}, &lf)
+		listen := localForwardListenShown(listenV4, listenV6, localForwardViewOf(lf, hostEnabled[lf.HostID], states))
+
+		if strings.Contains(strings.ToLower(listen), folded) || strings.Contains(strings.ToLower(target), folded) {
 			matched = append(matched, lf)
 		}
 	}

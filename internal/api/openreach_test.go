@@ -1,6 +1,8 @@
 package api
 
 import (
+	"net/url"
+	"reflect"
 	"testing"
 
 	"github.com/jollaman999/tunnel-manager/internal/models"
@@ -80,5 +82,51 @@ func TestTheHostViewCarriesTheHalfTheProxyOpened(t *testing.T) {
 
 	if got := hostViewOf(host, nil, nil).SocksOpenReach; got != "" {
 		t.Fatalf("a proxy that does not run is viewed with socks_open_reach %q, want it empty", got)
+	}
+}
+
+// TestTheStatusSearchFindsALocalForwardByTheAddressItShows holds q on the
+// status table to the address a local forward row carries in local, which is
+// the IPv6 one of the pair where the forward opened that one alone. A row is
+// found by what it shows, and not by the IPv4 address it would have shown had
+// both halves opened.
+func TestTheStatusSearchFindsALocalForwardByTheAddressItShows(t *testing.T) {
+	hosts := []models.Host{statusHost(1, true)}
+
+	states := map[tunnel.LocalForwardKey]tunnel.LocalForwardState{
+		{HostID: 1, Number: 1}: {Status: "connected", OpenReach: "ipv6"},
+		{HostID: 1, Number: 2}: {Status: "connected", OpenReach: "both"},
+	}
+
+	db := newRowsDB(t, hosts, nil, nil)
+	storeLocalForwards(t, db, []models.LocalForward{
+		statusLocalForward(1, 1, 19000, models.BindScopeLoopback, true),
+		statusLocalForward(2, 1, 19001, models.BindScopeLoopback, true),
+	})
+
+	ipv6Alone := "local_forward host=1 local=[::1]:19000"
+	both := "local_forward host=1 local=127.0.0.1:19001"
+
+	cases := []struct {
+		q    string
+		want []string
+	}{
+		{"[::1]:19000", []string{ipv6Alone}},
+		{"::1", []string{ipv6Alone}},
+		{"127.0.0.1:19000", []string{}},
+		{"127.0.0.1:19001", []string{both}},
+		{"198.51.100.20", []string{ipv6Alone, both}},
+	}
+
+	for _, tc := range cases {
+		rows, data := statusRowsWithStates(t, db, "/api/status?q="+url.QueryEscape(tc.q), states)
+
+		got := statusNames(t, rows)
+		if !reflect.DeepEqual(got, tc.want) {
+			t.Errorf("q=%q finds %v, want %v", tc.q, got, tc.want)
+		}
+		if statusCount(t, data, "total_rows") != len(tc.want) {
+			t.Errorf("q=%q says total_rows is %d, want %d", tc.q, statusCount(t, data, "total_rows"), len(tc.want))
+		}
 	}
 }

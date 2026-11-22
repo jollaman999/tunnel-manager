@@ -250,11 +250,7 @@ func tunnelStatusRow(t models.Tunnel) statusPageRow {
 // nothing, which is what a disabled Host reports, and it has no server address
 // to name; GetLocalForward answers one the same way.
 //
-// The listen address is the IPv4 one of the pair, for the reason the tunnel
-// rows carry that one (see models.Tunnel.Local): a scope names two addresses
-// and the row carries the one to connect to. Where the running forward opened
-// the IPv6 one alone it is that one, as on a tunnel row, because the row has to
-// name an address that answers.
+// The listen address is the one localForwardListenShown picks.
 func localForwardStatusRow(lf models.LocalForward, host *models.Host,
 	states map[tunnel.LocalForwardKey]tunnel.LocalForwardState) statusPageRow {
 	owner := models.Host{}
@@ -270,11 +266,6 @@ func localForwardStatusRow(lf models.LocalForward, host *models.Host,
 	view := localForwardViewOf(lf, host != nil && host.Enabled, states)
 	number := lf.Number
 
-	local := listenV4
-	if view.OpenReach == "ipv6" {
-		local = listenV6
-	}
-
 	return statusPageRow{
 		ref: statusRef{HostID: lf.HostID, Kind: statusKindLocalForward, Ref: lf.Number},
 		row: statusRow{
@@ -289,13 +280,30 @@ func localForwardStatusRow(lf models.LocalForward, host *models.Host,
 				JumpReason:      view.JumpReason,
 				OpenReach:       view.OpenReach,
 				Server:          server,
-				Local:           local,
+				Local:           localForwardListenShown(listenV4, listenV6, view),
 				Remote:          target,
 			},
 			Kind:   statusKindLocalForward,
 			Number: &number,
 		},
 	}
+}
+
+// localForwardListenShown is the listen address the status row of a local
+// forward carries. It is the IPv4 one of the pair, for the reason the tunnel
+// rows carry that one (see models.Tunnel.Local): a scope names two addresses
+// and the row carries the one to connect to. Where the running forward opened
+// the IPv6 one alone it is that one, as on a tunnel row, because the row has to
+// name an address that answers.
+//
+// The status row and the status search both take it from here, so that a row
+// is found by the address it shows.
+func localForwardListenShown(listenV4, listenV6 string, view localForwardView) string {
+	if view.OpenReach == "ipv6" {
+		return listenV6
+	}
+
+	return listenV4
 }
 
 // mergeStatusRows merges the rows read from the two tables into the order the
