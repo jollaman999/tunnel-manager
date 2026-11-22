@@ -66,6 +66,11 @@ type hostView struct {
 	SocksJumpSeq    int    `json:"socks_jump_seq"`
 	SocksJumpHostID uint   `json:"socks_jump_host_id"`
 	SocksJumpReason string `json:"socks_jump_reason"`
+	// SocksOpenReach is which of the two addresses of the bind scope the
+	// running proxy opened on this machine: "both", "ipv4" or "ipv6", and
+	// empty before a connection has opened them and while none runs. It reads
+	// the way open_reach does on a local forward.
+	SocksOpenReach string `json:"socks_open_reach"`
 	// JumpHostIDs is the jump route of the Host in the order it goes, and an
 	// empty list for a Host reached directly.
 	JumpHostIDs []uint    `json:"jump_host_ids"`
@@ -121,6 +126,7 @@ func hostViewOf(host models.Host, route []uint, socks map[uint]tunnel.SocksState
 		view.SocksJumpSeq = state.JumpSeq
 		view.SocksJumpHostID = state.JumpHostID
 		view.SocksJumpReason = state.JumpReason
+		view.SocksOpenReach = state.OpenReach
 	}
 
 	return view

@@ -1237,6 +1237,7 @@
   "status.kind-service-port.text": "Service port",
   "status.kind.column": "Kind",
   "status.last-connected.column": "Last connected",
+  "status.local-opened-one.text": "Only {opened} could be opened on the Tunnel Manager server. {refused} is already held there by another program, or that address is not available on it, so a client that connects to {refused} does not reach this forward.",
   "status.loopback-here-copied.notice": "The address copied is a loopback address, so it works only on the Tunnel Manager server itself.",
   "status.loopback-host-copied.notice": "The address copied is a loopback address, so it works only on the Host itself.",
   "status.no-tunnels.empty": "There are no tunnels.",

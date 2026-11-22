@@ -1237,6 +1237,7 @@
   "status.kind-service-port.text": "सर्विस पोर्ट",
   "status.kind.column": "प्रकार",
   "status.last-connected.column": "आखिरी बार जुड़ा",
+  "status.local-opened-one.text": "Tunnel Manager सर्वर पर सिर्फ़ {opened} खुल सका। {refused} उस सर्वर पर पहले से किसी दूसरे प्रोग्राम के पास है, या वह पता वहाँ उपलब्ध नहीं है, इसलिए {refused} से जुड़ने वाला क्लाइंट इस फ़ॉरवर्ड तक नहीं पहुँचता।",
   "status.loopback-here-copied.notice": "कॉपी किया गया पता लूपबैक पता है, इसलिए यह सिर्फ़ ख़ुद Tunnel Manager सर्वर पर काम करता है।",
   "status.loopback-host-copied.notice": "कॉपी किया गया पता लूपबैक पता है, इसलिए यह सिर्फ़ उसी Host पर काम करता है।",
   "status.no-tunnels.empty": "अभी कोई टनल नहीं है।",

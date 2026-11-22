@@ -252,7 +252,9 @@ func tunnelStatusRow(t models.Tunnel) statusPageRow {
 //
 // The listen address is the IPv4 one of the pair, for the reason the tunnel
 // rows carry that one (see models.Tunnel.Local): a scope names two addresses
-// and the row carries the one to connect to.
+// and the row carries the one to connect to. Where the running forward opened
+// the IPv6 one alone it is that one, as on a tunnel row, because the row has to
+// name an address that answers.
 func localForwardStatusRow(lf models.LocalForward, host *models.Host,
 	states map[tunnel.LocalForwardKey]tunnel.LocalForwardState) statusPageRow {
 	owner := models.Host{}
@@ -260,13 +262,18 @@ func localForwardStatusRow(lf models.LocalForward, host *models.Host,
 		owner = *host
 	}
 
-	listenV4, _, server, target := tunnel.LocalForwardAddresses(&owner, &lf)
+	listenV4, listenV6, server, target := tunnel.LocalForwardAddresses(&owner, &lf)
 	if host == nil {
 		server = ""
 	}
 
 	view := localForwardViewOf(lf, host != nil && host.Enabled, states)
 	number := lf.Number
+
+	local := listenV4
+	if view.OpenReach == "ipv6" {
+		local = listenV6
+	}
 
 	return statusPageRow{
 		ref: statusRef{HostID: lf.HostID, Kind: statusKindLocalForward, Ref: lf.Number},
@@ -280,8 +287,9 @@ func localForwardStatusRow(lf models.LocalForward, host *models.Host,
 				JumpSeq:         view.JumpSeq,
 				JumpHostID:      view.JumpHostID,
 				JumpReason:      view.JumpReason,
+				OpenReach:       view.OpenReach,
 				Server:          server,
-				Local:           listenV4,
+				Local:           local,
 				Remote:          target,
 			},
 			Kind:   statusKindLocalForward,

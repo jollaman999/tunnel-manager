@@ -4040,6 +4040,10 @@
                 "socks_last_error": {
                     "type": "string"
                 },
+                "socks_open_reach": {
+                    "description": "SocksOpenReach is which of the two addresses of the bind scope the\nrunning proxy opened on this machine: \"both\", \"ipv4\" or \"ipv6\", and\nempty before a connection has opened them and while none runs. It reads\nthe way open_reach does on a local forward.",
+                    "type": "string"
+                },
                 "socks_port": {
                     "type": "integer"
                 },
@@ -4199,6 +4203,10 @@
                 "number": {
                     "description": "Number is which forward of its Host this is, counted from 1. Numbers are\nhanded out per Host, so two Hosts each have a first forward.",
                     "type": "integer"
+                },
+                "open_reach": {
+                    "description": "OpenReach is which of the two addresses of the bind scope the running\nforward opened on this machine, in the words models.Tunnel.OpenReach\ncarries: \"both\", \"ipv4\" or \"ipv6\", and empty before a connection has\nopened them and while none runs. A half that is missing is one this\nmachine refused, most often because another program holds the port on\nthat address, and a client that connects there does not reach the\nforward.",
+                    "type": "string"
                 },
                 "retry_count": {
                     "type": "integer"

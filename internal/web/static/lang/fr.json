@@ -1237,6 +1237,7 @@
   "status.kind-service-port.text": "Port de service",
   "status.kind.column": "Type",
   "status.last-connected.column": "Dernière connexion",
+  "status.local-opened-one.text": "Seule {opened} a pu être ouverte sur le serveur Tunnel Manager. {refused} y est déjà prise par un autre programme, ou cette adresse n'y est pas disponible : un client qui se connecte à {refused} n'atteint donc pas cette redirection.",
   "status.loopback-here-copied.notice": "L'adresse copiée est une adresse de bouclage : elle ne fonctionne que sur le serveur Tunnel Manager lui-même.",
   "status.loopback-host-copied.notice": "L'adresse copiée est une adresse de bouclage : elle ne fonctionne que sur le Host lui-même.",
   "status.no-tunnels.empty": "Aucun tunnel.",

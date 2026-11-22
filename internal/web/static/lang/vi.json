@@ -1237,6 +1237,7 @@
   "status.kind-service-port.text": "Cổng dịch vụ",
   "status.kind.column": "Loại",
   "status.last-connected.column": "Kết nối lần cuối",
+  "status.local-opened-one.text": "Trên máy chủ Tunnel Manager chỉ mở được {opened}. {refused} đã bị một chương trình khác trên máy chủ đó chiếm, hoặc địa chỉ đó không dùng được ở đó, nên máy khách kết nối tới {refused} sẽ không tới được chuyển tiếp này.",
   "status.loopback-here-copied.notice": "Địa chỉ vừa sao chép là địa chỉ loopback, chỉ dùng được ngay trên máy chủ Tunnel Manager.",
   "status.loopback-host-copied.notice": "Địa chỉ vừa sao chép là địa chỉ loopback, chỉ dùng được ngay trên Host đó.",
   "status.no-tunnels.empty": "Chưa có tunnel nào.",

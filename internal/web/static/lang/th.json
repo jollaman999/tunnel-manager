@@ -1237,6 +1237,7 @@
   "status.kind-service-port.text": "พอร์ตบริการ",
   "status.kind.column": "ชนิด",
   "status.last-connected.column": "เชื่อมต่อล่าสุด",
+  "status.local-opened-one.text": "บนเซิร์ฟเวอร์ Tunnel Manager เปิดได้เฉพาะ {opened} เท่านั้น {refused} ถูกโปรแกรมอื่นบนเซิร์ฟเวอร์นั้นใช้อยู่แล้ว หรือใช้ที่อยู่นั้นบนเซิร์ฟเวอร์ไม่ได้ ไคลเอนต์ที่เชื่อมต่อไปยัง {refused} จึงไปไม่ถึงการส่งต่อนี้",
   "status.loopback-here-copied.notice": "ที่อยู่ที่คัดลอกเป็นที่อยู่ลูปแบ็ก ใช้ได้เฉพาะบนเซิร์ฟเวอร์ Tunnel Manager เองเท่านั้น",
   "status.loopback-host-copied.notice": "ที่อยู่ที่คัดลอกเป็นที่อยู่ลูปแบ็ก ใช้ได้เฉพาะบน Host นั้นเองเท่านั้น",
   "status.no-tunnels.empty": "ยังไม่มีอุโมงค์",

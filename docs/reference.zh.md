@@ -2018,7 +2018,8 @@ curl -s -b cookies.txt -X POST "$BASE/api/host" \
 本服务器占着的端口，会被 `409` 拒绝。两种情况都不保存任何内容。凡是带着 Host 的响应，都带着保存
 下来的这四个字段、总是写成单词的 `socks_bind_scope`、`socks_status` 和 `socks_last_error`，以及
 说明代理在跳板路线上哪里停下的 `socks_jump_seq`、`socks_jump_host_id` 和 `socks_jump_reason`，
-见[跳板路线](#跳板路线)。
+见[跳板路线](#跳板路线)。`socks_open_reach` 是正在运行的代理打开了 `socks_bind_scope` 两个地址中的
+哪一个，见[本地转发或代理打开了哪一半](#本地转发或代理打开了哪一半)。
 
 ```bash
 # 在端口 1080 上开启 Host 3 的 SOCKS5 代理，只接受两个来源。
@@ -2338,6 +2339,7 @@ curl -s -b cookies.txt -X POST "$BASE/api/host/1/local-forward" \
         "enabled": true, "allowed_sources": "",
         "status": "connected", "last_error": "", "retry_count": 0,
         "last_connected_at": "<连接建立的时间>", "forward_reach": "reachable",
+        "open_reach": "both",
         "jump_seq": 0, "jump_host_id": 0, "jump_reason": "",
         "created_at": "<...>", "updated_at": "<...>" }
     ],
@@ -2351,8 +2353,10 @@ curl -s -b cookies.txt -X POST "$BASE/api/host/1/local-forward" \
 这是之后 `GET /api/host/1/local-forward` 的返回：一页，形状和其他分页的列表一样，见[分页](#分页)。
 创建、读取和修改都用一个和 `items` 里一样的对象作答。响应里的 `bind_scope` 总是 `loopback` 或
 `wildcard`，不会是空的。`forward_reach` 是目标有没有应答，没在运行的转发不带这个字段，见
-[本地转发能不能到达目标](#本地转发能不能到达目标)。`jump_seq`、`jump_host_id` 和 `jump_reason`
-说明转发在 Host 的跳板路线上哪里停下，见[跳板路线](#跳板路线)。
+[本地转发能不能到达目标](#本地转发能不能到达目标)。`open_reach` 是正在运行的转发打开了
+`bind_scope` 两个地址中的哪一个，见[本地转发或代理打开了哪一半](#本地转发或代理打开了哪一半)。
+`jump_seq`、`jump_host_id` 和 `jump_reason` 说明转发在 Host 的跳板路线上哪里停下，见
+[跳板路线](#跳板路线)。
 
 **这个列表以前返回全部行，`data` 就是它们的数组。** 现在分页了，`data` 是上面的对象，原来读
 `data[0]` 的客户端现在读 `data.items[0]`。
@@ -2659,7 +2663,7 @@ curl -s -b cookies.txt https://127.0.0.1:8888/api/status
         "jump_seq": 0,
         "jump_host_id": 0,
         "jump_reason": "",
-        "open_reach": "",
+        "open_reach": "both",
         "listen_addresses": "",
         "kind": "local_forward",
         "sp_id": null,
@@ -2686,9 +2690,11 @@ curl -s -b cookies.txt https://127.0.0.1:8888/api/status
 [一台 Host 的本地转发](#一台-host-的本地转发)里用来指到某一个的那个编号。隧道的行上根本没有
 `number`：它不是发成 0，而是整个字段都不发，所以有 `host_id` 和 `number` 的是本地转发的行，有
 `host_id` 和 `sp_id` 的是隧道的行。本地转发的目标是否应答不在这个响应里，而在它所属 Host 的
-本地转发上，见[下文](#本地转发能不能到达目标)。`server_banner`、`error_kind`、
-`open_reach` 和 `listen_addresses` 只在服务端口的行上填，本地转发的行上都是空的：本地转发不在
-Host 上开端口，这些字段没有可说的对象。
+本地转发上，见[下文](#本地转发能不能到达目标)。`server_banner`、`error_kind` 和
+`listen_addresses` 只在服务端口的行上填，本地转发的行上都是空的：本地转发不在 Host 上开端口，这些
+字段没有可说的对象。`open_reach` 两种行上都填：在本地转发的行上，它是范围的两个地址中哪一个在
+Tunnel Manager 服务器上打开了；只打开了 IPv6 那一个时，`local` 也是那个地址，见
+[本地转发或代理打开了哪一半](#本地转发或代理打开了哪一半)。
 
 计数是对所有行算的，不是对这一页算的：一台有二十五行的 Tunnel Manager 服务器，在十行一页上报出来的还是二十五，
 而 `connected_tunnels` 数的是Tunnel Manager 服务器连上的隧道，不是恰好落在这一页上的那些。
@@ -2811,6 +2817,22 @@ address"，把 `no` 写作 "force ... available to the local host only"。**两�
 **tunnel-manager 不会自己去连转发端口。** SSH 服务器不肯打开的端口，会让隧道处于错误状态，
 `error_kind` 为 `forward_denied`；端口开在了哪里，由 `listen_addresses` 说明。请求的是什么，就是
 分配关系的范围；服务器对一次请求答应或拒绝，并不等于端口开着或关着，所以状态界面从不说端口是开着的。
+
+### 本地转发或代理打开了哪一半
+
+本地转发和 SOCKS5 代理在 Tunnel Manager 服务器上，在范围的两个地址上都打开端口，只要其中一个打开
+就算建立。打开的是哪一个，记在转发的 `open_reach` 上（状态行和
+`GET /api/host/:id/local-forward`），代理的记在 Host 的 `socks_open_reach` 上：`both`；只打开了
+`127.0.0.1` 或 `0.0.0.0` 时是 `ipv4`；只打开了 `::1` 或 `::` 时是 `ipv6`；没有在运行，或者第一次
+连接还没打开端口时是空值。两个都没打开就是出错的转发，记在 `status` 和 `last_error` 上。
+
+**这里是测量值，而不是服务器的答复。** 端口由这台服务器自己打开，缺的那一半就是这台服务器打不开的
+那一半：要么别的程序已经占着那个地址上的端口，要么那个地址在这台机器上不可用，比如没有 IPv6 的
+机器上的 `::1`。连接那个地址的客户端到不了这个转发，而是连到占着端口的程序，或者哪里也连不上。
+
+这样的转发，状态行会像隧道行一样在 `local` 里写打开的那一半，状态界面在可连接地址一栏只画那个地址，
+并在行下说明哪个地址没能打开。每次转发连接时都会重新测量，断开后正在重试的转发保留上一次连接打开的
+结果。
 
 ### 本地转发能不能到达目标
 

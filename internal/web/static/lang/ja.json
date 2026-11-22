@@ -1237,6 +1237,7 @@
   "status.kind-service-port.text": "サービスポート",
   "status.kind.column": "種類",
   "status.last-connected.column": "最終接続",
+  "status.local-opened-one.text": "Tunnel Manager サーバーで開けたのは {opened} だけです。{refused} はそのサーバーで別のプログラムがすでに使っているか、使えないアドレスなので、{refused} に接続するクライアントはこの転送に届きません。",
   "status.loopback-here-copied.notice": "コピーしたアドレスはループバックアドレスなので、Tunnel Manager サーバー自身の中でしか使えません。",
   "status.loopback-host-copied.notice": "コピーしたアドレスはループバックアドレスなので、その Host の中でしか使えません。",
   "status.no-tunnels.empty": "トンネルがありません。",

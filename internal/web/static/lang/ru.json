@@ -1237,6 +1237,7 @@
   "status.kind-service-port.text": "Сервисный порт",
   "status.kind.column": "Вид",
   "status.last-connected.column": "Подключался",
+  "status.local-opened-one.text": "На сервере Tunnel Manager удалось открыть только {opened}. {refused} там уже занят другой программой или этот адрес на нём недоступен, поэтому клиент, подключающийся к {refused}, не попадает в эту переадресацию.",
   "status.loopback-here-copied.notice": "Скопирован loopback-адрес, он работает только на самом сервере Tunnel Manager.",
   "status.loopback-host-copied.notice": "Скопирован loopback-адрес, он работает только на самом Host.",
   "status.no-tunnels.empty": "Туннелей нет.",

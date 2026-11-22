@@ -54,6 +54,14 @@ type localForwardView struct {
 	// the last reading of one that has since been switched off would read as
 	// a measurement of now.
 	ForwardReach string `json:"forward_reach,omitempty"`
+	// OpenReach is which of the two addresses of the bind scope the running
+	// forward opened on this machine, in the words models.Tunnel.OpenReach
+	// carries: "both", "ipv4" or "ipv6", and empty before a connection has
+	// opened them and while none runs. A half that is missing is one this
+	// machine refused, most often because another program holds the port on
+	// that address, and a client that connects there does not reach the
+	// forward.
+	OpenReach string `json:"open_reach"`
 }
 
 // localForwardViewOf builds the view of one row. The scope goes out as a word
@@ -84,6 +92,7 @@ func localForwardViewOf(lf models.LocalForward, hostEnabled bool,
 		view.JumpHostID = state.JumpHostID
 		view.JumpReason = state.JumpReason
 		view.ForwardReach = state.ForwardReach
+		view.OpenReach = state.OpenReach
 	}
 
 	return view

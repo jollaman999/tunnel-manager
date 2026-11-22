@@ -1237,6 +1237,7 @@
   "status.kind-service-port.text": "服务端口",
   "status.kind.column": "类型",
   "status.last-connected.column": "上次连接",
+  "status.local-opened-one.text": "在 Tunnel Manager 服务器上只打开了 {opened}。{refused} 已被该服务器上的其他程序占用，或者该地址在服务器上不可用，所以连接 {refused} 的客户端到不了这个转发。",
   "status.loopback-here-copied.notice": "复制的是回环地址，只能在 Tunnel Manager 服务器本身上使用。",
   "status.loopback-host-copied.notice": "复制的是回环地址，只能在该 Host 本机上使用。",
   "status.no-tunnels.empty": "还没有隧道。",

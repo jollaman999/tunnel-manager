@@ -2565,7 +2565,9 @@ either case. Every answer that carries a Host carries the four fields as they
 are stored, `socks_bind_scope` as a word every time, `socks_status` and
 `socks_last_error`, and `socks_jump_seq`, `socks_jump_host_id` and
 `socks_jump_reason`, which say where on its jump route the proxy stopped, see
-[A jump route](#a-jump-route).
+[A jump route](#a-jump-route). `socks_open_reach` says which of the two
+addresses of `socks_bind_scope` the running proxy opened, see
+[Which half of a local forward or proxy opened](#which-half-of-a-local-forward-or-proxy-opened).
 
 ```bash
 # Switch on the SOCKS5 proxy of Host 3 on port 1080, for two sources only.
@@ -2945,6 +2947,7 @@ curl -s -b cookies.txt -X POST "$BASE/api/host/1/local-forward" \
         "enabled": true, "allowed_sources": "",
         "status": "connected", "last_error": "", "retry_count": 0,
         "last_connected_at": "<when the connection was made>", "forward_reach": "reachable",
+        "open_reach": "both",
         "jump_seq": 0, "jump_host_id": 0, "jump_reason": "",
         "created_at": "<...>", "updated_at": "<...>" }
     ],
@@ -2961,6 +2964,9 @@ read and an update answer with one object like those in `items`. `bind_scope` in
 an answer is always `loopback` or `wildcard`, never empty. `forward_reach` is
 whether the target answered, and a forward that is not running leaves it out,
 see [Whether a local forward reaches its target](#whether-a-local-forward-reaches-its-target).
+`open_reach` is which of the two addresses of `bind_scope` the running forward
+opened, see
+[Which half of a local forward or proxy opened](#which-half-of-a-local-forward-or-proxy-opened).
 `jump_seq`, `jump_host_id` and `jump_reason` say where on the jump route of the
 Host the forward stopped, see [A jump route](#a-jump-route).
 
@@ -3341,7 +3347,7 @@ curl -s -b cookies.txt https://127.0.0.1:8888/api/status
         "jump_seq": 0,
         "jump_host_id": 0,
         "jump_reason": "",
-        "open_reach": "",
+        "open_reach": "both",
         "listen_addresses": "",
         "kind": "local_forward",
         "sp_id": null,
@@ -3379,9 +3385,12 @@ zero, so `host_id` with `number` names a local forward row and `host_id` with
 `sp_id` names a tunnel. Whether the target of a local forward answers is not on
 this answer but on the local forwards of its Host, see
 [below](#whether-a-local-forward-reaches-its-target). `server_banner`,
-`error_kind`, `open_reach` and `listen_addresses` are filled on service port
-rows alone and stay empty on a local forward, which opens no port on the Host
-for them to describe.
+`error_kind` and `listen_addresses` are filled on service port rows alone and
+stay empty on a local forward, which opens no port on the Host for them to
+describe. `open_reach` is filled on both: on a local forward row it is which of
+the two addresses of the scope opened on the Tunnel Manager server, and `local`
+is then the IPv6 one where that one opened alone, see
+[Which half of a local forward or proxy opened](#which-half-of-a-local-forward-or-proxy-opened).
 
 The counts are over every row and not over the page: a Tunnel Manager server
 with
@@ -3533,6 +3542,30 @@ would not open is a tunnel in error, with `error_kind` `forward_denied`, and
 where the port was opened is what `listen_addresses` says. What was asked for is
 the scope of the assignment, and a yes or a no from the server to a request is
 not a port that is up or down, so the status screen never says a port is open.
+
+### Which half of a local forward or proxy opened
+
+A local forward and a SOCKS5 proxy open their port on the Tunnel Manager
+server, on both addresses of their scope, and stand once one of the two has
+opened. Which of them did is `open_reach` on the forward, on its status row and
+in `GET /api/host/:id/local-forward`, and `socks_open_reach` on the Host for its
+proxy: `both`, `ipv4` where only `127.0.0.1` or `0.0.0.0` opened, `ipv6` where
+only `::1` or `::` did, and empty while nothing runs or before the first
+connection has opened the port. Neither opening is a forward in error and is
+reported on `status` and `last_error`.
+
+**Here it is a measurement and not an answer.** The port is opened by this
+server itself, so a half that is missing is one this server could not open:
+another program already holds the port on that address, or the address is not
+available on it, as `::1` is not on a machine without IPv6. A client that
+connects to that address does not reach the forward. It reaches the program
+that holds it, or nothing.
+
+The status row of such a forward names the half that opened in `local`, the way
+a tunnel row does, and the status screen draws only that address under
+Reachable at and says under the row which address could not be opened. The
+reading is taken each time the forward connects, and a forward that dropped and
+is being tried again carries what its last connection opened.
 
 ### Whether a local forward reaches its target
 

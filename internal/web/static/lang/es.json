@@ -1237,6 +1237,7 @@
   "status.kind-service-port.text": "Puerto de servicio",
   "status.kind.column": "Tipo",
   "status.last-connected.column": "Última conexión",
+  "status.local-opened-one.text": "En el servidor de Tunnel Manager solo se pudo abrir {opened}. {refused} ya la ocupa allí otro programa, o esa dirección no está disponible en él, así que un cliente que se conecte a {refused} no llega a este reenvío.",
   "status.loopback-here-copied.notice": "La dirección copiada es de loopback, así que solo funciona en el propio servidor de Tunnel Manager.",
   "status.loopback-host-copied.notice": "La dirección copiada es de loopback, así que solo funciona en el propio Host.",
   "status.no-tunnels.empty": "No hay túneles.",

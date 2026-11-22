@@ -1237,6 +1237,7 @@
   "status.kind-service-port.text": "Service-Port",
   "status.kind.column": "Art",
   "status.last-connected.column": "Zuletzt verbunden",
+  "status.local-opened-one.text": "Auf dem Tunnel-Manager-Server ließ sich nur {opened} öffnen. {refused} ist dort bereits von einem anderen Programm belegt oder als Adresse nicht verfügbar, daher erreicht ein Client, der sich mit {refused} verbindet, diese Weiterleitung nicht.",
   "status.loopback-here-copied.notice": "Die kopierte Adresse ist eine Loopback-Adresse und funktioniert nur auf dem Tunnel-Manager-Server selbst.",
   "status.loopback-host-copied.notice": "Die kopierte Adresse ist eine Loopback-Adresse und funktioniert nur auf dem Host selbst.",
   "status.no-tunnels.empty": "Es gibt keine Tunnel.",

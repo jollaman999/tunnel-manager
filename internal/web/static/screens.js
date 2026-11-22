@@ -778,6 +778,11 @@ async function drawStatus() {
         under.push(addresses);
       }
 
+      const half = localForwardHalf(tunnel);
+      if (half !== null) {
+        under.push(half);
+      }
+
       if (under.length === 0) {
         return cells;
       }
@@ -990,13 +995,51 @@ function reachableCell(row) {
     scope: pair.scope,
     port: addressPort(local),
     host: forward ? pageHost() : server,
-    // A service port row says which of the two addresses went up. A row that
-    // says neither, one not measured yet or a local forward, is drawn with the
+    // A row says which of the two addresses went up: a service port row what
+    // the SSH server answered, and a local forward row what this machine
+    // opened. A row that says neither, one not measured yet, is drawn with the
     // two the scope asked for.
-    v4: forward || reach !== "ipv6",
-    v6: forward || reach !== "ipv4",
+    v4: reach !== "ipv6",
+    v6: reach !== "ipv4",
     here: forward
   });
+}
+
+// localForwardHalf is the note under a local forward row that opened one of
+// the two addresses of its scope, and null under every other row.
+//
+// It is said as a fact, where the line under a service port row is careful not
+// to: a local forward opens its port on this machine, so which of the pair
+// went up is something this end did and saw rather than an answer it was
+// given. It is drawn only while the forward is connected, for the reason
+// forwardAddresses is, and a forward that opened both says nothing.
+function localForwardHalf(row) {
+  if (!isLocalForward(row) || row.status !== "connected") {
+    return null;
+  }
+
+  const reach = typeof row.open_reach === "string" ? row.open_reach : "";
+  if (reach !== "ipv4" && reach !== "ipv6") {
+    return null;
+  }
+
+  const pair = requestedPair(typeof row.local === "string" ? row.local : "");
+  if (pair === null) {
+    return null;
+  }
+
+  const box = document.createElement("div");
+
+  box.className = "forward-addresses";
+  box.dataset.localReach = reach;
+
+  box.appendChild(element("strong", t("status.addresses-known.text")));
+  box.appendChild(element("p", t("status.local-opened-one.text", {
+    opened: reach === "ipv4" ? pair.v4 : pair.v6,
+    refused: reach === "ipv4" ? pair.v6 : pair.v4
+  })));
+
+  return box;
 }
 
 // listeningHosts is the addresses the Host said are listening on the forwarded
@@ -1386,6 +1429,13 @@ function forwardAdvice(tunnel) {
 // drawn from an absence of readings would be on every row of an installation
 // that has just been upgraded.
 function forwardAddresses(tunnel) {
+  // A local forward opens its port on this machine and asks no SSH server for
+  // it, so none of what is said here is about it. What it opened is said under
+  // it by localForwardHalf.
+  if (isLocalForward(tunnel)) {
+    return null;
+  }
+
   const reach = typeof tunnel.open_reach === "string" ? tunnel.open_reach : "";
 
   // Only under a tunnel that is up. The readings belong to the connection that
@@ -6851,8 +6901,11 @@ function localForwardRow(item, known, edit, flip, remove, approve) {
         scope: bindScopeStored(item.bind_scope),
         port: String(item.local_port),
         host: pageHost(),
-        v4: true,
-        v6: true,
+        // Both addresses of the scope, unless the running forward says it
+        // opened one of them alone, for the reason reachableCell drops the
+        // other on the status screen.
+        v4: item.open_reach !== "ipv6",
+        v6: item.open_reach !== "ipv4",
         here: true
       }),
       target,

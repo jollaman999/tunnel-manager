@@ -1237,6 +1237,7 @@
   "status.kind-service-port.text": "منفذ خدمة",
   "status.kind.column": "النوع",
   "status.last-connected.column": "آخر اتصال",
+  "status.local-opened-one.text": "لم يُفتح على خادم Tunnel Manager إلا {opened}. أما {refused} فيشغله برنامج آخر على ذلك الخادم، أو أن هذا العنوان غير متاح عليه، لذا لا يصل العميل الذي يتصل بـ {refused} إلى هذا التمرير.",
   "status.loopback-here-copied.notice": "العنوان المنسوخ عنوان استرجاع محلي، فلا يعمل إلا على خادم Tunnel Manager نفسه.",
   "status.loopback-host-copied.notice": "العنوان المنسوخ عنوان استرجاع محلي، فلا يعمل إلا على المضيف نفسه.",
   "status.no-tunnels.empty": "لا توجد أنفاق.",

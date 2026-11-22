@@ -1237,6 +1237,7 @@
   "status.kind-service-port.text": "서비스 포트",
   "status.kind.column": "종류",
   "status.last-connected.column": "마지막 연결",
+  "status.local-opened-one.text": "Tunnel Manager 서버에서 {opened} 만 열렸습니다. {refused} 는 그 서버에서 다른 프로그램이 이미 쓰고 있거나 쓸 수 없는 주소라서, {refused} 로 접속하는 클라이언트는 이 포워딩에 닿지 않습니다.",
   "status.loopback-here-copied.notice": "복사한 주소는 로컬호스트 주소라서 Tunnel Manager 서버 안에서만 쓸 수 있습니다.",
   "status.loopback-host-copied.notice": "복사한 주소는 로컬호스트 주소라서 해당 Host 안에서만 쓸 수 있습니다.",
   "status.no-tunnels.empty": "터널이 없습니다.",

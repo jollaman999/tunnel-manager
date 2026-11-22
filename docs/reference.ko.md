@@ -2222,7 +2222,9 @@ curl -s -b cookies.txt -X POST "$BASE/api/host" \
 옮기면 `409` 로 거부합니다. 어느 경우에도 아무것도 저장하지 않습니다. Host 를 싣는 응답에는
 저장된 네 항목과, 늘 낱말로 적힌 `socks_bind_scope`, `socks_status` 와 `socks_last_error`,
 그리고 프록시가 점프 경로 어디서 멈췄는지를 말하는 `socks_jump_seq`, `socks_jump_host_id`,
-`socks_jump_reason` 이 실립니다. [점프 경로](#점프-경로)를 보십시오.
+`socks_jump_reason` 이 실립니다. [점프 경로](#점프-경로)를 보십시오. `socks_open_reach` 는
+돌고 있는 프록시가 `socks_bind_scope` 의 두 주소 중 무엇을 열었는지입니다.
+[로컬 포워딩이나 프록시가 어느 쪽을 열었는지](#로컬-포워딩이나-프록시가-어느-쪽을-열었는지)를 보십시오.
 
 ```bash
 # Host 3 의 SOCKS5 프록시를 포트 1080 으로 켜고, 두 출발지만 받는다.
@@ -2562,6 +2564,7 @@ curl -s -b cookies.txt -X POST "$BASE/api/host/1/local-forward" \
         "enabled": true, "allowed_sources": "",
         "status": "connected", "last_error": "", "retry_count": 0,
         "last_connected_at": "<연결된 시각>", "forward_reach": "reachable",
+        "open_reach": "both",
         "jump_seq": 0, "jump_host_id": 0, "jump_reason": "",
         "created_at": "<...>", "updated_at": "<...>" }
     ],
@@ -2577,6 +2580,8 @@ curl -s -b cookies.txt -X POST "$BASE/api/host/1/local-forward" \
 같은 객체 하나로 응답합니다. 응답의 `bind_scope` 는 언제나 `loopback` 이나 `wildcard` 이고 비어
 있지 않습니다. `forward_reach` 는 대상이 응답했는지이고, 돌고 있지 않은 포워딩에는 실리지
 않습니다. [로컬 포워딩이 대상에 닿는지](#로컬-포워딩이-대상에-닿는지)를 보십시오.
+`open_reach` 는 돌고 있는 포워딩이 `bind_scope` 의 두 주소 중 무엇을 열었는지입니다.
+[로컬 포워딩이나 프록시가 어느 쪽을 열었는지](#로컬-포워딩이나-프록시가-어느-쪽을-열었는지)를 보십시오.
 `jump_seq`, `jump_host_id`, `jump_reason` 은 로컬 포워딩이 Host 의 점프 경로 어디서
 멈췄는지를 말합니다. [점프 경로](#점프-경로)를 보십시오.
 
@@ -2910,7 +2915,7 @@ curl -s -b cookies.txt https://127.0.0.1:8888/api/status
         "jump_seq": 0,
         "jump_host_id": 0,
         "jump_reason": "",
-        "open_reach": "",
+        "open_reach": "both",
         "listen_addresses": "",
         "kind": "local_forward",
         "sp_id": null,
@@ -2941,9 +2946,11 @@ Host, 그 다음 종류, 그 다음 터널이면 서비스 포트, 로컬 포워
 칸 자체를 빼므로, `host_id` 와 `number` 가 있으면 로컬 포워딩 행이고 `host_id` 와 `sp_id` 가
 있으면 터널 행입니다. 로컬 포워딩의 대상이 응답하는지는 이 응답이 아니라 그 Host 의 로컬
 포워딩에 실립니다. [아래](#로컬-포워딩이-대상에-닿는지)를 보십시오.
-`server_banner`, `error_kind`, `open_reach`, `listen_addresses` 는 서비스 포트 행에만
-채워지고 로컬 포워딩 행에서는 빈 값입니다. 로컬 포워딩은 Host 에 포트를 열지 않으므로 이
-값들이 말할 대상이 없습니다.
+`server_banner`, `error_kind`, `listen_addresses` 는 서비스 포트 행에만 채워지고 로컬 포워딩
+행에서는 빈 값입니다. 로컬 포워딩은 Host 에 포트를 열지 않으므로 이 값들이 말할 대상이 없습니다.
+`open_reach` 는 두 행 모두에 채워집니다. 로컬 포워딩 행에서는 범위의 두 주소 중 무엇이 Tunnel
+Manager 서버에서 열렸는지이고, IPv6 쪽만 열렸으면 `local` 도 그 주소입니다.
+[로컬 포워딩이나 프록시가 어느 쪽을 열었는지](#로컬-포워딩이나-프록시가-어느-쪽을-열었는지)를 보십시오.
 
 숫자는 페이지가 아니라 전체 행을 셉니다. 행이 25개인 Tunnel Manager 서버는 10개짜리 페이지를 줘도 25를
 보고하고, `connected_tunnels` 도 그 페이지에 올라온 것이 아니라 Tunnel Manager 서버 전체의 연결된 터널을
@@ -3076,6 +3083,24 @@ address", `no` 를 "force ... available to the local host only" 라고 적습니
 `error_kind` 가 `forward_denied` 인 오류 터널이 되고, 포트가 어디에 열렸는지는 `listen_addresses`
 가 말합니다. 무엇을 요청했는지는 할당의 범위이고, 요청에 대한 서버의 승낙이나 거부는 포트가
 열렸다거나 닫혔다는 뜻이 아니므로, 상태 화면은 포트가 열렸다고 쓰지 않습니다.
+
+### 로컬 포워딩이나 프록시가 어느 쪽을 열었는지
+
+로컬 포워딩과 SOCKS5 프록시는 Tunnel Manager 서버에서 범위의 두 주소 모두에 포트를 열고, 둘 중
+하나라도 열리면 섭니다. 어느 쪽이 열렸는지는 포워딩의 `open_reach`(상태 행과
+`GET /api/host/:id/local-forward`)와 Host 의 `socks_open_reach`(프록시)에 실립니다. 값은 `both`,
+`127.0.0.1` 이나 `0.0.0.0` 만 열렸으면 `ipv4`, `::1` 이나 `::` 만 열렸으면 `ipv6`, 돌고 있는 것이
+없거나 첫 연결이 아직 포트를 열지 않았으면 빈 값입니다. 둘 다 열리지 않으면 오류인 포워딩이고
+`status` 와 `last_error` 에 실립니다.
+
+**여기서는 서버의 답이 아니라 잰 값입니다.** 포트를 이 서버가 직접 열기 때문에, 빠진 쪽은 이 서버가
+열지 못한 쪽입니다. 다른 프로그램이 그 주소의 포트를 이미 쥐고 있거나, IPv6 가 없는 시스템의 `::1`
+처럼 그 주소를 쓸 수 없는 경우입니다. 그 주소로 접속하는 클라이언트는 포워딩에 닿지 않고, 그 포트를
+쥔 프로그램에 닿거나 아무 데도 닿지 않습니다.
+
+그런 포워딩의 상태 행은 터널 행처럼 열린 쪽을 `local` 에 적고, 상태 화면은 접속 주소 칸에 그 주소만
+그리고 행 아래에 어느 주소를 열지 못했는지 적습니다. 이 값은 포워딩이 연결될 때마다 다시 재고,
+끊겨서 다시 시도 중인 포워딩은 마지막 연결이 연 것을 그대로 갖고 있습니다.
 
 ### 로컬 포워딩이 대상에 닿는지
 
