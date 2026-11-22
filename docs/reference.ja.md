@@ -499,12 +499,24 @@ flowchart LR
 |------|------|
 | `socks_enabled` | Host がプロキシを持つかどうか。送らなければオフ |
 | `socks_port` | Tunnel Manager サーバーに開くポート。1 から 65535。プロキシがオンなら必須 |
-| `socks_bind_scope` | Tunnel Manager サーバーのどのアドレスに開くか。`wildcard` (`0.0.0.0` と `::`) か `loopback` (`127.0.0.1` と `::1`)。Host の登録時に与えなければ `loopback` |
+| `socks_bind_scope` | Tunnel Manager サーバーのどのアドレスに開くか。`wildcard` (`0.0.0.0` と `::`) か `loopback` (`127.0.0.1` と `::1`)。Host の登録時に与えなければ `loopback`。範囲なしで保存された Host は、プロキシがオフの間 `loopback` (下記参照) |
 | `socks_allowed_sources` | クライアントが接続してきてよいアドレス。空ならすべてのアドレスを受け付ける |
 
 **既定は `loopback` で、プロキシはパスワードを求めません。** v3.13.6 から、
 `socks_bind_scope` なしで登録した Host と Hosts 画面で追加した Host は、プロキシをTunnel Manager サーバーに
-だけ開きます。それより前に保存された Host は、保存されている範囲のままです。プロキシは普通ほかの
+だけ開きます。それより前に保存された Host や、範囲を書いていないファイルからインポートした Host は
+範囲が空で、その意味はプロキシが動いているか、つまりポートと一緒にオンになっているかで分かれます。
+
+- **動いていないプロキシは `loopback` です。** 起動時にそうした Host ごとに `loopback` を保存して
+  `database.socks_scope_narrowed` を info で記録し、Hosts 画面は `loopback` をあらかじめ選び、
+  `socks_bind_scope` なしでオンにする `PUT /api/host/:id` も `loopback` に開きます。以前の
+  リリースは、こうしたプロキシをオンにするとワイルドカードに開いていました。
+- **動いているプロキシはワイルドカードのままです。** これまでそこで動いていたので、アップグレードで
+  それを使うマシンが切られないようにするためです。起動時に行は変えず、範囲を選ぶまで起動のたびに
+  `database.socks_scope_left_open` を警告で記録します。範囲は Hosts 画面で選ぶか、
+  `PUT /api/host/:id` に `socks_bind_scope` を送って決めます。オフにすると `loopback` で保存されます。
+
+プロキシは普通ほかの
 マシンのブラウザが使うもので、そのためには `wildcard` を選ぶ必要があり、すると、Tunnel Manager サーバーの
 `socks_port` に届く人は誰でも Host 側のネットワークに入れます。ワイルドカードで開くプロキシには **許可する接続元を入れてください。**
 Chrome と Firefox には SOCKS5 プロキシにパスワードを渡す場所がないので、ログインの代わりに
@@ -2229,7 +2241,7 @@ curl -s -b cookies.txt "$BASE/api/host?q=example&page=1&size=20"
 | `description`, `enabled` | 省略可 | 省略可 |
 | `assign_all_service_ports` | 省略可。省くと、保存されているサービスポートがすべてその Host に与えられます。何も担当しない Host として登録するには false を送ります | 読みません。Host が何を担当するかは `PUT /api/host/:id/service-port` から変えます |
 | `socks_enabled`, `socks_port` | 省略可。`socks_enabled` が true なら `socks_port` は必須です | 省略可。省いたものはそのまま残ります |
-| `socks_bind_scope` | 省略可。`loopback` か `wildcard` で、省くか空で送ると `loopback` です | 省略可。省くか空で送ると、保存されている範囲がそのまま残ります |
+| `socks_bind_scope` | 省略可。`loopback` か `wildcard` で、省くか空で送ると `loopback` です | 省略可。省くか空で送ると、保存されている範囲がそのまま残ります。範囲なしで保存された Host は、変更の前後ともプロキシが動いているときだけそのままで、それ以外は `loopback` で保存します |
 | `socks_allowed_sources` | 省略可。空ならすべてのアドレスを受け付けます | 省略可。省くと保存されている一覧がそのまま残り、`""` で送るとすべてのアドレスを受け付けます |
 | `jump_host_ids` | 省略可。ジャンプホストにする登録済み Host の id を順に、最大 8 つ。省くか `[]` なら直接接続します | 省略可。省くか `null` なら保存されている経路がそのまま残り、`[]` で経路を消します |
 | `account_password` | 読みません | Host のパスワードではなく **このアカウント** のパスワードです。承認済みのホスト鍵がなく、パスワードか秘密鍵が保存されている Host の `address`、`port`、`jump_host_ids` を変えるときに必要です。下を見てください |
@@ -2832,6 +2844,9 @@ Host のアドレスと同じく、大文字小文字と IP アドレスの書�
 `local_forwards` のないファイルはその Host をローカルフォワードなしでインポートし、`enabled` の
 ないローカルフォワードはオンで、`allowed_sources` のないものはすべてのアドレスを受け付けるように
 保存し、`socks_` の項目が 1 つもないファイルはその Host をプロキシなしでインポートします。
+こうしたファイルが `socks_bind_scope` を省くか空で送ったプロキシは `loopback` で保存します。id のある
+ファイルは、空の範囲をエクスポート元の行が持っていたとおりに残し、その意味は
+[Host の SOCKS5 プロキシ](#host-の-socks5-プロキシ)に書いたとおりです。
 
 **Host が信頼している鍵も一緒に運ばれます。** `host_key` がそれで、設定を移すために信頼を
 捨てることにはならず、ファイルを取り込んだ Tunnel Manager サーバーは、すべての Host を承認し直さずに接続

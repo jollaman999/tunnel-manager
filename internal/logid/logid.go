@@ -131,6 +131,12 @@ const (
 	DatabaseOpenFailed              ID = "database.open_failed"
 	DatabaseTransactionStartFailed  ID = "database.transaction_start_failed"
 	DatabaseTransactionCommitFailed ID = "database.transaction_commit_failed"
+	// The SOCKS5 proxies stored with no scope, as the startup finds them. A
+	// proxy that does not run is written down as loopback, one that runs is
+	// left on the wildcard and named, since nobody chose that for it.
+	DatabaseSocksScopeNarrowed     ID = "database.socks_scope_narrowed"
+	DatabaseSocksScopeLeftOpen     ID = "database.socks_scope_left_open"
+	DatabaseSocksScopeRepairFailed ID = "database.socks_scope_repair_failed"
 )
 
 // tlsserve: the API port, which serves TLS and plain HTTP at once.

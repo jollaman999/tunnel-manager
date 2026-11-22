@@ -1160,6 +1160,46 @@ func repairStoredIntervals(db *gorm.DB, logger *zap.Logger) {
 	}
 }
 
+// repairSocksBindScopes writes loopback into the scope of every SOCKS5 proxy
+// that has none and does not run, and says in the log which Hosts it wrote it
+// for and which proxies it left running on the wildcard without a scope. It
+// runs before the tunnel manager starts the proxies, so that what they open on
+// is what the screen shows.
+//
+// A narrowed proxy is an info line: it opens nothing now, and what changed is
+// where it will open once it is switched on. A proxy left open is a warning,
+// written on every startup until somebody picks a scope for it: it asks for no
+// password and is open to every machine that reaches this one, and nobody
+// chose that for it. A write that fails is reported and the startup goes on,
+// since the proxies that run are read the way they were.
+func repairSocksBindScopes(db *gorm.DB, logger *zap.Logger) {
+	narrowed, open, err := database.RepairSocksBindScopes(db)
+	if err != nil {
+		logger.Warn("failed to store the SOCKS5 proxies that have no scope on loopback",
+			logid.DatabaseSocksScopeRepairFailed.Field(),
+			zap.Error(err))
+	}
+
+	for _, host := range narrowed {
+		logger.Info("the SOCKS5 proxy of a Host had no scope and was not running, "+
+			"and was given loopback, which is where it opens once it is switched on",
+			logid.DatabaseSocksScopeNarrowed.Field(),
+			zap.Uint("host_id", host.ID),
+			zap.String("host_ip", host.Address),
+			zap.Int("host_port", host.Port))
+	}
+
+	for _, host := range open {
+		logger.Warn("the SOCKS5 proxy of a Host has no scope and runs on every address of this machine "+
+			"without a password, as it did before the scope was stored; choose a scope for it on the Hosts screen",
+			logid.DatabaseSocksScopeLeftOpen.Field(),
+			zap.Uint("host_id", host.ID),
+			zap.String("host_ip", host.Address),
+			zap.Int("host_port", host.Port),
+			zap.Int("socks_port", host.SocksPort))
+	}
+}
+
 // resetStoredSettings puts every stored setting back to its default and ends
 // the process. It is the way out of a stored set that keeps the process from
 // starting: the settings are changed on a screen this binary serves, and a
@@ -1760,6 +1800,10 @@ func serve() {
 	// An interval stored while there was no ceiling on it is lowered to the
 	// ceiling here, for the same reason and above the same read.
 	repairStoredIntervals(db, logger)
+
+	// A SOCKS5 proxy stored with no scope is written down as loopback here
+	// while it does not run, before the tunnel manager reads the Hosts.
+	repairSocksBindScopes(db, logger)
 
 	set, err := settings.Load(db)
 	if err != nil {

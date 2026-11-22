@@ -73,8 +73,8 @@ type Host struct {
 	// no proxy. SocksEnabled has no default for the reason Enabled has none.
 	//
 	// SocksBindScope takes the words and the constraint of
-	// HostServicePort.BindScope, and an empty value is the wildcard for the
-	// same reason.
+	// HostServicePort.BindScope. What an empty value means is read by
+	// SocksScope, since it depends on whether the proxy runs.
 	//
 	// SocksAllowedSources is the list of addresses and CIDR blocks a client of
 	// the proxy may connect from, separated by commas or spaces. An empty
@@ -87,6 +87,36 @@ type Host struct {
 	SocksAllowedSources string    `json:"socks_allowed_sources"`
 	CreatedAt           time.Time `json:"created_at"`
 	UpdatedAt           time.Time `json:"updated_at"`
+}
+
+// SocksRuns reports whether the SOCKS5 proxy of the Host is switched on with a
+// port, which is what opens it while the Host is enabled. A Host that is
+// disabled is counted with the ones that run, since enabling it opens the
+// proxy again as it was.
+func (h Host) SocksRuns() bool {
+	return h.SocksEnabled && h.SocksPort > 0
+}
+
+// SocksScope is the scope the SOCKS5 proxy of the Host is opened on, as one of
+// the two words. A stored word is itself.
+//
+// The empty value is what every row written before the column existed holds,
+// and what an import of a file that named no scope stored. A proxy that runs
+// with it has been running on the wildcard, and it is read that way so that an
+// upgrade does not take the proxy away from the machines that use it. A proxy
+// that does not run opens nothing, and the first time it does it is on
+// loopback: it asks for no password, so the wildcard is to be chosen by its
+// word rather than handed over by a column nobody filled in.
+func (h Host) SocksScope() string {
+	if h.SocksBindScope != "" {
+		return h.SocksBindScope
+	}
+
+	if h.SocksRuns() {
+		return BindScopeWildcard
+	}
+
+	return BindScopeLoopback
 }
 
 // HostJump is one step of the jump route of a Host: the connection to HostID
@@ -418,7 +448,10 @@ type UpdateHostRequest struct {
 	// false, or an empty list, says so: an empty list of allowed sources lets
 	// every address in, and is a value a request has to be able to ask for.
 	// SocksBindScope left empty keeps the scope that is stored, the way Address and
-	// User do; the wildcard is asked for by its word.
+	// User do; the wildcard is asked for by its word. A Host stored with no
+	// scope keeps that only while its proxy runs before and after the change,
+	// and is stored on loopback otherwise, which is what Host.SocksScope reads
+	// it as.
 	SocksEnabled        *bool   `json:"socks_enabled"`
 	SocksPort           *int    `json:"socks_port" validate:"omitempty,min=1,max=65535"`
 	SocksBindScope      string  `json:"socks_bind_scope" validate:"omitempty,oneof=loopback wildcard"`

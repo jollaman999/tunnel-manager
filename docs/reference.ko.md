@@ -477,12 +477,25 @@ flowchart LR
 |------|----------|
 | `socks_enabled` | Host 가 프록시를 가질지. 보내지 않으면 꺼짐 |
 | `socks_port` | Tunnel Manager 서버에 여는 포트. 1 ~ 65535. 프록시가 켜져 있으면 필수 |
-| `socks_bind_scope` | Tunnel Manager 서버의 어느 주소에 열지. `wildcard`(`0.0.0.0` 과 `::`) 또는 `loopback`(`127.0.0.1` 과 `::1`). Host 를 등록할 때 안 주면 `loopback` |
+| `socks_bind_scope` | Tunnel Manager 서버의 어느 주소에 열지. `wildcard`(`0.0.0.0` 과 `::`) 또는 `loopback`(`127.0.0.1` 과 `::1`). Host 를 등록할 때 안 주면 `loopback`. 범위 없이 저장된 Host 는 프록시가 꺼져 있는 동안 `loopback` (아래 참조) |
 | `socks_allowed_sources` | 클라이언트가 접속해 올 수 있는 주소. 비우면 모든 주소를 받음 |
 
 **기본은 `loopback` 이고, 프록시는 비밀번호를 묻지 않습니다.** v3.13.6 부터
 `socks_bind_scope` 없이 등록한 Host 와 Hosts 화면에서 추가한 Host 는 프록시를 Tunnel Manager 서버에만
-엽니다. 그 전에 저장된 Host 는 저장된 범위를 그대로 씁니다. 프록시는 보통 다른 장비의
+엽니다. 그 전에 저장된 Host 나 범위를 적지 않은 파일에서 가져온 Host 는 범위가 비어 있고,
+그 뜻은 프록시가 도는지, 곧 포트와 함께 켜져 있는지에 따라 갈립니다.
+
+- **돌지 않는 프록시는 `loopback` 입니다.** 시작할 때 그런 Host 마다 `loopback` 을 저장하고
+  `database.socks_scope_narrowed` 를 info 로 남기며, Hosts 화면은 `loopback` 을 미리 고르고,
+  `socks_bind_scope` 없이 켜는 `PUT /api/host/:id` 도 `loopback` 에 엽니다. 이전 릴리즈는 이런
+  프록시를 켜면 와일드카드에 열었습니다.
+- **돌고 있는 프록시는 와일드카드에 그대로 둡니다.** 지금까지 그렇게 돌았으므로, 업그레이드로
+  그것을 쓰는 장비가 끊기지 않게 하려는 것입니다. 시작할 때 행은 바꾸지 않고, 범위를 고를
+  때까지 시작할 때마다 `database.socks_scope_left_open` 을 경고로 남깁니다. 범위는 Hosts 화면에서
+  고르거나 `PUT /api/host/:id` 에 `socks_bind_scope` 를 보내 정합니다. 끄면 `loopback` 으로
+  저장됩니다.
+
+프록시는 보통 다른 장비의
 브라우저가 쓰는 것인데, 그러려면 `wildcard` 를 골라야 하고, 그러면 Tunnel Manager 서버의 `socks_port` 에
 닿는 사람은 누구나 Host 쪽 망으로 들어올 수 있습니다. 와일드카드로 여는 프록시에는 **허용할 접속 주소를 채우십시오.** Chrome 과
 Firefox 에는 SOCKS5 프록시에 비밀번호를 넣을 자리가 없으므로, 로그인 대신 클라이언트의
@@ -2162,7 +2175,7 @@ curl -s -b cookies.txt "$BASE/api/host?q=example&page=1&size=20"
 | `description`, `enabled` | 선택 | 선택 |
 | `assign_all_service_ports` | 선택. 안 보내면 저장돼 있는 서비스 포트를 전부 받습니다. 아무것도 담당하지 않는 Host 로 등록하려면 false 로 보냅니다 | 읽지 않습니다. 무엇을 담당하는지는 `PUT /api/host/:id/service-port` 로 바꿉니다 |
 | `socks_enabled`, `socks_port` | 선택. `socks_enabled` 가 true 면 `socks_port` 는 필수입니다 | 선택. 빠뜨린 것은 그대로 둡니다 |
-| `socks_bind_scope` | 선택. `loopback` 또는 `wildcard` 이고, 빼거나 빈 값으로 보내면 `loopback` 입니다 | 선택. 빼거나 빈 값으로 보내면 저장된 범위를 그대로 둡니다 |
+| `socks_bind_scope` | 선택. `loopback` 또는 `wildcard` 이고, 빼거나 빈 값으로 보내면 `loopback` 입니다 | 선택. 빼거나 빈 값으로 보내면 저장된 범위를 그대로 둡니다. 범위 없이 저장된 Host 는 바꾸기 전후 모두 프록시가 돌 때만 그대로 두고, 그 밖에는 `loopback` 으로 저장합니다 |
 | `socks_allowed_sources` | 선택. 비우면 모든 주소를 받습니다 | 선택. 빼면 저장된 목록을 그대로 두고, `""` 로 보내면 모든 주소를 받습니다 |
 | `jump_host_ids` | 선택. 점프 호스트로 쓸 등록된 Host 의 id 를 순서대로, 최대 8개. 빼거나 `[]` 면 바로 접속합니다 | 선택. 빼거나 `null` 이면 저장된 경로를 그대로 두고, `[]` 면 경로를 지웁니다 |
 | `account_password` | 읽지 않음 | Host 의 비밀번호가 아니라 **이 계정**의 비밀번호. 승인된 호스트 키가 없고 비밀번호나 개인키가 저장된 Host 의 `address`, `port`, `jump_host_ids` 를 바꿀 때 필요합니다. 아래를 보십시오 |
@@ -2754,7 +2767,9 @@ API 토큰은 건드리지 않습니다. 터널 자체는 담기지 않습니다
 Host 의 모든 할당이 `loopback` 이 되고 그 밖의 답은 전부 와일드카드가 됩니다.
 `local_forwards` 가 없는 파일은 그 Host 를 로컬 포워딩 없이 가져오고, `enabled` 가 없는 로컬
 포워딩은 켜진 채로, `allowed_sources` 가 없는 것은 모든 주소를 받도록 저장하며, `socks_` 항목이
-하나도 없는 파일은 그 Host 를 프록시 없이 가져옵니다.
+하나도 없는 파일은 그 Host 를 프록시 없이 가져옵니다. 이런 파일이 `socks_bind_scope` 를 빼거나
+비워 보낸 프록시는 `loopback` 으로 저장합니다. id 가 있는 파일은 빈 범위를 내보낸 행이 가졌던
+그대로 두고, 그 뜻은 [Host 의 SOCKS5 프록시](#host-의-socks5-프록시)에 적은 대로입니다.
 
 **Host 가 신뢰하는 키도 같이 건너갑니다.** `host_key` 에 담기므로, 설정을 옮긴다고 신뢰를
 버리게 되지 않고 파일을 가져간 설치는 모든 Host 를 다시 승인하지 않고도 연결합니다. 공개

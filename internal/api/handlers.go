@@ -904,7 +904,7 @@ func (h *Handler) GetHost(c *echo.Context) error {
 
 // @Summary      Update a Host
 // @Description  Every field is optional; enabled false stops its tunnels.
-// @Description  A SOCKS5 field left out keeps what is stored. socks_allowed_sources sent empty lets every address in; socks_bind_scope left empty keeps the stored scope.
+// @Description  A SOCKS5 field left out keeps what is stored. socks_allowed_sources sent empty lets every address in; socks_bind_scope left empty keeps the stored scope. A Host stored with no scope keeps that only while its proxy runs before and after the change, and is stored on loopback otherwise.
 // @Description  jump_host_ids replaces the jump route: left out or null keeps the stored route, and an empty list takes it away.
 // @Description  account_password is the password of the account. It is asked for when the Host has no approved host key and carries a stored password or private key, and the request changes its address, its SSH port or its jump route; a value sent again as it is stored is not a change. Without it that request is refused with 400 under host.update.account_password.required, with one that does not open the account with 401 under host.update.account_password.wrong, and after too many of those with 429, on the counters the login uses.
 // @Tags         hosts
@@ -1073,7 +1073,7 @@ func (h *Handler) UpdateHost(c *echo.Context) error {
 		host.Enabled = *req.Enabled
 	}
 
-	socksBefore := host.SocksEnabled && host.SocksPort > 0
+	socksBefore := host.SocksRuns()
 	portBefore := host.SocksPort
 
 	if req.SocksEnabled != nil {
@@ -1087,6 +1087,15 @@ func (h *Handler) UpdateHost(c *echo.Context) error {
 	}
 	if req.SocksAllowedSources != nil {
 		host.SocksAllowedSources = *req.SocksAllowedSources
+	}
+
+	// A Host stored with no scope keeps it only while its proxy runs on both
+	// sides of the change, which is the proxy that has been open on the
+	// wildcard. Any other is written down as loopback, the scope SocksScope
+	// reads it as, so that switching a proxy on that nobody gave a scope does
+	// not open it to every machine that reaches this one.
+	if host.SocksBindScope == "" && !(socksBefore && host.SocksRuns()) {
+		host.SocksBindScope = models.BindScopeLoopback
 	}
 
 	refused := checkSocks(&host)

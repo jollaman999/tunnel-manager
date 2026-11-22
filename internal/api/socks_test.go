@@ -366,15 +366,20 @@ func TestTheHostViewCarriesTheSocksStatus(t *testing.T) {
 		4: {Status: "connected"},
 	}
 
+	// None of them is stored with a scope. The ones whose proxy is switched on
+	// with a port have been running on the wildcard, the disabled Host among
+	// them; the one whose proxy is off reads as loopback, where it opens once
+	// it is switched on.
 	tests := []struct {
 		host      models.Host
 		status    string
 		lastError string
+		scope     string
 	}{
-		{socksHost(1, true, 1080), "error", "listen tcp :1080: bind: address already in use"},
-		{socksHost(2, true, 1081), socksStatusStopped, ""},
-		{socksHost(3, false, 1082), socksStatusDisabled, ""},
-		{statusHost(4, true), socksStatusOff, ""},
+		{socksHost(1, true, 1080), "error", "listen tcp :1080: bind: address already in use", models.BindScopeWildcard},
+		{socksHost(2, true, 1081), socksStatusStopped, "", models.BindScopeWildcard},
+		{socksHost(3, false, 1082), socksStatusDisabled, "", models.BindScopeWildcard},
+		{statusHost(4, true), socksStatusOff, "", models.BindScopeLoopback},
 	}
 
 	for _, tc := range tests {
@@ -383,9 +388,8 @@ func TestTheHostViewCarriesTheSocksStatus(t *testing.T) {
 			t.Errorf("Host %d: socks_status = %q, socks_last_error = %q, want %q and %q", tc.host.ID,
 				view.SocksStatus, view.SocksLastError, tc.status, tc.lastError)
 		}
-		if view.SocksBindScope != models.BindScopeWildcard {
-			t.Errorf("Host %d: socks_bind_scope = %q, want %q", tc.host.ID, view.SocksBindScope,
-				models.BindScopeWildcard)
+		if view.SocksBindScope != tc.scope {
+			t.Errorf("Host %d: socks_bind_scope = %q, want %q", tc.host.ID, view.SocksBindScope, tc.scope)
 		}
 	}
 }
@@ -643,7 +647,12 @@ func TestAFileFromBeforeTheSocksProxiesImportsNone(t *testing.T) {
 			}
 		})
 
-	for _, file := range []string{older, exported} {
+	// The file without ids makes a new row, which is stored on loopback; the
+	// one with ids keeps the empty scope the row it came from held.
+	for file, want := range map[string][]string{
+		older:    {"192.0.2.10 off 0 loopback "},
+		exported: {"192.0.2.10 off 0  "},
+	} {
 		target := newTransferInstall(t)
 
 		target.registerHost(t, passwordHost("192.0.2.10"))
@@ -654,7 +663,6 @@ func TestAFileFromBeforeTheSocksProxiesImportsNone(t *testing.T) {
 			t.Fatalf("the import answered %d: %s", rec.Code, rec.Body.String())
 		}
 
-		want := []string{"192.0.2.10 off 0  "}
 		if !reflect.DeepEqual(target.proxies(t), want) {
 			t.Fatalf("the import left the proxies %v, want %v", target.proxies(t), want)
 		}
@@ -844,5 +852,152 @@ func TestImportedSettingsWithAnAPIPortASocksProxyOpensAreNotStored(t *testing.T)
 	}
 	if after.APIPort == 15432 {
 		t.Errorf("the refused import stored api_port 15432")
+	}
+}
+
+// storedSocksScope is the scope column of the Host id as the row holds it.
+func storedSocksScope(t *testing.T, db *gorm.DB, id uint) string {
+	t.Helper()
+
+	var host models.Host
+
+	err := db.First(&host, id).Error
+	if err != nil {
+		t.Fatalf("failed to read the Host %d: %v", id, err)
+	}
+
+	return host.SocksBindScope
+}
+
+// TestSwitchingOnAProxyStoredWithoutAScopeOpensItOnLoopback is a Host stored
+// before the scope was, or imported without one, whose proxy is switched on
+// with a port and nothing more. The proxy asks for no password, and the empty
+// scope was read as the wildcard, so the request opened it on every address of
+// the machine without anybody naming the wildcard.
+func TestSwitchingOnAProxyStoredWithoutAScopeOpensItOnLoopback(t *testing.T) {
+	db := newSocksDB(t, []models.Host{statusHost(1, true)}, nil)
+	h := NewHandler(db, &wakeRecorder{tx: &txConnPool{}}, zap.NewNop(), newTestCipher(t))
+
+	if scope := storedSocksScope(t, db, 1); scope != "" {
+		t.Fatalf("the Host is stored with the scope %q, want none", scope)
+	}
+
+	rec := updateHost(t, h, `{"socks_enabled":true,"socks_port":21080}`)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d, body: %s", rec.Code, http.StatusOK, rec.Body.String())
+	}
+
+	if scope := storedSocksScope(t, db, 1); scope != models.BindScopeLoopback {
+		t.Errorf("the proxy is stored on %q, want %q", scope, models.BindScopeLoopback)
+	}
+	if view := readHostAnswer(t, rec); view.SocksBindScope != models.BindScopeLoopback {
+		t.Errorf("the answer says socks_bind_scope = %q, want %q", view.SocksBindScope, models.BindScopeLoopback)
+	}
+}
+
+// TestARunningProxyStoredWithoutAScopeKeepsIt is the other half: a proxy that
+// is switched on with a port and stored without a scope has been running on
+// the wildcard, and a change of anything else leaves it there, so that an
+// upgrade does not take it away from the machines that use it. Switched off,
+// it opens nothing, and what it is stored with from then on is loopback.
+func TestARunningProxyStoredWithoutAScopeKeepsIt(t *testing.T) {
+	db := newSocksDB(t, []models.Host{socksHost(1, true, 1080)}, nil)
+	h := NewHandler(db, &wakeRecorder{tx: &txConnPool{}}, zap.NewNop(), newTestCipher(t))
+
+	for _, body := range []string{`{"description":"kept"}`, `{"socks_port":21081}`,
+		`{"socks_enabled":true,"socks_allowed_sources":"192.0.2.0/24"}`} {
+		rec := updateHost(t, h, body)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("%s: status = %d, want %d, body: %s", body, rec.Code, http.StatusOK, rec.Body.String())
+		}
+
+		if scope := storedSocksScope(t, db, 1); scope != "" {
+			t.Errorf("%s: the proxy is stored on %q, want the empty scope kept", body, scope)
+		}
+		if view := readHostAnswer(t, rec); view.SocksBindScope != models.BindScopeWildcard {
+			t.Errorf("%s: the answer says socks_bind_scope = %q, want %q", body, view.SocksBindScope,
+				models.BindScopeWildcard)
+		}
+	}
+
+	rec := updateHost(t, h, `{"socks_enabled":false}`)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d, body: %s", rec.Code, http.StatusOK, rec.Body.String())
+	}
+
+	if scope := storedSocksScope(t, db, 1); scope != models.BindScopeLoopback {
+		t.Errorf("the proxy switched off is stored on %q, want %q", scope, models.BindScopeLoopback)
+	}
+	if view := readHostAnswer(t, rec); view.SocksBindScope != models.BindScopeLoopback {
+		t.Errorf("the answer says socks_bind_scope = %q, want %q", view.SocksBindScope, models.BindScopeLoopback)
+	}
+}
+
+// TestAnImportedProxyWithoutAScopeIsOnLoopback is a file that names no scope
+// for the proxy of a Host. A file without ids makes new rows, which start on
+// loopback the way a Host added on the screen does. A file with ids is the
+// rows it was exported from, kept as they were: one whose proxy was running
+// without a scope keeps running on the wildcard, and one whose proxy was not
+// reads as loopback, and is switched on there.
+func TestAnImportedProxyWithoutAScopeIsOnLoopback(t *testing.T) {
+	withoutScope := passwordHost("192.0.2.11")
+	enabled, port := true, 1091
+	withoutScope.SocksEnabled = &enabled
+	withoutScope.SocksPort = &port
+
+	source := newTransferInstall(t)
+	target := newTransferInstall(t)
+
+	file := sealedTunnelsFile(t, source, tunnelsContent{Hosts: []hostContent{
+		withSocks(passwordHost("192.0.2.10"), 1090, "", ""),
+		withoutScope,
+	}}, testExportPassword)
+
+	rec := target.importTunnels(t, file, testExportPassword)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("the import answered %d: %s", rec.Code, rec.Body.String())
+	}
+
+	want := []string{"192.0.2.10 on 1090 loopback ", "192.0.2.11 on 1091 loopback "}
+	if !reflect.DeepEqual(target.proxies(t), want) {
+		t.Fatalf("a file without ids imported the proxies %v, want %v", target.proxies(t), want)
+	}
+
+	source = newTransferInstall(t)
+	target = newTransferInstall(t)
+
+	source.registerHost(t, passwordHost("192.0.2.10"))
+	source.registerHost(t, passwordHost("192.0.2.11"))
+	source.setSocks(t, "192.0.2.10", 1080, "", "")
+
+	rec = target.importTunnels(t, source.exportTunnels(t, testExportPassword), testExportPassword)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("the import answered %d: %s", rec.Code, rec.Body.String())
+	}
+
+	want = []string{"192.0.2.10 on 1080  ", "192.0.2.11 off 0  "}
+	if !reflect.DeepEqual(target.proxies(t), want) {
+		t.Fatalf("a file with ids imported the proxies %v, want %v", target.proxies(t), want)
+	}
+
+	off, _ := storedHostByIP(t, target.db, "192.0.2.11")
+	if view := hostViewOf(off, nil, nil); view.SocksBindScope != models.BindScopeLoopback {
+		t.Errorf("the Host whose proxy is off reads socks_bind_scope = %q, want %q", view.SocksBindScope,
+			models.BindScopeLoopback)
+	}
+
+	h := NewHandler(target.db, &wakeRecorder{tx: &txConnPool{}}, zap.NewNop(), newTestCipher(t))
+	c, rec := localForwardRequest(t, http.MethodPut, "/api/host/"+strconv.FormatUint(uint64(off.ID), 10),
+		`{"socks_enabled":true,"socks_port":21080}`, strconv.FormatUint(uint64(off.ID), 10))
+
+	err := h.UpdateHost(c)
+	if err != nil {
+		t.Fatalf("UpdateHost returned error: %v", err)
+	}
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d, body: %s", rec.Code, http.StatusOK, rec.Body.String())
+	}
+	if scope := storedSocksScope(t, target.db, off.ID); scope != models.BindScopeLoopback {
+		t.Errorf("the imported proxy switched on is stored on %q, want %q", scope, models.BindScopeLoopback)
 	}
 }

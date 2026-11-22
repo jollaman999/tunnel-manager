@@ -434,11 +434,21 @@ flowchart LR
 |------|--------|
 | `socks_enabled` | 这台 Host 是否带代理。不发就是关闭 |
 | `socks_port` | 在Tunnel Manager 服务器打开的端口，1 到 65535。代理开启时必填 |
-| `socks_bind_scope` | 开在Tunnel Manager 服务器的哪些地址上：`wildcard`（`0.0.0.0` 和 `::`）或 `loopback`（`127.0.0.1` 和 `::1`）。注册 Host 时不给就是 `loopback` |
+| `socks_bind_scope` | 开在Tunnel Manager 服务器的哪些地址上：`wildcard`（`0.0.0.0` 和 `::`）或 `loopback`（`127.0.0.1` 和 `::1`）。注册 Host 时不给就是 `loopback`。没有范围就保存下来的 Host，代理关闭期间是 `loopback`（见下文） |
 | `socks_allowed_sources` | 客户端可以从哪些地址连进来。留空则接受所有地址 |
 
 **默认是 `loopback`，而且代理不要求密码。** 从 v3.13.6 起，不带 `socks_bind_scope` 注册的
-Host，以及在 Hosts 页面添加的 Host，代理只开在Tunnel Manager 服务器上；在那之前保存的 Host 保留已保存的范围。代理
+Host，以及在 Hosts 页面添加的 Host，代理只开在Tunnel Manager 服务器上。在那之前保存的 Host，或者从
+没写范围的文件导入的 Host，范围是空的，它的意思取决于代理是否在运行，也就是是否带着端口开启：
+
+- **没有运行的代理是 `loopback`。** 启动时给每台这样的 Host 保存 `loopback`，并以 info 记录
+  `database.socks_scope_narrowed`；Hosts 页面预先选中 `loopback`；不带 `socks_bind_scope` 开启它的
+  `PUT /api/host/:id` 也开在 `loopback` 上。以前的版本开启这样的代理时会开在通配范围上。
+- **正在运行的代理留在通配范围上。** 它一直在那里运行，这样升级不会切断正在使用它的机器。启动时
+  不改这一行，在选定范围之前，每次启动都以警告记录 `database.socks_scope_left_open`。范围可以在
+  Hosts 页面选，也可以在 `PUT /api/host/:id` 里发送 `socks_bind_scope`。关闭后按 `loopback` 保存。
+
+代理
 通常是给别的机器上的浏览器用的，这就要选 `wildcard`，而这样一来，任何能连到Tunnel Manager 服务器 `socks_port` 的人
 都能进入 Host 那边的网络。开在通配范围上的代理，**请填上允许的来源地址**。Chrome 和 Firefox 都没有
 地方给 SOCKS5 代理填密码，所以代理靠客户端的来源地址来限制，而不是靠登录；端口前面的防火墙是
@@ -1966,7 +1976,7 @@ curl -s -b cookies.txt "$BASE/api/host?q=example&page=1&size=20"
 | `description`、`enabled` | 可不填 | 可不填 |
 | `assign_all_service_ports` | 可不填。不填的话，现存的服务端口全部分给这台 Host。发成 false 则注册一台不负责任何服务端口的 Host | 不读取。一台 Host 负责什么，通过 `PUT /api/host/:id/service-port` 修改 |
 | `socks_enabled`、`socks_port` | 可不填。`socks_enabled` 为 true 时 `socks_port` 必填 | 可不填；没写的保持原样 |
-| `socks_bind_scope` | 可不填。取 `loopback` 或 `wildcard`，不填或发成空就是 `loopback` | 可不填；不填或发成空，保留已保存的范围 |
+| `socks_bind_scope` | 可不填。取 `loopback` 或 `wildcard`，不填或发成空就是 `loopback` | 可不填；不填或发成空，保留已保存的范围。没有范围就保存下来的 Host，只有修改前后代理都在运行时才保持不变，其余情况按 `loopback` 保存 |
 | `socks_allowed_sources` | 可不填。留空则接受所有地址 | 可不填；不填则保留已保存的列表，发成 `""` 则接受所有地址 |
 | `jump_host_ids` | 可选。用作跳板机的已注册 Host 的 id，按顺序，最多 8 个。不给或给 `[]` 就直接连接 | 可选；不给或给 `null` 保留已保存的路线，给 `[]` 则清除路线 |
 | `account_password` | 不读 | 是**这个账号**的密码，不是 Host 的密码。修改一台没有已批准主机密钥、又保存着密码或私钥的 Host 的 `address`、`port` 或 `jump_host_ids` 时需要，见下文 |
@@ -2513,6 +2523,8 @@ Host 负责的服务端口按本地端口写在 `assigned_local_ports` 里，旁
 `bind_address`：写的是回环地址时，那台 Host 的每一条分配关系都成为 `loopback`，其他答案一律成为
 通配范围。没有 `local_forwards` 的文件导入的 Host 没有本地转发，没有 `enabled` 的本地转发按开启
 保存，没有 `allowed_sources` 的放行所有地址，一个 `socks_` 字段都没有的文件导入的 Host 没有代理。
+这样的文件里不填或发成空 `socks_bind_scope` 的代理按 `loopback` 保存。带 id 的文件则按导出它的那一行
+原样保留空范围，它的意思见 [Host 的 SOCKS5 代理](#host-的-socks5-代理)。
 
 **每台 Host 信任的那把密钥也跟着一起走**，写在 `host_key` 里，所以搬一套配置不会把这份信任
 扔掉，接收文件的那台 Tunnel Manager 服务器不必把每台 Host 重新批准一遍就能连上。它是公钥，所以不加密，行里怎么

@@ -5432,10 +5432,19 @@ function socksFields(host) {
 // out on it. A Host that is being added starts on this machine alone: the proxy
 // asks for no password, so the reach that opens it to other machines is one to
 // pick knowingly rather than one a form hands over. A stored Host shows what it
-// is stored with, and a stored blank is the wildcard it has always meant.
+// is stored with. A stored blank is read the way the server reads it: the
+// wildcard for a proxy that is switched on with a port, which is where it has
+// been running, and this machine alone for one that is not, which is where it
+// opens once it is switched on.
 function socksScopeStored(host) {
   if (host.id === undefined) {
     return bindScopeLoopback;
+  }
+
+  if (typeof host.socks_bind_scope !== "string" || host.socks_bind_scope === "") {
+    const runs = host.socks_enabled === true && typeof host.socks_port === "number" && host.socks_port > 0;
+
+    return runs ? bindScopeWildcard : bindScopeLoopback;
   }
 
   return bindScopeStored(host.socks_bind_scope);

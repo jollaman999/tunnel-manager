@@ -233,7 +233,10 @@ type assignmentContent struct {
 
 // socksOf lays the SOCKS5 fields a file carries for a Host over the ones the
 // Host is stored with, and leaves a field the file does not carry as stored.
-// An empty scope is stored as the word it stands for.
+// A scope that comes out empty, whether the file sent it so or left it out, is
+// stored as loopback, which is what a Host added on the screen starts on: the
+// proxy asks for no password, and a file that names no scope has not asked
+// for the wildcard.
 func (host hostContent) socksOf(stored models.Host) models.Host {
 	if host.SocksEnabled != nil {
 		stored.SocksEnabled = *host.SocksEnabled
@@ -243,9 +246,9 @@ func (host hostContent) socksOf(stored models.Host) models.Host {
 	}
 	if host.SocksBindScope != nil {
 		stored.SocksBindScope = *host.SocksBindScope
-		if stored.SocksBindScope == "" {
-			stored.SocksBindScope = models.BindScopeWildcard
-		}
+	}
+	if stored.SocksBindScope == "" {
+		stored.SocksBindScope = models.BindScopeLoopback
 	}
 	if host.SocksAllowedSources != nil {
 		stored.SocksAllowedSources = *host.SocksAllowedSources
@@ -1750,7 +1753,9 @@ func (h *TransferHandler) planImport(c *echo.Context, withIDs bool, content tunn
 // planHost holds one Host of the file to the rules of a create and seals its
 // secrets with the key of this installation. A file with ids is stored with the
 // SOCKS5 scope it carries, an empty one included, since it is the scope the
-// row it was exported from held.
+// row it was exported from held, and models.Host.SocksScope reads it here the
+// way it was read there. A file without ids makes new rows, and an empty scope
+// is stored as loopback, as socksOf says.
 func (h *TransferHandler) planHost(c *echo.Context, host hostContent, withIDs bool) (models.Host, *refusal) {
 	name := host.Address
 

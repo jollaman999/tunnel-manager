@@ -480,6 +480,71 @@ func fillBindScopes(db *gorm.DB) error {
 	return nil
 }
 
+// socksBindScopeColumn is the column the scope of the SOCKS5 proxy of a Host is
+// stored in.
+const socksBindScopeColumn = "socks_bind_scope"
+
+// RepairSocksBindScopes writes loopback into the SOCKS5 scope of every Host
+// that holds none and whose proxy does not run, and reports those Hosts as
+// narrowed. The Hosts that hold none and whose proxy runs are reported as open
+// and left as they are. It is run by the startup, the way settings.RepairPaths
+// is, so the caller can say in the log what it found.
+//
+// The empty value, NULL among them, is what every Host stored before the
+// column existed holds, and what an import stored for a file that named no
+// scope. It used to be read as the wildcard, and the proxy asks for no
+// password, so switching such a proxy on opened it to every machine that
+// reaches this one without anybody naming the wildcard. models.Host.SocksScope
+// reads it as loopback on a proxy that does not run, and this writes that down
+// so that the stored row says what the screen shows and what the proxy opens on
+// once it is switched on.
+//
+// A proxy that runs without a scope has been open on the wildcard, and some
+// machine other than this one may be using it. Narrowing it here would cut
+// that machine off on an upgrade nobody asked to do that, so it is left alone
+// and named instead. It is not written as the wildcard either: the empty value
+// is what says nobody chose the wildcard, which is why the startup names the
+// Host on every start until somebody picks a scope for it.
+//
+// Only the scope column is written, and the time of the last change of the row
+// is left as it was, since nothing was changed by a person.
+func RepairSocksBindScopes(db *gorm.DB) (narrowed []models.Host, open []models.Host, err error) {
+	var unscoped []models.Host
+
+	err = db.Model(&models.Host{}).
+		Select("id", "address", "port", "socks_enabled", "socks_port", socksBindScopeColumn).
+		Where(socksBindScopeColumn + " IS NULL OR " + socksBindScopeColumn + " = ''").
+		Order("id").Find(&unscoped).Error
+	if err != nil {
+		return nil, nil, fmt.Errorf("failed to read the Hosts whose SOCKS5 proxy has no scope: %w", err)
+	}
+
+	ids := make([]uint, 0, len(unscoped))
+
+	for _, host := range unscoped {
+		if host.SocksRuns() {
+			open = append(open, host)
+
+			continue
+		}
+
+		narrowed = append(narrowed, host)
+		ids = append(ids, host.ID)
+	}
+
+	if len(ids) == 0 {
+		return nil, open, nil
+	}
+
+	err = db.Model(&models.Host{}).Where("id IN ?", ids).
+		UpdateColumn(socksBindScopeColumn, models.BindScopeLoopback).Error
+	if err != nil {
+		return nil, open, fmt.Errorf("failed to store the SOCKS5 proxies with no scope on loopback: %w", err)
+	}
+
+	return narrowed, open, nil
+}
+
 // assignmentEnabledColumn is the column that says whether the tunnel of an
 // assignment runs.
 const assignmentEnabledColumn = "enabled"

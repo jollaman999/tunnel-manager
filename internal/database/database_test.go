@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"reflect"
 	"runtime"
 	"sort"
 	"strconv"
@@ -2814,5 +2815,103 @@ func TestANewDatabaseHasThePortInTheAddressIndex(t *testing.T) {
 	}
 	if strings.Join(columns, ",") != "address,port" {
 		t.Fatalf("the index covers %v, want address and port", columns)
+	}
+}
+
+// storedSocksScopes returns the scope column and the time of the last change
+// of every Host, as "<id>=<scope>@<updated_at>", read with SQL so that a NULL
+// and an empty value are told apart.
+func storedSocksScopes(t *testing.T, db *gorm.DB) []string {
+	t.Helper()
+
+	var scopes []string
+	err := db.Raw("SELECT id || '=' || COALESCE(socks_bind_scope,'NULL') || '@' || updated_at " +
+		"FROM hosts ORDER BY id").Scan(&scopes).Error
+	if err != nil {
+		t.Fatalf("failed to read the SOCKS5 scopes: %v", err)
+	}
+
+	return scopes
+}
+
+// hostIDs is the id of every Host given, in order.
+func hostIDs(hosts []models.Host) []uint {
+	ids := make([]uint, 0, len(hosts))
+	for _, host := range hosts {
+		ids = append(ids, host.ID)
+	}
+
+	return ids
+}
+
+// TestTheProxiesStoredWithoutAScopeAreRepaired is an installation with Hosts
+// stored before the SOCKS5 scope was, or imported without one. A proxy that is
+// not running is written down as loopback, NULL included, which is what the
+// next switch of it on would open it on; one that is running is left on the
+// wildcard it has been running on, and is named so the startup can say so.
+// A Host that carries a scope is left alone either way, and so is the time of
+// the last change of every row.
+func TestTheProxiesStoredWithoutAScopeAreRepaired(t *testing.T) {
+	db, _ := newTestDatabase(t)
+
+	rows := []string{
+		// Off, with every SOCKS5 column NULL: a row from before the columns.
+		"(1,'192.0.2.1',22,'operator',true,NULL,NULL,NULL)",
+		// Running without a scope.
+		"(2,'192.0.2.2',22,'operator',true,true,1080,'')",
+		// Running on the wildcard somebody chose.
+		"(3,'192.0.2.3',22,'operator',true,true,1081,'wildcard')",
+		// Off with a port and no scope.
+		"(4,'192.0.2.4',22,'operator',true,false,1082,'')",
+		// Off on the wildcard somebody chose.
+		"(5,'192.0.2.5',22,'operator',true,false,1083,'wildcard')",
+		// Switched on with no port, which opens nothing.
+		"(6,'192.0.2.6',22,'operator',true,true,0,'')",
+		// Running without a scope on a Host that is disabled, which runs again
+		// as it was once the Host is enabled.
+		"(7,'192.0.2.7',22,'operator',false,true,1084,NULL)",
+	}
+	for _, row := range rows {
+		err := db.Exec("INSERT INTO `hosts` (`id`,`address`,`port`,`user`,`enabled`,`socks_enabled`," +
+			"`socks_port`,`socks_bind_scope`,`created_at`,`updated_at`) VALUES " +
+			strings.TrimSuffix(row, ")") + ",'2026-09-01 00:00:00','2026-09-01 00:00:00')").Error
+		if err != nil {
+			t.Fatalf("failed to store the Host %s: %v", row, err)
+		}
+	}
+
+	narrowed, open, err := RepairSocksBindScopes(db)
+	if err != nil {
+		t.Fatalf("the repair failed: %v", err)
+	}
+
+	if got := hostIDs(narrowed); !reflect.DeepEqual(got, []uint{1, 4, 6}) {
+		t.Errorf("the repair narrowed the Hosts %v, want 1, 4 and 6", got)
+	}
+	if got := hostIDs(open); !reflect.DeepEqual(got, []uint{2, 7}) {
+		t.Errorf("the repair named the Hosts %v as open, want 2 and 7", got)
+	}
+	if len(narrowed) > 0 && (narrowed[0].Address != "192.0.2.1" || narrowed[0].Port != 22) {
+		t.Errorf("the first Host narrowed is named %s:%d, want 192.0.2.1:22", narrowed[0].Address, narrowed[0].Port)
+	}
+	if len(open) > 0 && open[0].SocksPort != 1080 {
+		t.Errorf("the first Host named as open carries the port %d, want 1080", open[0].SocksPort)
+	}
+
+	const at = "@2026-09-01 00:00:00"
+
+	want := []string{"1=loopback" + at, "2=" + at, "3=wildcard" + at, "4=loopback" + at,
+		"5=wildcard" + at, "6=loopback" + at, "7=NULL" + at}
+	if got := storedSocksScopes(t, db); !reflect.DeepEqual(got, want) {
+		t.Fatalf("after the repair the Hosts hold %v, want %v", got, want)
+	}
+
+	narrowed, open, err = RepairSocksBindScopes(db)
+	if err != nil {
+		t.Fatalf("the second repair failed: %v", err)
+	}
+	if len(narrowed) != 0 || !reflect.DeepEqual(hostIDs(open), []uint{2, 7}) {
+		t.Errorf("the second repair narrowed %v and named %v as open, want nothing and 2 and 7",
+			hostIDs(narrowed), hostIDs(open))
 	}
 }

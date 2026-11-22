@@ -1346,6 +1346,62 @@ func TestTheStartupSaysNothingAboutIntervalsItDoesNotLower(t *testing.T) {
 	}
 }
 
+// TestTheStartupNamesTheSocksProxiesStoredWithoutAScope is an installation
+// with two Hosts stored before the SOCKS5 scope was: one whose proxy is off,
+// which the startup gives loopback and says so at info, and one whose proxy
+// runs, which it leaves on the wildcard and warns about on every start.
+func TestTheStartupNamesTheSocksProxiesStoredWithoutAScope(t *testing.T) {
+	db := newSettingsDB(t)
+
+	err := db.AutoMigrate(&models.Host{})
+	if err != nil {
+		t.Fatalf("failed to migrate the Hosts: %v", err)
+	}
+
+	for _, host := range []map[string]interface{}{
+		{"id": 1, "address": "192.0.2.1", "port": 22, "user": "operator", "enabled": true,
+			"socks_enabled": false, "socks_port": 0, "socks_bind_scope": ""},
+		{"id": 2, "address": "192.0.2.2", "port": 22, "user": "operator", "enabled": true,
+			"socks_enabled": true, "socks_port": 1080, "socks_bind_scope": ""},
+	} {
+		err = db.Model(&models.Host{}).Create(host).Error
+		if err != nil {
+			t.Fatalf("failed to store the Host %v: %v", host["address"], err)
+		}
+	}
+
+	for start := 1; start <= 2; start++ {
+		core, logs := observer.New(zapcore.DebugLevel)
+
+		repairSocksBindScopes(db, zap.New(core))
+
+		said := map[string]string{}
+		for _, entry := range logs.All() {
+			fields := entry.ContextMap()
+			said[fmt.Sprint(fields["log_id"])] = entry.Level.String() + " " + fmt.Sprint(fields["host_ip"])
+		}
+
+		want := map[string]string{"database.socks_scope_left_open": "warn 192.0.2.2"}
+		if start == 1 {
+			want["database.socks_scope_narrowed"] = "info 192.0.2.1"
+		}
+
+		if fmt.Sprint(said) != fmt.Sprint(want) {
+			t.Errorf("start %d logged %v, want %v", start, said, want)
+		}
+	}
+
+	var scopes []string
+
+	err = db.Raw("SELECT socks_bind_scope FROM hosts ORDER BY id").Scan(&scopes).Error
+	if err != nil {
+		t.Fatalf("failed to read the scopes: %v", err)
+	}
+	if strings.Join(scopes, ",") != models.BindScopeLoopback+"," {
+		t.Fatalf("the Hosts are stored on %q, want loopback and the empty scope", scopes)
+	}
+}
+
 // proxyTrustRecorder stands in for the authentication handler and remembers
 // what it was told, since the handler itself keeps the answer to itself.
 type proxyTrustRecorder struct {

@@ -96,15 +96,11 @@ func hostViewOf(host models.Host, route []uint, socks map[uint]tunnel.SocksState
 		Enabled:                   host.Enabled,
 		SocksEnabled:              host.SocksEnabled,
 		SocksPort:                 host.SocksPort,
-		SocksBindScope:            host.SocksBindScope,
+		SocksBindScope:            host.SocksScope(),
 		SocksAllowedSources:       host.SocksAllowedSources,
 		JumpHostIDs:               route,
 		CreatedAt:                 host.CreatedAt,
 		UpdatedAt:                 host.UpdatedAt,
-	}
-
-	if view.SocksBindScope == "" {
-		view.SocksBindScope = models.BindScopeWildcard
 	}
 
 	if view.JumpHostIDs == nil {

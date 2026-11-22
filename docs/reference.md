@@ -560,13 +560,29 @@ at 1080. Through the API the same four fields are sent on the Host, see
 |-------|------------|
 | `socks_enabled` | Whether the Host carries a proxy. Off unless it is sent |
 | `socks_port` | The port opened on the Tunnel Manager server, 1 to 65535. Required while the proxy is on |
-| `socks_bind_scope` | Which addresses of the Tunnel Manager server it is opened on: `wildcard` (`0.0.0.0` and `::`) or `loopback` (`127.0.0.1` and `::1`). Left out when the Host is registered, it is `loopback` |
+| `socks_bind_scope` | Which addresses of the Tunnel Manager server it is opened on: `wildcard` (`0.0.0.0` and `::`) or `loopback` (`127.0.0.1` and `::1`). Left out when the Host is registered, it is `loopback`. A Host stored with no scope is `loopback` while its proxy is off, see below |
 | `socks_allowed_sources` | The addresses a client may connect from. Empty lets every address in |
 
 **The default is `loopback`, and the proxy asks for no password.** Since
 v3.13.6 a Host registered without `socks_bind_scope`, and one added on the Hosts
-screen, opens its proxy on the Tunnel Manager server alone; a Host stored before then keeps
-the scope it was stored with. A browser on another machine, which is what a
+screen, opens its proxy on the Tunnel Manager server alone. A Host stored before
+then, or imported from a file that names no scope, holds no scope, and what that
+means depends on whether its proxy runs, that is whether it is switched on with
+a port:
+
+- **A proxy that does not run is `loopback`.** The startup writes `loopback`
+  into it and logs `database.socks_scope_narrowed` at info for each such Host,
+  the Hosts screen preselects `loopback` for it, and a `PUT /api/host/:id` that
+  switches it on without `socks_bind_scope` opens it on `loopback`. Earlier
+  releases opened such a proxy on the wildcard when it was switched on.
+- **A proxy that runs stays on the wildcard**, where it has been running, so an
+  upgrade does not cut off the machines that use it. The startup leaves the
+  row as it is and logs `database.socks_scope_left_open` as a warning for it
+  on every start, until a scope is chosen for it: on the Hosts screen, or with
+  `socks_bind_scope` in a `PUT /api/host/:id`. Switching it off stores it on
+  `loopback`.
+
+A browser on another machine, which is what a
 proxy is usually for, reaches it only once `wildcard` is chosen, and that makes
 it an open door into the network of the Host for anybody who reaches the
 Tunnel Manager server on `socks_port`. **Fill in the allowed client
@@ -2494,7 +2510,7 @@ The body of a create and of an update takes these fields.
 | `description`, `enabled` | Optional | Optional |
 | `assign_all_service_ports` | Optional. Left out, and the Host is given every service port that is stored. Send it as false to register a Host that carries none | Not read. What a Host carries is changed through `PUT /api/host/:id/service-port` |
 | `socks_enabled`, `socks_port` | Optional. `socks_port` is required when `socks_enabled` is true | Optional; what is left out stays as it is |
-| `socks_bind_scope` | Optional. `loopback` or `wildcard`, and left out or sent empty it is `loopback` | Optional; left out or sent empty, the stored scope stays |
+| `socks_bind_scope` | Optional. `loopback` or `wildcard`, and left out or sent empty it is `loopback` | Optional; left out or sent empty, the stored scope stays. A Host stored with no scope keeps that only while its proxy runs before and after the change, and is stored on `loopback` otherwise |
 | `socks_allowed_sources` | Optional. Empty lets every address in | Optional; left out, the stored list stays, and sent as `""` it lets every address in |
 | `jump_host_ids` | Optional. The ids of the registered Hosts to use as jump hosts, in order, at most 8. Left out or `[]`, the Host is reached directly | Optional; left out or `null`, the stored route stays, and `[]` takes it away |
 | `account_password` | Not read | The password of **this account**, not of the Host. Asked for on a change of `address`, `port` or `jump_host_ids` of a Host that has no approved host key and carries a password or a private key, see below |
@@ -3169,6 +3185,10 @@ scopes: a loopback address there makes every assignment of that Host
 no `local_forwards` imports the Host with none, a forward without `enabled` is
 stored switched on and one without `allowed_sources` lets every address in, and
 a file that carries none of the `socks_` fields imports the Host with no proxy.
+A proxy whose `socks_bind_scope` such a file leaves out or sends empty is
+stored on `loopback`. A file with ids keeps an empty scope as the row it was
+exported from held it, which is read as
+[A SOCKS5 proxy on a Host](#a-socks5-proxy-on-a-host) says.
 
 **The key each Host is trusted on travels with it**, in `host_key`, so moving a
 configuration does not throw the trust away and the Tunnel Manager server that
