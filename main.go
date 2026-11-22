@@ -2386,13 +2386,18 @@ func serve() bool {
 	// build them again, the database handle it closes and the paths of the
 	// files this installation is made of. The paths are the ones the startup
 	// opened, so what goes is what was in use and not what a setting saved
-	// without a restart names.
+	// without a restart names. What the updates leave is named from the same
+	// data directory the update handler below writes it in.
+	updateDataDir := install.Defaults().WithDatabase(databaseFile).DataDir
 	uninstallHandler := api.NewUninstallHandler(db, logger, manager, stopReconcileLoop,
 		api.UninstallPaths{
 			DatabaseFile:        databaseFile,
 			KeyFile:             keyFile,
 			InitialPasswordFile: initialPasswordFile,
 			LogFile:             resolveInstallPath(installDir, set.LoggingFilePath),
+			InstallProblemFile:  installProblemPath(updateDataDir),
+			UpdateCheckFile:     updateCheckPath(updateDataDir),
+			InstallReportFile:   installReportPath(databaseFile, false),
 		}, beginUninstall, endAfterUninstall)
 	// The restart is handed the shutdown above and what this build can do about
 	// coming back. canReexec is asked here, in the one place that knows it is
@@ -2410,7 +2415,6 @@ func serve() bool {
 	// interval from after a restart.
 	var updateHandler *api.UpdateHandler
 
-	updateDataDir := install.Defaults().WithDatabase(databaseFile).DataDir
 	updateHandler = api.NewUpdateHandler(logger, db, version, canInstallUpdate(databaseFile),
 		keptUpdateChecks(logger, updateDataDir, install.Check), func() error {
 			return startUpdateInstall(logger, databaseFile, updateHandler.InstallEnded)

@@ -66,6 +66,16 @@ type UninstallPaths struct {
 	// LogFile is the file the logs are written to. The rotated ones beside it
 	// are found by their names.
 	LogFile string
+	// InstallProblemFile is where an install the Update screen or the update
+	// loop started leaves why it failed. It is only there after one failed.
+	InstallProblemFile string
+	// UpdateCheckFile holds the time of the last look for a newer release. It
+	// is there once the service has looked at all.
+	UpdateCheckFile string
+	// InstallReportFile is what an install started as a plain child process
+	// writes its report to. An install that ran as a transient systemd unit
+	// wrote to the journal instead, so it is not there on those systems.
+	InstallReportFile string
 }
 
 // UninstallHandler removes this installation and ends the process.
@@ -348,6 +358,9 @@ const (
 	textUninstallDatabaseSHM     textCode = "uninstall.file.database_shm"
 	textUninstallEncryptionKey   textCode = "uninstall.file.encryption_key"
 	textUninstallInitialPassword textCode = "uninstall.file.initial_password"
+	textUninstallInstallProblem  textCode = "uninstall.file.install_problem"
+	textUninstallUpdateCheck     textCode = "uninstall.file.update_check"
+	textUninstallInstallReport   textCode = "uninstall.file.install_report"
 	textUninstallRotatedLog      textCode = "uninstall.file.rotated_log"
 	textUninstallLog             textCode = "uninstall.file.log"
 )
@@ -372,6 +385,14 @@ func (h *UninstallHandler) installedFiles() []removedFile {
 		{Path: databaseSidecar(h.paths.DatabaseFile, "-shm"), What: "the shared memory file of the database", WhatCode: textUninstallDatabaseSHM},
 		{Path: h.paths.KeyFile, What: "the encryption key", WhatCode: textUninstallEncryptionKey},
 		{Path: h.paths.InitialPasswordFile, What: "the initial password file", WhatCode: textUninstallInitialPassword},
+		// What the updates leave in the data directory. None of them holds a
+		// secret, but they are this installation's all the same, and an
+		// installation put in the same place afterwards would read the reason
+		// a failed update left as its own and wait out an interval from a look
+		// it never made.
+		{Path: h.paths.InstallProblemFile, What: "the reason a failed update left", WhatCode: textUninstallInstallProblem},
+		{Path: h.paths.UpdateCheckFile, What: "the time of the last look for a newer release", WhatCode: textUninstallUpdateCheck},
+		{Path: h.paths.InstallReportFile, What: "the report of an update install", WhatCode: textUninstallInstallReport},
 	}
 
 	for _, rotated := range h.rotatedLogFiles() {

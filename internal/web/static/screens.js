@@ -12111,7 +12111,8 @@ function settingsDangerZone() {
         t("uninstall.file-database.text"),
         t("uninstall.file-key.text"),
         t("uninstall.file-initial-password.text"),
-        t("uninstall.file-logs.text")
+        t("uninstall.file-logs.text"),
+        t("uninstall.file-updates.text")
       ]),
       element("p", t("uninstall.program.text"))
     ],

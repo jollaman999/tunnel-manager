@@ -2113,6 +2113,7 @@ tunnel, deletes the files tunnel-manager keeps and ends the process.
 | The encryption key file | The service entry that starts it |
 | The initial password file, if it is still there | The directories the files were in |
 | The log file and the rotated log files beside it | |
+| What the updates leave beside the database file, where there is any: `update-install.problem`, `update-check.last` and `logs/update-install.log` | |
 
 **The program file is not removed.** A running process cannot delete its own
 image on Windows, and on Unix it would stay on disk until the process ends

@@ -58,6 +58,9 @@ func newInstallation(t *testing.T) *installation {
 			KeyFile:             filepath.Join(dir, "keys", "tunnel-manager.key"),
 			InitialPasswordFile: filepath.Join(dir, "data", "initial-password"),
 			LogFile:             filepath.Join(dir, "logs", "tunnel-manager.log"),
+			InstallProblemFile:  filepath.Join(dir, "data", "update-install.problem"),
+			UpdateCheckFile:     filepath.Join(dir, "data", "update-check.last"),
+			InstallReportFile:   filepath.Join(dir, "data", "logs", "update-install.log"),
 		},
 		rotated: []string{
 			filepath.Join(dir, "logs", "tunnel-manager-2026-09-18T01-02-03.456.log"),
@@ -76,6 +79,9 @@ func newInstallation(t *testing.T) *installation {
 		inst.paths.KeyFile,
 		inst.paths.InitialPasswordFile,
 		inst.paths.LogFile,
+		inst.paths.InstallProblemFile,
+		inst.paths.UpdateCheckFile,
+		inst.paths.InstallReportFile,
 	}
 
 	files = append(files, inst.rotated...)
@@ -97,6 +103,9 @@ func (i *installation) installedFilePaths() []string {
 		i.paths.KeyFile,
 		i.paths.InitialPasswordFile,
 		i.paths.LogFile,
+		i.paths.InstallProblemFile,
+		i.paths.UpdateCheckFile,
+		i.paths.InstallReportFile,
 	}
 
 	return append(paths, i.rotated...)
@@ -809,5 +818,52 @@ func TestRemoveFilesTakesTheDatabaseSidecarsThatAreStillThere(t *testing.T) {
 	if len(result.Removed) != 3 || len(result.Failed) != 0 {
 		t.Fatalf("the uninstall reported %d removed and %d left behind, want three and none",
 			len(result.Removed), len(result.Failed))
+	}
+}
+
+// TestUninstallRemovesWhatTheUpdatesLeft holds the three files the updates
+// write in the data directory to the uninstall. They are named by no setting,
+// so nothing but this list puts them on it, and each has to be answered under
+// the code the last screen says it by.
+func TestUninstallRemovesWhatTheUpdatesLeft(t *testing.T) {
+	inst := newInstallation(t)
+	h, _, _, _ := newUninstallHandler(t, inst)
+
+	rec := postUninstall(t, h, `{"password":"`+uninstallPassword+`"}`)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("POST /api/uninstall = %d (%s), want %d", rec.Code, rec.Body.String(),
+			http.StatusOK)
+	}
+
+	result := decodeUninstall(t, rec)
+
+	want := map[string]textCode{
+		inst.paths.InstallProblemFile: textUninstallInstallProblem,
+		inst.paths.UpdateCheckFile:    textUninstallUpdateCheck,
+		inst.paths.InstallReportFile:  textUninstallInstallReport,
+	}
+
+	for path, code := range want {
+		if exists(t, path) {
+			t.Errorf("%s is still there after the uninstall", path)
+		}
+
+		var named []textCode
+
+		for _, file := range result.Removed {
+			if file.Path == path {
+				named = append(named, file.WhatCode)
+			}
+		}
+
+		if len(named) != 1 || named[0] != code {
+			t.Errorf("the answer names %s under %v, want it once under %q", path, named, code)
+		}
+	}
+
+	files := h.installedFiles()
+	if last := files[len(files)-1]; last.WhatCode != textUninstallLog {
+		t.Errorf("the last file removed is %s (%s), want the log file", last.Path, last.What)
 	}
 }
