@@ -459,8 +459,19 @@ func (p *socksTunnel) establish() error {
 		return fmt.Errorf("failed to establish SSH connection: %w", err)
 	}
 
+	// Opened under clientMu after done is looked at, for the reason
+	// localTunnel.establish opens its port there.
+	p.clientMu.Lock()
+	if p.stopped() {
+		p.clientMu.Unlock()
+		_ = client.Close()
+
+		return errSocksStopped
+	}
+
 	opened, err := openLocalListeners(p.listen)
 	if err != nil {
+		p.clientMu.Unlock()
 		_ = client.Close()
 
 		p.logger.Error("failed to open the port of the SOCKS5 proxy",
@@ -473,15 +484,6 @@ func (p *socksTunnel) establish() error {
 		})
 
 		return fmt.Errorf("failed to open the proxy port: %w", err)
-	}
-
-	p.clientMu.Lock()
-	if p.stopped() {
-		opened.close()
-		p.clientMu.Unlock()
-		_ = client.Close()
-
-		return errSocksStopped
 	}
 	p.listening.Add(1)
 	p.client = client

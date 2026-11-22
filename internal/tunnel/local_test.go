@@ -809,6 +809,64 @@ func TestALocalForwardReconnectsAfterTheHostDropsIt(t *testing.T) {
 	}
 }
 
+// TestStopLeavesTheLocalPortFreeWhateverTheAttemptWasDoing holds Stop to what
+// it says: the local port is free by the time it returns, even where it came
+// while a connection attempt was opening the port. Stop is called at a moment
+// picked at random over the first connection, many times over, and the port
+// is taken back the moment it returns.
+//
+// The moment that matters is a few microseconds wide, between the port being
+// opened and the attempt looking at whether the forward was stopped, so no one
+// run is sure to land on it. Run against an attempt that opened the port before
+// looking, two thousand runs landed on it a few times each time this was tried.
+func TestStopLeavesTheLocalPortFreeWhateverTheAttemptWasDoing(t *testing.T) {
+	server := startDirectSSHServer(t)
+
+	serverHost, serverPort, err := net.SplitHostPort(server.addr)
+	if err != nil {
+		t.Fatalf("failed to split %s: %v", server.addr, err)
+	}
+	sshPort, err := strconv.Atoi(serverPort)
+	if err != nil {
+		t.Fatalf("failed to read the port of %s: %v", server.addr, err)
+	}
+
+	host := &models.Host{ID: 1, Address: serverHost, Port: sshPort}
+	config := &ssh.ClientConfig{
+		User:            "tester",
+		Auth:            []ssh.AuthMethod{ssh.Password("pass")}, // hook:allow
+		HostKeyCallback: ssh.FixedHostKey(server.key),
+	}
+
+	const runs = 2000
+
+	held := 0
+	for i := 0; i < runs; i++ {
+		localPort := freeDualStackPort(t)
+
+		f, err := newLocalTunnel(&models.LocalForward{
+			Number: 1, HostID: 1, BindScope: models.BindScopeLoopback, LocalPort: localPort,
+			TargetAddress: "127.0.0.1", TargetPort: 9,
+		}, host, config, time.Hour, zap.NewNop())
+		if err != nil {
+			t.Fatalf("failed to build the forward: %v", err)
+		}
+
+		go f.Start()
+
+		time.Sleep(time.Duration(i%30) * 100 * time.Microsecond)
+		f.Stop()
+
+		if !portIsFree(localPort) {
+			held++
+		}
+	}
+
+	if held != 0 {
+		t.Fatalf("the local port was still held after Stop returned in %d of %d runs", held, runs)
+	}
+}
+
 // dialRefused connects to the local port at address, sends nothing and returns
 // how long the forward held the connection before closing it, failing the test
 // if anything came back.

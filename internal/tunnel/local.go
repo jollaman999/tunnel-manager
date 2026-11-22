@@ -259,8 +259,25 @@ func (f *localTunnel) establish() error {
 		return fmt.Errorf("failed to establish SSH connection: %w", err)
 	}
 
+	// The port is opened under clientMu, after done is looked at and before
+	// the pair is counted in listening, so a Stop comes either before all of
+	// it, and nothing is opened, or after all of it, and waits for the port to
+	// be closed. Opened before the lock, a Stop in between would find nothing
+	// to wait for and return with the port still held, and a forward rebuilt
+	// on it would be refused the address. Opening is two binds on this machine
+	// and waits on nothing across a network, so the lock is not held for
+	// longer than the status reads that share it can stand.
+	f.clientMu.Lock()
+	if f.stopped() {
+		f.clientMu.Unlock()
+		_ = client.Close()
+
+		return errLocalForwardStopped
+	}
+
 	opened, err := openLocalListeners(f.listen)
 	if err != nil {
+		f.clientMu.Unlock()
 		_ = client.Close()
 
 		f.logger.Error("failed to open the local port of the local forward",
@@ -273,17 +290,6 @@ func (f *localTunnel) establish() error {
 		})
 
 		return fmt.Errorf("failed to open the local port: %w", err)
-	}
-
-	f.clientMu.Lock()
-	if f.stopped() {
-		// Closed under the lock, so Stop, which is waiting for it, returns
-		// with the port already free.
-		opened.close()
-		f.clientMu.Unlock()
-		_ = client.Close()
-
-		return errLocalForwardStopped
 	}
 	f.listening.Add(1)
 	f.client = client
@@ -707,8 +713,10 @@ func (f *localTunnel) Start() {
 
 // Stop ends the forward and waits for its listeners to be closed, so the
 // local port is free by the time a forward rebuilt on it starts. It does not
-// wait for a connection attempt that is under way, which opens nothing once it
-// sees the forward stopped.
+// wait for a connection attempt that is under way: establish opens the port
+// only under clientMu with done still open, so an attempt that has not opened
+// it by the time Stop takes the lock opens nothing, and one that has is
+// counted in listening and waited for.
 func (f *localTunnel) Stop() {
 	f.stopOnce.Do(func() {
 		f.clientMu.Lock()
