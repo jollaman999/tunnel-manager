@@ -2941,7 +2941,7 @@
                         "CSRFToken": []
                     }
                 ],
-                "description": "Takes the account password. The tunnels come down, the files tunnel-manager keeps are removed, and where a service manager runs this process the service is disabled so that it does not start at boot. Its registration and the executable stay for -uninstall. The answer is written before the process goes.",
+                "description": "Takes the account password. The tunnels come down, the files tunnel-manager keeps are removed, and where a service manager runs this process the service is disabled and its registration, its executable and its data directory are removed, which leaves what -uninstall -purge leaves. The service is not stopped first: the process ends on its own after the answer. The answer is written before the process goes.",
                 "consumes": [
                     "application/json"
                 ],
@@ -4885,7 +4885,7 @@
                     }
                 },
                 "service": {
-                    "description": "Service is what became of the start at boot of the service this process\nruns as.",
+                    "description": "Service is what became of the service this process runs as.",
                     "allOf": [
                         {
                             "$ref": "#/definitions/api.uninstallService"
@@ -4897,12 +4897,53 @@
         "api.uninstallService": {
             "type": "object",
             "properties": {
+                "data_dir": {
+                    "description": "DataDir is what became of the directory the database was in, with what\nwas left under it.",
+                    "allOf": [
+                        {
+                            "$ref": "#/definitions/api.uninstallServicePart"
+                        }
+                    ]
+                },
                 "error": {
                     "description": "Error is what went wrong, filled in only for disable_failed.",
                     "type": "string"
                 },
+                "executable": {
+                    "description": "Executable is what became of the program file the registration starts.",
+                    "allOf": [
+                        {
+                            "$ref": "#/definitions/api.uninstallServicePart"
+                        }
+                    ]
+                },
+                "registration": {
+                    "description": "Registration is what became of the unit, the plist or the Windows\nservice entry. It, Executable and DataDir are there only when this\nprocess is the service.",
+                    "allOf": [
+                        {
+                            "$ref": "#/definitions/api.uninstallServicePart"
+                        }
+                    ]
+                },
                 "state": {
                     "description": "State is none, disabled or disable_failed.",
+                    "type": "string"
+                }
+            }
+        },
+        "api.uninstallServicePart": {
+            "type": "object",
+            "properties": {
+                "error": {
+                    "description": "Error is what went wrong, or why the part was kept.",
+                    "type": "string"
+                },
+                "path": {
+                    "description": "Path names the part. For the registration on Windows, which is in the\nregistry, it is the name of the service.",
+                    "type": "string"
+                },
+                "state": {
+                    "description": "State is removed, removed_at_reboot, failed or kept.",
                     "type": "string"
                 }
             }

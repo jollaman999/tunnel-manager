@@ -5,6 +5,7 @@ package install
 import (
 	"context"
 	"errors"
+	"io/fs"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -217,6 +218,105 @@ func TestTheStartAtBootIsTurnedOffWithoutAStop(t *testing.T) {
 		t.Fatalf("the command is systemctl %s, want systemctl %s",
 			strings.Join(got, " "), strings.Join(want, " "))
 	}
+}
+
+// fakeSystemctl puts a systemctl first on the PATH that writes the arguments
+// of every call to a file and exits with status, and answers the file. It is
+// what lets the calls UnregisterSelf makes be read without a systemd, and
+// without touching the one of the machine the test runs on.
+func fakeSystemctl(t *testing.T, status int) string {
+	t.Helper()
+
+	bin := t.TempDir()
+	calls := filepath.Join(t.TempDir(), "calls")
+
+	writeFile(t, filepath.Join(bin, "systemctl"),
+		"#!/bin/sh\necho \"$*\" >> '"+calls+"'\nexit "+strconv.Itoa(status)+"\n")
+	t.Setenv("PATH", bin)
+
+	return calls
+}
+
+func systemctlCalls(t *testing.T, calls string) []string {
+	t.Helper()
+
+	recorded, err := os.ReadFile(calls)
+	if errors.Is(err, fs.ErrNotExist) {
+		return nil
+	}
+
+	if err != nil {
+		t.Fatalf("failed to read %s: %v", calls, err)
+	}
+
+	return strings.Split(strings.TrimSpace(string(recorded)), "\n")
+}
+
+// TestUnregisterSelfRemovesTheUnitWithoutAStop holds what the uninstall on the
+// Settings screen asks systemd for: the unit file goes and systemd is told to
+// read the disk again, and nothing stops the unit, whose process is the one
+// asking.
+func TestUnregisterSelfRemovesTheUnitWithoutAStop(t *testing.T) {
+	cases := []struct {
+		name      string
+		unitThere bool
+	}{
+		{name: "the unit file is there", unitThere: true},
+		{name: "the unit file is already gone", unitThere: false},
+	}
+
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			calls := fakeSystemctl(t, 0)
+			unitPath := filepath.Join(t.TempDir(), "tunnel-manager.service")
+
+			if c.unitThere {
+				writeFile(t, unitPath, "[Unit]\n")
+			}
+
+			err := systemd{unit: "tunnel-manager.service"}.UnregisterSelf(Installed{DefinitionPath: unitPath})
+			if err != nil {
+				t.Fatalf("UnregisterSelf: %v", err)
+			}
+
+			if _, err := os.Lstat(unitPath); !errors.Is(err, fs.ErrNotExist) {
+				t.Fatalf("after UnregisterSelf, %s is still there: %v", unitPath, err)
+			}
+
+			got := systemctlCalls(t, calls)
+			if strings.Join(got, "|") != "daemon-reload" {
+				t.Fatalf("systemctl was run as %q, want daemon-reload alone", got)
+			}
+		})
+	}
+}
+
+// TestUnregisterSelfReportsWhatWentWrong covers the two failures the uninstall
+// on the Settings screen puts in front of the operator: a reload systemd
+// refused, and a registration that names no file to remove.
+func TestUnregisterSelfReportsWhatWentWrong(t *testing.T) {
+	t.Run("the reload failed", func(t *testing.T) {
+		fakeSystemctl(t, 1)
+		unitPath := writeFile(t, filepath.Join(t.TempDir(), "tunnel-manager.service"), "[Unit]\n")
+
+		err := systemd{unit: "tunnel-manager.service"}.UnregisterSelf(Installed{DefinitionPath: unitPath})
+		if err == nil || !strings.Contains(err.Error(), "systemctl daemon-reload failed") {
+			t.Fatalf("UnregisterSelf answered %v, want the reload failure", err)
+		}
+	})
+
+	t.Run("no unit file is named", func(t *testing.T) {
+		calls := fakeSystemctl(t, 0)
+
+		err := systemd{unit: "tunnel-manager.service"}.UnregisterSelf(Installed{})
+		if err == nil {
+			t.Fatalf("UnregisterSelf answered nil for a registration that names no file")
+		}
+
+		if got := systemctlCalls(t, calls); len(got) != 0 {
+			t.Fatalf("systemctl was run as %q, want it not run", got)
+		}
+	})
 }
 
 // TestBootedWithSystemdReadsTheRuntimeDirectory covers the check that keeps a

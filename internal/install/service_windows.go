@@ -252,6 +252,30 @@ func (s scmService) Unregister(_ Installed) error {
 		return err
 	}
 
+	return deleteService()
+}
+
+// UnregisterSelf deletes the registration of the service whose process is the
+// one asking, and does not stop it.
+//
+// DeleteService does not take a running service away. Its documentation says
+// it "marks a service for deletion from the service control manager database.
+// The database entry is not removed until all open handles to the service have
+// been closed by calls to the CloseServiceHandle function, and the service is
+// not running." So the entry stays while this process answers the uninstall,
+// and goes when the process ends and the handler in main_windows.go reports
+// the service stopped; this one's own handle is closed before that, here. Until
+// then the name is taken, and an install that runs in between is refused by
+// CreateService with ERROR_SERVICE_MARKED_FOR_DELETE. (The documented
+// behaviour of DeleteService, not run on Windows.)
+func (scmService) UnregisterSelf(_ Installed) error {
+	return deleteService()
+}
+
+// deleteService marks the registration for deletion and closes the handle it
+// opened to do so. A registration that is not there, or is already marked, is
+// the state that was asked for.
+func deleteService() error {
 	opened, err := openService()
 
 	switch {
@@ -263,17 +287,17 @@ func (s scmService) Unregister(_ Installed) error {
 
 	defer opened.close()
 
-	err = opened.service.Delete()
-	if err != nil {
-		// Already marked for deletion is the state that was being asked for.
-		if errors.Is(err, windows.ERROR_SERVICE_MARKED_FOR_DELETE) {
-			return nil
-		}
+	return deletedAnswer(opened.service.Delete())
+}
 
-		return fmt.Errorf("failed to delete the %s service: %w", serviceName, err)
+// deletedAnswer is what DeleteService answered, read as Unregister and
+// UnregisterSelf answer it, apart so that a test holds it without an SCM.
+func deletedAnswer(err error) error {
+	if err == nil || errors.Is(err, windows.ERROR_SERVICE_MARKED_FOR_DELETE) {
+		return nil
 	}
 
-	return nil
+	return fmt.Errorf("failed to delete the %s service: %w", serviceName, err)
 }
 
 // Start starts the service and waits for it to report that it is running.

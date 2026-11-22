@@ -864,7 +864,7 @@ Windows 에서는 **관리자 권한으로 실행**한 PowerShell 이나 명령 
 |---|-------|-------|---------|
 | 실행 파일 | `/usr/local/bin/tunnel-manager` | `/usr/local/bin/tunnel-manager` | `C:\Program Files\tunnel-manager\tunnel-manager.exe` |
 | 데이터 디렉터리 | `/var/lib/tunnel-manager` | `/Library/Application Support/tunnel-manager` | `C:\ProgramData\tunnel-manager` |
-| 서비스 등록 | systemd 유닛. 이미 등록된 유닛이 있으면 그 자리에 쓰고, 없으면 `/etc/systemd/system/tunnel-manager.service` | LaunchDaemon `/Library/LaunchDaemons/io.github.jollaman999.tunnel-manager.plist` | 서비스 제어 관리자의 `tunnel-manager` 서비스 |
+| 서비스 등록 | systemd 유닛 `/usr/lib/systemd/system/tunnel-manager.service`. 전에 무엇이 등록돼 있었든 이 자리에 씁니다. `/lib/systemd/system` 으로 쓰는데, `/usr` 를 합친 시스템에서는 같은 디렉터리입니다 | LaunchDaemon `/Library/LaunchDaemons/io.github.jollaman999.tunnel-manager.plist` | 서비스 제어 관리자의 `tunnel-manager` 서비스 |
 | 실행 계정 | `root` | `root` | `LocalSystem` |
 | 꺼졌을 때 다시 띄우기 | `Restart=always`, 5초 뒤 | `KeepAlive`. 0 으로 끝났으면 띄우지 않음 | 5초 간격으로 세 번 |
 
@@ -895,7 +895,7 @@ tunnel-manager install
   md5 after     0b7f4b1c9d2e5a6f8c3d1e4b7a9f2c5d
   data          /var/lib/tunnel-manager
   database      /var/lib/tunnel-manager/tunnel-manager.db
-  service       /etc/systemd/system/tunnel-manager.service
+  service       /usr/lib/systemd/system/tunnel-manager.service
   registration  new, nothing was registered before
   state         started
 ```
@@ -940,7 +940,7 @@ tunnel-manager uninstall
   executable    /usr/local/bin/tunnel-manager, removed
   data          /var/lib/tunnel-manager, left in place
   database      /var/lib/tunnel-manager/tunnel-manager.db
-  service       /etc/systemd/system/tunnel-manager.service, removed
+  service       /usr/lib/systemd/system/tunnel-manager.service, removed
   state         stopped and taken out of the service manager
 ```
 
@@ -1805,18 +1805,23 @@ Settings 화면의 서비스 탭에서 tunnel-manager 를 제거합니다. 터�
 > 암호화돼 있습니다. 미리 떠 둔 데이터베이스 백업이 있어도 소용없습니다. 그 안의 비밀번호는
 > 계속 못 읽고, 새로 설치한 곳에 Host 를 비밀번호와 함께 전부 다시 등록해야 합니다.
 
-| 지웁니다 | 그대로 둡니다 |
-|----------|---------------|
-| 데이터베이스 파일과, SQLite 가 옆에 두는 `-wal`·`-shm` 파일 | **실행 파일** |
-| 암호화 키 파일 | 실행 파일을 띄우는 서비스 등록. 부팅 시 시작은 끕니다 |
-| 임시 비밀번호 파일 (아직 남아 있으면) | 파일들이 있던 디렉터리 |
-| 로그 파일과 그 옆의 회전된 로그 파일들 | |
+| 지웁니다 | 서비스 관리자가 띄운 프로세스라면 이것도 지웁니다 |
+|----------|---------------------------------------------------|
+| 데이터베이스 파일과, SQLite 가 옆에 두는 `-wal`·`-shm` 파일 | 서비스의 부팅 시 시작. 가장 먼저 끕니다 |
+| 암호화 키 파일 | **서비스 등록**: systemd 유닛, LaunchDaemon plist, Windows 서비스 |
+| 임시 비밀번호 파일 (아직 남아 있으면) | 서비스 등록이 띄우는 **실행 파일** |
+| 로그 파일과 그 옆의 회전된 로그 파일들 | **데이터 디렉터리**와 그 안에 남은 것 |
 | 업데이트가 데이터베이스 파일 옆에 남기는 파일 (있으면): `update-install.problem`, `update-check.last`, `logs/update-install.log` | |
 
-**실행 파일은 지우지 않습니다.** Windows 는 실행 중인 프로세스가 자기 실행 이미지를 못 지우고,
-유닉스에서도 프로세스가 끝날 때까지 디스크에 남아서 절반만 된 일이 됩니다. `-install` 로
-설치한 서비스라면 실행 파일과 서비스 등록은 `-uninstall` 이 지웁니다. compose 파일은 손으로
-지우십시오.
+**`-install` 로 설치한 서비스는 `-uninstall -purge` 를 돌린 것과 같은 상태가 되고**, 바로
+`-install` 로 다시 설치할 수 있습니다. 쓰는 조각은 `-uninstall` 과 같고 하나만 다릅니다. 서비스를
+멈추지 않습니다. 요청을 처리하는 프로세스가 바로 그 서비스이고, 응답 뒤 잠시 있다가 스스로
+끝나기 때문입니다.
+
+**손으로 띄웠거나 컨테이너에서 도는 프로세스는 실행 파일과 디렉터리를 그대로 둡니다.**
+등록한 곳이 없으니 실행 파일과 데이터베이스가 있는 디렉터리가 설치본의 것이라고 말해 주는
+것이 없습니다. 손으로 띄운 것은 작업 트리에서 빌드한 실행 파일이고 데이터베이스가 실행한
+디렉터리에 있을 수도 있습니다. 왼쪽 열의 파일만 지웁니다. compose 파일은 손으로 지우십시오.
 
 **계정의 비밀번호를 다시 입력받고** 아무것도 건드리기 전에 확인합니다. 그러지 않으면 자리를
 비운 사이 열려 있는 화면이 한 번의 클릭으로 이 일을 하게 되고, 지나가는 사람이 댈 수 없는
@@ -1824,12 +1829,29 @@ Settings 화면의 서비스 탭에서 tunnel-manager 를 제거합니다. 터�
 
 순서가 중요하고, 그 순서는 고정돼 있습니다. 조정 루프를 먼저 멈춥니다. 터널을 다시 시작하는
 것이 그것이기 때문입니다. 그다음 터널을 끊어서 원격 호스트에 리스너를 남기지 않고, 그다음
-데이터베이스를 닫고 파일을 지우고, 그다음 서비스의 부팅 시 시작을 끄고, 그다음 응답을 씁니다.
+데이터베이스를 닫고 파일을 지우고, 그다음 서비스를 이 시스템에서 지우고, 그다음 응답을 씁니다.
 프로세스는 그로부터 3초쯤 뒤에 끝납니다. 브라우저가 응답을 받을 시간을 두기 위해서입니다.
 
-**서비스 관리자가 다시 띄우지 않습니다.** 서비스 등록은 그대로 남아 있어서, 그냥 두면 몇 초 뒤
-빈 데이터베이스와 새 임시 비밀번호로 tunnel-manager 를 다시 띄웁니다. 그래서 프로세스는
-`-install` 이 쓴 등록이 그대로 두라고 적힌 방식 하나로 끝납니다.
+**서비스는 마지막 단계에서 지웁니다.** 파일을 지운 뒤, 응답 전입니다.
+
+| | 부팅 시 시작 | 서비스 등록 | 실행 파일 |
+|---|--------------|-------------|-----------|
+| Linux | `systemctl disable tunnel-manager.service`. `--now` 없이 | 유닛 파일을 지우고 `systemctl daemon-reload` | 지움 |
+| macOS | `launchctl disable system/io.github.jollaman999.tunnel-manager` | plist 를 지웁니다. `bootout` 은 응답 전에 프로세스를 내리므로 쓰지 않습니다. 그래서 launchd 는 다음 부팅까지 프로세스 없는 job 을 들고 있고, `-install` 이 새 plist 를 올리기 전에 그것을 내립니다 | 지움 |
+| Windows | 서비스의 시작 유형을 사용 안 함으로 | `DeleteService`. 돌고 있는 서비스는 삭제 표시만 되고, 프로세스가 끝나면 서비스 제어 관리자가 지웁니다 | 실행 중인 프로세스의 이미지는 지울 수 없어서, 다음 재시작 때 지우도록 Windows 에 넘깁니다 (`MoveFileEx`) |
+
+데이터 디렉터리는 `-purge` 와 같은 검사를 거친 뒤 그 안의 것까지 통째로 지웁니다. 이 설치본 말고도
+담고 있는 디렉터리(디스크의 루트, `/var/lib`, 홈 디렉터리)는 남기고, 그 이유를 응답에 적습니다.
+실제로 돌려 본 것은 Linux 열뿐이고, macOS 와 Windows 는 빌드와 단위 테스트까지입니다.
+
+지우지 못한 것은 이유와 함께 알려 주고, 나머지는 그대로 지웁니다. 하나만 예외입니다. 서비스
+등록이 남아 있으면 실행 파일도 남깁니다. `-uninstall` 을 돌리는 프로그램이 그것이고, 남은
+등록을 지우는 것이 `-uninstall` 이기 때문입니다.
+
+**서비스 관리자가 다시 띄우지 않습니다.** 서비스 등록이 지워질 때까지, macOS 와 Windows 에서는
+프로세스가 끝날 때까지, 서비스 관리자가 몇 초 뒤 빈 데이터베이스와 새 임시 비밀번호로
+tunnel-manager 를 다시 띄울 수 있습니다. 그래서 프로세스는 `-install` 이 쓴 등록이 그대로 두라고
+적힌 방식 하나로 끝납니다.
 
 | | 프로세스가 끝나는 방식 | 서비스 등록에 적힌 것 |
 |---|------------------------|------------------------|
@@ -1841,28 +1863,14 @@ macOS 에서는 이 경우만이 아니라 0 으로 끝나는 것은 전부 다�
 멈춘 프로세스는 종료 절차를 0 으로 끝내고, `launchctl kickstart` 나 다음 부팅까지 꺼진 채로
 있습니다. 실패, 비정상 종료, `kill -9` 는 그대로 다시 뜹니다.
 
-- **이전 릴리즈가 쓴 서비스 등록은 다시 띄웁니다.** 위의 줄은 그것을 쓰는 릴리즈부터 등록에
-  들어갑니다. `-install` 을 다시 돌리면 지금의 등록으로 바뀌고, 업데이트 화면에서 설치한
-  업데이트도 `-install` 을 돌리므로 마찬가지입니다.
-- **시스템이 부팅해도 다시 뜨지 않습니다.** 서비스 관리자가 띄운 프로세스라면 제거의 마지막
-  단계로, 파일을 지운 뒤 응답 전에 그 서비스의 부팅 시 시작을 끕니다. 끄기만 하고 멈추지는
-  않습니다. 요청을 처리하는 프로세스가 바로 그 서비스이고, 잠시 뒤 스스로 끝나기 때문입니다.
-  서비스 등록과 실행 파일은 남고, 그것은 `-uninstall` 이 지웁니다. 손으로 띄웠거나 컨테이너에서
-  돌던 프로세스는 끌 것이 없습니다.
-
-  | | 끄는 방법 |
-  |---|-----------|
-  | Linux | `systemctl disable tunnel-manager.service`. `--now` 없이 |
-  | macOS | `launchctl disable system/io.github.jollaman999.tunnel-manager`. launchd 가 부팅 뒤에도 기억합니다. `bootout` 은 응답 전에 프로세스를 내리므로 쓰지 않습니다 |
-  | Windows | 서비스의 시작 유형을 사용 안 함으로 |
-
-  실제로 돌려 본 것은 Linux 뿐이고, macOS 와 Windows 는 빌드와 단위 테스트까지입니다.
-  `-install` 이 부팅 시 시작을 다시 켭니다.
+- **이전 릴리즈가 쓴 서비스 등록은 지우지 못했을 때 다시 띄울 수 있습니다.** 위의 줄은 그것을
+  쓰는 릴리즈부터 등록에 들어갑니다. `-install` 을 다시 돌리면 지금의 등록으로 바뀌고, 업데이트
+  화면에서 설치한 업데이트도 `-install` 을 돌리므로 마찬가지입니다.
 - **Docker Compose 는 컨테이너를 다시 띄웁니다.** compose 파일의 `restart: always` 는 무엇으로
   끝났든 다시 띄우므로, 제거가 끝나면 `docker compose down` 을 돌리십시오.
-- **`-uninstall` 을 돌리기 전에는 `-install` 이 거절됩니다.** 재부팅 전이든 후든 같습니다. 등록된
-  서비스가 어느 데이터베이스를 쓰는지는 돌고 있는 프로세스에게 묻는데, 이 뒤에는 도는 것이 없습니다. `-uninstall` 이 등록과
-  실행 파일을 지우고, 그 뒤의 `-install` 은 처음부터 설치합니다.
+- **Windows 에서는 다음 재시작 뒤에 다시 설치하십시오.** 실행 파일은 그 재시작 때 경로로
+  지워지므로, 그 전에 `-install` 이 같은 경로에 놓은 파일이 대신 지워집니다. 프로세스가 끝나기
+  전에는 서비스 등록도 이름을 쥐고 있습니다.
 
 재시작이 실행되기 전 기다리는 몇 초 사이에 제거를 누르면 제거가 재시작을 대신합니다. 프로세스는
 제거로 끝나고 프로그램을 다시 띄우지 않습니다.
@@ -1884,7 +1892,12 @@ curl -s -b cookies.txt -X POST "$BASE/api/uninstall" \
       { "path": "/var/lib/tunnel-manager/logs/tunnel-manager.log", "what": "the log file" }
     ],
     "failed": [],
-    "service": { "state": "disabled" },
+    "service": {
+      "state": "disabled",
+      "registration": { "path": "/usr/lib/systemd/system/tunnel-manager.service", "state": "removed" },
+      "executable": { "path": "/usr/local/bin/tunnel-manager", "state": "removed" },
+      "data_dir": { "path": "/var/lib/tunnel-manager", "state": "removed" }
+    },
     "exit_in_sec": 3
   }
 }
@@ -1893,15 +1906,25 @@ curl -s -b cookies.txt -X POST "$BASE/api/uninstall" \
 지우지 못한 파일은 이유와 함께 `failed` 에 실리고 디스크에 남습니다. 손으로 정리하십시오.
 그 하나 때문에 나머지를 멈추지는 않습니다. Windows 에서는 이 프로세스가 쓰고 있는 로그
 파일을 열린 채로 지울 수 없는데, 로그 파일에서 멈추면 애초에 지워질 수 없던 파일 하나 때문에
-데이터베이스와 키가 남게 됩니다.
+데이터베이스와 키가 남게 됩니다. Windows 에서는 같은 파일 때문에 데이터 디렉터리도 남습니다.
 
 `service.state` 는 부팅 시 시작이 어떻게 됐는지입니다.
 
 | `state` | 뜻 |
 |---------|----|
-| `disabled` | 이 프로세스가 돌던 서비스가 이제 부팅 때 뜨지 않습니다. 서비스 등록과 실행 파일은 `-uninstall` 몫으로 남습니다 |
-| `none` | 이 프로세스를 띄운 서비스 관리자가 없어서 끌 것이 없었습니다 |
-| `disable_failed` | 끄지 못했거나, 이 프로세스가 그 서비스인지 서비스 관리자에게 묻지 못했습니다. 이유는 `service.error` 에 있습니다. 파일은 그대로 지워졌고, 다음 부팅 때 빈 설치가 새 임시 비밀번호로 뜰 수 있으니 `-uninstall` 을 돌리십시오 |
+| `disabled` | 이 프로세스가 돌던 서비스가 이제 부팅 때 뜨지 않습니다. 나머지가 어떻게 됐는지는 아래 세 항목에 있습니다 |
+| `none` | 이 프로세스를 띄운 서비스 관리자가 없습니다. 서비스에 관한 것은 건드리지 않았고, 실행 파일과 데이터 디렉터리는 남습니다 |
+| `disable_failed` | 끄지 못했거나, 이 프로세스가 그 서비스인지 서비스 관리자에게 묻지 못했습니다. 이유는 `service.error` 에 있습니다. 뒤의 경우에는 아래 항목이 없고 서비스에 관한 것은 건드리지 않았습니다. 다음 부팅 때 빈 설치가 새 임시 비밀번호로 뜰 수 있으니 `-uninstall` 을 돌리십시오 |
+
+`service.registration`, `service.executable`, `service.data_dir` 은 이 프로세스가 그 서비스였을 때만
+있고, 각각 대상 `path` 와 `state` 를 담습니다.
+
+| `state` | 뜻 |
+|---------|----|
+| `removed` | 지웠습니다. 서비스 등록이 지워졌으면 `service.state` 와 상관없이 부팅 시 시작도 함께 사라집니다 |
+| `removed_at_reboot` | Windows 의 실행 파일. 다음 재시작 때 지워집니다 |
+| `failed` | 지우지 못했습니다. 이유는 `error` 에 있고, 남은 것은 `-uninstall` 이 지웁니다 |
+| `kept` | 일부러 남겼고, 이유는 `error` 에 있습니다. 서비스 등록이 남아 있는 동안의 실행 파일, 또는 `-purge` 도 거절할 데이터 디렉터리입니다 |
 
 ## 스크립트에서 API 호출하기
 

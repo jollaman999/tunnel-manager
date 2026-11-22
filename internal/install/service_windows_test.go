@@ -3,6 +3,7 @@
 package install
 
 import (
+	"errors"
 	"testing"
 	"time"
 
@@ -267,6 +268,25 @@ func TestDisabledAtBootChangesTheStartTypeAlone(t *testing.T) {
 	// bring up a service this turned off.
 	if serviceConfig(plannedFor("windows")).StartType == change.startType {
 		t.Errorf("Register writes the start type this turns the service off with")
+	}
+}
+
+// TestDeletedAnswer holds how Unregister and UnregisterSelf read what
+// DeleteService answered. A registration already marked for deletion is the
+// one the uninstall on the Settings screen leaves until its process ends, and a
+// second removal of it asks for the state it is in.
+func TestDeletedAnswer(t *testing.T) {
+	if err := deletedAnswer(nil); err != nil {
+		t.Errorf("a deletion that worked is answered %v", err)
+	}
+
+	if err := deletedAnswer(windows.ERROR_SERVICE_MARKED_FOR_DELETE); err != nil {
+		t.Errorf("a registration already marked for deletion is answered %v", err)
+	}
+
+	err := deletedAnswer(windows.ERROR_ACCESS_DENIED)
+	if !errors.Is(err, windows.ERROR_ACCESS_DENIED) {
+		t.Errorf("a refused deletion is answered %v, want it to carry ERROR_ACCESS_DENIED", err)
 	}
 }
 

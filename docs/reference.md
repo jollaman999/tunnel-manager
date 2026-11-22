@@ -1005,7 +1005,7 @@ Where things go when no path is given:
 |---|-------|-------|---------|
 | Executable | `/usr/local/bin/tunnel-manager` | `/usr/local/bin/tunnel-manager` | `C:\Program Files\tunnel-manager\tunnel-manager.exe` |
 | Data directory | `/var/lib/tunnel-manager` | `/Library/Application Support/tunnel-manager` | `C:\ProgramData\tunnel-manager` |
-| Registration | a systemd unit, written over the one that is already registered or, when none is, at `/etc/systemd/system/tunnel-manager.service` | the LaunchDaemon `/Library/LaunchDaemons/io.github.jollaman999.tunnel-manager.plist` | the `tunnel-manager` service of the service control manager |
+| Registration | a systemd unit at `/usr/lib/systemd/system/tunnel-manager.service`, whatever was registered before. It is written as `/lib/systemd/system`, which is the same directory on a system that merged `/usr` | the LaunchDaemon `/Library/LaunchDaemons/io.github.jollaman999.tunnel-manager.plist` | the `tunnel-manager` service of the service control manager |
 | The account it runs as | `root` | `root` | `LocalSystem` |
 | Started again when it exits | `Restart=always`, 5 seconds later | `KeepAlive`, unless it exited with 0 | three restarts, 5 seconds apart |
 
@@ -1042,7 +1042,7 @@ tunnel-manager install
   md5 after     0b7f4b1c9d2e5a6f8c3d1e4b7a9f2c5d
   data          /var/lib/tunnel-manager
   database      /var/lib/tunnel-manager/tunnel-manager.db
-  service       /etc/systemd/system/tunnel-manager.service
+  service       /usr/lib/systemd/system/tunnel-manager.service
   registration  new, nothing was registered before
   state         started
 ```
@@ -1093,7 +1093,7 @@ tunnel-manager uninstall
   executable    /usr/local/bin/tunnel-manager, removed
   data          /var/lib/tunnel-manager, left in place
   database      /var/lib/tunnel-manager/tunnel-manager.db
-  service       /etc/systemd/system/tunnel-manager.service, removed
+  service       /usr/lib/systemd/system/tunnel-manager.service, removed
   state         stopped and taken out of the service manager
 ```
 
@@ -2117,19 +2117,24 @@ tunnel, deletes the files tunnel-manager keeps and ends the process.
 > not help: the passwords in it stay unreadable, and every Host has to be
 > registered again with its password once tunnel-manager is installed afresh.
 
-| Removed | Left alone |
-|---------|------------|
-| The database file, with the `-wal` and `-shm` files SQLite keeps beside it | **The program file** |
-| The encryption key file | The service entry that starts it, with its start at boot turned off |
-| The initial password file, if it is still there | The directories the files were in |
-| The log file and the rotated log files beside it | |
+| Removed | Removed as well where a service manager runs the process |
+|---------|-----------------------------------------------------------|
+| The database file, with the `-wal` and `-shm` files SQLite keeps beside it | The start at boot of the service, turned off first |
+| The encryption key file | **The service entry**: the systemd unit, the LaunchDaemon plist or the Windows service |
+| The initial password file, if it is still there | **The program file** the entry starts |
+| The log file and the rotated log files beside it | **The data directory**, with whatever is left under it |
 | What the updates leave beside the database file, where there is any: `update-install.problem`, `update-check.last` and `logs/update-install.log` | |
 
-**The program file is not removed.** A running process cannot delete its own
-image on Windows, and on Unix it would stay on disk until the process ends
-anyway, which is half of a job rather than one done. `-uninstall` is what
-removes the executable and the registration of a service installed with
-`-install`; a compose file is removed by hand.
+**A service installed with `-install` is left the way `-uninstall -purge` leaves
+it**, and `-install` installs it again straight away. The pieces are the ones
+`-uninstall` uses, with one difference: the service is not stopped, because the
+process asking is the service, and it ends on its own a moment after the answer.
+
+**A process started by hand or in a container keeps its program file and its
+directories.** Nothing registered it, so nothing says the program file and the
+directory the database is in belong to an installation: a run by hand may be a
+build in a working copy, with its database in the directory it was started from.
+Only the files in the left column go. A compose file is removed by hand.
 
 The **password of the account is asked for again** and checked before anything is
 touched. A session left open on an unattended screen is otherwise one press away
@@ -2139,13 +2144,34 @@ answers `401` and stops nothing.
 The order matters and is fixed: the reconcile loop is stopped first, because it
 is what starts tunnels again; then the tunnels come down, so no listener is left
 behind on a remote host; then the database is closed and the files go; then the
-start at boot of the service is turned off; then the answer is written; and the
-process ends about three seconds later, so the browser has the time to receive it.
+service is taken off the system; then the answer is written; and the process ends
+about three seconds later, so the browser has the time to receive it.
 
-**The service manager does not start it again.** The service entry is left in
-place, and on its own it would start tunnel-manager again a few seconds later on
-an empty database with a new initial password. So the process ends the one way
-the entry `-install` writes is told to leave down:
+**The service is taken off the system** as the last step, after the files are
+gone and before the answer:
+
+| | Start at boot | Service entry | Program file |
+|---|---------------|---------------|--------------|
+| Linux | `systemctl disable tunnel-manager.service`, without `--now` | the unit file is removed and `systemctl daemon-reload` run | removed |
+| macOS | `launchctl disable system/io.github.jollaman999.tunnel-manager` | the plist is removed. `bootout` is not used, since it would take the process down before the answer, so launchd holds the job with no process until the next boot; `-install` boots it out before it loads the new plist | removed |
+| Windows | the start type of the service, set to disabled | `DeleteService`. A running service is marked for deletion, and the service control manager removes it once the process has ended | handed to Windows to delete at the next restart (`MoveFileEx`), since the image of a running process cannot be deleted |
+
+The data directory is checked the way `-purge` checks it and is then removed with
+everything under it. A directory that holds more than this installation - the
+root of a disk, `/var/lib`, a home directory - is kept, and the reason is in the
+answer. Only the Linux column has been run; the macOS and the Windows ones are
+built and unit tested.
+
+What could not go is listed with the reason, and the rest goes all the same. The
+one exception is the program file, which stays while the service entry does: it
+is the program `-uninstall` is run with, and `-uninstall` is what removes an
+entry that is left.
+
+**The service manager does not start it again.** Until the entry is gone, and on
+macOS and Windows until the process has ended, the service manager could start
+tunnel-manager again a few seconds later on an empty database with a new initial
+password. So the process ends the one way the entry `-install` writes is told to
+leave down:
 
 | | The process ends with | What the service entry says |
 |---|-----------------------|-----------------------------|
@@ -2158,32 +2184,17 @@ with `kill` (SIGTERM) ends its shutdown with 0 and stays down until
 `launchctl kickstart` or the next boot. A failure, a crash and a `kill -9` are
 still started again.
 
-- **A service entry written by an earlier release starts it again.** Those lines
-  are in the entry from the release that wrote them on. Running `-install` again
-  writes the current entry, and so does an update installed from the Update
-  screen, since it runs `-install`.
-- **Booting does not start it again either.** Where a service manager runs the
-  process, the uninstall turns off the start at boot of that service as its last
-  step, after the files are gone and before the answer. It turns off and does
-  not stop: the process asking is the service, and it ends on its own a moment
-  later. The service entry and the executable stay, and `-uninstall` removes
-  them. A process started by hand or in a container has nothing to turn off.
-
-  | | What is turned off |
-  |---|--------------------|
-  | Linux | `systemctl disable tunnel-manager.service`, without `--now` |
-  | macOS | `launchctl disable system/io.github.jollaman999.tunnel-manager`, which launchd keeps across boots. `bootout` is not used, since it would take the process down before the answer |
-  | Windows | the start type of the service, set to disabled |
-
-  Only the Linux one has been run; the macOS and the Windows ones are built and
-  unit tested. `-install` turns the start at boot back on.
+- **A service entry written by an earlier release may start it again** where the
+  entry could not be removed. Those lines are in the entry from the release that
+  wrote them on. Running `-install` again writes the current entry, and so does
+  an update installed from the Update screen, since it runs `-install`.
 - **Docker Compose starts the container again.** `restart: always` in the
   compose file starts it whatever it exited with, so run `docker compose down`
   once the uninstall is over.
-- **`-install` is refused until `-uninstall` has run**, before a reboot and after
-  one. It reads which database a registered service uses from the running
-  process, and after this nothing runs. `-uninstall` takes out the entry and the
-  executable, and an `-install` after it installs afresh.
+- **On Windows, install again after the next restart.** The program file is
+  deleted at that restart by its path, so a file `-install` put at the same path
+  before it would be the one that goes, and until the process has ended the
+  service entry still holds its name.
 
 An uninstall pressed in the seconds a restart waits before it goes takes the
 place of the restart: the process ends as an uninstall ends and does not run the
@@ -2206,7 +2217,12 @@ curl -s -b cookies.txt -X POST "$BASE/api/uninstall" \
       { "path": "/var/lib/tunnel-manager/logs/tunnel-manager.log", "what": "the log file" }
     ],
     "failed": [],
-    "service": { "state": "disabled" },
+    "service": {
+      "state": "disabled",
+      "registration": { "path": "/usr/lib/systemd/system/tunnel-manager.service", "state": "removed" },
+      "executable": { "path": "/usr/local/bin/tunnel-manager", "state": "removed" },
+      "data_dir": { "path": "/var/lib/tunnel-manager", "state": "removed" }
+    },
     "exit_in_sec": 3
   }
 }
@@ -2216,15 +2232,27 @@ A file that could not be removed is reported under `failed` with the reason and
 is left on disk for you to deal with. It does not stop the rest: on Windows the
 log file this process is writing to cannot be deleted while it is open, and a run
 that stopped there would leave the database and the key behind over the one file
-that was never going to go.
+that was never going to go. The same file keeps the data directory there on
+Windows.
 
 `service.state` says what became of the start at boot:
 
 | `state` | Meaning |
 |---------|---------|
-| `disabled` | The service this process ran as no longer starts at boot. Its entry and the executable are left for `-uninstall` |
-| `none` | No service manager ran this process, so there was nothing to turn off |
-| `disable_failed` | It could not be turned off, or the service manager could not be asked whether this process is its service. `service.error` says why. The files are gone all the same, and the next boot may start an empty installation with a new initial password: run `-uninstall` |
+| `disabled` | The service this process ran as no longer starts at boot. The three parts below say what became of the rest of it |
+| `none` | No service manager ran this process. Nothing of a service was touched, and the program file and the data directory stay |
+| `disable_failed` | It could not be turned off, or the service manager could not be asked whether this process is its service. `service.error` says why. In the second case there are no parts below and nothing of the service was touched: the next boot may start an empty installation with a new initial password, so run `-uninstall` |
+
+`service.registration`, `service.executable` and `service.data_dir` are there
+when this process was the service, each with the `path` it is about and a
+`state`:
+
+| `state` | Meaning |
+|---------|---------|
+| `removed` | It went. A service entry that went takes the start at boot with it, whatever `service.state` says |
+| `removed_at_reboot` | The program file on Windows, deleted at the next restart |
+| `failed` | It could not be removed. `error` says why; `-uninstall` removes what is left |
+| `kept` | It was left on purpose, and `error` says why: the program file while the service entry is still there, or a data directory `-purge` would refuse as well |
 
 ## Calling the API from a script
 

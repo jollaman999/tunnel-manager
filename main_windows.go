@@ -158,11 +158,13 @@ func (h serviceHandler) Execute(_ []string, requests <-chan svc.ChangeRequest, s
 				return false, 0
 			}
 
-			// The uninstall on the Settings screen removed the data and left
-			// this registration. Reported as a stop, which the failure actions
-			// leave alone: reported as a failure it would be started again
-			// with an empty database a few seconds after the screen said the
-			// installation was gone. It is told apart from the restart below
+			// The uninstall on the Settings screen removed the data and
+			// marked this registration for deletion, which the SCM carries
+			// out once the service has stopped (install.RemoveThisService).
+			// Reported as a stop, which the failure actions leave alone:
+			// reported as a failure it would be started again with an empty
+			// database a few seconds after the screen said the installation
+			// was gone, if the deletion had not gone through. It is told apart from the restart below
 			// by what run answered, and not by how it ended, since both end
 			// the same way with nobody having asked the SCM for anything.
 			if uninstalled {

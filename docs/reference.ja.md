@@ -892,7 +892,7 @@ Windows では、**管理者として実行**で開いた PowerShell かコマ�
 |---|-------|-------|---------|
 | 実行ファイル | `/usr/local/bin/tunnel-manager` | `/usr/local/bin/tunnel-manager` | `C:\Program Files\tunnel-manager\tunnel-manager.exe` |
 | データディレクトリ | `/var/lib/tunnel-manager` | `/Library/Application Support/tunnel-manager` | `C:\ProgramData\tunnel-manager` |
-| サービスの登録 | systemd ユニット。すでに登録されているユニットがあればその場所に、なければ `/etc/systemd/system/tunnel-manager.service` に書きます | LaunchDaemon `/Library/LaunchDaemons/io.github.jollaman999.tunnel-manager.plist` | サービス制御マネージャーの `tunnel-manager` サービス |
+| サービスの登録 | systemd ユニット `/usr/lib/systemd/system/tunnel-manager.service`。以前に何が登録されていてもこの場所に書きます。`/lib/systemd/system` として書き、`/usr` を統合したシステムでは同じディレクトリです | LaunchDaemon `/Library/LaunchDaemons/io.github.jollaman999.tunnel-manager.plist` | サービス制御マネージャーの `tunnel-manager` サービス |
 | 実行するアカウント | `root` | `root` | `LocalSystem` |
 | 落ちたときの再起動 | `Restart=always`、5 秒後 | `KeepAlive`。0 で終わったときは起動しない | 5 秒間隔で 3 回 |
 
@@ -925,7 +925,7 @@ tunnel-manager install
   md5 after     0b7f4b1c9d2e5a6f8c3d1e4b7a9f2c5d
   data          /var/lib/tunnel-manager
   database      /var/lib/tunnel-manager/tunnel-manager.db
-  service       /etc/systemd/system/tunnel-manager.service
+  service       /usr/lib/systemd/system/tunnel-manager.service
   registration  new, nothing was registered before
   state         started
 ```
@@ -972,7 +972,7 @@ tunnel-manager uninstall
   executable    /usr/local/bin/tunnel-manager, removed
   data          /var/lib/tunnel-manager, left in place
   database      /var/lib/tunnel-manager/tunnel-manager.db
-  service       /etc/systemd/system/tunnel-manager.service, removed
+  service       /usr/lib/systemd/system/tunnel-manager.service, removed
   state         stopped and taken out of the service manager
 ```
 
@@ -1868,17 +1868,23 @@ API もボタンが出る条件をそのまま見ます。前回の確認で新�
 > パスワードは読めないままで、tunnel-manager をインストールし直したあとで、すべての Host をパスワードごと登録し直す
 > ことになります。
 
-| 削除されるもの | 残るもの |
-|----------------|----------|
-| データベースファイルと、SQLite が隣に置く `-wal` と `-shm` のファイル | **プログラムのファイル** |
-| 暗号化キーのファイル | それを起動するサービスの登録。起動時の自動開始は無効にします |
-| 初期パスワードのファイル (まだ残っていれば) | ファイルが入っていたディレクトリ |
-| ログファイルと、その隣のローテート済みログファイル | |
+| 削除されるもの | サービスマネージャーが動かしているプロセスなら、これも削除されます |
+|----------------|--------------------------------------------------------------------|
+| データベースファイルと、SQLite が隣に置く `-wal` と `-shm` のファイル | サービスの起動時の自動開始。最初に無効にします |
+| 暗号化キーのファイル | **サービスの登録**：systemd ユニット、LaunchDaemon の plist、Windows のサービス |
+| 初期パスワードのファイル (まだ残っていれば) | 登録が起動する**プログラムのファイル** |
+| ログファイルと、その隣のローテート済みログファイル | **データディレクトリ**と、その中に残っているもの |
 | アップデートがデータベースファイルの隣に残すファイル (あれば)：`update-install.problem`、`update-check.last`、`logs/update-install.log` | |
 
-**プログラムのファイルは削除しません。** Windows では実行中のプロセスが自分自身のイメージを
-削除できず、Unix でもプロセスが終わるまではディスクに残るので、中途半端な結果にしかなりません。
-`-install` で入れたサービスなら、プログラムのファイルとサービスの登録は `-uninstall` が削除します。
+**`-install` で入れたサービスは `-uninstall -purge` を実行したのと同じ状態になり**、すぐに
+`-install` でインストールし直せます。使う部品は `-uninstall` と同じで、違いは 1 つだけです。
+サービスを停止しません。要求を処理しているプロセスがそのサービスそのもので、応答のあと少しして
+自分で終わるからです。
+
+**手で起動したプロセスやコンテナで動いているプロセスは、プログラムのファイルとディレクトリを
+そのまま残します。** 登録したものがないので、プログラムのファイルとデータベースのあるディレクトリが
+インストールのものだと示すものがありません。手で起動したものは作業ツリーでビルドしたファイルで、
+データベースは起動したディレクトリにあるかもしれません。左の列のファイルだけを削除します。
 compose ファイルは手動で削除してください。
 
 **アカウントのパスワードをもう一度求め**、何かに触れる前に照合します。そうしないと、人のいない
@@ -1887,12 +1893,29 @@ compose ファイルは手動で削除してください。
 
 順序は決まっていて、意味があります。まず調整ループを停止します。トンネルを再確立するのはこれ
 だからです。次にトンネルを停止します。リモートのホストに待ち受けを残さないためです。
-それからデータベースを閉じてファイルを削除し、サービスの起動時の自動開始を無効にし、応答を書き、
+それからデータベースを閉じてファイルを削除し、サービスをシステムから削除し、応答を書き、
 約 3 秒後にプロセスが終わります。ブラウザが応答を受け取る時間です。
 
-**サービスマネージャーはもう一度起動しません。** サービスの登録は残っていて、そのままにすると数秒後に
-空のデータベースと新しい初期パスワードで tunnel-manager をもう一度起動します。そのためプロセスは、
-`-install` が書いた登録に「起動し直さない」と書かれている終わり方で終わります。
+**サービスは最後の手順で削除します。** ファイルを削除したあと、応答の前です。
+
+| | 起動時の自動開始 | サービスの登録 | プログラムのファイル |
+|---|------------------|----------------|----------------------|
+| Linux | `systemctl disable tunnel-manager.service`。`--now` は付けません | ユニットファイルを削除し、`systemctl daemon-reload` | 削除 |
+| macOS | `launchctl disable system/io.github.jollaman999.tunnel-manager` | plist を削除します。`bootout` は応答の前にプロセスを落とすので使いません。そのため launchd は次の起動までプロセスのない job を持ったままで、`-install` が新しい plist を読み込む前にそれを外します | 削除 |
+| Windows | サービスのスタートアップの種類を無効に | `DeleteService`。動いているサービスには削除の印が付き、プロセスが終わるとサービス制御マネージャーが削除します | 実行中のプロセスのイメージは削除できないので、次の再起動で削除するよう Windows に渡します (`MoveFileEx`) |
+
+データディレクトリは `-purge` と同じ確認をしてから、中のものごと削除します。このインストール以外の
+ものも入っているディレクトリ (ディスクのルート、`/var/lib`、ホームディレクトリ) は残し、その理由を
+応答に書きます。実際に動かして確かめたのは Linux の列だけで、macOS と Windows はビルドと単体テストまでです。
+
+削除できなかったものは理由とともに知らせ、残りはそのまま削除します。例外は 1 つで、サービスの
+登録が残っている間はプログラムのファイルも残します。`-uninstall` を実行するプログラムがそれで、
+残った登録を削除するのが `-uninstall` だからです。
+
+**サービスマネージャーはもう一度起動しません。** サービスの登録が削除されるまで、macOS と Windows では
+プロセスが終わるまで、サービスマネージャーは数秒後に空のデータベースと新しい初期パスワードで
+tunnel-manager をもう一度起動しかねません。そのためプロセスは、`-install` が書いた登録に
+「起動し直さない」と書かれている終わり方で終わります。
 
 | | プロセスの終わり方 | サービスの登録に書かれていること |
 |---|--------------------|----------------------------------|
@@ -1904,29 +1927,14 @@ macOS では、この場合に限らず 0 で終わったものはすべて起�
 止めたプロセスは終了処理を 0 で終え、`launchctl kickstart` か次の起動まで止まったままです。
 失敗、異常終了、`kill -9` はこれまでどおり起動し直されます。
 
-- **以前のリリースが書いたサービスの登録は起動し直します。** 上の行は、それを書くリリースから
-  登録に入ります。`-install` をもう一度実行すると今の登録に書き換わり、更新の画面からインストール
-  した更新も `-install` を実行するので同じです。
-- **システムが起動しても、もう一度起動しません。** サービスマネージャーが動かしているプロセスなら、
-  アンインストールの最後の手順として、ファイルを削除したあと応答の前に、そのサービスの起動時の
-  自動開始を無効にします。無効にするだけで停止はしません。要求を処理しているプロセスがそのサービス
-  そのもので、少しあとに自分で終わるからです。サービスの登録と実行ファイルは残り、`-uninstall` が
-  削除します。手で起動したプロセスやコンテナで動いていたプロセスには、無効にするものがありません。
-
-  | | 無効にする方法 |
-  |---|----------------|
-  | Linux | `systemctl disable tunnel-manager.service`。`--now` は付けません |
-  | macOS | `launchctl disable system/io.github.jollaman999.tunnel-manager`。launchd が起動をまたいで覚えています。`bootout` は応答の前にプロセスを落とすので使いません |
-  | Windows | サービスのスタートアップの種類を無効に |
-
-  実際に動かして確かめたのは Linux だけで、macOS と Windows はビルドと単体テストまでです。
-  `-install` が起動時の自動開始を有効に戻します。
+- **以前のリリースが書いたサービスの登録は、削除できなかったときに起動し直すことがあります。**
+  上の行は、それを書くリリースから登録に入ります。`-install` をもう一度実行すると今の登録に
+  書き換わり、更新の画面からインストールした更新も `-install` を実行するので同じです。
 - **Docker Compose はコンテナをもう一度起動します。** compose ファイルの `restart: always` は
   何で終わっても起動し直すので、アンインストールが終わったら `docker compose down` を実行してください。
-- **`-uninstall` を実行するまで `-install` は断られます。** 再起動の前でもあとでも同じです。
-  登録されたサービスがどのデータベースを使っているかは動いているプロセスに尋ねますが、このあとは
-  何も動いていません。`-uninstall` が登録と実行ファイルを削除し、そのあとの `-install` は最初から
-  インストールします。
+- **Windows では次の再起動のあとでインストールし直してください。** プログラムのファイルはその
+  再起動でパスによって削除されるので、それより前に `-install` が同じパスに置いたファイルが代わりに
+  消えます。プロセスが終わるまでは、サービスの登録も名前を押さえています。
 
 再起動が実行されるまで待つ数秒の間にアンインストールを押すと、アンインストールが再起動に代わります。
 プロセスはアンインストールとして終わり、プログラムを起動し直しません。
@@ -1948,7 +1956,12 @@ curl -s -b cookies.txt -X POST "$BASE/api/uninstall" \
       { "path": "/var/lib/tunnel-manager/logs/tunnel-manager.log", "what": "the log file" }
     ],
     "failed": [],
-    "service": { "state": "disabled" },
+    "service": {
+      "state": "disabled",
+      "registration": { "path": "/usr/lib/systemd/system/tunnel-manager.service", "state": "removed" },
+      "executable": { "path": "/usr/local/bin/tunnel-manager", "state": "removed" },
+      "data_dir": { "path": "/var/lib/tunnel-manager", "state": "removed" }
+    },
     "exit_in_sec": 3
   }
 }
@@ -1957,15 +1970,25 @@ curl -s -b cookies.txt -X POST "$BASE/api/uninstall" \
 削除できなかったファイルは理由とともに `failed` に載り、あとで削除できるようにディスクに残ります。
 それで残りの処理が止まることはありません。Windows では、このプロセスが書いているログファイルは開いて
 いる間は削除できません。そこで止まってしまうと、どうせ消せなかった 1 つのファイルのために、
-データベースとキーが残ることになります。
+データベースとキーが残ることになります。Windows では同じファイルのためにデータディレクトリも残ります。
 
 `service.state` は起動時の自動開始がどうなったかです。
 
 | `state` | 意味 |
 |---------|------|
-| `disabled` | このプロセスが動いていたサービスは、もう起動時に立ち上がりません。サービスの登録と実行ファイルは `-uninstall` のために残ります |
-| `none` | このプロセスを起動したサービスマネージャーがなく、無効にするものはありませんでした |
-| `disable_failed` | 無効にできなかったか、このプロセスがそのサービスかどうかをサービスマネージャーに尋ねられませんでした。理由は `service.error` にあります。ファイルは削除済みで、次の起動で空のインストールが新しい初期パスワードで立ち上がることがあるので、`-uninstall` を実行してください |
+| `disabled` | このプロセスが動いていたサービスは、もう起動時に立ち上がりません。残りがどうなったかは下の 3 つの項目にあります |
+| `none` | このプロセスを起動したサービスマネージャーがありません。サービスに関するものには触れず、プログラムのファイルとデータディレクトリは残ります |
+| `disable_failed` | 無効にできなかったか、このプロセスがそのサービスかどうかをサービスマネージャーに尋ねられませんでした。理由は `service.error` にあります。後者のときは下の項目がなく、サービスに関するものには触れていません。次の起動で空のインストールが新しい初期パスワードで立ち上がることがあるので、`-uninstall` を実行してください |
+
+`service.registration`、`service.executable`、`service.data_dir` は、このプロセスがそのサービス
+だったときだけあり、それぞれ対象の `path` と `state` を持ちます。
+
+| `state` | 意味 |
+|---------|------|
+| `removed` | 削除しました。サービスの登録が削除されていれば、`service.state` にかかわらず起動時の自動開始もなくなります |
+| `removed_at_reboot` | Windows のプログラムのファイル。次の再起動で削除されます |
+| `failed` | 削除できませんでした。理由は `error` にあり、残ったものは `-uninstall` が削除します |
+| `kept` | わざと残しました。理由は `error` にあります。サービスの登録が残っている間のプログラムのファイルか、`-purge` も断るデータディレクトリです |
 
 ## スクリプトから API を呼ぶ
 

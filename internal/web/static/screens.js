@@ -12126,8 +12126,8 @@ function settingsDangerZone() {
         t("uninstall.file-logs.text"),
         t("uninstall.file-updates.text")
       ]),
-      element("p", t("uninstall.program.text")),
-      element("p", t("uninstall.service.text", uninstallCommands))
+      element("p", t("uninstall.service.text", uninstallCommands)),
+      element("p", t("uninstall.program.text"))
     ],
     submitLabel: t("uninstall.submit.button"),
     submitVariant: "danger",
@@ -12202,23 +12202,26 @@ function drawUninstalled() {
       { seconds: seconds })
     : t("uninstalled.stopped-soon.text")));
 
-  for (const node of uninstalledService(uninstallResult.service)) {
+  const parts = uninstalledServiceParts(uninstallResult.service);
+
+  for (const node of uninstalledService(uninstallResult.service, parts)) {
     nodes.push(node);
   }
 
-  const removed = listOfFiles(uninstallResult.removed);
+  const removed = listOfFiles(uninstallResult.removed).map(function (file) {
+    return [serverText(file.what, file.what_code, null), file.path];
+  }).concat(parts.removed);
 
   if (removed.length === 0) {
     nodes.push(statusLine(t("uninstalled.none.empty"), "empty"));
   } else {
     nodes.push(element("h2", t("uninstalled.removed.title")));
-    nodes.push(buildTable([t("uninstalled.what.column"), t("uninstalled.path.column")],
-      removed.map(function (file) {
-        return [serverText(file.what, file.what_code, null), file.path];
-      })));
+    nodes.push(buildTable([t("uninstalled.what.column"), t("uninstalled.path.column")], removed));
   }
 
-  const failed = listOfFiles(uninstallResult.failed);
+  const failed = listOfFiles(uninstallResult.failed).map(function (file) {
+    return [serverText(file.what, file.what_code, null), file.path, file.error];
+  }).concat(parts.left);
 
   if (failed.length > 0) {
     // These are what is left on disk. The server cannot be asked about them any
@@ -12226,9 +12229,7 @@ function drawUninstalled() {
     nodes.push(element("h2", t("uninstalled.left.title")));
     nodes.push(statusLine(t("uninstalled.left.notice"), "warning"));
     nodes.push(buildTable([t("uninstalled.what.column"), t("uninstalled.path.column"),
-      t("uninstalled.why.column")], failed.map(function (file) {
-        return [serverText(file.what, file.what_code, null), file.path, file.error];
-      })));
+      t("uninstalled.why.column")], failed));
   }
 
   render(t("uninstalled.screen.title"), nodes);
@@ -12239,34 +12240,84 @@ function drawUninstalled() {
 // left does not carry the dash of the flag to the other end of it.
 const uninstallCommands = {
   command: "tunnel-manager -uninstall",
+  purge: "tunnel-manager -uninstall -purge",
   install: "tunnel-manager -install"
 };
 
-// uninstalledService is what the last screen says about the service the
-// process ran as. The start at boot of a service is turned off and its entry
-// and program file stay for -uninstall; one that could not be turned off may
-// come back empty at the next boot, which is the warning. An answer that says
-// nothing of it is drawn as a process no service manager ran.
-function uninstalledService(service) {
-  const state = service !== null && typeof service === "object" ? service.state : "";
+// uninstalledServiceParts sorts the parts of the service the answer names -
+// its entry, its program file and its data directory - into rows of the two
+// tables the last screen draws, the way the files are sorted into them. A
+// part the server left out was not touched and has no row.
+function uninstalledServiceParts(service) {
+  const parts = { present: false, removed: [], left: [], registrationRemoved: false };
 
-  if (state === "disabled") {
-    return [element("p", t("uninstalled.service-disabled.text", uninstallCommands))];
+  if (service === null || typeof service !== "object") {
+    return parts;
   }
 
-  if (state === "disable_failed") {
-    const nodes = [statusLine(t("uninstalled.service-failed.notice", uninstallCommands), "warning")];
+  const named = [
+    { part: service.registration, what: "uninstalled.part-registration.text" },
+    { part: service.executable, what: "uninstalled.part-executable.text" },
+    { part: service.data_dir, what: "uninstalled.part-data-dir.text" }
+  ];
+
+  for (const entry of named) {
+    const part = entry.part;
+
+    if (part === null || typeof part !== "object") {
+      continue;
+    }
+
+    parts.present = true;
+
+    if (part.state === "removed") {
+      parts.removed.push([t(entry.what), part.path]);
+    } else if (part.state === "removed_at_reboot") {
+      parts.removed.push([t("uninstalled.part-executable-reboot.text"), part.path]);
+    } else {
+      parts.left.push([t(entry.what), part.path, typeof part.error === "string" ? part.error : ""]);
+    }
+
+    if (entry.part === service.registration && part.state === "removed") {
+      parts.registrationRemoved = true;
+    }
+  }
+
+  return parts;
+}
+
+// uninstalledService is what the last screen says about the service the
+// process ran as. A service is taken off the system the way -uninstall -purge
+// takes it, and the parts of it that could not go are listed for -uninstall.
+// A start at boot that could not be turned off matters only while the entry is
+// still there: with the entry gone nothing starts it. An answer that says
+// nothing of a service is drawn as a process no service manager ran.
+function uninstalledService(service, parts) {
+  const state = service !== null && typeof service === "object" ? service.state : "";
+
+  if (state !== "disabled" && state !== "disable_failed") {
+    return [element("p", t("uninstalled.program.text"))];
+  }
+
+  const nodes = [];
+
+  if (parts.present) {
+    nodes.push(parts.left.length === 0
+      ? element("p", t("uninstalled.service-removed.text", uninstallCommands))
+      : statusLine(t("uninstalled.service-left.notice", uninstallCommands), "warning"));
+  }
+
+  if (state === "disable_failed" && !parts.registrationRemoved) {
+    nodes.push(statusLine(t("uninstalled.service-failed.notice", uninstallCommands), "warning"));
 
     // What the service manager said, as it came. There is nothing left to ask
     // about it afterwards.
     if (typeof service.error === "string" && service.error !== "") {
       nodes.push(element("p", service.error));
     }
-
-    return nodes;
   }
 
-  return [element("p", t("uninstalled.program.text"))];
+  return nodes;
 }
 
 // listOfFiles is one of the two lists the uninstall answered with. A list the

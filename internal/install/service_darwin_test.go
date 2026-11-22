@@ -278,6 +278,53 @@ func TestCurrentFromAPlistThatCannotBeRead(t *testing.T) {
 	t.Log(err)
 }
 
+// TestUnregisterSelfRemovesThePlistAlone holds that the uninstall on the
+// Settings screen takes the plist away. Nothing else is asked of launchd
+// there, so the job stays loaded and its process, which is the one asking, is
+// not sent the SIGTERM a bootout sends.
+func TestUnregisterSelfRemovesThePlistAlone(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "io.github.jollaman999.tunnel-manager.plist")
+
+	err := os.WriteFile(path, []byte(defaultsPlist), plistMode)
+	if err != nil {
+		t.Fatalf("failed to write %s: %v", path, err)
+	}
+
+	err = launchdService{}.UnregisterSelf(Installed{DefinitionPath: path})
+	if err != nil {
+		t.Fatalf("UnregisterSelf: %v", err)
+	}
+
+	if _, err := os.Lstat(path); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("after UnregisterSelf, %s is still there: %v", path, err)
+	}
+}
+
+// TestStartBootsOutOnlyAJobWithNoProcess holds which state Start boots out
+// before its bootstrap. A job loaded with no process is the one the uninstall
+// on the Settings screen leaves behind; one that is not loaded is what Stop
+// leaves, and one with a process is running and is not Start's to end.
+func TestStartBootsOutOnlyAJobWithNoProcess(t *testing.T) {
+	cases := []struct {
+		name   string
+		up     bool
+		output string
+		want   bool
+	}{
+		{name: "not loaded", up: false, output: "", want: false},
+		{name: "loaded with no process", up: true, output: "system/x = {\n\tstate = not running\n}", want: true},
+		{name: "loaded and running", up: true, output: "system/x = {\n\tstate = running\n\tpid = 412\n}", want: false},
+	}
+
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			if got := loadedWithNoProcess(c.up, c.output); got != c.want {
+				t.Errorf("loadedWithNoProcess(%v, %q) = %v, want %v", c.up, c.output, got, c.want)
+			}
+		})
+	}
+}
+
 // TestLaunchctlCommands freezes the commands this package runs as root on a
 // Mac. They cannot be run from here, so the argv is what there is to check,
 // and it is written out rather than built from the constants for the same

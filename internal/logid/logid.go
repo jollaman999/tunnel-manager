@@ -451,4 +451,8 @@ const (
 	UninstallServiceDisabled           ID = "uninstall.service_disabled"
 	UninstallServiceDisableFailed      ID = "uninstall.service_disable_failed"
 	UninstallNotAService               ID = "uninstall.not_a_service"
+	UninstallServicePartRemoved        ID = "uninstall.service_part_removed"
+	UninstallServicePartAtReboot       ID = "uninstall.service_part_at_reboot"
+	UninstallServicePartKept           ID = "uninstall.service_part_kept"
+	UninstallServicePartRemoveFailed   ID = "uninstall.service_part_remove_failed"
 )

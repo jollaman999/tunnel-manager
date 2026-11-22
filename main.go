@@ -2397,8 +2397,9 @@ func serve() bool {
 	// opened, so what goes is what was in use and not what a setting saved
 	// without a restart names. What the updates leave is named from the same
 	// data directory the update handler below writes it in. The service this
-	// process runs as, if a service manager runs it, has its start at boot
-	// turned off last.
+	// process runs as, if a service manager runs it, is taken off the system
+	// last: its start at boot, its registration, its executable and its data
+	// directory.
 	updateDataDir := install.Defaults().WithDatabase(databaseFile).DataDir
 	uninstallHandler := api.NewUninstallHandler(db, logger, manager, stopReconcileLoop,
 		api.UninstallPaths{
@@ -2409,7 +2410,7 @@ func serve() bool {
 			InstallProblemFile:  installProblemPath(updateDataDir),
 			UpdateCheckFile:     updateCheckPath(updateDataDir),
 			InstallReportFile:   installReportPath(databaseFile, false),
-		}, beginUninstall, install.DisableThisService, endAfterUninstall)
+		}, beginUninstall, install.RemoveThisService, endAfterUninstall)
 	// The restart is handed the shutdown above and what this build can do about
 	// coming back. canReexec is asked here, in the one place that knows it is
 	// the process, rather than in the handler: the handler answers with it, and

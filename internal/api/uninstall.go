@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/jollaman999/tunnel-manager/internal/auth"
+	"github.com/jollaman999/tunnel-manager/internal/install"
 	"github.com/jollaman999/tunnel-manager/internal/logid"
 	"github.com/jollaman999/tunnel-manager/internal/models"
 	"github.com/labstack/echo/v5"
@@ -102,11 +103,14 @@ type UninstallHandler struct {
 	// this one would, and does not run this program again on the files that
 	// are about to go.
 	begin func()
-	// disableService turns off the start at boot of the service this process
-	// runs as, and answers whether it runs as one. It is the last step before
-	// the answer, after the files have gone. See install.DisableThisService for
-	// why it is turned off and not stopped or unregistered.
-	disableService func() (bool, error)
+	// removeService takes the service this process runs as off the system -
+	// its start at boot, its registration, its executable and its data
+	// directory - and says what became of each. It is handed the database this
+	// process opened, which names the data directory. It is the last step
+	// before the answer, after the files have gone. See
+	// install.RemoveThisService for why the service is not stopped, and why a
+	// process no service manager runs is left as it is.
+	removeService func(databaseFile string) install.ServiceRemoval
 	// exit ends the process. It is a function of the startup rather than
 	// os.Exit, so that the process goes down the same way a signal takes it
 	// down and so that a test is not ended by the code it is testing.
@@ -117,18 +121,18 @@ type UninstallHandler struct {
 }
 
 func NewUninstallHandler(db *gorm.DB, logger *zap.Logger, manager tunnelStopper,
-	stopReconcile func(), paths UninstallPaths, begin func(), disableService func() (bool, error),
-	exit func()) *UninstallHandler {
+	stopReconcile func(), paths UninstallPaths, begin func(),
+	removeService func(databaseFile string) install.ServiceRemoval, exit func()) *UninstallHandler {
 	return &UninstallHandler{
-		db:             db,
-		logger:         logger,
-		manager:        manager,
-		stopReconcile:  stopReconcile,
-		paths:          paths,
-		begin:          begin,
-		disableService: disableService,
-		exit:           exit,
-		exitAfter:      uninstallExitDelay,
+		db:            db,
+		logger:        logger,
+		manager:       manager,
+		stopReconcile: stopReconcile,
+		paths:         paths,
+		begin:         begin,
+		removeService: removeService,
+		exit:          exit,
+		exitAfter:     uninstallExitDelay,
 	}
 }
 
@@ -159,25 +163,62 @@ const (
 	// off.
 	uninstallServiceNone = "none"
 	// uninstallServiceDisabled is a service whose start at boot was turned
-	// off. Its registration and the executable are left for -uninstall.
+	// off. What became of its registration, its executable and its data
+	// directory is in the parts beside the state.
 	uninstallServiceDisabled = "disabled"
 	// uninstallServiceDisableFailed is a start at boot that could not be
 	// turned off, or a service manager that could not be asked whether this
-	// process is its service. Either way the next boot may start an empty
-	// installation, which is what the screen has to say.
+	// process is its service. In the second case there are no parts: nothing
+	// of the service was touched. In the first the parts follow, and a
+	// registration that went takes the start at boot with it.
 	uninstallServiceDisableFailed = "disable_failed"
 )
 
+// What became of one part of the service, as uninstallServicePart.State says
+// it.
+const (
+	uninstallPartRemoved = "removed"
+	// uninstallPartRemovedAtReboot is the executable on Windows, which a
+	// running process cannot delete and which goes at the next restart of the
+	// system instead.
+	uninstallPartRemovedAtReboot = "removed_at_reboot"
+	uninstallPartFailed          = "failed"
+	// uninstallPartKept is a part left in place on purpose, with the reason as
+	// the error: the executable while the registration that names it is still
+	// there, or a data directory -purge would refuse to remove as well.
+	uninstallPartKept = "kept"
+)
+
+// uninstallServicePart is what became of one part of the service.
+type uninstallServicePart struct {
+	// Path names the part. For the registration on Windows, which is in the
+	// registry, it is the name of the service.
+	Path string `json:"path"`
+	// State is removed, removed_at_reboot, failed or kept.
+	State string `json:"state"`
+	// Error is what went wrong, or why the part was kept.
+	Error string `json:"error,omitempty"`
+}
+
 // uninstallService is what became of the service this process runs as.
 //
-// It is apart from the lists of files because it is not a file: on Windows the
-// registration is in the registry, and on every platform what was done to it
-// is a setting turned off rather than something removed.
+// It is apart from the lists of files because not all of it is a file: on
+// Windows the registration is in the registry, and the start at boot is a
+// setting turned off rather than something removed.
 type uninstallService struct {
 	// State is none, disabled or disable_failed.
 	State string `json:"state"`
 	// Error is what went wrong, filled in only for disable_failed.
 	Error string `json:"error,omitempty"`
+	// Registration is what became of the unit, the plist or the Windows
+	// service entry. It, Executable and DataDir are there only when this
+	// process is the service.
+	Registration *uninstallServicePart `json:"registration,omitempty"`
+	// Executable is what became of the program file the registration starts.
+	Executable *uninstallServicePart `json:"executable,omitempty"`
+	// DataDir is what became of the directory the database was in, with what
+	// was left under it.
+	DataDir *uninstallServicePart `json:"data_dir,omitempty"`
 }
 
 // uninstallResult is what the uninstall answers with. The files that could not
@@ -187,8 +228,7 @@ type uninstallService struct {
 type uninstallResult struct {
 	Removed []removedFile `json:"removed"`
 	Failed  []removedFile `json:"failed"`
-	// Service is what became of the start at boot of the service this process
-	// runs as.
+	// Service is what became of the service this process runs as.
 	Service uninstallService `json:"service"`
 	// ExitInSec is how long the process stays up after this answer. The screen
 	// says it, so the number comes from the side that waits it out.
@@ -200,12 +240,12 @@ type uninstallResult struct {
 // The order is the whole of it. The password is checked before anything is
 // touched, the tunnels are taken down before the files go so that no listener
 // is left on a remote host, and the loop that would build them again is stopped
-// first of all. The start at boot of the service this process runs as is turned
-// off last, once the files are gone. The answer is written while the process is
-// still up, and the process ends a few seconds later.
+// first of all. The service this process runs as is taken off the system last,
+// once the files are gone. The answer is written while the process is still
+// up, and the process ends a few seconds later.
 //
 // @Summary      Uninstall tunnel-manager and end the process
-// @Description  Takes the account password. The tunnels come down, the files tunnel-manager keeps are removed, and where a service manager runs this process the service is disabled so that it does not start at boot. Its registration and the executable stay for -uninstall. The answer is written before the process goes.
+// @Description  Takes the account password. The tunnels come down, the files tunnel-manager keeps are removed, and where a service manager runs this process the service is disabled and its registration, its executable and its data directory are removed, which leaves what -uninstall -purge leaves. The service is not stopped first: the process ends on its own after the answer. The answer is written before the process goes.
 // @Tags         uninstall
 // @Accept   json
 // @Produce  json
@@ -296,7 +336,7 @@ func (h *UninstallHandler) Uninstall(c *echo.Context) error {
 	h.closeDatabase()
 
 	result := h.removeFiles()
-	result.Service = h.disableTheService()
+	result.Service = h.removeTheService()
 	result.ExitInSec = int(h.exitAfter / time.Second)
 
 	// The answer is written before the timer starts, so the wait is the time the
@@ -318,35 +358,99 @@ func (h *UninstallHandler) Uninstall(c *echo.Context) error {
 	return err
 }
 
-// disableTheService turns off the start at boot of the service this process
-// runs as, and says what became of it.
+// removeTheService takes the service this process runs as off the system, and
+// says what became of it.
 //
 // A failure here does not take back what was done: the files are gone, and the
-// operator is told on the screen and in the log that the next boot may start
-// an empty installation, which -uninstall takes away.
-func (h *UninstallHandler) disableTheService() uninstallService {
-	isService, err := h.disableService()
+// operator is told on the screen and in the log what is left, which
+// -uninstall takes away.
+func (h *UninstallHandler) removeTheService() uninstallService {
+	removal := h.removeService(absolutePath(h.paths.DatabaseFile))
+
+	service := uninstallService{State: uninstallServiceNone}
 
 	switch {
-	case err != nil:
+	case removal.DisableErr != nil:
 		h.logger.Error("failed to turn off the start at boot of the service this process runs as, so "+
-			"the next boot may start an empty installation. -uninstall takes the registration out",
+			"the next boot may start it again unless its registration went. -uninstall takes the "+
+			"registration out",
 			logid.UninstallServiceDisableFailed.Field(),
-			zap.Error(err))
+			zap.Error(removal.DisableErr))
 
-		return uninstallService{State: uninstallServiceDisableFailed, Error: err.Error()}
-	case isService:
-		h.logger.Info("turned off the start at boot of the service this process runs as. Its "+
-			"registration and the executable are left for -uninstall",
+		service = uninstallService{State: uninstallServiceDisableFailed, Error: removal.DisableErr.Error()}
+	case removal.IsService:
+		h.logger.Info("turned off the start at boot of the service this process runs as",
 			logid.UninstallServiceDisabled.Field())
 
-		return uninstallService{State: uninstallServiceDisabled}
+		service = uninstallService{State: uninstallServiceDisabled}
 	default:
-		h.logger.Info("no service manager runs this process, so there is no start at boot to turn off",
+		h.logger.Info("no service manager runs this process, so there is no service to take off the "+
+			"system and the program file is left where it is",
 			logid.UninstallNotAService.Field())
-
-		return uninstallService{State: uninstallServiceNone}
 	}
+
+	if !removal.IsService {
+		return service
+	}
+
+	service.Registration = h.servicePart("the service registration", removal.Registration)
+	service.Executable = h.servicePart("the program file", removal.Executable)
+	service.DataDir = h.servicePart("the data directory", removal.DataDir)
+
+	return service
+}
+
+// servicePart says what became of one part of the service, in the answer and
+// in the log.
+func (h *UninstallHandler) servicePart(what string, part install.RemovedPart) *uninstallServicePart {
+	answer := &uninstallServicePart{Path: part.Path}
+
+	switch {
+	case part.Removed && part.AtReboot:
+		h.logger.Info("set a part of the service this process ran as to be removed at the next "+
+			"restart of the system, since it is in use until then",
+			logid.UninstallServicePartAtReboot.Field(),
+			zap.String("what", what),
+			zap.String("path", part.Path))
+
+		answer.State = uninstallPartRemovedAtReboot
+	case part.Removed:
+		h.logger.Info("removed a part of the service this process ran as",
+			logid.UninstallServicePartRemoved.Field(),
+			zap.String("what", what),
+			zap.String("path", part.Path))
+
+		answer.State = uninstallPartRemoved
+	case part.Kept:
+		h.logger.Warn("left a part of the service this process ran as in place",
+			logid.UninstallServicePartKept.Field(),
+			zap.String("what", what),
+			zap.String("path", part.Path),
+			zap.String("reason", errorText(part.Err)))
+
+		answer.State = uninstallPartKept
+		answer.Error = errorText(part.Err)
+	default:
+		h.logger.Error("failed to remove a part of the service this process ran as",
+			logid.UninstallServicePartRemoveFailed.Field(),
+			zap.String("what", what),
+			zap.String("path", part.Path),
+			zap.Error(part.Err))
+
+		answer.State = uninstallPartFailed
+		answer.Error = errorText(part.Err)
+	}
+
+	return answer
+}
+
+// errorText is the text of err, and nothing for no error.
+func errorText(err error) string {
+	if err == nil {
+		return ""
+	}
+
+	return err.Error()
 }
 
 // closeDatabase closes the handle before the file is removed.
@@ -439,9 +543,9 @@ const (
 
 // installedFiles is every file that goes, in the order it goes.
 //
-// The executable is not among them. Windows does not let a running process
-// delete its own image, and on Unix it would stay on disk until the process
-// ends anyway, which makes it half of a job rather than one done.
+// The executable is not among them, and neither is the data directory. Both
+// go only when this process is the service of an installation, which is
+// removeTheService's to work out.
 //
 // The log file is last. Everything above it is reported through the log while
 // it is still being written, and on a system where an open file cannot be

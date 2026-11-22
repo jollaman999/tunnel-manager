@@ -272,12 +272,36 @@ func (launchdService) Unregister(installed Installed) error {
 		return err
 	}
 
+	return removePlist(installed)
+}
+
+// UnregisterSelf removes the plist and leaves the job loaded.
+//
+// It is Unregister without the bootout, which would have launchd send the
+// process of the job its SIGTERM, and that process is the one asking. launchd
+// goes on holding the job as it was bootstrapped, from the plist that is gone,
+// until the system restarts or the job is booted out. It does not start it
+// again: the process ends with 0, which KeepAlive leaves down (launchdPlist),
+// and the disable DisableAtBoot wrote keeps it from being loaded at boot. The
+// job left loaded with no process is what Start boots out before it
+// bootstraps, so that an install right after is not refused over the label.
+// (launchd's handling of a plist removed under a loaded job is from its
+// documentation, which says a job is read when it is bootstrapped, and was not
+// run on a Mac.)
+func (launchdService) UnregisterSelf(installed Installed) error {
+	return removePlist(installed)
+}
+
+// removePlist removes the plist installed names, or the one this backend
+// writes where it names none. One that is already gone is the state that was
+// asked for.
+func removePlist(installed Installed) error {
 	path := installed.DefinitionPath
 	if path == "" {
 		path = launchdPlistPath
 	}
 
-	err = os.Remove(path)
+	err := os.Remove(path)
 	if err != nil && !errors.Is(err, fs.ErrNotExist) {
 		return fmt.Errorf("failed to remove the LaunchDaemon plist %s: %w", path, err)
 	}
@@ -294,10 +318,29 @@ func (launchdService) Unregister(installed Installed) error {
 // cannot run on anyway. A fallback would be a second path through here that
 // nothing would ever take and nobody could test. (Which launchctl subcommands
 // a given macOS has was read from Apple's documentation, not checked on a Mac.)
+//
+// A job launchd holds with no process running is booted out first. That is
+// what the uninstall on the Settings screen leaves (UnregisterSelf): a job
+// bootstrapped from a plist that is gone, which launchd would go on running
+// from instead of the plist Register just wrote, and whose label makes the
+// bootstrap below fail. A job that is not loaded, which is what Stop leaves,
+// is not touched.
 func (s launchdService) Start() error {
 	installed, err := s.Current()
 	if err != nil {
 		return fmt.Errorf("failed to read the LaunchDaemon plist to start it: %w", err)
+	}
+
+	up, printed, err := loaded()
+	if err != nil {
+		return err
+	}
+
+	if loadedWithNoProcess(up, printed) {
+		err = bootout()
+		if err != nil {
+			return fmt.Errorf("failed to boot out the %s job left loaded with no process: %w", launchdTarget, err)
+		}
 	}
 
 	arguments := bootstrapArgs(installed.DefinitionPath)
@@ -565,6 +608,18 @@ func servicePID(printOutput string) (int, bool) {
 	return 0, false
 }
 
+// loadedWithNoProcess says whether what loaded answered is a job launchd holds
+// with no process of it running. See Start for the one it is there to find.
+func loadedWithNoProcess(up bool, printOutput string) bool {
+	if !up {
+		return false
+	}
+
+	_, running := servicePID(printOutput)
+
+	return !running
+}
+
 // runLaunchctl runs one launchctl command under ctx and hands back everything
 // it wrote. Standard error is taken with standard output because launchctl
 // puts the reason a call failed on either one depending on the call, and what
@@ -605,9 +660,10 @@ func launchctlPath() string {
 // KeepAlive is the Restart=always of the systemd unit, with one exit left out:
 // launchd starts the job again when it did not exit successfully, and leaves it
 // down after an exit with 0. The exit it is there for is the uninstall on the
-// Settings screen, which removes the data and leaves this plist, so a job
-// started again after it would come up empty a moment after the screen said the
-// installation was gone. launchd has no key that leaves down one status alone,
+// Settings screen, which removes the data and this plist while launchd still
+// holds the job it bootstrapped from it, so a job started again after it would
+// come up empty a moment after the screen said the installation was gone.
+// launchd has no key that leaves down one status alone,
 // the way RestartPreventExitStatus does on systemd, so that uninstall ends with
 // 0 here (UninstalledExitCode) and the rule takes every other exit with 0 along
 // with it. A failure ends with 1, a panic with 2 and a process killed by a
@@ -620,7 +676,8 @@ func launchctlPath() string {
 //
 // RunAtLoad is what makes it come up when the machine boots, since the plist is
 // loaded then. The uninstall on the Settings screen turns that off through
-// DisableAtBoot, which launchd keeps apart from this file.
+// DisableAtBoot, which launchd keeps apart from this file, and then removes
+// the file (UnregisterSelf).
 func launchdPlist(plan Plan) []byte {
 	var document bytes.Buffer
 

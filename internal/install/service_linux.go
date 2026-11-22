@@ -256,15 +256,56 @@ func (s systemd) Unregister(installed Installed) error {
 	}
 
 	if installed.DefinitionPath != "" {
-		err = os.Remove(installed.DefinitionPath)
-		if err != nil && !errors.Is(err, fs.ErrNotExist) {
-			return fmt.Errorf("failed to remove the unit %s: %w", installed.DefinitionPath, err)
+		err = removeUnitFile(installed.DefinitionPath)
+		if err != nil {
+			return err
 		}
 	}
 
 	_, err = s.run(commandTimeout, "daemon-reload")
 	if err != nil {
 		return err
+	}
+
+	return nil
+}
+
+// UnregisterSelf removes the unit file and reloads systemd, and leaves the
+// process of the unit running.
+//
+// It is Unregister without the disable --now, whose --now stops the unit: the
+// process asking is the unit. The links that start it at boot are taken out
+// before this by DisableAtBoot, which needs the unit file to work them out.
+// After the reload systemd holds the unit as not-found and still active, and
+// once the process has ended as failed and not-found, with Restart=no and no
+// ExecStart: nothing starts it again, and an install right after writes and
+// loads a unit of the same name over it. (Watched on the systemd of Debian
+// trixie in a container: systemctl show of the unit, and -install run straight
+// after.)
+func (s systemd) UnregisterSelf(installed Installed) error {
+	if installed.DefinitionPath == "" {
+		return fmt.Errorf("systemd names no file for the %s unit", s.unit)
+	}
+
+	err := removeUnitFile(installed.DefinitionPath)
+	if err != nil {
+		return err
+	}
+
+	_, err = s.run(commandTimeout, "daemon-reload")
+	if err != nil {
+		return err
+	}
+
+	return nil
+}
+
+// removeUnitFile removes the unit file. One that is already gone is the state
+// that was asked for.
+func removeUnitFile(path string) error {
+	err := os.Remove(path)
+	if err != nil && !errors.Is(err, fs.ErrNotExist) {
+		return fmt.Errorf("failed to remove the unit %s: %w", path, err)
 	}
 
 	return nil
@@ -554,11 +595,12 @@ func unitFile(plan Plan) string {
 	b.WriteString("\n")
 	b.WriteString("Restart=always\n")
 
-	// The uninstall on the Settings screen removes the data and leaves this
-	// unit, so Restart=always alone would start an empty installation five
-	// seconds after the screen said it was gone. That uninstall ends the
-	// process with this status and nothing else does (UninstalledExitCode).
-	// A boot still starts the unit, since it stays enabled.
+	// The uninstall on the Settings screen removes the data, and this unit
+	// where it can, while the process of it is running. A unit it could not
+	// remove is still here, and Restart=always alone would start an empty
+	// installation five seconds after the screen said it was gone. That
+	// uninstall ends the process with this status and nothing else does
+	// (UninstalledExitCode).
 	b.WriteString("# The uninstall on the Settings screen ends the process with this status,\n")
 	b.WriteString("# so that the installation it removed is not started again empty.\n")
 	b.WriteString("RestartPreventExitStatus=" + strconv.Itoa(uninstalledExitStatus) + "\n")

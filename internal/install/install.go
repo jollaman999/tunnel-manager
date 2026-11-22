@@ -77,12 +77,14 @@ const uninstalledExitStatus = 5
 // UninstalledExitCode is the status the process ends with once the uninstall
 // on the Settings screen has removed the installation.
 //
-// That uninstall removes the data and leaves the registration in place, with
-// its start at boot turned off (DisableThisService), and a registration is
-// what starts the process again after it ends. What it would
-// start is an empty database with a new initial password, a few seconds after
-// the screen told the operator that the installation is gone. So the status is
-// the one each service manager is told to leave down, and that differs:
+// That uninstall removes the data and takes the registration out from under
+// the running process (RemoveThisService), and a registration is what starts
+// the process again after it ends. Where it could not be taken out, what it
+// would start is an empty database with a new initial password, a few seconds
+// after the screen told the operator that the installation is gone; where it
+// was, launchd and the SCM still hold the job until the process has ended. So
+// the status is the one each service manager is told to leave down, and that
+// differs:
 //
 //   - systemd starts the unit again however it ended (Restart=always), except
 //     after a status RestartPreventExitStatus names. unitFile names this one.
@@ -267,6 +269,14 @@ type service interface {
 	// the system boots, and leaves the registration in place and a running
 	// process running. Register is what turns the start at boot on again.
 	DisableAtBoot() error
+
+	// UnregisterSelf removes the registration named by installed while the
+	// process of the service is still running, and does not stop it. It is
+	// what the service asks for itself, from the uninstall on the Settings
+	// screen, where a stop would end the process that is asking. What the
+	// service manager does with a registration that goes from under a running
+	// process differs, and each backend says it.
+	UnregisterSelf(installed Installed) error
 }
 
 // newService builds the backend for this platform. Each backend file sets it

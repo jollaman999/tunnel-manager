@@ -135,12 +135,16 @@ type fakeService struct {
 	servicePID    int
 	servicePIDErr error
 	disableErr    error
+	// unregisterSelfErr is what taking the registration out from under the
+	// running service answers.
+	unregisterSelfErr error
 
-	calls          []string
-	checkedPlan    Plan
-	registeredPlan Plan
-	registeredOver *Installed
-	unregistered   *Installed
+	calls            []string
+	checkedPlan      Plan
+	registeredPlan   Plan
+	registeredOver   *Installed
+	unregistered     *Installed
+	unregisteredSelf *Installed
 }
 
 func (f *fakeService) Current() (Installed, error) {
@@ -209,6 +213,13 @@ func (f *fakeService) DisableAtBoot() error {
 	f.calls = append(f.calls, "disable")
 
 	return f.disableErr
+}
+
+func (f *fakeService) UnregisterSelf(installed Installed) error {
+	f.calls = append(f.calls, "unregisterself")
+	f.unregisteredSelf = &installed
+
+	return f.unregisterSelfErr
 }
 
 // allowPrivilege runs the flow as if this process were root. The check itself

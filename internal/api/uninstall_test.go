@@ -15,6 +15,7 @@ import (
 
 	"github.com/glebarez/sqlite"
 	"github.com/jollaman999/tunnel-manager/internal/auth"
+	"github.com/jollaman999/tunnel-manager/internal/install"
 	"github.com/jollaman999/tunnel-manager/internal/models"
 	"github.com/labstack/echo/v5"
 	"github.com/labstack/echo/v5/middleware"
@@ -145,16 +146,20 @@ type uninstallSteps struct {
 	// the step ran.
 	fileWasThere []bool
 	databaseFile string
-	// isService and disableErr are what turning off the start at boot of the
-	// service answers.
-	isService  bool
-	disableErr error
+	// removal is what taking the service off the system answers, and
+	// removedFor the database file it was handed.
+	removal    install.ServiceRemoval
+	removedFor string
 }
 
-func (s *uninstallSteps) disableService() (bool, error) {
-	s.record("disable")
+func (s *uninstallSteps) removeService(databaseFile string) install.ServiceRemoval {
+	s.record("service")
 
-	return s.isService, s.disableErr
+	s.mu.Lock()
+	s.removedFor = databaseFile
+	s.mu.Unlock()
+
+	return s.removal
 }
 
 func (s *uninstallSteps) record(name string) {
@@ -233,14 +238,15 @@ func newUninstallHandler(t *testing.T, inst *installation) (*UninstallHandler, *
 	writeFile(t, inst.paths.DatabaseFile+"-wal")
 	writeFile(t, inst.paths.DatabaseFile+"-shm")
 
-	steps := &uninstallSteps{databaseFile: inst.paths.DatabaseFile, isService: true}
+	steps := &uninstallSteps{databaseFile: inst.paths.DatabaseFile,
+		removal: install.ServiceRemoval{IsService: true}}
 	exited := make(chan struct{})
 
 	h := NewUninstallHandler(db, zap.NewNop(), steps, func() {
 		steps.record("reconcile")
 	}, inst.paths, func() {
 		steps.record("begin")
-	}, steps.disableService, func() {
+	}, steps.removeService, func() {
 		close(exited)
 	})
 
@@ -593,9 +599,9 @@ func TestUninstallLeavesFilesThatTheRotationDidNotWrite(t *testing.T) {
 
 // TestUninstallStopsTheLoopAndTheTunnelsBeforeTheFilesGo is the order the whole
 // thing turns on. A loop that is still running builds again what was stopped,
-// and a tunnel that is left up holds a listener on a remote host. The start at
-// boot of the service is turned off last, once the files are gone, and before
-// the answer, which says what became of it.
+// and a tunnel that is left up holds a listener on a remote host. The service
+// is taken off the system last, once the files are gone, and before the
+// answer, which says what became of it.
 func TestUninstallStopsTheLoopAndTheTunnelsBeforeTheFilesGo(t *testing.T) {
 	inst := newInstallation(t)
 	h, steps, _, _ := newUninstallHandler(t, inst)
@@ -609,15 +615,15 @@ func TestUninstallStopsTheLoopAndTheTunnelsBeforeTheFilesGo(t *testing.T) {
 
 	names, fileWasThere := steps.taken()
 
-	if strings.Join(names, ",") != "begin,reconcile,tunnels,disable" {
+	if strings.Join(names, ",") != "begin,reconcile,tunnels,service" {
 		t.Fatalf("the uninstall took the steps %v, want the loop stopped, then the tunnels, "+
-			"and the start at boot of the service turned off last", names)
+			"and the service taken off the system last", names)
 	}
 
 	for index, there := range fileWasThere {
-		if names[index] == "disable" {
+		if names[index] == "service" {
 			if there {
-				t.Fatalf("the start at boot of the service was turned off before the files went")
+				t.Fatalf("the service was taken off the system before the files went")
 			}
 
 			continue
@@ -627,33 +633,93 @@ func TestUninstallStopsTheLoopAndTheTunnelsBeforeTheFilesGo(t *testing.T) {
 			t.Fatalf("%s was stopped after the database file was already removed", names[index])
 		}
 	}
+
+	// The database this process opened is what names the data directory, and
+	// it is handed over absolute, the way -purge is only willing to read it.
+	if steps.removedFor != absolutePath(inst.paths.DatabaseFile) || !filepath.IsAbs(steps.removedFor) {
+		t.Fatalf("the service was taken off with the database %q, want %q",
+			steps.removedFor, absolutePath(inst.paths.DatabaseFile))
+	}
 }
 
-// TestUninstallSaysWhatBecameOfTheService covers the three answers the last
-// screen tells apart. A start at boot that could not be turned off does not
-// take back the files that went: the uninstall answers 200 with what it
-// removed, and says the service may start again so that the operator runs
-// -uninstall.
+// TestUninstallSaysWhatBecameOfTheService covers the answers the last screen
+// tells apart. A part of the service that could not go does not take back the
+// files that went: the uninstall answers 200 with what it removed, and says
+// part by part what is left for -uninstall.
 func TestUninstallSaysWhatBecameOfTheService(t *testing.T) {
+	refused := errors.New("refused")
+	removed := func(path string) install.RemovedPart {
+		return install.RemovedPart{Path: path, Removed: true}
+	}
+	allRemoved := install.ServiceRemoval{
+		IsService:    true,
+		Registration: removed("/usr/lib/systemd/system/tunnel-manager.service"),
+		Executable:   removed("/usr/local/bin/tunnel-manager"),
+		DataDir:      removed("/var/lib/tunnel-manager"),
+	}
+	part := func(path string, state string, err string) *uninstallServicePart {
+		return &uninstallServicePart{Path: path, State: state, Error: err}
+	}
+	allRemovedParts := uninstallService{
+		State:        uninstallServiceDisabled,
+		Registration: part("/usr/lib/systemd/system/tunnel-manager.service", uninstallPartRemoved, ""),
+		Executable:   part("/usr/local/bin/tunnel-manager", uninstallPartRemoved, ""),
+		DataDir:      part("/var/lib/tunnel-manager", uninstallPartRemoved, ""),
+	}
+
+	withDisableErr := allRemoved
+	withDisableErr.DisableErr = errors.New("systemctl disable tunnel-manager.service failed: exit status 1")
+	withDisableErrParts := allRemovedParts
+	withDisableErrParts.State = uninstallServiceDisableFailed
+	withDisableErrParts.Error = "systemctl disable tunnel-manager.service failed: exit status 1"
+
+	registrationLeft := install.ServiceRemoval{
+		IsService: true,
+		Registration: install.RemovedPart{Path: "/usr/lib/systemd/system/tunnel-manager.service",
+			Err: refused},
+		Executable: install.RemovedPart{Path: "/usr/local/bin/tunnel-manager", Kept: true,
+			Err: errors.New("kept")},
+		DataDir: install.RemovedPart{Path: "/var/lib/tunnel-manager", Err: errors.New("busy")},
+	}
+
+	atReboot := install.ServiceRemoval{
+		IsService:    true,
+		Registration: removed("tunnel-manager"),
+		Executable: install.RemovedPart{Path: `C:\Program Files\tunnel-manager\tunnel-manager.exe`,
+			Removed: true, AtReboot: true},
+		DataDir: removed(`C:\ProgramData\tunnel-manager`),
+	}
+
 	cases := []struct {
-		name       string
-		isService  bool
-		disableErr error
-		wantState  string
-		wantError  string
+		name    string
+		removal install.ServiceRemoval
+		want    uninstallService
 	}{
-		{name: "a service whose start at boot was turned off", isService: true,
-			wantState: uninstallServiceDisabled},
-		{name: "a process no service manager runs", isService: false,
-			wantState: uninstallServiceNone},
-		{name: "a start at boot that could not be turned off", isService: true,
-			disableErr: errors.New("systemctl disable tunnel-manager.service failed: exit status 1"),
-			wantState:  uninstallServiceDisableFailed,
-			wantError:  "systemctl disable tunnel-manager.service failed: exit status 1"},
-		{name: "a service manager that could not be asked", isService: false,
-			disableErr: errors.New("failed to ask the service manager"),
-			wantState:  uninstallServiceDisableFailed,
-			wantError:  "failed to ask the service manager"},
+		{name: "a service taken off the system whole", removal: allRemoved, want: allRemovedParts},
+		{name: "a process no service manager runs", removal: install.ServiceRemoval{},
+			want: uninstallService{State: uninstallServiceNone}},
+		{name: "a start at boot that could not be turned off", removal: withDisableErr,
+			want: withDisableErrParts},
+		{name: "a service manager that could not be asked",
+			removal: install.ServiceRemoval{DisableErr: errors.New("failed to ask the service manager")},
+			want: uninstallService{State: uninstallServiceDisableFailed,
+				Error: "failed to ask the service manager"}},
+		{name: "a registration that could not be taken out", removal: registrationLeft,
+			want: uninstallService{
+				State: uninstallServiceDisabled,
+				Registration: part("/usr/lib/systemd/system/tunnel-manager.service",
+					uninstallPartFailed, "refused"),
+				Executable: part("/usr/local/bin/tunnel-manager", uninstallPartKept, "kept"),
+				DataDir:    part("/var/lib/tunnel-manager", uninstallPartFailed, "busy"),
+			}},
+		{name: "an executable left to the next restart", removal: atReboot,
+			want: uninstallService{
+				State:        uninstallServiceDisabled,
+				Registration: part("tunnel-manager", uninstallPartRemoved, ""),
+				Executable: part(`C:\Program Files\tunnel-manager\tunnel-manager.exe`,
+					uninstallPartRemovedAtReboot, ""),
+				DataDir: part(`C:\ProgramData\tunnel-manager`, uninstallPartRemoved, ""),
+			}},
 	}
 
 	for _, c := range cases {
@@ -661,8 +727,7 @@ func TestUninstallSaysWhatBecameOfTheService(t *testing.T) {
 			inst := newInstallation(t)
 			h, steps, exited, _ := newUninstallHandler(t, inst)
 
-			steps.isService = c.isService
-			steps.disableErr = c.disableErr
+			steps.removal = c.removal
 
 			rec := postUninstall(t, h, `{"password":"`+uninstallPassword+`"}`)
 
@@ -673,9 +738,11 @@ func TestUninstallSaysWhatBecameOfTheService(t *testing.T) {
 
 			result := decodeUninstall(t, rec)
 
-			if result.Service.State != c.wantState || result.Service.Error != c.wantError {
-				t.Fatalf("the service is reported as %+v, want state %q and error %q",
-					result.Service, c.wantState, c.wantError)
+			got, _ := json.Marshal(result.Service)
+			want, _ := json.Marshal(c.want)
+
+			if string(got) != string(want) {
+				t.Fatalf("the service is reported as\n%s\nwant\n%s", got, want)
 			}
 
 			if len(result.Removed) == 0 {

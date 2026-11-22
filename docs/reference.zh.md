@@ -780,7 +780,7 @@ sudo ./tunnel-manager-linux-amd64 -install
 |---|-------|-------|---------|
 | 可执行文件 | `/usr/local/bin/tunnel-manager` | `/usr/local/bin/tunnel-manager` | `C:\Program Files\tunnel-manager\tunnel-manager.exe` |
 | 数据目录 | `/var/lib/tunnel-manager` | `/Library/Application Support/tunnel-manager` | `C:\ProgramData\tunnel-manager` |
-| 服务注册 | systemd unit。已经注册过的话就写在原来那个位置，没有的话写到 `/etc/systemd/system/tunnel-manager.service` | LaunchDaemon `/Library/LaunchDaemons/io.github.jollaman999.tunnel-manager.plist` | 服务控制管理器里的 `tunnel-manager` 服务 |
+| 服务注册 | systemd unit `/usr/lib/systemd/system/tunnel-manager.service`，不论之前注册在哪里都写在这里。写入时用的是 `/lib/systemd/system`，在合并了 `/usr` 的系统上是同一个目录 | LaunchDaemon `/Library/LaunchDaemons/io.github.jollaman999.tunnel-manager.plist` | 服务控制管理器里的 `tunnel-manager` 服务 |
 | 运行用的账号 | `root` | `root` | `LocalSystem` |
 | 退出后再起来 | `Restart=always`，5 秒后 | `KeepAlive`，以 0 退出时不再起来 | 每隔 5 秒重启，共三次 |
 
@@ -809,7 +809,7 @@ tunnel-manager install
   md5 after     0b7f4b1c9d2e5a6f8c3d1e4b7a9f2c5d
   data          /var/lib/tunnel-manager
   database      /var/lib/tunnel-manager/tunnel-manager.db
-  service       /etc/systemd/system/tunnel-manager.service
+  service       /usr/lib/systemd/system/tunnel-manager.service
   registration  new, nothing was registered before
   state         started
 ```
@@ -851,7 +851,7 @@ tunnel-manager uninstall
   executable    /usr/local/bin/tunnel-manager, removed
   data          /var/lib/tunnel-manager, left in place
   database      /var/lib/tunnel-manager/tunnel-manager.db
-  service       /etc/systemd/system/tunnel-manager.service, removed
+  service       /usr/lib/systemd/system/tunnel-manager.service, removed
   state         stopped and taken out of the service manager
 ```
 
@@ -1614,28 +1614,48 @@ API 也按给出按钮的同一条件判断。如果上一次查看没有找到�
 > **删除加密密钥是不可挽回的。** 每台 Host 的 SSH 密码都是用那把密钥加密的。事先备份的数据库
 > 也无济于事：里面的密码依旧无法读取，每台 Host 都要连同密码在重新安装 tunnel-manager 之后重新注册。
 
-| 会删除 | 不动 |
-|--------|------|
-| 数据库文件，以及 SQLite 在旁边留的 `-wal` 和 `-shm` 文件 | **程序文件本身** |
-| 加密密钥文件 | 启动它的那条服务配置，但关掉开机启动 |
-| 初始密码文件，如果它还在 | 这些文件所在的目录 |
-| 日志文件，以及旁边轮转后的日志文件 | |
+| 会删除 | 进程由服务管理器运行时，还会删除 |
+|--------|----------------------------------|
+| 数据库文件，以及 SQLite 在旁边留的 `-wal` 和 `-shm` 文件 | 服务的开机启动，最先关掉 |
+| 加密密钥文件 | **服务注册**：systemd unit、LaunchDaemon plist 或 Windows 服务 |
+| 初始密码文件，如果它还在 | 服务注册启动的那个**程序文件** |
+| 日志文件，以及旁边轮转后的日志文件 | **数据目录**，连同里面剩下的东西 |
 | 更新在数据库文件旁边留下的文件，如果有的话：`update-install.problem`、`update-check.last` 和 `logs/update-install.log` | |
 
-**程序文件本身不删。** 在 Windows 上，正在运行的进程无法删除自己的映像；在 Unix 上，它也要等到
-进程结束才真正从磁盘上消失，那只能算做了一半。如果 tunnel-manager 是用 `-install` 装的，程序文件和
-服务注册由 `-uninstall` 删除；compose 文件请手动删除。
+**用 `-install` 装的服务，卸载后的状态和运行 `-uninstall -purge` 一样**，随后马上可以用
+`-install` 重新安装。用到的步骤和 `-uninstall` 相同，只差一点：不停止服务。处理这次请求的进程
+就是那个服务，写出响应后片刻它会自己结束。
+
+**手动启动或在容器里运行的进程，程序文件和目录都保留。** 没有谁注册过它，也就没有东西能说明
+程序文件和数据库所在的目录属于一个安装：手动运行的可能是工作目录里编译出来的程序，数据库就在
+启动时所在的目录里。只删除左栏里的文件。compose 文件请手动删除。
 
 **账号密码会再问一遍**，并在动任何东西之前先核对。否则，一台无人看管的屏幕上留下的会话，
 离这件事只有一次点击的距离，而密码正是路过的人给不出的。密码不对返回 `401`，什么也
 不会被停止。
 
 顺序是有讲究的，而且固定：先停止调谐循环，因为它是会重新启动隧道的那个；然后逐条断开隧道，
-这样远端主机上不会留下无人管理的监听；再关闭数据库、删除文件；再关掉服务的开机启动；再写出响应；
+这样远端主机上不会留下无人管理的监听；再关闭数据库、删除文件；再把服务从系统中删除；再写出响应；
 进程大约三秒后结束，好让浏览器有时间收到它。
 
-**服务管理器不会再把它拉起来。** 服务注册还留着，放着不管的话，几秒后就会用空数据库和新的初始密码
-把 tunnel-manager 再启动一次。所以进程按 `-install` 写的注册里标明“不要再拉起”的那一种方式结束：
+**服务在最后一步删除**，在删除文件之后、写出响应之前：
+
+| | 开机启动 | 服务注册 | 程序文件 |
+|---|----------|----------|----------|
+| Linux | `systemctl disable tunnel-manager.service`，不带 `--now` | 删除 unit 文件，再运行 `systemctl daemon-reload` | 删除 |
+| macOS | `launchctl disable system/io.github.jollaman999.tunnel-manager` | 删除 plist。不用 `bootout`，因为它会在写出响应之前把进程停掉；所以 launchd 在下次开机前会一直留着一个没有进程的 job，`-install` 在加载新的 plist 之前会先把它卸掉 | 删除 |
+| Windows | 把服务的启动类型设为禁用 | `DeleteService`。正在运行的服务只会被标记为待删除，进程结束后由服务控制管理器删除 | 正在运行的进程的映像无法删除，所以交给 Windows 在下次重启时删除 (`MoveFileEx`) |
+
+数据目录会先按 `-purge` 的方式检查，再连同里面的东西一起删除。装着不止这个安装的目录
+（磁盘的根目录、`/var/lib`、家目录）会保留，原因写在响应里。实际运行过的只有 Linux 这一栏；
+macOS 和 Windows 只做到编译和单元测试。
+
+删不掉的会连同原因一起告知，其余的照样删除。只有一个例外：服务注册还在时，程序文件也保留。
+运行 `-uninstall` 的正是这个程序，而删除剩下的注册的正是 `-uninstall`。
+
+**服务管理器不会再把它拉起来。** 在服务注册被删除之前，以及在 macOS 和 Windows 上进程结束之前，
+服务管理器可能在几秒后用空数据库和新的初始密码把 tunnel-manager 再启动一次。所以进程按
+`-install` 写的注册里标明“不要再拉起”的那一种方式结束：
 
 | | 进程怎么结束 | 服务注册里写的是什么 |
 |---|--------------|----------------------|
@@ -1647,25 +1667,12 @@ API 也按给出按钮的同一条件判断。如果上一次查看没有找到�
 以 0 结束关闭流程，在 `launchctl kickstart` 或下次开机之前一直停着。失败、崩溃和 `kill -9`
 仍然会被重新拉起。
 
-- **以前的版本写的服务注册仍会把它拉起来。** 上面那几行是从写入它们的版本起才进到注册里的。
-  再运行一次 `-install` 会换成现在的注册；在更新页面安装的更新也会运行 `-install`，效果一样。
-- **系统开机时也不会再启动。** 如果进程是服务管理器运行的，卸载的最后一步会在删除文件之后、写出
-  响应之前，关掉那个服务的开机启动。只关掉，不停止：处理这次请求的进程就是那个服务，片刻之后它会
-  自己结束。服务注册和可执行文件留着，由 `-uninstall` 删除。手动启动或在容器里运行的进程没有
-  要关的东西。
-
-  | | 怎么关 |
-  |---|--------|
-  | Linux | `systemctl disable tunnel-manager.service`，不带 `--now` |
-  | macOS | `launchctl disable system/io.github.jollaman999.tunnel-manager`，launchd 在开机之后仍记得。不用 `bootout`，因为它会在写出响应之前把进程停掉 |
-  | Windows | 把服务的启动类型设为禁用 |
-
-  实际运行过的只有 Linux；macOS 和 Windows 只做到编译和单元测试。`-install` 会重新打开开机启动。
+- **以前的版本写的服务注册，在没能删除时可能会把它拉起来。** 上面那几行是从写入它们的版本起才进到
+  注册里的。再运行一次 `-install` 会换成现在的注册；在更新页面安装的更新也会运行 `-install`，效果一样。
 - **Docker Compose 会把容器再拉起来。** compose 文件里的 `restart: always` 不论以什么结束都会
   重新拉起，所以卸载完成后请运行 `docker compose down`。
-- **在运行 `-uninstall` 之前，`-install` 会被拒绝**，重启前后都一样。已注册的服务用的是哪个
-  数据库，要问正在运行的进程，而这之后什么也没在运行。`-uninstall` 会删除注册和可执行文件，
-  之后的 `-install` 从头安装。
+- **在 Windows 上，请在下次重启之后再重新安装。** 程序文件会在那次重启时按路径删除，所以在那之前
+  `-install` 放到同一路径的文件会被删掉；进程结束之前，服务注册也还占着这个名字。
 
 在重启真正执行前等待的那几秒里按下卸载，卸载会取代重启：进程按卸载的方式结束，不会再运行程序。
 
@@ -1686,7 +1693,12 @@ curl -s -b cookies.txt -X POST "$BASE/api/uninstall" \
       { "path": "/var/lib/tunnel-manager/logs/tunnel-manager.log", "what": "the log file" }
     ],
     "failed": [],
-    "service": { "state": "disabled" },
+    "service": {
+      "state": "disabled",
+      "registration": { "path": "/usr/lib/systemd/system/tunnel-manager.service", "state": "removed" },
+      "executable": { "path": "/usr/local/bin/tunnel-manager", "state": "removed" },
+      "data_dir": { "path": "/var/lib/tunnel-manager", "state": "removed" }
+    },
     "exit_in_sec": 3
   }
 }
@@ -1694,15 +1706,25 @@ curl -s -b cookies.txt -X POST "$BASE/api/uninstall" \
 
 无法删除的文件会连同原因一起列在 `failed` 里，留在磁盘上由你处置。它不会阻止其余的步骤：在
 Windows 上，这个进程正在写的日志文件打开着就无法删除，而在那里中止的一次卸载，会为了这一个
-本来就无法删除的文件，把数据库和密钥都留在原地。
+本来就无法删除的文件，把数据库和密钥都留在原地。在 Windows 上，数据目录也会因为这个文件留下。
 
 `service.state` 说明开机启动变成了什么样：
 
 | `state` | 含义 |
 |---------|------|
-| `disabled` | 这个进程所属的服务开机时不再启动。服务注册和可执行文件留给 `-uninstall` |
-| `none` | 没有服务管理器在运行这个进程，所以没有要关的东西 |
-| `disable_failed` | 没能关掉，或者没能向服务管理器问清这个进程是不是它的服务。原因在 `service.error` 里。文件照样已删除，下次开机可能会用新的初始密码启动一个空的安装，请运行 `-uninstall` |
+| `disabled` | 这个进程所属的服务开机时不再启动。其余部分怎样了，看下面三项 |
+| `none` | 没有服务管理器在运行这个进程。服务相关的东西都没动，程序文件和数据目录保留 |
+| `disable_failed` | 没能关掉，或者没能向服务管理器问清这个进程是不是它的服务。原因在 `service.error` 里。后一种情况下没有下面那几项，服务相关的东西都没动；下次开机可能会用新的初始密码启动一个空的安装，请运行 `-uninstall` |
+
+`service.registration`、`service.executable` 和 `service.data_dir` 只在这个进程就是那个服务时出现，
+各自带着所指的 `path` 和 `state`：
+
+| `state` | 含义 |
+|---------|------|
+| `removed` | 已删除。服务注册删除后，不论 `service.state` 是什么，开机启动也一起没了 |
+| `removed_at_reboot` | Windows 上的程序文件，在下次重启时删除 |
+| `failed` | 没能删除。原因在 `error` 里，剩下的由 `-uninstall` 删除 |
+| `kept` | 有意保留，原因在 `error` 里：服务注册还在时的程序文件，或者 `-purge` 也会拒绝的数据目录 |
 
 ## 在脚本里调用 API
 
