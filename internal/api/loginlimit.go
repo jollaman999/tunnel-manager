@@ -110,8 +110,10 @@ const loginAccountBlockFor = 5 * time.Minute
 // The cookie is what lets an attempt past a hold on the account, so without a
 // limit of its own a stolen one would be a way to guess at the password with
 // the account counter switched off. With it, a cookie buys five guesses per
-// hold and no more, wherever they are sent from, which is less than the
-// account counter allows to everybody without one.
+// hold and no more, wherever they are sent from. Those come on top of the
+// thirty per hold the account counter lets anybody have, not in place of
+// them, because whoever holds the cookie can as well leave it off: five more
+// against thirty is the most a stolen one adds.
 const loginDeviceFailureLimit = loginAddressFailureLimit
 
 // loginDeviceBlockFor is how long a device cookie that met its limit goes

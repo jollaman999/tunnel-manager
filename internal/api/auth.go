@@ -37,16 +37,24 @@ const sessionCookieName = "tm_session"
 
 // hostCookiePrefix is the mark a browser guards a cookie name with. A cookie
 // whose name carries it is only taken when it is Secure, has Path=/ and names
-// no Domain, and only the exact host that set it can write it again. Cookies
-// carry no port and no scheme of their own, so without the prefix a service on
-// another port of this host, or a sibling name under a shared domain, can set
-// a cookie of the same name and the browser will send that one here instead.
+// no Domain. Without it, a sibling name under a shared domain can set a cookie
+// of the same name for this host with Domain, and a page served over plain HTTP
+// on this host name can set one without Secure, and the browser sends that one
+// here instead. With it, only a page on this exact host name over HTTPS can.
 //
-// Neither token is given away that way in any case: the session cookie is
-// HttpOnly, and the CSRF header is compared against the token the session
-// holds rather than against the cookie that came back. What the prefix stops is
-// the other half of it, an outsider writing over the two cookies until the
-// operator cannot use this server at all.
+// That is the whole of what it guards. Cookies carry no port (RFC 6265, section
+// 8.5), and neither does the prefix: a service on another HTTPS port of this
+// same host name is sent these cookies by the browser and can set ones of the
+// same names, prefix and all. No attribute changes that, which is why the
+// reference tells the operator to give this server a host name of its own when
+// something they do not trust runs on the same one.
+//
+// Writing a cookie gives no token away in any case: the session cookie is
+// HttpOnly, the device cookie only holds where this server signed it, and the
+// CSRF header is compared against the token the session holds rather than
+// against the cookie that came back. What the prefix stops is the other half
+// of it, an outsider writing over the cookies until the operator cannot use
+// this server at all.
 //
 // The prefix is put on only where the cookie is really Secure, which
 // cookieIsSecure decides for each request, because this server is served over
