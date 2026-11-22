@@ -531,7 +531,7 @@ func (h *AuthHandler) CreateToken(c *echo.Context) error {
 		return failure(c, http.StatusBadRequest, errTokenAccountPasswordRequired)
 	}
 
-	refused := accountPasswordRefused(c, h.db, h.logger, req.AccountPassword, errTokenAccountPasswordWrong)
+	checked, refused := accountPasswordChecked(c, h.db, h.logger, req.AccountPassword, errTokenAccountPasswordWrong)
 	if refused != nil {
 		if refused.code == errTokenAccountPasswordWrong {
 			h.logger.Warn("an API token was asked for with a password that does not open the account. "+
@@ -632,6 +632,32 @@ func (h *AuthHandler) CreateToken(c *echo.Context) error {
 	if taken > 0 {
 		tx.Rollback()
 		return failure(c, http.StatusConflict, errTokenNameTaken, errorArgs{"name": name})
+	}
+
+	// The account is read again inside the transaction, through it, because
+	// the password was checked before it was opened. A change of the account
+	// that committed in between revoked every token in its own transaction,
+	// and a token stored after it would be one made with the credentials that
+	// change replaced, outliving the revocation the change answered with. A
+	// change that commits after this one finds the token here and revokes it
+	// with the rest. The username is compared as well as the hash, because a
+	// change of the name alone revokes every token too.
+	var current models.User
+
+	err = tx.First(&current, checked.ID).Error
+	if err != nil {
+		tx.Rollback()
+		h.logger.Error("failed to read the account", logid.AccountReadFailed.Field(), zap.Error(err))
+		return failure(c, http.StatusInternalServerError, errAccountReadFailed)
+	}
+
+	if current.PasswordHash != checked.PasswordHash || current.Username != checked.Username {
+		tx.Rollback()
+		h.logger.Warn("an API token was asked for with a password that does not open the account. "+
+			"No token was made",
+			logid.TokenCreateAccountPasswordWrong.Field())
+
+		return failure(c, http.StatusUnauthorized, errTokenAccountPasswordWrong)
 	}
 
 	err = tx.Create(&row).Error

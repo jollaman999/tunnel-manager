@@ -4,6 +4,7 @@ import (
 	"crypto/rand"
 	"crypto/subtle"
 	"encoding/base64"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -182,7 +183,19 @@ type SessionStore struct {
 	// now is the clock the deadlines are measured against. It is a field so a
 	// test can move time forward instead of waiting for it.
 	now func() time.Time
+	// generation counts the calls to DeleteAllExcept. A login takes it before
+	// it reads the account and hands it back to Create, which is how a login
+	// whose password was compared against credentials that have since been
+	// replaced is told apart from one that was not. Generation says why the
+	// counter is asked and not the row.
+	generation uint64
 }
+
+// errSessionsEndedSince is what Create answers when DeleteAllExcept has run
+// since the login took the generation it handed in. The credentials the login
+// checked are then not the ones the account has, or are ones a setup or a
+// change has just replaced, and the session is not made.
+var errSessionsEndedSince = errors.New("every other session was ended after the credentials were checked")
 
 // NewSessionStore returns an empty store with the default lifetime.
 //
@@ -208,9 +221,33 @@ func NewSessionStore() *SessionStore {
 	}
 }
 
+// Generation returns the number of times DeleteAllExcept has run, which a
+// login hands back to Create.
+//
+// A login compares the password against a row it read before bcrypt, and
+// bcrypt takes long enough for a change of the account to commit and end every
+// other session in the middle of it. A session made after that would be one
+// made with credentials the operator has just replaced, and nothing would be
+// left to end it. Reading the row again before Create would not close the gap
+// either: the change could commit between that read and the session going into
+// the map. The counter is moved under the same lock Create takes, after the
+// change has committed, so a login that took it before reading the row and
+// finds it unchanged inside Create was not crossed by any change at all. It
+// covers a change of the username too, which leaves the hash as it was.
+func (s *SessionStore) Generation() uint64 {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	return s.generation
+}
+
 // Create makes a session for userID and returns the token it is found by
 // together with the CSRF token that its state changing requests have to carry.
-func (s *SessionStore) Create(userID uint) (string, string, error) {
+//
+// generation is what Generation returned before the credentials were read.
+// When DeleteAllExcept has run since, no session is made and the error is
+// errSessionsEndedSince.
+func (s *SessionStore) Create(userID uint, generation uint64) (string, string, error) {
 	token, err := randomToken(sessionTokenBytes)
 	if err != nil {
 		return "", "", fmt.Errorf("failed to generate a session token: %w", err)
@@ -223,6 +260,10 @@ func (s *SessionStore) Create(userID uint) (string, string, error) {
 
 	s.mu.Lock()
 	defer s.mu.Unlock()
+
+	if s.generation != generation {
+		return "", "", errSessionsEndedSince
+	}
 
 	now := s.now()
 
@@ -337,6 +378,8 @@ func (s *SessionStore) Delete(token string) {
 func (s *SessionStore) DeleteAllExcept(token string) int {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+
+	s.generation++
 
 	dropped := 0
 
@@ -594,6 +637,11 @@ func (h *AuthHandler) Login(c *echo.Context) error {
 		return unreadableBody(err).answer(c)
 	}
 
+	// Taken before the row is read, so that a change of the account that
+	// commits after the read has ended the sessions after this was taken too.
+	// SessionStore.Generation says why.
+	generation := h.sessions.Generation()
+
 	user, err := h.readUser()
 	if err != nil {
 		h.logger.Error("failed to read the account", logid.AccountReadFailed.Field(), zap.Error(err))
@@ -637,7 +685,16 @@ func (h *AuthHandler) Login(c *echo.Context) error {
 	// after a successful sign in would hold the operator on their next slip.
 	attempt.succeeded()
 
-	token, csrfToken, err := h.sessions.Create(user.ID)
+	token, csrfToken, err := h.sessions.Create(user.ID, generation)
+	if errors.Is(err, errSessionsEndedSince) {
+		// The answer is the one a wrong password gets. The password this
+		// request carried is not the one the account has now, or is one that
+		// was set as this login was being checked and that it is enough to
+		// send again; saying more would tell whoever sent the old one that it
+		// was right until a moment ago.
+		return failure(c, http.StatusUnauthorized, errAuthCredentialsInvalid)
+	}
+
 	if err != nil {
 		h.logger.Error("failed to create a session", logid.AccountSessionCreateFailed.Field(), zap.Error(err))
 		return failure(c, http.StatusInternalServerError, errAuthSessionCreateFailed)
@@ -998,6 +1055,21 @@ func isSafeMethod(method string) bool {
 // counters.
 func accountPasswordRefused(c *echo.Context, db *gorm.DB, logger *zap.Logger, password string,
 	wrong errorCode) *refusal {
+	_, refused := accountPasswordChecked(c, db, logger, password, wrong)
+
+	return refused
+}
+
+// accountPasswordChecked is accountPasswordRefused that also returns the row
+// the password was compared against when it opened it.
+//
+// A call that stores something the credentials are meant to take away with
+// them, an API token, has to know which credentials it was let through under.
+// The compare runs ahead of its transaction, so a change of the account can
+// commit between the two, and the row is what the transaction reads again to
+// see whether that happened.
+func accountPasswordChecked(c *echo.Context, db *gorm.DB, logger *zap.Logger, password string,
+	wrong errorCode) (*models.User, *refusal) {
 	userID, limiter, ok := sessionOnContext(c)
 	if !ok {
 		// The middleware is what puts them there, so getting here means the
@@ -1006,7 +1078,7 @@ func accountPasswordRefused(c *echo.Context, db *gorm.DB, logger *zap.Logger, pa
 			"account nor the limiter of its failures on the context, so no password was checked",
 			logid.AccountReadNoAccountOnContext.Field())
 
-		return refuse(http.StatusInternalServerError, errAccountReadFailed)
+		return nil, refuse(http.StatusInternalServerError, errAccountReadFailed)
 	}
 
 	// The failures are looked at before the account is read and long before
@@ -1019,7 +1091,7 @@ func accountPasswordRefused(c *echo.Context, db *gorm.DB, logger *zap.Logger, pa
 	// the first one found them and all reach bcrypt.
 	attempt, refused := limiter.passwordBegin(c, userID)
 	if refused != nil {
-		return refused
+		return nil, refused
 	}
 	defer attempt.release()
 
@@ -1029,16 +1101,16 @@ func accountPasswordRefused(c *echo.Context, db *gorm.DB, logger *zap.Logger, pa
 	if err != nil {
 		logger.Error("failed to read the account", logid.AccountReadFailed.Field(), zap.Error(err))
 
-		return refuse(http.StatusInternalServerError, errAccountReadFailed)
+		return nil, refuse(http.StatusInternalServerError, errAccountReadFailed)
 	}
 
 	if !auth.CheckPassword(user.PasswordHash, password) {
 		attempt.failed()
 
-		return refuse(http.StatusUnauthorized, wrong)
+		return nil, refuse(http.StatusUnauthorized, wrong)
 	}
 
 	attempt.succeeded()
 
-	return nil
+	return &user, nil
 }

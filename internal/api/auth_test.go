@@ -523,7 +523,7 @@ func TestTheSessionDeadlineSlides(t *testing.T) {
 	now := time.Now()
 	store.now = func() time.Time { return now }
 
-	token, _, err := store.Create(1)
+	token, _, err := store.Create(1, store.Generation())
 	if err != nil {
 		t.Fatalf("Create returned an error: %v", err)
 	}
@@ -553,7 +553,7 @@ func TestTheSessionRunsOutAtTheAbsoluteDeadline(t *testing.T) {
 	now := start
 	store.now = func() time.Time { return now }
 
-	token, _, err := store.Create(1)
+	token, _, err := store.Create(1, store.Generation())
 	if err != nil {
 		t.Fatalf("Create returned an error: %v", err)
 	}
@@ -659,19 +659,19 @@ func TestALoginDropsTheSessionsThatRanOutUnseen(t *testing.T) {
 	now := time.Now()
 	store.now = func() time.Time { return now }
 
-	first, _, err := store.Create(1)
+	first, _, err := store.Create(1, store.Generation())
 	if err != nil {
 		t.Fatalf("Create returned an error: %v", err)
 	}
 
-	second, _, err := store.Create(1)
+	second, _, err := store.Create(1, store.Generation())
 	if err != nil {
 		t.Fatalf("Create returned an error: %v", err)
 	}
 
 	now = now.Add(sessionLifetime)
 
-	third, _, err := store.Create(1)
+	third, _, err := store.Create(1, store.Generation())
 	if err != nil {
 		t.Fatalf("Create returned an error: %v", err)
 	}
@@ -708,14 +708,14 @@ func TestALoginKeepsTheSessionsThatAreStillLive(t *testing.T) {
 	now := time.Now()
 	store.now = func() time.Time { return now }
 
-	first, csrfToken, err := store.Create(1)
+	first, csrfToken, err := store.Create(1, store.Generation())
 	if err != nil {
 		t.Fatalf("Create returned an error: %v", err)
 	}
 
 	now = now.Add(sessionLifetime - time.Hour)
 
-	_, _, err = store.Create(2)
+	_, _, err = store.Create(2, store.Generation())
 	if err != nil {
 		t.Fatalf("Create returned an error: %v", err)
 	}
@@ -728,6 +728,54 @@ func TestALoginKeepsTheSessionsThatAreStillLive(t *testing.T) {
 	if userID != 1 || csrf != csrfToken {
 		t.Errorf("the session came back as account %d with CSRF token %q, want account 1 with %q",
 			userID, csrf, csrfToken)
+	}
+}
+
+// TestALoginCrossedByDeleteAllExceptMakesNoSession pins the half of the race
+// the store decides. A login takes the generation before it reads the
+// account, the credentials change and every other session is ended while its
+// bcrypt runs, and the session it then asks for is refused: nothing would be
+// left to end it otherwise. A login that took the generation after the change
+// is not refused, so the counter is not one that refuses everything after the
+// first change.
+func TestALoginCrossedByDeleteAllExceptMakesNoSession(t *testing.T) {
+	store := NewSessionStore()
+
+	kept, _, err := store.Create(1, store.Generation())
+	if err != nil {
+		t.Fatalf("Create returned an error: %v", err)
+	}
+
+	before := store.Generation()
+
+	store.DeleteAllExcept(kept)
+
+	token, csrfToken, err := store.Create(1, before)
+	if !errors.Is(err, errSessionsEndedSince) {
+		t.Fatalf("Create with the generation from before DeleteAllExcept returned %v, want %v",
+			err, errSessionsEndedSince)
+	}
+
+	if token != "" || csrfToken != "" {
+		t.Errorf("the refused Create handed out the tokens %q and %q", token, csrfToken)
+	}
+
+	store.mu.RLock()
+	left := len(store.sessions)
+	store.mu.RUnlock()
+
+	if left != 1 {
+		t.Errorf("the store holds %d sessions after the refused Create, want the 1 DeleteAllExcept kept", left)
+	}
+
+	after, _, err := store.Create(1, store.Generation())
+	if err != nil {
+		t.Fatalf("Create with the generation from after DeleteAllExcept returned an error: %v", err)
+	}
+
+	_, _, ok := store.Lookup(after)
+	if !ok {
+		t.Errorf("the session made after DeleteAllExcept is not in the store")
 	}
 }
 
@@ -746,7 +794,7 @@ func TestALoginDropsASessionPastOnlyTheAbsoluteDeadline(t *testing.T) {
 	now := start
 	store.now = func() time.Time { return now }
 
-	token, _, err := store.Create(1)
+	token, _, err := store.Create(1, store.Generation())
 	if err != nil {
 		t.Fatalf("Create returned an error: %v", err)
 	}
@@ -773,7 +821,7 @@ func TestALoginDropsASessionPastOnlyTheAbsoluteDeadline(t *testing.T) {
 			"the absolute deadline doing it", sliding.Sub(start), now.Sub(start))
 	}
 
-	_, _, err = store.Create(1)
+	_, _, err = store.Create(1, store.Generation())
 	if err != nil {
 		t.Fatalf("Create returned an error: %v", err)
 	}
@@ -1077,7 +1125,7 @@ func TestTheSessionStoreIsUsedFromManyGoroutines(t *testing.T) {
 			defer wg.Done()
 
 			for j := 0; j < 50; j++ {
-				token, _, err := store.Create(1)
+				token, _, err := store.Create(1, store.Generation())
 				if err != nil {
 					t.Errorf("Create returned an error: %v", err)
 					return
