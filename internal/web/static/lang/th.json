@@ -345,6 +345,7 @@
   "error.update.check_failed.error": "อ่านรุ่นล่าสุดไม่ได้: {reason}",
   "error.update.install_failed.error": "เริ่มการติดตั้งไม่สำเร็จ: {reason}",
   "error.update.not_installable.error": "ติดตั้งอัปเดตจากหน้านี้ไม่ได้ เพราะ tunnel-manager ทำงานบนเซิร์ฟเวอร์ Tunnel Manager ในแบบที่มีคนสั่งเปิดเอง ไม่ใช่บริการที่ลงทะเบียนไว้ จึงไม่มีอะไรมาเปิดใหม่ให้หลังจากนั้น",
+  "error.update.nothing_newer.error": "ไม่มีรุ่นใหม่กว่าให้ติดตั้ง การตรวจครั้งล่าสุดไม่พบรุ่นที่ใหม่กว่ารุ่นที่กำลังทำงาน จึงไม่ได้ติดตั้งอะไร ตรวจอีกครั้ง แล้วติดตั้งเมื่อพบรุ่นที่ใหม่กว่า",
   "error.update.password_missing.error": "กรอกรหัสผ่านบัญชีของคุณเพื่อติดตั้งอัปเดต",
   "error.update.password_wrong.error": "นี่ไม่ใช่รหัสผ่านของบัญชีนี้ ไม่มีอะไรถูกติดตั้ง",
   "form.bind-scope-loopback.option": "เฉพาะตัว Host เอง (127.0.0.1 และ ::1)",

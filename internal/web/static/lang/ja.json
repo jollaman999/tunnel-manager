@@ -345,6 +345,7 @@
   "error.update.check_failed.error": "最新のリリースを読めませんでした: {reason}",
   "error.update.install_failed.error": "インストールを開始できませんでした: {reason}",
   "error.update.not_installable.error": "この画面からはアップデートをインストールできません。tunnel-manager が Tunnel Manager サーバーの上で、登録されたサービスではなく、誰かが直接起動したプログラムとして動いているため、インストール後に起動し直すものがありません",
+  "error.update.nothing_newer.error": "インストールする新しいリリースがありません。前回の確認で、動いているバージョンより新しいリリースが見つからなかったため、何もインストールしていません。もう一度確認し、新しいリリースが見つかってからインストールしてください",
   "error.update.password_missing.error": "アップデートをインストールするにはアカウントのパスワードを入力してください",
   "error.update.password_wrong.error": "このアカウントのパスワードではありません。何もインストールしていません",
   "form.bind-scope-loopback.option": "Host 自身だけ (127.0.0.1 と ::1)",

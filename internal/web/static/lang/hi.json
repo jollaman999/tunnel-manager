@@ -345,6 +345,7 @@
   "error.update.check_failed.error": "नवीनतम रिलीज़ पढ़ी नहीं जा सकी: {reason}",
   "error.update.install_failed.error": "इंस्टॉल शुरू नहीं किया जा सका: {reason}",
   "error.update.not_installable.error": "इस स्क्रीन से अपडेट इंस्टॉल नहीं किया जा सकता। Tunnel Manager सर्वर पर tunnel-manager किसी के चलाए प्रोग्राम के रूप में चल रहा है, रजिस्टर की हुई सेवा के रूप में नहीं, इसलिए बाद में इसे कोई रीस्टार्ट नहीं करेगा",
+  "error.update.nothing_newer.error": "इंस्टॉल करने के लिए कोई नई रिलीज़ नहीं है। पिछली बार देखने पर चल रहे संस्करण से नई कोई रिलीज़ नहीं मिली, इसलिए कुछ भी इंस्टॉल नहीं हुआ। फिर से देखें, और नई रिलीज़ मिलने पर इंस्टॉल करें",
   "error.update.password_missing.error": "अपडेट इंस्टॉल करने के लिए अपने खाते का पासवर्ड डालें",
   "error.update.password_wrong.error": "यह इस खाते का पासवर्ड नहीं है। कुछ भी इंस्टॉल नहीं हुआ",
   "form.bind-scope-loopback.option": "सिर्फ़ Host ख़ुद (127.0.0.1 और ::1)",

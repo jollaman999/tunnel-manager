@@ -345,6 +345,7 @@
   "error.update.check_failed.error": "La dernière version n'a pas pu être lue : {reason}",
   "error.update.install_failed.error": "L'installation n'a pas pu être lancée : {reason}",
   "error.update.not_installable.error": "Une mise à jour ne peut pas être installée depuis cet écran. tunnel-manager tourne sur le serveur Tunnel Manager comme un programme que quelqu'un a lancé et non comme un service enregistré, donc rien ne le redémarrerait ensuite",
+  "error.update.nothing_newer.error": "Il n'y a pas de version plus récente à installer. La dernière consultation n'en a trouvé aucune postérieure à la version qui tourne, donc rien n'a été installé. Consultez à nouveau et installez dès qu'une version plus récente est trouvée",
   "error.update.password_missing.error": "Saisissez le mot de passe de votre compte pour installer la mise à jour",
   "error.update.password_wrong.error": "Ce n'est pas le mot de passe de ce compte. Rien n'a été installé",
   "form.bind-scope-loopback.option": "Le Host lui-même (127.0.0.1 et ::1)",

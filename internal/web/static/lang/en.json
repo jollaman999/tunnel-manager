@@ -345,6 +345,7 @@
   "error.update.check_failed.error": "The newest release could not be read: {reason}",
   "error.update.install_failed.error": "The install could not be started: {reason}",
   "error.update.not_installable.error": "An update cannot be installed from this screen. tunnel-manager runs on the Tunnel Manager server as a program somebody started rather than as a registered service, so there is nothing to restart it afterwards",
+  "error.update.nothing_newer.error": "There is no newer release to install. The last check did not find a release after the version running, so nothing was installed. Check again, and install once a newer one is found",
   "error.update.password_missing.error": "Enter the password of your account to install the update",
   "error.update.password_wrong.error": "That is not the password of this account. Nothing was installed",
   "form.bind-scope-loopback.option": "The Host itself (127.0.0.1 and ::1)",

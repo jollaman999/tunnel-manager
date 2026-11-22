@@ -234,6 +234,7 @@ func TestAnInstallTakesThePasswordOfTheAccount(t *testing.T) {
 				installable: tt.installable,
 			}
 			h, logs := call.handler(t, nil)
+			h.Look(context.Background())
 
 			c, rec := updateRequest(t, "/api/update/install", tt.body, true)
 
@@ -263,8 +264,12 @@ func TestAnInstallTakesThePasswordOfTheAccount(t *testing.T) {
 // TestAWrongPasswordOnAnInstallIsAnsweredByItsOwnCode keeps the screen from
 // reading the refusal as a session that has ended.
 func TestAWrongPasswordOnAnInstallIsAnsweredByItsOwnCode(t *testing.T) {
-	call := &updateCall{installable: true}
+	call := &updateCall{
+		latest:      install.Latest{Tag: "v3.7.5", Newer: true, Comparable: true},
+		installable: true,
+	}
 	h, logs := call.handler(t, nil)
+	h.Look(context.Background())
 
 	c, rec := updateRequest(t, "/api/update/install", `{"password":"not it"}`, true)
 
@@ -295,8 +300,12 @@ func TestAWrongPasswordOnAnInstallIsAnsweredByItsOwnCode(t *testing.T) {
 // the middleware does not cover. It must not be a press that goes through with
 // no account behind it.
 func TestAnInstallOutsideTheSessionMiddlewareIsAnError(t *testing.T) {
-	call := &updateCall{installable: true}
+	call := &updateCall{
+		latest:      install.Latest{Tag: "v3.7.5", Newer: true, Comparable: true},
+		installable: true,
+	}
 	h, _ := call.handler(t, nil)
+	h.Look(context.Background())
 
 	c, rec := updateRequest(t, "/api/update/install",
 		`{"password":"`+hostKeyAccountPassword+`"}`, false)
@@ -312,5 +321,64 @@ func TestAnInstallOutsideTheSessionMiddlewareIsAnError(t *testing.T) {
 
 	if call.started != 0 {
 		t.Error("the install was started with no account on the context")
+	}
+}
+
+// TestAnInstallWithNothingNewerIsRefused holds a press to what the screen
+// offers it on. The install takes whatever the newest release is, so a press
+// that went through here would put the running release in place again or an
+// older one over it, and take every tunnel down to do so.
+func TestAnInstallWithNothingNewerIsRefused(t *testing.T) {
+	tests := []struct {
+		name  string
+		found install.Latest
+		err   error
+		look  bool
+	}{
+		{"nothing has looked yet", install.Latest{Tag: "v3.7.5", Newer: true, Comparable: true}, nil, false},
+		{"the same version", install.Latest{Tag: "v3.7.4", Newer: false, Comparable: true}, nil, true},
+		{"older", install.Latest{Tag: "v3.7.3", Newer: false, Comparable: true}, nil, true},
+		{"not comparable", install.Latest{Tag: "nightly", Newer: false, Comparable: false}, nil, true},
+		{"the check failed", install.Latest{}, errors.New("no route to host"), true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			call := &updateCall{latest: tt.found, checkErr: tt.err, installable: true}
+			h, _ := call.handler(t, nil)
+
+			if tt.look {
+				h.Look(context.Background())
+			}
+
+			c, rec := updateRequest(t, "/api/update/install",
+				`{"password":"`+hostKeyAccountPassword+`"}`, true)
+
+			err := h.InstallUpdate(c)
+			if err != nil {
+				t.Fatalf("InstallUpdate returned an error: %v", err)
+			}
+
+			if rec.Code != http.StatusConflict {
+				t.Fatalf("status = %d, want 409, body: %s", rec.Code, rec.Body.String())
+			}
+
+			var code struct {
+				Code string `json:"error_code"`
+			}
+
+			err = json.Unmarshal(rec.Body.Bytes(), &code)
+			if err != nil {
+				t.Fatalf("failed to read the answer: %v", err)
+			}
+
+			if code.Code != string(errUpdateNothingNewer) {
+				t.Errorf("error_code = %q, want %q", code.Code, errUpdateNothingNewer)
+			}
+
+			if call.started != 0 {
+				t.Errorf("the install was started %d times with nothing newer, want 0", call.started)
+			}
+		})
 	}
 }

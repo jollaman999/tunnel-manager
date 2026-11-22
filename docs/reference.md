@@ -1940,6 +1940,14 @@ registered service, the press is not offered at all: `-install` would register
 one, and nothing would start the process again afterwards. The screen says that
 in place of the button, and `POST /api/update/install` answers `409`.
 
+The call asks what the press is offered on. Where the last check found nothing
+newer, found a tag that cannot be compared, failed, or has not run yet,
+`POST /api/update/install` answers `409` with `update.nothing_newer` and
+installs nothing. `-install` puts the newest release in place whatever is
+running, so a call that went through there would put the running release in
+place again, or an older one over a build that is ahead of it, and take every
+tunnel down to do so.
+
 ### Installing without being asked
 
 `update_auto_install` is off unless it is turned on. With it on, a release that

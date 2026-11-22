@@ -232,6 +232,7 @@ const (
 
 	errUpdateCheckFailed     errorCode = "update.check_failed"
 	errUpdateNotInstallable  errorCode = "update.not_installable"
+	errUpdateNothingNewer    errorCode = "update.nothing_newer"
 	errUpdatePasswordMissing errorCode = "update.password_missing"
 	errUpdatePasswordWrong   errorCode = "update.password_wrong"
 	errUpdateInstallFailed   errorCode = "update.install_failed"
@@ -559,6 +560,7 @@ var errorMessages = map[errorCode]string{
 
 	errUpdateCheckFailed:     "The newest release could not be read: {reason}",
 	errUpdateNotInstallable:  "An update cannot be installed from this screen. tunnel-manager runs on the Tunnel Manager server as a program somebody started rather than as a registered service, so there is nothing to restart it afterwards",
+	errUpdateNothingNewer:    "There is no newer release to install. The last check did not find a release after the version running, so nothing was installed. Check again, and install once a newer one is found",
 	errUpdatePasswordMissing: "Enter the password of your account to install the update",
 	errUpdatePasswordWrong:   "That is not the password of this account. Nothing was installed",
 	errUpdateInstallFailed:   "The install could not be started: {reason}",

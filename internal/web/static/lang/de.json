@@ -345,6 +345,7 @@
   "error.update.check_failed.error": "Die neueste Veröffentlichung konnte nicht gelesen werden: {reason}",
   "error.update.install_failed.error": "Die Installation konnte nicht gestartet werden: {reason}",
   "error.update.not_installable.error": "Eine Aktualisierung lässt sich von dieser Seite aus nicht installieren. tunnel-manager läuft auf dem Tunnel-Manager-Server als Programm, das jemand gestartet hat, und nicht als registrierter Dienst, daher gibt es nichts, was es danach neu startet",
+  "error.update.nothing_newer.error": "Es gibt keine neuere Veröffentlichung zum Installieren. Beim letzten Nachsehen wurde keine gefunden, die neuer ist als die laufende Version, daher wurde nichts installiert. Sehen Sie erneut nach und installieren Sie, sobald eine neuere gefunden wird",
   "error.update.password_missing.error": "Geben Sie das Passwort Ihres Kontos ein, um die Aktualisierung zu installieren",
   "error.update.password_wrong.error": "Das ist nicht das Passwort dieses Kontos. Es wurde nichts installiert",
   "form.bind-scope-loopback.option": "Nur der Host selbst (127.0.0.1 und ::1)",

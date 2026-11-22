@@ -345,6 +345,7 @@
   "error.update.check_failed.error": "최신 릴리즈를 읽지 못했습니다: {reason}",
   "error.update.install_failed.error": "설치를 시작하지 못했습니다: {reason}",
   "error.update.not_installable.error": "이 화면에서는 업데이트를 설치할 수 없습니다. Tunnel Manager 서버에서 tunnel-manager 가 등록된 서비스가 아니라 누군가 직접 실행한 프로그램으로 동작하고 있어서, 설치 뒤에 다시 실행해 줄 것이 없습니다",
+  "error.update.nothing_newer.error": "설치할 새 릴리즈가 없습니다. 마지막 확인에서 실행 중인 버전보다 최신인 릴리즈를 찾지 못해 아무것도 설치하지 않았습니다. 다시 확인하고, 새 릴리즈가 나오면 설치하십시오",
   "error.update.password_missing.error": "업데이트를 설치하려면 계정 비밀번호를 입력하십시오",
   "error.update.password_wrong.error": "이 계정의 비밀번호가 아닙니다. 아무것도 설치하지 않았습니다",
   "form.bind-scope-loopback.option": "Host 자신만 (127.0.0.1 과 ::1)",

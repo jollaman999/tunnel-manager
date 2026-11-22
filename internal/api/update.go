@@ -240,6 +240,16 @@ func (h *UpdateHandler) InstallUpdate(c *echo.Context) error {
 		return failure(c, http.StatusConflict, errUpdateNotInstallable)
 	}
 
+	// The install takes whatever the newest release is, whatever this process
+	// is running. A press where the last look found nothing newer would put the
+	// same release in place again, which takes every tunnel down for nothing,
+	// or put an older one over a build that is ahead of what was released. So
+	// a press asks what the loop asks before it installs on its own, and what
+	// the screen asks before it offers the press.
+	if !h.NewerAvailable() {
+		return failure(c, http.StatusConflict, errUpdateNothingNewer)
+	}
+
 	if req.Password == "" {
 		return failure(c, http.StatusBadRequest, errUpdatePasswordMissing)
 	}

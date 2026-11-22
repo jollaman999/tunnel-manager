@@ -1491,6 +1491,11 @@ fatal  failed to read the settings  {"error": "the stored settings are refused: 
 服务，而此后没有东西会再次启动该进程。页面会在按钮的位置说明这一点，`POST /api/update/install`
 返回 `409`。
 
+API 也按给出按钮的同一条件判断。如果上一次查看没有找到更新的发布、标签无法比较，或者查看失败、尚未
+运行过，`POST /api/update/install` 返回 `409` 和 `update.nothing_newer`，不会安装任何东西。`-install`
+不管正在运行什么都会放上最新的发布，所以照样继续的话，会把正在运行的发布再放一次，或者把较旧的发布
+放到领先于它的构建上面，并为此断开所有隧道。
+
 ### 不询问就安装
 
 `update_auto_install` 除非在此开启，否则一直关闭。开启后，被读作更新的发布会在无人按下任何按钮的

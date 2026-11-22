@@ -345,6 +345,7 @@
   "error.update.check_failed.error": "تعذّرت قراءة أحدث إصدار: {reason}",
   "error.update.install_failed.error": "تعذّر بدء التثبيت: {reason}",
   "error.update.not_installable.error": "لا يمكن تثبيت تحديث من هذه الشاشة. فـ tunnel-manager يعمل على خادم Tunnel Manager كبرنامج شغّله أحدهم لا كخدمة مسجَّلة، فلا شيء يعيد تشغيله بعد ذلك",
+  "error.update.nothing_newer.error": "لا يوجد إصدار أحدث لتثبيته. لم يعثر آخر بحث على إصدار أحدث من الإصدار الذي يعمل، فلم يُثبَّت شيء. ابحث مرة أخرى، وثبّت حين يُعثر على إصدار أحدث",
   "error.update.password_missing.error": "أدخل كلمة مرور حسابك لتثبيت التحديث",
   "error.update.password_wrong.error": "هذه ليست كلمة مرور هذا الحساب. لم يُثبَّت شيء",
   "form.bind-scope-loopback.option": "الـ Host نفسه فقط (127.0.0.1 و ::1)",

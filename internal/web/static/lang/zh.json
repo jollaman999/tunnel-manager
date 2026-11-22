@@ -345,6 +345,7 @@
   "error.update.check_failed.error": "无法读取最新发布：{reason}",
   "error.update.install_failed.error": "无法开始安装：{reason}",
   "error.update.not_installable.error": "无法从此页面安装更新。tunnel-manager 在 Tunnel Manager 服务器上是以某人直接启动的方式运行，而不是注册的服务，因此安装后没有东西会重新启动它",
+  "error.update.nothing_newer.error": "没有可安装的新发布。上次查看时没有找到比正在运行的版本更新的发布，因此未安装任何内容。请再查看一次，找到更新的发布后再安装",
   "error.update.password_missing.error": "请输入你的账号密码以安装更新",
   "error.update.password_wrong.error": "这不是这个账号的密码。未安装任何内容",
   "form.bind-scope-loopback.option": "仅 Host 自身（127.0.0.1 和 ::1）",

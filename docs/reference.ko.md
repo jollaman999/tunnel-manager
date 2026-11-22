@@ -1655,6 +1655,12 @@ fatal  failed to read the settings  {"error": "the stored settings are refused: 
 이 서비스를 등록해 버리고, 그 뒤에 프로세스를 다시 띄워 줄 것이 없기 때문입니다. 버튼 자리에
 그 사실을 적고, `POST /api/update/install` 은 `409` 로 답합니다.
 
+API 도 버튼이 나오는 조건을 그대로 봅니다. 마지막 확인에서 새 것을 못 찾았거나, 비교할 수 없는
+태그였거나, 확인이 실패했거나 아직 한 번도 안 돌았으면 `POST /api/update/install` 은 `409` 와
+`update.nothing_newer` 로 답하고 아무것도 설치하지 않습니다. `-install` 은 무엇이 돌든 최신 릴리즈를
+놓기 때문에, 그대로 진행하면 지금 도는 릴리즈를 다시 놓거나 더 앞선 빌드 위에 옛 릴리즈를 놓으면서
+터널을 전부 내립니다.
+
 ### 묻지 않고 설치
 
 `update_auto_install` 은 켜지 않으면 꺼져 있습니다. 켜면 새 것으로 읽힌 릴리즈를 아무도 누르지
