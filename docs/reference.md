@@ -2044,6 +2044,13 @@ CSRF stands for cross site request forgery: another site making your browser sen
 a request with your cookies attached. The token defeats it because that site
 cannot read the answer of your login and cannot set the header.
 
+**If a service you do not trust runs on the same host name, give Tunnel Manager
+a host name of its own.** Cookies carry no port (RFC 6265, section 8.5): a
+browser sends these cookies to every port of the host name it reached Tunnel
+Manager by, so a service on another port reads them off the requests it gets and
+can set cookies of the same names. No cookie attribute changes that, and the
+`__Host-` prefix only keeps other host names and plain HTTP from writing them.
+
 The server sends no `Access-Control-Allow-Origin` header at all. That is a rule
 browsers apply to pages, not a check this server performs, so `curl`, scripts and
 server to server calls are untouched; a page on another origin is not.
