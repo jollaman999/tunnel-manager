@@ -1366,6 +1366,21 @@ func (a installation) runInstall(out io.Writer) error {
 		plan = plan.WithDatabase(a.database)
 	}
 
+	return installRelease(plan, installSteps{fetch: install.Fetch, put: install.Install}, out)
+}
+
+// installSteps are the two steps of an install that reach off this machine or
+// change it: the download of the release and putting it in place. They are
+// handed to installRelease so that a test follows it in the order runInstall
+// takes it, without a download and without a service manager.
+type installSteps struct {
+	fetch func(ctx context.Context, dir string) (*install.Fetched, error)
+	put   func(plan install.Plan, executable string, source string, out io.Writer) (install.Outcome, error)
+}
+
+// installRelease is runInstall once the privilege has been checked and the plan
+// worked out: the lock, the download and the install.
+func installRelease(plan install.Plan, steps installSteps, out io.Writer) error {
 	// One install of an installation runs at a time. A press on the Update
 	// screen, the loop that installs on its own and an operator at a terminal
 	// can each start one, and two that overlap would each stop the service and
@@ -1387,14 +1402,14 @@ func (a installation) runInstall(out io.Writer) error {
 		_ = os.RemoveAll(dir)
 	}()
 
-	fetched, err := install.Fetch(context.Background(), dir)
+	fetched, err := steps.fetch(context.Background(), dir)
 	if err != nil {
 		return err
 	}
 
 	defer fetched.Close()
 
-	_, err = install.Install(plan, fetched.Path, installSource(fetched), out)
+	_, err = steps.put(plan, fetched.Path, installSource(fetched), out)
 
 	return err
 }
