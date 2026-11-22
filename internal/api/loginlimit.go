@@ -318,21 +318,7 @@ func (l *loginLimiter) recordFailure(keys []loginKey) {
 	l.prune(now)
 }
 
-// succeeded forgets both counters of an attempt that got the password right.
-//
-// It is what keeps the limit off the operator: somebody who mistypes four times
-// and then signs in is back at nothing, rather than carrying those four
-// failures into the next quarter of an hour where one more slip would hold
-// them. It costs an attacker nothing to reach, because reaching it means they
-// already have the password.
-func (l *loginLimiter) succeeded(address string, accountID uint) {
-	l.mu.Lock()
-	defer l.mu.Unlock()
-
-	l.forget(loginKeysOf(address, accountID))
-}
-
-// forget is succeeded with the lock already held.
+// forget drops the counters of the keys given. The caller holds the lock.
 func (l *loginLimiter) forget(keys []loginKey) {
 	for _, key := range keys {
 		delete(l.failures, key)
@@ -488,8 +474,13 @@ func (a *loginAttempt) failed() {
 	}
 }
 
-// succeeded ends the attempt as the right password and forgets both counters,
-// for the reason loginLimiter.succeeded gives.
+// succeeded ends the attempt as the right password and forgets both counters.
+//
+// It is what keeps the limit off the operator: somebody who mistypes four times
+// and then signs in is back at nothing, rather than carrying those four
+// failures into the next quarter of an hour where one more slip would hold
+// them. It costs an attacker nothing to reach, because reaching it means they
+// already have the password.
 func (a *loginAttempt) succeeded() {
 	a.limiter.mu.Lock()
 	defer a.limiter.mu.Unlock()

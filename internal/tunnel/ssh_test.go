@@ -10,13 +10,11 @@ import (
 	"fmt"
 	"io"
 	"net"
-	"net/netip"
 	"runtime"
 	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
-	"syscall"
 	"testing"
 	"time"
 
@@ -2270,59 +2268,6 @@ func TestForwardEndsWhenTheServiceConnectionIsReset(t *testing.T) {
 	}
 }
 
-// startBlackholeListener returns an address that neither answers a connection
-// nor refuses one, which is the case the probe timeout exists for.
-//
-// The socket listens with a backlog of one and nothing ever accepts from it, so
-// the connection made here fills the queue and every SYN after it is dropped by
-// the kernel instead of being answered. net.Listen has no way to ask for a
-// backlog, so the socket is built with the syscall package, and what a full
-// queue does is the kernel's own behaviour, so the test that uses this runs on
-// Linux alone.
-func startBlackholeListener(t *testing.T) string {
-	t.Helper()
-
-	fd, err := syscall.Socket(syscall.AF_INET, syscall.SOCK_STREAM, 0)
-	if err != nil {
-		t.Fatalf("failed to open a socket: %v", err)
-	}
-	t.Cleanup(func() {
-		_ = syscall.Close(fd)
-	})
-
-	err = syscall.Bind(fd, &syscall.SockaddrInet4{Port: 0, Addr: [4]byte{127, 0, 0, 1}})
-	if err != nil {
-		t.Fatalf("failed to bind the socket: %v", err)
-	}
-
-	err = syscall.Listen(fd, 0)
-	if err != nil {
-		t.Fatalf("failed to listen with a backlog of one: %v", err)
-	}
-
-	bound, err := syscall.Getsockname(fd)
-	if err != nil {
-		t.Fatalf("failed to read the bound address: %v", err)
-	}
-
-	sa, ok := bound.(*syscall.SockaddrInet4)
-	if !ok {
-		t.Fatalf("the bound address is %T, want an IPv4 one", bound)
-	}
-
-	addr := net.JoinHostPort("127.0.0.1", strconv.Itoa(sa.Port))
-
-	filler, err := net.DialTimeout("tcp", addr, 5*time.Second)
-	if err != nil {
-		t.Fatalf("failed to fill the accept queue: %v", err)
-	}
-	t.Cleanup(func() {
-		_ = filler.Close()
-	})
-
-	return addr
-}
-
 // closedPort returns an address nothing listens on. The port was listened on a
 // moment earlier, so it is one this machine hands out, and it is closed again
 // before it is returned.
@@ -2344,29 +2289,6 @@ func closedPort(t *testing.T) string {
 	return addr
 }
 
-// waitForFinished waits for the counter to reach want and says whether it did
-// inside the time given. The counter is read under the lock it is written
-// under, and the wait is bounded so that a connection the listener never
-// finishes with fails the test rather than hanging it.
-func waitForFinished(mu *sync.Mutex, done *int, want int, within time.Duration) bool {
-	deadline := time.Now().Add(within)
-	for {
-		mu.Lock()
-		reached := *done
-		mu.Unlock()
-
-		if reached >= want {
-			return true
-		}
-
-		if !time.Now().Before(deadline) {
-			return false
-		}
-
-		time.Sleep(time.Millisecond)
-	}
-}
-
 // TestForwardProbeTimeoutMatchesTheForwardDial keeps the two bounds one number.
 // They are the same kind of wait against the same kind of peer, and two numbers
 // to reason about is one more than there is reason for.
@@ -2378,19 +2300,6 @@ func TestForwardProbeTimeoutMatchesTheForwardDial(t *testing.T) {
 	if forwardProbeTimeout <= 0 {
 		t.Fatalf("forwardProbeTimeout = %v, so the probe is dialed with no bound at all", forwardProbeTimeout)
 	}
-}
-
-// resolveTestTCPAddr parses an IP literal and port with the failure reported
-// here, so that a table of addresses reads as a table.
-func resolveTestTCPAddr(t *testing.T, address string) *net.TCPAddr {
-	t.Helper()
-
-	addr, err := netip.ParseAddrPort(address)
-	if err != nil {
-		t.Fatalf("failed to parse %q: %v", address, err)
-	}
-
-	return net.TCPAddrFromAddrPort(addr)
 }
 
 // readTunnelBanner reads the banner under the lock the tunnel row is written

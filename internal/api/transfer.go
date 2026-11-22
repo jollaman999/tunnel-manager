@@ -628,15 +628,6 @@ func (t transferText) english() string {
 	return english
 }
 
-// namedBy writes the name of the item from a sentence.
-func (item transferItem) namedBy(name transferText) transferItem {
-	item.Name = name.english()
-	item.NameCode = name.code
-	item.NameValues = name.values
-
-	return item
-}
-
 // because writes the reason of the item from a sentence.
 func (item transferItem) because(reason transferText) transferItem {
 	item.Reason = reason.english()
@@ -1050,15 +1041,6 @@ func whatIsIn(kind string) (string, textCode) {
 	}
 
 	return "a kind this version does not know (" + kind + ")", textImportKindUnknown
-}
-
-// exportedBy names the version that wrote a file, when the file says.
-func exportedBy(version string) string {
-	if version == "" {
-		return ""
-	}
-
-	return " (" + version + ")"
 }
 
 // unseal returns the plaintext of a value the database holds sealed with the
