@@ -1346,9 +1346,9 @@ type installation struct {
 // on a machine that cannot reach GitHub needs. Started by an update, the same
 // fallback is the version this service already runs: the service is stopped,
 // the same file is copied over itself and started again, the newer release is
-// still there to be found, and the loop that installs on its own finds it in
-// the first minute of the process the restart started, which has never looked.
-// So an update installs the release or nothing.
+// still there to be found, and the loop that installs on its own finds it one
+// interval into the process the restart started and does the same again, once
+// every interval. So an update installs the release or nothing.
 //
 // It is left out of the usage. Its name says who started the install, and that
 // is the service; an operator has no use for it.

@@ -2011,8 +2011,9 @@ no `SHA256SUMS` or no line in it for this platform, a release that cannot be
 read or downloaded - the update stops. Put in place, that executable is the
 version the service already runs: the service would be stopped and started
 again for nothing, the newer release would still be there, and the process the
-restart started would find it again in its first minute and start the same
-install. The update stops before the service is stopped, so the service goes on
+restart started would find it again one interval later and start the same
+install, so the service would go down and up for nothing once every interval.
+The update stops before the service is stopped, so the service goes on
 running the version it had, and the reason is on the Update tab (see below) and
 in the report of the install: the journal on systemd, `logs/update-install.log`
 beside the database file elsewhere. With nothing restarted, the loop under
