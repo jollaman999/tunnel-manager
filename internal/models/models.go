@@ -326,29 +326,40 @@ type Tunnel struct {
 	JumpSeq    int    `json:"jump_seq"`
 	JumpHostID uint   `json:"jump_host_id"`
 	JumpReason string `json:"jump_reason"`
-	// OpenReach says which of the two addresses this assignment asked for were
-	// actually opened.
+	// OpenReach says which of the two addresses of the bind scope went up.
 	//   "both"  - both went up
-	//   "ipv4"  - only 127.0.0.1 or 0.0.0.0 went up; the IPv6 one was refused
-	//   "ipv6"  - only ::1 or :: went up; the IPv4 one was refused
+	//   "ipv4"  - only 127.0.0.1 or 0.0.0.0 went up; the IPv6 one did not
+	//   "ipv6"  - only ::1 or :: went up; the IPv4 one did not
 	//   ""      - nothing measured yet, or a row written before this column
 	//
-	// A scope names a pair of addresses, one per family, and the far side
-	// answers each request on its own, so the assignment can end up half open.
+	// Who says so differs by the sort of row, and so does what the reading is
+	// worth.
+	//
+	// On a service port row it is what the SSH server answered. The port is
+	// opened on the Host, which is asked once for each address and answers
+	// each request on its own, so the assignment can end up half open. It says
+	// what was answered and not why: a server that refuses the second request
+	// because it already bound both families on the first and one that has no
+	// IPv6 at all answer identically, so neither may be reported as the cause,
+	// and an answer is not a binding.
+	//
+	// On a local forward row it is what the Tunnel Manager server itself
+	// opened, which is a measurement and not an answer. The port is opened on
+	// this machine, so a half that is missing is one it could not open: another
+	// program holds the port on that address, or the address is not available
+	// here. Local then names the half that opened. The SOCKS5 proxy of a Host
+	// opens its port the same way and reports the same reading as
+	// socks_open_reach on the Host.
+	//
 	// The empty value is nothing measured rather than nothing open: a row that
-	// has not been connected yet and a row whose IPv6 request was refused must
+	// has not been connected yet and a row of which one half did not go up must
 	// not read alike, and a screen that draws a warning on the first would put
 	// one on every tunnel that is still starting.
 	//
-	// Both requests being refused is not one of these readings. Nothing is
-	// forwarded then, which is a failure of the tunnel rather than a fact
-	// about how far it reaches, and it is reported the way every other failure
-	// is, on Status, LastError and ErrorKind.
-	//
-	// It says what happened and not why. A server that
-	// refuses the second request because it already bound both families on the
-	// first and one that has no IPv6 at all answer identically, so neither may
-	// be reported as the cause.
+	// Neither half going up is not one of these readings. Nothing is forwarded
+	// then, which is a failure of the forward rather than a fact about how far
+	// it reaches, and it is reported the way every other failure is, on Status,
+	// LastError and, on a service port row, ErrorKind.
 	OpenReach string `json:"open_reach"`
 	// ListenAddresses are the addresses the Host itself said are listening on
 	// the forwarded port, comma separated, each one an address that parsed as
