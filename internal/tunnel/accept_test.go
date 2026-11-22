@@ -319,6 +319,7 @@ func TestAcceptErrorPassesOnlyForWhatNetHTTPWaitsOut(t *testing.T) {
 		}
 
 		ne, ok := c.err.(net.Error)
+		//lint:ignore SA1019 net/http's Server.Serve still decides on Temporary (net/http/server.go:3583 in Go 1.27.4), and this asks what it decides
 		if http := ok && ne.Temporary(); http != c.want {
 			t.Errorf("net/http waits out %s: %v, the case says %v", c.name, http, c.want)
 		}

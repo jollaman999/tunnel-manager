@@ -763,6 +763,7 @@ func CheckPrivilege() error {
 		return nil
 	}
 
+	//lint:ignore ST1005 the operator reads this as it is, two sentences, and the hint ends in a full stop of its own
 	return errors.New("installing and removing the service needs more than this process has. " + privilegeHint)
 }
 

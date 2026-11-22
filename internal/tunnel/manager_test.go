@@ -120,6 +120,7 @@ func TestStopAllTunnelsWithFailingDB(t *testing.T) {
 	locked := make(chan struct{})
 	go func() {
 		m.mu.Lock()
+		//lint:ignore SA2001 taking the lock and letting it go is the whole check, it only gets through if nothing still holds it
 		m.mu.Unlock()
 		close(locked)
 	}()
