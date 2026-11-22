@@ -146,6 +146,14 @@ type Manager struct {
 	reconnectHosts map[uint]bool
 	reconnectMu    sync.Mutex
 
+	// stopping holds, under m.mu, the tunnels that StopTunnel has taken out of
+	// m.tunnels and is still stopping, by the same key. The channel is closed
+	// once the stop is done. The row of a tunnel is keyed by its Host and its
+	// service port, which is the key here, so a stop that is still deleting
+	// it would take the row of a tunnel started again under the key in the
+	// meantime; StartTunnel waits on the channel for that reason.
+	stopping map[string]chan struct{}
+
 	// signers holds the private key of every Host as it was last read, so
 	// that the key is read once rather than once for every connection made
 	// with it. What is kept and when it is read again is at signerCache.
@@ -249,6 +257,7 @@ func NewManager(db *gorm.DB, logger *zap.Logger, cipher *crypto.Cipher, monitori
 	return &Manager{
 		db:                    db,
 		tunnels:               make(map[string]*SSHTunnel),
+		stopping:              make(map[string]chan struct{}),
 		logger:                logger,
 		cipher:                cipher,
 		monitoringIntervalSec: monitoringIntervalSec,
@@ -1067,6 +1076,19 @@ func (m *Manager) StartTunnel(host *models.Host, sp *models.ServicePort, bindSco
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
+	// A stop of the tunnel under this key that has not finished is waited
+	// for, since it is still to delete the row this start is about to make.
+	for {
+		stopped, stopping := m.stopping[key]
+		if !stopping {
+			break
+		}
+
+		m.mu.Unlock()
+		<-stopped
+		m.mu.Lock()
+	}
+
 	// Asked again under the lock, since another start of the same tunnel can
 	// have registered it while this one was being built.
 	if _, exists := m.tunnels[key]; exists {
@@ -1102,18 +1124,36 @@ func (m *Manager) tunnelRegistered(key string) bool {
 	return exists
 }
 
+// StopTunnel stops the tunnel running under the Host and the service port and
+// deletes its row.
+//
+// m.mu is held only to take the tunnel out of m.tunnels and not while it is
+// stopped. Stopping it waits for a write of its status that is under way and
+// then deletes its row, both of which take as long as the database does, and
+// every status call and every pass waits on m.mu. The key is marked in
+// m.stopping for that time, which StartTunnel waits on.
 func (m *Manager) StopTunnel(hostID uint, spID uint) error {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-
 	key := tunnelKey(hostID, spID)
+
+	m.mu.Lock()
 	tunnel, exists := m.tunnels[key]
 	if !exists {
+		m.mu.Unlock()
 		return ErrTunnelNotExist
 	}
 
-	err := tunnel.Stop(m)
+	stopped := make(chan struct{})
 	delete(m.tunnels, key)
+	m.stopping[key] = stopped
+	m.mu.Unlock()
+
+	err := tunnel.Stop(m)
+
+	m.mu.Lock()
+	delete(m.stopping, key)
+	m.mu.Unlock()
+	close(stopped)
+
 	if err != nil {
 		return fmt.Errorf("failed to stop tunnel: %w", err)
 	}
