@@ -238,6 +238,9 @@ func startInstall(command *exec.Cmd, release func()) error {
 // report then goes to a file rather than to nothing: an install that fails is
 // the one moment those lines are worth having, and the process that would have
 // read them from a terminal is not there.
+//
+// Either way -install carries fromUpdateFlag, which keeps it from putting the
+// executable that is running back in place when the release cannot be used.
 func installCommand(running string, databaseFile string) (*exec.Cmd, bool, func(), error) {
 	if runtime.GOOS == "linux" {
 		runner, err := exec.LookPath("systemd-run")
@@ -245,11 +248,11 @@ func installCommand(running string, databaseFile string) (*exec.Cmd, bool, func(
 			unit := fmt.Sprintf("tunnel-manager-install-%d", os.Getpid())
 
 			return exec.Command(runner, "--collect", "--quiet", "--unit", unit,
-				running, "-install", "-db", databaseFile), true, func() {}, nil
+				running, "-install", "-"+fromUpdateFlag, "-db", databaseFile), true, func() {}, nil
 		}
 	}
 
-	command := exec.Command(running, "-install", "-db", databaseFile)
+	command := exec.Command(running, "-install", "-"+fromUpdateFlag, "-db", databaseFile)
 
 	// On Windows the report is made with the DACL of the owner, SYSTEM and
 	// Administrators first, as the log beside it is. On Unix this does nothing.

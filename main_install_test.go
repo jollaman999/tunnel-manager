@@ -6,6 +6,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/jollaman999/tunnel-manager/internal/install"
@@ -66,7 +67,7 @@ func TestARefusedInstallLeavesNoDataDirectory(t *testing.T) {
 
 			steps, _ := installStepsThat(t, tt.fetchErr, tt.putErr)
 
-			err := installRelease(plan, steps, io.Discard)
+			err := installRelease(plan, steps, false, io.Discard)
 			if err == nil {
 				t.Fatal("the install reported that it went through")
 			}
@@ -94,7 +95,7 @@ func TestAnInstallKeepsTheDataDirectoryItWasGiven(t *testing.T) {
 		plan := install.Defaults().WithDatabase(filepath.Join(dataDir, "tm.db"))
 		steps, _ := installStepsThat(t, nil, errors.New("refused"))
 
-		if installRelease(plan, steps, io.Discard) == nil {
+		if installRelease(plan, steps, false, io.Discard) == nil {
 			t.Fatal("the install reported that it went through")
 		}
 
@@ -106,7 +107,7 @@ func TestAnInstallKeepsTheDataDirectoryItWasGiven(t *testing.T) {
 		plan := install.Defaults().WithDatabase(filepath.Join(dataDir, "tm.db"))
 		steps, reached := installStepsThat(t, nil, nil)
 
-		err := installRelease(plan, steps, io.Discard)
+		err := installRelease(plan, steps, false, io.Discard)
 		if err != nil {
 			t.Fatalf("the install failed: %v", err)
 		}
@@ -117,6 +118,87 @@ func TestAnInstallKeepsTheDataDirectoryItWasGiven(t *testing.T) {
 
 		assertEmptyDirectory(t, dataDir)
 	})
+}
+
+// TestAnUpdateInstallsTheReleaseOrNothing is the one place an install the
+// service started and one somebody typed part ways. Where the release cannot be
+// used, the typed one puts the running executable in place, and the update
+// stops before put, which is the step that stops the service, with the reason.
+func TestAnUpdateInstallsTheReleaseOrNothing(t *testing.T) {
+	why := "release v3.7.5 carries no SHA256SUMS.sig"
+
+	cases := []struct {
+		name       string
+		source     install.Source
+		fromUpdate bool
+		wantPut    bool
+	}{
+		{"typed, the release cannot be used", install.SourceRunning, false, true},
+		{"an update, the release cannot be used", install.SourceRunning, true, false},
+		{"an update, the release was checked", install.SourceRelease, true, true},
+		{"typed, the release was checked", install.SourceRelease, false, true},
+	}
+
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			plan := install.Defaults().WithDatabase(filepath.Join(t.TempDir(), "data", "tm.db"))
+
+			reached := false
+
+			steps := installSteps{
+				fetch: func(context.Context, string) (*install.Fetched, error) {
+					return &install.Fetched{Path: "/usr/local/bin/tunnel-manager", Source: c.source,
+						Tag: "v3.7.5", Verified: c.source == install.SourceRelease, Why: why}, nil
+				},
+				put: func(install.Plan, string, string, io.Writer) (install.Outcome, error) {
+					reached = true
+
+					return install.Outcome{}, nil
+				},
+			}
+
+			err := installRelease(plan, steps, c.fromUpdate, io.Discard)
+
+			if reached != c.wantPut {
+				t.Errorf("put reached = %v, want %v", reached, c.wantPut)
+			}
+
+			if c.wantPut && err != nil {
+				t.Errorf("the install failed: %v", err)
+			}
+
+			if !c.wantPut && (err == nil || !strings.Contains(err.Error(), why)) {
+				t.Errorf("the install answered %v, want an error that carries %q", err, why)
+			}
+		})
+	}
+}
+
+// TestFromUpdateGoesWithInstall is the hidden flag given on its own, or with
+// -uninstall, which it has nothing to say about.
+func TestFromUpdateGoesWithInstall(t *testing.T) {
+	cases := []struct {
+		name   string
+		asked  installation
+		refuse bool
+	}{
+		{"with -install", installation{install: true, fromUpdate: true}, false},
+		{"on its own", installation{fromUpdate: true}, true},
+		{"with -uninstall", installation{uninstall: true, fromUpdate: true}, true},
+	}
+
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			if !c.asked.asked() {
+				t.Fatal("the command line was not taken for an installation command")
+			}
+
+			err := c.asked.check()
+			if (err != nil) != c.refuse {
+				t.Errorf("check answered %v, want refused = %v", err, c.refuse)
+			}
+		})
+	}
 }
 
 // assertEmptyDirectory holds dir to being there with nothing in it: the lock

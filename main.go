@@ -1314,7 +1314,7 @@ func defaultDatabasePath() (string, error) {
 	return filepath.Join(dir, "tunnel-manager", databaseFileName), nil
 }
 
-// installation is what the four installation flags were given, gathered so that
+// installation is what the installation flags were given, gathered so that
 // the checks between them are made in one place.
 //
 // binNamed and databaseNamed are carried beside the values because "left out"
@@ -1332,21 +1332,41 @@ type installation struct {
 	databaseNamed bool
 	purge         bool
 	assumeYes     bool
+	// fromUpdate is an -install this service started, from the Update screen
+	// or from the loop that installs on its own. See fromUpdateFlag.
+	fromUpdate bool
 }
+
+// fromUpdateFlag is the flag installCommand starts -install with, which is what
+// tells an install this service asked for from one somebody typed.
+//
+// The two take a release that cannot be checked differently. Typed, the install
+// puts the running executable in place instead, which is what a first install
+// on a machine that cannot reach GitHub needs. Started by an update, the same
+// fallback is the version this service already runs: the service is stopped,
+// the same file is copied over itself and started again, the newer release is
+// still there to be found, and the loop that installs on its own finds it in
+// the first minute of the process the restart started, which has never looked.
+// So an update installs the release or nothing.
+//
+// It is left out of the usage. Its name says who started the install, and that
+// is the service; an operator has no use for it.
+const fromUpdateFlag = "from-update"
 
 // installationAsked reads the installation flags off the command line.
 //
 // flag.Visit walks the flags that were given rather than all of them, which is
 // the only way to tell a -db that was left out from one that was named.
 func installationAsked(install bool, uninstall bool, bin string, database string, purge bool,
-	assumeYes bool) installation {
+	assumeYes bool, fromUpdate bool) installation {
 	asked := installation{
-		install:   install,
-		uninstall: uninstall,
-		bin:       bin,
-		database:  database,
-		purge:     purge,
-		assumeYes: assumeYes,
+		install:    install,
+		uninstall:  uninstall,
+		bin:        bin,
+		database:   database,
+		purge:      purge,
+		assumeYes:  assumeYes,
+		fromUpdate: fromUpdate,
 	}
 
 	flag.Visit(func(f *flag.Flag) {
@@ -1369,7 +1389,7 @@ func installationAsked(install bool, uninstall bool, bin string, database string
 // would go on serving while the operator waited for an install, and a -purge
 // that was quietly dropped would leave somebody believing their data was gone.
 func (a installation) asked() bool {
-	return a.install || a.uninstall || a.binNamed || a.purge || a.assumeYes
+	return a.install || a.uninstall || a.binNamed || a.purge || a.assumeYes || a.fromUpdate
 }
 
 // check reports the combinations that are refused, so that they are refused
@@ -1392,6 +1412,11 @@ func (a installation) check() error {
 	if a.assumeYes && !a.uninstall {
 		return errors.New("-y answers the question -uninstall asks before it removes anything. " +
 			"It goes with -uninstall")
+	}
+
+	if a.fromUpdate && !a.install {
+		return errors.New("-" + fromUpdateFlag + " is how this service starts an -install of an update. " +
+			"It goes with -install")
 	}
 
 	return nil
@@ -1455,7 +1480,7 @@ func (a installation) runInstall(out io.Writer) error {
 		plan = plan.WithDatabase(a.database)
 	}
 
-	return installRelease(plan, installSteps{fetch: install.Fetch, put: install.Install}, out)
+	return installRelease(plan, installSteps{fetch: install.Fetch, put: install.Install}, a.fromUpdate, out)
 }
 
 // installSteps are the two steps of an install that reach off this machine or
@@ -1468,8 +1493,9 @@ type installSteps struct {
 }
 
 // installRelease is runInstall once the privilege has been checked and the plan
-// worked out: the lock, the download and the install.
-func installRelease(plan install.Plan, steps installSteps, out io.Writer) error {
+// worked out: the lock, the download and the install. fromUpdate is an install
+// this service started, which takes a release or nothing; see fromUpdateFlag.
+func installRelease(plan install.Plan, steps installSteps, fromUpdate bool, out io.Writer) error {
 	// One install of an installation runs at a time. A press on the Update
 	// screen, the loop that installs on its own and an operator at a terminal
 	// can each start one, and two that overlap would each stop the service and
@@ -1505,6 +1531,13 @@ func installRelease(plan install.Plan, steps installSteps, out io.Writer) error 
 	}
 
 	defer fetched.Close()
+
+	// The refusal comes before put, which is the step that stops the service,
+	// so an update that ends here leaves the service running as it was.
+	if fromUpdate && fetched.Source == install.SourceRunning {
+		return fmt.Errorf("the update was not installed and nothing was stopped or replaced: "+
+			"the release was not used (%s), and an update installs a release or nothing", fetched.Why)
+	}
 
 	_, err = steps.put(plan, fetched.Path, installSource(fetched), out)
 	installed = err == nil
@@ -1586,13 +1619,35 @@ func usage() {
 	fmt.Fprintf(out, "Usage: %s [flags]\n\n", filepath.Base(os.Args[0]))
 	fmt.Fprintf(out, "Flags:\n")
 
-	flag.PrintDefaults()
+	printShownFlags(out)
 
 	fmt.Fprintf(out, "\nThere is no configuration file. The database file is the whole of this "+
 		"installation:\nevery other setting is kept in it and is changed on the Settings screen "+
 		"of the web UI.\n")
 	fmt.Fprintf(out, "\nRun with -install to have this system start and keep this program running, "+
 		"and with\n-uninstall to take that away again.\n")
+}
+
+// printShownFlags is flag.PrintDefaults without fromUpdateFlag.
+//
+// The flags are copied onto a set of their own and printed from there, because
+// the flag package prints every flag of a set and has no way to leave one out.
+// The default is copied as it was registered: a copy made from the value would
+// print what this command line set it to, which is not a default.
+func printShownFlags(out io.Writer) {
+	shown := flag.NewFlagSet(flag.CommandLine.Name(), flag.ContinueOnError)
+	shown.SetOutput(out)
+
+	flag.VisitAll(func(f *flag.Flag) {
+		if f.Name == fromUpdateFlag {
+			return
+		}
+
+		shown.Var(f.Value, f.Name, f.Usage)
+		shown.Lookup(f.Name).DefValue = f.DefValue
+	})
+
+	shown.PrintDefaults()
 }
 
 // serviceStopped is closed when the service control manager asks this process
@@ -1780,6 +1835,8 @@ func serve() {
 			"of what would go is still printed.\n"+
 			"An uninstall whose standard input is not a terminal - one run from a script -\n"+
 			"has nobody to ask and is refused without this.")
+	fromUpdate := flag.Bool(fromUpdateFlag, false,
+		"with -install, install the release or nothing. The service starts its updates with it.")
 	flag.Parse()
 
 	if *versionFlag {
@@ -1794,7 +1851,8 @@ func serve() {
 	// database of the installation it is laying down, and opening one first
 	// would build it under whoever ran the command rather than where the
 	// service is about to be registered to read it from.
-	installation := installationAsked(*installFlag, *uninstallFlag, *binPath, *dbPath, *purge, *assumeYes)
+	installation := installationAsked(*installFlag, *uninstallFlag, *binPath, *dbPath, *purge, *assumeYes,
+		*fromUpdate)
 	if installation.asked() {
 		// The standard input is handed over because the uninstall asks before
 		// it removes anything, and whether there is anybody to answer is read

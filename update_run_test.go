@@ -3,10 +3,12 @@ package main
 import (
 	"context"
 	"errors"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strconv"
 	"strings"
 	"sync/atomic"
@@ -61,7 +63,8 @@ func TestInstallCommandRunsOutsideThisServiceOnSystemd(t *testing.T) {
 
 	line := strings.Join(command.Args, " ")
 
-	for _, want := range []string{"--collect", "--unit", "-install", "-db /var/lib/tunnel-manager/tunnel-manager.db"} {
+	for _, want := range []string{"--collect", "--unit", "-install", "-" + fromUpdateFlag,
+		"-db /var/lib/tunnel-manager/tunnel-manager.db"} {
 		if !strings.Contains(line, want) {
 			t.Errorf("the command is %q, want it to carry %q", line, want)
 		}
@@ -475,5 +478,157 @@ func TestAnInstallWhoseLockIsNeverLetGoIsTakenAsOver(t *testing.T) {
 
 	if logs.FilterField(logid.UpdateInstallWaitGaveUp.Field()).Len() != 1 {
 		t.Errorf("no line says the wait gave up. Lines: %v", logs.All())
+	}
+}
+
+// TestAnUpdateWhoseReleaseCannotBeCheckedDoesNotRestartTheService is the
+// install the loop starts on its own, followed past the end of this process.
+//
+// The release is newer and carries nothing its download could be checked
+// against, which is what a release made before the checksums were signed looks
+// like, so Fetch answers with the executable that is running. The service is
+// stood in for by a loop and a handler; an install that reaches put is a
+// restart of it, and the next one starts with a loop that has never looked.
+func TestAnUpdateWhoseReleaseCannotBeCheckedDoesNotRestartTheService(t *testing.T) {
+	db := newSettingsDB(t)
+
+	loaded, err := settings.Load(db)
+	if err != nil {
+		t.Fatalf("failed to read the settings: %v", err)
+	}
+
+	stored := *loaded
+	stored.UpdateCheckEnabled = true
+	stored.UpdateAutoInstall = true
+
+	err = settings.Save(db, &stored, nil)
+	if err != nil {
+		t.Fatalf("failed to store the settings: %v", err)
+	}
+
+	if stored.UpdateCheckIntervalHours != 24 {
+		t.Fatalf("the interval is %d hours, want the default of 24", stored.UpdateCheckIntervalHours)
+	}
+
+	tick := updateCheckTick
+	updateCheckTick = 5 * time.Millisecond
+
+	t.Cleanup(func() {
+		updateCheckTick = tick
+	})
+
+	plan := install.Defaults().WithDatabase(filepath.Join(t.TempDir(), "data", "tunnel-manager.db"))
+
+	// The install is run with what the command this service starts it with
+	// says, so that a command that left the flag out is the install that
+	// restarts the service.
+	command, _, release, err := installCommand("/usr/local/bin/tunnel-manager", reportPlace(t))
+	if err != nil {
+		t.Fatalf("building the command failed: %v", err)
+	}
+
+	release()
+
+	fromUpdate := slices.Contains(command.Args, "-"+fromUpdateFlag)
+
+	type ended struct {
+		err       error
+		restarted bool
+	}
+
+	over := make(chan ended, 1)
+
+	var looks, starts, restarts atomic.Int32
+
+	steps := installSteps{
+		fetch: func(context.Context, string) (*install.Fetched, error) {
+			return &install.Fetched{Path: "/usr/local/bin/tunnel-manager", Source: install.SourceRunning,
+				Why: "release v99.0.0 carries no SHA256SUMS.sig"}, nil
+		},
+		put: func(install.Plan, string, string, io.Writer) (install.Outcome, error) {
+			restarts.Add(1)
+
+			return install.Outcome{}, nil
+		},
+	}
+
+	check := func(context.Context, string) (install.Latest, error) {
+		looks.Add(1)
+
+		return install.Latest{Tag: "v99.0.0", Newer: true, Comparable: true}, nil
+	}
+
+	var handler *api.UpdateHandler
+
+	// serve is one life of the service: a loop that has never looked and a
+	// handler that has never installed, as a process that has just started has.
+	serve := func() (context.CancelFunc, chan struct{}) {
+		handler = api.NewUpdateHandler(zap.NewNop(), db, "3.0.0", true, check, func() error {
+			starts.Add(1)
+
+			go func() {
+				before := restarts.Load()
+				err := installRelease(plan, steps, fromUpdate, io.Discard)
+				over <- ended{err: err, restarted: restarts.Load() != before}
+			}()
+
+			return nil
+		})
+
+		ctx, cancel := context.WithCancel(context.Background())
+		done := make(chan struct{})
+
+		go func() {
+			defer close(done)
+			runUpdateChecks(ctx, zap.NewNop(), db, handler, true)
+		}()
+
+		return cancel, done
+	}
+
+	cancel, done := serve()
+
+	t.Cleanup(func() {
+		cancel()
+		<-done
+	})
+
+	var failures []error
+
+	deadline := time.After(2 * time.Second)
+
+wait:
+	for restarts.Load() < 5 {
+		select {
+		case end := <-over:
+			if end.restarted {
+				cancel()
+				<-done
+				cancel, done = serve()
+
+				continue
+			}
+
+			failures = append(failures, end.err)
+			handler.InstallEnded()
+		case <-deadline:
+			break wait
+		}
+	}
+
+	t.Logf("tick %v: looks = %d, installs started = %d, restarts = %d, installs that failed = %v",
+		updateCheckTick, looks.Load(), starts.Load(), restarts.Load(), failures)
+
+	if restarts.Load() != 0 {
+		t.Errorf("the service was restarted %d times on the executable it was already running, want none",
+			restarts.Load())
+	}
+
+	if len(failures) != 1 || failures[0] == nil || !strings.Contains(failures[0].Error(), "SHA256SUMS.sig") {
+		t.Errorf("the installs that failed are %v, want one that names why the release was not used", failures)
+	}
+
+	if starts.Load() != 1 {
+		t.Errorf("%d installs were started, want one: the next is an interval away", starts.Load())
 	}
 }

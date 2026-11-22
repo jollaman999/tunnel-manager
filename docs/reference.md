@@ -1028,7 +1028,9 @@ Everything else - a release that cannot be read, a release with no asset for
 this platform, a release with no `SHA256SUMS` or no `SHA256SUMS.sig`, which is
 what releases made before the checksums were signed look like, a download that
 failed - installs the executable of the running process instead, with the
-reason. Which of the two landed is in the report:
+reason. An install started from the Update screen, or by the settings, does not:
+it installs the release or nothing (see [Installing](#installing)). Which of the
+two landed is in the report:
 
 ```text
 tunnel-manager install
@@ -1997,12 +1999,24 @@ own file and then run itself again, so the work is handed to one that has not.
 The release is downloaded, checked against the `SHA256SUMS` the release
 publishes once the signature over that file has been checked, put in place, and
 the service manager restarts the service. A release whose signature does not
-match stops the install. One made before releases were signed, which carries no
-`SHA256SUMS.sig`, is not installed either: the executable that is already
-running is installed in its place, so the service comes back on the version it
-had. The development build is the exception: it does not check the signature,
-says so under the version on the tab, and `GET /api/update` answers it with
-`dev_build: true`. See [From source](#from-source).
+match stops the install. The development build is the exception: it does not
+check the signature, says so under the version on the tab, and
+`GET /api/update` answers it with `dev_build: true`. See [From source](#from-source).
+
+**An update installs the release or nothing.** Where `-install` typed at a
+terminal would put the running executable in place instead - a release made
+before releases were signed, which carries no `SHA256SUMS.sig`, a release with
+no `SHA256SUMS` or no line in it for this platform, a release that cannot be
+read or downloaded - the update stops. Put in place, that executable is the
+version the service already runs: the service would be stopped and started
+again for nothing, the newer release would still be there, and the process the
+restart started would find it again in its first minute and start the same
+install. The update stops before the service is stopped, so the service goes on
+running the version it had, and the reason is in the report of the install: the
+journal on systemd, `logs/update-install.log` beside the database file
+elsewhere. With nothing restarted, the loop under
+[Installing without being asked](#installing-without-being-asked) looks again
+one interval later, not at once.
 
 **The answer says the install started and never that it finished.** The process
 that would report the end is the one being restarted. The screen says so and
