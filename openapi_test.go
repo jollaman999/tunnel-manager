@@ -63,11 +63,12 @@ type spec struct {
 // a reference to a definition, the parts of an allOf, the fields of an object
 // and the rows of an array.
 type specSchema struct {
-	Ref        string                `json:"$ref"`
-	Type       string                `json:"type"`
-	AllOf      []specSchema          `json:"allOf"`
-	Properties map[string]specSchema `json:"properties"`
-	Items      *specSchema           `json:"items"`
+	Ref         string                `json:"$ref"`
+	Type        string                `json:"type"`
+	Description string                `json:"description"`
+	AllOf       []specSchema          `json:"allOf"`
+	Properties  map[string]specSchema `json:"properties"`
+	Items       *specSchema           `json:"items"`
 }
 
 // resolve follows a reference to the definition it names, and hands back a
@@ -405,6 +406,10 @@ func TestTheSpecIsTheShapeAClientExpects(t *testing.T) {
 // they embed: kind, sp_id, which the row declares again so that a local forward
 // can leave it empty, and number. A description that took the tunnel row alone
 // would carry sp_id and none of the other two.
+//
+// Every field of a row is to say what it holds. A field described by its name
+// and type alone is one a script reads by guessing, which is what the
+// description is here to spare it.
 func TestTheStatusAnswerIsDescribed(t *testing.T) {
 	parsed := readSpec(t)
 
@@ -469,5 +474,19 @@ func TestTheStatusAnswerIsDescribed(t *testing.T) {
 
 	if row["sp_id"].Type != "integer" {
 		t.Errorf("sp_id of a row of GET /status is described as %q, want integer", row["sp_id"].Type)
+	}
+
+	names := make([]string, 0, len(row))
+	for name := range row {
+		names = append(names, name)
+	}
+
+	sort.Strings(names)
+
+	for _, name := range names {
+		if strings.TrimSpace(row[name].Description) == "" {
+			t.Errorf("%s of a row of GET /status carries no description. Say what it holds "+
+				"in a comment on the field and run `make openapi`", name)
+		}
 	}
 }

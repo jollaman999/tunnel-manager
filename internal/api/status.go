@@ -58,11 +58,13 @@ type statusRow struct {
 	// Kind is which sort the row is, service_port or local_forward. It is what
 	// says which machine local and remote are on, because the two look alike.
 	Kind string `json:"kind"`
-	// SPID shadows Tunnel.SPID, which is a uint and cannot be empty: a local
-	// forward is not carried by a service port and a zero there would read as
-	// the service port numbered nothing. The pointer is null on those rows and
-	// the number on the others. Both fields are tagged sp_id and this one is
-	// the shallower, which is the one encoding/json writes.
+	// SPID is the service port a tunnel row carries, and null on a local
+	// forward row, which no service port carries.
+	//
+	// It shadows Tunnel.SPID, which is a uint and cannot be empty: a zero
+	// there would read as the service port numbered nothing. Both fields are
+	// tagged sp_id and this one is the shallower, which is the one
+	// encoding/json writes.
 	SPID *uint `json:"sp_id"`
 	// Number is which forward of its Host a local forward row is, which is
 	// what the row is read and changed by. It is left out of a tunnel row

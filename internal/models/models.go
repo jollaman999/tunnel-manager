@@ -273,15 +273,70 @@ type LocalForward struct {
 }
 
 type Tunnel struct {
-	HostID          uint      `gorm:"primaryKey;not null" json:"host_id"`
-	SPID            uint      `gorm:"primaryKey;not null" json:"sp_id"`
-	Status          string    `gorm:"not null" json:"status"`
-	LastError       string    `json:"last_error"`
-	RetryCount      int       `gorm:"default:0" json:"retry_count"`
+	// HostID is the Host the tunnel runs over, whose SSH connection opens the
+	// forwarded port.
+	HostID uint `gorm:"primaryKey;not null" json:"host_id"`
+	// SPID is the service port the tunnel carries. A Host runs one tunnel for
+	// each service port assigned to it, so the two ids together name a row.
+	SPID uint `gorm:"primaryKey;not null" json:"sp_id"`
+	// Status is where the connection stands, as one of these words:
+	//   "starting"            - built and not connected yet
+	//   "connected"           - the SSH connection stands and the port is open
+	//   "reconnecting"        - the connection dropped, or the wait after a
+	//                           failure is over, and the next attempt is on
+	//   "error"               - the last attempt to connect or to open the
+	//                           port failed, and LastError says how
+	//   "host_key_unapproved" - the Host presented a key nobody has approved
+	//   "host_key_mismatch"   - the Host presented a key other than the one
+	//                           approved
+	//   "jump_host_disabled"  - the Host is reached through a Host that is
+	//                           disabled
+	//
+	// Most errors are tried again after a wait, which is when the row moves to
+	// reconnecting. A refused host key, refused credentials and a route that
+	// is not to be dialled are not: no number of attempts changes them, and
+	// what does change them, an approval or a change to a Host, builds the
+	// tunnel again.
+	//
+	// A local forward row of the status table carries the same words, and
+	// three of its own for a forward that runs nothing: "disabled" when its
+	// Host is disabled, "off" when the forward is switched off, and "stopped"
+	// when both are on and no forward is running.
+	Status string `gorm:"not null" json:"status"`
+	// LastError is what the last failure said, as the SSH library or this
+	// program wrote it. It is emptied when a connection stands, and kept while
+	// the row is reconnecting so that what brought it down can still be read.
+	// It is a sentence for a person; ErrorKind and JumpReason are the values
+	// to branch on.
+	LastError string `json:"last_error"`
+	// RetryCount is how many times the tunnel has gone to reconnecting since
+	// a connection last stood, and goes back to 0 when one does. A number that
+	// keeps climbing is a tunnel that does not come up.
+	RetryCount int `gorm:"default:0" json:"retry_count"`
+	// LastConnectedAt is when a connection last stood. It is kept when the
+	// connection goes down, so on a row that is reconnecting it is when the
+	// tunnel was last up, and it is the zero time, 0001-01-01T00:00:00Z, on a
+	// row that has not connected since it was started.
 	LastConnectedAt time.Time `json:"last_connected_at"`
-	Server          string    `gorm:"not null" json:"server"`
-	Local           string    `gorm:"not null" json:"local"`
-	Remote          string    `gorm:"not null" json:"remote"`
+	// Server is the SSH address of the Host, address and port. On a Host
+	// reached through jump hosts it is still the Host itself and not the
+	// first step of the route.
+	Server string `gorm:"not null" json:"server"`
+	// Local is the address the forwarded port is opened on, on the Host. The
+	// bind scope names two, an IPv4 one and an IPv6 one, and the row carries
+	// one of them, the one to connect to: the IPv4 one, unless a connection
+	// opened the IPv6 one alone, because the row has to name an address that
+	// answers. Until a connection stands it is the IPv4 one that was asked
+	// for. Which halves opened is on OpenReach, and what the Host says is
+	// listening is on ListenAddresses.
+	//
+	// On a local forward row of the status table it is the address opened on
+	// the Tunnel Manager server instead.
+	Local string `gorm:"not null" json:"local"`
+	// Remote is the service the forwarded port carries to, address and port,
+	// as reached from the Tunnel Manager server. On a local forward row of the
+	// status table it is the target reached from the Host instead.
+	Remote string `gorm:"not null" json:"remote"`
 	// ServerBanner is what the SSH server called itself on the handshake, as
 	// the library hands it over (x/crypto/ssh, sshConn.ServerVersion). It is
 	// kept because what opens a forwarded port to an address other than
@@ -323,8 +378,13 @@ type Tunnel struct {
 	// sentence, and the screen says what to do about it in its own words.
 	//
 	// None of them carries "not null", for the reason ServerBanner does not.
-	JumpSeq    int    `json:"jump_seq"`
-	JumpHostID uint   `json:"jump_host_id"`
+	JumpSeq int `json:"jump_seq"`
+	// JumpHostID is the Host at step JumpSeq of the jump route, the one the
+	// connection stopped at, and 0 where JumpSeq is.
+	JumpHostID uint `json:"jump_host_id"`
+	// JumpReason is why the connection stopped on the jump route, one of the
+	// words named on JumpSeq, and empty on a failure that is not about the
+	// route.
 	JumpReason string `json:"jump_reason"`
 	// OpenReach says which of the two addresses of the bind scope went up.
 	//   "both"  - both went up

@@ -4591,12 +4591,15 @@
                     "type": "string"
                 },
                 "host_id": {
+                    "description": "HostID is the Host the tunnel runs over, whose SSH connection opens the\nforwarded port.",
                     "type": "integer"
                 },
                 "jump_host_id": {
+                    "description": "JumpHostID is the Host at step JumpSeq of the jump route, the one the\nconnection stopped at, and 0 where JumpSeq is.",
                     "type": "integer"
                 },
                 "jump_reason": {
+                    "description": "JumpReason is why the connection stopped on the jump route, one of the\nwords named on JumpSeq, and empty on a failure that is not about the\nroute.",
                     "type": "string"
                 },
                 "jump_seq": {
@@ -4608,9 +4611,11 @@
                     "type": "string"
                 },
                 "last_connected_at": {
+                    "description": "LastConnectedAt is when a connection last stood. It is kept when the\nconnection goes down, so on a row that is reconnecting it is when the\ntunnel was last up, and it is the zero time, 0001-01-01T00:00:00Z, on a\nrow that has not connected since it was started.",
                     "type": "string"
                 },
                 "last_error": {
+                    "description": "LastError is what the last failure said, as the SSH library or this\nprogram wrote it. It is emptied when a connection stands, and kept while\nthe row is reconnecting so that what brought it down can still be read.\nIt is a sentence for a person; ErrorKind and JumpReason are the values\nto branch on.",
                     "type": "string"
                 },
                 "listen_addresses": {
@@ -4618,6 +4623,7 @@
                     "type": "string"
                 },
                 "local": {
+                    "description": "Local is the address the forwarded port is opened on, on the Host. The\nbind scope names two, an IPv4 one and an IPv6 one, and the row carries\none of them, the one to connect to: the IPv4 one, unless a connection\nopened the IPv6 one alone, because the row has to name an address that\nanswers. Until a connection stands it is the IPv4 one that was asked\nfor. Which halves opened is on OpenReach, and what the Host says is\nlistening is on ListenAddresses.\n\nOn a local forward row of the status table it is the address opened on\nthe Tunnel Manager server instead.",
                     "type": "string"
                 },
                 "number": {
@@ -4629,12 +4635,15 @@
                     "type": "string"
                 },
                 "remote": {
+                    "description": "Remote is the service the forwarded port carries to, address and port,\nas reached from the Tunnel Manager server. On a local forward row of the\nstatus table it is the target reached from the Host instead.",
                     "type": "string"
                 },
                 "retry_count": {
+                    "description": "RetryCount is how many times the tunnel has gone to reconnecting since\na connection last stood, and goes back to 0 when one does. A number that\nkeeps climbing is a tunnel that does not come up.",
                     "type": "integer"
                 },
                 "server": {
+                    "description": "Server is the SSH address of the Host, address and port. On a Host\nreached through jump hosts it is still the Host itself and not the\nfirst step of the route.",
                     "type": "string"
                 },
                 "server_banner": {
@@ -4642,10 +4651,11 @@
                     "type": "string"
                 },
                 "sp_id": {
-                    "description": "SPID shadows Tunnel.SPID, which is a uint and cannot be empty: a local\nforward is not carried by a service port and a zero there would read as\nthe service port numbered nothing. The pointer is null on those rows and\nthe number on the others. Both fields are tagged sp_id and this one is\nthe shallower, which is the one encoding/json writes.",
+                    "description": "SPID is the service port a tunnel row carries, and null on a local\nforward row, which no service port carries.\n\nIt shadows Tunnel.SPID, which is a uint and cannot be empty: a zero\nthere would read as the service port numbered nothing. Both fields are\ntagged sp_id and this one is the shallower, which is the one\nencoding/json writes.",
                     "type": "integer"
                 },
                 "status": {
+                    "description": "Status is where the connection stands, as one of these words:\n  \"starting\"            - built and not connected yet\n  \"connected\"           - the SSH connection stands and the port is open\n  \"reconnecting\"        - the connection dropped, or the wait after a\n                          failure is over, and the next attempt is on\n  \"error\"               - the last attempt to connect or to open the\n                          port failed, and LastError says how\n  \"host_key_unapproved\" - the Host presented a key nobody has approved\n  \"host_key_mismatch\"   - the Host presented a key other than the one\n                          approved\n  \"jump_host_disabled\"  - the Host is reached through a Host that is\n                          disabled\n\nMost errors are tried again after a wait, which is when the row moves to\nreconnecting. A refused host key, refused credentials and a route that\nis not to be dialled are not: no number of attempts changes them, and\nwhat does change them, an approval or a change to a Host, builds the\ntunnel again.\n\nA local forward row of the status table carries the same words, and\nthree of its own for a forward that runs nothing: \"disabled\" when its\nHost is disabled, \"off\" when the forward is switched off, and \"stopped\"\nwhen both are on and no forward is running.",
                     "type": "string"
                 }
             }
