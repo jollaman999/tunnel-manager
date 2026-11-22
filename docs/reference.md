@@ -1316,7 +1316,7 @@ counted against one address and every log line would name the proxy.
 
 `-trust-proxy-headers` is what says otherwise. With it, a request that carries
 `X-Forwarded-Proto: https` is treated as having arrived over TLS, and the
-session and device cookies are marked `Secure`. The address of the request is the
+session cookie is marked `Secure`. The address of the request is the
 rightmost `X-Forwarded-For` entry: the login limit counts by it, and the access
 log (`remote_ip`) and the log lines the API writes name it. Where that header is
 missing or its rightmost entry is not an IP address, the address of the
@@ -1415,28 +1415,37 @@ restart clears them.
 
 **A browser that has signed in before is not held out by the account counter.**
 Anyone who can reach the port can hold the account with thirty wrong passwords,
-so every login that gets the password right also sets a device cookie,
-`__Host-tm_device` over HTTPS and `tm_device` over plain HTTP. An attempt that
-carries a valid one is counted against its address and against that cookie
-instead of against the account, so a hold on the account does not reach it. The
-address limit still applies to it.
+so every login that gets the password right also answers with a device value in
+`data.device`. The screens keep it in the local storage of the browser and send
+it back in an `X-TM-Device` header on every request, the logins after it
+included. An attempt that carries a valid one is counted against its address
+and against that value instead of against the account, so a hold on the account
+does not reach it. The address limit still applies to it.
 
-- The cookie is signed with the password hash of the account and holds for 30
-  days from the login that set it. Every login replaces it, so a browser you
-  sign in from at least once a month keeps one. It survives a restart.
-- **A device cookie that carries five wrong passwords in 15 minutes is not
+- **The value is in no cookie.** A browser sends cookies to every port of the
+  host name, so a service on another port would be handed it, and could spend
+  five wrong passwords on it so that your browser is not trusted while it holds
+  the account. Local storage is kept apart for every port. A `tm_device` or
+  `__Host-tm_device` cookie left by an earlier version is not read and is
+  expired on the next request, so every browser counts as a new one until its
+  next login that gets the password right.
+- The value is signed with the password hash of the account and holds for 30
+  days from the login that handed it out. Every login replaces it, so a browser
+  you sign in from at least once a month keeps one. It survives a restart.
+- **A device value that carries five wrong passwords in 15 minutes is not
   trusted for 5 minutes.** Until then its attempts are counted like any other
-  and meet a hold on the account. A stolen cookie therefore adds at most five
+  and meet a hold on the account. A stolen value therefore adds at most five
   guesses every five minutes to the thirty that anyone gets against the
   account in those five minutes, and without the password it opens nothing.
 - **Changing the username or the password, or finishing the setup, ends every
-  device cookie set before it.** The browser that made the change is given a
-  new one.
-- Logging out leaves the cookie. It opens nothing on its own; it only says that
-  this browser got the password right before.
+  device value handed out before it.** The answer carries a new one for the
+  browser that made the change in `device`, and the screens keep it.
+- Logging out leaves the value, and so does a session that runs out. It opens
+  nothing on its own; it only says that this browser got the password right
+  before.
 
-A script that keeps its cookie jar from one run to the next is treated the same
-way.
+A script that keeps `data.device` from one run to the next and sends it as
+`X-TM-Device` on its logins is treated the same way.
 
 ### Changing the username and the password
 
@@ -1462,9 +1471,10 @@ that changed them is gone, and so is every token, the ones that never run out
 included. The session that made the change keeps working, including the CSRF
 token it already holds, so the screen that asked for it can show what happened.
 The answer says how many other clients were signed out in `sessions_ended` and
-how many tokens were revoked in `tokens_revoked`. Every device cookie set before
-the change stops counting as well, and the browser that made the change is given
-a new one; see [Failed sign-ins](#failed-sign-ins).
+how many tokens were revoked in `tokens_revoked`. Every device value handed out
+before the change stops counting as well, and the answer carries a new one for
+the client that made the change in `device`; see
+[Failed sign-ins](#failed-sign-ins).
 
 **A script that uses a token stops working when the credentials change.** Its next
 request is answered `401`, the way a revoked token is, until it is given a token
@@ -2227,14 +2237,18 @@ is sent with needs the key of the session as well, `GET` included.**
    belongs to this host alone, and a browser only takes that name from a
    cookie marked `Secure`, so a machine with HTTPS turned off is served the
    name without it. A cookie jar keeps whichever arrived, so a script that uses
-   one does not have to know which. The login sets a second cookie,
-   `__Host-tm_device` or `tm_device`, which lets the next login past a hold on
-   the account: see [Failed sign-ins](#failed-sign-ins).
+   one does not have to know which. The session cookie is the one cookie the
+   login sets.
 2. Read `data.csrf_token` out of the answer. That is the key of the session,
    and the answer of the login is the only place it is handed out: it is in no
    cookie. Send it as an `X-CSRF-Token` header on **every** request, `GET`
    included.
-3. A request that brings the session cookie without the key, or with a key that
+3. Keep `data.device` of the answer as well, from one run to the next. It is
+   the device value, in no cookie either, and sent as an `X-TM-Device` header
+   on the next login it lets that login past a hold on the account: see
+   [Failed sign-ins](#failed-sign-ins). The setup and `PUT /api/account` answer
+   with a new one, which takes the place of the one kept.
+4. A request that brings the session cookie without the key, or with a key that
    is not the one of that session, is answered `401 Authentication required`,
    the same as no session at all. `POST /api/logout` is the one call that takes
    the cookie alone.
@@ -2255,9 +2269,7 @@ answer of your login and cannot set the header.
 the cookies and can set cookies of the same names**, and no cookie attribute
 changes that: the `__Host-` prefix only keeps other host names and plain HTTP
 from writing them. It cannot use the session, but it can sign the browser out
-of it, and the device cookie it receives counts at the login as yours (see
-[Failed sign-ins](#failed-sign-ins)). Give Tunnel Manager a host name of its own
-in that case.
+of it. Give Tunnel Manager a host name of its own in that case.
 
 The server sends no `Access-Control-Allow-Origin` header at all. That is a rule
 browsers apply to pages, not a check this server performs, so `curl`, scripts and
@@ -2274,18 +2286,21 @@ BASE=https://127.0.0.1:8888
 # See [HTTPS and the certificate](#https-and-the-certificate).
 export CURL_CA_BUNDLE=tm-cert.pem
 
-# 1. Log in. -c stores the session and device cookies in cookies.txt, under the
-# names they came back with.
+# 1. Log in. -c stores the session cookie in cookies.txt, under the name it came
+# back with. device.txt is the device value a run before this one kept, if any.
 curl -s -c cookies.txt -X POST "$BASE/api/login" \
   -H 'Content-Type: application/json' \
+  -H "X-TM-Device: $(cat device.txt 2>/dev/null)" \
   -d '{"username":"operator","password":"<your-password>"}' > login.json
 
-# {"success":true,"data":{"setup_required":false,"csrf_token":"<token>"}}
+# {"success":true,"data":{"setup_required":false,"csrf_token":"<token>","device":"<device value>"}}
 
-# 2. Take the key of the session out of the answer.
+# 2. Take the key of the session out of the answer, and keep the device value
+# for the next run.
 CSRF=$(python3 -c 'import json; print(json.load(open("login.json"))["data"]["csrf_token"])')
+python3 -c 'import json; print(json.load(open("login.json"))["data"]["device"])' > device.txt
 
-# 3. A read needs the cookies and the header.
+# 3. A read needs the cookie and the header.
 curl -s -b cookies.txt -H "X-CSRF-Token: $CSRF" "$BASE/api/status"
 
 # 4. So does a write.
@@ -2317,7 +2332,11 @@ CSRF=$(python3 -c 'import json; print(json.load(open("login.json"))["data"]["csr
 curl -s -b cookies.txt -X POST "$BASE/api/setup" \
   -H 'Content-Type: application/json' \
   -H "X-CSRF-Token: $CSRF" \
-  -d '{"username":"operator","password":"<your-password>"}'
+  -d '{"username":"operator","password":"<your-password>"}' > setup.json
+
+# The device value the login answered with was signed under the initial
+# password. Keep the one the setup answers with instead.
+python3 -c 'import json; print(json.load(open("setup.json"))["data"]["device"])' > device.txt
 ```
 
 What goes wrong, and what it looks like:
@@ -2493,14 +2512,18 @@ practising behind the button.
 is served from the same address as the screens, so the browser sends it the same
 session cookie, and the page reads the key of the session from where the screens
 keep it and puts it on every call it makes to this server as an `X-CSRF-Token`
-header, `GET` included. Nothing has to be pasted.
+header, `GET` included. The device value the screens keep goes along as an
+`X-TM-Device` header, so a login sent from the page is let past a hold on the
+account the way one from the screens is. Nothing has to be pasted.
 
 Otherwise, find `POST /api/login`, press **Try it out**, put your username and
 password into the body and press **Execute**. The browser keeps the cookie the
-answer sets, and the page keeps the `data.csrf_token` of the answer where the
-screens keep theirs, so every call after it goes out with the key, and the
-screens in another tab are signed in with the same session. `POST /api/logout`
-from the page drops the key again.
+answer sets, and the page keeps the `data.csrf_token` and the `data.device` of
+the answer where the screens keep theirs, so every call after it goes out with
+the key, and the screens in another tab are signed in with the same session.
+The setup and `PUT /api/account` sent from the page keep the device value they
+answer with the same way. `POST /api/logout` from the page drops the key again
+and leaves the device value.
 
 A key pasted into **Authorize** at the top of the page is sent in place of the
 one the page keeps, on the calls that declare it. A call that goes out without a
@@ -2535,7 +2558,8 @@ the login. Call `POST /api/login` first and the cookies stay in the client from
 then on; on every call, add the `X-CSRF-Token` header with the key that login
 answered with. The description declares that header as an API key named
 `CSRFToken`, so a tool that reads security definitions gives you a field to put
-it in.
+it in. To be let past a hold on the account, send the `data.device` of an
+earlier login as an `X-TM-Device` header on the login.
 
 **Generating a client**: `openapi-generator` reads the file as it stands.
 
@@ -2638,12 +2662,12 @@ curl -s -b cookies.txt -H "X-CSRF-Token: $CSRF" "$BASE/api/host?q=example&page=1
 
 | Method | Path | What it does |
 |--------|------|--------------|
-| `POST` | `/api/login` | Takes `username` and `password`, sets the session cookie, and the device cookie when the password is right, answers with `setup_required` and `csrf_token`, the key of the session, which is in no cookie |
-| `POST` | `/api/logout` | Drops the session and expires the session cookie. Needs no `X-CSRF-Token`. The device cookie stays |
+| `POST` | `/api/login` | Takes `username` and `password`, and the device value of an earlier login in `X-TM-Device`, sets the session cookie, answers with `setup_required`, `csrf_token`, the key of the session, and `device`, the device value. Neither is in a cookie |
+| `POST` | `/api/logout` | Drops the session and expires the session cookie. Needs no `X-CSRF-Token`. The device value the client keeps goes on holding |
 | `GET` | `/api/setup` | Says whether the account still needs its username and password. Answers without a session, for the login screen |
-| `POST` | `/api/setup` | Sets the username and the password once, on the account that still needs them |
+| `POST` | `/api/setup` | Sets the username and the password once, on the account that still needs them, and answers with a new `device` under them |
 | `GET` | `/api/account` | What the account is called |
-| `PUT` | `/api/account` | Takes `current_password` and `username`, `new_password` or both, changes them, signs out every other session and revokes every API token |
+| `PUT` | `/api/account` | Takes `current_password` and `username`, `new_password` or both, changes them, signs out every other session and revokes every API token, and answers with a new `device` |
 
 ### Hosts
 

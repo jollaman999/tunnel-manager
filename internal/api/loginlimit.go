@@ -50,13 +50,14 @@ import (
 // is driven by anyone who can reach the port, and thirty wrong guesses from
 // thirty addresses hold it against everybody. What tells the operator apart
 // from that is the browser they have signed in from before. Every login that
-// gets the password right hands that browser a device cookie (deviceCookieName)
-// signed for the account, and an attempt that carries one that still holds is
-// counted against its address and against that cookie instead of against the
-// account. A hold on the account does not reach it, and a cookie that is
-// guessed with too often stops being trusted and is counted like any other
-// attempt. This is the device cookie of the OWASP guidance on slowing online
-// guessing down, and deviceOf says what makes a cookie one that holds.
+// gets the password right hands that browser a device value signed for the
+// account, which it sends back in a header (deviceHeaderName), and an attempt
+// that carries one that still holds is counted against its address and against
+// that value instead of against the account. A hold on the account does not
+// reach it, and a value that is guessed with too often stops being trusted and
+// is counted like any other attempt. This is the device cookie of the OWASP
+// guidance on slowing online guessing down, kept out of a cookie for the reason
+// handOutDevice gives, and deviceOf says what makes a value one that holds.
 
 // loginFailureWindow is how long a failed sign in goes on counting. Failures
 // further apart than this never add up, so an operator who gets it wrong once
@@ -101,22 +102,22 @@ const loginAccountFailureLimit = 30
 // seconds of CPU an hour rather than a core held flat.
 const loginAccountBlockFor = 5 * time.Minute
 
-// loginDeviceFailureLimit is how many failures one device cookie may pile up
+// loginDeviceFailureLimit is how many failures one device value may pile up
 // inside the window before it stops being trusted. It is the per address limit
-// and for the same reason: the one who carries a cookie that holds is meant to
+// and for the same reason: the one who carries a value that holds is meant to
 // be the operator at the browser they always use, and that is somebody
 // mistyping a password they know.
 //
-// The cookie is what lets an attempt past a hold on the account, so without a
+// The value is what lets an attempt past a hold on the account, so without a
 // limit of its own a stolen one would be a way to guess at the password with
-// the account counter switched off. With it, a cookie buys five guesses per
+// the account counter switched off. With it, a value buys five guesses per
 // hold and no more, wherever they are sent from. Those come on top of the
 // thirty per hold the account counter lets anybody have, not in place of
-// them, because whoever holds the cookie can as well leave it off: five more
+// them, because whoever holds the value can as well leave it off: five more
 // against thirty is the most a stolen one adds.
 const loginDeviceFailureLimit = loginAddressFailureLimit
 
-// loginDeviceBlockFor is how long a device cookie that met its limit goes
+// loginDeviceBlockFor is how long a device value that met its limit goes
 // untrusted for. While it is, an attempt that carries it is counted against
 // the account like an attempt that carries none, so it meets whatever hold the
 // account is under. Five minutes, the hold of the address it was most likely
@@ -148,10 +149,10 @@ type loginKeyKind uint8
 const (
 	loginKeyAddress loginKeyKind = iota
 	loginKeyAccount
-	// loginKeyDevice is the counter of one device cookie, named by the nonce
-	// the cookie carries. Only a cookie whose signature holds is ever counted,
+	// loginKeyDevice is the counter of one device value, named by the nonce
+	// the value carries. Only a value whose signature holds is ever counted,
 	// so these keys are not something a sender can make up: there is one per
-	// login that got the password right inside the lifetime of a cookie.
+	// login that got the password right inside the lifetime of a value.
 	loginKeyDevice
 )
 
@@ -352,7 +353,7 @@ func (l *loginLimiter) forget(keys []loginKey) {
 // release so that a path that returns without an outcome gives the
 // reservation back rather than holding the key forever.
 //
-// device is the nonce of the device cookie the attempt carried, as deviceOf
+// device is the nonce of the device value the attempt carried, as deviceOf
 // read it, or "" where it carried none that holds. keysFor says what it
 // changes.
 func (l *loginLimiter) begin(address string, accountID uint, device string) (*loginAttempt, time.Duration, bool) {
@@ -365,14 +366,14 @@ func (l *loginLimiter) begin(address string, accountID uint, device string) (*lo
 // keysFor returns the counters an attempt is counted against. The lock is held
 // by the caller.
 //
-// An attempt that carries a device cookie that holds is counted against its
-// address and against that cookie, and not against the account. That is the
-// whole of what the cookie does: the address limit still applies to it, and
+// An attempt that carries a device value that holds is counted against its
+// address and against that value, and not against the account. That is the
+// whole of what the value does: the address limit still applies to it, and
 // what it is spared is the hold on the account that anyone can bring about. A
-// cookie that has met its own limit is not trusted until its hold runs out,
-// and the attempt is then counted the way one without a cookie is, on the
+// value that has met its own limit is not trusted until its hold runs out,
+// and the attempt is then counted the way one without a value is, on the
 // address and the account. The choice is made under the lock that the counting
-// is done under, so that the cookie cannot meet its limit between the two.
+// is done under, so that the value cannot meet its limit between the two.
 func (l *loginLimiter) keysFor(address string, accountID uint, device string) []loginKey {
 	if device != "" {
 		key := loginKey{kind: loginKeyDevice, name: device}
@@ -513,9 +514,9 @@ func (a *loginAttempt) release() {
 // way to grow anything - and if they could be evicted, a flood of addresses
 // would be a way to lift the hold off the account, which is the opposite of
 // what the ceiling is for. Device entries are kept for the same reason: they
-// are not a way to grow anything either, since each one is a cookie this
+// are not a way to grow anything either, since each one is a value this
 // server signed after a password that was right, and evicting one would lift
-// the limit off a cookie that was stolen.
+// the limit off a value that was stolen.
 func (l *loginLimiter) prune(now time.Time) {
 	if len(l.failures) <= loginLimiterMaxAddresses {
 		return
@@ -713,12 +714,12 @@ func sessionOnContext(c *echo.Context) (uint, accountPasswordLimiter, bool) {
 // was asked for their password on the way to something else; a sentence that
 // told them signing in was blocked would name a thing they are not doing.
 //
-// The device cookie counts here the way it counts at the login. A hold on the
+// The device value counts here the way it counts at the login. A hold on the
 // account that somebody else brought about would otherwise reach the operator
 // in the middle of their own session, at the uninstall or the account change,
 // which is the same lockout one step later. It widens nothing for a screen
 // left unattended, the case these calls ask for the password again for: the
-// browser on that screen holds the cookie, but its address is held after five
+// browser on that screen holds the value, but its address is held after five
 // wrong passwords either way.
 func (h *AuthHandler) passwordBegin(c *echo.Context, accountID uint) (*loginAttempt, *refusal) {
 	attempt, wait, held := h.logins.begin(h.loginAddress(c), accountID, h.deviceOfAccount(c, accountID))
@@ -734,48 +735,51 @@ func (h *AuthHandler) passwordBegin(c *echo.Context, accountID uint) (*loginAtte
 		errorArgs{"retry_after": strconv.Itoa(seconds)})
 }
 
-// deviceCookieLifetime is how long a device cookie holds, counted from the login
-// that handed it out.
+// deviceLifetime is how long a device value holds, counted from the login that
+// handed it out.
 //
 // Thirty days. Every login that gets the password right hands out a new one, so
 // a browser the operator signs in from at least once a month never goes
 // without, and a browser the operator signs in from less often than that is
 // one that ought to be counted like a stranger again. It is longer than a
-// session lives on purpose (sessionAbsoluteLifetime is a week): the cookie is
+// session lives on purpose (sessionAbsoluteLifetime is a week): the value is
 // what the operator falls back on when the session is gone, so one that ended
 // with it would be gone exactly when it is wanted. And it is not a credential:
 // it opens nothing on its own and only moves an attempt that still carries the
 // password from one counter to another, so a longer life costs little, and
 // what bounds a stolen one is its own failure limit and the change of the
 // credentials, not the date.
-const deviceCookieLifetime = 30 * 24 * time.Hour
+const deviceLifetime = 30 * 24 * time.Hour
 
-// deviceCookieVersion is the first field of a device cookie. It names the
-// layout the rest is in, so that a later one can be told apart from this one
-// rather than read as a signature that does not hold.
-const deviceCookieVersion = "v1"
+// deviceVersion is the first field of a device value. It names the layout the
+// rest is in, so that a later one can be told apart from this one rather than
+// read as a signature that does not hold.
+const deviceVersion = "v1"
 
-// deviceCookieLabel is what the signature of a device cookie starts with. It
-// keeps the signature from being one that a value signed by the same key for
-// anything else could ever be passed off as.
-const deviceCookieLabel = "tunnel-manager device cookie\x00"
+// deviceLabel is what the signature of a device value starts with. It keeps
+// the signature from being one that a value signed by the same key for
+// anything else could ever be passed off as. It says cookie because that is
+// where the value was first handed out, and it stays as it is: the label is
+// part of every signature, and a value is the same value wherever it travels.
+const deviceLabel = "tunnel-manager device cookie\x00"
 
-// deviceCookieValue returns a device cookie for user, handed out at issuedAt.
+// deviceValue returns a device value for user, handed out at issuedAt.
 //
 // It is the account id, the time it was handed out and a nonce, followed by a
 // signature over the three: "v1.<id>.<unix seconds>.<nonce>.<signature>". The
-// nonce is what a cookie is counted by, so that every browser has a counter of
+// nonce is what a value is counted by, so that every browser has a counter of
 // its own, and it is 128 bits from crypto/rand so that two of them never meet.
-// Nothing in it is secret: it is HttpOnly because a script has no use for it,
-// not because it says anything.
-func deviceCookieValue(user *models.User, issuedAt time.Time) string {
-	payload := deviceCookieVersion + "." + strconv.FormatUint(uint64(user.ID), 10) + "." +
+// Nothing it says is secret. The page keeps it where its own scripts can read
+// it, beside the key of the session, and what a script that read it would get
+// is the value to send, not anything written in it.
+func deviceValue(user *models.User, issuedAt time.Time) string {
+	payload := deviceVersion + "." + strconv.FormatUint(uint64(user.ID), 10) + "." +
 		strconv.FormatInt(issuedAt.Unix(), 10) + "." + rand.Text()
 
-	return payload + "." + deviceCookieSignature(user, payload)
+	return payload + "." + deviceSignature(user, payload)
 }
 
-// deviceCookieSignature signs payload for user.
+// deviceSignature signs payload for user.
 //
 // The key is the bcrypt hash of the account password, and the username is
 // signed beside the payload. Both are taken on purpose rather than a key of
@@ -784,22 +788,22 @@ func deviceCookieValue(user *models.User, issuedAt time.Time) string {
 // The hash is a secret this installation already keeps. It never leaves the
 // process (models.User keeps it out of every answer), it carries the 128 bit
 // salt bcrypt made it with, so nobody who only knows the password can work it
-// out, and it lives in the database, so a cookie outlives a restart, which a
+// out, and it lives in the database, so a value outlives a restart, which a
 // key made in memory would not: the restart is exactly when every session is
 // gone and the operator has to sign in again. Anyone who can read the hash out
-// of the database can sign a cookie, but they can also take the hash away and
+// of the database can sign a value, but they can also take the hash away and
 // guess at it offline, which is a far better use of it than getting past the
 // account counter.
 //
-// And a cookie signed by the credentials is one that dies with them. When the
+// And a value signed by the credentials is one that dies with them. When the
 // username or the password changes, at the setup or at the account change,
-// every cookie handed out before stops holding, the way every other session is
+// every value handed out before stops holding, the way every other session is
 // ended then: half the reason to change either is that somebody else may know
-// them. There is no list of cookies to keep or to clear for that, which is
+// them. There is no list of values to keep or to clear for that, which is
 // what lets it hold across a restart as well.
-func deviceCookieSignature(user *models.User, payload string) string {
+func deviceSignature(user *models.User, payload string) string {
 	mac := hmac.New(sha256.New, []byte(user.PasswordHash))
-	mac.Write([]byte(deviceCookieLabel))
+	mac.Write([]byte(deviceLabel))
 	mac.Write([]byte(user.Username))
 	mac.Write([]byte{0})
 	mac.Write([]byte(payload))
@@ -807,15 +811,15 @@ func deviceCookieSignature(user *models.User, payload string) string {
 	return base64.RawURLEncoding.EncodeToString(mac.Sum(nil))
 }
 
-// deviceOf returns the nonce of the device cookie value, or "" where value is
+// deviceOf returns the nonce of the device value, or "" where value is
 // not one that holds for user at now.
 //
-// A cookie holds when the signature is the one this account signs with today,
-// it names this account, and it was handed out less than deviceCookieLifetime
+// A value holds when the signature is the one this account signs with today,
+// it names this account, and it was handed out less than deviceLifetime
 // ago. Anything else, a value that was tampered with, one signed under
 // credentials that have changed since or one that has run out, is answered the
-// same way as no cookie at all: the attempt is counted against the account.
-// That is all a cookie that does not hold costs, so there is nothing to say
+// same way as no value at all: the attempt is counted against the account.
+// That is all a value that does not hold costs, so there is nothing to say
 // about it to the sender and nothing to log.
 //
 // An account with no hash signs nothing. A row like that opens no login either,
@@ -832,12 +836,12 @@ func deviceOf(value string, user *models.User, now time.Time) string {
 
 	payload, signature := value[:cut], value[cut+1:]
 
-	if !hmac.Equal([]byte(signature), []byte(deviceCookieSignature(user, payload))) {
+	if !hmac.Equal([]byte(signature), []byte(deviceSignature(user, payload))) {
 		return ""
 	}
 
 	fields := strings.Split(payload, ".")
-	if len(fields) != 4 || fields[0] != deviceCookieVersion || fields[3] == "" {
+	if len(fields) != 4 || fields[0] != deviceVersion || fields[3] == "" {
 		return ""
 	}
 
@@ -850,7 +854,7 @@ func deviceOf(value string, user *models.User, now time.Time) string {
 		return ""
 	}
 
-	if !now.Before(time.Unix(issued, 0).Add(deviceCookieLifetime)) {
+	if !now.Before(time.Unix(issued, 0).Add(deviceLifetime)) {
 		return ""
 	}
 
@@ -860,13 +864,13 @@ func deviceOf(value string, user *models.User, now time.Time) string {
 // deviceOfAccount is deviceOf for a call behind a session, which knows the
 // account by its id and has not read the row yet.
 //
-// The row is read only where the request carries a cookie to check, and
+// The row is read only where the request carries a value to check, and
 // through the handle of the handler and not a transaction: every caller of
 // passwordBegin reaches it before it opens one. A read that fails leaves the
-// attempt counted the way one without a cookie is, and the caller reads the
+// attempt counted the way one without a value is, and the caller reads the
 // same row straight after and answers that failure itself.
 func (h *AuthHandler) deviceOfAccount(c *echo.Context, accountID uint) string {
-	value := cookieValue(c, deviceCookieName)
+	value := c.Request().Header.Get(deviceHeaderName)
 	if value == "" {
 		return ""
 	}
@@ -879,12 +883,23 @@ func (h *AuthHandler) deviceOfAccount(c *echo.Context, accountID uint) string {
 	return deviceOf(value, user, h.logins.now())
 }
 
-// handOutDevice sets a new device cookie for user on the answer. It is called
-// wherever the request has just proved the password of the account: the login,
-// and the setup and the account change, which are the two places the
-// credentials a cookie is signed under change, so that the browser that changed
-// them is not left holding one that no longer holds.
-func (h *AuthHandler) handOutDevice(c *echo.Context, user *models.User) {
-	c.SetCookie(h.deviceCookie(c, deviceCookieValue(user, h.logins.now()),
-		int(deviceCookieLifetime/time.Second)))
+// handOutDevice returns a new device value for user, which the caller puts in
+// the body of its answer. It is called wherever the request has just proved the
+// password of the account: the login, and the setup and the account change,
+// which are the two places the credentials a value is signed under change, so
+// that the browser that changed them is not left holding one that no longer
+// holds.
+//
+// The value goes in the body and in no cookie, and comes back in the header
+// deviceHeaderName. A browser sends a cookie to every port of the host name,
+// so a service on another port would be handed the value by the operator's own
+// browser, and could spend it on five wrong passwords that leave that browser
+// untrusted while the account is held. The page keeps it in local storage,
+// which a browser keeps apart for every port.
+//
+// The logout leaves it where it is. Signing out ends what the session opens,
+// and the device value opens nothing: it only says that this browser has got
+// the password right before.
+func (h *AuthHandler) handOutDevice(user *models.User) string {
+	return deviceValue(user, h.logins.now())
 }

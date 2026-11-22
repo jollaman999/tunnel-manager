@@ -33,18 +33,30 @@
 // under csrfStoreKey, which app.js names as well, and this page is served from
 // the same origin, so it reads the key from there.
 //
-// The key is put only on a request to this same origin, so it is not handed
-// to wherever a URL typed into a form points, and not over a key pasted into
-// Authorize, which is the one the reader asked for.
+// The device value of the browser goes the same way, under deviceStoreKey and
+// in deviceHeaderName. It is what lets a login past a hold on the account that
+// somebody else brought about, and the server hands it out in no cookie, so a
+// login sent from here would be counted like one from a stranger without it.
+//
+// Both are put only on a request to this same origin, so neither is handed to
+// wherever a URL typed into a form points, and neither is put over a value the
+// reader set themselves, such as a key pasted into Authorize.
 //
 // responseInterceptor is the other half: a login sent from this page keeps the
-// key it is answered with where the screens keep theirs, and a logout drops
-// it, the way the screens do. The browser holds one session cookie for this
-// origin whichever page signed in, so the key beside it is one as well; a
-// login here that left the key of the screens in place would have this page
-// and the screens send a key that is not the one of the cookie.
+// key and the device value it is answered with where the screens keep theirs,
+// the setup and the account change keep the device value they hand out, and a
+// logout drops the key and leaves the device value, the way the screens do.
+// The browser holds one session cookie for this origin whichever page signed
+// in, so the key beside it is one as well; a login here that left the key of
+// the screens in place would have this page and the screens send a key that
+// is not the one of the cookie.
 const csrfStoreKey = "tm_csrf";
 const csrfHeaderName = "X-CSRF-Token";
+const deviceStoreKey = "tm_device";
+const deviceHeaderName = "X-TM-Device";
+
+// handsOutDevice are the paths whose answer carries a new device value.
+const handsOutDevice = ["/api/login", "/api/setup", "/api/account"];
 
 // sameOrigin returns the URL of url when it is on this origin, or null.
 function sameOrigin(url) {
@@ -59,47 +71,71 @@ function sameOrigin(url) {
   return target.origin === window.location.origin ? target : null;
 }
 
-function withSessionKey(request) {
-  let key = null;
-
+// keptValue is what the screens keep under key, or "" where they keep nothing
+// or the browser keeps nothing in local storage.
+function keptValue(key) {
   try {
-    key = window.localStorage.getItem(csrfStoreKey);
+    const kept = window.localStorage.getItem(key);
+
+    return kept === null ? "" : kept;
   } catch (error) {
+    return "";
+  }
+}
+
+function withKeptValues(request) {
+  if (sameOrigin(request.url) === null) {
     return request;
   }
 
-  if (key === null || key === "" || sameOrigin(request.url) === null) {
-    return request;
-  }
+  for (const [storeKey, headerName] of [
+    [csrfStoreKey, csrfHeaderName],
+    [deviceStoreKey, deviceHeaderName]
+  ]) {
+    const value = keptValue(storeKey);
 
-  request.headers = request.headers || {};
+    if (value === "") {
+      continue;
+    }
 
-  if (request.headers[csrfHeaderName] === undefined) {
-    request.headers[csrfHeaderName] = key;
+    request.headers = request.headers || {};
+
+    if (request.headers[headerName] === undefined) {
+      request.headers[headerName] = value;
+    }
   }
 
   return request;
 }
 
-function keepSessionKey(response) {
+function keepHandedOutValues(response) {
   const target = sameOrigin(response.url);
 
   if (target === null || !response.ok) {
     return response;
   }
 
+  const body = response.body;
+  const data = body && body.data ? body.data : {};
+  const key = data.csrf_token;
+  const device = data.device;
+
   try {
     if (target.pathname.endsWith("/api/logout")) {
       window.localStorage.removeItem(csrfStoreKey);
     }
 
-    if (target.pathname.endsWith("/api/login")) {
-      const body = response.body;
-      const key = body && body.data ? body.data.csrf_token : undefined;
+    if (target.pathname.endsWith("/api/login") &&
+        typeof key === "string" && key !== "") {
+      window.localStorage.setItem(csrfStoreKey, key);
+    }
 
-      if (typeof key === "string" && key !== "") {
-        window.localStorage.setItem(csrfStoreKey, key);
-      }
+    const handed = handsOutDevice.some(function (path) {
+      return target.pathname.endsWith(path);
+    });
+
+    if (handed && typeof device === "string" && device !== "") {
+      window.localStorage.setItem(deviceStoreKey, device);
     }
   } catch (error) {
     return response;
@@ -119,7 +155,7 @@ window.onload = function () {
     docExpansion: "list",
     validatorUrl: null,
     defaultModelsExpandDepth: 1,
-    requestInterceptor: withSessionKey,
-    responseInterceptor: keepSessionKey,
+    requestInterceptor: withKeptValues,
+    responseInterceptor: keepHandedOutValues,
   });
 };

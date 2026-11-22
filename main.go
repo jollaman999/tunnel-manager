@@ -1790,9 +1790,11 @@ func endOnServiceStop() {
 // @description
 // @description  Logging in sets the session cookie, __Host-tm_session over
 // @description  HTTPS and tm_session over plain HTTP. A login with the right
-// @description  password also sets the device cookie, __Host-tm_device or
-// @description  tm_device, which keeps a hold on the account from refusing
-// @description  this browser.
+// @description  password also answers with data.device, the device value of
+// @description  this client, and sets no cookie for it. Sent back as an
+// @description  X-TM-Device header on the next login, it keeps a hold on the
+// @description  account from refusing this client. The setup and PUT
+// @description  /api/account answer with a new one.
 // @description
 // @description  Every request the session cookie is sent with, GET included,
 // @description  also needs the key of the session in an X-CSRF-Token header,
@@ -1803,9 +1805,10 @@ func endOnServiceStop() {
 // @description  /api/logout is the one call that does without it.
 // @description
 // @description  "Try it out" on this page works as soon as you are logged in to
-// @description  the screens in the same browser: the screens keep the key, and
-// @description  this page puts it on every call it makes to this server. A key
-// @description  pasted into Authorize above is sent in its place.
+// @description  the screens in the same browser: the screens keep the key and
+// @description  the device value, and this page puts both on every call it
+// @description  makes to this server. A key pasted into Authorize above is sent
+// @description  in its place.
 // @description
 // @description  A script can use an API token instead of a session. Make one
 // @description  on the Settings screen or with POST /api/token, and send it as

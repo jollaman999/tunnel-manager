@@ -467,8 +467,10 @@ async function submitLogin(values) {
   });
 
   // The key of the session is in this answer and nowhere else: the server puts
-  // it in no cookie, and every call from here on is refused without it.
+  // it in no cookie, and every call from here on is refused without it. The
+  // device value is beside it for the same reason.
   rememberSession(data === null ? "" : data.csrf_token);
+  rememberDevice(data === null ? "" : data.device);
 
   // The account has no username and no chosen password yet, and a session that
   // is in that state is refused everywhere but at the setup.
@@ -542,10 +544,14 @@ function passwordConfirmationField(name, label, against, note) {
 
 async function submitSetup(values) {
   try {
-    await apiCall("POST", "/api/setup", {
+    const data = await apiCall("POST", "/api/setup", {
       username: values.username,
       password: values.password
     });
+
+    // The device value the login handed out was signed under the initial
+    // password, and this one is signed under what was just chosen.
+    rememberDevice(data === null ? "" : data.device);
   } catch (error) {
     // The account was set up by someone else in the meantime. There is nothing
     // to do on this screen any more, and the credentials that now open the
@@ -10650,6 +10656,10 @@ async function saveAccount(values) {
   }
 
   const data = await apiCall("PUT", apiAccountPath, body);
+
+  // Every device value handed out before the change stopped holding with it,
+  // the one this browser kept included, and the answer carries its new one.
+  rememberDevice(data === null || data === undefined ? "" : data.device);
 
   setToast(function () {
     return accountOutcome(data);

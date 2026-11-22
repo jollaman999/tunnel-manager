@@ -133,6 +133,7 @@ type testResponse struct {
 	Data    struct {
 		SetupRequired bool   `json:"setup_required"`
 		CSRFToken     string `json:"csrf_token"`
+		Device        string `json:"device"`
 	} `json:"data"`
 }
 
@@ -140,7 +141,8 @@ type testResponse struct {
 // returns the recorder. The key of a session rides among them as csrfKey makes
 // it, and is put in the header and not in a cookie, which is what the page does
 // with the key it keeps: a test that wants a request to arrive without the key
-// leaves it out and sends the session cookie alone.
+// leaves it out and sends the session cookie alone. carry says the same of the
+// device value.
 func do(e *echo.Echo, method, target, body string, cookies ...*http.Cookie) *httptest.ResponseRecorder {
 	return doOverTLS(e, false, method, target, body, cookies...)
 }
@@ -158,24 +160,32 @@ func doOverTLS(e *echo.Echo, overTLS bool, method, target, body string, cookies 
 		req.TLS = &tls.ConnectionState{}
 	}
 
+	carry(req, cookies)
+
+	rec := httptest.NewRecorder()
+	e.ServeHTTP(rec, req)
+
+	return rec
+}
+
+// carry puts on req what a client holds. The key of a session and the device
+// value ride among the cookies as csrfKey and deviceKey make them, and go in
+// the headers they are named after, which is what the page does with what it
+// keeps; everything else goes as a cookie.
+func carry(req *http.Request, cookies []*http.Cookie) {
 	for _, cookie := range cookies {
 		if cookie == nil {
 			continue
 		}
 
-		if cookie.Name == csrfHeaderName {
-			req.Header.Set(csrfHeaderName, cookie.Value)
+		if cookie.Name == csrfHeaderName || cookie.Name == deviceHeaderName {
+			req.Header.Set(cookie.Name, cookie.Value)
 
 			continue
 		}
 
 		req.AddCookie(cookie)
 	}
-
-	rec := httptest.NewRecorder()
-	e.ServeHTTP(rec, req)
-
-	return rec
 }
 
 // isCookieFor reports whether the cookie is the one for base, under the guarded

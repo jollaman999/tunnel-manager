@@ -1,6 +1,8 @@
 package api
 
 import (
+	"crypto/tls"
+	"encoding/json"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -51,20 +53,17 @@ func loginFrom(e *echo.Echo, address, body string) *httptest.ResponseRecorder {
 	return loginCarrying(e, address, body)
 }
 
-// loginCarrying is loginFrom for a client that holds cookies, which is how a
-// login carries the device cookie of a browser that signed in before. The host
-// and the port are joined the way a socket address is written, so an IPv6
-// address arrives in brackets as it would from a real connection.
+// loginCarrying is loginFrom for a client that holds something, which is how a
+// login carries the device value of a browser that signed in before, in the
+// header carry puts it in. The host and the port are joined the way a socket
+// address is written, so an IPv6 address arrives in brackets as it would from
+// a real connection.
 func loginCarrying(e *echo.Echo, address, body string, cookies ...*http.Cookie) *httptest.ResponseRecorder {
 	req := httptest.NewRequest(http.MethodPost, loginPath, strings.NewReader(body))
 	req.Header.Set(echo.HeaderContentType, echo.MIMEApplicationJSON)
 	req.RemoteAddr = net.JoinHostPort(address, "54321")
 
-	for _, cookie := range cookies {
-		if cookie != nil {
-			req.AddCookie(cookie)
-		}
-	}
+	carry(req, cookies)
 
 	rec := httptest.NewRecorder()
 	e.ServeHTTP(rec, req)
@@ -723,15 +722,7 @@ func passwordCheckFrom(e *echo.Echo, address, method, target, body string,
 	req.Header.Set(echo.HeaderContentType, echo.MIMEApplicationJSON)
 	req.RemoteAddr = address + ":54321"
 
-	for _, cookie := range cookies {
-		if cookie.Name == csrfHeaderName {
-			req.Header.Set(csrfHeaderName, cookie.Value)
-
-			continue
-		}
-
-		req.AddCookie(cookie)
-	}
+	carry(req, cookies)
 
 	rec := httptest.NewRecorder()
 	e.ServeHTTP(rec, req)
@@ -1136,10 +1127,32 @@ func TestTheAccountChangeIsHeldByTheSameCounter(t *testing.T) {
 	}
 }
 
-// The tests below are the device cookie: what lets the operator's browser past
+// The tests below are the device value: what lets the operator's browser past
 // a hold on the account that somebody else brought about.
 
-// deviceCookieOf returns the device cookie the answer set, or nil.
+// deviceKey is a device value in the shape carry takes it in. It is named after
+// the header it goes out in, which no cookie is, so carry can tell it from the
+// cookies it travels among and put it where the page puts it.
+func deviceKey(value string) *http.Cookie {
+	return &http.Cookie{Name: deviceHeaderName, Value: value}
+}
+
+// deviceKeyOf returns the device value the answer carried in its body, as
+// deviceKey makes it, or nil where the answer carries none. The body is the one
+// place the server hands it out.
+func deviceKeyOf(rec *httptest.ResponseRecorder) *http.Cookie {
+	var resp testResponse
+
+	err := json.Unmarshal(rec.Body.Bytes(), &resp)
+	if err != nil || resp.Data.Device == "" {
+		return nil
+	}
+
+	return deviceKey(resp.Data.Device)
+}
+
+// deviceCookieOf returns the cookie the answer set under the name the device
+// value went out in before it was taken out of cookies, or nil.
 func deviceCookieOf(rec *httptest.ResponseRecorder) *http.Cookie {
 	for _, cookie := range rec.Result().Cookies() {
 		if isCookieFor(cookie, deviceCookieName) {
@@ -1150,7 +1163,7 @@ func deviceCookieOf(rec *httptest.ResponseRecorder) *http.Cookie {
 	return nil
 }
 
-// holdTheAccount is the attack the device cookie is for, as it was measured
+// holdTheAccount is the attack the device value is for, as it was measured
 // against a running server: five wrong passwords from each of 127.0.0.2 to
 // 127.0.0.7. No address goes past its own limit and the thirty together hold
 // the account, which no address the operator could come from is spared.
@@ -1163,29 +1176,29 @@ func holdTheAccount(t *testing.T, e *echo.Echo) {
 }
 
 // deviceFrom logs in from address with the right password and returns the
-// device cookie the answer handed out, failing the test where there is none.
+// device value the answer handed out, failing the test where there is none.
 func deviceFrom(t *testing.T, e *echo.Echo, address string) *http.Cookie {
 	t.Helper()
 
 	rec := loginFrom(e, address, goodLogin)
 	if rec.Code != http.StatusOK {
-		t.Fatalf("the login that hands out the device cookie: status = %d, want %d, body: %s",
+		t.Fatalf("the login that hands out the device value: status = %d, want %d, body: %s",
 			rec.Code, http.StatusOK, rec.Body.String())
 	}
 
-	device := deviceCookieOf(rec)
+	device := deviceKeyOf(rec)
 	if device == nil {
-		t.Fatalf("a login with the right password set no %s cookie", deviceCookieName)
+		t.Fatalf("a login with the right password answered with no device, body: %s", rec.Body.String())
 	}
 
 	return device
 }
 
-// TestADeviceCookieGetsPastAHoldOnTheAccount is the lockout the cookie exists
+// TestADeviceValueGetsPastAHoldOnTheAccount is the lockout the value exists
 // to end. Once the account is held, the right password from an address that has
 // never sent anything is refused, and the same password from a browser that
-// signed in before is let in.
-func TestADeviceCookieGetsPastAHoldOnTheAccount(t *testing.T) {
+// signed in before, sending the value in its header, is let in.
+func TestADeviceValueGetsPastAHoldOnTheAccount(t *testing.T) {
 	e, _ := newTestServer(t, newTestAccount(t, false))
 
 	signedIn := loginFrom(e, "127.0.0.1", goodLogin)
@@ -1194,75 +1207,159 @@ func TestADeviceCookieGetsPastAHoldOnTheAccount(t *testing.T) {
 			signedIn.Code, http.StatusOK, signedIn.Body.String())
 	}
 
-	device := deviceCookieOf(signedIn)
+	device := deviceKeyOf(signedIn)
 	if device == nil {
-		t.Errorf("a login with the right password set no %s cookie", deviceCookieName)
+		t.Fatalf("a login with the right password answered with no device, body: %s", signedIn.Body.String())
 	}
 
 	holdTheAccount(t, e)
 
-	// Without the cookie it is still the hold it was: what the account counter
+	// Without the value it is still the hold it was: what the account counter
 	// is for has not changed.
 	stranger := loginFrom(e, "127.0.0.8", goodLogin)
 	if stranger.Code != http.StatusTooManyRequests {
-		t.Errorf("the right password without a device cookie: status = %d, want %d, body: %s",
+		t.Errorf("the right password without a device value: status = %d, want %d, body: %s",
 			stranger.Code, http.StatusTooManyRequests, stranger.Body.String())
 	}
 
 	if got, want := stranger.Result().Header.Get(echo.HeaderRetryAfter),
 		strconv.Itoa(int(loginAccountBlockFor/time.Second)); got != want {
-		t.Errorf("Retry-After without a device cookie = %q, want %q", got, want)
+		t.Errorf("Retry-After without a device value = %q, want %q", got, want)
 	}
 
 	operator := loginCarrying(e, "127.0.0.9", goodLogin, device)
 	if operator.Code != http.StatusOK {
-		t.Fatalf("the right password with the device cookie: status = %d, want %d, body: %s",
+		t.Fatalf("the right password with the device value: status = %d, want %d, body: %s",
 			operator.Code, http.StatusOK, operator.Body.String())
 	}
 
 	if sessionCookieOf(operator) == nil {
-		t.Error("the login with the device cookie set no session cookie")
+		t.Error("the login with the device value set no session cookie")
 	}
 
-	t.Logf("account held: without the cookie %d %s, with it %d",
+	t.Logf("account held: without the value %d %s, with it %d",
 		stranger.Code, stranger.Body.String(), operator.Code)
 }
 
-// TestADeviceCookieIsHandedOutLikeTheSessionCookie checks the attributes. It
-// is HttpOnly and SameSite=Lax like the session, kept for its lifetime rather
-// than for the life of the browser, and under the guarded name over TLS.
-func TestADeviceCookieIsHandedOutLikeTheSessionCookie(t *testing.T) {
-	e, _ := newTestServer(t, newTestAccount(t, false))
+// TestTheDeviceValueIsHandedOutInTheBodyAndInNoCookie is where the value goes.
+// A cookie is sent to every port of the host name, so a cookie that carried it
+// would hand it to whatever runs on another port; the session cookie is the one
+// cookie a login sets, and the value is in the body, signed for this account.
+func TestTheDeviceValueIsHandedOutInTheBodyAndInNoCookie(t *testing.T) {
+	user := newTestAccount(t, false)
+	e, _ := newTestServer(t, user)
 
 	for _, overTLS := range []bool{false, true} {
 		rec, _ := loginOverTLS(t, e, overTLS, goodLogin)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("over TLS %v: status = %d, want %d, body: %s", overTLS, rec.Code, http.StatusOK, rec.Body.String())
+		}
 
-		device := deviceCookieOf(rec)
+		names := []string{}
+		for _, cookie := range rec.Result().Cookies() {
+			names = append(names, cookie.Name)
+		}
+
+		if want := cookieName(sessionCookieName, overTLS); len(names) != 1 || names[0] != want {
+			t.Errorf("over TLS %v: the login set the cookies %v, want %s alone", overTLS, names, want)
+		}
+
+		device := deviceKeyOf(rec)
 		if device == nil {
-			t.Fatalf("over TLS %v: no %s cookie", overTLS, deviceCookieName)
+			t.Fatalf("over TLS %v: the login answered with no device, body: %s", overTLS, rec.Body.String())
 		}
 
-		wantName := deviceCookieName
-		if overTLS {
-			wantName = hostCookiePrefix + deviceCookieName
-		}
-
-		if device.Name != wantName || device.Secure != overTLS || !device.HttpOnly ||
-			device.SameSite != http.SameSiteLaxMode || device.Path != "/" || device.Domain != "" {
-			t.Errorf("over TLS %v: cookie = %+v, want name %s, Secure %v, HttpOnly, Lax, Path /, no Domain",
-				overTLS, device, wantName, overTLS)
-		}
-
-		if want := int(deviceCookieLifetime / time.Second); device.MaxAge != want {
-			t.Errorf("over TLS %v: Max-Age = %d, want %d", overTLS, device.MaxAge, want)
+		if deviceOf(device.Value, &user, time.Now()) == "" {
+			t.Errorf("over TLS %v: the device the login answered with does not hold: %q", overTLS, device.Value)
 		}
 	}
 }
 
-// TestADeviceCookieThatDoesNotHoldIsIgnored is the other side: anything but a
-// cookie this server signed for these credentials less than its lifetime ago
+// TestAnOldDeviceCookieCountsForNothingAndIsDropped is a browser that signed in
+// under a version that handed the value out in a cookie. The cookie is not
+// read: a login that carries a value that holds in it, and nothing in the
+// header, is counted the way one with no value is and meets the hold on the
+// account. The same value in the header is let through, so what refused it is
+// where it came from. Every answer to a request that carries the cookie drops
+// it, under the name it came under.
+func TestAnOldDeviceCookieCountsForNothingAndIsDropped(t *testing.T) {
+	tests := []struct {
+		name    string
+		overTLS bool
+		cookie  string
+	}{
+		{name: "the bare name over plain HTTP", cookie: deviceCookieName},
+		{name: "the guarded name over TLS", overTLS: true, cookie: hostCookiePrefix + deviceCookieName},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			e, _ := newTestServer(t, newTestAccount(t, false))
+
+			device := deviceFrom(t, e, "127.0.0.1")
+			old := &http.Cookie{Name: tt.cookie, Value: device.Value}
+
+			holdTheAccount(t, e)
+
+			req := httptest.NewRequest(http.MethodPost, loginPath, strings.NewReader(goodLogin))
+			req.Header.Set(echo.HeaderContentType, echo.MIMEApplicationJSON)
+			req.RemoteAddr = net.JoinHostPort("127.0.0.9", "54321")
+
+			if tt.overTLS {
+				req.TLS = &tls.ConnectionState{}
+			}
+
+			carry(req, []*http.Cookie{old})
+
+			rec := httptest.NewRecorder()
+			e.ServeHTTP(rec, req)
+
+			if rec.Code != http.StatusTooManyRequests {
+				t.Errorf("the right password with the value in an old cookie: status = %d, want %d, body: %s",
+					rec.Code, http.StatusTooManyRequests, rec.Body.String())
+			}
+
+			for _, step := range []struct {
+				what string
+				rec  *httptest.ResponseRecorder
+			}{
+				{"the login", rec},
+				{"a read", doOverTLS(e, tt.overTLS, http.MethodGet, "/api/host", "", old)},
+			} {
+				dropped := deviceCookieOf(step.rec)
+				if dropped == nil {
+					t.Errorf("%s: nothing was set under the %s name", step.what, tt.cookie)
+
+					continue
+				}
+
+				if dropped.Name != tt.cookie || dropped.MaxAge >= 0 || dropped.Value != "" || dropped.Path != "/" {
+					t.Errorf("%s: the %s cookie was not dropped: %s set with MaxAge %d, Path %q and a value of %d bytes",
+						step.what, tt.cookie, dropped.Name, dropped.MaxAge, dropped.Path, len(dropped.Value))
+				}
+
+				if tt.overTLS && !dropped.Secure {
+					t.Errorf("%s: the guarded name was dropped without Secure, which a browser ignores", step.what)
+				}
+			}
+
+			rec = loginCarrying(e, "127.0.0.10", goodLogin, device)
+			if rec.Code != http.StatusOK {
+				t.Errorf("the right password with the same value in the header: status = %d, want %d, body: %s",
+					rec.Code, http.StatusOK, rec.Body.String())
+			}
+
+			if cookie := deviceCookieOf(rec); cookie != nil {
+				t.Errorf("a login that carried no old cookie set %s, MaxAge %d", cookie.Name, cookie.MaxAge)
+			}
+		})
+	}
+}
+
+// TestADeviceValueThatDoesNotHoldIsIgnored is the other side: anything but a
+// value this server signed for these credentials less than its lifetime ago
 // leaves the attempt counted against the account, and the hold reaches it.
-func TestADeviceCookieThatDoesNotHoldIsIgnored(t *testing.T) {
+func TestADeviceValueThatDoesNotHoldIsIgnored(t *testing.T) {
 	user := newTestAccount(t, false)
 
 	otherHash := newTestAccount(t, false)
@@ -1286,7 +1383,7 @@ func TestADeviceCookieThatDoesNotHoldIsIgnored(t *testing.T) {
 
 	signed := func(c *http.Cookie, by models.User) *http.Cookie {
 		forged := *c
-		forged.Value = deviceCookieValue(&by, time.Now())
+		forged.Value = deviceValue(&by, time.Now())
 
 		return &forged
 	}
@@ -1299,13 +1396,13 @@ func TestADeviceCookieThatDoesNotHoldIsIgnored(t *testing.T) {
 		{name: "a signature that was changed", forge: tampered},
 		{name: "signed under another password hash", forge: func(c *http.Cookie) *http.Cookie { return signed(c, otherHash) }},
 		{name: "signed under another username", forge: func(c *http.Cookie) *http.Cookie { return signed(c, renamed) }},
-		{name: "not a device cookie at all", forge: func(c *http.Cookie) *http.Cookie {
+		{name: "not a device value at all", forge: func(c *http.Cookie) *http.Cookie {
 			forged := *c
 			forged.Value = "anything"
 
 			return &forged
 		}},
-		{name: "past its lifetime", forge: func(c *http.Cookie) *http.Cookie { return c }, wait: deviceCookieLifetime},
+		{name: "past its lifetime", forge: func(c *http.Cookie) *http.Cookie { return c }, wait: deviceLifetime},
 	}
 
 	for _, tc := range cases {
@@ -1325,14 +1422,14 @@ func TestADeviceCookieThatDoesNotHoldIsIgnored(t *testing.T) {
 		})
 	}
 
-	// One second short of the lifetime the same cookie still holds, so what
+	// One second short of the lifetime the same value still holds, so what
 	// refused it above is the date and nothing else.
 	e, h := newTestServer(t, user)
 	advance, _ := heldClock(h)
 
 	device := deviceFrom(t, e, "127.0.0.1")
 
-	advance(deviceCookieLifetime - time.Second)
+	advance(deviceLifetime - time.Second)
 	holdTheAccount(t, e)
 
 	rec := loginCarrying(e, "127.0.0.9", goodLogin, device)
@@ -1342,22 +1439,22 @@ func TestADeviceCookieThatDoesNotHoldIsIgnored(t *testing.T) {
 	}
 }
 
-// TestDeviceOfReadsOnlyACookieThatHolds is deviceOf on its own, for the cases
+// TestDeviceOfReadsOnlyAValueThatHolds is deviceOf on its own, for the cases
 // a login cannot reach: another account id, and an account with no hash, which
 // would otherwise be a key anyone can sign with.
-func TestDeviceOfReadsOnlyACookieThatHolds(t *testing.T) {
+func TestDeviceOfReadsOnlyAValueThatHolds(t *testing.T) {
 	user := newTestAccount(t, false)
 	at := time.Date(2026, 9, 22, 10, 0, 0, 0, time.UTC)
 
-	value := deviceCookieValue(&user, at)
+	value := deviceValue(&user, at)
 
 	nonce := deviceOf(value, &user, at)
 	if nonce == "" {
-		t.Fatalf("a cookie handed out a moment ago does not hold: %q", value)
+		t.Fatalf("a value handed out a moment ago does not hold: %q", value)
 	}
 
-	if again := deviceOf(deviceCookieValue(&user, at), &user, at); again == nonce {
-		t.Errorf("two cookies handed out at the same moment share the nonce %q", nonce)
+	if again := deviceOf(deviceValue(&user, at), &user, at); again == nonce {
+		t.Errorf("two values handed out at the same moment share the nonce %q", nonce)
 	}
 
 	otherID := user
@@ -1366,7 +1463,7 @@ func TestDeviceOfReadsOnlyACookieThatHolds(t *testing.T) {
 	noHash := user
 	noHash.PasswordHash = ""
 
-	unsigned := deviceCookieValue(&noHash, at)
+	unsigned := deviceValue(&noHash, at)
 
 	cases := []struct {
 		name  string
@@ -1376,7 +1473,7 @@ func TestDeviceOfReadsOnlyACookieThatHolds(t *testing.T) {
 	}{
 		{name: "another account id", value: value, user: otherID, now: at},
 		{name: "an account with no hash", value: unsigned, user: noHash, now: at},
-		{name: "the end of its lifetime", value: value, user: user, now: at.Add(deviceCookieLifetime)},
+		{name: "the end of its lifetime", value: value, user: user, now: at.Add(deviceLifetime)},
 		{name: "empty", value: "", user: user, now: at},
 		{name: "no signature", value: value[:strings.LastIndexByte(value, '.')], user: user, now: at},
 	}
@@ -1389,11 +1486,11 @@ func TestDeviceOfReadsOnlyACookieThatHolds(t *testing.T) {
 	}
 }
 
-// TestADeviceCookieHasALimitOfItsOwn is what keeps a stolen cookie from being a
+// TestADeviceValueHasALimitOfItsOwn is what keeps a stolen value from being a
 // way to guess with the account counter switched off. Its wrong passwords are
-// not counted on the account, they are counted on the cookie, and once the
-// cookie has met its limit it is trusted no more than no cookie at all.
-func TestADeviceCookieHasALimitOfItsOwn(t *testing.T) {
+// not counted on the account, they are counted on the value, and once the
+// value has met its limit it is trusted no more than no value at all.
+func TestADeviceValueHasALimitOfItsOwn(t *testing.T) {
 	e, h := newTestServer(t, newTestAccount(t, false))
 
 	device := deviceFrom(t, e, "127.0.0.1")
@@ -1403,7 +1500,7 @@ func TestADeviceCookieHasALimitOfItsOwn(t *testing.T) {
 	for i := 0; i < loginDeviceFailureLimit-1; i++ {
 		rec := loginCarrying(e, "198.51.100."+strconv.Itoa(100+i), badLogin, device)
 		if rec.Code != http.StatusUnauthorized {
-			t.Fatalf("wrong password %d with the cookie: status = %d, want %d, body: %s",
+			t.Fatalf("wrong password %d with the value: status = %d, want %d, body: %s",
 				i+1, rec.Code, http.StatusUnauthorized, rec.Body.String())
 		}
 	}
@@ -1420,7 +1517,7 @@ func TestADeviceCookieHasALimitOfItsOwn(t *testing.T) {
 	h.logins.mu.Unlock()
 
 	if accountCounted {
-		t.Error("wrong passwords sent with a device cookie were counted against the account")
+		t.Error("wrong passwords sent with a device value were counted against the account")
 	}
 
 	if devices != 1 {
@@ -1429,11 +1526,11 @@ func TestADeviceCookieHasALimitOfItsOwn(t *testing.T) {
 
 	holdTheAccount(t, e)
 
-	// The account is held now and the cookie still has one failure to go, so
+	// The account is held now and the value still has one failure to go, so
 	// it is let through and counted.
 	rec := loginCarrying(e, "198.51.100.150", badLogin, device)
 	if rec.Code != http.StatusUnauthorized {
-		t.Fatalf("wrong password %d with the cookie while the account is held: status = %d, want %d, body: %s",
+		t.Fatalf("wrong password %d with the value while the account is held: status = %d, want %d, body: %s",
 			loginDeviceFailureLimit, rec.Code, http.StatusUnauthorized, rec.Body.String())
 	}
 
@@ -1441,21 +1538,21 @@ func TestADeviceCookieHasALimitOfItsOwn(t *testing.T) {
 	// would be without it, and meets the hold on the account.
 	rec = loginCarrying(e, "198.51.100.151", goodLogin, device)
 	if rec.Code != http.StatusTooManyRequests {
-		t.Errorf("the right password with a cookie past its limit: status = %d, want %d, body: %s",
+		t.Errorf("the right password with a value past its limit: status = %d, want %d, body: %s",
 			rec.Code, http.StatusTooManyRequests, rec.Body.String())
 	}
 }
 
-// TestACallThatAsksAgainHonoursTheDeviceCookie is the same lockout one step
+// TestACallThatAsksAgainHonoursTheDeviceValue is the same lockout one step
 // later: the operator signed in before the hold, and a call that asks for the
 // password again would otherwise be refused because of what somebody else sent
 // at the login.
-func TestACallThatAsksAgainHonoursTheDeviceCookie(t *testing.T) {
+func TestACallThatAsksAgainHonoursTheDeviceValue(t *testing.T) {
 	e, _, logPath := newPasswordCheckServer(t)
 
 	signedIn := loginFrom(e, "127.0.0.1", goodLogin)
 	cookies := []*http.Cookie{sessionCookieOf(signedIn), csrfKeyOf(signedIn)}
-	device := deviceCookieOf(signedIn)
+	device := deviceKeyOf(signedIn)
 
 	if cookies[0] == nil || cookies[1] == nil || device == nil {
 		t.Fatalf("the login set session %v, CSRF %v and device %v", cookies[0], cookies[1], device)
@@ -1465,13 +1562,13 @@ func TestACallThatAsksAgainHonoursTheDeviceCookie(t *testing.T) {
 
 	rec := clearLogsWith(e, "127.0.0.1", testPassword, cookies)
 	if rec.Code != http.StatusTooManyRequests {
-		t.Fatalf("the right password without the device cookie: status = %d, want %d, body: %s",
+		t.Fatalf("the right password without the device value: status = %d, want %d, body: %s",
 			rec.Code, http.StatusTooManyRequests, rec.Body.String())
 	}
 
 	rec = clearLogsWith(e, "127.0.0.1", testPassword, append(cookies, device))
 	if rec.Code != http.StatusOK {
-		t.Fatalf("the right password with the device cookie: status = %d, want %d, body: %s",
+		t.Fatalf("the right password with the device value: status = %d, want %d, body: %s",
 			rec.Code, http.StatusOK, rec.Body.String())
 	}
 
@@ -1485,11 +1582,11 @@ func TestACallThatAsksAgainHonoursTheDeviceCookie(t *testing.T) {
 	}
 }
 
-// TestChangingTheCredentialsEndsTheDeviceCookiesButOne is the account change.
-// Every cookie handed out before it was signed under the credentials it
+// TestChangingTheCredentialsEndsTheDeviceValuesButOne is the account change.
+// Every value handed out before it was signed under the credentials it
 // replaced and stops holding; the browser that made the change is handed one
 // under the new ones.
-func TestChangingTheCredentialsEndsTheDeviceCookiesButOne(t *testing.T) {
+func TestChangingTheCredentialsEndsTheDeviceValuesButOne(t *testing.T) {
 	for _, change := range []struct {
 		name, username, newPassword, loginAs, password string
 	}{
@@ -1502,7 +1599,7 @@ func TestChangingTheCredentialsEndsTheDeviceCookiesButOne(t *testing.T) {
 			other := deviceFrom(t, f.e, "127.0.0.1")
 
 			signedIn := loginFrom(f.e, "127.0.0.2", goodLogin)
-			changer := deviceCookieOf(signedIn)
+			changer := deviceKeyOf(signedIn)
 			cookies := []*http.Cookie{sessionCookieOf(signedIn), csrfKeyOf(signedIn), changer}
 
 			rec := f.changeAccount(t, cookies, testPassword, change.username, change.newPassword)
@@ -1510,9 +1607,13 @@ func TestChangingTheCredentialsEndsTheDeviceCookiesButOne(t *testing.T) {
 				t.Fatalf("the change: status = %d, want %d, body: %s", rec.Code, http.StatusOK, rec.Body.String())
 			}
 
-			renewed := deviceCookieOf(rec)
+			renewed := deviceKeyOf(rec)
 			if renewed == nil {
-				t.Fatalf("the change handed out no %s cookie", deviceCookieName)
+				t.Fatalf("the change answered with no device, body: %s", rec.Body.String())
+			}
+
+			if cookie := deviceCookieOf(rec); cookie != nil {
+				t.Errorf("the change set the %s cookie", cookie.Name)
 			}
 
 			holdTheAccount(t, f.e)
@@ -1522,23 +1623,23 @@ func TestChangingTheCredentialsEndsTheDeviceCookiesButOne(t *testing.T) {
 			for _, stale := range []*http.Cookie{other, changer} {
 				rec = loginCarrying(f.e, "127.0.0.9", body, stale)
 				if rec.Code != http.StatusTooManyRequests {
-					t.Errorf("a cookie handed out before the change: status = %d, want %d, body: %s",
+					t.Errorf("a value handed out before the change: status = %d, want %d, body: %s",
 						rec.Code, http.StatusTooManyRequests, rec.Body.String())
 				}
 			}
 
 			rec = loginCarrying(f.e, "127.0.0.9", body, renewed)
 			if rec.Code != http.StatusOK {
-				t.Errorf("the cookie the change handed out: status = %d, want %d, body: %s",
+				t.Errorf("the value the change handed out: status = %d, want %d, body: %s",
 					rec.Code, http.StatusOK, rec.Body.String())
 			}
 		})
 	}
 }
 
-// TestTheSetupHandsOutADeviceCookieUnderTheNewCredentials is the same for the
+// TestTheSetupHandsOutADeviceValueUnderTheNewCredentials is the same for the
 // setup, which replaces the initial password the first login was signed under.
-func TestTheSetupHandsOutADeviceCookieUnderTheNewCredentials(t *testing.T) {
+func TestTheSetupHandsOutADeviceValueUnderTheNewCredentials(t *testing.T) {
 	f := newAccountFixture(t)
 	f.e.POST(setupPath, f.auth.Setup, f.auth.RequireSession())
 
@@ -1549,7 +1650,7 @@ func TestTheSetupHandsOutADeviceCookieUnderTheNewCredentials(t *testing.T) {
 	}
 
 	first := loginFrom(f.e, "127.0.0.1", loginBody(t, "", testPassword))
-	initial := deviceCookieOf(first)
+	initial := deviceKeyOf(first)
 	cookies := []*http.Cookie{sessionCookieOf(first), csrfKeyOf(first), initial}
 
 	if cookies[0] == nil || initial == nil {
@@ -1561,9 +1662,13 @@ func TestTheSetupHandsOutADeviceCookieUnderTheNewCredentials(t *testing.T) {
 		t.Fatalf("the setup: status = %d, want %d, body: %s", rec.Code, http.StatusOK, rec.Body.String())
 	}
 
-	renewed := deviceCookieOf(rec)
+	renewed := deviceKeyOf(rec)
 	if renewed == nil {
-		t.Fatalf("the setup handed out no %s cookie", deviceCookieName)
+		t.Fatalf("the setup answered with no device, body: %s", rec.Body.String())
+	}
+
+	if cookie := deviceCookieOf(rec); cookie != nil {
+		t.Errorf("the setup set the %s cookie", cookie.Name)
 	}
 
 	holdTheAccount(t, f.e)
@@ -1572,32 +1677,46 @@ func TestTheSetupHandsOutADeviceCookieUnderTheNewCredentials(t *testing.T) {
 
 	rec = loginCarrying(f.e, "127.0.0.9", body, initial)
 	if rec.Code != http.StatusTooManyRequests {
-		t.Errorf("the cookie of the initial password: status = %d, want %d, body: %s",
+		t.Errorf("the value of the initial password: status = %d, want %d, body: %s",
 			rec.Code, http.StatusTooManyRequests, rec.Body.String())
 	}
 
 	rec = loginCarrying(f.e, "127.0.0.9", body, renewed)
 	if rec.Code != http.StatusOK {
-		t.Errorf("the cookie the setup handed out: status = %d, want %d, body: %s",
+		t.Errorf("the value the setup handed out: status = %d, want %d, body: %s",
 			rec.Code, http.StatusOK, rec.Body.String())
 	}
 }
 
-// TestTheLogoutLeavesTheDeviceCookie holds that signing out does not make the
-// browser a stranger: the logout expires the session cookie, and
-// sets nothing under the device name.
-func TestTheLogoutLeavesTheDeviceCookie(t *testing.T) {
+// TestTheLogoutLeavesTheDeviceValue holds that signing out does not make the
+// browser a stranger: the logout sets nothing under the old device name, and
+// the value the browser kept still gets it past a hold on the account after it.
+func TestTheLogoutLeavesTheDeviceValue(t *testing.T) {
 	e, _ := newTestServer(t, newTestAccount(t, false))
 
-	cookies := csrfLoginCookies(t, e, goodLogin)
+	signedIn := loginFrom(e, "127.0.0.1", goodLogin)
+	device := deviceKeyOf(signedIn)
+	cookies := []*http.Cookie{sessionCookieOf(signedIn), csrfKeyOf(signedIn), device}
+
+	if cookies[0] == nil || cookies[1] == nil || device == nil {
+		t.Fatalf("the login set session %v, CSRF %v and device %v", cookies[0], cookies[1], device)
+	}
 
 	rec := do(e, http.MethodPost, logoutPath, "", cookies...)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("the logout: status = %d, want %d, body: %s", rec.Code, http.StatusOK, rec.Body.String())
 	}
 
-	if device := deviceCookieOf(rec); device != nil {
-		t.Errorf("the logout set the device cookie: %+v", device)
+	if cookie := deviceCookieOf(rec); cookie != nil {
+		t.Errorf("the logout set the %s cookie: %+v", cookie.Name, cookie)
+	}
+
+	holdTheAccount(t, e)
+
+	rec = loginCarrying(e, "127.0.0.9", goodLogin, device)
+	if rec.Code != http.StatusOK {
+		t.Errorf("the right password with the value kept over the logout: status = %d, want %d, body: %s",
+			rec.Code, http.StatusOK, rec.Body.String())
 	}
 }
 

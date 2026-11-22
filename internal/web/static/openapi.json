@@ -1,7 +1,7 @@
 {
     "swagger": "2.0",
     "info": {
-        "description": "The API the Tunnel Manager screens are built on. Every path\nbelow sits under /api and needs a session, except POST\n/api/login and GET /api/setup.\n\nLogging in sets the session cookie, __Host-tm_session over\nHTTPS and tm_session over plain HTTP. A login with the right\npassword also sets the device cookie, __Host-tm_device or\ntm_device, which keeps a hold on the account from refusing\nthis browser.\n\nEvery request the session cookie is sent with, GET included,\nalso needs the key of the session in an X-CSRF-Token header,\nand without it is answered 401 as if there were no session.\nPOST /api/login answers with the key in data.csrf_token and\nhands it out nowhere else: it is in no cookie, because a\nbrowser sends cookies to every port of the host name. POST\n/api/logout is the one call that does without it.\n\n\"Try it out\" on this page works as soon as you are logged in to\nthe screens in the same browser: the screens keep the key, and\nthis page puts it on every call it makes to this server. A key\npasted into Authorize above is sent in its place.\n\nA script can use an API token instead of a session. Make one\non the Settings screen or with POST /api/token, and send it as\nAuthorization: Bearer \u003ctoken\u003e. A request that does needs no\ncookie and no X-CSRF-Token, and reaches only the routes of the\nscopes the token was made with: read opens every GET but\nGET /api/account, and the others open the changes of one area\neach. GET and PUT /api/account, /api/token, /api/setup and\n/api/logout are never open to a token.\n\nEvery answer has the same shape: {\"success\":true,\"data\":...}\nor {\"success\":false,\"error\":\"...\"}. An answer that says no\ncarries error_code, which names the refusal and is what a\nscript should match on, and error_args, the values its English\nsentence was written with.",
+        "description": "The API the Tunnel Manager screens are built on. Every path\nbelow sits under /api and needs a session, except POST\n/api/login and GET /api/setup.\n\nLogging in sets the session cookie, __Host-tm_session over\nHTTPS and tm_session over plain HTTP. A login with the right\npassword also answers with data.device, the device value of\nthis client, and sets no cookie for it. Sent back as an\nX-TM-Device header on the next login, it keeps a hold on the\naccount from refusing this client. The setup and PUT\n/api/account answer with a new one.\n\nEvery request the session cookie is sent with, GET included,\nalso needs the key of the session in an X-CSRF-Token header,\nand without it is answered 401 as if there were no session.\nPOST /api/login answers with the key in data.csrf_token and\nhands it out nowhere else: it is in no cookie, because a\nbrowser sends cookies to every port of the host name. POST\n/api/logout is the one call that does without it.\n\n\"Try it out\" on this page works as soon as you are logged in to\nthe screens in the same browser: the screens keep the key and\nthe device value, and this page puts both on every call it\nmakes to this server. A key pasted into Authorize above is sent\nin its place.\n\nA script can use an API token instead of a session. Make one\non the Settings screen or with POST /api/token, and send it as\nAuthorization: Bearer \u003ctoken\u003e. A request that does needs no\ncookie and no X-CSRF-Token, and reaches only the routes of the\nscopes the token was made with: read opens every GET but\nGET /api/account, and the others open the changes of one area\neach. GET and PUT /api/account, /api/token, /api/setup and\n/api/logout are never open to a token.\n\nEvery answer has the same shape: {\"success\":true,\"data\":...}\nor {\"success\":false,\"error\":\"...\"}. An answer that says no\ncarries error_code, which names the refusal and is what a\nscript should match on, and error_args, the values its English\nsentence was written with.",
         "title": "Tunnel Manager API",
         "contact": {},
         "license": {
@@ -53,7 +53,7 @@
                         "CSRFToken": []
                     }
                 ],
-                "description": "Takes current_password and username, new_password or both, changes them, signs out every other session and revokes every API token. The answer says how many of each in sessions_ended and tokens_revoked.",
+                "description": "Takes current_password and username, new_password or both, changes them, signs out every other session and revokes every API token. The answer says how many of each in sessions_ended and tokens_revoked.\nEvery device value handed out before stops holding, and the answer carries a new one for this client in device.",
                 "consumes": [
                     "application/json"
                 ],
@@ -1667,7 +1667,7 @@
         },
         "/login": {
             "post": {
-                "description": "Takes username and password, sets the session cookie, and answers with setup_required and csrf_token.\ncsrf_token is the key of the session and is handed out here and in no cookie. Send it as X-CSRF-Token on every request the session cookie authenticates, GET included: the cookie without it is answered 401.\nA login that gets the password right also sets the device cookie (tm_device), which keeps a hold on the account from refusing this browser for 30 days.\nOn the very first sign in the username is empty and the password is the one in the initial-password file.",
+                "description": "Takes username and password, sets the session cookie, and answers with setup_required and csrf_token.\ncsrf_token is the key of the session and is handed out here and in no cookie. Send it as X-CSRF-Token on every request the session cookie authenticates, GET included: the cookie without it is answered 401.\nA login that gets the password right also answers with device, the device value of this client, which is in no cookie either. Send it as X-TM-Device on every later login and on every call that asks for the password again: for 30 days it keeps a hold on the account from refusing this client.\nOn the very first sign in the username is empty and the password is the one in the initial-password file.",
                 "consumes": [
                     "application/json"
                 ],
@@ -1731,7 +1731,7 @@
         },
         "/logout": {
             "post": {
-                "description": "Drops the session and expires the session cookie. The device cookie stays.\nNeeds no X-CSRF-Token: it ends the session the cookie names and opens nothing.",
+                "description": "Drops the session and expires the session cookie. The device value the client keeps goes on holding.\nNeeds no X-CSRF-Token: it ends the session the cookie names and opens nothing.",
                 "produces": [
                     "application/json"
                 ],
@@ -2618,7 +2618,7 @@
                         "CSRFToken": []
                     }
                 ],
-                "description": "Sets the username and the password once, on the account that still needs them.",
+                "description": "Sets the username and the password once, on the account that still needs them.\nAnswers with device, the device value of this client under the new credentials, which takes the place of the one the login answered with.",
                 "consumes": [
                     "application/json"
                 ],
@@ -2644,7 +2644,19 @@
                     "200": {
                         "description": "OK",
                         "schema": {
-                            "$ref": "#/definitions/models.Response"
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/models.Response"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "data": {
+                                            "$ref": "#/definitions/api.setupDone"
+                                        }
+                                    }
+                                }
+                            ]
                         }
                     },
                     "400": {
@@ -3116,6 +3128,9 @@
         "api.accountChanged": {
             "type": "object",
             "properties": {
+                "device": {
+                    "type": "string"
+                },
                 "password_changed": {
                     "type": "boolean"
                 },
@@ -4275,6 +4290,9 @@
                 "csrf_token": {
                     "type": "string"
                 },
+                "device": {
+                    "type": "string"
+                },
                 "setup_required": {
                     "type": "boolean"
                 }
@@ -4554,6 +4572,14 @@
                 "update_check_interval_hours": {
                     "description": "UpdateCheckIntervalHours is how often that read happens. Releases are\nnot a thing that happens by the minute, and the answer is only ever used\nto draw a line on a screen or, where the setting below is on, to start\nan install that takes the service down: a day is often enough for both\nand rare enough that nobody is rate limited for it.",
                     "type": "integer"
+                }
+            }
+        },
+        "api.setupDone": {
+            "type": "object",
+            "properties": {
+                "device": {
+                    "type": "string"
                 }
             }
         },

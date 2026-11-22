@@ -1359,6 +1359,74 @@ func TestTheDocsPageReadsTheKeyWhereThePageKeepsIt(t *testing.T) {
 	}
 }
 
+// The two names the device value goes by on the way out of a page, the way the
+// key of a session has two, and the header as the server names it.
+var (
+	scriptDeviceStoreKey   = regexp.MustCompile(`(?m)^const deviceStoreKey = "([^"]+)";$`)
+	scriptDeviceHeaderName = regexp.MustCompile(`(?m)^const deviceHeaderName = "([^"]+)";$`)
+	serverDeviceHeaderName = regexp.MustCompile(`(?m)^const deviceHeaderName = "([^"]+)"$`)
+)
+
+// scriptForgetSession is the function the screens drop what a session left
+// behind with, at the logout and at a refusal for want of a session.
+var scriptForgetSession = regexp.MustCompile(`(?ms)^function forgetSession\(\) \{\n(.*?)^\}$`)
+
+// TestTheDocsPageKeepsTheDeviceValueWhereThePageKeepsIt holds the Swagger UI to
+// the screens and both to the server on where the device value is.
+//
+// The value is what lets the operator's browser past a hold on the account
+// that somebody else brought about, and nothing says when it is not sent: a
+// login without it is counted like one from a stranger, which is only seen on
+// the day the account is held. A name that drifted between the two pages would
+// leave one of them sending a value the other stopped updating, and a header
+// the server stopped reading would leave every browser a stranger.
+//
+// The screens keep it over the end of a session, too. The logout and a session
+// that ran out are when the operator has to sign in again, which is when the
+// value is wanted, so forgetSession must not be what drops it.
+func TestTheDocsPageKeepsTheDeviceValueWhereThePageKeepsIt(t *testing.T) {
+	header := namedIn(t, "../api/auth.go", serverDeviceHeaderName)
+	app := readStatic(t, "app.js")
+
+	want := scriptDeviceStoreKey.FindStringSubmatch(app)
+	if want == nil {
+		t.Fatalf("app.js names no deviceStoreKey")
+	}
+
+	if csrf := scriptCsrfStoreKey.FindStringSubmatch(app); csrf != nil && csrf[1] == want[1] {
+		t.Errorf("app.js keeps the device value and the key of the session under the same name %q", want[1])
+	}
+
+	for _, name := range []string{"app.js", "api-docs/init.js"} {
+		script := readStatic(t, name)
+
+		store := scriptDeviceStoreKey.FindStringSubmatch(script)
+		if store == nil {
+			t.Errorf("%s names no deviceStoreKey", name)
+		} else if store[1] != want[1] {
+			t.Errorf("%s keeps the device value under %q, and app.js under %q", name, store[1], want[1])
+		}
+
+		sent := scriptDeviceHeaderName.FindStringSubmatch(script)
+		if sent == nil {
+			t.Errorf("%s names no deviceHeaderName", name)
+		} else if sent[1] != header[0] {
+			t.Errorf("%s sends the device value in %q, and the server reads %q", name, sent[1], header[0])
+		}
+	}
+
+	forget := scriptForgetSession.FindStringSubmatch(app)
+	if forget == nil {
+		t.Fatalf("app.js has no forgetSession in the shape this test reads")
+	}
+
+	for _, held := range []string{"deviceStoreKey", "heldDevice"} {
+		if strings.Contains(forget[1], held) {
+			t.Errorf("forgetSession touches %s, so a logout would make this browser a stranger", held)
+		}
+	}
+}
+
 // scriptAPIFetch is the start of a fetch the screens make of a literal path
 // under /api. What it is made with runs from there to the "})" that closes the
 // options, which is how every such call is written.

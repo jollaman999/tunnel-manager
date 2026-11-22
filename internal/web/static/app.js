@@ -141,6 +141,24 @@ const importAPIPortSocksCode = "import.settings.api_port.socks";
 const csrfStoreKey = "tm_csrf";
 const csrfHeaderName = "X-CSRF-Token";
 
+// deviceStoreKey and deviceHeaderName are the two ends of the device value:
+// what tells this browser apart as one that got the password right before, so
+// that a hold on the account somebody else brought about does not keep it out.
+// The login, the setup and the account change answer with it in their bodies,
+// and the server reads it back from the header on the login and on every call
+// that asks for the password again.
+//
+// It is kept in local storage and never in a cookie, for the reason the key of
+// the session is: a cookie goes to every port of the host name, and a service
+// on another port that read the value could spend it on wrong passwords until
+// the server stopped trusting it. Unlike the key it outlives the session, the
+// logout included, since what it says is about the browser and not about the
+// session.
+//
+// api-docs/init.js keeps and sends it under the same names.
+const deviceStoreKey = "tm_device";
+const deviceHeaderName = "X-TM-Device";
+
 // themeKey is where the theme the operator picked is kept, and index.html holds
 // the same string: it is read there, in the head, so the first paint is already
 // in the right colour. It is a key of the local storage of the one browser and
@@ -351,6 +369,10 @@ let loadedVersion = null;
 // heldCsrfKey is the key of the session this tab signed in with, for a browser
 // that keeps nothing in local storage. csrfToken says when it is read.
 let heldCsrfKey = "";
+
+// heldDevice is the device value this tab was handed, for a browser that keeps
+// nothing in local storage. deviceValue says when it is read.
+let heldDevice = "";
 
 // notice is the one line above the screen: what says it, and what kind of
 // message it is. It outlives a redraw of the same screen, which is how the
@@ -1429,15 +1451,65 @@ function saysSetupFirst(payload, response) {
 //
 // apiCall builds on it, and so does every fetch of the API made beside apiCall:
 // a fetch that left the key off would be answered as if there were no session.
+//
+// The device value goes on every call as well, the login among them, where
+// this browser was handed one. The server reads it at the login and at the
+// calls that ask for the password again, and nothing here has to keep a list
+// of which those are.
 function apiHeaders() {
   const headers = { Accept: "application/json" };
   const token = csrfToken();
+  const device = deviceValue();
 
   if (token !== "") {
     headers[csrfHeaderName] = token;
   }
 
+  if (device !== "") {
+    headers[deviceHeaderName] = device;
+  }
+
   return headers;
+}
+
+// deviceValue is the device value of this browser, or "" when it was never
+// handed one. It is read out of local storage at every call for the reasons
+// csrfToken is, and heldDevice stands in where the browser keeps nothing there.
+function deviceValue() {
+  try {
+    const kept = window.localStorage.getItem(deviceStoreKey);
+
+    if (kept !== null) {
+      return kept;
+    }
+  } catch (error) {
+    return heldDevice;
+  }
+
+  return heldDevice;
+}
+
+// rememberDevice keeps the device value an answer carried, in place of the one
+// kept before: the login hands out a new one every time, and the setup and the
+// account change hand out the one that holds under the credentials they set.
+// An answer that carries none leaves what is kept as it is.
+//
+// Nothing here ever drops it. The logout and a session that ran out end the
+// session, and the value is what gets this browser back in when the account is
+// held; a value that stopped holding costs nothing but being counted like a
+// browser that has none.
+function rememberDevice(value) {
+  if (typeof value !== "string" || value === "") {
+    return;
+  }
+
+  heldDevice = value;
+
+  try {
+    window.localStorage.setItem(deviceStoreKey, value);
+  } catch (error) {
+    // Held in memory, which deviceValue reads.
+  }
 }
 
 // csrfToken is the key of the session, or "" when there is not one yet. It is

@@ -54,9 +54,11 @@ const sessionCookieName = "tm_session"
 // another port reads it off the requests the browser sends there, so every
 // request it authenticates has to bring the key of the session as well, in a
 // header, and the key is never put in a cookie: RequireSession says where it
-// is kept instead. Writing a cookie gives nothing away either: the device
-// cookie only holds where this server signed it, and the key is compared
-// against the one the session holds. What the prefix stops is the other half
+// is kept instead. The device value that tells the operator's browser apart at
+// the login stays out of cookies for the same reason, and handOutDevice says
+// where it goes. Writing a cookie gives nothing away either: the key is
+// compared against the one the session holds, and a device value is read from
+// a header and nowhere else. What the prefix stops is the other half
 // of it, an outsider writing over the cookies until the operator cannot use
 // this server at all.
 //
@@ -95,13 +97,17 @@ const sessionTokenBytes = 32
 // key was taken out of cookies. Nothing hands it out any more: a cookie is sent
 // to every port of the host name, and a key that went along with the session
 // cookie would let whatever runs on another port use the session. A browser
-// that still holds one is told to drop it, which dropCSRFCookie does. Like the
-// session name it is the bare one, and cookieName says what it went out as.
+// that still holds one is told to drop it, which dropRetiredCookies does. Like
+// the session name it is the bare one, and cookieName says what it went out as.
 const csrfCookieName = "tm_csrf"
 
-// deviceCookieName is the cookie a browser that has signed in is known by again.
-// loginlimit.go says what it is for and deviceCookieValue what is in it. Like
-// the other two it is the bare name, and cookieName says what it goes out as.
+// deviceCookieName is the cookie the device value of a browser was carried in
+// before the value was taken out of cookies. Nothing hands it out any more and
+// nothing reads it: a cookie is sent to every port of the host name, and a
+// value that went there could be spent by whatever runs on another port, on
+// wrong passwords that leave the operator's own browser untrusted. A browser
+// that still holds one is told to drop it, which dropRetiredCookies does. Like
+// the session name it is the bare one, and cookieName says what it went out as.
 const deviceCookieName = "tm_device"
 
 // csrfHeaderName is the header the key of a session is sent back in. A header
@@ -111,6 +117,13 @@ const deviceCookieName = "tm_device"
 // says CSRF because that is what it was first there for; it is also what a
 // session cookie read off another port of this host name comes without.
 const csrfHeaderName = "X-CSRF-Token"
+
+// deviceHeaderName is the header the device value of a browser is sent back in.
+// loginlimit.go says what the value is for and deviceValue what is in it. It is
+// a header of its own rather than the one the key of a session goes in, because
+// it is sent where there is no session yet: the login is the request it is
+// there for.
+const deviceHeaderName = "X-TM-Device"
 
 // csrfTokenBytes is how much randomness a CSRF token carries. It is as large as
 // a session token, because both are defended against guessing and nothing else.
@@ -461,15 +474,26 @@ type loginRequest struct {
 // and the two together are a session that works. The page keeps the key in its
 // local storage, which a browser keeps apart for every port, and a client that
 // is not a browser keeps it wherever it keeps the cookie jar.
+//
+// Device is the device value of this browser, which is in the body and only
+// there as well. handOutDevice says why.
 type loginResponse struct {
 	SetupRequired bool   `json:"setup_required"`
 	CSRFToken     string `json:"csrf_token"`
+	Device        string `json:"device"`
 }
 
 // setupRequest is the username and the password the operator settles on.
 type setupRequest struct {
 	Username string `json:"username"`
 	Password string `json:"password"`
+}
+
+// setupDone is what the setup answers with: the device value of the browser
+// under the credentials it just chose. The one the login handed out was signed
+// under the initial password and holds no more.
+type setupDone struct {
+	Device string `json:"device"`
 }
 
 // sessionCookie returns the cookie a session token is handed out in. Secure is
@@ -566,56 +590,40 @@ func (h *AuthHandler) cookieIsSecure(c *echo.Context) bool {
 	return strings.EqualFold(strings.TrimSpace(proto), "https")
 }
 
-// dropCSRFCookie tells the browser to throw away the cookie the key of a
-// session was handed out in before, under each name the request carries one
-// under, and does nothing where it carries none.
+// retiredCookieNames are the bare names of the cookies this server handed out
+// before what they carried was taken out of cookies: the key of a session and
+// the device value of a browser.
+var retiredCookieNames = []string{csrfCookieName, deviceCookieName}
+
+// dropRetiredCookies tells the browser to throw away the cookies the key of a
+// session and the device value were handed out in before, under each name the
+// request carries one under, and does nothing where it carries none.
 //
-// The key in it belonged to a session made by a version that handed it out
-// that way, and the browser goes on sending it to every port of this host name
-// for as long as it keeps it. Asking only where one arrived keeps a Set-Cookie
-// off the answers of every other request.
+// What is in them was handed out by a version that put it there, and the
+// browser goes on sending it to every port of this host name for as long as it
+// keeps it. Asking only where one arrived keeps a Set-Cookie off the answers of
+// every other request.
 //
 // The guarded name is dropped with Secure on whatever the request came over,
 // because a browser takes nothing under that name without it; the bare one
 // follows the request, the way it was set.
-func (h *AuthHandler) dropCSRFCookie(c *echo.Context) {
-	for _, name := range []string{hostCookiePrefix + csrfCookieName, csrfCookieName} {
-		_, err := c.Cookie(name)
-		if err != nil {
-			continue
+func (h *AuthHandler) dropRetiredCookies(c *echo.Context) {
+	for _, base := range retiredCookieNames {
+		for _, name := range []string{hostCookiePrefix + base, base} {
+			_, err := c.Cookie(name)
+			if err != nil {
+				continue
+			}
+
+			c.SetCookie(&http.Cookie{
+				Name:     name,
+				Value:    "",
+				Path:     "/",
+				MaxAge:   -1,
+				SameSite: http.SameSiteLaxMode,
+				Secure:   name != base || h.cookieIsSecure(c),
+			})
 		}
-
-		c.SetCookie(&http.Cookie{
-			Name:     name,
-			Value:    "",
-			Path:     "/",
-			MaxAge:   -1,
-			SameSite: http.SameSiteLaxMode,
-			Secure:   name != csrfCookieName || h.cookieIsSecure(c),
-		})
-	}
-}
-
-// deviceCookie returns the cookie the device cookie of a browser is handed out
-// in. It is the session cookie in every way but one: it is kept across a
-// restart of the browser for maxAge seconds rather than dropped with it,
-// because a browser that signed in last week is the one it is there to tell
-// apart, and the session cookie is gone by then.
-//
-// The logout leaves it where it is. Signing out ends what the session opens,
-// and the device cookie opens nothing: it only says that this browser has got
-// the password right before.
-func (h *AuthHandler) deviceCookie(c *echo.Context, value string, maxAge int) *http.Cookie {
-	secure := h.cookieIsSecure(c)
-
-	return &http.Cookie{
-		Name:     cookieName(deviceCookieName, secure),
-		Value:    value,
-		Path:     "/",
-		MaxAge:   maxAge,
-		HttpOnly: true,
-		SameSite: http.SameSiteLaxMode,
-		Secure:   secure,
 	}
 }
 
@@ -638,7 +646,7 @@ func (h *AuthHandler) readUser(conds ...interface{}) (*models.User, error) {
 // @Summary      Log in
 // @Description  Takes username and password, sets the session cookie, and answers with setup_required and csrf_token.
 // @Description  csrf_token is the key of the session and is handed out here and in no cookie. Send it as X-CSRF-Token on every request the session cookie authenticates, GET included: the cookie without it is answered 401.
-// @Description  A login that gets the password right also sets the device cookie (tm_device), which keeps a hold on the account from refusing this browser for 30 days.
+// @Description  A login that gets the password right also answers with device, the device value of this client, which is in no cookie either. Send it as X-TM-Device on every later login and on every call that asks for the password again: for 30 days it keeps a hold on the account from refusing this client.
 // @Description  On the very first sign in the username is empty and the password is the one in the initial-password file.
 // @Tags         account
 // @Accept   json
@@ -673,10 +681,10 @@ func (h *AuthHandler) Login(c *echo.Context) error {
 	// as much as the account is. The account row is read first because the
 	// counter of the account is named by the row, and that read is one indexed
 	// row out of a table that holds one, which next to a bcrypt compare is
-	// nothing. The device cookie is checked against the same row, and it is an
+	// nothing. The device value is checked against the same row, and it is an
 	// HMAC, which is nothing next to bcrypt either.
 	address := h.loginAddress(c)
-	device := deviceOf(cookieValue(c, deviceCookieName), user, h.logins.now())
+	device := deviceOf(c.Request().Header.Get(deviceHeaderName), user, h.logins.now())
 
 	attempt, wait, held := h.logins.begin(address, user.ID, device)
 	if held {
@@ -721,15 +729,16 @@ func (h *AuthHandler) Login(c *echo.Context) error {
 	}
 
 	c.SetCookie(h.sessionCookie(c, token, 0))
-	// A new one on every login, whatever the browser already holds, so that its
-	// thirty days are counted from the last time the password was right.
-	h.handOutDevice(c, user)
 
 	return c.JSON(http.StatusOK, models.Response{
 		Success: true,
 		Data: loginResponse{
 			SetupRequired: user.SetupRequired,
 			CSRFToken:     csrfToken,
+			// A new one on every login, whatever the browser already holds, so
+			// that its thirty days are counted from the last time the password
+			// was right.
+			Device: h.handOutDevice(user),
 		},
 	})
 }
@@ -739,7 +748,7 @@ func (h *AuthHandler) Login(c *echo.Context) error {
 // asked for is the state it is left in.
 //
 // @Summary      Log out
-// @Description  Drops the session and expires the session cookie. The device cookie stays.
+// @Description  Drops the session and expires the session cookie. The device value the client keeps goes on holding.
 // @Description  Needs no X-CSRF-Token: it ends the session the cookie names and opens nothing.
 // @Tags         account
 // @Produce  json
@@ -791,12 +800,13 @@ func (h *AuthHandler) GetSetup(c *echo.Context) error {
 
 // @Summary      Finish the account setup
 // @Description  Sets the username and the password once, on the account that still needs them.
+// @Description  Answers with device, the device value of this client under the new credentials, which takes the place of the one the login answered with.
 // @Tags         account
 // @Accept   json
 // @Produce  json
 // @Security  CSRFToken
 // @Param   body  body  api.setupRequest  true  "The username and the password to set"
-// @Success  200  {object}  models.Response
+// @Success  200  {object}  models.Response{data=api.setupDone}
 // @Failure  400  {object}  api.errorBody  "The password is too short or too long"
 // @Failure  401  {object}  api.errorBody  "No session, or no valid X-CSRF-Token header"
 // @Failure  409  {object}  api.errorBody  "The setup is already done"
@@ -896,13 +906,14 @@ func (h *AuthHandler) Setup(c *echo.Context) error {
 	h.sessions.DeleteAllExcept(token)
 	h.removeInitialPasswordFile()
 
-	// The cookie the login handed out was signed under the initial password,
-	// which stopped holding at the commit. The browser that did the setup is
-	// the one browser known to be the operator's, so it is given one under the
-	// credentials it just chose.
-	h.handOutDevice(c, &user)
-
-	return c.JSON(http.StatusOK, models.Response{Success: true})
+	// The device value the login handed out was signed under the initial
+	// password, which stopped holding at the commit. The browser that did the
+	// setup is the one browser known to be the operator's, so it is given one
+	// under the credentials it just chose.
+	return c.JSON(http.StatusOK, models.Response{
+		Success: true,
+		Data:    setupDone{Device: h.handOutDevice(&user)},
+	})
 }
 
 // removeInitialPasswordFile deletes the file the startup wrote the initial
@@ -963,10 +974,11 @@ func (h *AuthHandler) RequireSession() echo.MiddlewareFunc {
 		return func(c *echo.Context) error {
 			path := c.Request().URL.Path
 
-			// A browser that signed in under a version that put the key in a
-			// cookie still sends it, to this port and every other one. It is
-			// told to drop it on whatever it asks for next, the login included.
-			h.dropCSRFCookie(c)
+			// A browser that signed in under a version that put the key or the
+			// device value in a cookie still sends it, to this port and every
+			// other one. It is told to drop it on whatever it asks for next, the
+			// login included.
+			h.dropRetiredCookies(c)
 
 			// The login is how a session and its key are got, so it cannot be
 			// behind either check. Nothing is forged by it: a request made from

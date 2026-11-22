@@ -1030,7 +1030,7 @@ cookie 却是不带这个标志跑的。
 服务器能看到的地址也只有代理一个，所以每次登录都会记在同一个地址上，每行日志写的都是代理。
 
 `-trust-proxy-headers` 就是用来说明情况不是这样的。加上它，带着 `X-Forwarded-Proto: https`
-的请求就被当作从 TLS 上过来的，会话和设备 cookie 会标上 `Secure`。请求的地址是
+的请求就被当作从 TLS 上过来的，会话 cookie 会标上 `Secure`。请求的地址是
 `X-Forwarded-For` 最右边的一项：登录限制按它计数，访问日志（`remote_ip`）和 API 写的日志行写的
 都是它。这个头缺失或最右边一项不是 IP 地址时，用连接的地址。在 API 前面写的日志行，也就是明文
 HTTP 请求的重定向以及端口上区分 TLS 和明文 HTTP 的那部分写的行，不管给没给这个参数，写的都是
@@ -1098,20 +1098,25 @@ proxy_set_header X-Forwarded-Proto $scheme;
 也一样会被挡。计数器存在内存里，重启后清空。
 
 **以前登录过的浏览器不会被账号计数器挡住。** 能连到这个端口的任何人，输错三十次就能把账号挡住，
-所以每次密码正确的登录都会再设一个设备 cookie：走 HTTPS 时叫 `__Host-tm_device`，走明文 HTTP
-时叫 `tm_device`。带着有效设备 cookie 的尝试，记在发来的地址和这个 cookie 上，而不记在账号上，
-所以账号被挡时它也不会被挡。地址的限制照样适用。
+所以每次密码正确的登录都会在响应的 `data.device` 里再给一个设备值。界面把它存进浏览器的本地
+存储，在之后的每个请求上（包括之后的登录）作为 `X-TM-Device` 头发回来。带着有效设备值的尝试，
+记在发来的地址和这个值上，而不记在账号上，所以账号被挡时它也不会被挡。地址的限制照样适用。
 
-- cookie 用账号的密码哈希签名，从设下它的那次登录起 30 天有效。每次登录都换成新的，所以每月至少
+- **设备值不放在任何 cookie 里。** 浏览器会把 cookie 发往这个主机名的每一个端口，放在 cookie 里
+  的话，另一个端口上的服务就能拿到它，用它输错五次密码，让你的浏览器在它挡住账号期间也不被信任。
+  本地存储是浏览器按端口分开保存的。旧版本留下的 `tm_device`、`__Host-tm_device` cookie 不会被
+  读取，并在下一个请求时被设为过期，所以升级之后，每个浏览器在下一次输对密码的登录之前都按新浏览器
+  计数。
+- 设备值用账号的密码哈希签名，从给出它的那次登录起 30 天有效。每次登录都换成新的，所以每月至少
   登录一次的浏览器会一直有。重启后仍然有效。
-- **同一个设备 cookie 在 15 分钟内输错五次，这个 cookie 在 5 分钟内不被信任。** 这段时间里它的
-  尝试和不带 cookie 的一样计数，账号被挡时也会被挡。所以偷到的 cookie 在任何人每 5 分钟都能对账号试的
-  三十次之外，每 5 分钟最多再多出五次猜测，没有密码它什么也打不开。
-- **修改用户名或密码，或者完成初始化之后，之前设下的设备 cookie 全部失效。** 做修改的那个浏览器
-  会拿到一个新的。
-- 退出登录不会删掉这个 cookie。单凭它什么也打不开，它只说明这个浏览器以前输对过密码。
+- **同一个设备值在 15 分钟内输错五次，这个值在 5 分钟内不被信任。** 这段时间里它的尝试和不带
+  设备值的一样计数，账号被挡时也会被挡。所以偷到的值在任何人每 5 分钟都能对账号试的三十次之外，
+  每 5 分钟最多再多出五次猜测，没有密码它什么也打不开。
+- **修改用户名或密码，或者完成初始化之后，之前给出的设备值全部失效。** 响应的 `device` 里带着
+  做修改的那个浏览器的新值，界面会把它存下来。
+- 退出登录、会话过期都不会删掉设备值。单凭它什么也打不开，它只说明这个浏览器以前输对过密码。
 
-每次运行都沿用同一个 cookie 文件的脚本，也按同样的方式处理。
+每次运行都沿用 `data.device`、并在登录时作为 `X-TM-Device` 发出去的脚本，也按同样的方式处理。
 
 ### 修改用户名和密码
 
@@ -1128,7 +1133,7 @@ Settings 页面上两个都能改，从脚本上做同一件事是 `PUT /api/acc
 凭据变了，那么除了执行这次修改的会话以外，全部作废，每个令牌也一样，包括永不过期的。做这次修改
 的会话继续能用，它的 CSRF 令牌也继续有效，这样发起请求的那个页面才能把结果显示出来。响应里
 `sessions_ended` 说明有多少个其他客户端被下线了，`tokens_revoked` 说明吊销了多少个令牌。修改之前
-设下的设备 cookie 也全部失效，做修改的那个浏览器会拿到一个新的，见 [登录失败的限制](#登录失败的限制)。
+给出的设备值也全部失效，响应的 `device` 里带着做修改的那个客户端的新值，见 [登录失败的限制](#登录失败的限制)。
 
 **用令牌的脚本在凭据变了之后就不能用了。** 在给它一个修改之后创建的令牌之前，它的下一个请求会
 像被吊销的令牌那样得到 `401`。账号那一行和令牌是一起写入的：保存失败的修改什么也不吊销；因当前
@@ -1707,11 +1712,14 @@ Windows 上，这个进程正在写的日志文件打开着就无法删除，而
    `__Host-tm_session`，走明文 HTTP 时叫 `tm_session`。`__Host-` 是告诉浏览器这个 cookie
    只属于这台主机的记号，而浏览器只在标了 `Secure` 的 cookie 上接受这个名字，所以关掉了
    HTTPS 的机器拿到的是不带前缀的名字。cookie jar 会把来的那个原样存下来，脚本不需要知道是
-   哪一个。登录还会设第二个 cookie，`__Host-tm_device` 或 `tm_device`，有了它，下一次登录
-   不会被账号的封锁挡住，见[登录失败的限制](#登录失败的限制)。
+   哪一个。登录设下的 cookie 只有会话 cookie 这一个。
 2. 从响应里取出 `data.csrf_token`。这就是会话密钥，除了登录的响应，哪里都不会给出它，
    cookie 里也没有。在**每一个**请求上，包括 `GET`，作为 `X-CSRF-Token` 头发出去。
-3. 只带会话 cookie 而没有密钥，或者带的不是这个会话的密钥的请求，和没有会话的请求一样，
+3. 响应里的 `data.device` 也要留着，一次运行接着一次运行地保存。这是设备值，同样不在任何
+   cookie 里。下一次登录时把它作为 `X-TM-Device` 头带上，那次登录就不会被账号的封锁挡住，
+   见[登录失败的限制](#登录失败的限制)。初始化和 `PUT /api/account` 会回一个新的，用它替换
+   保存着的那个。
+4. 只带会话 cookie 而没有密钥，或者带的不是这个会话的密钥的请求，和没有会话的请求一样，
    返回 `401 Authentication required`。只凭 cookie 就接受的只有 `POST /api/logout`。
 
 **让会话 cookie 单独什么都做不了的，就是这个密钥。** cookie 不带端口（RFC 6265 第 8.5 节）：
@@ -1725,8 +1733,7 @@ Windows 上，这个进程正在写的日志文件打开着就无法删除，而
 
 **同一个主机名上跑着你不信任的服务时，它仍然能收到 cookie，也能设置同名的 cookie。** 任何
 cookie 属性都挡不住这一点，`__Host-` 前缀只挡得住别的主机名和明文 HTTP 改写它们。它用不了
-会话，但能让浏览器退出登录，它收到的设备 cookie 在登录时也会被算作你的（见
-[登录失败的限制](#登录失败的限制)）。这种情况下给 Tunnel Manager 一个专用的主机名。
+会话，但能让浏览器退出登录。这种情况下给 Tunnel Manager 一个专用的主机名。
 
 服务器根本不发 `Access-Control-Allow-Origin` 头。那是浏览器施加在页面上的规则，不是这台
 服务器做的检查，所以 `curl`、脚本和服务器之间的调用都不受影响；在另一个源上的页面则不行。
@@ -1742,15 +1749,18 @@ BASE=https://127.0.0.1:8888
 # 见 [HTTPS 与证书](#https-与证书)。
 export CURL_CA_BUNDLE=tm-cert.pem
 
-# 1. 登录。-c 把会话和设备 cookie 按回来的名字存进 cookies.txt。
+# 1. 登录。-c 把会话 cookie 按回来的名字存进 cookies.txt。
+# device.txt 是上一次运行保存的设备值，没有就发出空值。
 curl -s -c cookies.txt -X POST "$BASE/api/login" \
   -H 'Content-Type: application/json' \
+  -H "X-TM-Device: $(cat device.txt 2>/dev/null)" \
   -d '{"username":"operator","password":"<your-password>"}' > login.json
 
-# {"success":true,"data":{"setup_required":false,"csrf_token":"<token>"}}
+# {"success":true,"data":{"setup_required":false,"csrf_token":"<token>","device":"<device value>"}}
 
-# 2. 从响应里取出会话密钥。
+# 2. 从响应里取出会话密钥，把设备值存下来给下一次运行用。
 CSRF=$(python3 -c 'import json; print(json.load(open("login.json"))["data"]["csrf_token"])')
+python3 -c 'import json; print(json.load(open("login.json"))["data"]["device"])' > device.txt
 
 # 3. 读操作要 cookie 和这个头。
 curl -s -b cookies.txt -H "X-CSRF-Token: $CSRF" "$BASE/api/status"
@@ -1783,7 +1793,10 @@ CSRF=$(python3 -c 'import json; print(json.load(open("login.json"))["data"]["csr
 curl -s -b cookies.txt -X POST "$BASE/api/setup" \
   -H 'Content-Type: application/json' \
   -H "X-CSRF-Token: $CSRF" \
-  -d '{"username":"operator","password":"<your-password>"}'
+  -d '{"username":"operator","password":"<your-password>"}' > setup.json
+
+# 登录给的设备值是用初始密码签名的，改存初始化回的那个。
+python3 -c 'import json; print(json.load(open("setup.json"))["data"]["device"])' > device.txt
 ```
 
 可能出现的错误，以及它们的形式：
@@ -1934,12 +1947,14 @@ telegraf：
 
 **已经在界面上登录过的浏览器，在这里也是登录着的。** 这一页和界面来自同一个地址，所以浏览器
 发来的是同一个会话 cookie；这一页从界面存放会话密钥的地方读出密钥，在发往这台服务器的每个
-调用上，包括 `GET`，作为 `X-CSRF-Token` 头带上。不需要粘贴任何东西。
+调用上，包括 `GET`，作为 `X-CSRF-Token` 头带上。界面保存的设备值也作为 `X-TM-Device` 头一起
+带上，所以从这一页发的登录和从界面发的一样，不会被账号的封锁挡住。不需要粘贴任何东西。
 
 否则，找到 `POST /api/login`，按 **Try it out**，把用户名和密码填进请求体，按 **Execute**。
-回答设下的 cookie 由浏览器保存，回答里的 `data.csrf_token` 由这一页放到界面存放它的同一个
-地方。所以之后的调用都会带着密钥发出去，另一个标签页里的界面也用同一个会话登录着。在这一页上
-调 `POST /api/logout` 会把密钥也删掉。
+回答设下的 cookie 由浏览器保存，回答里的 `data.csrf_token` 和 `data.device` 由这一页放到界面
+存放它们的同一个地方。所以之后的调用都会带着密钥发出去，另一个标签页里的界面也用同一个会话
+登录着。从这一页发的初始化和 `PUT /api/account` 也同样保存回答里的设备值。在这一页上调
+`POST /api/logout` 会把密钥删掉，设备值留着。
 
 在页面顶部的 **Authorize** 里粘贴的密钥，会在声明了它的调用上代替这一页保存的密钥发出去。
 没带与会话相符的密钥发出去的调用会收到 `401 Authentication required`，和脚本因为同样的原因
@@ -1967,7 +1982,8 @@ curl -sk https://127.0.0.1:8888/ui/openapi.json > openapi.json
 **Postman**：*Import*，选这个文件，每个调用都会变成集合里的一个请求。**Insomnia**：
 *Import From* → *File*。两个都不会替你登录。先调 `POST /api/login`，之后 cookie 就留在
 客户端里了；每个调用都要加上 `X-CSRF-Token` 头，值就是登录回答里的那个密钥。描述文件把这个头
-声明成了名为 `CSRFToken` 的 API key，所以会读安全定义的工具会给你一个填它的地方。
+声明成了名为 `CSRFToken` 的 API key，所以会读安全定义的工具会给你一个填它的地方。要不被账号的
+封锁挡住，就在登录时把上一次登录的 `data.device` 作为 `X-TM-Device` 头带上。
 
 **生成客户端**：`openapi-generator` 直接就能读这个文件。
 
@@ -2056,12 +2072,12 @@ curl -s -b cookies.txt -H "X-CSRF-Token: $CSRF" "$BASE/api/host?q=example&page=1
 
 | 方法 | 路径 | 做什么 |
 |------|------|--------|
-| `POST` | `/api/login` | 收 `username` 和 `password`，设置会话 cookie，密码正确时还设置设备 cookie，响应里带有 `setup_required` 和会话密钥 `csrf_token`，密钥不放在任何 cookie 里 |
-| `POST` | `/api/logout` | 销毁会话，并让会话 cookie 过期。不需要 `X-CSRF-Token`。设备 cookie 保留 |
+| `POST` | `/api/login` | 收 `username` 和 `password`，以及 `X-TM-Device` 里上一次登录的设备值，设置会话 cookie，响应里带有 `setup_required`、会话密钥 `csrf_token` 和设备值 `device`，两者都不放在任何 cookie 里 |
+| `POST` | `/api/logout` | 销毁会话，并让会话 cookie 过期。不需要 `X-CSRF-Token`。客户端保存的设备值继续有效 |
 | `GET` | `/api/setup` | 说明账号是否还没有用户名和密码。登录页要用，所以不需要会话也会响应 |
-| `POST` | `/api/setup` | 给还没有用户名和密码的账号设置一次用户名和密码 |
+| `POST` | `/api/setup` | 给还没有用户名和密码的账号设置一次用户名和密码，并回一个用新凭据签名的 `device` |
 | `GET` | `/api/account` | 这个账号叫什么 |
-| `PUT` | `/api/account` | 收 `current_password`，以及 `username`、`new_password` 或两者，修改它们，让其他会话全部下线并吊销每个 API 令牌 |
+| `PUT` | `/api/account` | 收 `current_password`，以及 `username`、`new_password` 或两者，修改它们，让其他会话全部下线并吊销每个 API 令牌，并回一个新的 `device` |
 
 ### Host
 

@@ -69,12 +69,17 @@ type accountView struct {
 //
 // TokensRevoked is the same for the scripts: every API token is gone with the
 // change, and a script that holds one is refused from its next request on.
+//
+// Device is the device value of this browser under the new credentials. Every
+// one handed out before was signed under the old ones and holds no more, the
+// one this browser kept included.
 type accountChanged struct {
 	Username        string `json:"username"`
 	UsernameChanged bool   `json:"username_changed"`
 	PasswordChanged bool   `json:"password_changed"`
 	SessionsEnded   int    `json:"sessions_ended"`
 	TokensRevoked   int    `json:"tokens_revoked"`
+	Device          string `json:"device"`
 }
 
 // GetAccount answers with what the account is called now.
@@ -123,6 +128,7 @@ func (h *AuthHandler) GetAccount(c *echo.Context) error {
 //
 // @Summary      Change the username, the password or both
 // @Description  Takes current_password and username, new_password or both, changes them, signs out every other session and revokes every API token. The answer says how many of each in sessions_ended and tokens_revoked.
+// @Description  Every device value handed out before stops holding, and the answer carries a new one for this client in device.
 // @Tags         account
 // @Accept   json
 // @Produce  json
@@ -363,13 +369,11 @@ func (h *AuthHandler) ChangeAccount(c *echo.Context) error {
 		zap.Int("sessions_ended", ended),
 		zap.Int("tokens_revoked", tokensRevoked))
 
-	// The device cookies go the way the sessions went, and with nothing to
+	// The device values go the way the sessions went, and with nothing to
 	// clear: each was signed under the credentials that were just replaced, so
-	// none of them holds any more (deviceCookieSignature). This browser is the
+	// none of them holds any more (deviceSignature). This browser is the
 	// exception for the reason its session is, and it is given one under the
 	// credentials it just chose, which Updates has written into current.
-	h.handOutDevice(c, &current)
-
 	return c.JSON(http.StatusOK, models.Response{
 		Success: true,
 		Data: accountChanged{
@@ -378,6 +382,7 @@ func (h *AuthHandler) ChangeAccount(c *echo.Context) error {
 			PasswordChanged: changePassword,
 			SessionsEnded:   ended,
 			TokensRevoked:   tokensRevoked,
+			Device:          h.handOutDevice(&current),
 		},
 	})
 }
