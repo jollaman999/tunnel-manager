@@ -2,6 +2,7 @@ package main
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"crypto/ed25519"
 	"crypto/rand"
@@ -21,6 +22,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"regexp"
 	"runtime"
@@ -32,6 +34,7 @@ import (
 	"github.com/go-playground/validator/v10"
 	"github.com/jollaman999/tunnel-manager/internal/api"
 	"github.com/jollaman999/tunnel-manager/internal/crypto"
+	"github.com/jollaman999/tunnel-manager/internal/logid"
 	"github.com/jollaman999/tunnel-manager/internal/models"
 	"github.com/jollaman999/tunnel-manager/internal/settings"
 	"github.com/jollaman999/tunnel-manager/internal/tunnel"
@@ -1190,7 +1193,7 @@ func TestTheStartupPutsAStoredPathOutsideTheInstallationBackToItsDefault(t *test
 
 	core, logs := observer.New(zapcore.DebugLevel)
 
-	repairStoredPaths(db, databaseFileName, zap.New(core))
+	repairStoredPaths(db, databaseFileName).log(zap.New(core))
 
 	if !loggedAtLeast(logs, zapcore.WarnLevel, "was put back to its default") {
 		t.Errorf("the repair was not reported as a warning, what was logged is %v", logs.All())
@@ -1242,7 +1245,7 @@ func TestTheStartupSaysNothingAboutPathsItDoesNotRepair(t *testing.T) {
 
 	core, logs := observer.New(zapcore.DebugLevel)
 
-	repairStoredPaths(db, databaseFileName, zap.New(core))
+	repairStoredPaths(db, databaseFileName).log(zap.New(core))
 
 	if logs.Len() != 0 {
 		t.Fatalf("a startup with nothing to repair logged %v", logs.All())
@@ -1276,8 +1279,8 @@ func TestTheStartupLowersAStoredIntervalAboveTheHour(t *testing.T) {
 	core, logs := observer.New(zapcore.DebugLevel)
 	logger := zap.New(core)
 
-	repairStoredPaths(db, databaseFileName, logger)
-	repairStoredIntervals(db, logger)
+	repairStoredPaths(db, databaseFileName).log(logger)
+	repairStoredIntervals(db).log(logger)
 
 	lowered := map[string]bool{}
 
@@ -1339,11 +1342,257 @@ func TestTheStartupSaysNothingAboutIntervalsItDoesNotLower(t *testing.T) {
 
 	core, logs := observer.New(zapcore.DebugLevel)
 
-	repairStoredIntervals(db, zap.New(core))
+	repairStoredIntervals(db).log(zap.New(core))
 
 	if logs.Len() != 0 {
 		t.Fatalf("a startup with nothing to lower logged %v", logs.All())
 	}
+}
+
+// serveHelperDBEnv names the database file the helper below starts this
+// program on. It is an environment variable because the helper is the test
+// binary run again, and the environment is what reaches it unchanged.
+const serveHelperDBEnv = "TUNNEL_MANAGER_TEST_SERVE_DB"
+
+// newInstallationWith returns the database file of an installation an earlier
+// version left behind: the settings row a first startup writes, with the given
+// columns changed by hand, in a directory of its own. The database is closed
+// again, since the program the tests start opens it itself.
+//
+// The API port is a free one so that the program does not reach for the
+// default another one may hold, and the update check is off so that it asks
+// nothing of the network. setup, when given, runs on the database after that.
+func newInstallationWith(t *testing.T, stored map[string]interface{}, setup string) string {
+	t.Helper()
+
+	installDir := filepath.Join(t.TempDir(), "installation")
+
+	err := os.MkdirAll(installDir, 0o700)
+	if err != nil {
+		t.Fatalf("failed to make the installation directory: %v", err)
+	}
+
+	databaseFile := filepath.Join(installDir, databaseFileName)
+
+	db, err := gorm.Open(sqlite.Open(databaseFile), &gorm.Config{Logger: gormlogger.Discard})
+	if err != nil {
+		t.Fatalf("failed to open the database: %v", err)
+	}
+
+	columns := map[string]interface{}{
+		"api_port":             freeLoopbackPort(t),
+		"update_check_enabled": false,
+	}
+	for column, value := range stored {
+		columns[column] = value
+	}
+
+	err = db.AutoMigrate(&settings.Settings{})
+	if err == nil {
+		_, err = settings.Load(db)
+	}
+	if err == nil {
+		err = db.Model(&settings.Settings{}).Where("id = ?", 1).Updates(columns).Error
+	}
+	if err == nil && setup != "" {
+		err = db.Exec(setup).Error
+	}
+
+	sqlDB, dbErr := db.DB()
+	if dbErr == nil {
+		_ = sqlDB.Close()
+	}
+
+	if err != nil {
+		t.Fatalf("failed to store the settings an earlier version left behind: %v", err)
+	}
+
+	return databaseFile
+}
+
+// serveRun is the program started on an installation by startServe: what it
+// wrote on the console, and the end of the process once it has ended.
+type serveRun struct {
+	cmd     *exec.Cmd
+	console *bytes.Buffer
+	exited  chan error
+}
+
+// startServe starts the helper below on the database file. The process is
+// ended when the test is, if it is still running then.
+func startServe(t *testing.T, databaseFile string) *serveRun {
+	t.Helper()
+
+	run := &serveRun{
+		cmd:     exec.Command(os.Args[0], "-test.run=^TestServeHelperProcess$"),
+		console: &bytes.Buffer{},
+		exited:  make(chan error, 1),
+	}
+
+	run.cmd.Env = append(os.Environ(), serveHelperDBEnv+"="+databaseFile)
+	run.cmd.Stdout = run.console
+	run.cmd.Stderr = run.console
+
+	err := run.cmd.Start()
+	if err != nil {
+		t.Fatalf("failed to start the program: %v", err)
+	}
+
+	go func() {
+		run.exited <- run.cmd.Wait()
+	}()
+
+	t.Cleanup(run.stop)
+
+	return run
+}
+
+// stop ends the process if it is still running and waits for it either way,
+// so that the console is whole and the files are closed when it returns. It
+// may be called more than once.
+func (r *serveRun) stop() {
+	if r.exited == nil {
+		return
+	}
+
+	select {
+	case <-r.exited:
+	default:
+		_ = r.cmd.Process.Kill()
+		<-r.exited
+	}
+
+	r.exited = nil
+}
+
+// TestTheStartupWritesItsRepairsIntoTheLogFile is the upgraded installation
+// again, this time started as the program starts and read where the operator
+// reads it. Both repairs run before the settings say where the log goes, so a
+// line written there and then reaches the console alone and is gone by the
+// time anybody opens the Logs screen. The log file here is itself one of the
+// repaired settings, so the file the lines have to be in is the default one the
+// repair put back, not the one that was stored.
+func TestTheStartupWritesItsRepairsIntoTheLogFile(t *testing.T) {
+	storedLogFile := filepath.Join(t.TempDir(), "elsewhere", "tunnel-manager.log")
+
+	databaseFile := newInstallationWith(t, map[string]interface{}{
+		"logging_file_path":       storedLogFile,
+		"monitoring_interval_sec": 99999,
+	}, "")
+
+	run := startServe(t, databaseFile)
+
+	// The key is loaded after the lines the repairs write, wherever they are
+	// written, so the file holding that line is the file as it stands once
+	// the startup is past both.
+	logFile := filepath.Join(filepath.Dir(databaseFile), filepath.FromSlash(settings.Defaults().LoggingFilePath))
+	keyLoaded := []byte(`"log_id":"` + string(logid.EncryptionKeyLoaded) + `"`)
+
+	for try := 0; try < 300; try++ {
+		written, _ := os.ReadFile(logFile)
+		if bytes.Contains(written, keyLoaded) {
+			break
+		}
+
+		select {
+		case err := <-run.exited:
+			run.exited <- err
+			try = 300
+		case <-time.After(100 * time.Millisecond):
+		}
+	}
+
+	run.stop()
+
+	written, _ := os.ReadFile(logFile)
+
+	if !bytes.Contains(written, keyLoaded) {
+		t.Fatalf("the startup did not get as far as loading the key; the log file %s holds:\n%s\nthe console:\n%s",
+			logFile, written, run.console.String())
+	}
+
+	found := map[string]string{}
+
+	for _, line := range bytes.Split(written, []byte("\n")) {
+		var entry map[string]interface{}
+
+		if json.Unmarshal(line, &entry) != nil {
+			continue
+		}
+
+		id := fmt.Sprint(entry["log_id"])
+		if id != string(logid.SettingsSettingPutBackToDefault) && id != string(logid.SettingsSettingLoweredToCeiling) {
+			continue
+		}
+
+		found[id+" "+fmt.Sprint(entry["setting"])] = fmt.Sprintf("%v %v -> %v", entry["level"], entry["from"], entry["to"])
+	}
+
+	want := map[string]string{
+		string(logid.SettingsSettingPutBackToDefault) + " logging.file.path": "warn " + storedLogFile + " -> " +
+			settings.Defaults().LoggingFilePath,
+		string(logid.SettingsSettingLoweredToCeiling) + " monitoring.interval_sec": "warn 99999 -> 3600",
+	}
+
+	if fmt.Sprint(found) != fmt.Sprint(want) {
+		t.Fatalf("the log file holds the repairs %v, want %v; the log file %s holds:\n%s\nthe console:\n%s",
+			found, want, logFile, written, run.console.String())
+	}
+}
+
+// TestTheStartupThatStopsOnARepairItCouldNotStoreSaysWhy is the repair whose
+// write fails. The read that follows refuses the row and stops the startup
+// before there is a log file, so the console is the one place left to say what
+// failed, and it has to say it before the line the process stops on: without
+// it the operator is told the settings could not be read and not why.
+//
+// The write is refused by a trigger, which leaves the row readable and every
+// other table as it was.
+func TestTheStartupThatStopsOnARepairItCouldNotStoreSaysWhy(t *testing.T) {
+	databaseFile := newInstallationWith(t, map[string]interface{}{
+		"logging_file_path": filepath.Join(t.TempDir(), "elsewhere", "tunnel-manager.log"),
+	}, "CREATE TRIGGER refuse_settings_update BEFORE UPDATE ON settings "+
+		"BEGIN SELECT RAISE(ABORT, 'the settings are not to be written'); END")
+
+	run := startServe(t, databaseFile)
+
+	var err error
+
+	select {
+	case err = <-run.exited:
+		run.exited <- err
+	case <-time.After(30 * time.Second):
+	}
+
+	run.stop()
+
+	console := run.console.String()
+
+	if err == nil {
+		t.Fatalf("the program did not stop on a row it could not repair; the console:\n%s", console)
+	}
+
+	storeFailed := strings.Index(console, string(logid.SettingsStoreFailed))
+	readFailed := strings.Index(console, string(logid.SettingsReadFailed))
+
+	if storeFailed < 0 || readFailed < 0 || storeFailed > readFailed {
+		t.Fatalf("the console names the failed write at %d and the refused read at %d, "+
+			"want both with the write first; the console:\n%s", storeFailed, readFailed, console)
+	}
+}
+
+// TestServeHelperProcess is not a test. It is the program the tests above
+// start: serve, on the database file it is handed, as the binary would run it
+// with -db. It returns only when the startup stops; the tests end it otherwise.
+func TestServeHelperProcess(t *testing.T) {
+	databaseFile := os.Getenv(serveHelperDBEnv)
+	if databaseFile == "" {
+		t.Skip("this is the helper of TestTheStartupWritesItsRepairsIntoTheLogFile")
+	}
+
+	os.Args = []string{os.Args[0], "-db", databaseFile}
+
+	serve()
 }
 
 // TestTheStartupNamesTheSocksProxiesStoredWithoutAScope is an installation

@@ -1095,31 +1095,50 @@ func (cv *CustomValidator) Validate(i interface{}) error {
 	return cv.validator.Struct(i)
 }
 
+// storedPathRepair is what repairStoredPaths did, held until the log file is
+// open: the path settings it put back and the write that failed.
+type storedPathRepair struct {
+	changes []settings.Change
+	err     error
+}
+
 // repairStoredPaths puts a stored log file or encryption key file that names a
 // place outside the installation directory, or a file the installation keeps
-// something else in, back to its default, and says in the log what it
-// replaced. It runs before the settings are read, because the read is what
-// would otherwise refuse such a row, and before the logger is opened, which is
-// what would write into the key or the database.
+// something else in, back to its default, and hands back what it replaced. It
+// runs before the settings are read, because the read is what would otherwise
+// refuse such a row, and before the logger is opened, which is what would
+// write into the key or the database.
 //
-// The line is a warning and not an error: the process goes on, and it goes on
-// with the path the rule allows rather than the one that was stored. What is
-// gone is what the operator wrote, so the line carries both halves of it.
+// It says nothing itself, for the reason repairSocksBindScopes says nothing:
+// the logger writes to the console alone until the settings are read, and a
+// setting that was replaced is something the operator looks for on the Logs
+// screen and in the log file. The log file may be one of the settings put
+// back, and the lines then go into the file it was put back to, since that is
+// the one the logger opens.
 //
-// A write that fails is reported and left there. The read that follows holds
+// A write that fails is handed back and left there. The read that follows holds
 // the row against the same rules and stops the startup naming -reset-settings,
 // which is the advice this could only repeat.
-func repairStoredPaths(db *gorm.DB, databaseFile string, logger *zap.Logger) {
+func repairStoredPaths(db *gorm.DB, databaseFile string) storedPathRepair {
 	changes, err := settings.RepairPaths(db, databaseFile)
-	if err != nil {
+
+	return storedPathRepair{changes: changes, err: err}
+}
+
+// log writes what the repair did. Every line is a warning and not an error:
+// the process goes on, and it goes on with the path the rule allows rather than
+// the one that was stored. What is gone is what the operator wrote, so the line
+// carries both halves of it.
+func (r storedPathRepair) log(logger *zap.Logger) {
+	if r.err != nil {
 		logger.Warn("failed to put a stored path setting back to its default",
 			logid.SettingsStoreFailed.Field(),
-			zap.Error(err))
+			zap.Error(r.err))
 
 		return
 	}
 
-	for _, change := range changes {
+	for _, change := range r.changes {
 		logger.Warn("a stored path setting names a place outside the directory the database file "+
 			"is in or a file this installation keeps something else in, which is no longer allowed, "+
 			"and was put back to its default",
@@ -1130,27 +1149,40 @@ func repairStoredPaths(db *gorm.DB, databaseFile string, logger *zap.Logger) {
 	}
 }
 
+// storedIntervalRepair is what repairStoredIntervals did, held until the log
+// file is open: the interval settings it lowered and the write that failed.
+type storedIntervalRepair struct {
+	changes []settings.Change
+	err     error
+}
+
 // repairStoredIntervals lowers a stored monitoring or reconcile interval above
-// the hour the settings hold them to, and says in the log what it lowered. It
-// runs before the settings are read for the reason repairStoredPaths does: the
-// read refuses such a row, and the row is one an earlier version stored and
-// started on.
+// the hour the settings hold them to, and hands back what it lowered. It runs
+// before the settings are read for the reason repairStoredPaths does: the read
+// refuses such a row, and the row is one an earlier version stored and started
+// on. It says nothing itself for that same reason as well.
 //
-// The line is a warning, carrying the value that was stored as well as the one
-// the process goes on with, since the stored one is gone after this. A write
-// that fails is reported and left there, and the read that follows stops the
-// startup naming -reset-settings.
-func repairStoredIntervals(db *gorm.DB, logger *zap.Logger) {
+// A write that fails is handed back and left there, and the read that follows
+// stops the startup naming -reset-settings.
+func repairStoredIntervals(db *gorm.DB) storedIntervalRepair {
 	changes, err := settings.RepairIntervals(db)
-	if err != nil {
+
+	return storedIntervalRepair{changes: changes, err: err}
+}
+
+// log writes what the repair did. Every line is a warning, carrying the value
+// that was stored as well as the one the process goes on with, since the
+// stored one is gone after this.
+func (r storedIntervalRepair) log(logger *zap.Logger) {
+	if r.err != nil {
 		logger.Warn("failed to lower a stored interval setting to its ceiling",
 			logid.SettingsStoreFailed.Field(),
-			zap.Error(err))
+			zap.Error(r.err))
 
 		return
 	}
 
-	for _, change := range changes {
+	for _, change := range r.changes {
 		logger.Warn("a stored interval setting is longer than the hour it is now held to, "+
 			"and was lowered to the hour",
 			logid.SettingsSettingLoweredToCeiling.Field(),
@@ -1812,19 +1844,26 @@ func serve() {
 	// A path stored while an absolute one was still accepted is put back to
 	// its default here, above the read that would refuse it. An installation
 	// that was working goes on working, on a path inside its own directory.
-	repairStoredPaths(db, databaseFile, logger)
+	// What was put back is logged below, once the log file is open.
+	pathRepair := repairStoredPaths(db, databaseFile)
 
 	// An interval stored while there was no ceiling on it is lowered to the
-	// ceiling here, for the same reason and above the same read.
-	repairStoredIntervals(db, logger)
+	// ceiling here, for the same reason and above the same read, and logged
+	// below for the same reason as well.
+	intervalRepair := repairStoredIntervals(db)
 
 	// A SOCKS5 proxy stored with no scope is written down as loopback here
 	// while it does not run, before the tunnel manager reads the Hosts. What
 	// was found is logged below, once the log file is open.
 	socksRepair := repairSocksBindScopes(db)
 
+	// A startup that stops before the log file is open writes what the
+	// repairs did on the console it stops on, since a write that failed is
+	// what the read below refuses and the line that names it is the reason.
 	set, err := settings.Load(db)
 	if err != nil {
+		pathRepair.log(logger)
+		intervalRepair.log(logger)
 		logger.Fatal("failed to read the settings", logid.SettingsReadFailed.Field(), zap.Error(err))
 	}
 
@@ -1833,6 +1872,8 @@ func serve() {
 	// level is not fixed into the core.
 	core, logLevel, emptyLog, err := initLogger(set, installDir)
 	if err != nil {
+		pathRepair.log(logger)
+		intervalRepair.log(logger)
 		logger.Fatal("failed to initialize the logger", logid.LoggingInitFailed.Field(), zap.Error(err))
 	}
 
@@ -1858,6 +1899,8 @@ func serve() {
 		zap.Int("reconnect_max_interval_sec", set.ReconnectMaxIntervalSec),
 		zap.Int("reconcile_interval_sec", set.ReconcileIntervalSec))
 
+	pathRepair.log(logger)
+	intervalRepair.log(logger)
 	socksRepair.log(logger)
 
 	warnIfNotPrivileged(logger)
