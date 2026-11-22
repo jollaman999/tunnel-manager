@@ -31,7 +31,8 @@ const passwordEncryptedPrefix = "tmpwenc:v1:"
 // what the 32 MiB is chosen against: a machine that small still has it free.
 //
 // A file carries the parameters it was written with, so these three only apply
-// to files written from now on.
+// to files written from now on, and the set they replace has to stay in
+// acceptedScryptParameters for the files already written to open.
 const (
 	scryptLogN = 15
 	scryptR    = 8
@@ -47,20 +48,29 @@ const passwordSaltSize = 16
 // byte of log2(N), one of r, one of p, then the salt.
 const passwordHeaderSize = 3 + passwordSaltSize
 
-// maxScryptMemory caps the memory a file may ask for while it is opened. A file
-// states its own N and r, so a hostile file could otherwise name a size that no
-// machine can allocate and end the process instead of failing the import. It is
-// four times what the parameters above take, which is room for two more steps
-// of N: a file written by a later version that raised N still opens here, and a
-// single open still asks for a size a machine that runs this program has.
-const maxScryptMemory = 128 << 20
+// acceptedScryptParameters lists every (log2(N), r, p) a v1 file may state,
+// and a file that states anything else is refused as damaged before scrypt
+// runs. A file names its own parameters and an import asks for no account
+// password, so whatever this list lets through is the memory and the time
+// anyone who reaches the import page can make this process spend per request.
+// A bound on memory alone is not enough: p multiplies the time and not the
+// memory, and N of 2^17, r of 8 and p of 32 held one core for eight seconds
+// under a 128 MiB cap.
+//
+// Only the parameters this build writes are listed, because no build has
+// written any others. Raising them later means appending the new set here, so
+// that this build keeps opening the files written under the old one, and the
+// cost of opening a file under each set is then the decision that entry makes.
+var acceptedScryptParameters = [][3]int{
+	{scryptLogN, scryptR, scryptP},
+}
 
-// passwordOpenSlots holds the opens that derive a key to one at a time. An
-// opened file names its own N and r, so one open may take as much as
-// maxScryptMemory, and files arriving together would otherwise add up to a
-// multiple of it with nothing above deciding how many arrive at once. Waiting
-// costs an import the time of the opens ahead of it, which is the same wait as
-// having no memory left.
+// passwordOpenSlots holds the opens that derive a key to one at a time. One
+// open takes the memory of the largest set in acceptedScryptParameters, and
+// files arriving together would otherwise add up to a multiple of it with
+// nothing above deciding how many arrive at once. Waiting costs an import the
+// time of the opens ahead of it, which is the same wait as having no memory
+// left.
 //
 // Sealing takes no slot. It derives under the constants above, which nothing in
 // the input can raise, so the size of a seal is what this build chose rather
@@ -218,18 +228,14 @@ func passwordAEAD(password string, salt []byte, logN int, r int, p int) (cipher.
 	return aead, nil
 }
 
-// checkScryptParameters rejects what scrypt itself rejects and, on top of that,
-// what would take more memory than maxScryptMemory allows.
+// checkScryptParameters refuses any parameters that are not one of the sets
+// in acceptedScryptParameters.
 func checkScryptParameters(logN int, r int, p int) error {
-	if logN < 1 || logN > 62 || r < 1 || p < 1 {
-		return fmt.Errorf("the encrypted value states unusable scrypt parameters (N=2^%d, r=%d, p=%d): %w", logN, r, p, ErrPasswordEncryptedDamaged)
+	for _, accepted := range acceptedScryptParameters {
+		if accepted == [3]int{logN, r, p} {
+			return nil
+		}
 	}
 
-	// 128 * r * N is what scrypt allocates. It is computed in this order and
-	// against a limit well below the word size, so the shift cannot wrap.
-	if logN > 40 || int64(128*r)<<logN > maxScryptMemory {
-		return fmt.Errorf("the encrypted value asks for more than %d bytes of memory (N=2^%d, r=%d): %w", maxScryptMemory, logN, r, ErrPasswordEncryptedDamaged)
-	}
-
-	return nil
+	return fmt.Errorf("the encrypted value states scrypt parameters this version does not write (N=2^%d, r=%d, p=%d): %w", logN, r, p, ErrPasswordEncryptedDamaged)
 }

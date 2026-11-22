@@ -185,14 +185,21 @@ func TestDecryptWithPasswordReportsCutValueAsDamaged(t *testing.T) {
 }
 
 func TestDecryptWithPasswordRejectsUnusableParameters(t *testing.T) {
-	// A file states the memory its own reading takes, so a file that names more
-	// than this build allows has to be refused before scrypt allocates it.
+	// A file states the memory and the time its own reading takes, so a file
+	// that names anything but what this build writes has to be refused before
+	// scrypt runs.
 	for name, header := range map[string][3]byte{
-		"N of 2^0":  {0, scryptR, scryptP},
-		"r of zero": {scryptLogN, 0, scryptP},
-		"p of zero": {scryptLogN, scryptR, 0},
-		"N of 2^40": {40, scryptR, scryptP},
-		"N of 2^63": {63, scryptR, scryptP},
+		"N of 2^0":   {0, scryptR, scryptP},
+		"r of zero":  {scryptLogN, 0, scryptP},
+		"p of zero":  {scryptLogN, scryptR, 0},
+		"N of 2^14":  {14, scryptR, scryptP},
+		"N of 2^16":  {16, scryptR, scryptP},
+		"N of 2^40":  {40, scryptR, scryptP},
+		"N of 2^63":  {63, scryptR, scryptP},
+		"r of 16":    {scryptLogN, 16, scryptP},
+		"p of 2":     {scryptLogN, scryptR, 2},
+		"p of 255":   {scryptLogN, scryptR, 255},
+		"all at 255": {255, 255, 255},
 	} {
 		t.Run(name, func(t *testing.T) {
 			err := checkScryptParameters(int(header[0]), int(header[1]), int(header[2]))
@@ -220,20 +227,51 @@ func passwordValueWithParameters(logN byte, r byte, p byte) string {
 }
 
 func TestDecryptWithPasswordCapsTheMemoryAFileAsksFor(t *testing.T) {
-	// scrypt takes 128 * r * N bytes, so with r of 8 a stated N of 2^17 is the
-	// 128 MiB that maxScryptMemory allows and 2^19 is four times that.
+	// scrypt takes 128 * r * N bytes, so with r of 8 a stated N of 2^19 is
+	// 512 MiB, sixteen times what the parameters this package writes take.
 	_, err := DecryptWithPassword(passwordValueWithParameters(19, scryptR, scryptP), testPhrase)
 	if !errors.Is(err, ErrPasswordEncryptedDamaged) {
 		t.Fatalf("a file that asks for 512 MiB was not refused as damaged: %v", err)
 	}
 
-	// At the cap the parameters are the last thing standing between the file
-	// and its body, so a file that sits on it is read that far and fails on the
-	// body instead: this one is zeros and does not authenticate.
-	_, err = DecryptWithPassword(passwordValueWithParameters(17, scryptR, scryptP), testPhrase)
+	// Under the parameters this package writes nothing stands between the file
+	// and its body, so it is read that far and fails on the body instead: this
+	// one is zeros and does not authenticate.
+	_, err = DecryptWithPassword(passwordValueWithParameters(scryptLogN, scryptR, scryptP), testPhrase)
 	if !errors.Is(err, ErrWrongPassword) {
-		t.Fatalf("a file at the cap was not read as far as its body: %v", err)
+		t.Fatalf("a file under the written parameters was not read as far as its body: %v", err)
 	}
+}
+
+func TestDecryptWithPasswordRefusesParametersItDoesNotWrite(t *testing.T) {
+	encrypted, err := EncryptWithPassword("the exported settings", testPhrase)
+	if err != nil {
+		t.Fatalf("EncryptWithPassword returned an error: %v", err)
+	}
+
+	plaintext, err := DecryptWithPassword(encrypted, testPhrase)
+	if err != nil || plaintext != "the exported settings" {
+		t.Fatalf("a file under the parameters this package writes did not open: %q, %v", plaintext, err)
+	}
+
+	// N of 2^17 and r of 8 sit within any memory cap that lets the written
+	// parameters through, and a p of 32 multiplies the time by 32 on top of
+	// the four that N already adds. An import asks for no account password, so
+	// a file like this one was eight seconds of one core for anyone who could
+	// reach the page. Refusing it has to come before scrypt runs at all.
+	start := time.Now()
+	_, err = DecryptWithPassword(passwordValueWithParameters(17, scryptR, 32), testPhrase)
+	elapsed := time.Since(start)
+
+	if !errors.Is(err, ErrPasswordEncryptedDamaged) {
+		t.Fatalf("a file that states p of 32 was not refused as damaged after %v: %v", elapsed, err)
+	}
+
+	if elapsed > 50*time.Millisecond {
+		t.Fatalf("refusing a file that states p of 32 took %v, so scrypt ran", elapsed)
+	}
+
+	t.Logf("a file that states N=2^17, r=8, p=32 was refused in %v", elapsed)
 }
 
 func TestDecryptWithPasswordOpensOneAtATime(t *testing.T) {
