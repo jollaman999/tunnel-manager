@@ -158,7 +158,6 @@
   "error.assignment.update_failed.error": "Không cập nhật được các cổng dịch vụ của Host",
   "error.auth.attempts.too_many.error": "Quá nhiều lượt đăng nhập thất bại. Đăng nhập bị chặn trong {retry_after} giây",
   "error.auth.credentials.invalid.error": "Tên đăng nhập hoặc mật khẩu không đúng",
-  "error.auth.csrf.refused.error": "Yêu cầu không có header {header} hợp lệ. Hãy gửi token của phiên - token mà lượt đăng nhập trả về và cookie {cookie} đang giữ - trong mọi POST, PUT và DELETE",
   "error.auth.password.too_long.error": "Mật khẩu dài nhất là {max} byte, vì bcrypt chỉ đọc tới đó",
   "error.auth.password.too_short.error": "Mật khẩu phải dài ít nhất {min} byte",
   "error.auth.password_attempts.too_many.error": "Quá nhiều lượt nhập mật khẩu thất bại. Việc kiểm tra mật khẩu bị chặn trong {retry_after} giây",

@@ -1,7 +1,7 @@
 {
     "swagger": "2.0",
     "info": {
-        "description": "The API the Tunnel Manager screens are built on. Every path\nbelow sits under /api and needs a session, except POST\n/api/login and GET /api/setup.\n\nLogging in sets the session and CSRF cookies. Over HTTPS they\nare named __Host-tm_session and __Host-tm_csrf, and over plain\nHTTP they are tm_session and tm_csrf. A login with the right\npassword also sets the device cookie, __Host-tm_device or\ntm_device, which keeps a hold on the account from refusing\nthis browser. A browser sends them back on its own, so \"Try it\nout\" on this page works as soon as you are logged in to the\nscreens in the same browser.\n\nEvery POST, PUT and DELETE also needs the token of the session\nin an X-CSRF-Token header. POST /api/login answers with it in\ndata.csrf_token; paste it into Authorize above and this page\nsends it. A GET needs no token.\n\nA script can use an API token instead of a session. Make one\non the Settings screen or with POST /api/token, and send it as\nAuthorization: Bearer \u003ctoken\u003e. A request that does needs no\ncookie and no X-CSRF-Token, and reaches only the routes of the\nscopes the token was made with: read opens every GET but\nGET /api/account, and the others open the changes of one area\neach. GET and PUT /api/account, /api/token, /api/setup and\n/api/logout are never open to a token.\n\nEvery answer has the same shape: {\"success\":true,\"data\":...}\nor {\"success\":false,\"error\":\"...\"}. An answer that says no\ncarries error_code, which names the refusal and is what a\nscript should match on, and error_args, the values its English\nsentence was written with.",
+        "description": "The API the Tunnel Manager screens are built on. Every path\nbelow sits under /api and needs a session, except POST\n/api/login and GET /api/setup.\n\nLogging in sets the session cookie, __Host-tm_session over\nHTTPS and tm_session over plain HTTP. A login with the right\npassword also sets the device cookie, __Host-tm_device or\ntm_device, which keeps a hold on the account from refusing\nthis browser.\n\nEvery request the session cookie is sent with, GET included,\nalso needs the key of the session in an X-CSRF-Token header,\nand without it is answered 401 as if there were no session.\nPOST /api/login answers with the key in data.csrf_token and\nhands it out nowhere else: it is in no cookie, because a\nbrowser sends cookies to every port of the host name. POST\n/api/logout is the one call that does without it.\n\n\"Try it out\" on this page works as soon as you are logged in to\nthe screens in the same browser: the screens keep the key, and\nthis page puts it on every call it makes to this server. A key\npasted into Authorize above is sent in its place.\n\nA script can use an API token instead of a session. Make one\non the Settings screen or with POST /api/token, and send it as\nAuthorization: Bearer \u003ctoken\u003e. A request that does needs no\ncookie and no X-CSRF-Token, and reaches only the routes of the\nscopes the token was made with: read opens every GET but\nGET /api/account, and the others open the changes of one area\neach. GET and PUT /api/account, /api/token, /api/setup and\n/api/logout are never open to a token.\n\nEvery answer has the same shape: {\"success\":true,\"data\":...}\nor {\"success\":false,\"error\":\"...\"}. An answer that says no\ncarries error_code, which names the refusal and is what a\nscript should match on, and error_args, the values its English\nsentence was written with.",
         "title": "Tunnel Manager API",
         "contact": {},
         "license": {
@@ -1667,7 +1667,7 @@
         },
         "/login": {
             "post": {
-                "description": "Takes username and password, sets the session and CSRF cookies, and answers with setup_required and csrf_token.\nA login that gets the password right also sets the device cookie (tm_device), which keeps a hold on the account from refusing this browser for 30 days.\nOn the very first sign in the username is empty and the password is the one in the initial-password file.",
+                "description": "Takes username and password, sets the session cookie, and answers with setup_required and csrf_token.\ncsrf_token is the key of the session and is handed out here and in no cookie. Send it as X-CSRF-Token on every request the session cookie authenticates, GET included: the cookie without it is answered 401.\nA login that gets the password right also sets the device cookie (tm_device), which keeps a hold on the account from refusing this browser for 30 days.\nOn the very first sign in the username is empty and the password is the one in the initial-password file.",
                 "consumes": [
                     "application/json"
                 ],
@@ -1731,12 +1731,7 @@
         },
         "/logout": {
             "post": {
-                "security": [
-                    {
-                        "CSRFToken": []
-                    }
-                ],
-                "description": "Drops the session and expires the session and CSRF cookies. The device cookie stays.",
+                "description": "Drops the session and expires the session cookie. The device cookie stays.\nNeeds no X-CSRF-Token: it ends the session the cookie names and opens nothing.",
                 "produces": [
                     "application/json"
                 ],
@@ -1749,12 +1744,6 @@
                         "description": "OK",
                         "schema": {
                             "$ref": "#/definitions/models.Response"
-                        }
-                    },
-                    "403": {
-                        "description": "The request carries no valid X-CSRF-Token header",
-                        "schema": {
-                            "$ref": "#/definitions/api.errorBody"
                         }
                     }
                 }
@@ -2664,8 +2653,14 @@
                             "$ref": "#/definitions/api.errorBody"
                         }
                     },
-                    "403": {
-                        "description": "The setup is already done, or no valid X-CSRF-Token header",
+                    "401": {
+                        "description": "No session, or no valid X-CSRF-Token header",
+                        "schema": {
+                            "$ref": "#/definitions/api.errorBody"
+                        }
+                    },
+                    "409": {
+                        "description": "The setup is already done",
                         "schema": {
                             "$ref": "#/definitions/api.errorBody"
                         }
@@ -3333,7 +3328,6 @@
                 "list.page.not_a_number",
                 "list.size.unsupported",
                 "auth.session.required",
-                "auth.csrf.refused",
                 "auth.credentials.invalid",
                 "auth.session.create_failed",
                 "auth.setup.required",
@@ -3547,7 +3541,6 @@
                 "errListPageNotANumber",
                 "errListSizeUnsupported",
                 "errAuthRequired",
-                "errAuthCSRFRefused",
                 "errAuthCredentialsInvalid",
                 "errAuthSessionCreateFailed",
                 "errAuthSetupRequired",
@@ -5382,7 +5375,7 @@
             "in": "header"
         },
         "CSRFToken": {
-            "description": "The token POST /api/login answers with, in\ndata.csrf_token. Required on every POST, PUT\nand DELETE. The session cookie goes with it and\nis sent by the browser on its own.",
+            "description": "The key of the session, which POST /api/login\nanswers with in data.csrf_token. Required on\nevery request the session cookie is sent with,\nGET included. The session cookie goes with it\nand is sent by the browser on its own.",
             "type": "apiKey",
             "name": "X-CSRF-Token",
             "in": "header"

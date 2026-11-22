@@ -50,10 +50,13 @@ const sessionCookieName = "tm_session"
 // reference tells the operator to give this server a host name of its own when
 // something they do not trust runs on the same one.
 //
-// Writing a cookie gives no token away in any case: the session cookie is
-// HttpOnly, the device cookie only holds where this server signed it, and the
-// CSRF header is compared against the token the session holds rather than
-// against the cookie that came back. What the prefix stops is the other half
+// It is also why the session cookie opens nothing on its own. A service on
+// another port reads it off the requests the browser sends there, so every
+// request it authenticates has to bring the key of the session as well, in a
+// header, and the key is never put in a cookie: RequireSession says where it
+// is kept instead. Writing a cookie gives nothing away either: the device
+// cookie only holds where this server signed it, and the key is compared
+// against the one the session holds. What the prefix stops is the other half
 // of it, an outsider writing over the cookies until the operator cannot use
 // this server at all.
 //
@@ -88,11 +91,12 @@ const sessionAbsoluteLifetime = 7 * 24 * time.Hour
 // is the whole credential, so it is read from crypto/rand and nothing else.
 const sessionTokenBytes = 32
 
-// csrfCookieName is the cookie the CSRF token of a session is carried in. It is
-// a second cookie rather than the session one because the page has to read it
-// to put it back in a header, and the session cookie stays HttpOnly so that a
-// script can never get at the credential itself. Like the session name it is
-// the bare one, and cookieName says what it goes out as.
+// csrfCookieName is the cookie the key of a session was carried in before the
+// key was taken out of cookies. Nothing hands it out any more: a cookie is sent
+// to every port of the host name, and a key that went along with the session
+// cookie would let whatever runs on another port use the session. A browser
+// that still holds one is told to drop it, which dropCSRFCookie does. Like the
+// session name it is the bare one, and cookieName says what it went out as.
 const csrfCookieName = "tm_csrf"
 
 // deviceCookieName is the cookie a browser that has signed in is known by again.
@@ -100,10 +104,12 @@ const csrfCookieName = "tm_csrf"
 // the other two it is the bare name, and cookieName says what it goes out as.
 const deviceCookieName = "tm_device"
 
-// csrfHeaderName is the header the token is sent back in. A header is what is
-// checked rather than a form field, because a page on another origin cannot put
-// one on a request to this one without a preflight, and no preflight is ever
-// granted: there is no CORS middleware in front of this API.
+// csrfHeaderName is the header the key of a session is sent back in. A header
+// is what is checked rather than a form field, because a page on another origin
+// cannot put one on a request to this one without a preflight, and no preflight
+// is ever granted: there is no CORS middleware in front of this API. The name
+// says CSRF because that is what it was first there for; it is also what a
+// session cookie read off another port of this host name comes without.
 const csrfHeaderName = "X-CSRF-Token"
 
 // csrfTokenBytes is how much randomness a CSRF token carries. It is as large as
@@ -151,10 +157,11 @@ const contextUserIDKey = "auth_user_id"
 // so a session does not hold a copy that goes stale.
 type session struct {
 	userID uint
-	// csrfToken is what a state changing request of this session has to send
-	// back in a header. It is held next to the session rather than derived from
-	// a cookie alone, so a token planted by something that can write cookies is
-	// not a token the server accepts.
+	// csrfToken is the key of the session: what every request the session
+	// cookie authenticates has to send back in a header. It is held next to the
+	// session rather than derived from a cookie, so a token planted by something
+	// that can write cookies is not a token the server accepts, and it is handed
+	// out in the body of the login and nowhere else.
 	csrfToken string
 	// expiresAt is moved forward by every lookup that finds the session.
 	expiresAt time.Time
@@ -242,7 +249,7 @@ func (s *SessionStore) Generation() uint64 {
 }
 
 // Create makes a session for userID and returns the token it is found by
-// together with the CSRF token that its state changing requests have to carry.
+// together with the key that every request of the session has to carry.
 //
 // generation is what Generation returned before the credentials were read.
 // When DeleteAllExcept has run since, no session is made and the error is
@@ -449,10 +456,11 @@ type loginRequest struct {
 // loginResponse tells the client which screen comes next. Before the setup is
 // done the only thing a session may do is finish it.
 //
-// The CSRF token is in the body as well as in a cookie. The browser reads the
-// cookie, which is what survives a reload of the page; a client that is not a
-// browser reads the body and does not have to take a cookie jar apart to find
-// the value it has to send back.
+// The key of the session, csrf_token, is in the body and only there. A cookie
+// would be sent to every port of this host name along with the session cookie,
+// and the two together are a session that works. The page keeps the key in its
+// local storage, which a browser keeps apart for every port, and a client that
+// is not a browser keeps it wherever it keeps the cookie jar.
 type loginResponse struct {
 	SetupRequired bool   `json:"setup_required"`
 	CSRFToken     string `json:"csrf_token"`
@@ -558,22 +566,33 @@ func (h *AuthHandler) cookieIsSecure(c *echo.Context) bool {
 	return strings.EqualFold(strings.TrimSpace(proto), "https")
 }
 
-// csrfCookie returns the cookie the CSRF token of a session is handed out in.
-// It is the session cookie in every way but one: HttpOnly is off, because the
-// page has to read the value to send it back in a header. That costs nothing,
-// since the value is not a credential on its own: it is only accepted next to
-// the session it was made for.
-func (h *AuthHandler) csrfCookie(c *echo.Context, token string, maxAge int) *http.Cookie {
-	secure := h.cookieIsSecure(c)
+// dropCSRFCookie tells the browser to throw away the cookie the key of a
+// session was handed out in before, under each name the request carries one
+// under, and does nothing where it carries none.
+//
+// The key in it belonged to a session made by a version that handed it out
+// that way, and the browser goes on sending it to every port of this host name
+// for as long as it keeps it. Asking only where one arrived keeps a Set-Cookie
+// off the answers of every other request.
+//
+// The guarded name is dropped with Secure on whatever the request came over,
+// because a browser takes nothing under that name without it; the bare one
+// follows the request, the way it was set.
+func (h *AuthHandler) dropCSRFCookie(c *echo.Context) {
+	for _, name := range []string{hostCookiePrefix + csrfCookieName, csrfCookieName} {
+		_, err := c.Cookie(name)
+		if err != nil {
+			continue
+		}
 
-	return &http.Cookie{
-		Name:     cookieName(csrfCookieName, secure),
-		Value:    token,
-		Path:     "/",
-		MaxAge:   maxAge,
-		HttpOnly: false,
-		SameSite: http.SameSiteLaxMode,
-		Secure:   secure,
+		c.SetCookie(&http.Cookie{
+			Name:     name,
+			Value:    "",
+			Path:     "/",
+			MaxAge:   -1,
+			SameSite: http.SameSiteLaxMode,
+			Secure:   name != csrfCookieName || h.cookieIsSecure(c),
+		})
 	}
 }
 
@@ -617,7 +636,8 @@ func (h *AuthHandler) readUser(conds ...interface{}) (*models.User, error) {
 // Login checks the credentials and hands out a session.
 //
 // @Summary      Log in
-// @Description  Takes username and password, sets the session and CSRF cookies, and answers with setup_required and csrf_token.
+// @Description  Takes username and password, sets the session cookie, and answers with setup_required and csrf_token.
+// @Description  csrf_token is the key of the session and is handed out here and in no cookie. Send it as X-CSRF-Token on every request the session cookie authenticates, GET included: the cookie without it is answered 401.
 // @Description  A login that gets the password right also sets the device cookie (tm_device), which keeps a hold on the account from refusing this browser for 30 days.
 // @Description  On the very first sign in the username is empty and the password is the one in the initial-password file.
 // @Tags         account
@@ -701,7 +721,6 @@ func (h *AuthHandler) Login(c *echo.Context) error {
 	}
 
 	c.SetCookie(h.sessionCookie(c, token, 0))
-	c.SetCookie(h.csrfCookie(c, csrfToken, 0))
 	// A new one on every login, whatever the browser already holds, so that its
 	// thirty days are counted from the last time the password was right.
 	h.handOutDevice(c, user)
@@ -720,12 +739,11 @@ func (h *AuthHandler) Login(c *echo.Context) error {
 // asked for is the state it is left in.
 //
 // @Summary      Log out
-// @Description  Drops the session and expires the session and CSRF cookies. The device cookie stays.
+// @Description  Drops the session and expires the session cookie. The device cookie stays.
+// @Description  Needs no X-CSRF-Token: it ends the session the cookie names and opens nothing.
 // @Tags         account
 // @Produce  json
-// @Security  CSRFToken
 // @Success  200  {object}  models.Response
-// @Failure  403  {object}  api.errorBody  "The request carries no valid X-CSRF-Token header"
 // @Router       /logout [post]
 func (h *AuthHandler) Logout(c *echo.Context) error {
 	token := cookieValue(c, sessionCookieName)
@@ -734,7 +752,6 @@ func (h *AuthHandler) Logout(c *echo.Context) error {
 	}
 
 	c.SetCookie(h.sessionCookie(c, "", -1))
-	c.SetCookie(h.csrfCookie(c, "", -1))
 
 	return c.JSON(http.StatusOK, models.Response{Success: true})
 }
@@ -781,7 +798,8 @@ func (h *AuthHandler) GetSetup(c *echo.Context) error {
 // @Param   body  body  api.setupRequest  true  "The username and the password to set"
 // @Success  200  {object}  models.Response
 // @Failure  400  {object}  api.errorBody  "The password is too short or too long"
-// @Failure  403  {object}  api.errorBody  "The setup is already done, or no valid X-CSRF-Token header"
+// @Failure  401  {object}  api.errorBody  "No session, or no valid X-CSRF-Token header"
+// @Failure  409  {object}  api.errorBody  "The setup is already done"
 // @Router       /setup [post]
 func (h *AuthHandler) Setup(c *echo.Context) error {
 	var req setupRequest
@@ -917,24 +935,43 @@ func (h *AuthHandler) removeInitialPasswordFile() {
 }
 
 // RequireSession returns the middleware that keeps the API behind the login and
-// behind the CSRF check. It is put on the /api group, so a path under it that
-// nobody registered a route for is refused by it as well. The UI files are
-// served outside it, because they are the same bytes for every client and carry
-// no data: what they show is fetched from here, and that is what is guarded.
+// behind the key of the session. It is put on the /api group, so a path under
+// it that nobody registered a route for is refused by it as well. The UI files
+// are served outside it, because they are the same bytes for every client and
+// carry no data: what they show is fetched from here, and that is what is
+// guarded.
 //
-// The CSRF check lives here rather than in a middleware of its own because the
-// token it compares against is the one held by the session, and both are read
-// out of the same lookup. Two middlewares would either look the session up
-// twice or depend on being ordered correctly to work at all.
+// A session is the cookie and the key together, on every request and whatever
+// the method. The browser sends the cookie to every port of this host name, so
+// a service on another port is handed it by the operator's own browser. What
+// that service is not handed is the key: the login answers with it in its
+// body, and the page keeps it in local storage, which a browser keeps apart for
+// every port. A request that brings the cookie without the key, or with a key
+// that is not the one of that session, is answered the way one with no session
+// at all is, which is what sends the page to the login.
+//
+// The same header is what keeps another site from making the browser send a
+// request with the cookie attached, which is what it was first there for: a
+// page on another origin cannot put it on a request to this one.
+//
+// The check lives here rather than in a middleware of its own because the key
+// it compares against is the one held by the session, and both are read out of
+// the same lookup. Two middlewares would either look the session up twice or
+// depend on being ordered correctly to work at all.
 func (h *AuthHandler) RequireSession() echo.MiddlewareFunc {
 	return func(next echo.HandlerFunc) echo.HandlerFunc {
 		return func(c *echo.Context) error {
 			path := c.Request().URL.Path
 
-			// The login is how a session and its CSRF token are got, so it
-			// cannot be behind either check. Nothing is forged by it: a request
-			// made from another origin still has to carry the password, and the
-			// session it would hand out goes into a cookie the attacker cannot
+			// A browser that signed in under a version that put the key in a
+			// cookie still sends it, to this port and every other one. It is
+			// told to drop it on whatever it asks for next, the login included.
+			h.dropCSRFCookie(c)
+
+			// The login is how a session and its key are got, so it cannot be
+			// behind either check. Nothing is forged by it: a request made from
+			// another origin still has to carry the password, and the key it
+			// would hand out is in an answer the sender of that request cannot
 			// read.
 			if path == loginPath {
 				return next(c)
@@ -951,42 +988,30 @@ func (h *AuthHandler) RequireSession() echo.MiddlewareFunc {
 
 			// A request that brings an API token is served on the token alone,
 			// whatever cookies it carries as well. The top of token.go says
-			// why the CSRF check does not apply to it.
+			// why the key of a session is not asked of it.
 			bearer, ok := bearerToken(c)
 			if ok {
 				return h.serveToken(c, next, bearer)
+			}
+
+			// The logout is let through on the cookie alone, with a session
+			// behind it or without one. It ends the session the cookie names
+			// and opens nothing, and what it asked for is the state the client
+			// is left in either way, so a page that has lost the key can still
+			// sign out.
+			if path == logoutPath {
+				return next(c)
 			}
 
 			token := cookieValue(c, sessionCookieName)
 
 			userID, csrfToken, ok := h.sessions.Lookup(token)
 			if !ok {
-				// The logout has to answer a client whose session is already
-				// gone, and what it asked for is the state it is in. There is
-				// no session to protect either, so there is nothing to check.
-				if path == logoutPath {
-					return next(c)
-				}
-
 				return unauthenticated(c)
 			}
 
-			// The cookie is written again on every request that carries a live
-			// session, so that a page which lost its copy gets it back on the
-			// next read instead of being unable to change anything until the
-			// operator logs in again.
-			c.SetCookie(h.csrfCookie(c, csrfToken, 0))
-
-			if !isSafeMethod(c.Request().Method) &&
-				subtle.ConstantTimeCompare([]byte(c.Request().Header.Get(csrfHeaderName)), []byte(csrfToken)) != 1 {
-				return failure(c, http.StatusForbidden, errAuthCSRFRefused,
-					errorArgs{"header": csrfHeaderName, "cookie": cookieName(csrfCookieName, h.cookieIsSecure(c))})
-			}
-
-			// The logout needs nothing below this point: it ends the session it
-			// was sent with, whatever the account behind it is allowed to reach.
-			if path == logoutPath {
-				return next(c)
+			if subtle.ConstantTimeCompare([]byte(c.Request().Header.Get(csrfHeaderName)), []byte(csrfToken)) != 1 {
+				return unauthenticated(c)
 			}
 
 			// SetupRequired is read from the database on every request instead
@@ -1016,9 +1041,9 @@ func (h *AuthHandler) RequireSession() echo.MiddlewareFunc {
 }
 
 // isSafeMethod reports whether a method is one that RFC 9110 calls safe, which
-// is the set that changes nothing and therefore needs no CSRF token. Everything
-// this API changes state with is a POST, a PUT or a DELETE, and a method that
-// is added later is checked unless it is named here.
+// is the set that changes nothing. Everything this API changes state with is a
+// POST, a PUT or a DELETE, and a method that is added later is taken for one
+// that changes something unless it is named here.
 func isSafeMethod(method string) bool {
 	switch method {
 	case http.MethodGet, http.MethodHead, http.MethodOptions, http.MethodTrace:

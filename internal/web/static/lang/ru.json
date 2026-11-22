@@ -158,7 +158,6 @@
   "error.assignment.update_failed.error": "Не удалось изменить сервисные порты Host",
   "error.auth.attempts.too_many.error": "Слишком много неудачных попыток входа. Вход заблокирован на {retry_after} с",
   "error.auth.credentials.invalid.error": "Неверное имя пользователя или пароль",
-  "error.auth.csrf.refused.error": "В запросе нет действительного заголовка {header}. Отправляйте токен сессии, который возвращает вход и хранит cookie {cookie}, с каждым POST, PUT и DELETE",
   "error.auth.password.too_long.error": "Пароль должен быть не длиннее {max} байт: дальше bcrypt не читает",
   "error.auth.password.too_short.error": "Пароль должен быть не короче {min} байт",
   "error.auth.password_attempts.too_many.error": "Слишком много неудачных попыток ввести пароль. Проверка пароля заблокирована на {retry_after} с",

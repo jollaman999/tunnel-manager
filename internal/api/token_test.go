@@ -644,8 +644,9 @@ func TestGoodTokensInFlightDoNotHoldTheLogin(t *testing.T) {
 }
 
 // TestTheCsrfCheckIsSkippedOnlyForAToken sends the same change twice without
-// an X-CSRF-Token header: once with a session, which is refused, and once with
-// a token, which is not. A request that carries both is served on the token.
+// an X-CSRF-Token header: once with a session cookie, which is refused as no
+// session, and once with a token, which is not. A request that carries both is
+// served on the token.
 func TestTheCsrfCheckIsSkippedOnlyForAToken(t *testing.T) {
 	f := newTokenFixture(t)
 	cookies := f.signIn(t)
@@ -660,9 +661,9 @@ func TestTheCsrfCheckIsSkippedOnlyForAToken(t *testing.T) {
 	}
 
 	rec := do(f.e, http.MethodPost, tokenHostsPath, "{}", session)
-	if rec.Code != http.StatusForbidden || decodeTokenAnswer(t, rec).ErrorCode != string(errAuthCSRFRefused) {
-		t.Fatalf("a session change without the header answered %d %s, want 403 %s",
-			rec.Code, rec.Body.String(), errAuthCSRFRefused)
+	if rec.Code != http.StatusUnauthorized || decodeTokenAnswer(t, rec).ErrorCode != string(errAuthRequired) {
+		t.Fatalf("a session change without the header answered %d %s, want 401 %s",
+			rec.Code, rec.Body.String(), errAuthRequired)
 	}
 
 	rec = f.withBearer(http.MethodPost, tokenHostsPath, "{}", writer.Token, "")
@@ -679,9 +680,9 @@ func TestTheCsrfCheckIsSkippedOnlyForAToken(t *testing.T) {
 	basic := httptest.NewRecorder()
 	f.e.ServeHTTP(basic, req)
 
-	if basic.Code != http.StatusForbidden || decodeTokenAnswer(t, basic).ErrorCode != string(errAuthCSRFRefused) {
-		t.Fatalf("a session change with a Basic header answered %d %s, want 403 %s",
-			basic.Code, basic.Body.String(), errAuthCSRFRefused)
+	if basic.Code != http.StatusUnauthorized || decodeTokenAnswer(t, basic).ErrorCode != string(errAuthRequired) {
+		t.Fatalf("a session change with a Basic header answered %d %s, want 401 %s",
+			basic.Code, basic.Body.String(), errAuthRequired)
 	}
 }
 

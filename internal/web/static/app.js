@@ -124,22 +124,22 @@ const importAPIPortTakenCode = "import.settings.api_port.local_forward";
 const settingsAPIPortSocksCode = "settings.api_port.socks";
 const importAPIPortSocksCode = "import.settings.api_port.socks";
 
-// csrfCookieName and csrfHeaderName are the two ends of the CSRF check. The
-// server hands the token of the session out in a cookie it leaves readable from
-// here on purpose, and wants it back in a header, which a page on another
-// origin cannot put on a request to this one without a preflight this server
-// never answers.
-const csrfCookieName = "tm_csrf";
+// csrfStoreKey and csrfHeaderName are the two ends of the key of the session.
+// The login answers with the key in its body, and the server wants it back in
+// a header on every call the session cookie is sent with, reads included.
+//
+// The key is kept in the local storage of the browser and never in a cookie. A
+// browser sends a cookie to every port of the host name, so a service on
+// another port of the same name is handed the session cookie by this very
+// browser; local storage is kept apart for every port, so that service cannot
+// read the key, and the cookie without it opens nothing. A page on another
+// site cannot put the header on a request to this one either, without a
+// preflight this server never answers.
+//
+// api-docs/init.js reads the key under the same name, so the Swagger UI served
+// beside this page calls the API with the session the operator signed in with.
+const csrfStoreKey = "tm_csrf";
 const csrfHeaderName = "X-CSRF-Token";
-
-// hostCookiePrefix is what the server puts in front of both cookie names where
-// it can. A browser only takes a name carrying it from a Secure cookie with
-// Path=/ and no Domain, which is what keeps another port of this host, or a
-// sibling name under a shared domain, from writing over the cookies of this
-// one. The server leaves it off where it is served over plain HTTP, since a
-// browser would drop such a cookie and no login would finish, so the page has
-// to look for the token under both names.
-const hostCookiePrefix = "__Host-";
 
 // themeKey is where the theme the operator picked is kept, and index.html holds
 // the same string: it is read there, in the head, so the first paint is already
@@ -347,6 +347,10 @@ let installationLang = null;
 // drawn again whenever the language changes and one fetch is enough for all of
 // them.
 let loadedVersion = null;
+
+// heldCsrfKey is the key of the session this tab signed in with, for a browser
+// that keeps nothing in local storage. csrfToken says when it is read.
+let heldCsrfKey = "";
 
 // notice is the one line above the screen: what says it, and what kind of
 // message it is. It outlives a redraw of the same screen, which is how the
@@ -1277,18 +1281,9 @@ function navigation() {
 async function apiCall(method, path, body) {
   const options = {
     method: method,
-    headers: { Accept: "application/json" },
+    headers: apiHeaders(),
     credentials: "same-origin"
   };
-
-  // The token goes on every call and not only on the ones that change state, so
-  // that nothing here has to keep a second list of which methods those are. The
-  // server is the one that decides where it matters. There is none before the
-  // login, which is the one call that is allowed to arrive without it.
-  const token = csrfToken();
-  if (token !== "") {
-    options.headers[csrfHeaderName] = token;
-  }
 
   if (body !== undefined) {
     options.headers["Content-Type"] = "application/json";
@@ -1426,31 +1421,46 @@ function saysSetupFirst(payload, response) {
   return errorOf(payload, response).toLowerCase().indexOf("setup") !== -1;
 }
 
-// csrfToken is the token of the session, or "" when there is not one yet. It is
-// read out of the cookie at every call rather than kept in a variable, because
-// the server writes the cookie again on every answer and a reload of the page
-// starts with nothing held in memory.
-function csrfToken() {
-  const guarded = hostCookiePrefix + csrfCookieName;
-  let bare = "";
+// apiHeaders is what a call to the API goes out with: what it takes back, and
+// the key of the session where there is one. The key goes on every call, the
+// reads as much as the changes, because the server asks it of every call the
+// session cookie is sent with. There is none before the login, which is the one
+// call that is allowed to arrive without it.
+//
+// apiCall builds on it, and so does every fetch of the API made beside apiCall:
+// a fetch that left the key off would be answered as if there were no session.
+function apiHeaders() {
+  const headers = { Accept: "application/json" };
+  const token = csrfToken();
 
-  for (const part of document.cookie.split(";")) {
-    const pair = part.trim();
-
-    if (pair.startsWith(guarded + "=")) {
-      return decodeURIComponent(pair.slice(guarded.length + 1));
-    }
-
-    // The bare name is kept and not returned yet, because a guarded cookie may
-    // still come later in the list and it is the one this server set where it
-    // set one. Reading the wrong one costs nothing but a refusal the operator
-    // would have to log in again to clear.
-    if (pair.startsWith(csrfCookieName + "=")) {
-      bare = decodeURIComponent(pair.slice(csrfCookieName.length + 1));
-    }
+  if (token !== "") {
+    headers[csrfHeaderName] = token;
   }
 
-  return bare;
+  return headers;
+}
+
+// csrfToken is the key of the session, or "" when there is not one yet. It is
+// read out of local storage at every call rather than kept in a variable,
+// because a reload of the page and a tab opened beside it start with nothing
+// held in memory, and a login in another tab replaces the key this one sends.
+//
+// heldCsrfKey is the copy the login left in memory, and it is what is read
+// where the browser will not keep anything in local storage: the session then
+// lasts as long as the tab, which is less than it would but more than a login
+// that every call after it is refused for.
+function csrfToken() {
+  try {
+    const kept = window.localStorage.getItem(csrfStoreKey);
+
+    if (kept !== null) {
+      return kept;
+    }
+  } catch (error) {
+    return heldCsrfKey;
+  }
+
+  return heldCsrfKey;
 }
 
 // readPayload returns the decoded body, or null when there is none to decode.
@@ -4142,10 +4152,23 @@ function storedLang() {
 }
 
 // rememberSession, hadSession and forgetSession keep the mark sessionMarkKey
-// names. A browser with storage turned off throws on the access itself, and
-// what it loses is only the line that says a session ended: the login it is
-// sent to is the same.
-function rememberSession() {
+// names, and the first and the last keep the key of the session beside it. A
+// browser with storage turned off throws on the access itself. What it loses
+// of the mark is only the line that says a session ended, since the login it
+// is sent to is the same; the key is held in memory as well, which csrfToken
+// says the rest of.
+//
+// key is the csrf_token the login answered with.
+function rememberSession(key) {
+  heldCsrfKey = typeof key === "string" ? key : "";
+
+  try {
+    window.localStorage.setItem(csrfStoreKey, heldCsrfKey);
+  } catch (error) {
+    // The key is still held in memory, and the mark below is a write of its
+    // own that may yet go through.
+  }
+
   try {
     window.localStorage.setItem(sessionMarkKey, "1");
   } catch (error) {
@@ -4162,7 +4185,10 @@ function hadSession() {
 }
 
 function forgetSession() {
+  heldCsrfKey = "";
+
   try {
+    window.localStorage.removeItem(csrfStoreKey);
     window.localStorage.removeItem(sessionMarkKey);
   } catch (error) {
     return;
@@ -4272,7 +4298,7 @@ async function loadInstallationLang() {
 
   try {
     response = await fetch("/api/settings", {
-      headers: { Accept: "application/json" },
+      headers: apiHeaders(),
       credentials: "same-origin"
     });
   } catch (error) {

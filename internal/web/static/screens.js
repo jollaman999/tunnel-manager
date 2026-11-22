@@ -390,9 +390,9 @@ let restartInFlight = false;
 let uninstallResult = null;
 
 // logOut ends the session and goes to the login. The cookie is dropped by the
-// server, so nothing here has to be cleared but the language the session gave
-// access to: the login is drawn in what the browser asks for, as it is in a
-// tab that has never signed in.
+// server; what is cleared here is the key of the session this browser kept,
+// and the language the session gave access to: the login is drawn in what the
+// browser asks for, as it is in a tab that has never signed in.
 async function logOut() {
   await apiCall("POST", "/api/logout");
   forgetSession();
@@ -466,7 +466,9 @@ async function submitLogin(values) {
     password: values.password
   });
 
-  rememberSession();
+  // The key of the session is in this answer and nowhere else: the server puts
+  // it in no cookie, and every call from here on is refused without it.
+  rememberSession(data === null ? "" : data.csrf_token);
 
   // The account has no username and no chosen password yet, and a session that
   // is in that state is refused everywhere but at the setup.
@@ -9059,7 +9061,7 @@ async function theVersionChanged(was) {
 async function theInstallProblem() {
   try {
     const response = await fetch("/api/update", {
-      headers: { Accept: "application/json" },
+      headers: apiHeaders(),
       credentials: "same-origin",
       cache: "no-store"
     });

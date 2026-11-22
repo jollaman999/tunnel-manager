@@ -1174,8 +1174,8 @@ HTTP 接続になります。セッションクッキーに `Secure` が付く�
 すべてのログ行がプロキシを書くことになります。
 
 `-trust-proxy-headers` が、そうではないと伝えるものです。これを指定すると、
-`X-Forwarded-Proto: https` を付けて届いた要求は TLS で届いたものとして扱われ、セッション、
-CSRF、デバイスのクッキーに `Secure` が付きます。要求のアドレスは `X-Forwarded-For` の一番右の値です。
+`X-Forwarded-Proto: https` を付けて届いた要求は TLS で届いたものとして扱われ、セッションと
+デバイスのクッキーに `Secure` が付きます。要求のアドレスは `X-Forwarded-For` の一番右の値です。
 ログイン制限はそれで数え、アクセスログ (`remote_ip`) と API が書くログ行はそれを書きます。その
 ヘッダがないか、一番右の値が IP アドレスでなければ、接続のアドレスを使います。API の手前で書かれる
 ログ行、つまり平文 HTTP の要求のリダイレクトと、ポートで TLS と平文 HTTP を振り分けるところが
@@ -1534,7 +1534,7 @@ curl -s -b cookies.txt -X PUT "$BASE/api/settings" \
 読み出しは、保存されている設定と、その隣に、このプロセスに反映されていない設定を返します。
 
 ```bash
-curl -s -b cookies.txt "$BASE/api/settings"
+curl -s -b cookies.txt -H "X-CSRF-Token: $CSRF" "$BASE/api/settings"
 ```
 
 ```json
@@ -1938,31 +1938,43 @@ curl -s -b cookies.txt -X POST "$BASE/api/uninstall" \
 
 ## スクリプトから API を呼ぶ
 
-**`/api` の下のすべてのパスにセッションが要り、`POST`, `PUT`, `DELETE` にはさらに CSRF
-トークンが要ります。**
+**`/api` の下のすべてのパスにセッションが要り、セッションのクッキーを送る要求には `GET` も
+含めてすべて、さらにセッションの鍵が要ります。**
 
 1. ユーザー名とパスワードで `POST /api/login` します。そこで設定されるクッキーを保存して
-   ください。HTTPS 経由なら名前は `__Host-tm_session` と `__Host-tm_csrf` で、平文の HTTP
-   なら `tm_session` と `tm_csrf` です。`__Host-` はそのクッキーがこのホストだけのものだと
-   ブラウザに伝える印で、ブラウザは `Secure` の付いたクッキーからしかその名前を受け取り
-   ません。ですから HTTPS を切ってあるマシンには、接頭辞のない名前で送られます。クッキーを
-   ファイルに保存しておけば届いたほうがそのまま残るので、スクリプトがどちらかを知って
-   いる必要はありません。ログインは 3 つ目のクッキー `__Host-tm_device` または
-   `tm_device` も設定し、これがあると次のログインがアカウントの停止に止められません。
-   [ログイン失敗の制限](#ログイン失敗の制限) を参照してください。
-2. 応答の `data.csrf_token` を取り出し、**すべての** `POST`, `PUT`, `DELETE` に
+   ください。HTTPS 経由なら名前は `__Host-tm_session` で、平文の HTTP なら `tm_session`
+   です。`__Host-` はそのクッキーがこのホストだけのものだとブラウザに伝える印で、ブラウザは
+   `Secure` の付いたクッキーからしかその名前を受け取りません。ですから HTTPS を切ってある
+   マシンには、接頭辞のない名前で送られます。クッキーをファイルに保存しておけば届いたほうが
+   そのまま残るので、スクリプトがどちらかを知っている必要はありません。ログインは 2 つ目の
+   クッキー `__Host-tm_device` または `tm_device` も設定し、これがあると次のログインが
+   アカウントの停止に止められません。[ログイン失敗の制限](#ログイン失敗の制限) を参照して
+   ください。
+2. 応答の `data.csrf_token` を取り出してください。これがセッションの鍵で、ログインの応答の
+   ほかには、クッキーも含めてどこにも出てきません。`GET` も含めて**すべての**要求に
    `X-CSRF-Token` ヘッダとして付けてください。
-3. `GET` にトークンは要りません。`GET` は何も変えないからです。
+3. セッションのクッキーだけで鍵のない要求、またはそのセッションの鍵ではない値を付けた要求は、
+   セッションがない要求と同じく `401 Authentication required` が返ります。クッキーだけで
+   受け付けるのは `POST /api/logout` だけです。
 
-CSRF はクロスサイトリクエストフォージェリのことで、別のサイトがあなたのブラウザに、あなたの
-クッキーを付けたリクエストを送らせる攻撃です。トークンがそれを防げるのは、そのサイトには
-ログインの応答が読めず、ヘッダも付けられないからです。
+**セッションのクッキーだけでは何もできないようにしているのが、この鍵です。** クッキーには
+ポートがありません (RFC 6265 8.5 節)。ブラウザは Tunnel Manager に接続したホスト名のすべての
+ポートにセッションのクッキーを送るので、同じ名前の別のポートで動いているサービスは、受け取った
+リクエストからそのクッキーを読みます。鍵はクッキーになく、画面はブラウザのローカルストレージに
+置きます。ローカルストレージはブラウザがポートごとに分けて持つので、そのサービスが手にする
+クッキーでは何も開きません。同じアドレスで再読み込みしても、新しいタブを開いても、ログインは
+そのままです。
 
-**信用できないサービスが同じホスト名で動いているなら、Tunnel Manager には専用のホスト名を
-与えてください。** クッキーにはポートがありません (RFC 6265 8.5 節)。ブラウザは Tunnel
-Manager に接続したホスト名のすべてのポートにこれらのクッキーを送るので、別のポートのサービスは
-受け取ったリクエストからクッキーを読み、同じ名前のクッキーを設定できます。クッキーの属性では
-防げず、`__Host-` 接頭辞が防ぐのは、ほかのホスト名と平文の HTTP からの上書きだけです。
+同じヘッダが CSRF (クロスサイトリクエストフォージェリ)、つまり別のサイトがあなたのブラウザに、
+あなたのクッキーを付けたリクエストを送らせる攻撃も防ぎます。そのサイトにはログインの応答が
+読めず、ヘッダも付けられないからです。
+
+**信用できないサービスが同じホスト名で動いていると、そのサービスはそれでもクッキーを受け取り、
+同じ名前のクッキーを設定できます。** クッキーの属性では防げず、`__Host-` 接頭辞が防ぐのは、
+ほかのホスト名と平文の HTTP からの上書きだけです。セッションは使えませんが、ブラウザを
+ログアウトさせることはでき、受け取ったデバイスクッキーはログインであなたのものとして数え
+られます ([ログイン失敗の制限](#ログイン失敗の制限) を参照)。その場合は Tunnel Manager に
+専用のホスト名を与えてください。
 
 サーバーは `Access-Control-Allow-Origin` ヘッダをまったく送りません。それはブラウザがページに
 対して適用する規則であって、このサーバーが行う検査ではありません。ですから `curl` も、
@@ -1979,20 +1991,20 @@ BASE=https://127.0.0.1:8888
 # [HTTPS と証明書](#https-と証明書) を参照。
 export CURL_CA_BUNDLE=tm-cert.pem
 
-# 1. ログインする。-c がセッション・CSRF・デバイスのクッキーを届いた名前のまま cookies.txt に書く。
+# 1. ログインする。-c がセッション・デバイスのクッキーを届いた名前のまま cookies.txt に書く。
 curl -s -c cookies.txt -X POST "$BASE/api/login" \
   -H 'Content-Type: application/json' \
   -d '{"username":"operator","password":"<your-password>"}' > login.json
 
 # {"success":true,"data":{"setup_required":false,"csrf_token":"<token>"}}
 
-# 2. 応答からトークンを取り出す。
+# 2. 応答からセッションの鍵を取り出す。
 CSRF=$(python3 -c 'import json; print(json.load(open("login.json"))["data"]["csrf_token"])')
 
-# 3. 読み出しはクッキーだけでよい。
-curl -s -b cookies.txt "$BASE/api/status"
+# 3. 読み出しにはクッキーとヘッダが要る。
+curl -s -b cookies.txt -H "X-CSRF-Token: $CSRF" "$BASE/api/status"
 
-# 4. 書き込みにはヘッダも要る。
+# 4. 書き込みも同じ。
 curl -s -b cookies.txt -X POST "$BASE/api/host" \
   -H 'Content-Type: application/json' \
   -H "X-CSRF-Token: $CSRF" \
@@ -2028,8 +2040,7 @@ curl -s -b cookies.txt -X POST "$BASE/api/setup" \
 
 | 応答 | 意味 |
 |------|------|
-| `401 Authentication required` | セッションのクッキーが送られていないか、セッションが切れています。ログインし直してください。 |
-| `403 The request carries no valid X-CSRF-Token header...` | 書き込みにトークンが付いていないか、違うトークンです。ログインの `data.csrf_token` を送ってください。 |
+| `401 Authentication required` | セッションのクッキーが送られていないか、セッションが切れているか、`X-CSRF-Token` ヘッダがないか違っています。ログインの `data.csrf_token` を送るか、ログインし直してください。 |
 | `403 The account setup is not finished...` | アカウントにまだユーザー名がありません。先に `POST /api/setup` を呼んでください。 |
 | `401 Invalid username or password` | ログインが拒否されました。どちらが違ったかは、意図的に示しません。 |
 | `400 The settings are refused: ...` | 設定が上の規則のどれかに違反しました。何も保存されていません。 |
@@ -2183,25 +2194,21 @@ telegraf:
 
 ### そのページでログインする
 
-貼り付けて終わりのトークンが一つあるわけではありません。この API はセッションクッキーと
-CSRF ヘッダなので、二段階になります。
+**すでに画面にログインしているブラウザなら、ここでもログイン済みです。** このページは画面と
+同じアドレスから出るので、ブラウザは同じセッションのクッキーを送ります。ページは画面が置いた
+場所からセッションの鍵を読み、このサーバーに送るすべての呼び出しに、`GET` も含めて
+`X-CSRF-Token` ヘッダとして付けます。貼り付けるものはありません。
 
-1. `POST /api/login` を探して **Try it out** を押し、本文にユーザー名とパスワードを入れて
-   **Execute** を押します。答えが設定するクッキーはブラウザが保存します。ログイン画面から
-   ログインしたときとまったく同じです。答えには `data.csrf_token` が入っています。
-2. そのトークンをコピーし、ページ上部の **Authorize** を押して貼り付けます。以降は
-   `X-CSRF-Token` ヘッダとして出ていきます。
+そうでなければ、`POST /api/login` を探して **Try it out** を押し、本文にユーザー名と
+パスワードを入れて **Execute** を押します。答えが設定するクッキーはブラウザが保存し、答えの
+`data.csrf_token` はページが画面と同じ場所に置きます。ですからその後の呼び出しはすべて鍵を
+付けて出ていき、別のタブの画面も同じセッションでログインした状態になります。このページから
+`POST /api/logout` を呼ぶと、鍵も消えます。
 
-1 まででどの `GET` も動きます。読み取りに要るのはクッキーだけで、ブラウザが言われなくても
-送るからです。2 が要るのは `POST`, `PUT`, `DELETE` で、やらないと `403` と
-`auth.csrf.refused` が返ります。スクリプトが同じ理由で受け取るのと同じ拒否です。
+ページ上部の **Authorize** に鍵を貼り付けると、それを宣言している呼び出しでは、ページが
+置いた鍵の代わりにそれが出ていきます。セッションに合う鍵なしで出ていった呼び出しには
+`401 Authentication required` が返ります。スクリプトが同じ理由で受け取るのと同じ拒否です。
 [スクリプトから API を呼ぶ](#スクリプトから-api-を呼ぶ) を見てください。
-
-すでに画面にログインしているブラウザなら、ここでもログイン済みです。同じオリジンで同じ
-クッキーだからです。それでもトークンは **Authorize** に手で入れる必要があり、新しいものを
-得る一番短い道が 1 です。トークンは `tm_csrf` クッキー（HTTPS なら `__Host-tm_csrf`）にも
-入っています。そのクッキーに `HttpOnly` が付いていないのはそのためで、セッションクッキーの
-ほうには付いていて、どのページからも読めません。
 
 ### 仕様ファイル
 
@@ -2227,7 +2234,7 @@ curl -sk https://127.0.0.1:8888/ui/openapi.json > openapi.json
 **Postman** は *Import* にこのファイルを入れると、呼び出しが一つずつコレクションの
 リクエストとして入ります。**Insomnia** は *Import From* → *File* です。どちらもログインまで
 はしてくれません。先に `POST /api/login` を呼べば、その後はクッキーがクライアントに残り
-ます。書き込みには、ログインの答えにあるトークンを `X-CSRF-Token` ヘッダとして付けます。
+ます。呼び出しごとに、ログインの答えにある鍵を `X-CSRF-Token` ヘッダとして付けます。
 仕様はこのヘッダを `CSRFToken` という名前の API key として宣言しているので、セキュリティ
 定義を読むツールはその値を入れる欄を出してくれます。
 
@@ -2237,14 +2244,15 @@ curl -sk https://127.0.0.1:8888/ui/openapi.json > openapi.json
 openapi-generator-cli generate -i openapi.json -g python -o ./client
 ```
 
-出てきたものはパスと本文と答えを知っています。セッションがクッキーにあることは知りません。
-生成先の HTTP ライブラリのクッキー保存を有効にしないと、ログインの次の呼び出しから `401`
-が返ります。
+出てきたものはパスと本文と答えを知っています。セッションがクッキーとヘッダにあることは
+知りません。生成先の HTTP ライブラリのクッキー保存を有効にし、すべての呼び出しに
+`X-CSRF-Token` ヘッダを付けないと、ログインの次の呼び出しから `401` が返ります。
 
 ## API エンドポイント
 
-`/api` の下はすべてセッションが要ります。`POST /api/login` だけが例外です。`GET` 以外はすべて
-`X-CSRF-Token` ヘッダが要ります。API トークンを送る要求はどちらも要りません。
+`/api` の下はすべてセッションが要ります。`POST /api/login` と `GET /api/setup` が例外です。
+セッションのクッキーを送る要求には `GET` も含めてすべて `X-CSRF-Token` ヘッダも要り、例外は
+`POST /api/logout` だけです。API トークンを送る要求はどちらも要りません。
 [API トークンで](#api-トークンで) を見てください。
 
 ### ページング
@@ -2298,8 +2306,8 @@ openapi-generator-cli generate -i openapi.json -g python -o ./client
 ```bash
 # Host を 20 件ずつにした 2 ページ目と、状態の行の最後のページ。最後より後ろのページは
 # 最後のページとして返るので、大きな数を渡せばそれが取得できる。
-curl -s -b cookies.txt "$BASE/api/host?page=2&size=20"
-curl -s -b cookies.txt "$BASE/api/status?page=99999&size=10"
+curl -s -b cookies.txt -H "X-CSRF-Token: $CSRF" "$BASE/api/host?page=2&size=20"
+curl -s -b cookies.txt -H "X-CSRF-Token: $CSRF" "$BASE/api/status?page=99999&size=10"
 ```
 
 ### 検索
@@ -2319,15 +2327,15 @@ Service Ports、状態画面の表の上にある検索欄がこれを送りま�
 です。`GET /api/status` の 4 つの数は、これまでどおり全行を数えます。
 
 ```bash
-curl -s -b cookies.txt "$BASE/api/host?q=example&page=1&size=20"
+curl -s -b cookies.txt -H "X-CSRF-Token: $CSRF" "$BASE/api/host?q=example&page=1&size=20"
 ```
 
 ### アカウント
 
 | メソッド | パス | 何をするか |
 |----------|------|------------|
-| `POST` | `/api/login` | `username` と `password` を受け取り、セッションと CSRF のクッキーを、パスワードが正しければデバイスクッキーも設定し、`setup_required` と `csrf_token` を返します |
-| `POST` | `/api/logout` | セッションを捨て、セッションと CSRF のクッキーを失効させます。デバイスクッキーは残ります |
+| `POST` | `/api/login` | `username` と `password` を受け取り、セッションのクッキーを、パスワードが正しければデバイスクッキーも設定し、`setup_required` とセッションの鍵 `csrf_token` を返します。鍵はどのクッキーにも入りません |
+| `POST` | `/api/logout` | セッションを捨て、セッションのクッキーを失効させます。`X-CSRF-Token` は要りません。デバイスクッキーは残ります |
 | `GET` | `/api/setup` | アカウントにまだユーザー名とパスワードがないかを返します。ログイン画面が使うので、セッションなしで答えます |
 | `POST` | `/api/setup` | まだユーザー名とパスワードを持たないアカウントに、それを一度だけ設定します |
 | `GET` | `/api/account` | アカウントの名前を返します |
@@ -2473,7 +2481,7 @@ curl -s -b cookies.txt -X PUT "$BASE/api/host/4" \
 して拒否されます。
 
 ```bash
-curl -s -b cookies.txt "$BASE/api/host?ids=2,3"
+curl -s -b cookies.txt -H "X-CSRF-Token: $CSRF" "$BASE/api/host?ids=2,3"
 ```
 
 ### Host が持つサービスポート
@@ -3061,7 +3069,7 @@ Host の SSH パスワードと、アカウントのパスワードハッシュ�
 ## トンネルの状態を読む
 
 ```bash
-curl -s -b cookies.txt https://127.0.0.1:8888/api/status
+curl -s -b cookies.txt -H "X-CSRF-Token: $CSRF" https://127.0.0.1:8888/api/status
 ```
 
 ```json

@@ -1321,6 +1321,103 @@ func TestEveryRefusalTheScriptActsOnIsOneTheServerRaises(t *testing.T) {
 	}
 }
 
+// The two names the key of a session goes by on the way out of a page: where it
+// is kept in local storage, and the header it is sent in. The server names the
+// header in auth.go in the shape of a Go constant.
+var (
+	scriptCsrfStoreKey   = regexp.MustCompile(`(?m)^const csrfStoreKey = "([^"]+)";$`)
+	scriptCsrfHeaderName = regexp.MustCompile(`(?m)^const csrfHeaderName = "([^"]+)";$`)
+	serverCsrfHeaderName = regexp.MustCompile(`(?m)^const csrfHeaderName = "([^"]+)"$`)
+)
+
+// TestTheDocsPageReadsTheKeyWhereThePageKeepsIt holds the Swagger UI to the
+// screens and both to the server on where the key of the session is.
+//
+// The screens write it, the Swagger UI reads it, and neither can see the other
+// do it: a name that drifted on one side would leave "Try it out" answered 401
+// on every call while the screens beside it went on working, and a header the
+// server stopped reading would sign every screen out at the first call.
+func TestTheDocsPageReadsTheKeyWhereThePageKeepsIt(t *testing.T) {
+	header := namedIn(t, "../api/auth.go", serverCsrfHeaderName)
+
+	for _, name := range []string{"app.js", "api-docs/init.js"} {
+		script := readStatic(t, name)
+
+		store := scriptCsrfStoreKey.FindStringSubmatch(script)
+		if store == nil {
+			t.Errorf("%s names no csrfStoreKey", name)
+		} else if want := scriptCsrfStoreKey.FindStringSubmatch(readStatic(t, "app.js"))[1]; store[1] != want {
+			t.Errorf("%s keeps the key under %q, and app.js under %q", name, store[1], want)
+		}
+
+		sent := scriptCsrfHeaderName.FindStringSubmatch(script)
+		if sent == nil {
+			t.Errorf("%s names no csrfHeaderName", name)
+		} else if sent[1] != header[0] {
+			t.Errorf("%s sends the key in %q, and the server reads %q", name, sent[1], header[0])
+		}
+	}
+}
+
+// scriptAPIFetch is the start of a fetch the screens make of a literal path
+// under /api. What it is made with runs from there to the "})" that closes the
+// options, which is how every such call is written.
+var scriptAPIFetch = regexp.MustCompile(`fetch\("(/api[^"]*)"`)
+
+// TestEveryFetchOfTheAPISendsTheKey holds the calls made beside apiCall to the
+// headers apiCall goes out with.
+//
+// The server answers a session cookie that comes without the key the way it
+// answers no session at all, and the calls made beside apiCall are made that
+// way on purpose so that such an answer is not turned into a move to the login.
+// A fetch that left the key off would read as a session that is not there,
+// quietly, every time: the language of the installation never arriving, or an
+// install that failed never being reported.
+//
+// The key is never read back out of a cookie either. The server puts it in
+// none, and a page that looked for it there would be the one thing that could
+// make the server start again.
+func TestEveryFetchOfTheAPISendsTheKey(t *testing.T) {
+	fetches := 0
+
+	for _, name := range []string{"app.js", "screens.js"} {
+		script := readStatic(t, name)
+
+		for _, at := range scriptAPIFetch.FindAllStringSubmatchIndex(script, -1) {
+			fetches++
+
+			path := script[at[2]:at[3]]
+			call := script[at[1]:]
+
+			end := strings.Index(call, "})")
+			if end < 0 {
+				t.Errorf("%s fetches %s with options this test cannot find the end of", name, path)
+
+				continue
+			}
+
+			if !strings.Contains(call[:end], "headers: apiHeaders()") {
+				t.Errorf("%s fetches %s without the headers apiHeaders makes, so the key is left off",
+					name, path)
+			}
+		}
+
+		if strings.Contains(script, "document.cookie") {
+			t.Errorf("%s reads document.cookie, and the key of the session is not in a cookie", name)
+		}
+	}
+
+	if fetches == 0 {
+		t.Fatalf("no fetch of a path under /api was found, so nothing here was checked")
+	}
+
+	t.Logf("fetches of the API made beside apiCall: %d", fetches)
+
+	if !strings.Contains(readStatic(t, "app.js"), "    headers: apiHeaders(),\n    credentials: \"same-origin\"\n  };") {
+		t.Errorf("apiCall does not build its options with apiHeaders")
+	}
+}
+
 // scriptBindScope is how screens.js writes down one of the two words a bind
 // scope can be.
 var scriptBindScope = regexp.MustCompile(`(?m)^const (bindScope[A-Za-z]+) = "([^"]*)";$`)

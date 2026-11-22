@@ -1788,19 +1788,24 @@ func endOnServiceStop() {
 // @description  below sits under /api and needs a session, except POST
 // @description  /api/login and GET /api/setup.
 // @description
-// @description  Logging in sets the session and CSRF cookies. Over HTTPS they
-// @description  are named __Host-tm_session and __Host-tm_csrf, and over plain
-// @description  HTTP they are tm_session and tm_csrf. A login with the right
+// @description  Logging in sets the session cookie, __Host-tm_session over
+// @description  HTTPS and tm_session over plain HTTP. A login with the right
 // @description  password also sets the device cookie, __Host-tm_device or
 // @description  tm_device, which keeps a hold on the account from refusing
-// @description  this browser. A browser sends them back on its own, so "Try it
-// @description  out" on this page works as soon as you are logged in to the
-// @description  screens in the same browser.
+// @description  this browser.
 // @description
-// @description  Every POST, PUT and DELETE also needs the token of the session
-// @description  in an X-CSRF-Token header. POST /api/login answers with it in
-// @description  data.csrf_token; paste it into Authorize above and this page
-// @description  sends it. A GET needs no token.
+// @description  Every request the session cookie is sent with, GET included,
+// @description  also needs the key of the session in an X-CSRF-Token header,
+// @description  and without it is answered 401 as if there were no session.
+// @description  POST /api/login answers with the key in data.csrf_token and
+// @description  hands it out nowhere else: it is in no cookie, because a
+// @description  browser sends cookies to every port of the host name. POST
+// @description  /api/logout is the one call that does without it.
+// @description
+// @description  "Try it out" on this page works as soon as you are logged in to
+// @description  the screens in the same browser: the screens keep the key, and
+// @description  this page puts it on every call it makes to this server. A key
+// @description  pasted into Authorize above is sent in its place.
 // @description
 // @description  A script can use an API token instead of a session. Make one
 // @description  on the Settings screen or with POST /api/token, and send it as
@@ -1829,10 +1834,11 @@ func endOnServiceStop() {
 // @securityDefinitions.apikey  CSRFToken
 // @in                          header
 // @name                        X-CSRF-Token
-// @description                 The token POST /api/login answers with, in
-// @description                 data.csrf_token. Required on every POST, PUT
-// @description                 and DELETE. The session cookie goes with it and
-// @description                 is sent by the browser on its own.
+// @description                 The key of the session, which POST /api/login
+// @description                 answers with in data.csrf_token. Required on
+// @description                 every request the session cookie is sent with,
+// @description                 GET included. The session cookie goes with it
+// @description                 and is sent by the browser on its own.
 //
 // @securityDefinitions.apikey  BearerToken
 // @in                          header

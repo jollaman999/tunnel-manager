@@ -707,12 +707,12 @@ func signInFrom(t *testing.T, e *echo.Echo, address string) []*http.Cookie {
 		t.Fatalf("the login set no session cookie, body: %s", rec.Body.String())
 	}
 
-	csrf := csrfCookieOf(rec)
-	if csrf == nil {
-		t.Fatalf("the login set no %s cookie, body: %s", csrfCookieName, rec.Body.String())
+	key := csrfKeyOf(rec)
+	if key == nil {
+		t.Fatalf("the login answered with no csrf_token, body: %s", rec.Body.String())
 	}
 
-	return []*http.Cookie{session, csrf}
+	return []*http.Cookie{session, key}
 }
 
 // passwordCheckFrom sends one call that asks for the account password. It is
@@ -724,11 +724,13 @@ func passwordCheckFrom(e *echo.Echo, address, method, target, body string,
 	req.RemoteAddr = address + ":54321"
 
 	for _, cookie := range cookies {
-		req.AddCookie(cookie)
-
-		if cookie.Name == csrfCookieName {
+		if cookie.Name == csrfHeaderName {
 			req.Header.Set(csrfHeaderName, cookie.Value)
+
+			continue
 		}
+
+		req.AddCookie(cookie)
 	}
 
 	rec := httptest.NewRecorder()
@@ -1452,7 +1454,7 @@ func TestACallThatAsksAgainHonoursTheDeviceCookie(t *testing.T) {
 	e, _, logPath := newPasswordCheckServer(t)
 
 	signedIn := loginFrom(e, "127.0.0.1", goodLogin)
-	cookies := []*http.Cookie{sessionCookieOf(signedIn), csrfCookieOf(signedIn)}
+	cookies := []*http.Cookie{sessionCookieOf(signedIn), csrfKeyOf(signedIn)}
 	device := deviceCookieOf(signedIn)
 
 	if cookies[0] == nil || cookies[1] == nil || device == nil {
@@ -1501,7 +1503,7 @@ func TestChangingTheCredentialsEndsTheDeviceCookiesButOne(t *testing.T) {
 
 			signedIn := loginFrom(f.e, "127.0.0.2", goodLogin)
 			changer := deviceCookieOf(signedIn)
-			cookies := []*http.Cookie{sessionCookieOf(signedIn), csrfCookieOf(signedIn), changer}
+			cookies := []*http.Cookie{sessionCookieOf(signedIn), csrfKeyOf(signedIn), changer}
 
 			rec := f.changeAccount(t, cookies, testPassword, change.username, change.newPassword)
 			if rec.Code != http.StatusOK {
@@ -1548,7 +1550,7 @@ func TestTheSetupHandsOutADeviceCookieUnderTheNewCredentials(t *testing.T) {
 
 	first := loginFrom(f.e, "127.0.0.1", loginBody(t, "", testPassword))
 	initial := deviceCookieOf(first)
-	cookies := []*http.Cookie{sessionCookieOf(first), csrfCookieOf(first), initial}
+	cookies := []*http.Cookie{sessionCookieOf(first), csrfKeyOf(first), initial}
 
 	if cookies[0] == nil || initial == nil {
 		t.Fatalf("the first login set session %v and device %v, body: %s", cookies[0], initial, first.Body.String())
@@ -1582,7 +1584,7 @@ func TestTheSetupHandsOutADeviceCookieUnderTheNewCredentials(t *testing.T) {
 }
 
 // TestTheLogoutLeavesTheDeviceCookie holds that signing out does not make the
-// browser a stranger: the logout expires the session and the CSRF cookie, and
+// browser a stranger: the logout expires the session cookie, and
 // sets nothing under the device name.
 func TestTheLogoutLeavesTheDeviceCookie(t *testing.T) {
 	e, _ := newTestServer(t, newTestAccount(t, false))

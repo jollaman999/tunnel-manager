@@ -459,8 +459,13 @@ func TestAccountChangeOverTLSKeepsTheSessionItWasMadeWith(t *testing.T) {
 	other := f.signIn(t, testUsername, testPassword)
 
 	// What makes this test the one it is. A login that handed out the bare
-	// names would be testing the same thing as the tests above it.
+	// name would be testing the same thing as the tests above it. The key of
+	// the session rides along as a header and has no cookie name to check.
 	for _, cookie := range mine {
+		if cookie.Name == csrfHeaderName {
+			continue
+		}
+
 		if !strings.HasPrefix(cookie.Name, hostCookiePrefix) {
 			t.Fatalf("the login over TLS set %q, want a name starting with %q",
 				cookie.Name, hostCookiePrefix)
@@ -504,19 +509,19 @@ func TestAccountChangeOverTLSKeepsTheSessionItWasMadeWith(t *testing.T) {
 	}
 }
 
-// TestAccountChangeNeedsTheCsrfToken covers the route being behind the check
-// the middleware puts on everything that is not a GET.
+// TestAccountChangeNeedsTheCsrfToken covers the route being behind the key of
+// the session, which the middleware asks of everything a session cookie opens.
 func TestAccountChangeNeedsTheCsrfToken(t *testing.T) {
 	f := newAccountFixture(t)
 	cookies := f.signIn(t, testUsername, testPassword)
 
-	// The session cookie alone. do puts the header on only when the CSRF cookie
-	// is among the ones it is handed, which is what the page does with it.
+	// The session cookie alone. do puts the header on only when the key is
+	// among what it is handed, which is what the page does with it.
 	rec := do(f.e, http.MethodPut, accountPath,
 		accountBody(t, testPassword, accountNewUsername, ""), cookies[0])
-	if rec.Code != http.StatusForbidden {
+	if rec.Code != http.StatusUnauthorized {
 		t.Fatalf("status = %d, want %d, body: %s",
-			rec.Code, http.StatusForbidden, rec.Body.String())
+			rec.Code, http.StatusUnauthorized, rec.Body.String())
 	}
 
 	if f.storedUsername(t) != testUsername {

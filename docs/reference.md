@@ -1316,7 +1316,7 @@ counted against one address and every log line would name the proxy.
 
 `-trust-proxy-headers` is what says otherwise. With it, a request that carries
 `X-Forwarded-Proto: https` is treated as having arrived over TLS, and the
-session, CSRF and device cookies are marked `Secure`. The address of the request is the
+session and device cookies are marked `Secure`. The address of the request is the
 rightmost `X-Forwarded-For` entry: the login limit counts by it, and the access
 log (`remote_ip`) and the log lines the API writes name it. Where that header is
 missing or its rightmost entry is not an IP address, the address of the
@@ -1727,7 +1727,7 @@ A read answers with the stored settings and, beside them, the ones this process
 is not running on:
 
 ```bash
-curl -s -b cookies.txt "$BASE/api/settings"
+curl -s -b cookies.txt -H "X-CSRF-Token: $CSRF" "$BASE/api/settings"
 ```
 
 ```json
@@ -2198,33 +2198,46 @@ that was never going to go.
 
 ## Calling the API from a script
 
-**Every path under `/api` needs a session, and every `POST`, `PUT` and `DELETE`
-needs a CSRF token as well.**
+**Every path under `/api` needs a session, and every request the session cookie
+is sent with needs the key of the session as well, `GET` included.**
 
-1. `POST /api/login` with the username and the password. Keep the cookies it
-   sets. Over HTTPS they are named `__Host-tm_session` and `__Host-tm_csrf`;
-   over plain HTTP they are `tm_session` and `tm_csrf`. The `__Host-` prefix is
-   what tells a browser that the cookie belongs to this host alone, and a
-   browser only takes that name from a cookie marked `Secure`, so a machine
-   with HTTPS turned off is served the names without it. A cookie jar keeps
-   whichever pair arrived, so a script that uses one does not have to know
-   which. The login sets a third cookie, `__Host-tm_device` or `tm_device`,
-   which lets the next login past a hold on the account: see
-   [Failed sign-ins](#failed-sign-ins).
-2. Read `data.csrf_token` out of the answer and send it as an `X-CSRF-Token`
-   header on **every** `POST`, `PUT` and `DELETE`.
-3. `GET` needs no token. Nothing it reaches changes anything.
+1. `POST /api/login` with the username and the password. Keep the cookie it
+   sets. Over HTTPS it is named `__Host-tm_session`; over plain HTTP it is
+   `tm_session`. The `__Host-` prefix is what tells a browser that the cookie
+   belongs to this host alone, and a browser only takes that name from a
+   cookie marked `Secure`, so a machine with HTTPS turned off is served the
+   name without it. A cookie jar keeps whichever arrived, so a script that uses
+   one does not have to know which. The login sets a second cookie,
+   `__Host-tm_device` or `tm_device`, which lets the next login past a hold on
+   the account: see [Failed sign-ins](#failed-sign-ins).
+2. Read `data.csrf_token` out of the answer. That is the key of the session,
+   and the answer of the login is the only place it is handed out: it is in no
+   cookie. Send it as an `X-CSRF-Token` header on **every** request, `GET`
+   included.
+3. A request that brings the session cookie without the key, or with a key that
+   is not the one of that session, is answered `401 Authentication required`,
+   the same as no session at all. `POST /api/logout` is the one call that takes
+   the cookie alone.
 
-CSRF stands for cross site request forgery: another site making your browser send
-a request with your cookies attached. The token defeats it because that site
-cannot read the answer of your login and cannot set the header.
+**The key is what keeps the session cookie from being enough on its own.**
+Cookies carry no port (RFC 6265, section 8.5): a browser sends the session
+cookie to every port of the host name it reached Tunnel Manager by, so a service
+on another port of that name reads it off the requests it gets. The key is not
+in a cookie, and the screens keep it in the local storage of the browser, which
+a browser keeps apart for every port, so that service gets a cookie that opens
+nothing. A reload or a new tab on the same address stays signed in.
 
-**If a service you do not trust runs on the same host name, give Tunnel Manager
-a host name of its own.** Cookies carry no port (RFC 6265, section 8.5): a
-browser sends these cookies to every port of the host name it reached Tunnel
-Manager by, so a service on another port reads them off the requests it gets and
-can set cookies of the same names. No cookie attribute changes that, and the
-`__Host-` prefix only keeps other host names and plain HTTP from writing them.
+The same header stops cross site request forgery: another site making your
+browser send a request with your cookies attached. That site cannot read the
+answer of your login and cannot set the header.
+
+**If a service you do not trust runs on the same host name, it still receives
+the cookies and can set cookies of the same names**, and no cookie attribute
+changes that: the `__Host-` prefix only keeps other host names and plain HTTP
+from writing them. It cannot use the session, but it can sign the browser out
+of it, and the device cookie it receives counts at the login as yours (see
+[Failed sign-ins](#failed-sign-ins)). Give Tunnel Manager a host name of its own
+in that case.
 
 The server sends no `Access-Control-Allow-Origin` header at all. That is a rule
 browsers apply to pages, not a check this server performs, so `curl`, scripts and
@@ -2241,21 +2254,21 @@ BASE=https://127.0.0.1:8888
 # See [HTTPS and the certificate](#https-and-the-certificate).
 export CURL_CA_BUNDLE=tm-cert.pem
 
-# 1. Log in. -c stores the session, CSRF and device cookies in cookies.txt,
-# under the names they came back with.
+# 1. Log in. -c stores the session and device cookies in cookies.txt, under the
+# names they came back with.
 curl -s -c cookies.txt -X POST "$BASE/api/login" \
   -H 'Content-Type: application/json' \
   -d '{"username":"operator","password":"<your-password>"}' > login.json
 
 # {"success":true,"data":{"setup_required":false,"csrf_token":"<token>"}}
 
-# 2. Take the token out of the answer.
+# 2. Take the key of the session out of the answer.
 CSRF=$(python3 -c 'import json; print(json.load(open("login.json"))["data"]["csrf_token"])')
 
-# 3. A read needs the cookies and nothing else.
-curl -s -b cookies.txt "$BASE/api/status"
+# 3. A read needs the cookies and the header.
+curl -s -b cookies.txt -H "X-CSRF-Token: $CSRF" "$BASE/api/status"
 
-# 4. A write needs the header as well.
+# 4. So does a write.
 curl -s -b cookies.txt -X POST "$BASE/api/host" \
   -H 'Content-Type: application/json' \
   -H "X-CSRF-Token: $CSRF" \
@@ -2291,8 +2304,7 @@ What goes wrong, and what it looks like:
 
 | Answer | What it means |
 |--------|---------------|
-| `401 Authentication required` | No session cookie was sent, or the session has run out. Log in again. |
-| `403 The request carries no valid X-CSRF-Token header...` | The write carried no token, or the wrong one. Send `data.csrf_token` from the login. |
+| `401 Authentication required` | No session cookie was sent, the session has run out, or the request carried no `X-CSRF-Token` header or the wrong one. Send `data.csrf_token` from the login, or log in again. |
 | `403 The account setup is not finished...` | The account still has no username. Call `POST /api/setup` first. |
 | `401 Invalid username or password` | The login was refused. It does not say which of the two was wrong, on purpose. |
 | `400 The settings are refused: ...` | A setting broke one of the rules above. Nothing was stored. |
@@ -2457,27 +2469,24 @@ practising behind the button.
 
 ### Logging in on that page
 
-There is no single token to paste and be done with. This API is a session cookie
-and a CSRF header, so it takes two steps.
+**A browser already logged in to the screens is logged in here too.** The page
+is served from the same address as the screens, so the browser sends it the same
+session cookie, and the page reads the key of the session from where the screens
+keep it and puts it on every call it makes to this server as an `X-CSRF-Token`
+header, `GET` included. Nothing has to be pasted.
 
-1. Find `POST /api/login`, press **Try it out**, put your username and password
-   into the body and press **Execute**. The browser keeps the cookies the answer
-   sets, exactly as it would after the login screen, and the answer shows
-   `data.csrf_token`.
-2. Copy that token, press **Authorize** at the top of the page and paste it in.
-   It goes out as an `X-CSRF-Token` header from then on.
+Otherwise, find `POST /api/login`, press **Try it out**, put your username and
+password into the body and press **Execute**. The browser keeps the cookie the
+answer sets, and the page keeps the `data.csrf_token` of the answer where the
+screens keep theirs, so every call after it goes out with the key, and the
+screens in another tab are signed in with the same session. `POST /api/logout`
+from the page drops the key again.
 
-Step 1 is enough for every `GET`: the cookie is all a read needs and the browser
-sends it without being asked. Step 2 is what a `POST`, `PUT` or `DELETE` needs,
-and without it those come back `403` with `auth.csrf.refused`, which is the same
-refusal a script gets for the same reason. See
+A key pasted into **Authorize** at the top of the page is sent in place of the
+one the page keeps, on the calls that declare it. A call that goes out without a
+key that matches the session comes back `401 Authentication required`, which is
+the same refusal a script gets for the same reason. See
 [Calling the API from a script](#calling-the-api-from-a-script).
-
-A browser already logged in to the screens is logged in here too: same origin,
-same cookie. The token still has to go into **Authorize** by hand, and step 1 is
-the shortest way to a fresh one. It is also in the `tm_csrf` cookie
-(`__Host-tm_csrf` over HTTPS), which is why that cookie is not marked
-`HttpOnly`, while the session cookie is and no page can read it.
 
 ### The description file
 
@@ -2503,7 +2512,7 @@ carries one no route answers, so the two do not drift apart quietly.
 **Postman**: *Import*, then the file. Every call arrives as a request in a
 collection. **Insomnia**: *Import From*, then *File*. Neither of them carries
 the login. Call `POST /api/login` first and the cookies stay in the client from
-then on; for a write, add the `X-CSRF-Token` header with the token that login
+then on; on every call, add the `X-CSRF-Token` header with the key that login
 answered with. The description declares that header as an API key named
 `CSRFToken`, so a tool that reads security definitions gives you a field to put
 it in.
@@ -2515,15 +2524,17 @@ openapi-generator-cli generate -i openapi.json -g python -o ./client
 ```
 
 What comes out knows the paths, the bodies and the answers. It does not know
-that the session lives in a cookie, so turn on the cookie jar of whatever HTTP
-library it was generated against, or every call after the login is answered
-`401`.
+that the session lives in a cookie and a header, so turn on the cookie jar of
+whatever HTTP library it was generated against and add the `X-CSRF-Token` header
+to every call, or every call after the login is answered `401`.
 
 ## API endpoints
 
-Everything under `/api` requires a session, except `POST /api/login`. Everything
-that is not a `GET` requires the `X-CSRF-Token` header. A request with an API
-token needs neither, see [With an API token](#with-an-api-token).
+Everything under `/api` requires a session, except `POST /api/login` and
+`GET /api/setup`. Every request the session cookie is sent with requires the
+`X-CSRF-Token` header as well, `GET` included, except `POST /api/logout`. A
+request with an API token needs neither, see
+[With an API token](#with-an-api-token).
 
 ### Paging
 
@@ -2577,8 +2588,8 @@ the Tunnel Manager server is doing, not what is on the page being looked at.
 ```bash
 # The second page of twenty Hosts, and the last page of the status rows: a page
 # past the end comes back as the last one, so a large number asks for it.
-curl -s -b cookies.txt "$BASE/api/host?page=2&size=20"
-curl -s -b cookies.txt "$BASE/api/status?page=99999&size=10"
+curl -s -b cookies.txt -H "X-CSRF-Token: $CSRF" "$BASE/api/host?page=2&size=20"
+curl -s -b cookies.txt -H "X-CSRF-Token: $CSRF" "$BASE/api/status?page=99999&size=10"
 ```
 
 ### Searching
@@ -2600,15 +2611,15 @@ The page is cut from the rows that match, so `total` on the first two and
 `GET /api/status` stay over every row.
 
 ```bash
-curl -s -b cookies.txt "$BASE/api/host?q=example&page=1&size=20"
+curl -s -b cookies.txt -H "X-CSRF-Token: $CSRF" "$BASE/api/host?q=example&page=1&size=20"
 ```
 
 ### Account
 
 | Method | Path | What it does |
 |--------|------|--------------|
-| `POST` | `/api/login` | Takes `username` and `password`, sets the session and CSRF cookies, and the device cookie when the password is right, answers with `setup_required` and `csrf_token` |
-| `POST` | `/api/logout` | Drops the session and expires the session and CSRF cookies. The device cookie stays |
+| `POST` | `/api/login` | Takes `username` and `password`, sets the session cookie, and the device cookie when the password is right, answers with `setup_required` and `csrf_token`, the key of the session, which is in no cookie |
+| `POST` | `/api/logout` | Drops the session and expires the session cookie. Needs no `X-CSRF-Token`. The device cookie stays |
 | `GET` | `/api/setup` | Says whether the account still needs its username and password. Answers without a session, for the login screen |
 | `POST` | `/api/setup` | Sets the username and the password once, on the account that still needs them |
 | `GET` | `/api/account` | What the account is called |
@@ -2772,7 +2783,7 @@ twice. A value that is not such a list is refused with `400` under
 `host.list.ids_invalid`.
 
 ```bash
-curl -s -b cookies.txt "$BASE/api/host?ids=2,3"
+curl -s -b cookies.txt -H "X-CSRF-Token: $CSRF" "$BASE/api/host?ids=2,3"
 ```
 
 ### The service ports a Host carries
@@ -3426,7 +3437,7 @@ every answer.
 ## Reading the tunnel status
 
 ```bash
-curl -s -b cookies.txt https://127.0.0.1:8888/api/status
+curl -s -b cookies.txt -H "X-CSRF-Token: $CSRF" https://127.0.0.1:8888/api/status
 ```
 
 ```json

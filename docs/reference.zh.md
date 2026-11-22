@@ -1030,7 +1030,7 @@ cookie 却是不带这个标志跑的。
 服务器能看到的地址也只有代理一个，所以每次登录都会记在同一个地址上，每行日志写的都是代理。
 
 `-trust-proxy-headers` 就是用来说明情况不是这样的。加上它，带着 `X-Forwarded-Proto: https`
-的请求就被当作从 TLS 上过来的，会话、CSRF 和设备 cookie 会标上 `Secure`。请求的地址是
+的请求就被当作从 TLS 上过来的，会话和设备 cookie 会标上 `Secure`。请求的地址是
 `X-Forwarded-For` 最右边的一项：登录限制按它计数，访问日志（`remote_ip`）和 API 写的日志行写的
 都是它。这个头缺失或最右边一项不是 IP 地址时，用连接的地址。在 API 前面写的日志行，也就是明文
 HTTP 请求的重定向以及端口上区分 TLS 和明文 HTTP 的那部分写的行，不管给没给这个参数，写的都是
@@ -1338,7 +1338,7 @@ curl -s -b cookies.txt -X PUT "$BASE/api/settings" \
 一次读取返回已保存的设置，并附上这个进程尚未运行的那些：
 
 ```bash
-curl -s -b cookies.txt "$BASE/api/settings"
+curl -s -b cookies.txt -H "X-CSRF-Token: $CSRF" "$BASE/api/settings"
 ```
 
 ```json
@@ -1681,26 +1681,32 @@ Windows 上，这个进程正在写的日志文件打开着就无法删除，而
 
 ## 在脚本里调用 API
 
-**`/api` 下面的每条路径都需要会话，而每个 `POST`、`PUT` 和 `DELETE` 还需要一个 CSRF 令牌。**
+**`/api` 下面的每条路径都需要会话，而带着会话 cookie 的每个请求，包括 `GET`，还需要会话密钥。**
 
-1. 用用户名和密码调 `POST /api/login`。把它设下的 cookie 留着。走 HTTPS 时它们叫
-   `__Host-tm_session` 和 `__Host-tm_csrf`，走明文 HTTP 时叫 `tm_session` 和 `tm_csrf`。
-   `__Host-` 是告诉浏览器这个 cookie 只属于这台主机的记号，而浏览器只在标了 `Secure` 的
-   cookie 上接受这个名字，所以关掉了 HTTPS 的机器拿到的是不带前缀的名字。cookie jar 会把
-   来的那一对原样存下来，脚本不需要知道是哪一对。登录还会设第三个 cookie，
-   `__Host-tm_device` 或 `tm_device`，有了它，下一次登录不会被账号的封锁挡住，见
-   [登录失败的限制](#登录失败的限制)。
-2. 从响应里取出 `data.csrf_token`，在**每一个** `POST`、`PUT` 和 `DELETE` 上作为
-   `X-CSRF-Token` 头发出去。
-3. `GET` 不需要令牌。它不修改任何数据。
+1. 用用户名和密码调 `POST /api/login`。把它设下的 cookie 留着。走 HTTPS 时它叫
+   `__Host-tm_session`，走明文 HTTP 时叫 `tm_session`。`__Host-` 是告诉浏览器这个 cookie
+   只属于这台主机的记号，而浏览器只在标了 `Secure` 的 cookie 上接受这个名字，所以关掉了
+   HTTPS 的机器拿到的是不带前缀的名字。cookie jar 会把来的那个原样存下来，脚本不需要知道是
+   哪一个。登录还会设第二个 cookie，`__Host-tm_device` 或 `tm_device`，有了它，下一次登录
+   不会被账号的封锁挡住，见[登录失败的限制](#登录失败的限制)。
+2. 从响应里取出 `data.csrf_token`。这就是会话密钥，除了登录的响应，哪里都不会给出它，
+   cookie 里也没有。在**每一个**请求上，包括 `GET`，作为 `X-CSRF-Token` 头发出去。
+3. 只带会话 cookie 而没有密钥，或者带的不是这个会话的密钥的请求，和没有会话的请求一样，
+   返回 `401 Authentication required`。只凭 cookie 就接受的只有 `POST /api/logout`。
 
-CSRF 是跨站请求伪造：别的站点让你的浏览器带着你的 cookie 发请求。令牌能挡住它，是因为那个
-站点读不到你登录的响应，也设置不了这个头。
+**让会话 cookie 单独什么都做不了的，就是这个密钥。** cookie 不带端口（RFC 6265 第 8.5 节）：
+浏览器会把会话 cookie 发往访问 Tunnel Manager 所用主机名的每一个端口，所以同一主机名另一个
+端口上的服务能从收到的请求里读到它。密钥不在 cookie 里，界面把它放在浏览器的本地存储
+（local storage）里，而浏览器按端口分开保存本地存储，所以那个服务拿到的 cookie 什么也打不开。
+在同一个地址上刷新或者开新标签页，登录状态都还在。
 
-**同一个主机名上跑着你不信任的服务时，给 Tunnel Manager 一个专用的主机名。** cookie 不带端口
-（RFC 6265 第 8.5 节）：浏览器会把这些 cookie 发往访问 Tunnel Manager 所用主机名的每一个端口，
-所以另一个端口上的服务能从收到的请求里读到它们，也能设置同名的 cookie。任何 cookie 属性都挡不住
-这一点，`__Host-` 前缀只挡得住别的主机名和明文 HTTP 改写它们。
+同一个头也挡住跨站请求伪造（CSRF）：别的站点让你的浏览器带着你的 cookie 发请求。那个站点读不到
+你登录的响应，也设置不了这个头。
+
+**同一个主机名上跑着你不信任的服务时，它仍然能收到 cookie，也能设置同名的 cookie。** 任何
+cookie 属性都挡不住这一点，`__Host-` 前缀只挡得住别的主机名和明文 HTTP 改写它们。它用不了
+会话，但能让浏览器退出登录，它收到的设备 cookie 在登录时也会被算作你的（见
+[登录失败的限制](#登录失败的限制)）。这种情况下给 Tunnel Manager 一个专用的主机名。
 
 服务器根本不发 `Access-Control-Allow-Origin` 头。那是浏览器施加在页面上的规则，不是这台
 服务器做的检查，所以 `curl`、脚本和服务器之间的调用都不受影响；在另一个源上的页面则不行。
@@ -1716,20 +1722,20 @@ BASE=https://127.0.0.1:8888
 # 见 [HTTPS 与证书](#https-与证书)。
 export CURL_CA_BUNDLE=tm-cert.pem
 
-# 1. 登录。-c 把会话、CSRF 和设备 cookie 按回来的名字存进 cookies.txt。
+# 1. 登录。-c 把会话和设备 cookie 按回来的名字存进 cookies.txt。
 curl -s -c cookies.txt -X POST "$BASE/api/login" \
   -H 'Content-Type: application/json' \
   -d '{"username":"operator","password":"<your-password>"}' > login.json
 
 # {"success":true,"data":{"setup_required":false,"csrf_token":"<token>"}}
 
-# 2. 从响应里取出令牌。
+# 2. 从响应里取出会话密钥。
 CSRF=$(python3 -c 'import json; print(json.load(open("login.json"))["data"]["csrf_token"])')
 
-# 3. 读操作只要 cookie，别的都不用。
-curl -s -b cookies.txt "$BASE/api/status"
+# 3. 读操作要 cookie 和这个头。
+curl -s -b cookies.txt -H "X-CSRF-Token: $CSRF" "$BASE/api/status"
 
-# 4. 写操作还要加上这个头。
+# 4. 写操作也一样。
 curl -s -b cookies.txt -X POST "$BASE/api/host" \
   -H 'Content-Type: application/json' \
   -H "X-CSRF-Token: $CSRF" \
@@ -1764,8 +1770,7 @@ curl -s -b cookies.txt -X POST "$BASE/api/setup" \
 
 | 响应 | 是什么意思 |
 |------|------------|
-| `401 Authentication required` | 没有发送会话 cookie，或者会话已经过期。重新登录。 |
-| `403 The request carries no valid X-CSRF-Token header...` | 这个写操作没带令牌，或者带错了。把登录响应里的 `data.csrf_token` 发过来。 |
+| `401 Authentication required` | 没有发送会话 cookie，会话已经过期，或者没带 `X-CSRF-Token` 头、带错了。把登录响应里的 `data.csrf_token` 发过来，或者重新登录。 |
 | `403 The account setup is not finished...` | 账号还没有用户名。先调 `POST /api/setup`。 |
 | `401 Invalid username or password` | 登录被拒。它故意不说是两者中的哪一个错了。 |
 | `400 The settings are refused: ...` | 某项设置违反了上面的规则。没有保存任何内容。 |
@@ -1907,23 +1912,18 @@ telegraf：
 
 ### 在那一页上登录
 
-没有一个贴上去就完事的令牌。这个 API 用的是会话 cookie 加 CSRF 头，所以分两步。
+**已经在界面上登录过的浏览器，在这里也是登录着的。** 这一页和界面来自同一个地址，所以浏览器
+发来的是同一个会话 cookie；这一页从界面存放会话密钥的地方读出密钥，在发往这台服务器的每个
+调用上，包括 `GET`，作为 `X-CSRF-Token` 头带上。不需要粘贴任何东西。
 
-1. 找到 `POST /api/login`，按 **Try it out**，把用户名和密码填进请求体，按 **Execute**。
-   回答设下的 cookie 由浏览器保存，和从登录界面登录完全一样，回答里带着
-   `data.csrf_token`。
-2. 把那个令牌复制下来，按页面顶部的 **Authorize** 粘进去。从那以后它会作为
-   `X-CSRF-Token` 头发出去。
+否则，找到 `POST /api/login`，按 **Try it out**，把用户名和密码填进请求体，按 **Execute**。
+回答设下的 cookie 由浏览器保存，回答里的 `data.csrf_token` 由这一页放到界面存放它的同一个
+地方。所以之后的调用都会带着密钥发出去，另一个标签页里的界面也用同一个会话登录着。在这一页上
+调 `POST /api/logout` 会把密钥也删掉。
 
-只做第一步，所有 `GET` 就都能用了：读取只需要 cookie，浏览器不用人说就会带上。第二步是
-`POST`、`PUT` 和 `DELETE` 需要的，不做的话它们会带着 `auth.csrf.refused` 返回 `403`，
-和脚本因为同样的原因收到的是同一个拒绝。见
-[在脚本里调用 API](#在脚本里调用-api)。
-
-已经在界面上登录过的浏览器，在这里也是登录着的：同一个来源，同一个 cookie。令牌仍然要手动
-放进 **Authorize**，而拿一个新令牌最快的路就是第一步。令牌也在 `tm_csrf` cookie 里（走
-HTTPS 时是 `__Host-tm_csrf`），那个 cookie 没有标 `HttpOnly` 正是为了这个，而会话 cookie
-标了，任何页面都读不到。
+在页面顶部的 **Authorize** 里粘贴的密钥，会在声明了它的调用上代替这一页保存的密钥发出去。
+没带与会话相符的密钥发出去的调用会收到 `401 Authentication required`，和脚本因为同样的原因
+收到的是同一个拒绝。见[在脚本里调用 API](#在脚本里调用-api)。
 
 ### 描述文件
 
@@ -1946,7 +1946,7 @@ curl -sk https://127.0.0.1:8888/ui/openapi.json > openapi.json
 
 **Postman**：*Import*，选这个文件，每个调用都会变成集合里的一个请求。**Insomnia**：
 *Import From* → *File*。两个都不会替你登录。先调 `POST /api/login`，之后 cookie 就留在
-客户端里了；写操作要加上 `X-CSRF-Token` 头，值就是登录回答里的那个令牌。描述文件把这个头
+客户端里了；每个调用都要加上 `X-CSRF-Token` 头，值就是登录回答里的那个密钥。描述文件把这个头
 声明成了名为 `CSRFToken` 的 API key，所以会读安全定义的工具会给你一个填它的地方。
 
 **生成客户端**：`openapi-generator` 直接就能读这个文件。
@@ -1955,13 +1955,13 @@ curl -sk https://127.0.0.1:8888/ui/openapi.json > openapi.json
 openapi-generator-cli generate -i openapi.json -g python -o ./client
 ```
 
-生成出来的代码知道路径、请求体和回答，但不知道会话在 cookie 里。把它所基于的那个 HTTP 库
-的 cookie 保存打开，否则登录之后的每个调用都会收到 `401`。
+生成出来的代码知道路径、请求体和回答，但不知道会话在 cookie 和头里。把它所基于的那个 HTTP 库
+的 cookie 保存打开，并在每个调用上加 `X-CSRF-Token` 头，否则登录之后的每个调用都会收到 `401`。
 
 ## API 接口
 
-`/api` 下面的一切都需要会话，只有 `POST /api/login` 例外。不是 `GET` 的一切都需要
-`X-CSRF-Token` 头。带 API 令牌的请求两者都不需要，见[使用 API 令牌](#使用-api-令牌)。
+`/api` 下面的一切都需要会话，只有 `POST /api/login` 和 `GET /api/setup` 例外。带着会话
+cookie 的每个请求，包括 `GET`，还需要 `X-CSRF-Token` 头，只有 `POST /api/logout` 例外。带 API 令牌的请求两者都不需要，见[使用 API 令牌](#使用-api-令牌)。
 
 ### 分页
 
@@ -2009,8 +2009,8 @@ openapi-generator-cli generate -i openapi.json -g python -o ./client
 ```bash
 # 二十台一页的 Host 的第二页，以及状态行的最后一页：超过末尾会返回最后一页，
 # 所以写一个很大的数就是在要最后一页。
-curl -s -b cookies.txt "$BASE/api/host?page=2&size=20"
-curl -s -b cookies.txt "$BASE/api/status?page=99999&size=10"
+curl -s -b cookies.txt -H "X-CSRF-Token: $CSRF" "$BASE/api/host?page=2&size=20"
+curl -s -b cookies.txt -H "X-CSRF-Token: $CSRF" "$BASE/api/status?page=99999&size=10"
 ```
 
 ### 搜索
@@ -2029,15 +2029,15 @@ curl -s -b cookies.txt "$BASE/api/status?page=99999&size=10"
 `GET /api/status` 的四个计数仍然是所有行的计数。
 
 ```bash
-curl -s -b cookies.txt "$BASE/api/host?q=example&page=1&size=20"
+curl -s -b cookies.txt -H "X-CSRF-Token: $CSRF" "$BASE/api/host?q=example&page=1&size=20"
 ```
 
 ### 账号
 
 | 方法 | 路径 | 做什么 |
 |------|------|--------|
-| `POST` | `/api/login` | 收 `username` 和 `password`，设置会话和 CSRF cookie，密码正确时还设置设备 cookie，响应里带有 `setup_required` 和 `csrf_token` |
-| `POST` | `/api/logout` | 销毁会话，并让会话和 CSRF cookie 过期。设备 cookie 保留 |
+| `POST` | `/api/login` | 收 `username` 和 `password`，设置会话 cookie，密码正确时还设置设备 cookie，响应里带有 `setup_required` 和会话密钥 `csrf_token`，密钥不放在任何 cookie 里 |
+| `POST` | `/api/logout` | 销毁会话，并让会话 cookie 过期。不需要 `X-CSRF-Token`。设备 cookie 保留 |
 | `GET` | `/api/setup` | 说明账号是否还没有用户名和密码。登录页要用，所以不需要会话也会响应 |
 | `POST` | `/api/setup` | 给还没有用户名和密码的账号设置一次用户名和密码 |
 | `GET` | `/api/account` | 这个账号叫什么 |
@@ -2169,7 +2169,7 @@ id 会被略过；`q` 像缩小列表一样缩小它们。像 `?ids=2&ids=3` 这
 两次的 id 算两个。不是这种列表的值会以 `host.list.ids_invalid` 被 `400` 拒绝。
 
 ```bash
-curl -s -b cookies.txt "$BASE/api/host?ids=2,3"
+curl -s -b cookies.txt -H "X-CSRF-Token: $CSRF" "$BASE/api/host?ids=2,3"
 ```
 
 ### 一台 Host 负责的服务端口
@@ -2705,7 +2705,7 @@ Host 的 SSH 密码和账号的密码哈希，在任何响应里都不会出现�
 ## 读懂隧道状态
 
 ```bash
-curl -s -b cookies.txt https://127.0.0.1:8888/api/status
+curl -s -b cookies.txt -H "X-CSRF-Token: $CSRF" https://127.0.0.1:8888/api/status
 ```
 
 ```json

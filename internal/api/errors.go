@@ -83,7 +83,6 @@ const (
 	errListSizeUnsupported     errorCode = "list.size.unsupported"
 
 	errAuthRequired                errorCode = "auth.session.required"
-	errAuthCSRFRefused             errorCode = "auth.csrf.refused"
 	errAuthCredentialsInvalid      errorCode = "auth.credentials.invalid"
 	errAuthSessionCreateFailed     errorCode = "auth.session.create_failed"
 	errAuthSetupRequired           errorCode = "auth.setup.required"
@@ -340,14 +339,10 @@ var errorMessages = map[errorCode]string{
 	errListPageNotANumber:      "The list was not read: page is not a number: {page}",
 	errListSizeUnsupported:     "The list was not read: size must be one of {sizes}, and not {size}",
 
-	// The session, the CSRF token and the setup gate.
-	errAuthRequired: "Authentication required",
-	// The answer to a state changing request that did not bring its token
-	// back. It says what to send, because the client can fix it. It must not
-	// read like the setup refusal: the UI moves to the setup screen on a 403
-	// that mentions one. The header and the cookie are values rather than words
-	// of the sentence, so that renaming either does not go past a translator.
-	errAuthCSRFRefused:         "The request carries no valid {header} header. Send the token of the session, which the login answers with and the {cookie} cookie holds, on every POST, PUT and DELETE",
+	// The session, its key and the setup gate. A request whose session cookie
+	// comes without the key of the session is answered with errAuthRequired
+	// as well: RequireSession says why it is not told apart from no session.
+	errAuthRequired:            "Authentication required",
 	errAuthCredentialsInvalid:  invalidCredentialsMessage,
 	errAuthSessionCreateFailed: "Failed to create a session",
 	// The answer to a request that a logged in client is not allowed to make

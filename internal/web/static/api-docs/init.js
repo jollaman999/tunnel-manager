@@ -25,6 +25,89 @@
 // out by sending the description to validator.swagger.io. That is the one
 // fetch this page would make that is not a file of its own, and it would carry
 // the shape of this installation's API to somebody else's server.
+//
+// requestInterceptor is what lets "Try it out" use the session the operator
+// signed in with. The server asks every request the session cookie is sent
+// with for the key of the session in a header, reads included, and the cookie
+// alone is answered as no session. The screens keep the key in local storage
+// under csrfStoreKey, which app.js names as well, and this page is served from
+// the same origin, so it reads the key from there.
+//
+// The key is put only on a request to this same origin, so it is not handed
+// to wherever a URL typed into a form points, and not over a key pasted into
+// Authorize, which is the one the reader asked for.
+//
+// responseInterceptor is the other half: a login sent from this page keeps the
+// key it is answered with where the screens keep theirs, and a logout drops
+// it, the way the screens do. The browser holds one session cookie for this
+// origin whichever page signed in, so the key beside it is one as well; a
+// login here that left the key of the screens in place would have this page
+// and the screens send a key that is not the one of the cookie.
+const csrfStoreKey = "tm_csrf";
+const csrfHeaderName = "X-CSRF-Token";
+
+// sameOrigin returns the URL of url when it is on this origin, or null.
+function sameOrigin(url) {
+  let target;
+
+  try {
+    target = new URL(url, window.location.href);
+  } catch (error) {
+    return null;
+  }
+
+  return target.origin === window.location.origin ? target : null;
+}
+
+function withSessionKey(request) {
+  let key = null;
+
+  try {
+    key = window.localStorage.getItem(csrfStoreKey);
+  } catch (error) {
+    return request;
+  }
+
+  if (key === null || key === "" || sameOrigin(request.url) === null) {
+    return request;
+  }
+
+  request.headers = request.headers || {};
+
+  if (request.headers[csrfHeaderName] === undefined) {
+    request.headers[csrfHeaderName] = key;
+  }
+
+  return request;
+}
+
+function keepSessionKey(response) {
+  const target = sameOrigin(response.url);
+
+  if (target === null || !response.ok) {
+    return response;
+  }
+
+  try {
+    if (target.pathname.endsWith("/api/logout")) {
+      window.localStorage.removeItem(csrfStoreKey);
+    }
+
+    if (target.pathname.endsWith("/api/login")) {
+      const body = response.body;
+      const key = body && body.data ? body.data.csrf_token : undefined;
+
+      if (typeof key === "string" && key !== "") {
+        window.localStorage.setItem(csrfStoreKey, key);
+      }
+    }
+  } catch (error) {
+    return response;
+  }
+
+  return response;
+}
+
 window.onload = function () {
   window.ui = SwaggerUIBundle({
     url: "../openapi.json",
@@ -36,5 +119,7 @@ window.onload = function () {
     docExpansion: "list",
     validatorUrl: null,
     defaultModelsExpandDepth: 1,
+    requestInterceptor: withSessionKey,
+    responseInterceptor: keepSessionKey,
   });
 };

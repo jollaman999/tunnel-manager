@@ -158,7 +158,6 @@
   "error.assignment.update_failed.error": "تعذّر تحديث منافذ الخدمة للـ Host",
   "error.auth.attempts.too_many.error": "محاولات تسجيل دخول فاشلة كثيرة جدًا. تسجيل الدخول محجوب مدة بالثواني قدرها {retry_after}",
   "error.auth.credentials.invalid.error": "اسم المستخدم أو كلمة المرور غير صحيح",
-  "error.auth.csrf.refused.error": "لا يتضمن الطلب ترويسة {header} صالحة. أرسل رمز الجلسة، وهو ما يجيب به تسجيل الدخول وتتضمنه الكوكي {cookie}، مع كل POST وPUT وDELETE",
   "error.auth.password.too_long.error": "يجب ألا تزيد كلمة المرور على {max} بايت، فهذا أقصى ما يقرؤه bcrypt",
   "error.auth.password.too_short.error": "يجب ألا تقل كلمة المرور عن {min} بايت",
   "error.auth.password_attempts.too_many.error": "محاولات كلمة مرور فاشلة كثيرة جدًا. التحقق من كلمة المرور محجوب مدة بالثواني قدرها {retry_after}",

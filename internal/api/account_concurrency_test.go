@@ -144,7 +144,7 @@ func TestALoginThatMeetsAPasswordChangeLeavesNoSession(t *testing.T) {
 				session := sessionCookieOf(rec)
 				if session != nil {
 					mu.Lock()
-					made = append(made, []*http.Cookie{session, csrfCookieOf(rec)})
+					made = append(made, []*http.Cookie{session, csrfKeyOf(rec)})
 					mu.Unlock()
 				}
 			}

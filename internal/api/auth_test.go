@@ -137,9 +137,10 @@ type testResponse struct {
 }
 
 // do sends one request, with the cookies attached that were handed in, and
-// returns the recorder. A CSRF cookie among them is put in the header as well,
-// which is what the page does with it: a test that wants a request to arrive
-// without a token leaves that cookie out and sends the session one alone.
+// returns the recorder. The key of a session rides among them as csrfKey makes
+// it, and is put in the header and not in a cookie, which is what the page does
+// with the key it keeps: a test that wants a request to arrive without the key
+// leaves it out and sends the session cookie alone.
 func do(e *echo.Echo, method, target, body string, cookies ...*http.Cookie) *httptest.ResponseRecorder {
 	return doOverTLS(e, false, method, target, body, cookies...)
 }
@@ -162,11 +163,13 @@ func doOverTLS(e *echo.Echo, overTLS bool, method, target, body string, cookies 
 			continue
 		}
 
-		req.AddCookie(cookie)
-
-		if isCookieFor(cookie, csrfCookieName) {
+		if cookie.Name == csrfHeaderName {
 			req.Header.Set(csrfHeaderName, cookie.Value)
+
+			continue
 		}
+
+		req.AddCookie(cookie)
 	}
 
 	rec := httptest.NewRecorder()
@@ -224,7 +227,29 @@ func loginOverTLS(t *testing.T, e *echo.Echo, overTLS bool, body string) (*httpt
 	return rec, sessionCookieOf(rec)
 }
 
-// csrfCookieOf returns the CSRF cookie the answer set, or nil.
+// csrfKey is the key of a session in the shape do takes it in. It is named
+// after the header it goes out in, which no cookie is, so do can tell it from
+// the cookies it travels among and put it where the page puts it.
+func csrfKey(value string) *http.Cookie {
+	return &http.Cookie{Name: csrfHeaderName, Value: value}
+}
+
+// csrfKeyOf returns the key of the session the login answered with, as csrfKey
+// makes it, or nil where the answer carries none. It is read out of the body,
+// the one place the server hands it out.
+func csrfKeyOf(rec *httptest.ResponseRecorder) *http.Cookie {
+	var resp testResponse
+
+	err := json.Unmarshal(rec.Body.Bytes(), &resp)
+	if err != nil || resp.Data.CSRFToken == "" {
+		return nil
+	}
+
+	return csrfKey(resp.Data.CSRFToken)
+}
+
+// csrfCookieOf returns the cookie the answer set under the name the key of a
+// session went out in before it was taken out of cookies, or nil.
 func csrfCookieOf(rec *httptest.ResponseRecorder) *http.Cookie {
 	for _, cookie := range rec.Result().Cookies() {
 		if isCookieFor(cookie, csrfCookieName) {
@@ -235,9 +260,9 @@ func csrfCookieOf(rec *httptest.ResponseRecorder) *http.Cookie {
 	return nil
 }
 
-// csrfLoginCookies logs in and returns both cookies the answer set: the session
-// and the CSRF token that belongs to it. That pair is what a client holds after
-// a login, and a request that changes something has to carry both.
+// csrfLoginCookies logs in and returns what a client holds afterwards: the
+// session cookie and the key that belongs to it, as csrfKey makes it. Every
+// request behind the session has to carry both.
 func csrfLoginCookies(t *testing.T, e *echo.Echo, body string) []*http.Cookie {
 	t.Helper()
 
@@ -255,12 +280,12 @@ func csrfLoginCookiesOverTLS(t *testing.T, e *echo.Echo, overTLS bool, body stri
 		t.Fatalf("the login set no session cookie, body: %s", rec.Body.String())
 	}
 
-	csrf := csrfCookieOf(rec)
-	if csrf == nil {
-		t.Fatalf("the login set no CSRF cookie, Set-Cookie: %v", rec.Result().Header["Set-Cookie"])
+	key := csrfKeyOf(rec)
+	if key == nil {
+		t.Fatalf("the login answered with no csrf_token, body: %s", rec.Body.String())
 	}
 
-	return []*http.Cookie{session, csrf}
+	return []*http.Cookie{session, key}
 }
 
 // TestApiIsRefusedWithoutASession pins down that the middleware covers the
@@ -424,7 +449,7 @@ func TestSessionAfterTheSetupReachesTheApi(t *testing.T) {
 		t.Errorf("data.setup_required = true on an account that is set up")
 	}
 
-	rec = do(e, http.MethodGet, "/api/host", "", cookie)
+	rec = do(e, http.MethodGet, "/api/host", "", cookie, csrfKeyOf(rec))
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d, want %d, body: %s", rec.Code, http.StatusOK, rec.Body.String())
 	}
@@ -447,19 +472,10 @@ func TestLogoutEndsTheSession(t *testing.T) {
 		t.Errorf("the logout did not expire the cookie: %v", expired)
 	}
 
-	// The CSRF cookie is set twice on this answer: the middleware writes it
-	// again on the way in, and the handler expires it. The last one is the one
-	// the browser is left holding.
-	var lastCSRF *http.Cookie
-
-	for _, cookie := range rec.Result().Cookies() {
-		if isCookieFor(cookie, csrfCookieName) {
-			lastCSRF = cookie
-		}
-	}
-
-	if lastCSRF == nil || lastCSRF.MaxAge >= 0 {
-		t.Errorf("the logout did not expire the %s cookie: %v", csrfCookieName, lastCSRF)
+	// The key of the session was never in a cookie, so there is none to
+	// expire, and a browser that held none is not handed one either.
+	if csrf := csrfCookieOf(rec); csrf != nil {
+		t.Errorf("the logout set the %s cookie, MaxAge %d", csrf.Name, csrf.MaxAge)
 	}
 
 	rec = do(e, http.MethodGet, "/api/host", "", cookies...)
@@ -613,16 +629,13 @@ func TestASessionInConstantUseIsRefusedOnceItIsTooOld(t *testing.T) {
 	now := start
 	authHandler.sessions.now = func() time.Time { return now }
 
-	_, cookie := login(t, e, `{"username":"`+testUsername+`","password":"`+testPassword+`"}`)
-	if cookie == nil {
-		t.Fatalf("the login set no session cookie")
-	}
+	cookies := csrfLoginCookies(t, e, `{"username":"`+testUsername+`","password":"`+testPassword+`"}`)
 
 	step := sessionLifetime - time.Hour
 	for now.Add(step).Sub(start) < sessionAbsoluteLifetime {
 		now = now.Add(step)
 
-		rec := do(e, http.MethodGet, "/api/host", "", cookie)
+		rec := do(e, http.MethodGet, "/api/host", "", cookies...)
 		if rec.Code != http.StatusOK {
 			t.Fatalf("%v after the login: status = %d, want %d, body: %s",
 				now.Sub(start), rec.Code, http.StatusOK, rec.Body.String())
@@ -631,7 +644,7 @@ func TestASessionInConstantUseIsRefusedOnceItIsTooOld(t *testing.T) {
 
 	now = start.Add(sessionAbsoluteLifetime)
 
-	rec := do(e, http.MethodGet, "/api/host", "", cookie)
+	rec := do(e, http.MethodGet, "/api/host", "", cookies...)
 	if rec.Code != http.StatusUnauthorized {
 		t.Fatalf("%v after the login: status = %d, want %d, body: %s",
 			now.Sub(start), rec.Code, http.StatusUnauthorized, rec.Body.String())
@@ -837,7 +850,7 @@ func TestALoginDropsASessionPastOnlyTheAbsoluteDeadline(t *testing.T) {
 }
 
 // TestTheCookieSecureFlagFollowsTheProxySwitch covers what decides Secure on
-// the two cookies the login hands out.
+// the session cookie the login hands out.
 //
 // The first rows are the behaviour with the switch off, which is what every
 // caller that does not turn it on gets: TLS this process terminated itself,
@@ -897,39 +910,28 @@ func TestTheCookieSecureFlagFollowsTheProxySwitch(t *testing.T) {
 				t.Fatalf("the login set no %s cookie", sessionCookieName)
 			}
 
-			csrf := csrfCookieOf(rec)
-			if csrf == nil {
-				t.Fatalf("the login set no %s cookie", csrfCookieName)
+			if session.Secure != tt.wantSecure {
+				t.Errorf("%s: Secure = %t, want %t", session.Name, session.Secure, tt.wantSecure)
 			}
 
-			for _, cookie := range []*http.Cookie{session, csrf} {
-				if cookie.Secure != tt.wantSecure {
-					t.Errorf("%s: Secure = %t, want %t", cookie.Name, cookie.Secure, tt.wantSecure)
-				}
+			if session.Path != "/" {
+				t.Errorf("%s: Path = %q, want %q", session.Name, session.Path, "/")
+			}
 
-				if cookie.Path != "/" {
-					t.Errorf("%s: Path = %q, want %q", cookie.Name, cookie.Path, "/")
-				}
-
-				if cookie.SameSite != http.SameSiteLaxMode {
-					t.Errorf("%s: SameSite = %v, want %v", cookie.Name, cookie.SameSite, http.SameSiteLaxMode)
-				}
+			if session.SameSite != http.SameSiteLaxMode {
+				t.Errorf("%s: SameSite = %v, want %v", session.Name, session.SameSite, http.SameSiteLaxMode)
 			}
 
 			if !session.HttpOnly {
 				t.Errorf("%s: HttpOnly = false, want true", sessionCookieName)
 			}
-
-			if csrf.HttpOnly {
-				t.Errorf("%s: HttpOnly = true, want false: the page has to read it", csrfCookieName)
-			}
 		})
 	}
 }
 
-// TestTheCookieNamesAreGuardedWhereTheyAreSecure pins down which name the two
-// cookies go out under, and that the attributes a browser demands of the
-// guarded name are all there.
+// TestTheCookieNamesAreGuardedWhereTheyAreSecure pins down which name the
+// session cookie goes out under, and that the attributes a browser demands of
+// the guarded name are all there.
 //
 // A cookie carries no port, so a service on another port of this host can write
 // over a cookie of this one and leave the operator unable to work. The guarded
@@ -981,19 +983,12 @@ func TestTheCookieNamesAreGuardedWhereTheyAreSecure(t *testing.T) {
 				t.Fatalf("the login set no session cookie, Set-Cookie: %v", rec.Result().Header["Set-Cookie"])
 			}
 
-			csrf := csrfCookieOf(rec)
-			if csrf == nil {
-				t.Fatalf("the login set no CSRF cookie, Set-Cookie: %v", rec.Result().Header["Set-Cookie"])
-			}
-
 			wantNames := map[string]string{
 				sessionCookieName: sessionCookieName,
-				csrfCookieName:    csrfCookieName,
 			}
 
 			if tt.wantGuarded {
 				wantNames[sessionCookieName] = hostCookiePrefix + sessionCookieName
-				wantNames[csrfCookieName] = hostCookiePrefix + csrfCookieName
 			}
 
 			pairs := []struct {
@@ -1001,7 +996,6 @@ func TestTheCookieNamesAreGuardedWhereTheyAreSecure(t *testing.T) {
 				cookie *http.Cookie
 			}{
 				{base: sessionCookieName, cookie: session},
-				{base: csrfCookieName, cookie: csrf},
 			}
 
 			for _, pair := range pairs {
@@ -1036,8 +1030,8 @@ func TestTheCookieNamesAreGuardedWhereTheyAreSecure(t *testing.T) {
 }
 
 // TestTheSessionWorksUnderBothCookieNames walks the whole flow on each of the
-// two names: log in, make a call that needs the session, then a call that needs
-// the CSRF token as well, and check that the session is gone afterwards.
+// two names: log in, make a call that needs the session and its key, log out,
+// and check that the session is gone afterwards.
 //
 // The plain HTTP row is the install with HTTPS turned off, and it is the one
 // that would break if the guarded name were put on unconditionally: the browser
@@ -1050,12 +1044,12 @@ func TestTheSessionWorksUnderBothCookieNames(t *testing.T) {
 	}{
 		{
 			name:      "plain HTTP",
-			wantNames: []string{sessionCookieName, csrfCookieName},
+			wantNames: []string{sessionCookieName},
 		},
 		{
 			name:      "over TLS",
 			overTLS:   true,
-			wantNames: []string{hostCookiePrefix + sessionCookieName, hostCookiePrefix + csrfCookieName},
+			wantNames: []string{hostCookiePrefix + sessionCookieName},
 		},
 	}
 
@@ -1071,28 +1065,26 @@ func TestTheSessionWorksUnderBothCookieNames(t *testing.T) {
 			}
 
 			session := sessionCookieOf(rec)
-			csrf := csrfCookieOf(rec)
+			key := csrfKeyOf(rec)
 
-			if session == nil || csrf == nil {
-				t.Fatalf("the login set %v, want a session and a CSRF cookie", rec.Result().Header["Set-Cookie"])
+			if session == nil || key == nil {
+				t.Fatalf("the login set %v and answered %s, want a session cookie and a key",
+					rec.Result().Header["Set-Cookie"], rec.Body.String())
 			}
 
-			got := []string{session.Name, csrf.Name}
-			if got[0] != tt.wantNames[0] || got[1] != tt.wantNames[1] {
-				t.Fatalf("names = %v, want %v", got, tt.wantNames)
+			if session.Name != tt.wantNames[0] {
+				t.Fatalf("name = %q, want %q", session.Name, tt.wantNames[0])
 			}
 
-			cookies := []*http.Cookie{session, csrf}
+			cookies := []*http.Cookie{session, key}
 
 			// A read behind the session, which is the name the middleware has
-			// to find the session under.
+			// to find the session under, and the key it is held to.
 			rec = doOverTLS(e, tt.overTLS, http.MethodGet, "/api/host", "", cookies...)
 			if rec.Code != http.StatusOK {
 				t.Fatalf("read status = %d, want %d, body: %s", rec.Code, http.StatusOK, rec.Body.String())
 			}
 
-			// A call that changes something, so the CSRF token the page read
-			// out of the cookie is checked against the one the session holds.
 			rec = doOverTLS(e, tt.overTLS, http.MethodPost, "/api/logout", "", cookies...)
 			if rec.Code != http.StatusOK {
 				t.Fatalf("logout status = %d, want %d, body: %s", rec.Code, http.StatusOK, rec.Body.String())
@@ -1881,9 +1873,9 @@ func TestSetupDropsTheOtherSessions(t *testing.T) {
 // csrfGoodLogin is the body that logs in against an account that is set up.
 const csrfGoodLogin = `{"username":"` + testUsername + `","password":"` + testPassword + `"}`
 
-// csrfStateChangingMethods is every method this API changes something with, and
-// therefore every method the token is asked for on.
-var csrfStateChangingMethods = []string{http.MethodPost, http.MethodPut, http.MethodDelete}
+// csrfMethods is every method a route of this API is served on, the reads
+// included: the key of the session is asked for on all of them.
+var csrfMethods = []string{http.MethodGet, http.MethodPost, http.MethodPut, http.MethodDelete}
 
 // csrfProbe stands in for the handlers behind the middleware. It counts the
 // calls that reached it, so a request the middleware refused can be told apart
@@ -1899,8 +1891,8 @@ func (p *csrfProbe) handle(c *echo.Context) error {
 }
 
 // csrfProbeServer wires the middleware the way main does and hangs the probe
-// behind it on one route per method, the readable one included. The login is
-// registered as well, because it is where the token comes from.
+// behind it on one route per method. The login is registered as well, because
+// it is where the key comes from.
 func csrfProbeServer(t *testing.T) (*echo.Echo, *csrfProbe) {
 	t.Helper()
 
@@ -1913,21 +1905,21 @@ func csrfProbeServer(t *testing.T) (*echo.Echo, *csrfProbe) {
 	g := e.Group("/api")
 	g.Use(authHandler.RequireSession())
 	g.POST("/login", authHandler.Login)
-	g.GET("/probe", probe.handle)
 
-	for _, method := range csrfStateChangingMethods {
+	for _, method := range csrfMethods {
 		g.Add(method, "/probe", probe.handle)
 	}
 
 	return e, probe
 }
 
-// TestCsrfStateChangesWithoutATokenAreRefused is the forged request: another
-// site made the browser send it, so the session cookie rides along and the
-// token does not, because the page that made it cannot read the cookie of this
-// origin. The refusal has to come before the handler.
-func TestCsrfStateChangesWithoutATokenAreRefused(t *testing.T) {
-	for _, method := range csrfStateChangingMethods {
+// TestCsrfTheSessionCookieAloneIsRefused is the session cookie read off another
+// port of this host name, or sent along by a page on another site: it arrives
+// without the key, and it is answered the way no session at all is. That holds
+// for a read as much as for a change, since what a read hands back is what the
+// cookie was taken for. The refusal has to come before the handler.
+func TestCsrfTheSessionCookieAloneIsRefused(t *testing.T) {
+	for _, method := range csrfMethods {
 		t.Run(method, func(t *testing.T) {
 			e, probe := csrfProbeServer(t)
 
@@ -1935,58 +1927,54 @@ func TestCsrfStateChangesWithoutATokenAreRefused(t *testing.T) {
 			session := cookies[0]
 
 			rec := do(e, method, "/api/probe", "", session)
-			if rec.Code != http.StatusForbidden {
-				t.Fatalf("status = %d, want %d, body: %s", rec.Code, http.StatusForbidden, rec.Body.String())
+			if rec.Code != http.StatusUnauthorized {
+				t.Fatalf("status = %d, want %d, body: %s", rec.Code, http.StatusUnauthorized, rec.Body.String())
 			}
 
 			if probe.calls != 0 {
-				t.Errorf("the handler ran %d times on a request with no token", probe.calls)
+				t.Errorf("the handler ran %d times on a request with no key", probe.calls)
 			}
 
-			resp := decode(t, rec)
-			if !strings.Contains(resp.Error, csrfHeaderName) {
-				t.Errorf("error = %q, want it to name the %s header", resp.Error, csrfHeaderName)
-			}
-
-			// The page moves to the setup screen on a 403 that mentions one, so
-			// this refusal must not read like that one.
-			if strings.Contains(strings.ToLower(resp.Error), "setup") {
-				t.Errorf("error = %q, which the page would read as the setup refusal", resp.Error)
+			// The page moves to the login on this code and on no other 401
+			// but the ones it names, so the refusal has to be this one.
+			code := errorCodeOf(t, rec)
+			if code != errAuthRequired {
+				t.Errorf("error_code = %q, want %q", code, errAuthRequired)
 			}
 		})
 	}
 }
 
 // TestCsrfATokenFromSomewhereElseIsRefused covers what a cookie on its own
-// cannot: something that can write cookies for this host sets both the cookie
-// and the header to a value of its own. They agree with each other and still do
-// not open anything, because the token that counts is the one the session
-// holds.
+// cannot: something that can write cookies for this host sets the cookie the
+// key used to be handed out in and the header to a value of its own. They agree
+// with each other and still do not open anything, because the key that counts
+// is the one the session holds.
 func TestCsrfATokenFromSomewhereElseIsRefused(t *testing.T) {
-	for _, method := range csrfStateChangingMethods {
+	for _, method := range csrfMethods {
 		t.Run(method, func(t *testing.T) {
 			e, probe := csrfProbeServer(t)
 
 			cookies := csrfLoginCookies(t, e, csrfGoodLogin)
-			planted := &http.Cookie{Name: csrfCookieName, Value: "a-token-the-session-never-had"}
+			const value = "a-token-the-session-never-had"
+			planted := &http.Cookie{Name: csrfCookieName, Value: value}
 
-			rec := do(e, method, "/api/probe", "", cookies[0], planted)
-			if rec.Code != http.StatusForbidden {
-				t.Fatalf("status = %d, want %d, body: %s", rec.Code, http.StatusForbidden, rec.Body.String())
+			rec := do(e, method, "/api/probe", "", cookies[0], planted, csrfKey(value))
+			if rec.Code != http.StatusUnauthorized {
+				t.Fatalf("status = %d, want %d, body: %s", rec.Code, http.StatusUnauthorized, rec.Body.String())
 			}
 
 			if probe.calls != 0 {
-				t.Errorf("the handler ran %d times on a planted token", probe.calls)
+				t.Errorf("the handler ran %d times on a planted key", probe.calls)
 			}
 		})
 	}
 }
 
-// TestCsrfStateChangesWithTheTokenPass is the flow the page walks: log in, keep
-// what the answer set, and send the token back on everything that changes
-// something.
-func TestCsrfStateChangesWithTheTokenPass(t *testing.T) {
-	for _, method := range csrfStateChangingMethods {
+// TestCsrfRequestsWithTheKeyPass is the flow the page walks: log in, keep the
+// key the answer carried, and send it back on everything.
+func TestCsrfRequestsWithTheKeyPass(t *testing.T) {
+	for _, method := range csrfMethods {
 		t.Run(method, func(t *testing.T) {
 			e, probe := csrfProbeServer(t)
 
@@ -2000,72 +1988,146 @@ func TestCsrfStateChangesWithTheTokenPass(t *testing.T) {
 			if probe.calls != 1 {
 				t.Errorf("the handler ran %d times, want 1", probe.calls)
 			}
+
+			// Nothing on the way out puts the key in a cookie, where it would
+			// go along with the session cookie to every port of the host.
+			if csrf := csrfCookieOf(rec); csrf != nil {
+				t.Errorf("the answer set the %s cookie, MaxAge %d", csrf.Name, csrf.MaxAge)
+			}
 		})
 	}
 }
 
-// TestCsrfTheLoginNeedsNoToken pins down the one call that cannot have a token
-// yet, and that it is where the token comes from.
-func TestCsrfTheLoginNeedsNoToken(t *testing.T) {
+// TestCsrfTheLoginHandsTheKeyOutInTheBodyAlone pins down the one call that
+// cannot have a key yet, that it is where the key comes from, and that it puts
+// the key in no cookie.
+func TestCsrfTheLoginHandsTheKeyOutInTheBodyAlone(t *testing.T) {
 	e, _ := csrfProbeServer(t)
 
-	rec := do(e, http.MethodPost, "/api/login", csrfGoodLogin)
-	if rec.Code != http.StatusOK {
-		t.Fatalf("status = %d, want %d, body: %s", rec.Code, http.StatusOK, rec.Body.String())
-	}
+	for _, overTLS := range []bool{false, true} {
+		rec := doOverTLS(e, overTLS, http.MethodPost, "/api/login", csrfGoodLogin)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("over TLS %t: status = %d, want %d, body: %s", overTLS, rec.Code, http.StatusOK, rec.Body.String())
+		}
 
-	cookie := csrfCookieOf(rec)
-	if cookie == nil {
-		t.Fatalf("the login set no %s cookie, Set-Cookie: %v", csrfCookieName, rec.Result().Header["Set-Cookie"])
-	}
+		if resp := decode(t, rec); resp.Data.CSRFToken == "" {
+			t.Errorf("over TLS %t: data.csrf_token is empty, body: %s", overTLS, rec.Body.String())
+		}
 
-	if cookie.Value == "" {
-		t.Errorf("the %s cookie carries no token", csrfCookieName)
-	}
+		if csrf := csrfCookieOf(rec); csrf != nil {
+			t.Errorf("over TLS %t: the login set the %s cookie, MaxAge %d", overTLS, csrf.Name, csrf.MaxAge)
+		}
 
-	// The page has to read it to send it back, which is the one way this cookie
-	// differs from the session one.
-	if cookie.HttpOnly {
-		t.Errorf("the %s cookie is HttpOnly, so the page cannot send it back", csrfCookieName)
-	}
-
-	if cookie.SameSite != http.SameSiteLaxMode || cookie.Path != "/" {
-		t.Errorf("SameSite = %v and path = %q, want %v and /", cookie.SameSite, cookie.Path, http.SameSiteLaxMode)
-	}
-
-	// The test request is plain HTTP, and a Secure cookie would never come back.
-	if cookie.Secure {
-		t.Errorf("the %s cookie is Secure on a plain HTTP request", csrfCookieName)
-	}
-
-	resp := decode(t, rec)
-	if resp.Data.CSRFToken != cookie.Value {
-		t.Errorf("data.csrf_token = %q, want the cookie value %q", resp.Data.CSRFToken, cookie.Value)
+		if sessionCookieOf(rec) == nil {
+			t.Errorf("over TLS %t: the login set no session cookie", overTLS)
+		}
 	}
 }
 
-// TestCsrfReadsNeedNoToken pins down that the check is only on the methods that
-// change something. A read that asked for a token would make every screen of
-// the UI wait for a login it already has.
-func TestCsrfReadsNeedNoToken(t *testing.T) {
-	e, probe := csrfProbeServer(t)
+// TestCsrfAnOldKeyCookieIsDropped is a browser that signed in under a version
+// that handed the key out in a cookie. Whatever it sends next, the login among
+// it, is answered with a Set-Cookie that drops that cookie under the name it
+// came under, and an answer to a request that carries none sets none.
+func TestCsrfAnOldKeyCookieIsDropped(t *testing.T) {
+	tests := []struct {
+		name    string
+		overTLS bool
+		cookie  string
+	}{
+		{name: "the bare name over plain HTTP", cookie: csrfCookieName},
+		{name: "the guarded name over TLS", overTLS: true, cookie: hostCookiePrefix + csrfCookieName},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			e, _ := csrfProbeServer(t)
+
+			old := &http.Cookie{Name: tt.cookie, Value: "a-key-from-before"}
+
+			for _, step := range []struct {
+				method, path, body string
+			}{
+				{http.MethodPost, "/api/login", csrfGoodLogin},
+				{http.MethodGet, "/api/probe", ""},
+			} {
+				rec := doOverTLS(e, tt.overTLS, step.method, step.path, step.body, old)
+
+				dropped := csrfCookieOf(rec)
+				if dropped == nil {
+					t.Errorf("%s %s: nothing was set under the %s name", step.method, step.path, tt.cookie)
+
+					continue
+				}
+
+				if dropped.Name != tt.cookie || dropped.MaxAge >= 0 || dropped.Value != "" {
+					t.Errorf("%s %s: the %s cookie was not dropped: %s set with MaxAge %d and a value of %d bytes",
+						step.method, step.path, tt.cookie, dropped.Name, dropped.MaxAge, len(dropped.Value))
+				}
+
+				if dropped.Path != "/" {
+					t.Errorf("%s %s: Path = %q, want /", step.method, step.path, dropped.Path)
+				}
+
+				if tt.overTLS && !dropped.Secure {
+					t.Errorf("%s %s: the guarded name was dropped without Secure, which a browser ignores",
+						step.method, step.path)
+				}
+			}
+
+			rec := doOverTLS(e, tt.overTLS, http.MethodGet, "/api/probe", "")
+			if csrf := csrfCookieOf(rec); csrf != nil {
+				t.Errorf("an answer to a request with no old cookie set %s, MaxAge %d", csrf.Name, csrf.MaxAge)
+			}
+		})
+	}
+}
+
+// TestCsrfTheLogoutNeedsNoKey is a page that has lost the key, or never had
+// it: it can still end the session its cookie names, and the session is gone
+// for the key as well afterwards.
+func TestCsrfTheLogoutNeedsNoKey(t *testing.T) {
+	e, _ := newTestServer(t, newTestAccount(t, false))
+
+	cookies := csrfLoginCookies(t, e, csrfGoodLogin)
+	session := cookies[0]
+
+	rec := do(e, http.MethodPost, "/api/logout", "", session)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("logout with the cookie alone: status = %d, want %d, body: %s",
+			rec.Code, http.StatusOK, rec.Body.String())
+	}
+
+	expired := sessionCookieOf(rec)
+	if expired == nil || expired.MaxAge >= 0 {
+		t.Errorf("the logout did not expire the session cookie: %v", expired)
+	}
+
+	rec = do(e, http.MethodGet, "/api/host", "", cookies...)
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("the cookie and the key after the logout: status = %d, want %d, body: %s",
+			rec.Code, http.StatusUnauthorized, rec.Body.String())
+	}
+}
+
+// TestTheSessionCookieAloneReadsNothing is the leak this check is for, walked
+// on the route the reference names: the session cookie the browser hands to a
+// service on another port of the host name opens GET /api/host on its own no
+// more, and the same cookie with the key does.
+func TestTheSessionCookieAloneReadsNothing(t *testing.T) {
+	e, _ := newTestServer(t, newTestAccount(t, false))
 
 	cookies := csrfLoginCookies(t, e, csrfGoodLogin)
 
-	rec := do(e, http.MethodGet, "/api/probe", "", cookies[0])
+	rec := do(e, http.MethodGet, "/api/host", "", cookies[0])
+	if rec.Code != http.StatusUnauthorized {
+		t.Errorf("GET /api/host with the session cookie alone: status = %d, want %d, body: %s",
+			rec.Code, http.StatusUnauthorized, rec.Body.String())
+	}
+
+	rec = do(e, http.MethodGet, "/api/host", "", cookies...)
 	if rec.Code != http.StatusOK {
-		t.Fatalf("status = %d, want %d, body: %s", rec.Code, http.StatusOK, rec.Body.String())
-	}
-
-	if probe.calls != 1 {
-		t.Errorf("the handler ran %d times, want 1", probe.calls)
-	}
-
-	// Every answer to a live session carries the cookie again, so a page that
-	// lost its copy gets it back on the next read.
-	again := csrfCookieOf(rec)
-	if again == nil || again.Value != cookies[1].Value {
-		t.Errorf("the read did not hand the token back: %v", again)
+		t.Errorf("GET /api/host with the cookie and the key: status = %d, want %d, body: %s",
+			rec.Code, http.StatusOK, rec.Body.String())
 	}
 }
 

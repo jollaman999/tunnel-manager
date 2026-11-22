@@ -158,7 +158,6 @@
   "error.assignment.update_failed.error": "Failed to update the service ports of the Host",
   "error.auth.attempts.too_many.error": "Too many failed sign in attempts. Sign in is blocked for {retry_after} seconds",
   "error.auth.credentials.invalid.error": "Invalid username or password",
-  "error.auth.csrf.refused.error": "The request carries no valid {header} header. Send the token of the session, which the login answers with and the {cookie} cookie holds, on every POST, PUT and DELETE",
   "error.auth.password.too_long.error": "Password must be at most {max} bytes long, because that is as far as bcrypt reads",
   "error.auth.password.too_short.error": "Password must be at least {min} bytes long",
   "error.auth.password_attempts.too_many.error": "Too many failed password attempts. Password checks are blocked for {retry_after} seconds",

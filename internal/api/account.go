@@ -344,12 +344,11 @@ func (h *AuthHandler) ChangeAccount(c *echo.Context) error {
 	// same grounds, because no token is the one that asked for this: the route
 	// is refused to every one of them.
 	//
-	// The session that stays keeps its tokens, the CSRF one included. That
-	// token is not a credential on its own: it is only taken next to the
-	// session it was made for, and that session is the one being kept. Handing
-	// out a new one would have to reach a page that is in the middle of this
-	// request, and a page that missed it could change nothing until a later
-	// answer set the cookie again.
+	// The session that stays keeps its tokens, its key included. The key is
+	// only taken next to the session it was made for, and that session is the
+	// one being kept. Handing out a new one would have to reach a page that is
+	// in the middle of this request, and the login is the one answer the key
+	// is handed out in: a page that missed it would be sent to sign in again.
 	ended := h.sessions.DeleteAllExcept(token)
 
 	// Which values changed is logged, and neither value is. The password is

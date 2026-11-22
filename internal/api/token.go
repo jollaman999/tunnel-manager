@@ -23,10 +23,11 @@ import (
 // who is signed in, it is shown once, and what it opens is decided per route
 // by the scopes it was made with.
 //
-// The CSRF check is not asked of a request that brings one. That check exists
-// because a browser attaches the session cookie to a request it was tricked
-// into sending; it never attaches an Authorization header of its own accord,
-// so a request that carries a token was written by something that holds it.
+// The key of a session is not asked of a request that brings one. That key
+// exists because a browser attaches the session cookie to a request it was
+// tricked into sending, and to a request for any other port of this host name;
+// it never attaches an Authorization header of its own accord, so a request
+// that carries a token was written by something that holds it.
 
 // apiTokenPrefix is what every token begins with. It is there so that a token
 // pasted somewhere it should not be is recognisable for what it is, by a person

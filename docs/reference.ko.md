@@ -1138,7 +1138,7 @@ HTTP 연결입니다. 그런데 세션 쿠키에 `Secure` 가 붙는 것은 TLS 
 프록시를 적게 됩니다.
 
 `-trust-proxy-headers` 가 그렇지 않다고 알려주는 것입니다. 이 플래그를 주면
-`X-Forwarded-Proto: https` 를 달고 온 요청은 TLS 로 들어온 것으로 보고, 세션·CSRF·기기
+`X-Forwarded-Proto: https` 를 달고 온 요청은 TLS 로 들어온 것으로 보고, 세션·기기
 쿠키에 `Secure` 를 붙입니다. 요청의 주소는 `X-Forwarded-For` 의 맨 오른쪽 값입니다. 로그인 제한이 그
 주소로 세고, 접근 로그(`remote_ip`)와 API 가 쓰는 로그 줄이 그 주소를 적습니다. 그 헤더가
 없거나 맨 오른쪽 값이 IP 주소가 아니면 연결의 주소를 씁니다. API 앞에서 쓰는 로그 줄, 곧
@@ -1490,7 +1490,7 @@ curl -s -b cookies.txt -X PUT "$BASE/api/settings" \
 조회 응답에는 저장된 설정과 함께, 지금 이 프로세스가 실행 중인 값과 다른 항목이 실립니다.
 
 ```bash
-curl -s -b cookies.txt "$BASE/api/settings"
+curl -s -b cookies.txt -H "X-CSRF-Token: $CSRF" "$BASE/api/settings"
 ```
 
 ```json
@@ -1876,30 +1876,40 @@ curl -s -b cookies.txt -X POST "$BASE/api/uninstall" \
 
 ## 스크립트에서 API 호출하기
 
-**`/api` 아래 모든 경로는 세션이 필요하고, `POST`·`PUT`·`DELETE` 는 CSRF 토큰도 필요합니다.**
+**`/api` 아래 모든 경로는 세션이 필요하고, 세션 쿠키를 싣는 요청은 `GET` 을 포함해 전부
+세션 키도 필요합니다.**
 
 1. `POST /api/login` 에 사용자명과 비밀번호를 보냅니다. 서버가 내려주는 쿠키를
-   보관합니다. HTTPS 로 부르면 이름이 `__Host-tm_session` 과 `__Host-tm_csrf` 이고,
-   평문 HTTP 면 `tm_session` 과 `tm_csrf` 입니다. `__Host-` 는 그 쿠키가 이 호스트
-   것뿐이라고 브라우저에 알리는 표시인데, 브라우저는 `Secure` 가 붙은 쿠키에서만 그
-   이름을 받습니다. 그래서 HTTPS 를 꺼 둔 설치에는 접두사 없는 이름으로 나갑니다.
-   쿠키를 파일에 모아 두면 어느 쪽이 왔든 그대로 남으므로, 스크립트가 어느 쪽인지 알고
-   있을 필요는 없습니다. 로그인은 세 번째 쿠키 `__Host-tm_device` 또는 `tm_device` 도
-   내려주는데, 다음 로그인이 계정 잠금에 막히지 않게 해 줍니다.
-   [로그인 실패 제한](#로그인-실패-제한) 참고.
-2. 응답의 `data.csrf_token` 을 꺼내서 **모든** `POST`·`PUT`·`DELETE` 에 `X-CSRF-Token`
-   헤더로 붙입니다.
-3. `GET` 은 토큰이 필요 없습니다. 바꾸는 것이 없기 때문입니다.
+   보관합니다. HTTPS 로 부르면 이름이 `__Host-tm_session` 이고, 평문 HTTP 면
+   `tm_session` 입니다. `__Host-` 는 그 쿠키가 이 호스트 것뿐이라고 브라우저에 알리는
+   표시인데, 브라우저는 `Secure` 가 붙은 쿠키에서만 그 이름을 받습니다. 그래서 HTTPS 를
+   꺼 둔 설치에는 접두사 없는 이름으로 나갑니다. 쿠키를 파일에 모아 두면 어느 쪽이 왔든
+   그대로 남으므로, 스크립트가 어느 쪽인지 알고 있을 필요는 없습니다. 로그인은 두 번째
+   쿠키 `__Host-tm_device` 또는 `tm_device` 도 내려주는데, 다음 로그인이 계정 잠금에
+   막히지 않게 해 줍니다. [로그인 실패 제한](#로그인-실패-제한) 참고.
+2. 응답의 `data.csrf_token` 을 꺼냅니다. 이것이 세션 키이고, 로그인 응답 말고는 어디서도
+   내주지 않습니다. 쿠키에도 들어 있지 않습니다. **모든** 요청에 `GET` 을 포함해
+   `X-CSRF-Token` 헤더로 붙입니다.
+3. 세션 쿠키만 싣고 키가 없거나, 그 세션의 키가 아닌 값을 실은 요청은 세션이 없는 요청과
+   똑같이 `401 Authentication required` 로 돌아옵니다. 쿠키만으로 받는 것은
+   `POST /api/logout` 하나뿐입니다.
 
-CSRF 는 cross site request forgery, 즉 다른 사이트가 내 브라우저를 시켜 내 쿠키가 붙은
-요청을 보내게 하는 공격입니다. 그 사이트는 내 로그인 응답을 읽을 수도 없고 헤더를 붙일
-수도 없으므로, 토큰을 검사하면 막힙니다.
+**세션 쿠키만으로는 아무것도 할 수 없게 하는 것이 이 키입니다.** 쿠키에는 포트가
+없습니다(RFC 6265 8.5절). 브라우저는 Tunnel Manager 에 접속한 호스트명의 모든 포트로 세션
+쿠키를 보내므로, 같은 이름의 다른 포트에 떠 있는 서비스는 받은 요청에서 그 쿠키를 읽습니다.
+키는 쿠키에 없고, 화면은 키를 브라우저의 로컬 스토리지에 둡니다. 로컬 스토리지는 브라우저가
+포트마다 따로 두므로, 그 서비스가 얻는 쿠키로는 아무것도 열리지 않습니다. 같은 주소에서
+새로고침하거나 새 탭을 열어도 로그인은 그대로입니다.
 
-**같은 호스트명에 믿지 못할 서비스가 떠 있으면 Tunnel Manager 에 전용 호스트명을
-주십시오.** 쿠키에는 포트가 없습니다(RFC 6265 8.5절). 브라우저는 Tunnel Manager 에 접속한
-호스트명의 모든 포트로 이 쿠키들을 보내므로, 다른 포트의 서비스는 받은 요청에서 쿠키를 읽고
-같은 이름의 쿠키를 심을 수 있습니다. 쿠키 속성으로는 막을 수 없고, `__Host-` 접두사는 다른
-호스트명과 평문 HTTP 가 쿠키를 덮어쓰는 것만 막습니다.
+같은 헤더가 CSRF(cross site request forgery), 즉 다른 사이트가 내 브라우저를 시켜 내
+쿠키가 붙은 요청을 보내게 하는 공격도 막습니다. 그 사이트는 내 로그인 응답을 읽을 수도
+없고 헤더를 붙일 수도 없습니다.
+
+**같은 호스트명에 믿지 못할 서비스가 떠 있으면 그 서비스는 여전히 쿠키를 받고 같은 이름의
+쿠키를 심을 수 있습니다.** 쿠키 속성으로는 막을 수 없고, `__Host-` 접두사는 다른 호스트명과
+평문 HTTP 가 쿠키를 덮어쓰는 것만 막습니다. 세션을 쓰지는 못하지만 브라우저를 로그아웃시킬
+수는 있고, 받은 기기 쿠키는 로그인에서 내 것으로 셉니다([로그인 실패 제한](#로그인-실패-제한)
+참고). 그런 경우에는 Tunnel Manager 에 전용 호스트명을 주십시오.
 
 서버는 `Access-Control-Allow-Origin` 헤더를 하나도 보내지 않습니다. CORS 는 브라우저가
 페이지에 적용하는 규칙이지 이 서버가 하는 검사가 아니므로 `curl` 과 스크립트와 서버 간
@@ -1916,20 +1926,20 @@ BASE=https://127.0.0.1:8888
 # [HTTPS 와 인증서](#https-와-인증서) 참조.
 export CURL_CA_BUNDLE=tm-cert.pem
 
-# 1. 로그인한다. -c 가 세션·CSRF·기기 쿠키를 내려온 이름 그대로 cookies.txt 에 적는다.
+# 1. 로그인한다. -c 가 세션·기기 쿠키를 내려온 이름 그대로 cookies.txt 에 적는다.
 curl -s -c cookies.txt -X POST "$BASE/api/login" \
   -H 'Content-Type: application/json' \
   -d '{"username":"operator","password":"<your-password>"}' > login.json
 
 # {"success":true,"data":{"setup_required":false,"csrf_token":"<token>"}}
 
-# 2. 응답에서 토큰을 꺼낸다.
+# 2. 응답에서 세션 키를 꺼낸다.
 CSRF=$(python3 -c 'import json; print(json.load(open("login.json"))["data"]["csrf_token"])')
 
-# 3. 읽기는 쿠키만 있으면 된다.
-curl -s -b cookies.txt "$BASE/api/status"
+# 3. 읽기에는 쿠키와 헤더가 필요하다.
+curl -s -b cookies.txt -H "X-CSRF-Token: $CSRF" "$BASE/api/status"
 
-# 4. 쓰기는 헤더까지 필요하다.
+# 4. 쓰기도 마찬가지다.
 curl -s -b cookies.txt -X POST "$BASE/api/host" \
   -H 'Content-Type: application/json' \
   -H "X-CSRF-Token: $CSRF" \
@@ -1965,8 +1975,7 @@ curl -s -b cookies.txt -X POST "$BASE/api/setup" \
 
 | 응답 | 무슨 뜻인가 |
 |------|-------------|
-| `401 Authentication required` | 세션 쿠키를 안 보냈거나 세션이 만료됐습니다. 다시 로그인하십시오. |
-| `403 The request carries no valid X-CSRF-Token header...` | 쓰기에 토큰이 없거나 틀렸습니다. 로그인 응답의 `data.csrf_token` 을 보내십시오. |
+| `401 Authentication required` | 세션 쿠키를 안 보냈거나, 세션이 만료됐거나, `X-CSRF-Token` 헤더가 없거나 틀렸습니다. 로그인 응답의 `data.csrf_token` 을 보내거나 다시 로그인하십시오. |
 | `403 The account setup is not finished...` | 계정에 아직 사용자명이 없습니다. `POST /api/setup` 을 먼저 부르십시오. |
 | `401 Invalid username or password` | 로그인이 거부됐습니다. 둘 중 무엇이 틀렸는지는 일부러 알려주지 않습니다. |
 | `400 The settings are refused: ...` | 설정이 위 규칙 중 하나를 어겼습니다. 아무것도 저장되지 않았습니다. |
@@ -2117,25 +2126,21 @@ telegraf:
 
 ### 그 화면에서 로그인하기
 
-붙여넣고 끝나는 토큰 하나는 없습니다. 이 API 는 세션 쿠키와 CSRF 헤더 구조라서 두 단계를
-거칩니다.
+**같은 브라우저에서 이미 화면에 로그인해 두었다면 여기도 로그인된 상태입니다.** 이 페이지는
+화면과 같은 주소에서 나오므로 브라우저가 같은 세션 쿠키를 보내고, 페이지는 화면이 둔 자리에서
+세션 키를 읽어 이 서버로 보내는 모든 호출에 `GET` 을 포함해 `X-CSRF-Token` 헤더로
+붙입니다. 붙여넣을 것은 없습니다.
 
-1. `POST /api/login` 을 찾아 **Try it out** 을 누르고, 본문에 사용자명과 비밀번호를 넣고
-   **Execute** 를 누릅니다. 응답이 내려주는 쿠키를 브라우저가 보관합니다. 로그인 화면으로
-   로그인했을 때와 똑같습니다. 응답에 `data.csrf_token` 이 들어 있습니다.
-2. 그 토큰을 복사해서 화면 위쪽의 **Authorize** 를 누르고 붙여넣습니다. 그때부터
-   `X-CSRF-Token` 헤더로 나갑니다.
+아니면 `POST /api/login` 을 찾아 **Try it out** 을 누르고, 본문에 사용자명과 비밀번호를
+넣고 **Execute** 를 누릅니다. 응답이 내려주는 쿠키는 브라우저가 보관하고, 응답의
+`data.csrf_token` 은 페이지가 화면과 같은 자리에 둡니다. 그래서 그다음 호출은 전부 키를
+싣고 나가고, 다른 탭의 화면도 같은 세션으로 로그인된 상태가 됩니다. 이 페이지에서
+`POST /api/logout` 을 부르면 키도 지웁니다.
 
-1번까지만 해도 `GET` 은 전부 됩니다. 읽기에는 쿠키만 있으면 되고 브라우저가 알아서
-보내기 때문입니다. 2번이 필요한 것은 `POST`·`PUT`·`DELETE` 이고, 안 하면 `403` 에
-`auth.csrf.refused` 로 돌아옵니다. 스크립트가 같은 이유로 받는 것과 같은 거절입니다.
+화면 위쪽의 **Authorize** 에 키를 붙여넣으면 그 키를 선언한 호출에서는 페이지가 둔 키
+대신 그것이 나갑니다. 세션에 맞는 키 없이 나간 호출은 `401 Authentication required` 로
+돌아옵니다. 스크립트가 같은 이유로 받는 것과 같은 거절입니다.
 [스크립트에서 API 호출하기](#스크립트에서-api-호출하기) 를 보세요.
-
-같은 브라우저에서 이미 화면에 로그인해 두었다면 여기도 로그인된 상태입니다. 출처가 같고
-쿠키가 같기 때문입니다. 그래도 토큰은 **Authorize** 에 직접 넣어야 하고, 새 토큰을 얻는
-가장 빠른 길이 1번입니다. 토큰은 `tm_csrf` 쿠키에도 들어 있습니다(HTTPS 면
-`__Host-tm_csrf`). 그 쿠키에 `HttpOnly` 가 붙어 있지 않은 것이 그래서이고, 세션 쿠키에는
-붙어 있어 어느 페이지도 읽지 못합니다.
 
 ### 스펙 파일
 
@@ -2159,8 +2164,8 @@ curl -sk https://127.0.0.1:8888/ui/openapi.json > openapi.json
 
 **Postman** 은 *Import* 에 이 파일을 넣으면 호출 하나하나가 컬렉션의 요청으로 들어옵니다.
 **Insomnia** 는 *Import From* → *File* 입니다. 둘 다 로그인까지 해 주지는 않습니다.
-`POST /api/login` 을 먼저 부르면 그다음부터는 쿠키가 클라이언트에 남습니다. 쓰기에는
-로그인 응답의 토큰을 `X-CSRF-Token` 헤더로 붙입니다. 스펙에 이 헤더가 `CSRFToken` 이라는
+`POST /api/login` 을 먼저 부르면 그다음부터는 쿠키가 클라이언트에 남습니다. 호출마다
+로그인 응답의 키를 `X-CSRF-Token` 헤더로 붙입니다. 스펙에 이 헤더가 `CSRFToken` 이라는
 이름의 API key 로 적혀 있으므로, 보안 정의를 읽는 도구는 그 값을 넣을 칸을 만들어 줍니다.
 
 **클라이언트 코드 생성**은 `openapi-generator` 가 이 파일을 그대로 읽습니다.
@@ -2169,14 +2174,15 @@ curl -sk https://127.0.0.1:8888/ui/openapi.json > openapi.json
 openapi-generator-cli generate -i openapi.json -g python -o ./client
 ```
 
-생성된 코드는 경로와 본문과 응답을 압니다. 세션이 쿠키에 있다는 것은 모릅니다. 생성된
-클라이언트가 쓰는 HTTP 라이브러리의 쿠키 보관을 켜 두지 않으면, 로그인 다음 호출부터
-전부 `401` 로 돌아옵니다.
+생성된 코드는 경로와 본문과 응답을 압니다. 세션이 쿠키와 헤더에 있다는 것은 모릅니다.
+생성된 클라이언트가 쓰는 HTTP 라이브러리의 쿠키 보관을 켜고 모든 호출에 `X-CSRF-Token`
+헤더를 붙이지 않으면, 로그인 다음 호출부터 전부 `401` 로 돌아옵니다.
 
 ## API 엔드포인트
 
-`POST /api/login` 을 뺀 `/api` 아래 전부가 세션을 요구합니다. `GET` 이 아닌 것은 전부
-`X-CSRF-Token` 헤더를 요구합니다. API 토큰을 보내는 요청은 둘 다 필요 없습니다.
+`POST /api/login` 과 `GET /api/setup` 을 뺀 `/api` 아래 전부가 세션을 요구합니다. 세션
+쿠키를 싣는 요청은 `GET` 을 포함해 전부 `X-CSRF-Token` 헤더도 요구하고, 예외는
+`POST /api/logout` 하나입니다. API 토큰을 보내는 요청은 둘 다 필요 없습니다.
 [API 토큰으로](#api-토큰으로) 를 보십시오.
 
 ### 페이징
@@ -2227,8 +2233,8 @@ openapi-generator-cli generate -i openapi.json -g python -o ./client
 ```bash
 # Host 를 20개씩 해서 2페이지, 그리고 상태 행의 마지막 페이지. 범위를 넘어간 페이지는
 # 마지막 페이지로 오므로 큰 수를 주면 그것을 받습니다.
-curl -s -b cookies.txt "$BASE/api/host?page=2&size=20"
-curl -s -b cookies.txt "$BASE/api/status?page=99999&size=10"
+curl -s -b cookies.txt -H "X-CSRF-Token: $CSRF" "$BASE/api/host?page=2&size=20"
+curl -s -b cookies.txt -H "X-CSRF-Token: $CSRF" "$BASE/api/status?page=99999&size=10"
 ```
 
 ### 검색
@@ -2248,15 +2254,15 @@ curl -s -b cookies.txt "$BASE/api/status?page=99999&size=10"
 `GET /api/status` 의 네 숫자는 여전히 Tunnel Manager 서버 전체를 셉니다.
 
 ```bash
-curl -s -b cookies.txt "$BASE/api/host?q=example&page=1&size=20"
+curl -s -b cookies.txt -H "X-CSRF-Token: $CSRF" "$BASE/api/host?q=example&page=1&size=20"
 ```
 
 ### 계정
 
 | 메서드 | 경로 | 하는 일 |
 |--------|------|---------|
-| `POST` | `/api/login` | `username` 과 `password` 를 받아 세션·CSRF 쿠키를, 비밀번호가 맞으면 기기 쿠키도 내리고 `setup_required` 와 `csrf_token` 을 응답 |
-| `POST` | `/api/logout` | 세션을 지우고 세션·CSRF 쿠키를 만료시킴. 기기 쿠키는 남음 |
+| `POST` | `/api/login` | `username` 과 `password` 를 받아 세션 쿠키를, 비밀번호가 맞으면 기기 쿠키도 내리고 `setup_required` 와 세션 키 `csrf_token` 을 응답. 키는 어느 쿠키에도 없음 |
+| `POST` | `/api/logout` | 세션을 지우고 세션 쿠키를 만료시킴. `X-CSRF-Token` 이 필요 없음. 기기 쿠키는 남음 |
 | `GET` | `/api/setup` | 계정에 아직 사용자명과 비밀번호가 없는지 알려 줌. 로그인 화면이 쓰므로 세션 없이 답함 |
 | `POST` | `/api/setup` | 아직 설정이 필요한 계정에 사용자명과 비밀번호를 한 번 정함 |
 | `GET` | `/api/account` | 계정의 사용자명 조회 |
@@ -2400,7 +2406,7 @@ Host 를 점프 호스트로 쓰는 Host 들을 알려 주고, `data` 가 그것
 그런 목록이 아닌 값은 `host.list.ids_invalid` 로 `400` 거부됩니다.
 
 ```bash
-curl -s -b cookies.txt "$BASE/api/host?ids=2,3"
+curl -s -b cookies.txt -H "X-CSRF-Token: $CSRF" "$BASE/api/host?ids=2,3"
 ```
 
 ### Host 가 담당하는 서비스 포트
@@ -2977,7 +2983,7 @@ Host 의 SSH 비밀번호와 계정의 비밀번호 해시는 어떤 응답에�
 ## 터널 상태 읽기
 
 ```bash
-curl -s -b cookies.txt https://127.0.0.1:8888/api/status
+curl -s -b cookies.txt -H "X-CSRF-Token: $CSRF" https://127.0.0.1:8888/api/status
 ```
 
 ```json
