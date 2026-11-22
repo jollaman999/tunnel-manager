@@ -17,6 +17,7 @@ import (
 
 	"go.uber.org/zap"
 	"go.uber.org/zap/zaptest/observer"
+	"gorm.io/gorm"
 
 	"github.com/jollaman999/tunnel-manager/internal/api"
 	"github.com/jollaman999/tunnel-manager/internal/install"
@@ -235,13 +236,65 @@ func TestStartInstallLetsGoOfTheReportTheInstallGoesOnWritingTo(t *testing.T) {
 	}
 }
 
-// TestTheUpdateLoopTakesUpAChangedSettingWithoutARestart stores the check and
-// the install switched off, starts the loop, and turns both on underneath it.
-// The Settings screen reports the two as in place on the strength of the loop
-// reading them on every pass, so a loop that held what it started with would
-// make that report untrue.
-func TestTheUpdateLoopTakesUpAChangedSettingWithoutARestart(t *testing.T) {
-	db := newSettingsDB(t)
+// updateClock is a clock that stands still until a test moves it on, for the
+// update loop to measure its interval with. The loop goes on running on its
+// short tick against it, so a test sees every pass an interval of hours would
+// take without waiting the hours out.
+type updateClock struct {
+	now   atomic.Int64
+	reads atomic.Int32
+}
+
+// stopUpdateClock puts an updateClock in place of the clock of the update loop
+// until the test ends.
+func stopUpdateClock(t *testing.T) *updateClock {
+	t.Helper()
+
+	stopped := &updateClock{}
+	stopped.now.Store(time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC).UnixNano())
+
+	clock := updateCheckNow
+	updateCheckNow = func() time.Time {
+		stopped.reads.Add(1)
+
+		return time.Unix(0, stopped.now.Load())
+	}
+
+	t.Cleanup(func() {
+		updateCheckNow = clock
+	})
+
+	return stopped
+}
+
+func (c *updateClock) advance(by time.Duration) {
+	c.now.Add(int64(by))
+}
+
+// started runs start, which starts a loop, and waits for that loop to have read
+// the clock. The start of a loop is what its first interval is measured from,
+// so a clock moved on before then would move the start with it.
+func (c *updateClock) started(t *testing.T, start func()) {
+	t.Helper()
+
+	before := c.reads.Load()
+
+	start()
+
+	deadline := time.Now().Add(5 * time.Second)
+	for c.reads.Load() == before {
+		if time.Now().After(deadline) {
+			t.Fatal("the loop did not read the clock it measures its interval with")
+		}
+
+		time.Sleep(time.Millisecond)
+	}
+}
+
+// storeUpdateSettings stores whether the check and the install are on and how
+// many hours apart the check is, over what is stored already.
+func storeUpdateSettings(t *testing.T, db *gorm.DB, check, autoInstall bool, hours int) {
+	t.Helper()
 
 	// The row is created first and switched off after. A first insert leaves
 	// out a false that has a default of true, and the check would be on.
@@ -251,13 +304,60 @@ func TestTheUpdateLoopTakesUpAChangedSettingWithoutARestart(t *testing.T) {
 	}
 
 	stored := *loaded
-	stored.UpdateCheckEnabled = false
-	stored.UpdateAutoInstall = false
+	stored.UpdateCheckEnabled = check
+	stored.UpdateAutoInstall = autoInstall
+	stored.UpdateCheckIntervalHours = hours
 
 	err = settings.Save(db, &stored, nil)
 	if err != nil {
 		t.Fatalf("failed to store the settings: %v", err)
 	}
+}
+
+// runUpdateLoop runs the update loop on a tick short enough for a test, until
+// the test ends.
+func runUpdateLoop(t *testing.T, clock *updateClock, db *gorm.DB, handler *api.UpdateHandler) {
+	t.Helper()
+
+	tick := updateCheckTick
+	updateCheckTick = 5 * time.Millisecond
+
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+
+	t.Cleanup(func() {
+		cancel()
+		<-done
+		updateCheckTick = tick
+	})
+
+	clock.started(t, func() {
+		go func() {
+			defer close(done)
+			runUpdateChecks(ctx, zap.NewNop(), db, handler, true)
+		}()
+	})
+}
+
+// waitForLooks waits for the loop to have looked as many times as want, and
+// then for long enough that a look past that would be seen.
+func waitForLooks(looks *atomic.Int32, want int32) {
+	deadline := time.Now().Add(5 * time.Second)
+	for looks.Load() < want && time.Now().Before(deadline) {
+		time.Sleep(5 * time.Millisecond)
+	}
+
+	time.Sleep(50 * time.Millisecond)
+}
+
+// TestTheUpdateLoopTakesUpAChangedSettingWithoutARestart stores the check and
+// the install switched off, starts the loop, and turns both on underneath it.
+// The Settings screen reports the two as in place on the strength of the loop
+// reading them on every pass, so a loop that held what it started with would
+// make that report untrue.
+func TestTheUpdateLoopTakesUpAChangedSettingWithoutARestart(t *testing.T) {
+	db := newSettingsDB(t)
+	storeUpdateSettings(t, db, false, false, 24)
 
 	var looks, installs atomic.Int32
 
@@ -274,23 +374,12 @@ func TestTheUpdateLoopTakesUpAChangedSettingWithoutARestart(t *testing.T) {
 
 	handler := api.NewUpdateHandler(zap.NewNop(), db, "3.0.0", true, check, start)
 
-	tick := updateCheckTick
-	updateCheckTick = 5 * time.Millisecond
+	clock := stopUpdateClock(t)
+	runUpdateLoop(t, clock, db, handler)
 
-	ctx, cancel := context.WithCancel(context.Background())
-	done := make(chan struct{})
-
-	t.Cleanup(func() {
-		cancel()
-		<-done
-		updateCheckTick = tick
-	})
-
-	go func() {
-		defer close(done)
-		runUpdateChecks(ctx, zap.NewNop(), db, handler, true)
-	}()
-
+	// The interval has gone by while the check is off, so that it is the
+	// switch and not the interval that keeps the loop from looking.
+	clock.advance(25 * time.Hour)
 	time.Sleep(100 * time.Millisecond)
 
 	if looks.Load() != 0 || installs.Load() != 0 {
@@ -298,13 +387,7 @@ func TestTheUpdateLoopTakesUpAChangedSettingWithoutARestart(t *testing.T) {
 			looks.Load(), installs.Load())
 	}
 
-	stored.UpdateCheckEnabled = true
-	stored.UpdateAutoInstall = true
-
-	err = settings.Save(db, &stored, nil)
-	if err != nil {
-		t.Fatalf("failed to store the settings: %v", err)
-	}
+	storeUpdateSettings(t, db, true, true, 24)
 
 	deadline := time.Now().Add(5 * time.Second)
 	for installs.Load() == 0 && time.Now().Before(deadline) {
@@ -314,6 +397,179 @@ func TestTheUpdateLoopTakesUpAChangedSettingWithoutARestart(t *testing.T) {
 	if looks.Load() != 1 || installs.Load() != 1 {
 		t.Fatalf("looks = %d, installs = %d after both were turned on, want one of each",
 			looks.Load(), installs.Load())
+	}
+}
+
+// TestTheFirstLookIsAnIntervalAfterStart is a process that has just started.
+// The loop passes many times before the interval has gone by, and none of them
+// is a request to the release API; the pass after it is one.
+func TestTheFirstLookIsAnIntervalAfterStart(t *testing.T) {
+	db := newSettingsDB(t)
+	storeUpdateSettings(t, db, true, false, 24)
+
+	var looks atomic.Int32
+
+	check := func(context.Context, string) (install.Latest, error) {
+		looks.Add(1)
+
+		return install.Latest{Tag: "v99.0.0", Newer: true, Comparable: true}, nil
+	}
+
+	handler := api.NewUpdateHandler(zap.NewNop(), db, "3.0.0", true, check, func() error { return nil })
+
+	clock := stopUpdateClock(t)
+	runUpdateLoop(t, clock, db, handler)
+
+	time.Sleep(100 * time.Millisecond)
+
+	if looks.Load() != 0 {
+		t.Fatalf("the loop looked %d times right after it started, want none before the interval",
+			looks.Load())
+	}
+
+	clock.advance(24*time.Hour - time.Minute)
+	time.Sleep(100 * time.Millisecond)
+
+	if looks.Load() != 0 {
+		t.Fatalf("the loop looked %d times a minute short of the interval, want none", looks.Load())
+	}
+
+	clock.advance(time.Minute)
+	waitForLooks(&looks, 1)
+
+	if looks.Load() != 1 {
+		t.Fatalf("the loop looked %d times once the interval had gone by, want one", looks.Load())
+	}
+}
+
+// TestAnIntervalShortenedAfterStartIsMeasuredFromTheStart changes a day to an
+// hour half an hour after the start. The look is due an hour after the start,
+// not a day after it and not at once.
+func TestAnIntervalShortenedAfterStartIsMeasuredFromTheStart(t *testing.T) {
+	db := newSettingsDB(t)
+	storeUpdateSettings(t, db, true, false, 24)
+
+	var looks atomic.Int32
+
+	check := func(context.Context, string) (install.Latest, error) {
+		looks.Add(1)
+
+		return install.Latest{Tag: "v99.0.0", Newer: true, Comparable: true}, nil
+	}
+
+	handler := api.NewUpdateHandler(zap.NewNop(), db, "3.0.0", true, check, func() error { return nil })
+
+	clock := stopUpdateClock(t)
+	runUpdateLoop(t, clock, db, handler)
+
+	clock.advance(30 * time.Minute)
+	storeUpdateSettings(t, db, true, false, 1)
+	time.Sleep(100 * time.Millisecond)
+
+	if looks.Load() != 0 {
+		t.Fatalf("the loop looked %d times half an hour after it started, want none", looks.Load())
+	}
+
+	clock.advance(30 * time.Minute)
+	waitForLooks(&looks, 1)
+
+	if looks.Load() != 1 {
+		t.Fatalf("the loop looked %d times an hour after it started, want one: the interval "+
+			"changed to an hour did not take hold without a restart", looks.Load())
+	}
+}
+
+// TestARestartDoesNotLookAgainBeforeAnInterval is an install that ends in the
+// restart of the service, and a release that still reads as newer after it, as
+// one whose executable gives a version that is not its tag does. The service
+// is stood in for by a loop and a handler, and a restart by a new pair.
+//
+// A loop that looked on its first pass started the install again a pass after
+// every restart, so that the service went round install and restart for as
+// long as the release stood.
+func TestARestartDoesNotLookAgainBeforeAnInterval(t *testing.T) {
+	db := newSettingsDB(t)
+	storeUpdateSettings(t, db, true, true, 24)
+
+	var looks, starts atomic.Int32
+
+	check := func(context.Context, string) (install.Latest, error) {
+		looks.Add(1)
+
+		return install.Latest{Tag: "v99.0.0", Newer: true, Comparable: true}, nil
+	}
+
+	installed := make(chan struct{}, 100)
+
+	tick := updateCheckTick
+	updateCheckTick = 5 * time.Millisecond
+
+	t.Cleanup(func() {
+		updateCheckTick = tick
+	})
+
+	clock := stopUpdateClock(t)
+
+	serve := func() (context.CancelFunc, chan struct{}) {
+		handler := api.NewUpdateHandler(zap.NewNop(), db, "3.0.0", true, check, func() error {
+			starts.Add(1)
+			installed <- struct{}{}
+
+			return nil
+		})
+
+		ctx, cancel := context.WithCancel(context.Background())
+		done := make(chan struct{})
+
+		clock.started(t, func() {
+			go func() {
+				defer close(done)
+				runUpdateChecks(ctx, zap.NewNop(), db, handler, true)
+			}()
+		})
+
+		return cancel, done
+	}
+
+	cancel, done := serve()
+
+	t.Cleanup(func() {
+		cancel()
+		<-done
+	})
+
+	clock.advance(24 * time.Hour)
+
+	restarts := 0
+	deadline := time.After(300 * time.Millisecond)
+
+wait:
+	for {
+		select {
+		case <-installed:
+			cancel()
+			<-done
+			cancel, done = serve()
+			restarts++
+		case <-deadline:
+			break wait
+		}
+	}
+
+	t.Logf("tick %v: looks = %d, installs started = %d, restarts = %d",
+		updateCheckTick, looks.Load(), starts.Load(), restarts)
+
+	if looks.Load() != 1 || starts.Load() != 1 {
+		t.Fatalf("looks = %d, installs = %d across %d restarts within the interval, want one of each: "+
+			"a restart looked again at once", looks.Load(), starts.Load(), restarts)
+	}
+
+	clock.advance(24 * time.Hour)
+	waitForLooks(&looks, 2)
+
+	if looks.Load() != 2 {
+		t.Errorf("the restarted service looked %d times in all an interval after it came up, want two",
+			looks.Load())
 	}
 }
 
@@ -517,6 +773,8 @@ func TestAnUpdateWhoseReleaseCannotBeCheckedDoesNotRestartTheService(t *testing.
 		updateCheckTick = tick
 	})
 
+	clock := stopUpdateClock(t)
+
 	plan := install.Defaults().WithDatabase(filepath.Join(t.TempDir(), "data", "tunnel-manager.db"))
 
 	// The install is run with what the command this service starts it with
@@ -578,10 +836,12 @@ func TestAnUpdateWhoseReleaseCannotBeCheckedDoesNotRestartTheService(t *testing.
 		ctx, cancel := context.WithCancel(context.Background())
 		done := make(chan struct{})
 
-		go func() {
-			defer close(done)
-			runUpdateChecks(ctx, zap.NewNop(), db, handler, true)
-		}()
+		clock.started(t, func() {
+			go func() {
+				defer close(done)
+				runUpdateChecks(ctx, zap.NewNop(), db, handler, true)
+			}()
+		})
 
 		return cancel, done
 	}
@@ -592,6 +852,8 @@ func TestAnUpdateWhoseReleaseCannotBeCheckedDoesNotRestartTheService(t *testing.
 		cancel()
 		<-done
 	})
+
+	clock.advance(24 * time.Hour)
 
 	var failures []error
 

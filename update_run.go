@@ -317,7 +317,10 @@ func runUpdateChecks(ctx context.Context, logger *zap.Logger, db *gorm.DB,
 	ticker := time.NewTicker(updateCheckTick)
 	defer ticker.Stop()
 
-	var last time.Time
+	// The start stands in for a last look, which is what puts the first one an
+	// interval in. The interval is read on every pass and measured from it, so
+	// a day shortened to an hour after startup is due an hour after the start.
+	last := updateCheckNow()
 
 	for {
 		select {
@@ -338,11 +341,11 @@ func runUpdateChecks(ctx context.Context, logger *zap.Logger, db *gorm.DB,
 		}
 
 		due := time.Duration(set.UpdateCheckIntervalHours) * time.Hour
-		if !last.IsZero() && time.Since(last) < due {
+		if updateCheckNow().Sub(last) < due {
 			continue
 		}
 
-		last = time.Now()
+		last = updateCheckNow()
 
 		handler.Look(ctx)
 
@@ -369,3 +372,8 @@ func runUpdateChecks(ctx context.Context, logger *zap.Logger, db *gorm.DB,
 // settings name: the pass reads that and decides whether the interval has gone
 // by, and this is only how often it asks itself the question.
 var updateCheckTick = time.Minute
+
+// updateCheckNow is the clock the pass above measures the interval with. It is
+// time.Now outside tests; a test that waited out an interval of an hour could
+// not be run.
+var updateCheckNow = time.Now
