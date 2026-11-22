@@ -356,15 +356,6 @@ func (m *Manager) storeEncryptedPassword(host *models.Host, password string) {
 		zap.String("host_ip", host.Address))
 }
 
-// hostAuth returns what to offer the Host to authenticate with, along with the
-// credentials those methods were built from, which is what the connection
-// fingerprint is taken over.
-//
-// The key comes first and the password second, which is the order the SSH
-// protocol tries them in: a method that is refused is followed by the next one.
-// A Host that carries both is therefore still reachable with its password while
-// the key that was just registered is not yet the one the Host knows, so
-// putting a key on a running installation cannot take its tunnels down.
 // hostCreds is every secret a connection to a Host is built from, opened out
 // of the row. The connection fingerprint is taken over all of them, so that a
 // Host whose key is replaced is noticed the same way one whose password is.
@@ -397,17 +388,30 @@ func (m *Manager) hostCredentials(host *models.Host) (hostCreds, error) {
 	return hostCreds{password: password, privateKey: privateKey, passphrase: passphrase}, nil
 }
 
+// hostAuth returns what to offer the Host to authenticate with, along with the
+// credentials those methods were built from, which is what the connection
+// fingerprint is taken over.
+//
+// The key comes first and the password second, which is the order the SSH
+// protocol tries them in: a method that is refused is followed by the next one.
+// A Host that carries both is therefore still reachable with its password while
+// the key that was just registered is not yet the one the Host knows, so
+// putting a key on a running installation cannot take its tunnels down.
+//
+// The credentials are opened before the key is read. A value that does not
+// open ends the call either way, and opening it first means it is opened and
+// reported once rather than once by each of the two.
 func (m *Manager) hostAuth(host *models.Host) ([]ssh.AuthMethod, hostCreds, error) {
 	var methods []ssh.AuthMethod
-
-	signer, keyErr := m.hostSigner(host)
-	if signer != nil {
-		methods = append(methods, ssh.PublicKeys(signer))
-	}
 
 	creds, err := m.hostCredentials(host)
 	if err != nil {
 		return nil, hostCreds{}, err
+	}
+
+	signer, keyErr := m.hostSigner(host)
+	if signer != nil {
+		methods = append(methods, ssh.PublicKeys(signer))
 	}
 
 	if creds.password != "" {
@@ -426,13 +430,15 @@ func (m *Manager) hostAuth(host *models.Host) ([]ssh.AuthMethod, hostCreds, erro
 	}
 
 	if keyErr != nil {
-		// The password is there, so the tunnel is made with it. hostSigner
-		// logged what is wrong with the key.
+		// The password is there, so the tunnel is made with it. What is
+		// wrong with the key goes with the line, since hostSigner reports it
+		// only when the key is read.
 		m.logger.Warn("connecting to the Host with its password alone, because its stored "+
 			"private key cannot be used",
 			logid.TunnelHostKeyUnusablePasswordUsed.Field(),
 			zap.Uint("host_id", host.ID),
-			zap.String("host_ip", host.Address))
+			zap.String("host_ip", host.Address),
+			zap.Error(keyErr))
 	}
 
 	return methods, creds, nil
@@ -449,9 +455,11 @@ func (m *Manager) hostAuth(host *models.Host) ([]ssh.AuthMethod, hostCreds, erro
 // passphrase.
 //
 // The key is read once for the stored values it is read from and kept in
-// m.signers. A key that cannot be read is reported every time it is asked for
-// all the same, so that each connection that goes without it says why in the
-// log next to it.
+// m.signers, and a key that cannot be read is reported when it is read and not
+// again. Every pass tries the tunnels of such a Host again, one for each of
+// its ports, and each of them answered from what was kept would otherwise
+// write the same line. Each try that fails says why on a line of its own, and
+// a key that is replaced is read and reported afresh.
 func (m *Manager) hostSigner(host *models.Host) (ssh.Signer, error) {
 	if host.PrivateKey == "" {
 		m.signers.forget(host.ID)
@@ -473,14 +481,16 @@ func (m *Manager) hostSigner(host *models.Host) (ssh.Signer, error) {
 
 		signer, err = parseHostKey(keyPEM, passphrase)
 		m.signers.keep(host.ID, host.PrivateKey, host.KeyPassphrase, signer, err)
+
+		if err != nil {
+			m.logger.Error("the stored private key of the Host cannot be read",
+				logid.TunnelHostKeyUnreadable.Field(),
+				zap.Uint("host_id", host.ID),
+				zap.String("host_ip", host.Address),
+				zap.Error(err))
+		}
 	}
 	if err != nil {
-		m.logger.Error("the stored private key of the Host cannot be read",
-			logid.TunnelHostKeyUnreadable.Field(),
-			zap.Uint("host_id", host.ID),
-			zap.String("host_ip", host.Address),
-			zap.Error(err))
-
 		return nil, fmt.Errorf("failed to read the stored private key of the Host (host_id=%d): %w", host.ID, err)
 	}
 
