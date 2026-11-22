@@ -1855,7 +1855,13 @@ func main() {
 		return
 	}
 
-	serve()
+	if serve() {
+		// The uninstall on the Settings screen ended this run. The status is
+		// the one the service manager of this platform is told to leave down,
+		// because the registration is still there and would start an empty
+		// installation in place of the one that was removed.
+		os.Exit(install.UninstalledExitCode())
+	}
 }
 
 // serve is the whole of this program: it reads the flags, opens the database,
@@ -1864,6 +1870,10 @@ func main() {
 // It is apart from main so that it can be handed to the service manager on the
 // platform that starts it that way. Called from main it is what this program
 // has always done from a console.
+//
+// It answers whether the uninstall on the Settings screen is what ended it.
+// What the process ends with afterwards is the caller's: an exit status from a
+// console or under systemd and launchd, a state reported to the SCM on Windows.
 // logo is the name of the program drawn large. It is what the program puts on
 // the terminal first, so that a console someone is watching says what started
 // there before any log line does.
@@ -1881,7 +1891,7 @@ func printLogo() {
 	fmt.Printf("\n%s  v%s\n\n", logo, version)
 }
 
-func serve() {
+func serve() bool {
 	flag.Usage = usage
 
 	versionFlag := flag.Bool("version", false, "print the version and exit")
@@ -2690,6 +2700,10 @@ func serve() {
 	// what it is followed by is not.
 	restartAsked := false
 
+	// uninstalledEnd is the shutdown the uninstall asked for, which ends the
+	// process with what keeps the service manager from starting it again.
+	uninstalledEnd := false
+
 	select {
 	case sig := <-sigChan:
 		logger.Info("Received signal, shutting down...",
@@ -2703,6 +2717,8 @@ func serve() {
 			logid.ShutdownSignalReceived.Field(),
 			zap.String("signal", "service manager stop"))
 	case <-uninstalled:
+		uninstalledEnd = true
+
 		logger.Info("The installation was removed, shutting down...", logid.ShutdownUninstalled.Field())
 	case <-restarting:
 		restartAsked = true
@@ -2768,6 +2784,8 @@ func serve() {
 		_ = logger.Sync()
 		os.Exit(1)
 	}
+
+	return uninstalledEnd
 }
 
 // finishRestart runs this program again in place of this process.

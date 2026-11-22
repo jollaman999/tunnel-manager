@@ -527,9 +527,24 @@ func launchctlPath() string {
 // from its documentation and was not checked on a Mac; the reason for leaving
 // the key out stands either way.)
 //
-// KeepAlive is the Restart=always of the systemd unit: launchd starts the job
-// again whenever it exits, however it exited. RunAtLoad is what makes it come
-// up when the machine boots, since the plist is loaded then.
+// KeepAlive is the Restart=always of the systemd unit, with one exit left out:
+// launchd starts the job again when it did not exit successfully, and leaves it
+// down after an exit with 0. The exit it is there for is the uninstall on the
+// Settings screen, which removes the data and leaves this plist, so a job
+// started again after it would come up empty a moment after the screen said the
+// installation was gone. launchd has no key that leaves down one status alone,
+// the way RestartPreventExitStatus does on systemd, so that uninstall ends with
+// 0 here (UninstalledExitCode) and the rule takes every other exit with 0 along
+// with it. A failure ends with 1, a panic with 2 and a process killed by a
+// signal does not exit at all, and all of those are started again. What stays
+// down besides the uninstall is a stop by SIGTERM or SIGINT that did not come
+// from launchctl bootout, a kill of the process by hand: the shutdown it runs
+// ends with 0. The restart on the Settings screen does not exit, it replaces
+// the image of the same process. (How launchd reads SuccessfulExit is from
+// the launchd.plist manual and was not watched on a Mac.)
+//
+// RunAtLoad is what makes it come up when the machine boots, since the plist is
+// loaded then, and that holds after the uninstall too.
 func launchdPlist(plan Plan) []byte {
 	var document bytes.Buffer
 
@@ -553,7 +568,10 @@ func launchdPlist(plan Plan) []byte {
 	document.WriteString("\t<true/>\n")
 
 	plistKey(&document, "KeepAlive")
-	document.WriteString("\t<true/>\n")
+	document.WriteString("\t<dict>\n")
+	document.WriteString("\t\t<key>SuccessfulExit</key>\n")
+	document.WriteString("\t\t<false/>\n")
+	document.WriteString("\t</dict>\n")
 
 	document.WriteString("</dict>\n</plist>\n")
 

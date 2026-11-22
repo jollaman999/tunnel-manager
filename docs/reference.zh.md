@@ -782,7 +782,7 @@ sudo ./tunnel-manager-linux-amd64 -install
 | 数据目录 | `/var/lib/tunnel-manager` | `/Library/Application Support/tunnel-manager` | `C:\ProgramData\tunnel-manager` |
 | 服务注册 | systemd unit。已经注册过的话就写在原来那个位置，没有的话写到 `/etc/systemd/system/tunnel-manager.service` | LaunchDaemon `/Library/LaunchDaemons/io.github.jollaman999.tunnel-manager.plist` | 服务控制管理器里的 `tunnel-manager` 服务 |
 | 运行用的账号 | `root` | `root` | `LocalSystem` |
-| 退出后再起来 | `Restart=always`，5 秒后 | `KeepAlive` | 每隔 5 秒重启，共三次 |
+| 退出后再起来 | `Restart=always`，5 秒后 | `KeepAlive`，以 0 退出时不再起来 | 每隔 5 秒重启，共三次 |
 
 `-bin` 把可执行文件放到别处，`-db` 把数据库放到别处。这里给的数据库路径会原样进到服务注册里，
 以后卸载从那份注册里读出来的也是这个路径：
@@ -1627,6 +1627,28 @@ API 也按给出按钮的同一条件判断。如果上一次查看没有找到�
 顺序是有讲究的，而且固定：先停止调谐循环，因为它是会重新启动隧道的那个；然后逐条断开隧道，
 这样远端主机上不会留下无人管理的监听；再关闭数据库、删除文件；再写出响应；进程大约三秒后结束，
 好让浏览器有时间收到它。
+
+**服务管理器不会再把它拉起来。** 服务注册还留着，放着不管的话，几秒后就会用空数据库和新的初始密码
+把 tunnel-manager 再启动一次。所以进程按 `-install` 写的注册里标明“不要再拉起”的那一种方式结束：
+
+| | 进程怎么结束 | 服务注册里写的是什么 |
+|---|--------------|----------------------|
+| Linux | 退出码 5 | `Restart=always` 旁边的 `RestartPreventExitStatus=5` |
+| macOS | 退出码 0 | `SuccessfulExit` 为 false 的 `KeepAlive`：只在没有成功退出时才重新拉起 |
+| Windows | 服务报告自己已停止 | 重启动作，只对失败生效，对停止不生效 |
+
+在 macOS 上，不只是这一种情况，凡是以 0 退出的都不会再被拉起。用 `kill` (SIGTERM) 停下的进程
+以 0 结束关闭流程，在 `launchctl kickstart` 或下次开机之前一直停着。失败、崩溃和 `kill -9`
+仍然会被重新拉起。
+
+- **以前的版本写的服务注册仍会把它拉起来。** 上面那几行是从写入它们的版本起才进到注册里的。
+  再运行一次 `-install` 会换成现在的注册；在更新页面安装的更新也会运行 `-install`，效果一样。
+- **系统开机时会再启动。** 服务仍是启用状态，所以会像新装的一样用空数据库启动。要让它一直停着，
+  用 `-uninstall` 删除注册，或者关掉开机启动（Linux 上是 `systemctl disable tunnel-manager`）。
+- **Docker Compose 会把容器再拉起来。** compose 文件里的 `restart: always` 不论以什么结束都会
+  重新拉起，所以卸载完成后请运行 `docker compose down`。
+- **在运行 `-uninstall` 之前，`-install` 会被拒绝。** 已注册的服务用的是哪个数据库，要问正在运行的
+  进程，而这之后什么也没在运行。`-uninstall` 会删除注册和可执行文件，之后的 `-install` 从头安装。
 
 ```bash
 curl -s -b cookies.txt -X POST "$BASE/api/uninstall" \

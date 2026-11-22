@@ -35,7 +35,10 @@ const defaultsPlist = `<?xml version="1.0" encoding="UTF-8"?>
 	<key>RunAtLoad</key>
 	<true/>
 	<key>KeepAlive</key>
-	<true/>
+	<dict>
+		<key>SuccessfulExit</key>
+		<false/>
+	</dict>
 </dict>
 </plist>
 `
@@ -50,6 +53,23 @@ func TestLaunchdPlistOfTheDefaults(t *testing.T) {
 	// Logged so that go test -v shows the file itself, which is what somebody
 	// with a Mac has to hold /Library/LaunchDaemons against.
 	t.Logf("%s\n%s", launchdPlistPath, written)
+}
+
+// TestTheJobLeavesDownWhatTheUninstallEndsWith holds the two halves of one
+// agreement: launchd leaves the job down after a successful exit and only
+// then, so the uninstall on the Settings screen has to end with 0 here. A
+// status other than 0 is one launchd starts an empty installation again on.
+func TestTheJobLeavesDownWhatTheUninstallEndsWith(t *testing.T) {
+	if UninstalledExitCode() != 0 {
+		t.Errorf("the uninstall ends with %d here, which KeepAlive starts again", UninstalledExitCode())
+	}
+
+	keepAlive := "<key>KeepAlive</key>\n\t<dict>\n\t\t<key>SuccessfulExit</key>\n\t\t<false/>\n\t</dict>\n"
+
+	written := string(launchdPlist(plannedFor("darwin")))
+	if !strings.Contains(written, keepAlive) {
+		t.Errorf("the plist does not leave the job down after a successful exit:\n%s", written)
+	}
 }
 
 // TestLaunchdPlistIsReadBackWhole covers the pair that has to agree: what

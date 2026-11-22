@@ -494,6 +494,15 @@ func unitFile(plan Plan) string {
 
 	b.WriteString("\n")
 	b.WriteString("Restart=always\n")
+
+	// The uninstall on the Settings screen removes the data and leaves this
+	// unit, so Restart=always alone would start an empty installation five
+	// seconds after the screen said it was gone. That uninstall ends the
+	// process with this status and nothing else does (UninstalledExitCode).
+	// A boot still starts the unit, since it stays enabled.
+	b.WriteString("# The uninstall on the Settings screen ends the process with this status,\n")
+	b.WriteString("# so that the installation it removed is not started again empty.\n")
+	b.WriteString("RestartPreventExitStatus=" + strconv.Itoa(uninstalledExitStatus) + "\n")
 	b.WriteString("RestartSec=5\n")
 	b.WriteString("TimeoutStopSec=90\n")
 	b.WriteString("\n")

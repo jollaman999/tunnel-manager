@@ -18,8 +18,10 @@ func runningAsService() bool {
 //
 // The stop is dropped rather than held: what would call it is the loop that
 // answers the service control manager, and there is none here. A stop on this
-// platform arrives as a signal, and the run waits for that itself.
-func runService(run func(), _ func()) error {
+// platform arrives as a signal, and the run waits for that itself. So is what
+// the run answers, which only the Windows handler reports anything with; main
+// never comes here, since runningAsService is always false on this platform.
+func runService(run func() bool, _ func()) error {
 	run()
 
 	return nil

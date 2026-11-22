@@ -894,7 +894,7 @@ Windows では、**管理者として実行**で開いた PowerShell かコマ�
 | データディレクトリ | `/var/lib/tunnel-manager` | `/Library/Application Support/tunnel-manager` | `C:\ProgramData\tunnel-manager` |
 | サービスの登録 | systemd ユニット。すでに登録されているユニットがあればその場所に、なければ `/etc/systemd/system/tunnel-manager.service` に書きます | LaunchDaemon `/Library/LaunchDaemons/io.github.jollaman999.tunnel-manager.plist` | サービス制御マネージャーの `tunnel-manager` サービス |
 | 実行するアカウント | `root` | `root` | `LocalSystem` |
-| 落ちたときの再起動 | `Restart=always`、5 秒後 | `KeepAlive` | 5 秒間隔で 3 回 |
+| 落ちたときの再起動 | `Restart=always`、5 秒後 | `KeepAlive`。0 で終わったときは起動しない | 5 秒間隔で 3 回 |
 
 `-bin` は実行ファイルを、`-db` はデータベースを別の場所に置きます。ここで指定したデータベース
 のパスがそのままサービスの登録に入り、あとでアンインストールがその登録から読み出すのも、この
@@ -1878,6 +1878,32 @@ compose ファイルは手動で削除してください。
 だからです。次にトンネルを停止します。リモートのホストに待ち受けを残さないためです。
 それからデータベースを閉じてファイルを削除し、応答を書き、約 3 秒後にプロセスが終わります。
 ブラウザが応答を受け取る時間です。
+
+**サービスマネージャーはもう一度起動しません。** サービスの登録は残っていて、そのままにすると数秒後に
+空のデータベースと新しい初期パスワードで tunnel-manager をもう一度起動します。そのためプロセスは、
+`-install` が書いた登録に「起動し直さない」と書かれている終わり方で終わります。
+
+| | プロセスの終わり方 | サービスの登録に書かれていること |
+|---|--------------------|----------------------------------|
+| Linux | 終了コード 5 | `Restart=always` の隣の `RestartPreventExitStatus=5` |
+| macOS | 終了コード 0 | `SuccessfulExit` が false の `KeepAlive`。成功で終わらなかったときだけ起動し直す |
+| Windows | サービスが停止したと報告する | 再起動の動作。失敗にだけかかり、停止にはかからない |
+
+macOS では、この場合に限らず 0 で終わったものはすべて起動し直されません。`kill` (SIGTERM) で
+止めたプロセスは終了処理を 0 で終え、`launchctl kickstart` か次の起動まで止まったままです。
+失敗、異常終了、`kill -9` はこれまでどおり起動し直されます。
+
+- **以前のリリースが書いたサービスの登録は起動し直します。** 上の行は、それを書くリリースから
+  登録に入ります。`-install` をもう一度実行すると今の登録に書き換わり、更新の画面からインストール
+  した更新も `-install` を実行するので同じです。
+- **システムが起動すると、もう一度起動します。** サービスは有効のままなので、空のデータベースで
+  新しくインストールしたように起動します。止めたままにするには、`-uninstall` で登録を削除するか、
+  起動時の開始を無効にしてください (Linux では `systemctl disable tunnel-manager`)。
+- **Docker Compose はコンテナをもう一度起動します。** compose ファイルの `restart: always` は
+  何で終わっても起動し直すので、アンインストールが終わったら `docker compose down` を実行してください。
+- **`-uninstall` を実行するまで `-install` は断られます。** 登録されたサービスがどのデータベースを
+  使っているかは動いているプロセスに尋ねますが、このあとは何も動いていません。`-uninstall` が登録と
+  実行ファイルを削除し、そのあとの `-install` は最初からインストールします。
 
 ```bash
 curl -s -b cookies.txt -X POST "$BASE/api/uninstall" \

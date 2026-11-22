@@ -866,7 +866,7 @@ Windows 에서는 **관리자 권한으로 실행**한 PowerShell 이나 명령 
 | 데이터 디렉터리 | `/var/lib/tunnel-manager` | `/Library/Application Support/tunnel-manager` | `C:\ProgramData\tunnel-manager` |
 | 서비스 등록 | systemd 유닛. 이미 등록된 유닛이 있으면 그 자리에 쓰고, 없으면 `/etc/systemd/system/tunnel-manager.service` | LaunchDaemon `/Library/LaunchDaemons/io.github.jollaman999.tunnel-manager.plist` | 서비스 제어 관리자의 `tunnel-manager` 서비스 |
 | 실행 계정 | `root` | `root` | `LocalSystem` |
-| 꺼졌을 때 다시 띄우기 | `Restart=always`, 5초 뒤 | `KeepAlive` | 5초 간격으로 세 번 |
+| 꺼졌을 때 다시 띄우기 | `Restart=always`, 5초 뒤 | `KeepAlive`. 0 으로 끝났으면 띄우지 않음 | 5초 간격으로 세 번 |
 
 `-bin` 은 실행 파일을, `-db` 는 데이터베이스를 다른 자리에 둡니다. 여기서 지정한 데이터베이스
 경로가 서비스 등록에 그대로 들어가고, 나중에 제거가 그 등록에서 읽어내는 것도 그 경로입니다.
@@ -1816,6 +1816,32 @@ Settings 화면의 서비스 탭에서 tunnel-manager 를 제거합니다. 터�
 것이 그것이기 때문입니다. 그다음 터널을 끊어서 원격 호스트에 리스너를 남기지 않고, 그다음
 데이터베이스를 닫고 파일을 지우고, 그다음 응답을 씁니다. 프로세스는 그로부터 3초쯤 뒤에
 끝납니다. 브라우저가 응답을 받을 시간을 두기 위해서입니다.
+
+**서비스 관리자가 다시 띄우지 않습니다.** 서비스 등록은 그대로 남아 있어서, 그냥 두면 몇 초 뒤
+빈 데이터베이스와 새 임시 비밀번호로 tunnel-manager 를 다시 띄웁니다. 그래서 프로세스는
+`-install` 이 쓴 등록이 그대로 두라고 적힌 방식 하나로 끝납니다.
+
+| | 프로세스가 끝나는 방식 | 서비스 등록에 적힌 것 |
+|---|------------------------|------------------------|
+| Linux | 종료 코드 5 | `Restart=always` 옆의 `RestartPreventExitStatus=5` |
+| macOS | 종료 코드 0 | `SuccessfulExit` 가 false 인 `KeepAlive`. 성공으로 끝나지 않았을 때만 다시 띄움 |
+| Windows | 서비스가 멈췄다고 알림 | 재시작 동작. 실패에만 걸리고 멈춤에는 안 걸림 |
+
+macOS 에서는 이 경우만이 아니라 0 으로 끝나는 것은 전부 다시 뜨지 않습니다. `kill`(SIGTERM)로
+멈춘 프로세스는 종료 절차를 0 으로 끝내고, `launchctl kickstart` 나 다음 부팅까지 꺼진 채로
+있습니다. 실패, 비정상 종료, `kill -9` 는 그대로 다시 뜹니다.
+
+- **이전 릴리즈가 쓴 서비스 등록은 다시 띄웁니다.** 위의 줄은 그것을 쓰는 릴리즈부터 등록에
+  들어갑니다. `-install` 을 다시 돌리면 지금의 등록으로 바뀌고, 업데이트 화면에서 설치한
+  업데이트도 `-install` 을 돌리므로 마찬가지입니다.
+- **시스템이 부팅하면 다시 뜹니다.** 서비스가 여전히 활성화돼 있어서, 빈 데이터베이스로 새로
+  설치한 것처럼 뜹니다. 계속 꺼 두려면 `-uninstall` 로 등록을 지우거나 부팅 시 시작을
+  끄십시오(Linux 는 `systemctl disable tunnel-manager`).
+- **Docker Compose 는 컨테이너를 다시 띄웁니다.** compose 파일의 `restart: always` 는 무엇으로
+  끝났든 다시 띄우므로, 제거가 끝나면 `docker compose down` 을 돌리십시오.
+- **`-uninstall` 을 돌리기 전에는 `-install` 이 거절됩니다.** 등록된 서비스가 어느 데이터베이스를
+  쓰는지는 돌고 있는 프로세스에게 묻는데, 이 뒤에는 도는 것이 없습니다. `-uninstall` 이 등록과
+  실행 파일을 지우고, 그 뒤의 `-install` 은 처음부터 설치합니다.
 
 ```bash
 curl -s -b cookies.txt -X POST "$BASE/api/uninstall" \

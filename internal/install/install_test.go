@@ -77,6 +77,41 @@ func TestDefaultsIsThisPlatform(t *testing.T) {
 	}
 }
 
+// TestUninstalledExitCodeFor holds the status the uninstall on the Settings
+// screen ends with to what each service manager is told to leave down. Only
+// systemd is told by a status other than 0: launchd leaves a job down after a
+// successful exit and restarts it after any other, so a status that systemd
+// would read correctly is one launchd restarts on.
+//
+// The value for linux is also held against everything else this program exits
+// with, since a status it shared with a failure would leave a failed service
+// down too.
+func TestUninstalledExitCodeFor(t *testing.T) {
+	cases := []struct {
+		goos string
+		want int
+	}{
+		{goos: "linux", want: 5},
+		{goos: "darwin", want: 0},
+		{goos: "windows", want: 0},
+	}
+
+	for _, c := range cases {
+		got := uninstalledExitCodeFor(c.goos)
+		if got != c.want {
+			t.Errorf("the uninstall on %s ends with %d, want %d", c.goos, got, c.want)
+		}
+	}
+
+	// 0 ends a run that was asked to, 1 one that failed and 2 a panic or a
+	// command line the flag package could not read.
+	for _, taken := range []int{0, 1, 2} {
+		if uninstalledExitCodeFor("linux") == taken {
+			t.Errorf("the uninstall on linux ends with %d, which this program already exits with", taken)
+		}
+	}
+}
+
 // fakeService stands in for a platform backend. It records the order it was
 // used in, which is the part of the flow that cannot be seen from the files
 // afterwards.

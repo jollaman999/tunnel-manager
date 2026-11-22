@@ -1007,7 +1007,7 @@ Where things go when no path is given:
 | Data directory | `/var/lib/tunnel-manager` | `/Library/Application Support/tunnel-manager` | `C:\ProgramData\tunnel-manager` |
 | Registration | a systemd unit, written over the one that is already registered or, when none is, at `/etc/systemd/system/tunnel-manager.service` | the LaunchDaemon `/Library/LaunchDaemons/io.github.jollaman999.tunnel-manager.plist` | the `tunnel-manager` service of the service control manager |
 | The account it runs as | `root` | `root` | `LocalSystem` |
-| Started again when it exits | `Restart=always`, 5 seconds later | `KeepAlive` | three restarts, 5 seconds apart |
+| Started again when it exits | `Restart=always`, 5 seconds later | `KeepAlive`, unless it exited with 0 | three restarts, 5 seconds apart |
 
 `-bin` puts the executable somewhere else and `-db` puts the database somewhere
 else. The database path given here is the one the registration passes to the
@@ -2130,6 +2130,38 @@ is what starts tunnels again; then the tunnels come down, so no listener is left
 behind on a remote host; then the database is closed and the files go; then the
 answer is written; and the process ends about three seconds later, so the browser
 has the time to receive it.
+
+**The service manager does not start it again.** The service entry is left in
+place, and on its own it would start tunnel-manager again a few seconds later on
+an empty database with a new initial password. So the process ends the one way
+the entry `-install` writes is told to leave down:
+
+| | The process ends with | What the service entry says |
+|---|-----------------------|-----------------------------|
+| Linux | exit status 5 | `RestartPreventExitStatus=5` beside `Restart=always` |
+| macOS | exit status 0 | `KeepAlive` with `SuccessfulExit` false: started again only after an exit that was not successful |
+| Windows | the service reporting that it stopped | the restart actions, which apply to a failure and not to a stop |
+
+On macOS this leaves down every exit with 0, not only this one: a process stopped
+with `kill` (SIGTERM) ends its shutdown with 0 and stays down until
+`launchctl kickstart` or the next boot. A failure, a crash and a `kill -9` are
+still started again.
+
+- **A service entry written by an earlier release starts it again.** Those lines
+  are in the entry from the release that wrote them on. Running `-install` again
+  writes the current entry, and so does an update installed from the Update
+  screen, since it runs `-install`.
+- **The machine booting starts it again**, as a new installation with an empty
+  database, since the service is still enabled. To keep it down, remove the
+  entry with `-uninstall`, or turn off the start at boot
+  (`systemctl disable tunnel-manager` on Linux).
+- **Docker Compose starts the container again.** `restart: always` in the
+  compose file starts it whatever it exited with, so run `docker compose down`
+  once the uninstall is over.
+- **`-install` is refused until `-uninstall` has run.** It reads which database
+  a registered service uses from the running process, and after this nothing
+  runs. `-uninstall` takes out the entry and the executable, and an `-install`
+  after it installs afresh.
 
 ```bash
 curl -s -b cookies.txt -X POST "$BASE/api/uninstall" \

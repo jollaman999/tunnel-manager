@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -108,6 +109,9 @@ ExecStart=/usr/local/bin/tunnel-manager -db /var/lib/tunnel-manager/tunnel-manag
 StateDirectory=tunnel-manager
 
 Restart=always
+# The uninstall on the Settings screen ends the process with this status,
+# so that the installation it removed is not started again empty.
+RestartPreventExitStatus=5
 RestartSec=5
 TimeoutStopSec=90
 
@@ -134,6 +138,9 @@ User=root
 ExecStart=/opt/tm/tunnel-manager -db /opt/tm/tm.db
 
 Restart=always
+# The uninstall on the Settings screen ends the process with this status,
+# so that the installation it removed is not started again empty.
+RestartPreventExitStatus=5
 RestartSec=5
 TimeoutStopSec=90
 
@@ -176,6 +183,26 @@ WantedBy=multi-user.target
 
 			t.Logf("\n%s", got)
 		})
+	}
+}
+
+// TestTheUnitLeavesDownWhatTheUninstallEndsWith holds the two halves of one
+// agreement apart from the text above: the status the process ends with after
+// the uninstall on the Settings screen, and the status the unit tells systemd
+// not to restart on. Two numbers that drift apart are a service that comes back
+// empty after it was removed.
+func TestTheUnitLeavesDownWhatTheUninstallEndsWith(t *testing.T) {
+	code := UninstalledExitCode()
+
+	if code == 0 {
+		t.Fatalf("the uninstall ends with 0 here, which Restart=always starts again")
+	}
+
+	want := "\nRestartPreventExitStatus=" + strconv.Itoa(code) + "\n"
+
+	got := unitFile(plannedFor("linux"))
+	if !strings.Contains(got, want) {
+		t.Errorf("the unit does not carry %q:\n%s", strings.TrimSpace(want), got)
 	}
 }
 

@@ -61,11 +61,12 @@ func runningAsService() bool {
 // the shutdown has finished. stop is what asks run to shut down. It is called
 // from the loop that answers the SCM, so it has to return straight away and
 // leave run to end on its own; closing the channel the shutdown waits on is
-// what it is for.
+// what it is for. What run answers is whether the uninstall on the Settings
+// screen ended it.
 //
 // It returns once run has returned, which is what the SCM takes as the service
 // having stopped.
-func runService(run func(), stop func()) error {
+func runService(run func() bool, stop func()) error {
 	err := svc.Run(windowsServiceName, serviceHandler{run: run, stop: stop})
 	if err != nil {
 		return fmt.Errorf("failed to run as a Windows service: %w", err)
@@ -77,9 +78,9 @@ func runService(run func(), stop func()) error {
 // serviceHandler is the side of this program the SCM talks to. It holds the two
 // functions runService was handed and nothing else: what the program does is
 // not this file's business, and every state this reports is worked out from
-// whether run has returned.
+// whether run has returned and what it answered.
 type serviceHandler struct {
-	run  func()
+	run  func() bool
 	stop func()
 }
 
@@ -102,10 +103,14 @@ func (h serviceHandler) Execute(_ []string, requests <-chan svc.ChangeRequest, s
 
 	done := make(chan struct{})
 
+	// uninstalled is what run answered. It is written before done is closed
+	// and read only after, so the close is what hands it over.
+	uninstalled := false
+
 	go func() {
 		defer close(done)
 
-		h.run()
+		uninstalled = h.run()
 	}()
 
 	status <- svc.Status{State: svc.Running, Accepts: accepted}
@@ -153,11 +158,24 @@ func (h serviceHandler) Execute(_ []string, requests <-chan svc.ChangeRequest, s
 				return false, 0
 			}
 
-			// The program ended without having been asked to: the API server
-			// failed to bind, or the startup gave up. Reported as a failure
-			// rather than as a stop, because a service that the SCM was told
-			// stopped normally is a service the failure actions on the
-			// registration leave down.
+			// The uninstall on the Settings screen removed the data and left
+			// this registration. Reported as a stop, which the failure actions
+			// leave alone: reported as a failure it would be started again
+			// with an empty database a few seconds after the screen said the
+			// installation was gone. It is told apart from the restart below
+			// by what run answered, and not by how it ended, since both end
+			// the same way with nobody having asked the SCM for anything.
+			if uninstalled {
+				return false, 0
+			}
+
+			// The program ended without having been asked to: the restart on
+			// the Settings screen, which this platform cannot do in place and
+			// leaves to the failure actions. Reported as a failure rather
+			// than as a stop, because a service that the SCM was told stopped
+			// normally is a service the failure actions on the registration
+			// leave down. A startup that failed or a server that could not
+			// bind never gets here: those end the process from inside run.
 			//
 			// Not verified on Windows: that the SCM takes this as a failure and
 			// applies the restart actions has not been watched happen.

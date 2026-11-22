@@ -65,6 +65,49 @@ const (
 	dataDirMode    fs.FileMode = 0o700
 )
 
+// uninstalledExitStatus is the exit status the systemd unit is written to
+// leave down. See UninstalledExitCode.
+//
+// 5 is the status the LSB gives to "program is not installed", which systemd
+// prints as NOTINSTALLED, and that is what a process ending this way is.
+// Nothing else this program does ends with it: a failure ends with 1, a panic
+// and a command line that cannot be read with 2, and everything else with 0.
+const uninstalledExitStatus = 5
+
+// UninstalledExitCode is the status the process ends with once the uninstall
+// on the Settings screen has removed the installation.
+//
+// That uninstall removes the data and leaves the registration in place, and a
+// registration is what starts the process again after it ends. What it would
+// start is an empty database with a new initial password, a few seconds after
+// the screen told the operator that the installation is gone. So the status is
+// the one each service manager is told to leave down, and that differs:
+//
+//   - systemd starts the unit again however it ended (Restart=always), except
+//     after a status RestartPreventExitStatus names. unitFile names this one.
+//   - launchd starts the job again only when it did not exit successfully
+//     (KeepAlive with SuccessfulExit false, launchdPlist), so 0 is the one that
+//     leaves it down.
+//   - On Windows a service does not end through this status at all. The SCM is
+//     told the service stopped, which its failure actions leave alone, by the
+//     handler in main_windows.go; a run from a console ends with 0.
+//
+// A registration written before these were part of it is changed only when
+// -install writes it again, which an update does as well.
+func UninstalledExitCode() int {
+	return uninstalledExitCodeFor(runtime.GOOS)
+}
+
+// uninstalledExitCodeFor is UninstalledExitCode for goos, apart so that the
+// answer of every platform is held by a test on any one of them.
+func uninstalledExitCodeFor(goos string) int {
+	if goos == "linux" {
+		return uninstalledExitStatus
+	}
+
+	return 0
+}
+
 // ErrNotInstalled is what a backend reports when this platform has no
 // registration for this service. It is a value and not a failure to read,
 // because "nothing is registered" is an answer an uninstall acts on rather than
