@@ -1563,6 +1563,14 @@ func installSource(fetched *install.Fetched) string {
 	// signature, or without an entry for this one in it - and stops with an
 	// error when either does not match, so a binary that came from a release is
 	// one whose signature and checksum matched.
+	//
+	// The development build is the exception, and the one place it is said for
+	// the install is here: this process has no log, and the report is what an
+	// operator or the journal keeps of it.
+	if !fetched.Verified {
+		return "the " + fetched.Tag + " release, checksum verified, signature not checked (a development build)"
+	}
+
 	return "the " + fetched.Tag + " release, signature and checksum verified"
 }
 
@@ -1890,6 +1898,14 @@ func serve() {
 	// handle carries every later change as well. Set through db.Logger it would
 	// be fixed here once and the Settings screen would have nothing to change.
 	gormLevel.Set(set.LoggingLevel)
+
+	// A development build installs an update without checking its signature
+	// (install.DevBuild). It is said here, after the logger was switched, so
+	// that it lands in the log file and on the Logs screen and not only on the
+	// standard output of the first moments.
+	if install.DevBuild {
+		logger.Warn("this build does not check the signature of a release", logid.StartupDevBuild.Field())
+	}
 
 	logger.Info("read the settings from the database",
 		logid.SettingsRead.Field(),

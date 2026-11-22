@@ -4,8 +4,20 @@ APP_NAME := tunnel-manager
 
 all: clean build
 
+# build makes the development build, and so do all and run, which go through
+# it. -tags dev compiles internal/install/signature_dev.go in place of
+# signature_release.go: an update is installed on its checksum alone and the
+# signature over SHA256SUMS is not checked, so a machine without the release
+# key can still work on the update path. It is not a build to deploy. The
+# checksums come from the same release as the binaries, and whoever can change
+# one file of a release can change both; only the signature tells them apart.
+# The build says what it is in its log as it starts and on the Update screen.
+#
+# release, below, builds without the tag, and so do the container image and a
+# plain `go build`. Those are the builds that check the signature, and they are
+# what goes onto a machine that is used.
 build:
-	CGO_ENABLED=0 go build -o $(APP_NAME) .
+	CGO_ENABLED=0 go build -tags dev -o $(APP_NAME) .
 
 run: build
 	sudo ./$(APP_NAME)
@@ -152,6 +164,9 @@ RELEASE_SIGNING_KEY ?= $(HOME)/tunnel-manager/tm-jolla.key
 # checked. The names in it carry no directory, so the checking works wherever
 # the files are put. macOS has shasum instead of sha256sum, and both write the
 # same format.
+#
+# The binaries are built without -tags dev, unlike build above, so each of them
+# checks the signature of the release it installs.
 #
 # SHA256SUMS is then signed into SHA256SUMS.sig, which goes up beside it. The
 # checksums come from the same place the binaries do, so on their own they say

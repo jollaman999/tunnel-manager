@@ -133,3 +133,34 @@ func assertEmptyDirectory(t *testing.T, dir string) {
 		t.Errorf("the data directory still holds %v", entries)
 	}
 }
+
+// TestInstallSourceSaysWhatWasChecked is the line of the report that says where
+// the executable came from. A release the development build took without its
+// signature must not read like one that was held to it: the report is all an
+// operator or the journal keeps of an install.
+func TestInstallSourceSaysWhatWasChecked(t *testing.T) {
+	cases := []struct {
+		name    string
+		fetched install.Fetched
+		want    string
+	}{
+		{"a release whose signature and checksum matched",
+			install.Fetched{Source: install.SourceRelease, Tag: "v3.7.5", Verified: true},
+			"the v3.7.5 release, signature and checksum verified"},
+		{"a release the development build took on its checksum",
+			install.Fetched{Source: install.SourceRelease, Tag: "v3.7.5"},
+			"the v3.7.5 release, checksum verified, signature not checked (a development build)"},
+		{"the running executable",
+			install.Fetched{Source: install.SourceRunning, Path: "/usr/local/bin/tunnel-manager", Why: "release v3.7.5 carries no SHA256SUMS.sig"},
+			"this running process, /usr/local/bin/tunnel-manager (the release was not used: release v3.7.5 carries no SHA256SUMS.sig)"},
+	}
+
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			got := installSource(&c.fetched)
+			if got != c.want {
+				t.Errorf("installSource = %q, want %q", got, c.want)
+			}
+		})
+	}
+}

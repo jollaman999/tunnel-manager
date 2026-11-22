@@ -167,6 +167,7 @@ const (
 	StartupStarting          ID = "startup.starting"
 	StartupFilesNarrowed     ID = "startup.files_narrowed"
 	StartupFilesNarrowFailed ID = "startup.files_narrow_failed"
+	StartupDevBuild          ID = "startup.dev_build"
 )
 
 // logging: the log file this process writes and the Logs screen reads.

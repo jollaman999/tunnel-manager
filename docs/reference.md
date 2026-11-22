@@ -1043,6 +1043,11 @@ tunnel-manager install
   state         started
 ```
 
+The development build that `make` makes (see [From source](#from-source)) does
+not check the signature. It installs a release on its checksum alone, with or
+without `SHA256SUMS.sig`, and the report says `checksum verified, signature not
+checked (a development build)`. A checksum that does not match still stops it.
+
 What an install does on a machine that already carries one depends on the paths
 the registration holds:
 
@@ -1156,8 +1161,16 @@ make
 ./tunnel-manager
 ```
 
-`make` builds the binary with `CGO_ENABLED=0`. `make release` builds one for
-every platform in the table above, writes `SHA256SUMS` for them and signs it
+`make` builds the binary with `CGO_ENABLED=0`, and it is the development build:
+`make`, `make build` and `make run` build with `-tags dev`. **The development
+build does not check the signature of a release.** It installs an update on its
+checksum alone, so that the update path can be worked on without the release
+key, and it says so in its log as it starts and under the version on the Update
+tab. It is not a build to deploy. What runs on a machine that is used is a
+binary from `make release` or from a release page, or the container image,
+which are built without the tag and check the signature.
+
+`make release` builds one for every platform in the table above, writes `SHA256SUMS` for them and signs it
 into `SHA256SUMS.sig`. Signing takes the private release key, a PKCS#8 PEM
 ed25519 key named by `RELEASE_SIGNING_KEY`, and `make release` stops before it
 builds anything when that file is not there, or refuses to sign with a key that
@@ -1987,7 +2000,9 @@ the service manager restarts the service. A release whose signature does not
 match stops the install. One made before releases were signed, which carries no
 `SHA256SUMS.sig`, is not installed either: the executable that is already
 running is installed in its place, so the service comes back on the version it
-had.
+had. The development build is the exception: it does not check the signature,
+says so under the version on the tab, and `GET /api/update` answers it with
+`dev_build: true`. See [From source](#from-source).
 
 **The answer says the install started and never that it finished.** The process
 that would report the end is the one being restarted. The screen says so and
@@ -3089,7 +3104,7 @@ refused with `409` under `service_port.local_port.taken`, with `local_port` and
 | `POST` | `/api/uninstall` | Takes `password`, uninstalls tunnel-manager and ends the process |
 | `GET` | `/api/logs` | The end of the log file. `lines` says how many, up to 2000 |
 | `POST` | `/api/logs/clear` | Takes `password`, empties the file the log is being written to and leaves the rotated files beside it alone |
-| `GET` | `/api/update` | What the last look found: the version running, the newest release, whether it is newer, and whether an install can be started from here |
+| `GET` | `/api/update` | What the last look found: the version running, the newest release, whether it is newer, whether an install can be started from here, and whether this is the development build, which does not check the signature of a release (`dev_build`) |
 | `POST` | `/api/update/check` | Reads the newest release now and answers what `GET /api/update` would then answer |
 | `POST` | `/api/update/install` | Takes `password` and starts the install. It answers that the install started and never that it finished: what the install ends with is a restart of the service answering the request |
 

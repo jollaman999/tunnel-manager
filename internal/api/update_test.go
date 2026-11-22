@@ -151,6 +151,16 @@ func TestTheUpdateScreenSaysNothingHasLookedYet(t *testing.T) {
 	if !view.Checked.IsZero() {
 		t.Errorf("checked_at = %v, want the zero time", view.Checked)
 	}
+
+	// The screen learns it is on the development build from this field alone,
+	// the version being the same string either way.
+	if view.DevBuild != install.DevBuild {
+		t.Errorf("dev_build = %v in a build where install.DevBuild is %v", view.DevBuild, install.DevBuild)
+	}
+
+	if !strings.Contains(rec.Body.String(), `"dev_build":`) {
+		t.Errorf("the answer carries no dev_build for the screen to read: %s", rec.Body.String())
+	}
 }
 
 // TestAFailedCheckIsNotUpToDate is the distinction the whole screen rests on.

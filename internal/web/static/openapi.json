@@ -4982,6 +4982,10 @@
                 "comparable": {
                     "type": "boolean"
                 },
+                "dev_build": {
+                    "description": "DevBuild says this process is the development build, which installs a\nrelease on its checksum without checking the signature over it\n(install.DevBuild). The version is the same string either way, so this is\nthe one place the screen can learn it from.",
+                    "type": "boolean"
+                },
                 "installable": {
                     "description": "Installable says whether the press that installs is offered. See the\nfield of the same name on the handler.",
                     "type": "boolean"

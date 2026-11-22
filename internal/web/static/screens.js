@@ -8702,6 +8702,12 @@ function updateTabNodes(update, set) {
     versions.appendChild(statusLine(t("update.not-installable.notice"), "warning"));
   }
 
+  // The version reads the same in a development build, so this line is the
+  // only thing on the screen that tells it from a release.
+  if (update.dev_build) {
+    versions.appendChild(statusLine(t("update.dev-build.notice"), "warning"));
+  }
+
   return [
     element("p", t("update.screen.text")),
     versions,

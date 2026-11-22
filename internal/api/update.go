@@ -102,13 +102,18 @@ type updateView struct {
 	// Installable says whether the press that installs is offered. See the
 	// field of the same name on the handler.
 	Installable bool `json:"installable"`
+	// DevBuild says this process is the development build, which installs a
+	// release on its checksum without checking the signature over it
+	// (install.DevBuild). The version is the same string either way, so this is
+	// the one place the screen can learn it from.
+	DevBuild bool `json:"dev_build"`
 }
 
 func (h *UpdateHandler) view() updateView {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 
-	view := updateView{Version: h.version, Installable: h.installable}
+	view := updateView{Version: h.version, Installable: h.installable, DevBuild: install.DevBuild}
 
 	if h.last != nil {
 		view.Checked = h.last.At

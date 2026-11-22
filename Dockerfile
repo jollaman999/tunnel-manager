@@ -5,7 +5,7 @@
 # another architecture would compile the whole program under emulation.
 FROM --platform=$BUILDPLATFORM golang:1.27.4-trixie@sha256:f18c3d73a184fb0582828510722e723b63a93f7188d11dd223d9be6f6880e65d AS builder
 
-RUN apt-get update && apt-get install -y make bash
+RUN apt-get update && apt-get install -y bash
 
 WORKDIR /go/src/github.com/jollaman999/tunnel-manager/
 
@@ -21,7 +21,10 @@ COPY . .
 ARG TARGETOS
 ARG TARGETARCH
 
-RUN GOOS=$TARGETOS GOARCH=$TARGETARCH make
+# The build is named here rather than left to make. make builds the development
+# build, which installs an update without checking its signature, and the image
+# is what gets deployed; this is the build the release binaries are, which does.
+RUN GOOS=$TARGETOS GOARCH=$TARGETARCH CGO_ENABLED=0 go build -o tunnel-manager .
 
 FROM alpine:3.24.4@sha256:f59abe656b692d901e184be3445e084786602108599d2a51d229c0f5a48c71bf AS prod
 

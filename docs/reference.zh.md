@@ -811,6 +811,10 @@ tunnel-manager install
   state         started
 ```
 
+`make` 构建出的开发用构建（见[从源码构建](#从源码构建)）不校验签名：不管有没有 `SHA256SUMS.sig`，
+都只凭校验和安装发布版本，报告里写的是 `checksum verified, signature not checked (a development
+build)`。校验和对不上，照样到此为止。
+
 在已经装过一遍的机器上，`-install` 做什么取决于注册里存的路径：
 
 | 注册 | `-install` 做什么 |
@@ -906,7 +910,13 @@ make
 ./tunnel-manager
 ```
 
-`make` 用 `CGO_ENABLED=0` 构建可执行文件。`make release` 给上面表里的每个平台各构建一个，写出
+`make` 用 `CGO_ENABLED=0` 构建可执行文件，构建出来的是开发用构建：`make`、`make build`、
+`make run` 都带 `-tags dev` 构建。**开发用构建不校验发布的签名。** 为了没有发布密钥也能改动更新流程，
+它只凭校验和安装更新，并在启动时的日志和更新标签页的版本下方写明这一点。它不是用来部署的构建。
+实际使用的机器上跑的应当是 `make release` 或发布页面上的可执行文件，或者容器镜像；它们构建时不带
+这个标签，会校验签名。
+
+`make release` 给上面表里的每个平台各构建一个，写出
 它们的 `SHA256SUMS`，再对它签名写出 `SHA256SUMS.sig`。签名要用 `RELEASE_SIGNING_KEY` 指向的
 发布私钥（PKCS#8 PEM 格式的 ed25519 密钥）。这个文件不在的话，`make release` 在构建任何东西之前
 就停下；不是程序用来核对发布版本的那把密钥，它不会拿来签名。
@@ -1528,7 +1538,8 @@ fatal  failed to read the settings  {"error": "the stored settings are refused: 
 带上该标志。一个进程无法在替换掉自己的文件之后再启动自己，所以这项工作交给一个尚未被替换的进程。
 发布会被下载、与核对过签名的发布 `SHA256SUMS` 比对、放到位，然后由服务管理器重启服务。签名对不上
 的发布版本，安装到此为止。开始签名之前做的发布版本，也就是没有 `SHA256SUMS.sig` 的，也不会装上：
-那时装到原位的是当前运行的这个文件，服务回来时还是原来的版本。
+那时装到原位的是当前运行的这个文件，服务回来时还是原来的版本。开发用构建是例外：它不校验签名，
+会在标签页的版本下方写明，`GET /api/update` 也会答 `dev_build: true`。见[从源码构建](#从源码构建)。
 
 **响应只说安装已开始，绝不说已完成。** 本该报告结束的那个进程，正是被重启的那个。页面会这样说明，
 并提示在服务回来之后重新打开页面：角落里的版本才是真正生效的那个。
@@ -2462,7 +2473,7 @@ Host 的地址一样，比较时不区分大小写，也不管 IP 地址怎么�
 | `POST` | `/api/uninstall` | 收 `password`，卸载 tunnel-manager 并结束进程 |
 | `GET` | `/api/logs` | 日志文件的末尾。`lines` 说要多少行，最多 2000 |
 | `POST` | `/api/logs/clear` | 接收 `password`，清空当前正在写入的日志文件，旁边已轮转的文件不动 |
-| `GET` | `/api/update` | 上次查看的结果：正在运行的版本、最新发布、它是否更新，以及能否从这里开始安装 |
+| `GET` | `/api/update` | 上次查看的结果：正在运行的版本、最新发布、它是否更新、能否从这里开始安装，以及这是不是不校验发布签名的开发用构建（`dev_build`） |
 | `POST` | `/api/update/check` | 立刻读取最新发布，并返回 `GET /api/update` 随后会返回的内容 |
 | `POST` | `/api/update/install` | 接收 `password` 并开始安装。它只回答安装已开始，绝不回答已完成：安装最后做的事，正是重启那个在回答本请求的服务 |
 

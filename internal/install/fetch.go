@@ -128,6 +128,12 @@ const (
 
 // Fetched is the binary to install and the story of where it came from, which
 // the install prints so the operator knows what landed.
+//
+// A release is taken with Verified false only by the development build
+// (DevBuild), which installs a release on its checksum and does not look at the
+// signature. Every other build leaves on the fallback or on an error wherever
+// the signature is missing or does not match, so a release it installs is one
+// whose signature and checksum both matched.
 type Fetched struct {
 	Path     string // a file on disk, ready to be copied into place
 	Source   Source
@@ -221,14 +227,17 @@ func fetchFrom(ctx context.Context, dir string, latestURL string) (*Fetched, err
 
 	// The signature is checked before anything in the checksums is believed.
 	// Until then they are only what the release says about itself, and the same
-	// hands that could swap the binary could have written them to match.
-	fallback, err := checkSignature(ctx, client, latest, body)
-	if err != nil {
-		return nil, err
-	}
+	// hands that could swap the binary could have written them to match. The
+	// development build does not check it; see DevBuild.
+	if !DevBuild {
+		fallback, err := checkSignature(ctx, client, latest, body)
+		if err != nil {
+			return nil, err
+		}
 
-	if fallback != "" {
-		return runningExecutable(fallback)
+		if fallback != "" {
+			return runningExecutable(fallback)
+		}
 	}
 
 	want := sumFor(body, name)
@@ -262,12 +271,13 @@ func fetchFrom(ctx context.Context, dir string, latestURL string) (*Fetched, err
 
 	// The download got here only by hashing to what the signed checksums said
 	// it would, because the paths where there was nothing to compare it against
-	// all left on the fallback above.
+	// all left on the fallback above. In the development build the checksums
+	// were not held to their signature, and Verified says so.
 	return &Fetched{
 		Path:     path,
 		Source:   SourceRelease,
 		Tag:      latest.TagName,
-		Verified: true,
+		Verified: !DevBuild,
 		cleanup:  func() { _ = os.Remove(path) },
 	}, nil
 }
