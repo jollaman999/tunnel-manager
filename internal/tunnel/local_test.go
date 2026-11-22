@@ -917,18 +917,52 @@ func TestALocalForwardReconnectsAfterTheHostDropsIt(t *testing.T) {
 	}
 }
 
-// TestStopLeavesTheLocalPortFreeWhateverTheAttemptWasDoing holds Stop to what
-// it says: the local port is free by the time it returns, even where it came
-// while a connection attempt was opening the port. Stop is called at a moment
-// picked at random over the first connection, many times over, and the port
-// is taken back the moment it returns.
+// stopRaceRuns is how many times stopRace starts and stops a forward. Run
+// against an attempt that opened the port before looking at whether it was
+// stopped, two thousand runs landed on the moment that matters a few times
+// each time this was tried.
+const stopRaceRuns = 2000
+
+// stopRace starts what start builds on a free port and stops it at a moment
+// picked over its first connection, stopRaceRuns times over, and returns in
+// how many of them the port was still held after Stop returned. start hands
+// back the Stop of what it started.
 //
 // The moment that matters is a few microseconds wide, between the port being
-// opened and the attempt looking at whether the forward was stopped, so no one
-// run is sure to land on it. Run against an attempt that opened the port before
-// looking, two thousand runs landed on it a few times each time this was tried.
-func TestStopLeavesTheLocalPortFreeWhateverTheAttemptWasDoing(t *testing.T) {
-	server := startDirectSSHServer(t)
+// opened and the attempt looking at whether it was stopped, so no one run is
+// sure to land on it.
+func stopRace(t *testing.T, start func(port int) func()) int {
+	t.Helper()
+
+	held := 0
+	for i := 0; i < stopRaceRuns; i++ {
+		port := freeDualStackPort(t)
+
+		stop := start(port)
+
+		time.Sleep(time.Duration(i%30) * 100 * time.Microsecond)
+		stop()
+
+		// The attempt that kept the port closes it a moment after Stop
+		// returned. A port that is still held well after that is held by a
+		// listener of something else, which opened it in between the port
+		// being picked and being taken back, and says nothing about Stop.
+		if !portIsFree(port) {
+			time.Sleep(100 * time.Millisecond)
+
+			if portIsFree(port) {
+				held++
+			}
+		}
+	}
+
+	return held
+}
+
+// stopRaceHost is a Host that points at server, and the client configuration
+// that logs in to it, for stopRace.
+func stopRaceHost(t *testing.T, server *directSSHServer) (*models.Host, *ssh.ClientConfig) {
+	t.Helper()
 
 	serverHost, serverPort, err := net.SplitHostPort(server.addr)
 	if err != nil {
@@ -939,21 +973,22 @@ func TestStopLeavesTheLocalPortFreeWhateverTheAttemptWasDoing(t *testing.T) {
 		t.Fatalf("failed to read the port of %s: %v", server.addr, err)
 	}
 
-	host := &models.Host{ID: 1, Address: serverHost, Port: sshPort}
-	config := &ssh.ClientConfig{
+	return &models.Host{ID: 1, Address: serverHost, Port: sshPort}, &ssh.ClientConfig{
 		User:            "tester",
 		Auth:            []ssh.AuthMethod{ssh.Password("pass")}, // hook:allow
 		HostKeyCallback: ssh.FixedHostKey(server.key),
 	}
+}
 
-	const runs = 2000
+// TestStopLeavesTheLocalPortFreeWhateverTheAttemptWasDoing holds Stop to what
+// it says: the local port is free by the time it returns, even where it came
+// while a connection attempt was opening the port.
+func TestStopLeavesTheLocalPortFreeWhateverTheAttemptWasDoing(t *testing.T) {
+	host, config := stopRaceHost(t, startDirectSSHServer(t))
 
-	held := 0
-	for i := 0; i < runs; i++ {
-		localPort := freeDualStackPort(t)
-
+	held := stopRace(t, func(port int) func() {
 		f, err := newLocalTunnel(&models.LocalForward{
-			Number: 1, HostID: 1, BindScope: models.BindScopeLoopback, LocalPort: localPort,
+			Number: 1, HostID: 1, BindScope: models.BindScopeLoopback, LocalPort: port,
 			TargetAddress: "127.0.0.1", TargetPort: 9,
 		}, host, config, time.Hour, zap.NewNop())
 		if err != nil {
@@ -962,24 +997,11 @@ func TestStopLeavesTheLocalPortFreeWhateverTheAttemptWasDoing(t *testing.T) {
 
 		go f.Start()
 
-		time.Sleep(time.Duration(i%30) * 100 * time.Microsecond)
-		f.Stop()
-
-		// The attempt that kept the port closes it a moment after Stop
-		// returned. A port that is still held well after that is held by a
-		// listener of something else, which opened it in between the port
-		// being picked and being taken back, and says nothing about Stop.
-		if !portIsFree(localPort) {
-			time.Sleep(100 * time.Millisecond)
-
-			if portIsFree(localPort) {
-				held++
-			}
-		}
-	}
+		return f.Stop
+	})
 
 	if held != 0 {
-		t.Fatalf("the local port was still held after Stop returned in %d of %d runs", held, runs)
+		t.Fatalf("the local port was still held after Stop returned in %d of %d runs", held, stopRaceRuns)
 	}
 }
 

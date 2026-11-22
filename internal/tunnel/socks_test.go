@@ -474,6 +474,31 @@ func TestSocksReportsTheHalfOfThePairItOpened(t *testing.T) {
 	}
 }
 
+// TestStopLeavesTheSocksPortFreeWhateverTheAttemptWasDoing is
+// TestStopLeavesTheLocalPortFreeWhateverTheAttemptWasDoing for the proxy.
+func TestStopLeavesTheSocksPortFreeWhateverTheAttemptWasDoing(t *testing.T) {
+	host, config := stopRaceHost(t, startDirectSSHServer(t))
+	host.SocksEnabled = true
+	host.SocksBindScope = models.BindScopeLoopback
+
+	held := stopRace(t, func(port int) func() {
+		host.SocksPort = port
+
+		p, err := newSocksTunnel(host, config, time.Hour, zap.NewNop())
+		if err != nil {
+			t.Fatalf("failed to build the proxy: %v", err)
+		}
+
+		go p.Start()
+
+		return p.Stop
+	})
+
+	if held != 0 {
+		t.Fatalf("the proxy port was still held after Stop returned in %d of %d runs", held, stopRaceRuns)
+	}
+}
+
 // TestSocksParseAllowedSources is the list as a person writes it, the forms
 // of IPv4 that name the same source, and what is refused.
 func TestSocksParseAllowedSources(t *testing.T) {
