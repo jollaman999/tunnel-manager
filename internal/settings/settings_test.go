@@ -326,6 +326,33 @@ func TestTheIntervalsTakeTheirBounds(t *testing.T) {
 	}
 }
 
+// TestTheLogLimitsTakeTheirBounds stores both ends of what the log size and the
+// days a rotated log file is kept may be: zero, which leaves the rotation its
+// own default or no bound, and the ceiling of each.
+func TestTheLogLimitsTakeTheirBounds(t *testing.T) {
+	db := newDB(t)
+
+	for _, bound := range []struct{ size, age int }{{0, 0}, {MaxLogFileSizeMB, MaxLogFileAgeDays}} {
+		s := Defaults()
+		s.LoggingFileMaxSize = bound.size
+		s.LoggingFileMaxAge = bound.age
+
+		err := Save(db, &s, nil)
+		if err != nil {
+			t.Fatalf("Save refused the log size %d and age %d: %v", bound.size, bound.age, err)
+		}
+
+		loaded, err := Load(db)
+		if err != nil {
+			t.Fatalf("Load: %v", err)
+		}
+		if loaded.LoggingFileMaxSize != bound.size || loaded.LoggingFileMaxAge != bound.age {
+			t.Fatalf("the log size and age read back as %d and %d, want %d and %d",
+				loaded.LoggingFileMaxSize, loaded.LoggingFileMaxAge, bound.size, bound.age)
+		}
+	}
+}
+
 // TestSaveRefusesASetThatWouldNotStart is why the validation moved here with
 // the settings. A stored api.port of 0 keeps the process from serving the very
 // screen the setting is changed on, so the save is refused and what is stored
@@ -412,6 +439,18 @@ func TestValidateRejects(t *testing.T) {
 		{"negative log max size", func(s *Settings) { s.LoggingFileMaxSize = -1 }, "log max size"},
 		{"negative log max backups", func(s *Settings) { s.LoggingFileMaxBackups = -1 }, "log max backups"},
 		{"negative log max age", func(s *Settings) { s.LoggingFileMaxAge = -1 }, "log max age"},
+		{"log max size over a terabyte", func(s *Settings) { s.LoggingFileMaxSize = 1048577 }, "log max size"},
+		// The first size that lumberjack turns into a negative number of bytes
+		// once it is multiplied by a megabyte, which leaves no line short
+		// enough to be written.
+		{"log max size past what a byte count holds", func(s *Settings) { s.LoggingFileMaxSize = 8796093022208 },
+			"log max size"},
+		{"log max age over ten years", func(s *Settings) { s.LoggingFileMaxAge = 3651 }, "log max age"},
+		// A number meant as "keep them for good". Multiplied by a day it no
+		// longer fits a time.Duration, and lumberjack then removes every
+		// rotated file.
+		{"log max age past what a duration holds", func(s *Settings) { s.LoggingFileMaxAge = 999999 },
+			"log max age"},
 		{"unknown language", func(s *Settings) { s.UIDefaultLanguage = "xx" }, "UI language"},
 		// The two near misses. A code is stored as it is written, so the one
 		// that is spelled in capitals and the one that carries a region the UI
@@ -1475,6 +1514,162 @@ func TestRepairIntervalsHasNothingToDoBeforeAFirstStartup(t *testing.T) {
 	}
 	if len(changes) != 0 {
 		t.Fatalf("RepairIntervals changed %+v in an empty database", changes)
+	}
+}
+
+// TestRepairLogLimitsLowersAStoredLimitAboveItsCeiling is the installation that
+// is upgraded from a version that held the log size and age to no ceiling,
+// with the size that stopped the log file and the age that removed every
+// rotated one. Both come up on their ceiling rather than stopping the startup
+// at Load.
+func TestRepairLogLimitsLowersAStoredLimitAboveItsCeiling(t *testing.T) {
+	db := newDB(t)
+
+	_, err := Load(db)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+
+	storeByHand(t, db, map[string]interface{}{
+		"logging_file_max_size": int64(8796093022208),
+		"logging_file_max_age":  999999,
+	})
+
+	_, err = Load(db)
+	if err == nil {
+		t.Fatal("Load accepted log limits above their ceiling, so there is nothing for the repair to do")
+	}
+
+	changes, err := RepairLogLimits(db)
+	if err != nil {
+		t.Fatalf("RepairLogLimits: %v", err)
+	}
+
+	want := []Change{
+		{Name: "logging.file.max_size", From: "8796093022208", To: "1048576"},
+		{Name: "logging.file.max_age", From: "999999", To: "3650"},
+	}
+	if len(changes) != len(want) {
+		t.Fatalf("RepairLogLimits reported %+v, want %+v", changes, want)
+	}
+	for i := range want {
+		if changes[i] != want[i] {
+			t.Errorf("change %d is %+v, want %+v", i, changes[i], want[i])
+		}
+	}
+
+	reloaded, err := Load(db)
+	if err != nil {
+		t.Fatalf("Load after the repair: %v", err)
+	}
+	if reloaded.LoggingFileMaxSize != MaxLogFileSizeMB || reloaded.LoggingFileMaxAge != MaxLogFileAgeDays {
+		t.Fatalf("the log size and age are %d and %d after the repair, want %d and %d",
+			reloaded.LoggingFileMaxSize, reloaded.LoggingFileMaxAge, MaxLogFileSizeMB, MaxLogFileAgeDays)
+	}
+}
+
+// TestRepairLogLimitsWritesOnlyTheLimitItLowers holds the repair to its column.
+// The size sits on its ceiling, which is allowed and stays, and an interval
+// above the hour stays for RepairIntervals rather than being written here.
+func TestRepairLogLimitsWritesOnlyTheLimitItLowers(t *testing.T) {
+	db := newDB(t)
+
+	_, err := Load(db)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+
+	storeByHand(t, db, map[string]interface{}{
+		"logging_file_max_size":   MaxLogFileSizeMB,
+		"logging_file_max_age":    MaxLogFileAgeDays + 1,
+		"monitoring_interval_sec": MaxIntervalSec + 1,
+	})
+
+	changes, err := RepairLogLimits(db)
+	if err != nil {
+		t.Fatalf("RepairLogLimits: %v", err)
+	}
+	if len(changes) != 1 || changes[0].Name != "logging.file.max_age" {
+		t.Fatalf("RepairLogLimits reported %+v, want the log age alone", changes)
+	}
+
+	stored, err := read(db)
+	if err != nil {
+		t.Fatalf("read: %v", err)
+	}
+	if stored.LoggingFileMaxSize != MaxLogFileSizeMB {
+		t.Errorf("the log size is %d, want it left at %d", stored.LoggingFileMaxSize, MaxLogFileSizeMB)
+	}
+	if stored.LoggingFileMaxAge != MaxLogFileAgeDays {
+		t.Errorf("the log age is %d, want it lowered to %d", stored.LoggingFileMaxAge, MaxLogFileAgeDays)
+	}
+	if stored.MonitoringIntervalSec != MaxIntervalSec+1 {
+		t.Errorf("the monitoring interval is %d, want %d left for the interval repair",
+			stored.MonitoringIntervalSec, MaxIntervalSec+1)
+	}
+}
+
+// TestRepairLogLimitsLeavesALimitItDidNotAllowAlone covers the value the
+// repair is not for. No version stored a negative log size, so one in the row
+// is left for Load to refuse.
+func TestRepairLogLimitsLeavesALimitItDidNotAllowAlone(t *testing.T) {
+	db := newDB(t)
+
+	_, err := Load(db)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+
+	storeByHand(t, db, map[string]interface{}{"logging_file_max_size": -1})
+
+	changes, err := RepairLogLimits(db)
+	if err != nil {
+		t.Fatalf("RepairLogLimits: %v", err)
+	}
+	if len(changes) != 0 {
+		t.Fatalf("RepairLogLimits changed %+v, want a negative log size left alone", changes)
+	}
+
+	_, err = Load(db)
+	if err == nil || !strings.Contains(err.Error(), "log max size") {
+		t.Fatalf("Load = %v, want it to refuse the negative log size", err)
+	}
+}
+
+// TestRepairLogLimitsLeavesASetThatPassesAlone covers every installation but
+// the upgraded one, and the empty database of a first startup: nothing is
+// lowered and the row is not written.
+func TestRepairLogLimitsLeavesASetThatPassesAlone(t *testing.T) {
+	db := newDB(t)
+
+	changes, err := RepairLogLimits(db)
+	if err != nil {
+		t.Fatalf("RepairLogLimits on an empty database: %v", err)
+	}
+	if len(changes) != 0 {
+		t.Fatalf("RepairLogLimits changed %+v in an empty database", changes)
+	}
+
+	stored, err := Load(db)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+
+	changes, err = RepairLogLimits(db)
+	if err != nil {
+		t.Fatalf("RepairLogLimits: %v", err)
+	}
+	if len(changes) != 0 {
+		t.Fatalf("RepairLogLimits changed %+v in a set that passes", changes)
+	}
+
+	again, err := Load(db)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if !again.UpdatedAt.Equal(stored.UpdatedAt) {
+		t.Errorf("the row was written although there was nothing to lower: %v became %v",
+			stored.UpdatedAt, again.UpdatedAt)
 	}
 }
 

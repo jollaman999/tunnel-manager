@@ -9486,12 +9486,12 @@ function loggingForm(set) {
           value: set.logging_file_path, check: checkPath },
         pathNote(set, t("settings.log-file.hint"))
       ),
-      settingsField(countField("logging_file_max_size", t("settings.log-size.label"),
-        set.logging_file_max_size), t("settings.next-start.hint")),
+      settingsField(boundCountField("logging_file_max_size", t("settings.log-size.label"),
+        set.logging_file_max_size, 1048576, t("settings.log-size.error")), t("settings.log-size.hint")),
       settingsField(countField("logging_file_max_backups", t("settings.log-backups.label"),
         set.logging_file_max_backups), t("settings.next-start.hint")),
-      settingsField(countField("logging_file_max_age", t("settings.log-age.label"),
-        set.logging_file_max_age), t("settings.next-start.hint")),
+      settingsField(boundCountField("logging_file_max_age", t("settings.log-age.label"),
+        set.logging_file_max_age, 3650, t("settings.log-age.error")), t("settings.log-age.hint")),
       {
         name: "logging_file_compress",
         label: t("settings.log-compress.label"),
@@ -9866,6 +9866,24 @@ function countField(name, label, value) {
     filter: portCharacters,
     check: checkCount
   };
+}
+
+// boundCountField is a number of the log rotation with a ceiling as well as a
+// floor. The server refuses a log size or a log age past its ceiling, so the box
+// says so before the save does.
+function boundCountField(name, label, value, ceiling, error) {
+  const field = countField(name, label, value);
+
+  field.check = function (text) {
+    const empty = checkCount(text);
+    if (empty !== "") {
+      return empty;
+    }
+
+    return Number(String(text).trim()) > ceiling ? error : "";
+  };
+
+  return field;
 }
 
 async function saveSettings(values) {

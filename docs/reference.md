@@ -1687,7 +1687,9 @@ A save is refused before it is stored when a value would not hold:
 | `security_key_file`, `logging_file_path` | Not empty, and a path under the directory the database file is in: an absolute path and one that climbs out with `..` are refused. Neither may name the database file, its `-wal`, `-shm` or `-journal`, `initial-password`, `install.lock`, `update-install.problem`, `update-check.last`, or the other one, with the case ignored. See [Where the files go](#where-the-files-go) |
 | `logging_level` | `debug`, `info`, `warn`, `error`, `dpanic`, `panic` or `fatal` |
 | `logging_format` | `json` or `console` |
-| `logging_file_max_size`, `logging_file_max_backups`, `logging_file_max_age` | Zero or more |
+| `logging_file_max_size` | 0 to 1048576 (MB). An earlier version held it to no ceiling, and one it stored above 1048576 is lowered to 1048576 at the next start, with a warning in the log that names the setting and both values. A settings import lowers one the same way and lists it in `items` |
+| `logging_file_max_backups` | Zero or more |
+| `logging_file_max_age` | 0 to 3650 (days), lowered at the next start and by a settings import the way `logging_file_max_size` is |
 | `ui_default_language` | Empty, or one of `en`, `ko`, `ja`, `zh`, `es`, `fr`, `de`, `pt-BR`, `ru`, `ar`, `hi`, `vi` and `th`, written exactly so: `EN` and `ko-KR` are refused |
 | `update_check_interval_hours` | 1 to 8760. Zero is refused rather than read as off, because a zero would be a timer rearming as fast as it can against an API that counts requests; `update_check_enabled` is what turns it off |
 | `alert_after_sec` | 10 to 86400 |
@@ -3334,11 +3336,11 @@ what the next startup runs on, and `GET /api/settings` reports the difference in
 `pending_restart` until then, so an import cannot move the port out from under
 the request that carries it. A file whose settings do not pass the rules of the
 Settings screen is refused, and nothing is stored; so is a file whose `api_port`
-is a new port a local forward opens here, with `409` as a save is. A path or an
-interval the settings import stored other than the file had it is listed in
-`items`, and a `reason` there that is an English sentence comes with
-`reason_code` and `reason_values`, the code and the values a screen says it from
-in its own language.
+is a new port a local forward opens here, with `409` as a save is. A path, an
+interval or a log size or age the settings import stored other than the file had
+it is listed in `items`, and a `reason` there that is an English sentence comes
+with `reason_code` and `reason_values`, the code and the values a screen says it
+from in its own language.
 
 A file that does not open says which of the four it is: the password is wrong,
 it is not a file this program wrote, it is damaged, or it holds the other kind.

@@ -1300,7 +1300,9 @@ Settings 页面。同样的值通过 `GET /api/settings` 和 `PUT /api/settings`
 | `security_key_file`、`logging_file_path` | 不能为空，而且要是数据库文件所在的目录底下的路径：绝对路径和用 `..` 爬出去的路径都会被拒绝。两者都不能指向数据库文件、它的 `-wal`、`-shm` 或 `-journal`、`initial-password`、`install.lock`、`update-install.problem`、`update-check.last`，或者另一个，比较时忽略大小写。见[文件放在哪里](#文件放在哪里) |
 | `logging_level` | `debug`、`info`、`warn`、`error`、`dpanic`、`panic` 或 `fatal` |
 | `logging_format` | `json` 或 `console` |
-| `logging_file_max_size`、`logging_file_max_backups`、`logging_file_max_age` | 零或更大 |
+| `logging_file_max_size` | 0 到 1048576（MB）。以前的版本没有上限，那时存下的大于 1048576 的值会在下次启动时降到 1048576，并在日志里留下一条警告，写明设置名和前后两个值。设置导入也会这样降低这类值，并列在 `items` 里 |
+| `logging_file_max_backups` | 零或更大 |
+| `logging_file_max_age` | 0 到 3650（天）。下次启动时和设置导入时会像 `logging_file_max_size` 一样被降低 |
 | `ui_default_language` | 空，或者 `en`、`ko`、`ja`、`zh`、`es`、`fr`、`de`、`pt-BR`、`ru`、`ar`、`hi`、`vi`、`th` 中的一个，一字不差：`EN` 和 `ko-KR` 都会被拒绝 |
 | `update_check_interval_hours` | 1 到 8760。0 是被拒绝而不是被当作关闭：0 会让计时器以能重新装填的速度不断发出请求，而对面是一个会计数的 API。要关闭请用 `update_check_enabled` |
 | `alert_after_sec` | 10 到 86400 |
@@ -2630,7 +2632,7 @@ Tunnel Manager 服务器的加密密钥，而这把密钥从不离开那台服�
 也不例外。保存的是下次启动使用的值，在那之前 `GET /api/settings` 会把差别报在
 `pending_restart` 里，所以一次导入不会把正在处理它的那个请求所用的端口改掉。设置不符合 Settings
 页面那些规则的文件会被拒绝，不保存任何内容；`api_port` 要改成这里某个本地转发打开的端口的文件也一样，
-和保存一样用 `409` 拒绝。设置导入没有照文件原样保存的路径和间隔会列在 `items` 里，那里英文句子形式的
+和保存一样用 `409` 拒绝。设置导入没有照文件原样保存的路径、间隔、日志大小和保留天数会列在 `items` 里，那里英文句子形式的
 `reason` 会附带 `reason_code` 与 `reason_values`，界面据此用自己的语言写出这句话。
 
 打不开的文件会说明是四种情况里的哪一种：密码错误、这不是这个程序写出来的文件、文件损坏了，或者

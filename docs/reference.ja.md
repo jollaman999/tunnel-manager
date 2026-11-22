@@ -1495,7 +1495,9 @@ Tunnel Manager サーバーが表示する言語であり、言語を選んだ�
 | `security_key_file`, `logging_file_path` | 空でなく、データベースファイルがあるディレクトリの下のパスであること。絶対パスと `..` で外へ出るパスは拒否されます。大文字と小文字を区別せず、データベースファイル、その `-wal`、`-shm`、`-journal`、`initial-password`、`install.lock`、`update-install.problem`、`update-check.last`、またはもう一方を指すこともできません。[ファイルが置かれる場所](#ファイルが置かれる場所)を参照してください |
 | `logging_level` | `debug`, `info`, `warn`, `error`, `dpanic`, `panic`, `fatal` のいずれか |
 | `logging_format` | `json` か `console` |
-| `logging_file_max_size`, `logging_file_max_backups`, `logging_file_max_age` | 0 以上 |
+| `logging_file_max_size` | 0 から 1048576 (MB)。以前のバージョンには上限がなく、そのとき 1048576 より大きく保存された値は次の起動で 1048576 に下げられ、設定の名前と前後の値が警告としてログに残る。設定のインポートも同じ値を同じように下げ、`items` に載せる |
+| `logging_file_max_backups` | 0 以上 |
+| `logging_file_max_age` | 0 から 3650 (日)。次の起動と設定のインポートで `logging_file_max_size` と同じように下げられる |
 | `ui_default_language` | 空か、`en`、`ko`、`ja`、`zh`、`es`、`fr`、`de`、`pt-BR`、`ru`、`ar`、`hi`、`vi`、`th` のどれかをそのまま書いたもの。`EN` や `ko-KR` は拒否されます |
 | `update_check_interval_hours` | 1 から 8760。0 は無効化ではなく拒否です。0 ならタイマーは張り直せる速さで要求を出し続け、相手は要求数を数える API です。止めるのは `update_check_enabled` です |
 | `alert_after_sec` | 10 から 86400 |
@@ -2981,7 +2983,7 @@ Host のアドレスと同じく、大文字小文字と IP アドレスの書�
 リクエストの途中でポートを変えてしまうことはありません。設定画面の規則を通らない設定を持つ
 ファイルは拒否し、何も保存しません。`api_port` がここでローカルフォワードの開くポートに変わる
 ファイルも、保存と同じく `409` で拒否し、何も保存しません。設定のインポートがファイルと違う値で
-保存したパスと間隔は `items` に載り、そこで英語の文である `reason` には `reason_code` と
+保存したパス、間隔、ログの大きさと保存日数は `items` に載り、そこで英語の文である `reason` には `reason_code` と
 `reason_values` が付きます。画面はこのコードと値から、その文を自分の言語で書きます。
 
 開けないファイルは、4 つのうちどれなのかを示します。パスワードが違う、このプログラムが書いた

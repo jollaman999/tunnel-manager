@@ -1349,6 +1349,26 @@ func TestTheStartupSaysNothingAboutIntervalsItDoesNotLower(t *testing.T) {
 	}
 }
 
+// TestTheStartupSaysNothingAboutLogLimitsItDoesNotLower covers every
+// installation but the upgraded one: the log size and age are within their
+// ceilings, nothing is written and nothing is logged.
+func TestTheStartupSaysNothingAboutLogLimitsItDoesNotLower(t *testing.T) {
+	db := newSettingsDB(t)
+
+	_, err := settings.Load(db)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+
+	core, logs := observer.New(zapcore.DebugLevel)
+
+	repairStoredLogLimits(db).log(zap.New(core))
+
+	if logs.Len() != 0 {
+		t.Fatalf("a startup with nothing to lower logged %v", logs.All())
+	}
+}
+
 // serveHelperDBEnv names the database file the helper below starts this
 // program on. It is an environment variable because the helper is the test
 // binary run again, and the environment is what reaches it unchanged.
@@ -1537,6 +1557,162 @@ func TestTheStartupWritesItsRepairsIntoTheLogFile(t *testing.T) {
 	if fmt.Sprint(found) != fmt.Sprint(want) {
 		t.Fatalf("the log file holds the repairs %v, want %v; the log file %s holds:\n%s\nthe console:\n%s",
 			found, want, logFile, written, run.console.String())
+	}
+}
+
+// rotatedLogTimestamp is the layout lumberjack writes into the name of a log
+// file it has rotated, in UTC, and reads back to tell how old the file is.
+const rotatedLogTimestamp = "2006-01-02T15-04-05.000"
+
+// waitForLogLine reads the log file until it holds the line the key is loaded
+// with, or the program stops, or 30 seconds go by, and hands back what the file
+// holds then.
+func waitForLogLine(run *serveRun, logFile string) []byte {
+	keyLoaded := []byte(`"log_id":"` + string(logid.EncryptionKeyLoaded) + `"`)
+
+	for try := 0; try < 300; try++ {
+		written, _ := os.ReadFile(logFile)
+		if bytes.Contains(written, keyLoaded) {
+			return written
+		}
+
+		select {
+		case err := <-run.exited:
+			run.exited <- err
+			try = 300
+		case <-time.After(100 * time.Millisecond):
+		}
+	}
+
+	written, _ := os.ReadFile(logFile)
+
+	return written
+}
+
+// TestTheStartupLowersAStoredLogAgeThatWouldRemoveEveryRotatedFile is the
+// installation that stored a number of days meant as "keep them for good".
+// lumberjack multiplies the days by a day in a time.Duration, and past 106751
+// days that product no longer fits and comes out negative, which puts the
+// cutoff it removes rotated files before in the future: the first line the
+// process wrote removed every rotated log file there was. The startup lowers
+// the number to the ceiling, says so in the log file, and the rotated files
+// stay.
+func TestTheStartupLowersAStoredLogAgeThatWouldRemoveEveryRotatedFile(t *testing.T) {
+	databaseFile := newInstallationWith(t, map[string]interface{}{
+		"logging_file_max_age": 999999,
+	}, "")
+
+	logFile := filepath.Join(filepath.Dir(databaseFile), filepath.FromSlash(settings.Defaults().LoggingFilePath))
+
+	err := os.MkdirAll(filepath.Dir(logFile), 0o700)
+	if err != nil {
+		t.Fatalf("failed to make the log directory: %v", err)
+	}
+
+	ext := filepath.Ext(logFile)
+	prefix := strings.TrimSuffix(logFile, ext)
+
+	var rotated []string
+
+	for days := 1; days <= 3; days++ {
+		name := prefix + "-" + time.Now().UTC().AddDate(0, 0, -days).Format(rotatedLogTimestamp) + ext
+
+		err = os.WriteFile(name, []byte("a line written before the upgrade\n"), 0o600)
+		if err != nil {
+			t.Fatalf("failed to write a rotated log file: %v", err)
+		}
+
+		rotated = append(rotated, name)
+	}
+
+	run := startServe(t, databaseFile)
+
+	written := waitForLogLine(run, logFile)
+
+	// lumberjack removes old files on a goroutine of its own after the first
+	// write, so the files are looked at for a while rather than once. A file it
+	// keeps it also compresses, which the settings leave on, so a rotated file
+	// is there when either form of it is.
+	var gone []string
+
+	for try := 0; try < 30 && len(gone) == 0; try++ {
+		for _, name := range rotated {
+			_, plain := os.Stat(name)
+			_, compressed := os.Stat(name + ".gz")
+			if plain != nil && compressed != nil {
+				gone = append(gone, filepath.Base(name))
+			}
+		}
+
+		time.Sleep(100 * time.Millisecond)
+	}
+
+	run.stop()
+
+	if len(gone) != 0 {
+		t.Fatalf("the rotated log files %v were removed; the log file %s holds:\n%s\nthe console:\n%s",
+			gone, logFile, written, run.console.String())
+	}
+
+	lowered := `"log_id":"settings.log_limit_lowered_to_ceiling","setting":"logging.file.max_age",` +
+		`"from":"999999","to":"3650"`
+	if !bytes.Contains(written, []byte(lowered)) {
+		t.Fatalf("the log file %s does not hold %s; it holds:\n%s\nthe console:\n%s",
+			logFile, lowered, written, run.console.String())
+	}
+
+	db, err := gorm.Open(sqlite.Open(databaseFile), &gorm.Config{Logger: gormlogger.Discard})
+	if err != nil {
+		t.Fatalf("failed to open the database: %v", err)
+	}
+
+	var stored settings.Settings
+
+	err = db.First(&stored, 1).Error
+
+	sqlDB, dbErr := db.DB()
+	if dbErr == nil {
+		_ = sqlDB.Close()
+	}
+
+	if err != nil {
+		t.Fatalf("failed to read the settings back: %v", err)
+	}
+	if stored.LoggingFileMaxAge != 3650 {
+		t.Fatalf("logging.file.max_age is stored as %d, want 3650", stored.LoggingFileMaxAge)
+	}
+}
+
+// TestTheStartupLowersAStoredLogSizeThatStopsTheLog is the installation that
+// stored a log size so large that lumberjack's megabytes times 1048576 no
+// longer fits an int64 and comes out negative. Every line was then longer than
+// the file could hold and was refused, so the log file stayed as it was and the
+// refusal reached the console alone. The startup lowers the size to the
+// ceiling and the log file is written to.
+func TestTheStartupLowersAStoredLogSizeThatStopsTheLog(t *testing.T) {
+	databaseFile := newInstallationWith(t, map[string]interface{}{
+		"logging_file_max_size": int64(8796093022208),
+	}, "")
+
+	run := startServe(t, databaseFile)
+
+	logFile := filepath.Join(filepath.Dir(databaseFile), filepath.FromSlash(settings.Defaults().LoggingFilePath))
+
+	written := waitForLogLine(run, logFile)
+
+	run.stop()
+
+	keyLoaded := []byte(`"log_id":"` + string(logid.EncryptionKeyLoaded) + `"`)
+	if !bytes.Contains(written, keyLoaded) {
+		t.Fatalf("the log file %s was not written to; it holds:\n%s\nthe console:\n%s",
+			logFile, written, run.console.String())
+	}
+
+	lowered := `"log_id":"settings.log_limit_lowered_to_ceiling","setting":"logging.file.max_size",` +
+		`"from":"8796093022208","to":"1048576"`
+	if !bytes.Contains(written, []byte(lowered)) {
+		t.Fatalf("the log file %s does not hold %s; it holds:\n%s\nthe console:\n%s",
+			logFile, lowered, written, run.console.String())
 	}
 }
 

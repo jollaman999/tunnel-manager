@@ -1193,6 +1193,48 @@ func (r storedIntervalRepair) log(logger *zap.Logger) {
 	}
 }
 
+// storedLogLimitRepair is what repairStoredLogLimits did, held until the log
+// file is open: the log settings it lowered and the write that failed.
+type storedLogLimitRepair struct {
+	changes []settings.Change
+	err     error
+}
+
+// repairStoredLogLimits lowers a stored log size or log age above its ceiling
+// to it, and hands back what it lowered. It runs before the settings are read
+// for the reason repairStoredIntervals does, and above the logger as well: the
+// logger is built from these two numbers, and built from one past its ceiling
+// it removes every rotated log file or writes no line at all. It says nothing
+// itself for the reason repairStoredPaths gives.
+//
+// A write that fails is handed back and left there, and the read that follows
+// stops the startup naming -reset-settings.
+func repairStoredLogLimits(db *gorm.DB) storedLogLimitRepair {
+	changes, err := settings.RepairLogLimits(db)
+
+	return storedLogLimitRepair{changes: changes, err: err}
+}
+
+// log writes what the repair did, in the shape storedIntervalRepair writes it.
+func (r storedLogLimitRepair) log(logger *zap.Logger) {
+	if r.err != nil {
+		logger.Warn("failed to lower a stored log setting to its ceiling",
+			logid.SettingsStoreFailed.Field(),
+			zap.Error(r.err))
+
+		return
+	}
+
+	for _, change := range r.changes {
+		logger.Warn("a stored log setting is above the ceiling it is now held to, "+
+			"and was lowered to the ceiling",
+			logid.SettingsLogLimitLoweredToCeiling.Field(),
+			zap.String("setting", change.Name),
+			zap.String("from", change.From),
+			zap.String("to", change.To))
+	}
+}
+
 // socksScopeRepair is what repairSocksBindScopes found, held until the log
 // file is open: the Hosts whose proxy it gave loopback, the Hosts whose proxy
 // it left running on the wildcard without a scope, and the write that failed.
@@ -1980,6 +2022,11 @@ func serve() {
 	// below for the same reason as well.
 	intervalRepair := repairStoredIntervals(db)
 
+	// A log size or age stored while there was no ceiling on it is lowered
+	// to the ceiling here, above the same read and above the logger that is
+	// built from it, and logged below for the same reason as well.
+	logLimitRepair := repairStoredLogLimits(db)
+
 	// A SOCKS5 proxy stored with no scope is written down as loopback here
 	// while it does not run, before the tunnel manager reads the Hosts. What
 	// was found is logged below, once the log file is open.
@@ -1992,6 +2039,7 @@ func serve() {
 	if err != nil {
 		pathRepair.log(logger)
 		intervalRepair.log(logger)
+		logLimitRepair.log(logger)
 		logger.Fatal("failed to read the settings", logid.SettingsReadFailed.Field(), zap.Error(err))
 	}
 
@@ -2002,6 +2050,7 @@ func serve() {
 	if err != nil {
 		pathRepair.log(logger)
 		intervalRepair.log(logger)
+		logLimitRepair.log(logger)
 		logger.Fatal("failed to initialize the logger", logid.LoggingInitFailed.Field(), zap.Error(err))
 	}
 
@@ -2037,6 +2086,7 @@ func serve() {
 
 	pathRepair.log(logger)
 	intervalRepair.log(logger)
+	logLimitRepair.log(logger)
 	socksRepair.log(logger)
 
 	warnIfNotPrivileged(logger)

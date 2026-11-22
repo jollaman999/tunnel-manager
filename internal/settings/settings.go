@@ -711,6 +711,31 @@ func (s *Settings) validateAlerts() error {
 // comes up, so a stored number that large would end every start.
 const MaxIntervalSec = 3600
 
+// MaxLogFileSizeMB is the ceiling of the size a log file is rotated at, in
+// megabytes. It is a terabyte, which no single log file of this program grows
+// to on purpose, so a number beyond it is a typo rather than a choice.
+//
+// lumberjack, which rotates the file, turns the size into bytes by multiplying
+// it by a megabyte in an int64. From 8796093022208 that product no longer fits
+// and comes out negative, and every line is then refused as longer than the
+// file may grow: the log file stops and the refusal reaches the console alone.
+const MaxLogFileSizeMB = 1048576
+
+// MaxLogFileAgeDays is the ceiling of the days a rotated log file is kept. It
+// is ten years. A number past it is somebody asking for the files to be kept
+// for good, and that is what zero already says: lumberjack removes nothing for
+// its age then.
+//
+// lumberjack turns the days into a time.Duration by multiplying them by a day,
+// and from 106752 that product no longer fits and comes out negative. The
+// cutoff it removes rotated files before then lies in the future, so a number
+// meant as "keep them for good" removed every rotated file on the first line
+// written.
+//
+// The number of rotated files kept carries no ceiling: lumberjack compares it
+// with the files it finds and multiplies it by nothing.
+const MaxLogFileAgeDays = 3650
+
 // Validate holds the rules the configuration file was checked against before
 // the settings moved into the database. They matter more here than they did
 // there: a file that refuses to start can be edited, while a stored setting
@@ -767,14 +792,16 @@ func (s *Settings) Validate() error {
 		return err
 	}
 
-	if s.LoggingFileMaxSize < 0 {
-		return fmt.Errorf("invalid log max size: %d", s.LoggingFileMaxSize)
+	if s.LoggingFileMaxSize < 0 || s.LoggingFileMaxSize > MaxLogFileSizeMB {
+		return fmt.Errorf("invalid log max size: %d. It is in megabytes, from 0 to %d",
+			s.LoggingFileMaxSize, MaxLogFileSizeMB)
 	}
 	if s.LoggingFileMaxBackups < 0 {
 		return fmt.Errorf("invalid log max backups: %d", s.LoggingFileMaxBackups)
 	}
-	if s.LoggingFileMaxAge < 0 {
-		return fmt.Errorf("invalid log max age: %d", s.LoggingFileMaxAge)
+	if s.LoggingFileMaxAge < 0 || s.LoggingFileMaxAge > MaxLogFileAgeDays {
+		return fmt.Errorf("invalid log max age: %d. It is in days, from 0 to %d",
+			s.LoggingFileMaxAge, MaxLogFileAgeDays)
 	}
 
 	// The empty language passes, because it is not a language that was got
@@ -1354,6 +1381,103 @@ func RepairIntervals(db *gorm.DB) ([]Change, error) {
 	err = db.Model(&Settings{}).Where("id = ?", settingsID).Updates(lowered).Error
 	if err != nil {
 		return nil, fmt.Errorf("failed to store the lowered interval settings: %w", err)
+	}
+
+	return changes, nil
+}
+
+// unboundedLogLimits are the two numbers of the log rotation that were stored
+// with no ceiling before MaxLogFileSizeMB and MaxLogFileAgeDays held them to
+// one, each with its ceiling.
+var unboundedLogLimits = []struct {
+	name    string
+	column  string
+	ceiling int
+	field   func(*Settings) *int
+}{
+	{
+		name:    "logging.file.max_size",
+		column:  "logging_file_max_size",
+		ceiling: MaxLogFileSizeMB,
+		field:   func(s *Settings) *int { return &s.LoggingFileMaxSize },
+	},
+	{
+		name:    "logging.file.max_age",
+		column:  "logging_file_max_age",
+		ceiling: MaxLogFileAgeDays,
+		field:   func(s *Settings) *int { return &s.LoggingFileMaxAge },
+	},
+}
+
+// LowerLogLimits puts a log size above MaxLogFileSizeMB or a log age above
+// MaxLogFileAgeDays down to its ceiling, and reports each one it lowered as a
+// Change from the value it held to the ceiling.
+//
+// The ceiling is what it lands on for the reason LowerIntervals gives: a large
+// number asked for a large bound, and the ceiling is the nearest the rule
+// allows to it. A negative number is left alone, since no version ever stored
+// one, and it stays for Validate to refuse.
+func LowerLogLimits(s *Settings) []Change {
+	changes, _ := lowerLogLimits(s)
+
+	return changes
+}
+
+// lowerLogLimits is LowerLogLimits that also hands back the columns it changed,
+// for RepairLogLimits to write and nothing else.
+func lowerLogLimits(s *Settings) ([]Change, map[string]interface{}) {
+	var changes []Change
+
+	lowered := map[string]interface{}{}
+
+	for _, limit := range unboundedLogLimits {
+		field := limit.field(s)
+		if *field <= limit.ceiling {
+			continue
+		}
+
+		changes = append(changes, Change{
+			Name: limit.name,
+			From: strconv.Itoa(*field),
+			To:   strconv.Itoa(limit.ceiling),
+		})
+		lowered[limit.column] = limit.ceiling
+		*field = limit.ceiling
+	}
+
+	return changes, lowered
+}
+
+// RepairLogLimits lowers a stored log size or log age above its ceiling to it,
+// and reports what it changed so the caller can log it. It is run by the
+// startup before the settings are read, for the reason RepairIntervals is: the
+// ceiling is newer than the installations it applies to, and a number stored
+// while there was none is one the server used to start on.
+//
+// It is a function of its own rather than a part of RepairIntervals because the
+// line the startup writes for it says something else: an interval is lowered
+// to the hour, while these are lowered to a size and a number of days.
+//
+// Only the columns that were lowered are written, so a row that is refused for
+// some other reason is left for Load to report.
+func RepairLogLimits(db *gorm.DB) ([]Change, error) {
+	stored, err := read(db)
+	if err != nil {
+		return nil, err
+	}
+
+	if stored == nil {
+		return nil, nil
+	}
+
+	changes, lowered := lowerLogLimits(stored)
+	if len(lowered) == 0 {
+		return nil, nil
+	}
+
+	err = db.Model(&Settings{}).Where("id = ?", settingsID).Updates(lowered).Error
+	if err != nil {
+		return nil, fmt.Errorf("failed to store the lowered log settings: %w", err)
 	}
 
 	return changes, nil

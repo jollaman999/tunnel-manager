@@ -3630,6 +3630,78 @@ func TestAnImportedIntervalOfZeroIsRefused(t *testing.T) {
 	}
 }
 
+// TestALogLimitAboveItsCeilingIsImportedAsTheCeiling is a file from a version
+// that held the log size and the days a rotated log file is kept to no
+// ceiling. The installation it came from ran on those numbers, and the file is
+// sealed, so it cannot be edited down; refused, it would move nothing. The
+// startup lowers such a stored number to its ceiling, and the import does the
+// same and says so in the answer and the log.
+func TestALogLimitAboveItsCeilingIsImportedAsTheCeiling(t *testing.T) {
+	source := newTransferInstall(t)
+	target := newTransferInstall(t)
+
+	stored, err := settings.Load(source.db)
+	if err != nil {
+		t.Fatalf("failed to read the settings: %v", err)
+	}
+
+	// Built rather than exported, since this installation cannot store them.
+	content := settingsOf(stored)
+	content.LoggingFileMaxSize = 8796093022208
+	content.LoggingFileMaxAge = 999999
+	content.LoggingLevel = "debug"
+
+	file, err := source.handler.seal(transferKindSettings, content, testExportPassword, time.Now())
+	if err != nil {
+		t.Fatalf("failed to seal a file: %v", err)
+	}
+
+	request, err := json.Marshal(importRequest{Password: testExportPassword, File: file})
+	if err != nil {
+		t.Fatalf("failed to write the import request: %v", err)
+	}
+
+	rec := target.call(t, target.handler.ImportSettings, string(request))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("the import answered %d, want %d: %s", rec.Code, http.StatusOK, rec.Body.String())
+	}
+
+	after, err := settings.Load(target.db)
+	if err != nil {
+		t.Fatalf("failed to read the settings: %v", err)
+	}
+	if after.LoggingFileMaxSize != settings.MaxLogFileSizeMB || after.LoggingFileMaxAge != settings.MaxLogFileAgeDays {
+		t.Errorf("the log size and age were stored as %d and %d, want %d and %d",
+			after.LoggingFileMaxSize, after.LoggingFileMaxAge, settings.MaxLogFileSizeMB, settings.MaxLogFileAgeDays)
+	}
+	if after.LoggingLevel != "debug" {
+		t.Errorf("logging.level = %q, want the debug the file names", after.LoggingLevel)
+	}
+
+	checkNamedItems(t, decodeTransfer(t, rec).Data, []namedItem{
+		{
+			kind: "setting", name: "logging.file.max_size", action: transferSkipped,
+			reason: "the file carries 8796093022208, which is above the 1048576 this setting " +
+				"is held to, so 1048576 was stored instead",
+			reasonCode:   textImportReasonLogLimitOverCeiling,
+			reasonValues: textArgs{"carried": "8796093022208", "stored": "1048576"},
+		},
+		{
+			kind: "setting", name: "logging.file.max_age", action: transferSkipped,
+			reason: "the file carries 999999, which is above the 3650 this setting " +
+				"is held to, so 3650 was stored instead",
+			reasonCode:   textImportReasonLogLimitOverCeiling,
+			reasonValues: textArgs{"carried": "999999", "stored": "3650"},
+		},
+	})
+
+	lowered := target.logs.FilterField(zap.String(logid.FieldKey,
+		string(logid.SettingsLogLimitLoweredToCeiling)))
+	if lowered.Len() != 2 {
+		t.Errorf("the log holds %d lines about a lowered log setting, want 2", lowered.Len())
+	}
+}
+
 // TestTheAllowedSourcesOfALocalForwardCrossWithIt is the list on the round
 // trip: the export writes it, the import stores it, and a file from before the
 // list, which carries no field, stores every forward with an empty list, which

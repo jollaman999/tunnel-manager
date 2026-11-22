@@ -265,6 +265,53 @@ func TestSaveRefusesAnIntervalPastTheHour(t *testing.T) {
 	}
 }
 
+// TestSaveRefusesALogLimitPastItsCeiling is the save that used to be taken: a
+// log age meant as "keep them for good" removed every rotated log file on the
+// next start, and a log size that large stopped the log file. Each is refused
+// on its own, by name, with the code a refused save carries, and nothing is
+// stored.
+func TestSaveRefusesALogLimitPastItsCeiling(t *testing.T) {
+	cases := []struct {
+		body string
+		want string
+	}{
+		{`{"logging_file_max_size":1048577}`, "log max size"},
+		{`{"logging_file_max_size":8796093022208}`, "log max size"},
+		{`{"logging_file_max_age":3651}`, "log max age"},
+		{`{"logging_file_max_age":999999}`, "log max age"},
+	}
+
+	for _, c := range cases {
+		t.Run(c.body, func(t *testing.T) {
+			db := newSettingsDB(t)
+			h, _, _, _ := newSettingsHandler(t, db)
+
+			rec := settingsRequest(t, h, c.body)
+
+			if rec.Code != http.StatusBadRequest {
+				t.Fatalf("status = %d, want %d, body: %s", rec.Code, http.StatusBadRequest, rec.Body.String())
+			}
+			if !strings.Contains(rec.Body.String(), c.want) {
+				t.Errorf("the answer does not name the %s: %s", c.want, rec.Body.String())
+			}
+			if code := errorCodeOf(t, rec); code != errSettingsRefused {
+				t.Errorf("error_code = %q, want %q", code, errSettingsRefused)
+			}
+
+			stored, err := settings.Load(db)
+			if err != nil {
+				t.Fatalf("failed to read the settings: %v", err)
+			}
+			defaults := settings.Defaults()
+			if stored.LoggingFileMaxSize != defaults.LoggingFileMaxSize ||
+				stored.LoggingFileMaxAge != defaults.LoggingFileMaxAge {
+				t.Fatalf("the log size and age are %d and %d after a refused save, want the defaults",
+					stored.LoggingFileMaxSize, stored.LoggingFileMaxAge)
+			}
+		})
+	}
+}
+
 // TestSaveRefusesALevelTheLoggerDoesNotKnow covers the other half of the rules:
 // a level outside the list is refused rather than reaching the logger.
 func TestSaveRefusesALevelTheLoggerDoesNotKnow(t *testing.T) {

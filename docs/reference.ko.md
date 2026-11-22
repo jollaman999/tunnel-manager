@@ -1451,7 +1451,9 @@ Tunnel Manager 서버가 보여주는 언어이고, 언어를 고른 사람은 �
 | `security_key_file`, `logging_file_path` | 비어 있으면 안 되고, 데이터베이스 파일이 있는 디렉터리 아래의 경로여야 함. 절대 경로와 `..` 로 밖으로 나가는 경로는 거부됨. 대소문자를 무시하고, 데이터베이스 파일, 그 `-wal`, `-shm`, `-journal`, `initial-password`, `install.lock`, `update-install.problem`, `update-check.last`, 또는 다른 쪽을 가리킬 수 없음. [파일이 어디에 생기나](#파일이-어디에-생기나) 참조 |
 | `logging_level` | `debug`, `info`, `warn`, `error`, `dpanic`, `panic`, `fatal` 중 하나 |
 | `logging_format` | `json` 또는 `console` |
-| `logging_file_max_size`, `logging_file_max_backups`, `logging_file_max_age` | 0 이상 |
+| `logging_file_max_size` | 0 에서 1048576 (MB). 이전 버전은 상한이 없었고, 그때 1048576 보다 크게 저장된 값은 다음 기동 때 1048576 으로 낮춰지며 설정 이름과 이전 값, 새 값이 경고로 로그에 남음. 설정 가져오기도 같은 값을 같은 식으로 낮추고 `items` 에 적음 |
+| `logging_file_max_backups` | 0 이상 |
+| `logging_file_max_age` | 0 에서 3650 (일). 다음 기동 때와 설정 가져오기에서 `logging_file_max_size` 와 같은 식으로 낮춰짐 |
 | `ui_default_language` | 비어 있거나, `en`, `ko`, `ja`, `zh`, `es`, `fr`, `de`, `pt-BR`, `ru`, `ar`, `hi`, `vi`, `th` 중 하나를 그대로 적은 것. `EN` 이나 `ko-KR` 은 거부됨 |
 | `update_check_interval_hours` | 1 에서 8760. 0 은 끔이 아니라 거부입니다. 0 이면 타이머가 다시 걸리는 속도만큼 요청을 보내게 되고 상대는 요청 수를 세는 API 입니다. 끄는 것은 `update_check_enabled` 입니다 |
 | `alert_after_sec` | 10 에서 86400 |
@@ -2897,7 +2899,7 @@ Host 의 모든 할당이 `loopback` 이 되고 그 밖의 답은 전부 와일�
 중인 요청 밑에서 포트를 바꿔 버리는 일이 없습니다. 설정 화면의 검사를 통과하지 못하는 파일은
 거부되고 아무것도 저장되지 않습니다. `api_port` 가 여기서 로컬 포워딩이 여는 포트로 바뀌는
 파일도 저장과 같이 `409` 로 거부되고 아무것도 저장되지 않습니다. 설정 가져오기가 파일과 다르게
-저장한 경로와 주기는 `items` 에 실리고, 거기서 영어 문장인 `reason` 에는 `reason_code` 와
+저장한 경로, 주기, 로그 크기와 보관 기간은 `items` 에 실리고, 거기서 영어 문장인 `reason` 에는 `reason_code` 와
 `reason_values` 가 함께 실립니다. 화면은 이 코드와 값으로 그 문장을 자기 언어로 씁니다.
 
 열리지 않는 파일은 넷 중 무엇인지 구분해서 응답합니다. 비밀번호가 틀렸는지, 이 프로그램이 쓴
