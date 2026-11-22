@@ -1322,6 +1322,50 @@ A session lives for 12 hours after the last request that used it, and every
 request pushes that deadline out. Sessions are kept in memory, so a restart ends
 all of them and you log in again.
 
+### Failed sign-ins
+
+Wrong passwords are counted twice, against the address they came from and
+against the account:
+
+- **Five wrong passwords from one address in 15 minutes hold that address for 5
+  minutes.** An IPv6 address is counted by the /64 it is in, because every
+  address of a /64 is the same sender's to choose. Behind a proxy the address is
+  the one [`-trust-proxy-headers`](#behind-a-reverse-proxy) picks.
+- **Thirty wrong passwords against the account in 15 minutes, from wherever
+  they come, hold the account for 5 minutes.** This is what stops guessing that
+  is spread over many addresses.
+
+A held attempt is answered `429` with a `Retry-After` header, and its password is
+not checked at all, the right one included. A login that gets the password right
+clears the counters it was counted on. The calls that ask for the account
+password again, the uninstall and the account change among them, count on the
+same counters and are held the same way. The counters are kept in memory, so a
+restart clears them.
+
+**A browser that has signed in before is not held out by the account counter.**
+Anyone who can reach the port can hold the account with thirty wrong passwords,
+so every login that gets the password right also sets a device cookie,
+`__Host-tm_device` over HTTPS and `tm_device` over plain HTTP. An attempt that
+carries a valid one is counted against its address and against that cookie
+instead of against the account, so a hold on the account does not reach it. The
+address limit still applies to it.
+
+- The cookie is signed with the password hash of the account and holds for 30
+  days from the login that set it. Every login replaces it, so a browser you
+  sign in from at least once a month keeps one. It survives a restart.
+- **A device cookie that carries five wrong passwords in 15 minutes is not
+  trusted for 5 minutes.** Until then its attempts are counted like any other
+  and meet a hold on the account. A stolen cookie is therefore no way to guess
+  faster than without one.
+- **Changing the username or the password, or finishing the setup, ends every
+  device cookie set before it.** The browser that made the change is given a
+  new one.
+- Logging out leaves the cookie. It opens nothing on its own; it only says that
+  this browser got the password right before.
+
+A script that keeps its cookie jar from one run to the next is treated the same
+way.
+
 ### Changing the username and the password
 
 The Settings screen changes both, and `PUT /api/account` is the same thing from a
@@ -1346,7 +1390,9 @@ that changed them is gone, and so is every token, the ones that never run out
 included. The session that made the change keeps working, including the CSRF
 token it already holds, so the screen that asked for it can show what happened.
 The answer says how many other clients were signed out in `sessions_ended` and
-how many tokens were revoked in `tokens_revoked`.
+how many tokens were revoked in `tokens_revoked`. Every device cookie set before
+the change stops counting as well, and the browser that made the change is given
+a new one; see [Failed sign-ins](#failed-sign-ins).
 
 **A script that uses a token stops working when the credentials change.** Its next
 request is answered `401`, the way a revoked token is, until it is given a token
@@ -1987,7 +2033,9 @@ needs a CSRF token as well.**
    browser only takes that name from a cookie marked `Secure`, so a machine
    with HTTPS turned off is served the names without it. A cookie jar keeps
    whichever pair arrived, so a script that uses one does not have to know
-   which.
+   which. The login sets a third cookie, `__Host-tm_device` or `tm_device`,
+   which lets the next login past a hold on the account: see
+   [Failed sign-ins](#failed-sign-ins).
 2. Read `data.csrf_token` out of the answer and send it as an `X-CSRF-Token`
    header on **every** `POST`, `PUT` and `DELETE`.
 3. `GET` needs no token. Nothing it reaches changes anything.

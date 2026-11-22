@@ -364,6 +364,13 @@ func (h *AuthHandler) ChangeAccount(c *echo.Context) error {
 		zap.Int("sessions_ended", ended),
 		zap.Int("tokens_revoked", tokensRevoked))
 
+	// The device cookies go the way the sessions went, and with nothing to
+	// clear: each was signed under the credentials that were just replaced, so
+	// none of them holds any more (deviceCookieSignature). This browser is the
+	// exception for the reason its session is, and it is given one under the
+	// credentials it just chose, which Updates has written into current.
+	h.handOutDevice(c, &current)
+
 	return c.JSON(http.StatusOK, models.Response{
 		Success: true,
 		Data: accountChanged{

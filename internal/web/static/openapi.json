@@ -1667,7 +1667,7 @@
         },
         "/login": {
             "post": {
-                "description": "Takes username and password, sets the session and CSRF cookies, and answers with setup_required and csrf_token.\nOn the very first sign in the username is empty and the password is the one in the initial-password file.",
+                "description": "Takes username and password, sets the session and CSRF cookies, and answers with setup_required and csrf_token.\nA login that gets the password right also sets the device cookie (tm_device), which keeps a hold on the account from refusing this browser for 30 days.\nOn the very first sign in the username is empty and the password is the one in the initial-password file.",
                 "consumes": [
                     "application/json"
                 ],

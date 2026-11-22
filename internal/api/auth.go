@@ -86,6 +86,11 @@ const sessionTokenBytes = 32
 // the bare one, and cookieName says what it goes out as.
 const csrfCookieName = "tm_csrf"
 
+// deviceCookieName is the cookie a browser that has signed in is known by again.
+// loginlimit.go says what it is for and deviceCookieValue what is in it. Like
+// the other two it is the bare name, and cookieName says what it goes out as.
+const deviceCookieName = "tm_device"
+
 // csrfHeaderName is the header the token is sent back in. A header is what is
 // checked rather than a form field, because a page on another origin cannot put
 // one on a request to this one without a preflight, and no preflight is ever
@@ -521,6 +526,29 @@ func (h *AuthHandler) csrfCookie(c *echo.Context, token string, maxAge int) *htt
 	}
 }
 
+// deviceCookie returns the cookie the device cookie of a browser is handed out
+// in. It is the session cookie in every way but one: it is kept across a
+// restart of the browser for maxAge seconds rather than dropped with it,
+// because a browser that signed in last week is the one it is there to tell
+// apart, and the session cookie is gone by then.
+//
+// The logout leaves it where it is. Signing out ends what the session opens,
+// and the device cookie opens nothing: it only says that this browser has got
+// the password right before.
+func (h *AuthHandler) deviceCookie(c *echo.Context, value string, maxAge int) *http.Cookie {
+	secure := h.cookieIsSecure(c)
+
+	return &http.Cookie{
+		Name:     cookieName(deviceCookieName, secure),
+		Value:    value,
+		Path:     "/",
+		MaxAge:   maxAge,
+		HttpOnly: true,
+		SameSite: http.SameSiteLaxMode,
+		Secure:   secure,
+	}
+}
+
 // readUser returns the account row. The table holds one row, so the login reads
 // it without an identifier; a request behind a session names the account its
 // session was made for.
@@ -539,6 +567,7 @@ func (h *AuthHandler) readUser(conds ...interface{}) (*models.User, error) {
 //
 // @Summary      Log in
 // @Description  Takes username and password, sets the session and CSRF cookies, and answers with setup_required and csrf_token.
+// @Description  A login that gets the password right also sets the device cookie (tm_device), which keeps a hold on the account from refusing this browser for 30 days.
 // @Description  On the very first sign in the username is empty and the password is the one in the initial-password file.
 // @Tags         account
 // @Accept   json
@@ -568,10 +597,12 @@ func (h *AuthHandler) Login(c *echo.Context) error {
 	// as much as the account is. The account row is read first because the
 	// counter of the account is named by the row, and that read is one indexed
 	// row out of a table that holds one, which next to a bcrypt compare is
-	// nothing.
+	// nothing. The device cookie is checked against the same row, and it is an
+	// HMAC, which is nothing next to bcrypt either.
 	address := h.loginAddress(c)
+	device := deviceOf(cookieValue(c, deviceCookieName), user, h.logins.now())
 
-	attempt, wait, held := h.logins.begin(address, user.ID)
+	attempt, wait, held := h.logins.begin(address, user.ID, device)
 	if held {
 		return h.refuseHeldLogin(c, wait)
 	}
@@ -606,6 +637,9 @@ func (h *AuthHandler) Login(c *echo.Context) error {
 
 	c.SetCookie(h.sessionCookie(c, token, 0))
 	c.SetCookie(h.csrfCookie(c, csrfToken, 0))
+	// A new one on every login, whatever the browser already holds, so that its
+	// thirty days are counted from the last time the password was right.
+	h.handOutDevice(c, user)
 
 	return c.JSON(http.StatusOK, models.Response{
 		Success: true,
@@ -778,6 +812,12 @@ func (h *AuthHandler) Setup(c *echo.Context) error {
 
 	h.sessions.DeleteAllExcept(token)
 	h.removeInitialPasswordFile()
+
+	// The cookie the login handed out was signed under the initial password,
+	// which stopped holding at the commit. The browser that did the setup is
+	// the one browser known to be the operator's, so it is given one under the
+	// credentials it just chose.
+	h.handOutDevice(c, &user)
 
 	return c.JSON(http.StatusOK, models.Response{Success: true})
 }
