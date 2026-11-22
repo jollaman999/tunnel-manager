@@ -652,6 +652,59 @@ func TestWhyAnInstallEndedIsAnsweredUntilTheNextStarts(t *testing.T) {
 	}
 }
 
+// TestWhyAnInstallBeforeThisProcessEndedGivesWayToOneBegunHere is the reason
+// read off the disk at startup, which may arrive once the lock of the install
+// that left it is let go. An install begun from this process before then is the
+// last one, and its own end is what the screen says.
+func TestWhyAnInstallBeforeThisProcessEndedGivesWayToOneBegunHere(t *testing.T) {
+	call := &updateCall{
+		latest:      install.Latest{Tag: "v3.7.5", Newer: true, Comparable: true},
+		installable: true,
+	}
+
+	read := func(h *UpdateHandler) string {
+		t.Helper()
+
+		c, rec := updateRequest(t, "/api/update", "", true)
+
+		err := h.GetUpdate(c)
+		if err != nil {
+			t.Fatalf("GetUpdate returned an error: %v", err)
+		}
+
+		return decodeUpdate(t, rec).InstallProblem
+	}
+
+	before := "failed to register the service: systemctl daemon-reload: exit status 1"
+
+	h, _ := call.handler(t, nil)
+	h.InstallEndedBefore(before)
+
+	if got := read(h); got != before {
+		t.Errorf("install_problem = %q at startup, want %q", got, before)
+	}
+
+	h, _ = call.handler(t, nil)
+
+	err := h.StartInstall()
+	if err != nil {
+		t.Fatalf("the loop failed to start an install: %v", err)
+	}
+
+	h.InstallEndedBefore(before)
+
+	if got := read(h); got != "" {
+		t.Errorf("install_problem = %q while an install begun here runs, want none", got)
+	}
+
+	h.InstallEnded("")
+	h.InstallEndedBefore(before)
+
+	if got := read(h); got != "" {
+		t.Errorf("install_problem = %q once an install begun here ended with none, want none", got)
+	}
+}
+
 // TestAStartThatPanickedMakesWayForTheNext is a start that never returned. The
 // panic is the server's to answer, but the flag it left up would refuse every
 // install after it, the press and the loop alike, until the service restarted.

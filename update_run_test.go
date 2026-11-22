@@ -799,6 +799,130 @@ func TestTheWaitForAnInstallThatNeverTookTheLockEnds(t *testing.T) {
 	}
 }
 
+// startedUpdateHandler is the update handler as main makes it, with the reason
+// an install left in dir answered the way main answers it at startup, and what
+// reads install_problem off GET /api/update.
+func startedUpdateHandler(t *testing.T, dir string) func() (string, string) {
+	t.Helper()
+
+	handler := api.NewUpdateHandler(zap.NewNop(), nil, "3.0.0", true,
+		func(context.Context, string) (install.Latest, error) {
+			return install.Latest{}, nil
+		},
+		func() error {
+			return nil
+		})
+
+	answerInstallProblemLeft(zap.NewNop(), dir, handler.InstallEndedBefore)
+
+	return func() (string, string) {
+		t.Helper()
+
+		rec := httptest.NewRecorder()
+		c := echo.New().NewContext(httptest.NewRequest(http.MethodGet, "/api/update", nil), rec)
+
+		err := handler.GetUpdate(c)
+		if err != nil {
+			t.Fatalf("GetUpdate returned an error: %v", err)
+		}
+
+		var resp struct {
+			Data map[string]any `json:"data"`
+		}
+
+		err = json.Unmarshal(rec.Body.Bytes(), &resp)
+		if err != nil {
+			t.Fatalf("failed to read the answer: %v, body: %s", err, rec.Body.String())
+		}
+
+		problem, _ := resp.Data["install_problem"].(string)
+
+		return problem, rec.Body.String()
+	}
+}
+
+// TestWhyAnUpdateFailedAfterTheStopIsAnsweredByTheProcessItStarted is an
+// install that failed after it had stopped the service. It starts the service
+// again on its way out, so the process that started it is gone, and the reason
+// it left was a file nobody read: the Update tab said nothing.
+func TestWhyAnUpdateFailedAfterTheStopIsAnsweredByTheProcessItStarted(t *testing.T) {
+	why := "failed to register the service: systemctl daemon-reload: exit status 1"
+
+	t.Run("the reason is there at startup", func(t *testing.T) {
+		dir := t.TempDir()
+
+		err := os.WriteFile(installProblemPath(dir), []byte(why+"\n"), 0o600)
+		if err != nil {
+			t.Fatalf("failed to leave the reason: %v", err)
+		}
+
+		read := startedUpdateHandler(t, dir)
+
+		if got, _ := read(); got != why {
+			t.Errorf("install_problem = %q, want %q", got, why)
+		}
+
+		_, err = os.Stat(installProblemPath(dir))
+		if err != nil {
+			t.Errorf("the reason was taken away once read: %v. It goes when the next install starts", err)
+		}
+	})
+
+	// The install starts the service before it writes the reason, and writes it
+	// before it lets the lock go. A process that came up in between and read
+	// the directory once would find nothing and say nothing for good.
+	t.Run("the install still holds the lock at startup", func(t *testing.T) {
+		poll := installLockPoll
+		installLockPoll = 5 * time.Millisecond
+
+		t.Cleanup(func() {
+			installLockPoll = poll
+		})
+
+		dir := t.TempDir()
+		holdInstallLockFor(t, dir)
+
+		read := startedUpdateHandler(t, dir)
+
+		if got, _ := read(); got != "" {
+			t.Fatalf("install_problem = %q while the install holds the lock and has left nothing, want none", got)
+		}
+
+		time.Sleep(50 * time.Millisecond)
+
+		err := os.WriteFile(installProblemPath(dir), []byte(why), 0o600)
+		if err != nil {
+			t.Fatalf("failed to leave the reason: %v", err)
+		}
+
+		err = os.Remove(install.InstallLockFile(dir))
+		if err != nil {
+			t.Fatalf("failed to let the lock go: %v", err)
+		}
+
+		deadline := time.Now().Add(5 * time.Second)
+
+		got, _ := read()
+		for got != why && time.Now().Before(deadline) {
+			time.Sleep(5 * time.Millisecond)
+
+			got, _ = read()
+		}
+
+		if got != why {
+			t.Errorf("install_problem = %q once the install let the lock go, want %q", got, why)
+		}
+	})
+
+	t.Run("no reason was left", func(t *testing.T) {
+		read := startedUpdateHandler(t, t.TempDir())
+
+		if got, body := read(); got != "" || strings.Contains(body, "install_problem") {
+			t.Errorf("install_problem = %q where no install left a reason, want the field left out: %s", got, body)
+		}
+	})
+}
+
 // TestTheWaitForAnInstallGivesUpOnALockThatIsNeverLetGo is a lock that reads
 // as held for good: it holds something other than a process id, or names an id
 // the system has handed to another process since. Waited on without an end,

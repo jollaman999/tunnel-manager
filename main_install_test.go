@@ -247,6 +247,42 @@ func TestAnUpdateThatFailedLeavesWhyForTheUpdateScreen(t *testing.T) {
 	}
 }
 
+// TestAnInstallTakesAwayTheReasonAnUpdateBeforeItLeft is a reason an update
+// left and an install after it, typed or not. The service that install starts
+// answers whatever reason it finds at startup, and the one of the update before
+// would be shown as the install's.
+func TestAnInstallTakesAwayTheReasonAnUpdateBeforeItLeft(t *testing.T) {
+	for _, fromUpdate := range []bool{false, true} {
+		plan := install.Defaults().WithDatabase(filepath.Join(t.TempDir(), "tm.db"))
+
+		err := os.WriteFile(installProblemPath(plan.DataDir), []byte("the update before failed"), 0o600)
+		if err != nil {
+			t.Fatalf("failed to leave the reason of the update before: %v", err)
+		}
+
+		steps := installSteps{
+			fetch: func(context.Context, string) (*install.Fetched, error) {
+				return &install.Fetched{Path: "/usr/local/bin/tunnel-manager", Source: install.SourceRelease,
+					Tag: "v3.7.5", Verified: true}, nil
+			},
+			put: func(install.Plan, string, string, io.Writer) (install.Outcome, error) {
+				return install.Outcome{}, nil
+			},
+		}
+
+		err = installRelease(plan, steps, fromUpdate, io.Discard)
+		if err != nil {
+			t.Fatalf("the install failed: %v", err)
+		}
+
+		said, readErr := os.ReadFile(installProblemPath(plan.DataDir))
+		if !errors.Is(readErr, fs.ErrNotExist) {
+			t.Errorf("from the update = %v: the install went through and %q (read: %v) is still there",
+				fromUpdate, said, readErr)
+		}
+	}
+}
+
 // TestAnUpdateRefusedItsPrivilegeLeavesWhy is the one failure that comes
 // before installRelease. It is followed only where this test cannot install,
 // since where it can the same call would put a service on the machine.

@@ -860,7 +860,7 @@ in.
     tunnel-manager.db-shm      the shared memory file SQLite keeps beside it
     initial-password           written on the first startup, deleted by the setup
     install.lock               held by an -install while it runs, removed when it ends
-    update-install.problem     why the last update the service started failed, removed when the next starts
+    update-install.problem     why the last update the service started failed, removed when the next install starts
     keys/tunnel-manager.key    the key the SSH passwords are encrypted with
     logs/tunnel-manager.log    the log file and the rotated files beside it
 ```
@@ -2033,6 +2033,12 @@ page that pressed stops waiting as soon as the reason is there and draws the tab
 with it, rather than waiting out the three minutes for a version that is not
 going to change. An install that went through restarts the service, and the
 process that answers after it has started no install, so the field is not there.
+An install that fails after it has stopped the service starts the service again
+on its way out, and the process that started it is gone by then. The process
+that comes up reads the reason at startup instead, once the install has let
+`install.lock` go. The restart ends every session, so the page that pressed
+waits out the three minutes and loads again, and the reason is on the Update tab
+once you log in again.
 
 Where this program is running as something somebody started rather than as a
 registered service, the press is not offered at all: `-install` would register

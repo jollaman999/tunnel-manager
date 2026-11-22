@@ -659,7 +659,7 @@ MCowBQYDK2VwAyEA57QsNFJidOS2ncMcnBU4nAiWvuw+M1+M9UKsIjdsvLw=
     tunnel-manager.db-shm      SQLite 在旁边留的共享内存文件
     initial-password           第一次启动时写出，初始化完成后删除
     install.lock               -install 运行期间持有，结束时删除
-    update-install.problem     服务启动的上一次更新失败的原因，下一次开始时删除
+    update-install.problem     服务启动的上一次更新失败的原因，下一次安装开始时删除
     keys/tunnel-manager.key    用来加密 SSH 密码的密钥
     logs/tunnel-manager.log    日志文件，轮转后的文件也在旁边
 ```
@@ -1558,6 +1558,9 @@ fatal  failed to read the settings  {"error": "the stored settings are refused: 
 `GET /api/update` 在下一次安装开始之前都会以 `install_problem` 答出它；没有可说的时候这个字段不出现。
 按下安装的页面一拿到原因就停止等待，并在标签页上显示这个原因，而不是为一个不会改变的版本等满三分钟。
 安装生效时服务会重启，之后应答的进程没有启动过安装，所以这个字段不会出现。
+在停止服务之后才失败的安装会在退出时重新启动服务，而启动安装的那个进程那时已经不在了。
+改由新启动的进程在安装放开 `install.lock` 之后、于启动时读取原因。重启会结束所有会话，
+所以按下安装的页面会等满三分钟后重新加载，重新登录后更新标签页上就会显示原因。
 
 如果本程序是以某人直接启动的方式运行，而不是注册的服务，按钮根本不会出现：`-install` 会去注册一个
 服务，而此后没有东西会再次启动该进程。页面会在按钮的位置说明这一点，`POST /api/update/install`

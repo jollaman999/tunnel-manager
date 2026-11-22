@@ -4987,7 +4987,7 @@
                     "type": "boolean"
                 },
                 "install_problem": {
-                    "description": "InstallProblem is why the last install started from this process ended\nwithout going through, left out where none has, where it went through, or\nwhere another has been started since. An install that went through ends\nwith a restart, and the process that answers after it has never started\none.",
+                    "description": "InstallProblem is why the last install started from the Update screen or\nthe loop ended without going through, left out where none has, where it\nwent through, or where another has been started since. It is the one this\nprocess started, or else the one a process before it started, as that\ninstall left it in the data directory: one that failed after it had\nstopped the service has only the process it started again to answer it.\nAn install that went through ends with a restart and leaves no reason,\nso the process that answers after it has none to give.",
                     "type": "string"
                 },
                 "installable": {

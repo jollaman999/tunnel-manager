@@ -12,6 +12,7 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"io/fs"
 	"log"
 	"net"
 	"net/http"
@@ -1523,6 +1524,17 @@ func installRelease(plan install.Plan, steps installSteps, fromUpdate bool, out 
 		return err
 	}
 
+	// A reason left by an update before this install is read by the service
+	// this install starts, which would show it as the last install's. An
+	// install typed at a terminal is the last one as much as an update is, so
+	// it goes whoever started this one.
+	removeErr := os.Remove(installProblemPath(plan.DataDir))
+	if removeErr != nil && !errors.Is(removeErr, fs.ErrNotExist) {
+		fmt.Fprintf(out, "failed to remove %s, the reason an update before this install left for the "+
+			"Update screen, which will show it until the next update: %v\n",
+			installProblemPath(plan.DataDir), removeErr)
+	}
+
 	installed := false
 
 	defer func() {
@@ -1564,7 +1576,9 @@ func installRelease(plan install.Plan, steps installSteps, fromUpdate bool, out 
 
 // leaveInstallProblem writes why an install this service started failed into
 // installProblemPath, for the service to read once the install is over and show
-// on the Update screen.
+// on the Update screen. Where the install failed after it had stopped the
+// service, the process that reads it is the one the install started again
+// (answerInstallProblemLeft).
 //
 // The report of the install says the same and more, but it is in the journal or
 // in a file beside the log, and the screen that started the install reads
@@ -2325,6 +2339,11 @@ func serve() {
 		install.Check, func() error {
 			return startUpdateInstall(logger, databaseFile, updateHandler.InstallEnded)
 		})
+	// An install that failed after it stopped this service started it again,
+	// and this process may be what it started. The reason it left is answered
+	// here, since the process that would have read it is the one it stopped.
+	answerInstallProblemLeft(logger, install.Defaults().WithDatabase(databaseFile).DataDir,
+		updateHandler.InstallEndedBefore)
 	// The export and the import are handed the handler that serves the Hosts,
 	// because an imported Host has to be stored the way a created one is. The
 	// version goes into the file, so that a file found later says what wrote it.

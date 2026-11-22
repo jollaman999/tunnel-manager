@@ -351,6 +351,49 @@ func installProblem(dataDir string) string {
 	return strings.TrimSpace(string(said))
 }
 
+// answerInstallProblemLeft hands left the reason an install left in dataDir
+// before this process started, and nothing where it left none.
+//
+// It is there for an install this service started that failed after it had
+// stopped the service. The install starts the service again on its way out and
+// writes the reason after that, so the process that started the install, which
+// would have read it once the install was over, is gone, and this one is what
+// the Update screen talks to now.
+//
+// The install writes the reason before it lets the lock go, and this process
+// may be up while it still holds it. So a lock that is held is waited on, on
+// the side and for as long as the wait in startUpdateInstall gives an install,
+// and the reason is read once it is let go. A lock that is not held is an
+// install that is over, and what it left is read at once.
+func answerInstallProblemLeft(logger *zap.Logger, dataDir string, left func(problem string)) {
+	answer := func() {
+		problem := installProblem(dataDir)
+		if problem != "" {
+			left(problem)
+		}
+	}
+
+	if !install.InstallRunning(dataDir) {
+		answer()
+
+		return
+	}
+
+	go func() {
+		over := waitForInstallEnd(dataDir, 0, installLockHeldWait, installLockPoll)
+		if !over {
+			logger.Warn("the lock of this installation has been held for longer than an install takes. "+
+				"The install is taken as over, and the reason it left for the Update screen, if any, "+
+				"is read now",
+				logid.UpdateInstallWaitGaveUp.Field(),
+				zap.String("lock", install.InstallLockFile(dataDir)),
+				zap.Duration("waited", installLockHeldWait))
+		}
+
+		answer()
+	}()
+}
+
 // runUpdateChecks looks for a newer release on a timer, and installs one where
 // the settings say to.
 //

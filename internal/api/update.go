@@ -70,9 +70,15 @@ type UpdateHandler struct {
 	// install runs in and this does not.
 	installing bool
 	// installProblem is why the last install ended without going through, as
-	// InstallEnded was told it. It stays until the next install is begun, so
-	// that the screen still says it when it is opened after the press.
+	// InstallEnded or InstallEndedBefore was told it. It stays until the next
+	// install is begun, so that the screen still says it when it is opened
+	// after the press.
 	installProblem string
+	// begun is up once an install has been begun from this process, and it
+	// stays up. From then on the last install is one this process knows the
+	// end of, and a reason read off the disk about one before it is not the
+	// last one's.
+	begun bool
 }
 
 func NewUpdateHandler(logger *zap.Logger, db *gorm.DB, version string, installable bool,
@@ -106,11 +112,14 @@ type updateView struct {
 	// Installable says whether the press that installs is offered. See the
 	// field of the same name on the handler.
 	Installable bool `json:"installable"`
-	// InstallProblem is why the last install started from this process ended
-	// without going through, left out where none has, where it went through, or
-	// where another has been started since. An install that went through ends
-	// with a restart, and the process that answers after it has never started
-	// one.
+	// InstallProblem is why the last install started from the Update screen or
+	// the loop ended without going through, left out where none has, where it
+	// went through, or where another has been started since. It is the one this
+	// process started, or else the one a process before it started, as that
+	// install left it in the data directory: one that failed after it had
+	// stopped the service has only the process it started again to answer it.
+	// An install that went through ends with a restart and leaves no reason,
+	// so the process that answers after it has none to give.
 	InstallProblem string `json:"install_problem,omitempty"`
 	// DevBuild says this process is the development build, which installs a
 	// release on its checksum without checking the signature over it
@@ -243,6 +252,7 @@ func (h *UpdateHandler) beginInstall() bool {
 	}
 
 	h.installing = true
+	h.begun = true
 	h.installProblem = ""
 
 	return true
@@ -259,6 +269,30 @@ func (h *UpdateHandler) InstallEnded(problem string) {
 	h.installing = false
 	h.installProblem = problem
 	h.mu.Unlock()
+}
+
+// InstallEndedBefore says why an install that ended before this process
+// started did not go through, as the install left it. main calls it at startup
+// with the reason it finds in the data directory.
+//
+// An install that fails after it has stopped the service starts the service
+// again on its way out, and the process that started the install is gone by
+// then: it was stopped. The process that comes up in its place is the only one
+// left to say why, and the reason is otherwise a file nobody reads.
+//
+// It may be told after this process has served for a while, since the install
+// lets its lock go only once it has written the reason, and the process it
+// started may be up before that. An install begun from here in between is the
+// last one from then on, so the reason is not taken once one has been.
+func (h *UpdateHandler) InstallEndedBefore(problem string) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+
+	if h.begun {
+		return
+	}
+
+	h.installProblem = problem
 }
 
 // GetUpdate answers with what is known, without looking again.
