@@ -21,6 +21,23 @@ import (
 // not a failure, but the Start loop still has to wait before reconnecting.
 var errConnectionClosed = errors.New("connection closed")
 
+// reportedDrop is the error of a connection that was lost after it was made,
+// whose loss is on the row already: the tunnel was reported as reconnecting and
+// the drop counted in RetryCount, either by acceptForwards or by reconnect
+// before it. retryAfter leaves the row alone for it, or one drop would be
+// counted twice. It reads and unwraps as the error it carries, so what is
+// logged and how long the wait is are those of that error.
+//
+// It travels with the error rather than in a field of the tunnel because it is
+// a fact about that one return, and the error is the one thing that goes from
+// where it is known to the one place that reads it.
+type reportedDrop struct {
+	err error
+}
+
+func (e reportedDrop) Error() string { return e.err.Error() }
+func (e reportedDrop) Unwrap() error { return e.err }
+
 // errTunnelStopped is what establishConnection returns when Stop came while it
 // was connecting, which is not a failure and is not retried.
 var errTunnelStopped = errors.New("tunnel stopped")
@@ -1207,7 +1224,7 @@ func (t *SSHTunnel) acceptForwards(m *Manager, tunnel *models.Tunnel, client *ss
 		return errConnectionClosed
 	}
 
-	return fmt.Errorf("listener accept error: %w", err)
+	return reportedDrop{err: fmt.Errorf("listener accept error: %w", err)}
 }
 
 // acceptForward carries the connections one forward accepts and returns what
@@ -1385,8 +1402,8 @@ func (t *SSHTunnel) Start(m *Manager, tunnel *models.Tunnel) {
 }
 
 // retryAfter waits out err, the failure of an attempt to connect that is to be
-// tried again, and reports the tunnel as reconnecting before the next attempt.
-// It reports whether that attempt is to be made, which it is not once the
+// tried again, and reports the tunnel as reconnecting before the next attempt,
+// unless it was reported for this failure already (reportedDrop). It reports whether that attempt is to be made, which it is not once the
 // tunnel was stopped during the wait.
 func (t *SSHTunnel) retryAfter(m *Manager, tunnel *models.Tunnel, err error) bool {
 	wait, reason := t.backoff.after(err)
@@ -1401,6 +1418,11 @@ func (t *SSHTunnel) retryAfter(m *Manager, tunnel *models.Tunnel, err error) boo
 
 	if !t.waitBeforeRetry(wait) {
 		return false
+	}
+
+	var reported reportedDrop
+	if errors.As(err, &reported) {
+		return true
 	}
 
 	t.tunnelMu.Lock()

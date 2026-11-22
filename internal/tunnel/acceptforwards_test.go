@@ -120,4 +120,63 @@ func TestAcceptForwardsLeavesAReplacedClientOnAnAcceptError(t *testing.T) {
 		t.Fatalf("Status = %q, RetryCount = %d, want %q and 1: one drop was reported twice",
 			status, retries, "reconnecting")
 	}
+
+	// Nor is it counted again in the turn of the Start loop that follows.
+	tun.backoff = newReconnectBackoff(time.Millisecond, time.Millisecond)
+	if !tun.retryAfter(m, row, err) {
+		t.Fatal("the turn ended as if the tunnel had been stopped")
+	}
+
+	tun.tunnelMu.Lock()
+	retries = row.RetryCount
+	tun.tunnelMu.Unlock()
+	if retries != 1 {
+		t.Fatalf("RetryCount = %d before the next attempt, want 1: one drop was counted twice", retries)
+	}
+}
+
+// TestAStartLoopTurnCountsAnAcceptErrorOnce covers the turn of the Start loop
+// that follows a forward ending with an error other than io.EOF: acceptForwards
+// reports the drop, and the loop waits before the next attempt. One dropped
+// connection is one retry, which is what the row says when the next attempt
+// is made.
+func TestAStartLoopTurnCountsAnAcceptErrorOnce(t *testing.T) {
+	m := newSSHTestManager(t, 60)
+	tun, row := newSSHTestTunnel(t, "127.0.0.1:1")
+	row.Status = "connected"
+	tun.backoff = newReconnectBackoff(time.Millisecond, time.Millisecond)
+
+	client, cleanup := newLoopbackSSHClient(t)
+	defer cleanup()
+
+	tun.clientMu.Lock()
+	tun.client = client
+	tun.clientMu.Unlock()
+
+	err := tun.acceptForwards(m, row, client, &openForwards{
+		v4:    failingListener{err: errAcceptReset},
+		reach: openReachV4,
+	})
+	if !errors.Is(err, errAcceptReset) {
+		t.Fatalf("acceptForwards returned %v, want the accept error", err)
+	}
+	if got, want := err.Error(), "listener accept error: "+errAcceptReset.Error(); got != want {
+		t.Fatalf("acceptForwards returned %q, want %q", got, want)
+	}
+
+	if !tun.retryAfter(m, row, err) {
+		t.Fatal("the turn ended as if the tunnel had been stopped")
+	}
+
+	tun.tunnelMu.Lock()
+	status, retries := row.Status, row.RetryCount
+	tun.tunnelMu.Unlock()
+
+	t.Logf("before the next attempt: Status = %q, RetryCount = %d", status, retries)
+	if status != "reconnecting" {
+		t.Errorf("Status = %q, want %q", status, "reconnecting")
+	}
+	if retries != 1 {
+		t.Errorf("RetryCount = %d for one dropped connection, want 1", retries)
+	}
 }
