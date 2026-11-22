@@ -612,6 +612,28 @@ xattr -d com.apple.quarantine tunnel-manager-darwin-arm64
 
 用 `curl` 下载的文件不会带这个属性，这时 `xattr` 会回答 `No such xattr`，不用理会。
 
+发布版本在可执行文件旁边带一个 `SHA256SUMS` 文件，写着每个文件应该是什么。加入这个文件之前做的
+发布版本没有它，那时下载下来的文件就没有可以核对的东西。第一次启动之前先核对：中途断掉的下载、
+被中间人换掉的文件，看上去也都是可执行文件。
+`grep tunnel-manager-linux-amd64 SHA256SUMS | sha256sum -c -` 会回答文件名和 `OK`；macOS 上用
+`shasum -a 256 -c -` 代替 `sha256sum -c -`。加 `grep` 是因为文件里列着所有平台，而下载的只是
+其中一个；里面的名字不带目录，所以文件放在哪里都能核对。
+
+旁边的 `SHA256SUMS.sig` 说明 `SHA256SUMS` 就是公布的那一份。校验和与可执行文件来自同一个地方，
+能换掉可执行文件的人也能换掉描述它的那一行；签名只有用发布私钥才做得出来，而这把私钥不放在发布
+版本所在的任何地方。它是对整个 `SHA256SUMS` 做的 ed25519 签名，原样 64 字节，核对用的公钥是：
+
+```text
+-----BEGIN PUBLIC KEY-----
+MCowBQYDK2VwAyEA57QsNFJidOS2ncMcnBU4nAiWvuw+M1+M9UKsIjdsvLw=
+-----END PUBLIC KEY-----
+```
+
+把它存成 `tunnel-manager.pub` 后，
+`openssl pkeyutl -verify -pubin -inkey tunnel-manager.pub -rawin -in SHA256SUMS -sigfile SHA256SUMS.sig`
+会回答 `Signature Verified Successfully`。先核对签名，再核对校验和：从没人担保的文件里读出来的
+校验和，只能说明那个文件和下载的文件彼此一致。
+
 命令行参数就这几个：
 
 | 参数 | 做什么 |
@@ -884,7 +906,10 @@ make
 ./tunnel-manager
 ```
 
-`make` 用 `CGO_ENABLED=0` 构建可执行文件。`make release` 给上面表里的每个平台各构建一个。
+`make` 用 `CGO_ENABLED=0` 构建可执行文件。`make release` 给上面表里的每个平台各构建一个，写出
+它们的 `SHA256SUMS`，再对它签名写出 `SHA256SUMS.sig`。签名要用 `RELEASE_SIGNING_KEY` 指向的
+发布私钥（PKCS#8 PEM 格式的 ed25519 密钥）。这个文件不在的话，`make release` 在构建任何东西之前
+就停下；不是程序用来核对发布版本的那把密钥，它不会拿来签名。
 
 ## HTTPS 与证书
 

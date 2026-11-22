@@ -141,14 +141,35 @@ docs-check: docs
 # whose name carries the platform, so the file says what it runs on.
 RELEASE_PLATFORMS := linux/amd64 linux/arm64 darwin/amd64 darwin/arm64 windows/amd64
 
+# RELEASE_SIGNING_KEY is the private half of the release key, the PKCS#8 PEM
+# file `openssl genpkey -algorithm ed25519` writes. It is read by
+# tools/releasesign and nothing else, and it is never copied into the tree.
+RELEASE_SIGNING_KEY ?= $(HOME)/tunnel-manager/tm-jolla.key
+
 # release builds every platform above. CGO is off, so a binary does not need a
 # matching libc on the machine it lands on and can be built from any host. It
 # also writes SHA256SUMS, which goes up with the binaries so a download can be
 # checked. The names in it carry no directory, so the checking works wherever
 # the files are put. macOS has shasum instead of sha256sum, and both write the
 # same format.
+#
+# SHA256SUMS is then signed into SHA256SUMS.sig, which goes up beside it. The
+# checksums come from the same place the binaries do, so on their own they say
+# only that the two agree; the signature is what an install takes to mean the
+# release is the one that was published, and an install refuses a release whose
+# signature does not match. tools/releasesign refuses a key that is not the one
+# the program checks against.
+#
+# The key is looked for before anything is built, and a release that cannot be
+# signed is not made: SHA256SUMS is taken away again when signing fails. A
+# release with checksums and no signature is one no install of this version
+# takes, and that is better found out here than after it was published.
 release: clean
-	@files=; \
+	@if [ ! -f "$(RELEASE_SIGNING_KEY)" ]; then \
+		echo "no signing key at $(RELEASE_SIGNING_KEY): a release is not made unsigned; set RELEASE_SIGNING_KEY to where the key is" >&2; \
+		exit 1; \
+	fi; \
+	files=; \
 	for p in $(RELEASE_PLATFORMS); do \
 		os=$${p%%/*}; arch=$${p##*/}; ext=; \
 		if [ "$$os" = windows ]; then ext=.exe; fi; \
@@ -165,7 +186,8 @@ release: clean
 		echo "no sha256sum and no shasum: SHA256SUMS cannot be written" >&2; \
 		exit 1; \
 	fi; \
-	echo "wrote SHA256SUMS"
+	echo "wrote SHA256SUMS"; \
+	go run ./tools/releasesign "$(RELEASE_SIGNING_KEY)" SHA256SUMS || { rm -f SHA256SUMS; exit 1; }
 
 clean:
-	rm -f $(APP_NAME) $(APP_NAME)-linux-* $(APP_NAME)-darwin-* $(APP_NAME)-windows-* SHA256SUMS
+	rm -f $(APP_NAME) $(APP_NAME)-linux-* $(APP_NAME)-darwin-* $(APP_NAME)-windows-* SHA256SUMS SHA256SUMS.sig

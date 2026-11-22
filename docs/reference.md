@@ -814,6 +814,25 @@ file name and `OK`, and macOS has `shasum -a 256 -c -` in place of
 while only one of them was downloaded, and the names in it carry no directory,
 so the check runs wherever the files were put.
 
+`SHA256SUMS.sig` beside it is what says `SHA256SUMS` is the one that was
+published. The checksums come from the same place as the binaries, so whoever
+could replace a binary could replace the line that describes it too; the
+signature can only be made with the private release key, which is not kept
+anywhere a release is. It is the raw 64-byte ed25519 signature over the whole of
+`SHA256SUMS`, and the public key it checks against is:
+
+```text
+-----BEGIN PUBLIC KEY-----
+MCowBQYDK2VwAyEA57QsNFJidOS2ncMcnBU4nAiWvuw+M1+M9UKsIjdsvLw=
+-----END PUBLIC KEY-----
+```
+
+With that saved as `tunnel-manager.pub`,
+`openssl pkeyutl -verify -pubin -inkey tunnel-manager.pub -rawin -in SHA256SUMS -sigfile SHA256SUMS.sig`
+answers `Signature Verified Successfully`. Check the signature first and the
+checksum after it: a checksum read out of a file nobody vouched for says only
+that the file and the download agree.
+
 The flags are all of them:
 
 | Flag | What it does |
@@ -1138,7 +1157,11 @@ make
 ```
 
 `make` builds the binary with `CGO_ENABLED=0`. `make release` builds one for
-every platform in the table above.
+every platform in the table above, writes `SHA256SUMS` for them and signs it
+into `SHA256SUMS.sig`. Signing takes the private release key, a PKCS#8 PEM
+ed25519 key named by `RELEASE_SIGNING_KEY`, and `make release` stops before it
+builds anything when that file is not there, or refuses to sign with a key that
+is not the one the program checks releases against.
 
 ## HTTPS and the certificate
 

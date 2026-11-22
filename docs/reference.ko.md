@@ -682,6 +682,32 @@ xattr -d com.apple.quarantine tunnel-manager-darwin-arm64
 `curl` 로 받은 파일에는 이 속성이 붙지 않습니다. 그때 `xattr` 가 `No such xattr` 라고 답하는데
 무시해도 됩니다.
 
+릴리즈에는 바이너리 옆에 `SHA256SUMS` 파일이 같이 올라가고, 각 파일이 무엇이어야 하는지 적혀
+있습니다. 그 파일이 생기기 전에 만든 릴리즈에는 없어서, 그때는 내려받은 파일을 대조할 것이
+없습니다. 처음 띄우기 전에 확인합니다. 중간에 끊긴 내려받기나 중간에서 누가 바꿔 준 파일도
+겉보기에는 바이너리입니다. `grep tunnel-manager-linux-amd64 SHA256SUMS | sha256sum -c -` 가 파일
+이름과 `OK` 로 답합니다. macOS 에서는 `sha256sum -c -` 대신 `shasum -a 256 -c -` 를 씁니다.
+`grep` 을 거는 것은 파일에 모든 플랫폼이 적혀 있는데 내려받은 것은 그중 하나뿐이기 때문이고,
+안의 이름에 디렉터리가 없어서 파일을 어디에 두든 확인이 됩니다.
+
+그 옆의 `SHA256SUMS.sig` 는 `SHA256SUMS` 가 공개된 바로 그 파일이라는 것을 말해 줍니다.
+체크섬은 바이너리와 같은 곳에서 오므로, 바이너리를 바꿀 수 있는 사람은 그 바이너리를 설명하는
+줄도 바꿀 수 있습니다. 서명은 릴리즈 개인키로만 만들 수 있고, 그 키는 릴리즈가 놓이는 곳 어디에도
+두지 않습니다. `SHA256SUMS` 전체에 대한 ed25519 서명 64바이트를 그대로 담은 파일이고, 대조할
+공개키는 다음과 같습니다.
+
+```text
+-----BEGIN PUBLIC KEY-----
+MCowBQYDK2VwAyEA57QsNFJidOS2ncMcnBU4nAiWvuw+M1+M9UKsIjdsvLw=
+-----END PUBLIC KEY-----
+```
+
+이것을 `tunnel-manager.pub` 로 저장하면
+`openssl pkeyutl -verify -pubin -inkey tunnel-manager.pub -rawin -in SHA256SUMS -sigfile SHA256SUMS.sig`
+가 `Signature Verified Successfully` 로 답합니다. 서명을 먼저 보고 체크섬을 그다음에 봅니다.
+아무도 보증하지 않은 파일에서 읽은 체크섬은 그 파일과 내려받은 파일이 서로 맞는다는 것만 말해
+줍니다.
+
 플래그는 이것이 전부입니다.
 
 | 플래그 | 하는 일 |
@@ -974,7 +1000,10 @@ make
 ```
 
 `make` 는 `CGO_ENABLED=0` 으로 바이너리를 만듭니다. `make release` 는 위 표의 플랫폼마다
-하나씩 만듭니다.
+하나씩 만들고, 그 파일들의 `SHA256SUMS` 를 쓴 뒤 거기에 서명해 `SHA256SUMS.sig` 를 씁니다.
+서명에는 `RELEASE_SIGNING_KEY` 가 가리키는 릴리즈 개인키(PKCS#8 PEM 형식의 ed25519 키)가
+필요합니다. 그 파일이 없으면 `make release` 는 아무것도 빌드하기 전에 멈추고, 프로그램이
+릴리즈를 대조하는 키가 아닌 키로는 서명하지 않습니다.
 
 ## HTTPS 와 인증서
 

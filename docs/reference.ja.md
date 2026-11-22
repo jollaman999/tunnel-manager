@@ -705,6 +705,33 @@ xattr -d com.apple.quarantine tunnel-manager-darwin-arm64
 `curl` で取ってきたファイルにはこの属性が付きません。そのとき `xattr` は `No such xattr` と
 答えますが、無視してかまいません。
 
+リリースにはバイナリの横に `SHA256SUMS` ファイルが置かれ、それぞれのファイルが何であるべきかが
+書かれています。このファイルが加わる前に作られたリリースには無く、そのときはダウンロードした
+ファイルを照合する相手がありません。最初に起動する前に確認してください。途中で切れたダウンロード
+や、途中で誰かが差し替えたファイルも、見た目はバイナリです。
+`grep tunnel-manager-linux-amd64 SHA256SUMS | sha256sum -c -` がファイル名と `OK` を返します。
+macOS では `sha256sum -c -` の代わりに `shasum -a 256 -c -` を使います。`grep` を挟むのは、
+ファイルにはすべてのプラットフォームが並んでいるのに、ダウンロードしたのはそのうち 1 つだけだから
+です。中の名前にはディレクトリが付いていないので、ファイルをどこに置いても確認できます。
+
+その横の `SHA256SUMS.sig` は、`SHA256SUMS` が公開されたそのものであることを示します。
+チェックサムはバイナリと同じ場所から来るので、バイナリを差し替えられる人はそれを説明する行も
+差し替えられます。署名はリリースの秘密鍵でしか作れず、その鍵はリリースが置かれるどこにも
+置いていません。`SHA256SUMS` 全体に対する ed25519 署名 64 バイトをそのまま入れたファイルで、
+照合する公開鍵は次のとおりです。
+
+```text
+-----BEGIN PUBLIC KEY-----
+MCowBQYDK2VwAyEA57QsNFJidOS2ncMcnBU4nAiWvuw+M1+M9UKsIjdsvLw=
+-----END PUBLIC KEY-----
+```
+
+これを `tunnel-manager.pub` として保存すると、
+`openssl pkeyutl -verify -pubin -inkey tunnel-manager.pub -rawin -in SHA256SUMS -sigfile SHA256SUMS.sig`
+が `Signature Verified Successfully` を返します。署名を先に、チェックサムをその後に確認します。
+誰も保証していないファイルから読んだチェックサムは、そのファイルとダウンロードしたファイルが
+互いに合っていることしか言いません。
+
 フラグはこれですべてです。
 
 | フラグ | 何をするか |
@@ -1006,7 +1033,10 @@ make
 ```
 
 `make` はバイナリを `CGO_ENABLED=0` でビルドします。`make release` は上の表のプラット
-フォームすべてに 1 つずつビルドします。
+フォームすべてに 1 つずつビルドし、それらの `SHA256SUMS` を書いたうえで署名して
+`SHA256SUMS.sig` を書きます。署名には `RELEASE_SIGNING_KEY` が指すリリースの秘密鍵
+(PKCS#8 PEM 形式の ed25519 鍵)が要ります。そのファイルが無ければ `make release` は何もビルド
+する前に止まり、プログラムがリリースを照合する鍵ではない鍵では署名しません。
 
 ## HTTPS と証明書
 
