@@ -390,12 +390,24 @@ func listeningLine(fields []string) bool {
 // writing here would put the addresses of a connection that is gone on the row
 // of the one that replaced it.
 //
+// The connection is looked at under tunnelMu, in the same hold as the write.
+// A connection that replaces this one is made current before its own write to
+// the row, which empties the addresses and is taken under tunnelMu too, so
+// either it is current by the time this looks and the reading is dropped, or
+// its write comes after this one and empties what this wrote. Looked at before
+// tunnelMu is taken, the replacement could be made current and write its row
+// in between, and the addresses of the connection that is gone would land on
+// top of it. tunnelMu is taken before clientMu here as Stop takes them.
+//
 // Nothing is logged about an ask that came back with nothing. An account with
 // no shell is the configuration this program recommends, so the usual outcome
 // here is no answer, and a line about it on every connection of every tunnel
 // would be noise that says nothing is wrong.
 func (t *SSHTunnel) recordListenAddresses(m *Manager, tunnel *models.Tunnel, measured *ssh.Client, port int) {
 	addresses := askListenAddresses(measured, port, listenAskTimeout)
+
+	t.tunnelMu.Lock()
+	defer t.tunnelMu.Unlock()
 
 	t.clientMu.RLock()
 	current := t.client
@@ -405,8 +417,6 @@ func (t *SSHTunnel) recordListenAddresses(m *Manager, tunnel *models.Tunnel, mea
 		return
 	}
 
-	t.tunnelMu.Lock()
 	tunnel.ListenAddresses = addresses
 	t.saveTunnelStatus(m, tunnel)
-	t.tunnelMu.Unlock()
 }

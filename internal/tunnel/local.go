@@ -523,22 +523,33 @@ func probeLocalForwardReach(client *ssh.Client, target string, timeout time.Dura
 // dropped. The forward reconnected while the probe was waiting, a probe of its
 // own is running for the connection that replaced it, and writing here would
 // put the reading of a connection that is gone on the forward that is up.
+//
+// The connection is looked at inside setState, in the same hold of stateMu as
+// the write, for the reason SSHTunnel.recordListenAddresses looks at it under
+// tunnelMu: establish makes a connection current before it writes the state
+// that sets the reading back to unknown, so either the replacement is current
+// by the time this looks, or its write comes after this one. stateMu is taken
+// before clientMu here and nowhere the other way round: establish and Stop
+// take clientMu and let it go before they write the state.
 func (f *localTunnel) recordForwardReach(measured *ssh.Client) {
 	reach := probeLocalForwardReach(measured, f.target, forwardProbeTimeout)
 
-	f.clientMu.RLock()
-	current := f.client
-	f.clientMu.RUnlock()
-
-	if current != measured {
-		return
-	}
+	recorded := false
 
 	f.setState(func(state *LocalForwardState) {
+		f.clientMu.RLock()
+		current := f.client
+		f.clientMu.RUnlock()
+
+		if current != measured {
+			return
+		}
+
 		state.ForwardReach = reach
+		recorded = true
 	})
 
-	if reach != forwardUnreachable {
+	if !recorded || reach != forwardUnreachable {
 		return
 	}
 
