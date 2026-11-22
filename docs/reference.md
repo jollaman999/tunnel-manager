@@ -1244,8 +1244,8 @@ The proxy is also the only address the server sees, so every login would be
 counted against one address and every log line would name the proxy.
 
 `-trust-proxy-headers` is what says otherwise. With it, a request that carries
-`X-Forwarded-Proto: https` is treated as having arrived over TLS, and the two
-session cookies are marked `Secure`. The address of the request is the
+`X-Forwarded-Proto: https` is treated as having arrived over TLS, and the
+session, CSRF and device cookies are marked `Secure`. The address of the request is the
 rightmost `X-Forwarded-For` entry: the login limit counts by it, and the access
 log (`remote_ip`) and the log lines the API writes name it. Where that header is
 missing or its rightmost entry is not an IP address, the address of the
@@ -1355,8 +1355,9 @@ address limit still applies to it.
   sign in from at least once a month keeps one. It survives a restart.
 - **A device cookie that carries five wrong passwords in 15 minutes is not
   trusted for 5 minutes.** Until then its attempts are counted like any other
-  and meet a hold on the account. A stolen cookie is therefore no way to guess
-  faster than without one.
+  and meet a hold on the account. A stolen cookie therefore adds at most five
+  guesses every five minutes to the thirty that anyone gets against the
+  account in those five minutes, and without the password it opens nothing.
 - **Changing the username or the password, or finishing the setup, ends every
   device cookie set before it.** The browser that made the change is given a
   new one.
@@ -2066,8 +2067,8 @@ BASE=https://127.0.0.1:8888
 # See [HTTPS and the certificate](#https-and-the-certificate).
 export CURL_CA_BUNDLE=tm-cert.pem
 
-# 1. Log in. -c stores both cookies in cookies.txt, under the names they came
-# back with.
+# 1. Log in. -c stores the session, CSRF and device cookies in cookies.txt,
+# under the names they came back with.
 curl -s -c cookies.txt -X POST "$BASE/api/login" \
   -H 'Content-Type: application/json' \
   -d '{"username":"operator","password":"<your-password>"}' > login.json
@@ -2432,8 +2433,8 @@ curl -s -b cookies.txt "$BASE/api/host?q=example&page=1&size=20"
 
 | Method | Path | What it does |
 |--------|------|--------------|
-| `POST` | `/api/login` | Takes `username` and `password`, sets the session and CSRF cookies, answers with `setup_required` and `csrf_token` |
-| `POST` | `/api/logout` | Drops the session and expires both cookies |
+| `POST` | `/api/login` | Takes `username` and `password`, sets the session and CSRF cookies, and the device cookie when the password is right, answers with `setup_required` and `csrf_token` |
+| `POST` | `/api/logout` | Drops the session and expires the session and CSRF cookies. The device cookie stays |
 | `GET` | `/api/setup` | Says whether the account still needs its username and password. Answers without a session, for the login screen |
 | `POST` | `/api/setup` | Sets the username and the password once, on the account that still needs them |
 | `GET` | `/api/account` | What the account is called |

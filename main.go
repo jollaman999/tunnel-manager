@@ -1496,11 +1496,14 @@ func endOnServiceStop() {
 // @description  below sits under /api and needs a session, except POST
 // @description  /api/login and GET /api/setup.
 // @description
-// @description  Logging in sets two cookies. Over HTTPS they are named
-// @description  __Host-tm_session and __Host-tm_csrf, and over plain HTTP they
-// @description  are tm_session and tm_csrf. A browser sends them back on its
-// @description  own, so "Try it out" on this page works as soon as you are
-// @description  logged in to the screens in the same browser.
+// @description  Logging in sets the session and CSRF cookies. Over HTTPS they
+// @description  are named __Host-tm_session and __Host-tm_csrf, and over plain
+// @description  HTTP they are tm_session and tm_csrf. A login with the right
+// @description  password also sets the device cookie, __Host-tm_device or
+// @description  tm_device, which keeps a hold on the account from refusing
+// @description  this browser. A browser sends them back on its own, so "Try it
+// @description  out" on this page works as soon as you are logged in to the
+// @description  screens in the same browser.
 // @description
 // @description  Every POST, PUT and DELETE also needs the token of the session
 // @description  in an X-CSRF-Token header. POST /api/login answers with it in

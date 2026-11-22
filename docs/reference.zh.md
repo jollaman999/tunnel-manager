@@ -973,7 +973,7 @@ cookie 却是不带这个标志跑的。
 服务器能看到的地址也只有代理一个，所以每次登录都会记在同一个地址上，每行日志写的都是代理。
 
 `-trust-proxy-headers` 就是用来说明情况不是这样的。加上它，带着 `X-Forwarded-Proto: https`
-的请求就被当作从 TLS 上过来的，那两个会话 cookie 会标上 `Secure`。请求的地址是
+的请求就被当作从 TLS 上过来的，会话、CSRF 和设备 cookie 会标上 `Secure`。请求的地址是
 `X-Forwarded-For` 最右边的一项：登录限制按它计数，访问日志（`remote_ip`）和 API 写的日志行写的
 都是它。这个头缺失或最右边一项不是 IP 地址时，用连接的地址。在 API 前面写的日志行，也就是明文
 HTTP 请求的重定向以及端口上区分 TLS 和明文 HTTP 的那部分写的行，不管给没给这个参数，写的都是
@@ -1048,7 +1048,8 @@ proxy_set_header X-Forwarded-Proto $scheme;
 - cookie 用账号的密码哈希签名，从设下它的那次登录起 30 天有效。每次登录都换成新的，所以每月至少
   登录一次的浏览器会一直有。重启后仍然有效。
 - **同一个设备 cookie 在 15 分钟内输错五次，这个 cookie 在 5 分钟内不被信任。** 这段时间里它的
-  尝试和不带 cookie 的一样计数，账号被挡时也会被挡。所以偷到 cookie 也不会比不带 cookie 猜得更快。
+  尝试和不带 cookie 的一样计数，账号被挡时也会被挡。所以偷到的 cookie 在任何人每 5 分钟都能对账号试的
+  三十次之外，每 5 分钟最多再多出五次猜测，没有密码它什么也打不开。
 - **修改用户名或密码，或者完成初始化之后，之前设下的设备 cookie 全部失效。** 做修改的那个浏览器
   会拿到一个新的。
 - 退出登录不会删掉这个 cookie。单凭它什么也打不开，它只说明这个浏览器以前输对过密码。
@@ -1595,7 +1596,7 @@ BASE=https://127.0.0.1:8888
 # 见 [HTTPS 与证书](#https-与证书)。
 export CURL_CA_BUNDLE=tm-cert.pem
 
-# 1. 登录。-c 把两个 cookie 按回来的名字存进 cookies.txt。
+# 1. 登录。-c 把会话、CSRF 和设备 cookie 按回来的名字存进 cookies.txt。
 curl -s -c cookies.txt -X POST "$BASE/api/login" \
   -H 'Content-Type: application/json' \
   -d '{"username":"operator","password":"<your-password>"}' > login.json
@@ -1915,8 +1916,8 @@ curl -s -b cookies.txt "$BASE/api/host?q=example&page=1&size=20"
 
 | 方法 | 路径 | 做什么 |
 |------|------|--------|
-| `POST` | `/api/login` | 收 `username` 和 `password`，设置会话和 CSRF 两个 cookie，响应里带有 `setup_required` 和 `csrf_token` |
-| `POST` | `/api/logout` | 销毁会话，并让两个 cookie 过期 |
+| `POST` | `/api/login` | 收 `username` 和 `password`，设置会话和 CSRF cookie，密码正确时还设置设备 cookie，响应里带有 `setup_required` 和 `csrf_token` |
+| `POST` | `/api/logout` | 销毁会话，并让会话和 CSRF cookie 过期。设备 cookie 保留 |
 | `GET` | `/api/setup` | 说明账号是否还没有用户名和密码。登录页要用，所以不需要会话也会响应 |
 | `POST` | `/api/setup` | 给还没有用户名和密码的账号设置一次用户名和密码 |
 | `GET` | `/api/account` | 这个账号叫什么 |

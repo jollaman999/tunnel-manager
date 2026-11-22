@@ -1070,8 +1070,8 @@ HTTP 연결입니다. 그런데 세션 쿠키에 `Secure` 가 붙는 것은 TLS 
 프록시를 적게 됩니다.
 
 `-trust-proxy-headers` 가 그렇지 않다고 알려주는 것입니다. 이 플래그를 주면
-`X-Forwarded-Proto: https` 를 달고 온 요청은 TLS 로 들어온 것으로 보고, 세션 쿠키 둘에
-`Secure` 를 붙입니다. 요청의 주소는 `X-Forwarded-For` 의 맨 오른쪽 값입니다. 로그인 제한이 그
+`X-Forwarded-Proto: https` 를 달고 온 요청은 TLS 로 들어온 것으로 보고, 세션·CSRF·기기
+쿠키에 `Secure` 를 붙입니다. 요청의 주소는 `X-Forwarded-For` 의 맨 오른쪽 값입니다. 로그인 제한이 그
 주소로 세고, 접근 로그(`remote_ip`)와 API 가 쓰는 로그 줄이 그 주소를 적습니다. 그 헤더가
 없거나 맨 오른쪽 값이 IP 주소가 아니면 연결의 주소를 씁니다. API 앞에서 쓰는 로그 줄, 곧
 평문 HTTP 요청의 리다이렉트와 포트에서 TLS 와 평문 HTTP 를 가르는 쪽이 쓰는 줄은 플래그와
@@ -1160,8 +1160,9 @@ bcrypt 가 앞의 72바이트까지만 읽기 때문입니다. 그 뒤는 로그
   때마다 새것으로 바뀌므로, 한 달에 한 번 이상 로그인하는 브라우저는 계속 가지고 있습니다.
   재기동해도 유효합니다.
 - **한 기기 쿠키로 15분 안에 다섯 번 틀리면 그 쿠키를 5분 동안 믿지 않습니다.** 그동안은
-  쿠키가 없는 시도처럼 세고 계정이 막혀 있으면 막힙니다. 그래서 쿠키를 훔쳐도 쿠키 없이
-  추측하는 것보다 빨라지지 않습니다.
+  쿠키가 없는 시도처럼 세고 계정이 막혀 있으면 막힙니다. 그래서 훔친 쿠키는 누구나 계정에
+  시도할 수 있는 5분에 서른 번 위에 5분에 많아야 다섯 번을 더할 뿐이고, 비밀번호 없이는
+  아무것도 열지 못합니다.
 - **사용자명이나 비밀번호를 바꾸거나 첫 설정을 마치면 그 전에 내려준 기기 쿠키는 전부
   무효가 됩니다.** 바꾼 브라우저에는 새 쿠키를 내려줍니다.
 - 로그아웃해도 쿠키는 남습니다. 쿠키만으로는 아무것도 열리지 않고, 이 브라우저가 전에
@@ -1768,7 +1769,7 @@ BASE=https://127.0.0.1:8888
 # [HTTPS 와 인증서](#https-와-인증서) 참조.
 export CURL_CA_BUNDLE=tm-cert.pem
 
-# 1. 로그인한다. -c 가 쿠키 둘을 내려온 이름 그대로 cookies.txt 에 적는다.
+# 1. 로그인한다. -c 가 세션·CSRF·기기 쿠키를 내려온 이름 그대로 cookies.txt 에 적는다.
 curl -s -c cookies.txt -X POST "$BASE/api/login" \
   -H 'Content-Type: application/json' \
   -d '{"username":"operator","password":"<your-password>"}' > login.json
@@ -2107,8 +2108,8 @@ curl -s -b cookies.txt "$BASE/api/host?q=example&page=1&size=20"
 
 | 메서드 | 경로 | 하는 일 |
 |--------|------|---------|
-| `POST` | `/api/login` | `username` 과 `password` 를 받아 세션·CSRF 쿠키를 내리고 `setup_required` 와 `csrf_token` 을 응답 |
-| `POST` | `/api/logout` | 세션을 지우고 쿠키 둘을 만료시킴 |
+| `POST` | `/api/login` | `username` 과 `password` 를 받아 세션·CSRF 쿠키를, 비밀번호가 맞으면 기기 쿠키도 내리고 `setup_required` 와 `csrf_token` 을 응답 |
+| `POST` | `/api/logout` | 세션을 지우고 세션·CSRF 쿠키를 만료시킴. 기기 쿠키는 남음 |
 | `GET` | `/api/setup` | 계정에 아직 사용자명과 비밀번호가 없는지 알려 줌. 로그인 화면이 쓰므로 세션 없이 답함 |
 | `POST` | `/api/setup` | 아직 설정이 필요한 계정에 사용자명과 비밀번호를 한 번 정함 |
 | `GET` | `/api/account` | 계정의 사용자명 조회 |

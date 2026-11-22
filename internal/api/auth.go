@@ -655,7 +655,7 @@ func (h *AuthHandler) Login(c *echo.Context) error {
 // asked for is the state it is left in.
 //
 // @Summary      Log out
-// @Description  Drops the session and expires both cookies.
+// @Description  Drops the session and expires the session and CSRF cookies. The device cookie stays.
 // @Tags         account
 // @Produce  json
 // @Security  CSRFToken

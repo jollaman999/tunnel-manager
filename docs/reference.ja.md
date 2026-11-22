@@ -1105,8 +1105,8 @@ HTTP 接続になります。セッションクッキーに `Secure` が付く�
 すべてのログ行がプロキシを書くことになります。
 
 `-trust-proxy-headers` が、そうではないと伝えるものです。これを指定すると、
-`X-Forwarded-Proto: https` を付けて届いた要求は TLS で届いたものとして扱われ、2 つの
-セッションクッキーに `Secure` が付きます。要求のアドレスは `X-Forwarded-For` の一番右の値です。
+`X-Forwarded-Proto: https` を付けて届いた要求は TLS で届いたものとして扱われ、セッション、
+CSRF、デバイスのクッキーに `Secure` が付きます。要求のアドレスは `X-Forwarded-For` の一番右の値です。
 ログイン制限はそれで数え、アクセスログ (`remote_ip`) と API が書くログ行はそれを書きます。その
 ヘッダがないか、一番右の値が IP アドレスでなければ、接続のアドレスを使います。API の手前で書かれる
 ログ行、つまり平文 HTTP の要求のリダイレクトと、ポートで TLS と平文 HTTP を振り分けるところが
@@ -1200,7 +1200,8 @@ proxy_set_header X-Forwarded-Proto $scheme;
   持ち続けます。再起動しても有効です。
 - **1 つのデバイスクッキーで 15 分以内に 5 回間違えると、そのクッキーを 5 分間信用しません。**
   その間はクッキーのない試行と同じに数え、アカウントが止められていれば止められます。ですから
-  クッキーを盗んでも、クッキーなしで推測するより速くはなりません。
+  盗んだクッキーは、誰でもアカウントに試せる 5 分で 30 回に、5 分で多くて 5 回を加えるだけで、
+  パスワードなしでは何も開けません。
 - **ユーザー名かパスワードを変えるか、初期設定を終えると、それより前に設定したデバイス
   クッキーはすべて無効になります。** 変更したブラウザには新しいクッキーを設定します。
 - ログアウトしてもクッキーは残ります。クッキーだけでは何も開けず、このブラウザが以前に
@@ -1826,7 +1827,7 @@ BASE=https://127.0.0.1:8888
 # [HTTPS と証明書](#https-と証明書) を参照。
 export CURL_CA_BUNDLE=tm-cert.pem
 
-# 1. ログインする。-c がクッキー 2 つを届いた名前のまま cookies.txt に書く。
+# 1. ログインする。-c がセッション・CSRF・デバイスのクッキーを届いた名前のまま cookies.txt に書く。
 curl -s -c cookies.txt -X POST "$BASE/api/login" \
   -H 'Content-Type: application/json' \
   -d '{"username":"operator","password":"<your-password>"}' > login.json
@@ -2173,8 +2174,8 @@ curl -s -b cookies.txt "$BASE/api/host?q=example&page=1&size=20"
 
 | メソッド | パス | 何をするか |
 |----------|------|------------|
-| `POST` | `/api/login` | `username` と `password` を受け取り、セッションと CSRF のクッキーを設定し、`setup_required` と `csrf_token` を返します |
-| `POST` | `/api/logout` | セッションを捨て、両方のクッキーを失効させます |
+| `POST` | `/api/login` | `username` と `password` を受け取り、セッションと CSRF のクッキーを、パスワードが正しければデバイスクッキーも設定し、`setup_required` と `csrf_token` を返します |
+| `POST` | `/api/logout` | セッションを捨て、セッションと CSRF のクッキーを失効させます。デバイスクッキーは残ります |
 | `GET` | `/api/setup` | アカウントにまだユーザー名とパスワードがないかを返します。ログイン画面が使うので、セッションなしで答えます |
 | `POST` | `/api/setup` | まだユーザー名とパスワードを持たないアカウントに、それを一度だけ設定します |
 | `GET` | `/api/account` | アカウントの名前を返します |
