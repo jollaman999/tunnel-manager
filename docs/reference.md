@@ -1336,7 +1336,7 @@ will not be able to log in.
    else.** Every other path under `/api` answers `403` with `The account setup is
    not finished`.
 
-The password chosen at the setup has to be **12 to 72 bytes** long. Bytes, not
+The password chosen at the setup has to be **8 to 72 bytes** long. Bytes, not
 characters: one Hangul syllable is three of them. The upper limit is 72 because
 bcrypt, which hashes the password, reads no further than that, and anything past
 the limit would not be part of what the login checks. A password that is too
@@ -1400,7 +1400,7 @@ The Settings screen changes both, and `PUT /api/account` is the same thing from 
 script. Send the current password together with whichever of the two is changing:
 `username`, `new_password` or both. A value that is not sent is left as it is,
 and a request that sends neither is refused, as is one that sends the value the
-account already has. The new password is held to the same 12 to 72 bytes the
+account already has. The new password is held to the same 8 to 72 bytes the
 setup holds it to.
 
 **The current password is required every time**, the change that only renames the
@@ -3220,7 +3220,7 @@ it names.
 
 The exports are `POST` and not `GET` because the password is in the body. In a
 URL it would be written to the access log of this server and to the history of
-the browser that asked. The password is held to the same 12 to 72 bytes the
+the browser that asked. The password is held to the same 8 to 72 bytes the
 account password is, and it is stored nowhere: a file whose password is
 forgotten cannot be opened by anyone, this program included.
 
