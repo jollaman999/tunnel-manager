@@ -2714,7 +2714,19 @@
                     "200": {
                         "description": "counts, and tunnels holding one page of the status rows",
                         "schema": {
-                            "$ref": "#/definitions/models.Response"
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/models.Response"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "data": {
+                                            "$ref": "#/definitions/api.statusView"
+                                        }
+                                    }
+                                }
+                            ]
                         }
                     },
                     "400": {
@@ -4568,6 +4580,121 @@
             "properties": {
                 "setup_required": {
                     "type": "boolean"
+                }
+            }
+        },
+        "api.statusRow": {
+            "type": "object",
+            "properties": {
+                "error_kind": {
+                    "description": "ErrorKind names what sort of failure LastError is, for the one sort the\nscreen has something to say about: \"forward_denied\" is the SSH server\nrefusing to open the forwarded port, and an empty value is every other\nfailure and every row that is not in error.\n\nIt is here so that the screen decides on a name this program chose\nrather than on the sentence the SSH library wrote. That sentence is a\nplain errors.New with nothing exported to compare against, so it is\nmatched once, in the one place that makes the call, and what travels is\nthis.\n\nIt says what happened and not why. The server refuses\nwithout giving a reason, and the several settings that make it refuse\nlook identical from here, so none of them may be reported as the cause.",
+                    "type": "string"
+                },
+                "host_id": {
+                    "type": "integer"
+                },
+                "jump_host_id": {
+                    "type": "integer"
+                },
+                "jump_reason": {
+                    "type": "string"
+                },
+                "jump_seq": {
+                    "description": "JumpSeq, JumpHostID and JumpReason say where on the jump route of the\nHost the connection stopped and why, for a failure that is about a Host\npassed through rather than the Host itself: the step counted from 1 the\nway HostJump.Seq is, the Host at that step, and one of \"disabled\",\n\"dial\", \"auth\", \"host_key\" and \"route\" (tunnel.JumpReasonDisabled and\nthe rest). All three are empty on a row that is not in error and on a\nfailure that is not about the route, and a \"route\" refusal leaves the\nstep and the Host empty when it is about the whole of the route, one\nlonger than it may be.\n\nThey are here for the reason ErrorKind is: LastError names the step in a\nsentence, and the screen says what to do about it in its own words.\n\nNone of them carries \"not null\", for the reason ServerBanner does not.",
+                    "type": "integer"
+                },
+                "kind": {
+                    "description": "Kind is which sort the row is, service_port or local_forward. It is what\nsays which machine local and remote are on, because the two look alike.",
+                    "type": "string"
+                },
+                "last_connected_at": {
+                    "type": "string"
+                },
+                "last_error": {
+                    "type": "string"
+                },
+                "listen_addresses": {
+                    "description": "ListenAddresses are the addresses the Host itself said are listening on\nthe forwarded port, comma separated, each one an address that parsed as\nan IP on the way in so that nothing else the far side printed can land\nhere.\n\nIt is the one thing on this row that says which addresses are open. What\nwas asked for is on Local, and what the SSH server answered to each\nrequest is on OpenReach, and neither is a binding: a server told to bind\nevery interface opens both families on the first request and refuses the\nsecond, and it does that for a request that named a loopback address\ntoo. The Host is the only place that knows, so it is asked.\n\nThe empty value is that it was not asked or could not answer, and never\nthat nothing is listening. An account with no shell refuses the session\nchannel, a Host with neither ss nor netstat prints nothing this can\nread, and both of those look exactly like a port that is closed from\nhere. Being unable to ask is the configuration this program recommends\nrather than a fault, so a screen draws nothing at all from an empty\nvalue.\n\nIt carries no \"not null\" for the reason ServerBanner does not: the\ncolumn is added to installations whose rows were written before it\nexisted, and AutoMigrate fills those with NULL.",
+                    "type": "string"
+                },
+                "local": {
+                    "type": "string"
+                },
+                "number": {
+                    "description": "Number is which forward of its Host a local forward row is, which is\nwhat the row is read and changed by. It is left out of a tunnel row\nrather than written there as null, because a tunnel row is what it was\nbefore the forwards stood beside it, field for field, and nothing\nnumbers a tunnel that way.",
+                    "type": "integer"
+                },
+                "open_reach": {
+                    "description": "OpenReach says which of the two addresses of the bind scope went up.\n  \"both\"  - both went up\n  \"ipv4\"  - only 127.0.0.1 or 0.0.0.0 went up; the IPv6 one did not\n  \"ipv6\"  - only ::1 or :: went up; the IPv4 one did not\n  \"\"      - nothing measured yet, or a row written before this column\n\nWho says so differs by the sort of row, and so does what the reading is\nworth.\n\nOn a service port row it is what the SSH server answered. The port is\nopened on the Host, which is asked once for each address and answers\neach request on its own, so the assignment can end up half open. It says\nwhat was answered and not why: a server that refuses the second request\nbecause it already bound both families on the first and one that has no\nIPv6 at all answer identically, so neither may be reported as the cause,\nand an answer is not a binding.\n\nOn a local forward row it is what the Tunnel Manager server itself\nopened, which is a measurement and not an answer. The port is opened on\nthis machine, so a half that is missing is one it could not open: another\nprogram holds the port on that address, or the address is not available\nhere. Local then names the half that opened. The SOCKS5 proxy of a Host\nopens its port the same way and reports the same reading as\nsocks_open_reach on the Host.\n\nThe empty value is nothing measured rather than nothing open: a row that\nhas not been connected yet and a row of which one half did not go up must\nnot read alike, and a screen that draws a warning on the first would put\none on every tunnel that is still starting.\n\nNeither half going up is not one of these readings. Nothing is forwarded\nthen, which is a failure of the forward rather than a fact about how far\nit reaches, and it is reported the way every other failure is, on Status,\nLastError and, on a service port row, ErrorKind.",
+                    "type": "string"
+                },
+                "remote": {
+                    "type": "string"
+                },
+                "retry_count": {
+                    "type": "integer"
+                },
+                "server": {
+                    "type": "string"
+                },
+                "server_banner": {
+                    "description": "ServerBanner is what the SSH server called itself on the handshake, as\nthe library hands it over (x/crypto/ssh, sshConn.ServerVersion). It is\nkept because what opens a forwarded port to an address other than\nloopback differs by server: OpenSSH decides it with GatewayPorts in\nsshd_config, Dropbear with the -a flag on its command line. The value is\na string the far side chose, so whatever draws it treats it as text and\nnever as markup.\n\nIt carries no \"not null\". The column is added to installations whose\nrows were written before it existed, and AutoMigrate fills those with\nNULL.",
+                    "type": "string"
+                },
+                "sp_id": {
+                    "description": "SPID shadows Tunnel.SPID, which is a uint and cannot be empty: a local\nforward is not carried by a service port and a zero there would read as\nthe service port numbered nothing. The pointer is null on those rows and\nthe number on the others. Both fields are tagged sp_id and this one is\nthe shallower, which is the one encoding/json writes.",
+                    "type": "integer"
+                },
+                "status": {
+                    "type": "string"
+                }
+            }
+        },
+        "api.statusView": {
+            "type": "object",
+            "properties": {
+                "connected_tunnels": {
+                    "description": "ConnectedTunnels is how many rows of either sort are connected, over\nevery row and not over the page.",
+                    "type": "integer"
+                },
+                "desired_tunnels": {
+                    "description": "DesiredTunnels is how many rows of either sort should be running as of\nthe last reconcile pass, which a change wakes. It is what the other\ncounts are read against: three connected says nothing about a fourth\nthat could not be started until this says there should be four.",
+                    "type": "integer"
+                },
+                "error_tunnels": {
+                    "description": "ErrorTunnels is how many rows of either sort are in error, over every\nrow. A row in jump_host_disabled, whose route passes through a disabled\nHost, is counted here, because it is waiting for somebody all the same.",
+                    "type": "integer"
+                },
+                "host_keys_mismatched": {
+                    "description": "HostKeysMismatched is how many Hosts answered with a key other than the\none approved, over every Host. The Hosts are listed by the host key\ncalls rather than here, because this answer is read every few seconds.",
+                    "type": "integer"
+                },
+                "host_keys_unapproved": {
+                    "description": "HostKeysUnapproved is how many Hosts are waiting for their first key to\nbe approved, over every Host, for the reason HostKeysMismatched is.",
+                    "type": "integer"
+                },
+                "page": {
+                    "description": "Page is the page answered, counted from 1. A page past the last one is\nanswered with the last page, so this can be below the page asked for.",
+                    "type": "integer"
+                },
+                "reconnecting_tunnels": {
+                    "description": "ReconnectingTunnels is how many rows of either sort are reconnecting,\nover every row. A row that is starting or held up at a host key is in\nnone of the three status counts.",
+                    "type": "integer"
+                },
+                "size": {
+                    "description": "Size is how many rows a page holds.",
+                    "type": "integer"
+                },
+                "total_rows": {
+                    "description": "TotalRows is how many rows of both sorts there are, which is what the\npages are cut from. A search narrows it with the rows, where it leaves\nthe counts above over every row.",
+                    "type": "integer"
+                },
+                "tunnels": {
+                    "description": "Tunnels is the page: the tunnels and the local forwards of each Host\ntogether, ordered by Host, then by sort, then by the number a row\ncarries within its sort.",
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/api.statusRow"
+                    }
                 }
             }
         },

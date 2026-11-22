@@ -894,3 +894,114 @@ func TestGetStatusCarriesWhereOnTheJumpRouteARowStopped(t *testing.T) {
 		}
 	}
 }
+
+// TestGetStatusWritesTheAnswerAsItAlwaysHas pins the outside of the status
+// answer down to its bytes: which keys data carries, what each one holds, and
+// the order they are written in, which is the alphabetical one. A client that
+// reads the answer as text, or compares two of them, sees any of the three
+// move, so the answer being described by a type of its own must leave all three
+// where they were.
+//
+// The order is checked by writing data again from a map of its keys, which
+// encoding/json writes sorted, around the values exactly as they came. Bytes
+// that differ from the ones the handler wrote differ in order or in nothing.
+func TestGetStatusWritesTheAnswerAsItAlwaysHas(t *testing.T) {
+	db := newRowsDB(t,
+		[]models.Host{statusHost(1, true), statusHost(2, true)},
+		[]models.ServicePort{statusServicePort(1), statusServicePort(2)},
+		[]models.Tunnel{statusTunnel(1, 1, "connected"), statusTunnel(1, 2, "error"), statusTunnel(2, 1, "reconnecting")})
+
+	storeLocalForwards(t, db, []models.LocalForward{
+		statusLocalForward(1, 1, 19000, models.BindScopeWildcard, true),
+		statusLocalForward(1, 2, 19001, models.BindScopeWildcard, true),
+	})
+
+	states := map[tunnel.LocalForwardKey]tunnel.LocalForwardState{
+		{HostID: 2, Number: 1}: {Status: "connected", OpenReach: "both"},
+	}
+
+	// The page asked for is past the last one, so page is the 1 it is fitted
+	// to. Of the five rows one tunnel and the forward of Host 2 are connected,
+	// and the forward of Host 1 reports nothing and is in none of the counts.
+	// Both Hosts carry both service ports, so four tunnels and the two
+	// forwards should be running, though only three of the tunnels have rows.
+
+	base, err := tunnel.NewManager(db, zap.NewNop(), newTestCipher(t), 1)
+	if err != nil {
+		t.Fatalf("failed to create manager: %v", err)
+	}
+
+	c, rec := getRequest(t, "/api/status?page=2&size=10", "", "")
+	h := NewHandler(db, runningLocalForwards{Manager: base, states: states}, zap.NewNop(), newTestCipher(t))
+
+	err = h.GetStatus(c)
+	if err != nil {
+		t.Fatalf("GetStatus returned error: %v", err)
+	}
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d, body: %s", rec.Code, http.StatusOK, rec.Body.String())
+	}
+
+	var answer struct {
+		Data json.RawMessage `json:"data"`
+	}
+
+	err = json.Unmarshal(rec.Body.Bytes(), &answer)
+	if err != nil {
+		t.Fatalf("failed to read the answer: %v, body: %s", err, rec.Body.String())
+	}
+
+	var fields map[string]json.RawMessage
+
+	err = json.Unmarshal(answer.Data, &fields)
+	if err != nil {
+		t.Fatalf("data is not an object: %v, body: %s", err, rec.Body.String())
+	}
+
+	want := map[string]string{
+		"connected_tunnels":    "2",
+		"desired_tunnels":      "6",
+		"error_tunnels":        "1",
+		"host_keys_mismatched": "0",
+		"host_keys_unapproved": "0",
+		"page":                 "1",
+		"reconnecting_tunnels": "1",
+		"size":                 "10",
+		"total_rows":           "5",
+	}
+
+	for key, value := range want {
+		got, carried := fields[key]
+		if !carried {
+			t.Errorf("data leaves out %s", key)
+
+			continue
+		}
+
+		if string(got) != value {
+			t.Errorf("data carries %s %s, want %s", key, got, value)
+		}
+	}
+
+	rows, carried := fields["tunnels"]
+	if !carried {
+		t.Error("data leaves out tunnels")
+	} else if !strings.HasPrefix(string(rows), "[{") {
+		t.Errorf("data carries tunnels %s, want the rows of the page", rows)
+	}
+
+	for key := range fields {
+		if _, known := want[key]; !known && key != "tunnels" {
+			t.Errorf("data carries %s, which the status answer has never carried", key)
+		}
+	}
+
+	sorted, err := json.Marshal(fields)
+	if err != nil {
+		t.Fatalf("failed to write data again: %v", err)
+	}
+
+	if string(sorted) != string(answer.Data) {
+		t.Errorf("data is not written with its keys in alphabetical order:\n got: %s\nwant: %s", answer.Data, sorted)
+	}
+}

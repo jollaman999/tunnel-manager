@@ -55,6 +55,8 @@ const (
 // about is what kind says.
 type statusRow struct {
 	models.Tunnel
+	// Kind is which sort the row is, service_port or local_forward. It is what
+	// says which machine local and remote are on, because the two look alike.
 	Kind string `json:"kind"`
 	// SPID shadows Tunnel.SPID, which is a uint and cannot be empty: a local
 	// forward is not carried by a service port and a zero there would read as
@@ -68,6 +70,52 @@ type statusRow struct {
 	// before the forwards stood beside it, field for field, and nothing
 	// numbers a tunnel that way.
 	Number *uint `json:"number,omitempty"`
+}
+
+// statusView is what the status call answers with: the counts of the whole
+// installation and one page of the status table.
+//
+// The fields are declared in the alphabetical order of their names, which is
+// the order the keys of this answer have always been written in. encoding/json
+// writes a struct in the order it is declared, so a field added out of that
+// order moves the keys after it in the bytes every client has been reading.
+type statusView struct {
+	// ConnectedTunnels is how many rows of either sort are connected, over
+	// every row and not over the page.
+	ConnectedTunnels int `json:"connected_tunnels"`
+	// DesiredTunnels is how many rows of either sort should be running as of
+	// the last reconcile pass, which a change wakes. It is what the other
+	// counts are read against: three connected says nothing about a fourth
+	// that could not be started until this says there should be four.
+	DesiredTunnels int `json:"desired_tunnels"`
+	// ErrorTunnels is how many rows of either sort are in error, over every
+	// row. A row in jump_host_disabled, whose route passes through a disabled
+	// Host, is counted here, because it is waiting for somebody all the same.
+	ErrorTunnels int `json:"error_tunnels"`
+	// HostKeysMismatched is how many Hosts answered with a key other than the
+	// one approved, over every Host. The Hosts are listed by the host key
+	// calls rather than here, because this answer is read every few seconds.
+	HostKeysMismatched int64 `json:"host_keys_mismatched"`
+	// HostKeysUnapproved is how many Hosts are waiting for their first key to
+	// be approved, over every Host, for the reason HostKeysMismatched is.
+	HostKeysUnapproved int64 `json:"host_keys_unapproved"`
+	// Page is the page answered, counted from 1. A page past the last one is
+	// answered with the last page, so this can be below the page asked for.
+	Page int `json:"page"`
+	// ReconnectingTunnels is how many rows of either sort are reconnecting,
+	// over every row. A row that is starting or held up at a host key is in
+	// none of the three status counts.
+	ReconnectingTunnels int `json:"reconnecting_tunnels"`
+	// Size is how many rows a page holds.
+	Size int `json:"size"`
+	// TotalRows is how many rows of both sorts there are, which is what the
+	// pages are cut from. A search narrows it with the rows, where it leaves
+	// the counts above over every row.
+	TotalRows int64 `json:"total_rows"`
+	// Tunnels is the page: the tunnels and the local forwards of each Host
+	// together, ordered by Host, then by sort, then by the number a row
+	// carries within its sort.
+	Tunnels []statusRow `json:"tunnels"`
 }
 
 // statusRef identifies one row of the status table in the order the table is

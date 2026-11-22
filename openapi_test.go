@@ -54,8 +54,39 @@ type spec struct {
 		Title   string `json:"title"`
 		Version string `json:"version"`
 	} `json:"info"`
-	BasePath string                            `json:"basePath"`
-	Paths    map[string]map[string]interface{} `json:"paths"`
+	BasePath    string                            `json:"basePath"`
+	Paths       map[string]map[string]interface{} `json:"paths"`
+	Definitions map[string]specSchema             `json:"definitions"`
+}
+
+// specSchema is the little of a schema in the description these tests follow:
+// a reference to a definition, the parts of an allOf, the fields of an object
+// and the rows of an array.
+type specSchema struct {
+	Ref        string                `json:"$ref"`
+	Type       string                `json:"type"`
+	AllOf      []specSchema          `json:"allOf"`
+	Properties map[string]specSchema `json:"properties"`
+	Items      *specSchema           `json:"items"`
+}
+
+// resolve follows a reference to the definition it names, and hands back a
+// schema that is not a reference as it is.
+func (parsed spec) resolve(t *testing.T, schema specSchema) specSchema {
+	t.Helper()
+
+	if schema.Ref == "" {
+		return schema
+	}
+
+	name := strings.TrimPrefix(schema.Ref, "#/definitions/")
+
+	definition, ok := parsed.Definitions[name]
+	if !ok {
+		t.Fatalf("%s names a definition %s does not carry", schema.Ref, specFile)
+	}
+
+	return definition
 }
 
 // readSpec reads the committed description.
@@ -362,5 +393,81 @@ func TestTheSpecIsTheShapeAClientExpects(t *testing.T) {
 				t.Errorf("%s %s says nothing about what it answers", strings.ToUpper(method), path)
 			}
 		}
+	}
+}
+
+// TestTheStatusAnswerIsDescribed holds the description to what GET /status
+// answers inside data. It is the answer a script watching the installation
+// reads most, and a description that stops at the envelope leaves it to read
+// the counts and the rows by guessing at their names.
+//
+// The rows are followed as far as the fields that are not on the tunnel row
+// they embed: kind, sp_id, which the row declares again so that a local forward
+// can leave it empty, and number. A description that took the tunnel row alone
+// would carry sp_id and none of the other two.
+func TestTheStatusAnswerIsDescribed(t *testing.T) {
+	parsed := readSpec(t)
+
+	written, err := json.Marshal(parsed.Paths["/status"]["get"])
+	if err != nil {
+		t.Fatalf("GET /status could not be read out of %s: %v", specFile, err)
+	}
+
+	var operation struct {
+		Responses map[string]struct {
+			Schema specSchema `json:"schema"`
+		} `json:"responses"`
+	}
+
+	err = json.Unmarshal(written, &operation)
+	if err != nil {
+		t.Fatalf("GET /status in %s is not an operation: %v", specFile, err)
+	}
+
+	answer, ok := operation.Responses["200"]
+	if !ok {
+		t.Fatalf("GET /status in %s says nothing about a 200", specFile)
+	}
+
+	var data *specSchema
+
+	for _, part := range parsed.resolve(t, answer.Schema).AllOf {
+		described, ok := parsed.resolve(t, part).Properties["data"]
+		if ok && (described.Ref != "" || len(described.Properties) > 0) {
+			data = &described
+		}
+	}
+
+	if data == nil {
+		t.Fatalf("GET /status in %s describes no data. Name the type it answers with in "+
+			"@Success as models.Response{data=...} and run `make openapi`", specFile)
+	}
+
+	fields := parsed.resolve(t, *data).Properties
+
+	for _, name := range []string{
+		"connected_tunnels", "desired_tunnels", "error_tunnels", "host_keys_mismatched",
+		"host_keys_unapproved", "page", "reconnecting_tunnels", "size", "total_rows", "tunnels",
+	} {
+		if _, ok := fields[name]; !ok {
+			t.Errorf("the data of GET /status is described without %s", name)
+		}
+	}
+
+	tunnels := fields["tunnels"]
+	if tunnels.Type != "array" || tunnels.Items == nil {
+		t.Fatalf("tunnels of GET /status is described as %q, want an array of rows", tunnels.Type)
+	}
+
+	row := parsed.resolve(t, *tunnels.Items).Properties
+
+	for _, name := range []string{"host_id", "status", "open_reach", "kind", "sp_id", "number"} {
+		if _, ok := row[name]; !ok {
+			t.Errorf("a row of GET /status is described without %s", name)
+		}
+	}
+
+	if row["sp_id"].Type != "integer" {
+		t.Errorf("sp_id of a row of GET /status is described as %q, want integer", row["sp_id"].Type)
 	}
 }

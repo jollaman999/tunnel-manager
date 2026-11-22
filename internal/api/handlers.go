@@ -2502,7 +2502,7 @@ func idList(ids []uint) string {
 // @Param   page  query  int  false  "The page, counted from 1. Below 1 is read as 1, and a page past the last one is answered with the last page"
 // @Param   size  query  int  false  "How many rows a page holds"  Enums(10, 20, 30, 50, 100)
 // @Param   q     query  string  false  "Only the rows whose Host holds this text in its address or description, or whose local or remote address holds it, with ASCII letters matched in either case. % and _ are taken as written"
-// @Success  200  {object}  models.Response  "counts, and tunnels holding one page of the status rows"
+// @Success  200  {object}  models.Response{data=api.statusView}  "counts, and tunnels holding one page of the status rows"
 // @Failure  400  {object}  api.errorBody  "page is not a number, or size is not one of the sizes taken"
 // @Router       /status [get]
 func (h *Handler) GetStatus(c *echo.Context) error {
@@ -2680,17 +2680,17 @@ func (h *Handler) GetStatus(c *echo.Context) error {
 
 	return c.JSON(http.StatusOK, models.Response{
 		Success: true,
-		Data: map[string]interface{}{
-			"desired_tunnels":      desiredTunnels + desiredLocalForwards,
-			"connected_tunnels":    counts.connected,
-			"reconnecting_tunnels": counts.reconnecting,
-			"error_tunnels":        counts.errored,
-			"total_rows":           totalTunnels + totalLocalForwards,
-			"host_keys_unapproved": hostKeysUnapproved,
-			"host_keys_mismatched": hostKeysMismatched,
-			"tunnels":              rows,
-			"page":                 page.number,
-			"size":                 page.size,
+		Data: statusView{
+			ConnectedTunnels:    counts.connected,
+			DesiredTunnels:      desiredTunnels + desiredLocalForwards,
+			ErrorTunnels:        counts.errored,
+			HostKeysMismatched:  hostKeysMismatched,
+			HostKeysUnapproved:  hostKeysUnapproved,
+			Page:                page.number,
+			ReconnectingTunnels: counts.reconnecting,
+			Size:                page.size,
+			TotalRows:           totalTunnels + totalLocalForwards,
+			Tunnels:             rows,
 		},
 	})
 }
