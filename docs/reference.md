@@ -565,10 +565,11 @@ at 1080. Through the API the same four fields are sent on the Host, see
 
 **The default is `loopback`, and the proxy asks for no password.** Since
 v3.13.6 a Host registered without `socks_bind_scope`, and one added on the Hosts
-screen, opens its proxy on the Tunnel Manager server alone. A Host stored before
-then, or imported from a file that names no scope, holds no scope, and what that
-means depends on whether its proxy runs, that is whether it is switched on with
-a port:
+screen, opens its proxy on the Tunnel Manager server alone, and so does one
+imported from a file that names no scope, see
+[Export and import](#export-and-import). A Host stored before then holds no
+scope, and what that means depends on whether its proxy runs, that is whether
+it is switched on with a port:
 
 - **A proxy that does not run is `loopback`.** The startup writes `loopback`
   into it and logs `database.socks_scope_narrowed` at info for each such Host,
@@ -3185,10 +3186,14 @@ scopes: a loopback address there makes every assignment of that Host
 no `local_forwards` imports the Host with none, a forward without `enabled` is
 stored switched on and one without `allowed_sources` lets every address in, and
 a file that carries none of the `socks_` fields imports the Host with no proxy.
-A proxy whose `socks_bind_scope` such a file leaves out or sends empty is
-stored on `loopback`. A file with ids keeps an empty scope as the row it was
-exported from held it, which is read as
-[A SOCKS5 proxy on a Host](#a-socks5-proxy-on-a-host) says.
+
+**A proxy with no scope is imported on `loopback`**, from a file of any
+release, switched on or not. That includes a file exported from an
+installation that keeps a proxy running on the wildcard without a scope, see
+[A SOCKS5 proxy on a Host](#a-socks5-proxy-on-a-host): that proxy is left
+there so an upgrade does not cut off the machines using it, and no machine is
+using the installation the file is imported into yet. To have it on the
+wildcard there, choose `wildcard` for it after the import.
 
 **The key each Host is trusted on travels with it**, in `host_key`, so moving a
 configuration does not throw the trust away and the Tunnel Manager server that

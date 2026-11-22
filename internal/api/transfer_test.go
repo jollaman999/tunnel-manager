@@ -732,9 +732,9 @@ func TestAnImportReplacesEverythingStoredHere(t *testing.T) {
 		t.Fatalf("the import answered %+v, want %+v", imported, want)
 	}
 
-	if !reflect.DeepEqual(target.configuration(t), source.configuration(t)) {
+	if !reflect.DeepEqual(target.configuration(t), importedAs(source.configuration(t))) {
 		t.Fatalf("after the import the installation holds\n%v\nwant what the file came from\n%v",
-			target.configuration(t), source.configuration(t))
+			target.configuration(t), importedAs(source.configuration(t)))
 	}
 
 	if target.count(t, &models.LocalForward{}) != 0 || target.count(t, &models.HostJump{}) != 0 ||
@@ -2712,8 +2712,9 @@ func TestTheLocalForwardsOfAHostCrossToAnotherInstallation(t *testing.T) {
 		t.Fatalf("the installation that took the file in forwards %v, want %v", target.forwards(t), want)
 	}
 
-	if !reflect.DeepEqual(target.configuration(t), source.configuration(t)) {
-		t.Fatalf("the local forwards came across as\n%v\nwant\n%v", target.configuration(t), source.configuration(t))
+	if !reflect.DeepEqual(target.configuration(t), importedAs(source.configuration(t))) {
+		t.Fatalf("the local forwards came across as\n%v\nwant\n%v", target.configuration(t),
+			importedAs(source.configuration(t)))
 	}
 
 	if target.manager.count() != 1 {
@@ -4008,6 +4009,22 @@ func (i *transferInstall) jump(t *testing.T, hostIP string, through ...string) {
 	}
 }
 
+// importedAs is a configuration as an import stores it: every row the same,
+// except that a Host with no SOCKS5 scope comes in on loopback.
+func importedAs(configuration []string) []string {
+	imported := make([]string, 0, len(configuration))
+
+	for _, row := range configuration {
+		if strings.HasPrefix(row, "host ") {
+			row = strings.Replace(row, `"socks_bind_scope":""`, `"socks_bind_scope":"loopback"`, 1)
+		}
+
+		imported = append(imported, row)
+	}
+
+	return imported
+}
+
 // configuration is every row of the tunnel configuration stored, written out
 // with its id, its number and its times, and with the secrets of the Hosts
 // opened: they are sealed with a key of each installation, so what is the same
@@ -4301,7 +4318,7 @@ func TestAnExportAndAnImportPutTheConfigurationBackAsItWas(t *testing.T) {
 		t.Fatalf("the import answered %d: %s", rec.Code, rec.Body.String())
 	}
 
-	want := source.configuration(t)
+	want := importedAs(source.configuration(t))
 	got := target.configuration(t)
 
 	if !reflect.DeepEqual(got, want) {

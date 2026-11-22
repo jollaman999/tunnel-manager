@@ -1642,7 +1642,7 @@ func (h *TransferHandler) planImport(c *echo.Context, withIDs bool, content tunn
 		heldAddresses[address] = true
 		hostIDs[i] = id
 
-		stored, refused := h.planHost(c, host, withIDs)
+		stored, refused := h.planHost(c, host)
 		if refused != nil {
 			return plan, refused
 		}
@@ -1751,12 +1751,13 @@ func (h *TransferHandler) planImport(c *echo.Context, withIDs bool, content tunn
 }
 
 // planHost holds one Host of the file to the rules of a create and seals its
-// secrets with the key of this installation. A file with ids is stored with the
-// SOCKS5 scope it carries, an empty one included, since it is the scope the
-// row it was exported from held, and models.Host.SocksScope reads it here the
-// way it was read there. A file without ids makes new rows, and an empty scope
-// is stored as loopback, as socksOf says.
-func (h *TransferHandler) planHost(c *echo.Context, host hostContent, withIDs bool) (models.Host, *refusal) {
+// secrets with the key of this installation. An empty SOCKS5 scope is stored
+// as loopback, as socksOf says, whether the file carries ids or not and
+// whether the proxy is on or not. A proxy that ran on the wildcard without a
+// scope where the file was exported from is kept there only on that
+// installation, so that an upgrade does not cut off the machines using it;
+// this one is new to it, and nothing here was reaching it.
+func (h *TransferHandler) planHost(c *echo.Context, host hostContent) (models.Host, *refusal) {
 	name := host.Address
 
 	// The rules of a create are run on what the file carries, so that a file
@@ -1843,9 +1844,6 @@ func (h *TransferHandler) planHost(c *echo.Context, host hostContent, withIDs bo
 	}
 
 	stored = host.socksOf(stored)
-	if withIDs && host.SocksBindScope != nil {
-		stored.SocksBindScope = *host.SocksBindScope
-	}
 
 	return stored, nil
 }

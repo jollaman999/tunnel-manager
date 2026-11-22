@@ -606,7 +606,7 @@ func (i *transferInstall) proxies(t *testing.T) []string {
 
 // TestTheSocksProxyOfAHostCrossesToAnotherInstallation is the round trip: the
 // four fields are written into the file and stored by the import as they
-// were, an empty scope included.
+// were, except an empty scope, which is stored as loopback.
 func TestTheSocksProxyOfAHostCrossesToAnotherInstallation(t *testing.T) {
 	source := newTransferInstall(t)
 	target := newTransferInstall(t)
@@ -622,7 +622,7 @@ func TestTheSocksProxyOfAHostCrossesToAnotherInstallation(t *testing.T) {
 
 	want := []string{
 		"192.0.2.10 on 1080 loopback 192.0.2.0/24 198.51.100.7",
-		"192.0.2.11 off 0  ",
+		"192.0.2.11 off 0 loopback ",
 	}
 	if !reflect.DeepEqual(target.proxies(t), want) {
 		t.Fatalf("the imported proxies are %v, want %v", target.proxies(t), want)
@@ -647,12 +647,10 @@ func TestAFileFromBeforeTheSocksProxiesImportsNone(t *testing.T) {
 			}
 		})
 
-	// The file without ids makes a new row, which is stored on loopback; the
-	// one with ids keeps the empty scope the row it came from held.
-	for file, want := range map[string][]string{
-		older:    {"192.0.2.10 off 0 loopback "},
-		exported: {"192.0.2.10 off 0  "},
-	} {
+	// Either file stores the scope it does not name as loopback.
+	for _, file := range []string{older, exported} {
+		want := []string{"192.0.2.10 off 0 loopback "}
+
 		target := newTransferInstall(t)
 
 		target.registerHost(t, passwordHost("192.0.2.10"))
@@ -934,11 +932,12 @@ func TestARunningProxyStoredWithoutAScopeKeepsIt(t *testing.T) {
 }
 
 // TestAnImportedProxyWithoutAScopeIsOnLoopback is a file that names no scope
-// for the proxy of a Host. A file without ids makes new rows, which start on
-// loopback the way a Host added on the screen does. A file with ids is the
-// rows it was exported from, kept as they were: one whose proxy was running
-// without a scope keeps running on the wildcard, and one whose proxy was not
-// reads as loopback, and is switched on there.
+// for the proxy of a Host. Either kind of file makes rows on an installation
+// none of the machines that used the proxy were reaching, so there is no
+// running proxy to keep open: the scope is stored as loopback, the way a Host
+// added on the screen starts, whether the proxy is on or not. A file with ids
+// is the one an export of an installation upgraded from before the scope
+// writes, which carries a running proxy with no scope.
 func TestAnImportedProxyWithoutAScopeIsOnLoopback(t *testing.T) {
 	withoutScope := passwordHost("192.0.2.11")
 	enabled, port := true, 1091
@@ -975,29 +974,14 @@ func TestAnImportedProxyWithoutAScopeIsOnLoopback(t *testing.T) {
 		t.Fatalf("the import answered %d: %s", rec.Code, rec.Body.String())
 	}
 
-	want = []string{"192.0.2.10 on 1080  ", "192.0.2.11 off 0  "}
+	want = []string{"192.0.2.10 on 1080 loopback ", "192.0.2.11 off 0 loopback "}
 	if !reflect.DeepEqual(target.proxies(t), want) {
 		t.Fatalf("a file with ids imported the proxies %v, want %v", target.proxies(t), want)
 	}
 
-	off, _ := storedHostByIP(t, target.db, "192.0.2.11")
-	if view := hostViewOf(off, nil, nil); view.SocksBindScope != models.BindScopeLoopback {
-		t.Errorf("the Host whose proxy is off reads socks_bind_scope = %q, want %q", view.SocksBindScope,
+	running, _ := storedHostByIP(t, target.db, "192.0.2.10")
+	if view := hostViewOf(running, nil, nil); view.SocksBindScope != models.BindScopeLoopback {
+		t.Errorf("the imported proxy that runs reads socks_bind_scope = %q, want %q", view.SocksBindScope,
 			models.BindScopeLoopback)
-	}
-
-	h := NewHandler(target.db, &wakeRecorder{tx: &txConnPool{}}, zap.NewNop(), newTestCipher(t))
-	c, rec := localForwardRequest(t, http.MethodPut, "/api/host/"+strconv.FormatUint(uint64(off.ID), 10),
-		`{"socks_enabled":true,"socks_port":21080}`, strconv.FormatUint(uint64(off.ID), 10))
-
-	err := h.UpdateHost(c)
-	if err != nil {
-		t.Fatalf("UpdateHost returned error: %v", err)
-	}
-	if rec.Code != http.StatusOK {
-		t.Fatalf("status = %d, want %d, body: %s", rec.Code, http.StatusOK, rec.Body.String())
-	}
-	if scope := storedSocksScope(t, target.db, off.ID); scope != models.BindScopeLoopback {
-		t.Errorf("the imported proxy switched on is stored on %q, want %q", scope, models.BindScopeLoopback)
 	}
 }

@@ -438,8 +438,9 @@ flowchart LR
 | `socks_allowed_sources` | 客户端可以从哪些地址连进来。留空则接受所有地址 |
 
 **默认是 `loopback`，而且代理不要求密码。** 从 v3.13.6 起，不带 `socks_bind_scope` 注册的
-Host，以及在 Hosts 页面添加的 Host，代理只开在Tunnel Manager 服务器上。在那之前保存的 Host，或者从
-没写范围的文件导入的 Host，范围是空的，它的意思取决于代理是否在运行，也就是是否带着端口开启：
+Host，以及在 Hosts 页面添加的 Host，代理只开在Tunnel Manager 服务器上；从没写范围的文件导入的 Host
+也一样，见[导出与导入](#导出与导入)。在那之前保存的 Host 范围是空的，它的意思取决于代理是否在运行，
+也就是是否带着端口开启：
 
 - **没有运行的代理是 `loopback`。** 启动时给每台这样的 Host 保存 `loopback`，并以 info 记录
   `database.socks_scope_narrowed`；Hosts 页面预先选中 `loopback`；不带 `socks_bind_scope` 开启它的
@@ -2523,8 +2524,11 @@ Host 负责的服务端口按本地端口写在 `assigned_local_ports` 里，旁
 `bind_address`：写的是回环地址时，那台 Host 的每一条分配关系都成为 `loopback`，其他答案一律成为
 通配范围。没有 `local_forwards` 的文件导入的 Host 没有本地转发，没有 `enabled` 的本地转发按开启
 保存，没有 `allowed_sources` 的放行所有地址，一个 `socks_` 字段都没有的文件导入的 Host 没有代理。
-这样的文件里不填或发成空 `socks_bind_scope` 的代理按 `loopback` 保存。带 id 的文件则按导出它的那一行
-原样保留空范围，它的意思见 [Host 的 SOCKS5 代理](#host-的-socks5-代理)。
+
+**没有范围的代理按 `loopback` 导入。** 不论文件来自哪个版本、代理是否开启都一样。从一个让代理不带
+范围在通配范围上运行的安装导出的文件也是如此（见 [Host 的 SOCKS5 代理](#host-的-socks5-代理)）：那里
+保留它，是为了升级不切断正在使用它的机器，而接收文件的安装还没有任何机器在用。要在那里也开在通配
+范围上，导入后为它选择 `wildcard`。
 
 **每台 Host 信任的那把密钥也跟着一起走**，写在 `host_key` 里，所以搬一套配置不会把这份信任
 扔掉，接收文件的那台 Tunnel Manager 服务器不必把每台 Host 重新批准一遍就能连上。它是公钥，所以不加密，行里怎么
