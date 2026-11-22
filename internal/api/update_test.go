@@ -563,3 +563,53 @@ func TestAnInstallThatEndedMakesWayForTheNext(t *testing.T) {
 		t.Errorf("the install was started %d times, want 5: the first, the two that failed, the one found running and the last", call.started)
 	}
 }
+
+// TestAStartThatPanickedMakesWayForTheNext is a start that never returned. The
+// panic is the server's to answer, but the flag it left up would refuse every
+// install after it, the press and the loop alike, until the service restarted.
+func TestAStartThatPanickedMakesWayForTheNext(t *testing.T) {
+	panics := true
+	started := 0
+
+	recorded, _ := observer.New(zap.DebugLevel)
+	h := NewUpdateHandler(zap.New(recorded), updateAccountDB(t), "3.7.4", true,
+		func(ctx context.Context, version string) (install.Latest, error) {
+			return install.Latest{Tag: "v3.7.5", Newer: true, Comparable: true}, nil
+		},
+		func() error {
+			started++
+
+			if panics {
+				panic("the start fell over")
+			}
+
+			return nil
+		})
+	h.Look(context.Background())
+
+	mustPanic := func(name string, call func()) {
+		t.Helper()
+
+		defer func() {
+			if recover() == nil {
+				t.Errorf("%s did not pass the panic of the start on", name)
+			}
+		}()
+
+		call()
+	}
+
+	mustPanic("the press", func() { _, _ = pressInstall(t, h) })
+	mustPanic("the loop", func() { _ = h.StartInstall() })
+
+	panics = false
+
+	status, code := pressInstall(t, h)
+	if status != http.StatusOK {
+		t.Errorf("a press after the start panicked answered %d %q, want 200", status, code)
+	}
+
+	if started != 3 {
+		t.Errorf("the start was reached %d times, want 3: both that panicked and the press after", started)
+	}
+}

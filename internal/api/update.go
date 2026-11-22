@@ -187,10 +187,25 @@ func (h *UpdateHandler) StartInstall() error {
 		return fmt.Errorf("an install started from this process has not ended yet: %w", install.ErrInstallRunning)
 	}
 
+	return h.handOver()
+}
+
+// handOver runs start with the flag already raised, and brings the flag down
+// again wherever start did not hand an install over: an error, or a panic,
+// which goes on up once the flag is down. A start that panicked started
+// nothing that could report its end, so the flag would otherwise stay up and
+// refuse every install after it until the service restarted.
+func (h *UpdateHandler) handOver() error {
+	handed := false
+
+	defer func() {
+		if !handed {
+			h.InstallEnded()
+		}
+	}()
+
 	err := h.start()
-	if err != nil {
-		h.InstallEnded()
-	}
+	handed = err == nil
 
 	return err
 }
@@ -326,10 +341,8 @@ func (h *UpdateHandler) InstallUpdate(c *echo.Context) error {
 		"installed and this service is restarted at the end of it, which takes every tunnel down",
 		logid.UpdateInstallAsked.Field(), zap.String("running", h.version))
 
-	err = h.start()
+	err = h.handOver()
 	if err != nil {
-		h.InstallEnded()
-
 		h.logger.Error("failed to start the install",
 			logid.UpdateInstallStartFailed.Field(), zap.Error(err))
 
