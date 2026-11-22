@@ -125,13 +125,18 @@ func runRemoteCommand(client *ssh.Client, command string, timeout time.Duration)
 		return ""
 	}
 
-	opened := make(chan *ssh.Session, 1)
+	// opened is unbuffered, and the session is handed over on it or closed on
+	// the spot where this end has given up by then. A session the far side was
+	// slow to open is in one hand or the other, never neither: kept by the
+	// goroutine it would go on to run the command after nobody was waiting for
+	// it, and be held for as long as the command ran.
+	opened := make(chan *ssh.Session)
+	abandoned := make(chan struct{})
 	done := make(chan *cappedWriter, 1)
 
 	go func() {
 		session, err := client.NewSession()
 		if err != nil {
-			opened <- nil
 			done <- nil
 
 			return
@@ -139,7 +144,14 @@ func runRemoteCommand(client *ssh.Client, command string, timeout time.Duration)
 
 		out := &cappedWriter{}
 		session.Stdout = out
-		opened <- session
+
+		select {
+		case <-abandoned:
+			_ = session.Close()
+
+			return
+		case opened <- session:
+		}
 
 		// The error is dropped on purpose, and so is anything the command
 		// wrote to stderr. See above.
@@ -152,27 +164,30 @@ func runRemoteCommand(client *ssh.Client, command string, timeout time.Duration)
 	timer := time.NewTimer(timeout)
 	defer timer.Stop()
 
-	select {
-	case out := <-done:
-		if out == nil {
-			return ""
-		}
+	var session *ssh.Session
 
-		return out.text()
-	case <-timer.C:
-		// The session is closed so that the goroutine above is let go rather
-		// than held for as long as the far side keeps the command running. The
-		// output it collected is never read after this, which is what keeps the
-		// two ends off the same buffer.
+	for {
 		select {
-		case session := <-opened:
+		case session = <-opened:
+		case out := <-done:
+			if out == nil {
+				return ""
+			}
+
+			return out.text()
+		case <-timer.C:
+			close(abandoned)
+
+			// The session is closed so that the goroutine above is let go
+			// rather than held for as long as the far side keeps the command
+			// running. The output it collected is never read after this, which
+			// is what keeps the two ends off the same buffer.
 			if session != nil {
 				_ = session.Close()
 			}
-		default:
-		}
 
-		return ""
+			return ""
+		}
 	}
 }
 
