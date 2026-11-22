@@ -625,6 +625,7 @@ xattr -d com.apple.quarantine tunnel-manager-darwin-arm64
     tunnel-manager.db-wal      SQLite 在旁边留的预写日志
     tunnel-manager.db-shm      SQLite 在旁边留的共享内存文件
     initial-password           第一次启动时写出，初始化完成后删除
+    install.lock               -install 运行期间持有，结束时删除
     keys/tunnel-manager.key    用来加密 SSH 密码的密钥
     logs/tunnel-manager.log    日志文件，轮转后的文件也在旁边
 ```
@@ -640,7 +641,7 @@ Logs 页面又把它的末尾读回来，所以一个能离开那个目录的路
 任何一个文件里写、并读取它能打开的任何一个文件的通道。
 
 **两者都不能指向 tunnel-manager 用来存放别的东西的文件：** 数据库文件，它的 `-wal`、`-shm` 和
-`-journal`，`initial-password`，或者两者中的另一个。比较时忽略大小写，并把 `./x` 和 `x` 当作同一个
+`-journal`，`initial-password`，`install.lock`，或者两者中的另一个。比较时忽略大小写，并把 `./x` 和 `x` 当作同一个
 文件；数据库文件指的是 `-db` 给的那个文件，不是默认值。日志器在读取密钥之前就打开了，所以指向密钥
 文件的日志文件会写进密钥里，下次启动就会停在一个读不了的密钥上。
 
@@ -786,6 +787,11 @@ tunnel-manager install
 **会把旧的一套留在原地的安装，宁可拒绝也不做。** 注册在别的路径上的那套安装，有这次安装不会
 去碰的可执行文件和数据库。新的注册会指向别的文件，旧的那些则留在磁盘上，机器上没有任何东西
 指着它们，之后任何一次卸载都找不到。
+
+**同一套安装一次只运行一个安装。** 安装从下载之前直到结束，都在数据目录里持有写着自己进程号的
+`install.lock`。在此期间，对同一套安装的第二个 `-install`，无论是在终端里输入的还是从更新页面启动
+的，都会被拒绝，什么都不碰。所写进程已经不在运行的锁，也就是被强行结束的安装、或安装途中断电的
+机器留下的锁，会被接管。如果拒绝指向的进程并不是安装，请删除拒绝中写明的那个文件。
 
 ### 卸载这套安装
 
@@ -1240,7 +1246,7 @@ Settings 页面。同样的值通过 `GET /api/settings` 和 `PUT /api/settings`
 | `api_port` | 1 到 65535。改成某个本地转发或 SOCKS5 代理打开的端口会被 `409` 拒绝，见[本地转发](#本地转发) |
 | `monitoring_interval_sec`、`reconcile_interval_sec` | 1 到 3600。以前的版本没有上限，那时存下的大于 3600 的值会在下次启动时降到 3600，并在日志里留下一条警告，写明设置名和前后两个值。设置导入也会这样降低这类值，并列在 `items` 里 |
 | `reconnect_max_interval_sec` | 1 到 3600 |
-| `security_key_file`、`logging_file_path` | 不能为空，而且要是数据库文件所在的目录底下的路径：绝对路径和用 `..` 爬出去的路径都会被拒绝。两者都不能指向数据库文件、它的 `-wal`、`-shm` 或 `-journal`、`initial-password`，或者另一个，比较时忽略大小写。见[文件放在哪里](#文件放在哪里) |
+| `security_key_file`、`logging_file_path` | 不能为空，而且要是数据库文件所在的目录底下的路径：绝对路径和用 `..` 爬出去的路径都会被拒绝。两者都不能指向数据库文件、它的 `-wal`、`-shm` 或 `-journal`、`initial-password`、`install.lock`，或者另一个，比较时忽略大小写。见[文件放在哪里](#文件放在哪里) |
 | `logging_level` | `debug`、`info`、`warn`、`error`、`dpanic`、`panic` 或 `fatal` |
 | `logging_format` | `json` 或 `console` |
 | `logging_file_max_size`、`logging_file_max_backups`、`logging_file_max_age` | 零或更大 |

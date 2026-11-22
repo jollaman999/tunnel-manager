@@ -393,6 +393,14 @@ func validateDataPath(setting string, path string) error {
 // settings are not where the password is written.
 const initialPasswordFileName = "initial-password"
 
+// installLockFileName is the name an install holds its lock under for as long
+// as it runs, beside the database file. It is the name internal/install takes
+// the lock under, spelled again here because that package reads the settings
+// and this one cannot read it back. An install takes a file under this name
+// for its lock: a log kept there would hold every install off, and an install
+// that read it while it was still empty would remove it.
+const installLockFileName = "install.lock"
+
 // installFile is a file this installation keeps beside the database file under
 // a name no setting chooses, together with the words it is named by in a
 // refusal.
@@ -414,6 +422,7 @@ func installFiles(databaseFile string) []installFile {
 		{name: base + "-shm", what: "the shared memory file of the database file"},
 		{name: base + "-journal", what: "the rollback journal of the database file"},
 		{name: initialPasswordFileName, what: "the initial password file"},
+		{name: installLockFileName, what: "the lock an install holds while it runs"},
 	}
 }
 

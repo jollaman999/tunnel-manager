@@ -693,6 +693,7 @@ tunnel-manager 가 쓰는 나머지 전부가 그 파일이 있는 디렉터리�
     tunnel-manager.db-wal      SQLite 가 옆에 두는 쓰기 선행 로그
     tunnel-manager.db-shm      SQLite 가 옆에 두는 공유 메모리 파일
     initial-password           첫 기동이 쓰고 계정 설정이 지웁니다
+    install.lock               -install 이 도는 동안 잡고 끝나면 지웁니다
     keys/tunnel-manager.key    SSH 비밀번호를 암호화하는 키
     logs/tunnel-manager.log    로그 파일과 그 옆의 회전된 파일들
 ```
@@ -709,7 +710,7 @@ tunnel-manager 가 쓰는 나머지 전부가 그 파일이 있는 디렉터리�
 파일이나 읽게 하는 통로가 됩니다.
 
 **둘 다 tunnel-manager 가 다른 것을 담아 두는 파일을 가리킬 수 없습니다.** 데이터베이스 파일, 그
-`-wal`, `-shm`, `-journal`, `initial-password`, 그리고 둘 중 다른 쪽입니다. 비교는 대소문자를
+`-wal`, `-shm`, `-journal`, `initial-password`, `install.lock`, 그리고 둘 중 다른 쪽입니다. 비교는 대소문자를
 무시하고 `./x` 와 `x` 를 같은 파일로 읽으며, 데이터베이스 파일은 기본값이 아니라 `-db` 가
 가리키는 파일입니다. 로거는 키를 읽기 전에 열리므로, 로그 파일이 키 파일을 가리키면 로그가
 키에 써지고 다음 기동은 읽을 수 없는 키에서 멈춥니다.
@@ -865,6 +866,13 @@ tunnel-manager install
 설치가 건드리지 않을 실행 파일과 데이터베이스를 갖고 있습니다. 새 등록은 다른 파일을 가리키게
 되고, 옛 파일들은 장비 어디에서도 가리키지 않는 채로 디스크에 남아 나중에 어떤 제거도 찾지
 못합니다.
+
+**한 설치본의 설치는 한 번에 하나만 돕니다.** 설치는 내려받기 전부터 끝날 때까지 데이터
+디렉터리에 자기 프로세스 번호를 적은 `install.lock` 을 잡고 있습니다. 그동안 같은 설치본에 대한
+두 번째 `-install` 은 터미널에서 친 것이든 업데이트 화면에서 시작된 것이든 거부되고 아무것도
+건드리지 않습니다. 적힌 프로세스가 이미 끝난 잠금, 즉 강제로 끝난 설치나 설치 중 전원이 나간
+장비가 남긴 잠금은 이어받습니다. 거부가 설치가 아닌 프로세스를 가리키면 거부에 적힌 파일을
+지우십시오.
 
 ### 설치본 제거하기
 
@@ -1380,7 +1388,7 @@ Tunnel Manager 서버가 보여주는 언어이고, 언어를 고른 사람은 �
 | `api_port` | 1 에서 65535. 로컬 포워딩이나 SOCKS5 프록시가 여는 포트로 바꾸면 `409` 로 거부됨. [로컬 포워딩](#로컬-포워딩) 참조 |
 | `monitoring_interval_sec`, `reconcile_interval_sec` | 1 에서 3600. 이전 버전은 상한이 없었고, 그때 3600 보다 크게 저장된 값은 다음 기동 때 3600 으로 낮춰지며 설정 이름과 이전 값, 새 값이 경고로 로그에 남음. 설정 가져오기도 같은 값을 같은 식으로 낮추고 `items` 에 적음 |
 | `reconnect_max_interval_sec` | 1 에서 3600 |
-| `security_key_file`, `logging_file_path` | 비어 있으면 안 되고, 데이터베이스 파일이 있는 디렉터리 아래의 경로여야 함. 절대 경로와 `..` 로 밖으로 나가는 경로는 거부됨. 대소문자를 무시하고, 데이터베이스 파일, 그 `-wal`, `-shm`, `-journal`, `initial-password`, 또는 다른 쪽을 가리킬 수 없음. [파일이 어디에 생기나](#파일이-어디에-생기나) 참조 |
+| `security_key_file`, `logging_file_path` | 비어 있으면 안 되고, 데이터베이스 파일이 있는 디렉터리 아래의 경로여야 함. 절대 경로와 `..` 로 밖으로 나가는 경로는 거부됨. 대소문자를 무시하고, 데이터베이스 파일, 그 `-wal`, `-shm`, `-journal`, `initial-password`, `install.lock`, 또는 다른 쪽을 가리킬 수 없음. [파일이 어디에 생기나](#파일이-어디에-생기나) 참조 |
 | `logging_level` | `debug`, `info`, `warn`, `error`, `dpanic`, `panic`, `fatal` 중 하나 |
 | `logging_format` | `json` 또는 `console` |
 | `logging_file_max_size`, `logging_file_max_backups`, `logging_file_max_age` | 0 이상 |

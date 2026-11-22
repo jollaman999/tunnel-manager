@@ -823,6 +823,7 @@ in.
     tunnel-manager.db-wal      the write ahead log SQLite keeps beside it
     tunnel-manager.db-shm      the shared memory file SQLite keeps beside it
     initial-password           written on the first startup, deleted by the setup
+    install.lock               held by an -install while it runs, removed when it ends
     keys/tunnel-manager.key    the key the SSH passwords are encrypted with
     logs/tunnel-manager.log    the log file and the rotated files beside it
 ```
@@ -843,8 +844,8 @@ have this process write into any file on the machine and read any file it can
 open.
 
 **Neither may name a file tunnel-manager keeps something else in:** the
-database file, its `-wal`, `-shm` and `-journal`, `initial-password`, or the
-other of the two. The comparison ignores case and reads `./x` and `x` as the
+database file, its `-wal`, `-shm` and `-journal`, `initial-password`,
+`install.lock`, or the other of the two. The comparison ignores case and reads `./x` and `x` as the
 same file, and the database file is named by the file `-db` names, not by the
 default. The logger is opened before the key is read, so a log file on the key
 file writes into the key and the next start stops on a key it cannot read.
@@ -1016,6 +1017,15 @@ An installation registered at other paths owns an executable and a database this
 install would not touch: the new registration would name other files, and the old
 ones would sit on disk with nothing on the machine naming them, which no
 uninstall afterwards can find.
+
+**One install of an installation runs at a time.** An install holds
+`install.lock` in the data directory, with its process id in it, from before the
+download until it ends. A second `-install` of the same installation, typed at a
+terminal or started from the Update screen, is refused while the first holds it
+and touches nothing. A lock whose process is no longer running, which is what an
+install that was killed or a machine that lost power during one leaves behind,
+is taken over. Where the refusal names a process that is not an install, remove
+the file it names.
 
 ### Removing the installation
 
@@ -1613,7 +1623,7 @@ A save is refused before it is stored when a value would not hold:
 | `api_port` | 1 to 65535. A new port a local forward or a SOCKS5 proxy opens is refused with `409`, see [Local forwards](#local-forwards) |
 | `monitoring_interval_sec`, `reconcile_interval_sec` | 1 to 3600. An earlier version held them to no ceiling, and one it stored above 3600 is lowered to 3600 at the next start, with a warning in the log that names the setting and both values. A settings import lowers one the same way and lists it in `items` |
 | `reconnect_max_interval_sec` | 1 to 3600 |
-| `security_key_file`, `logging_file_path` | Not empty, and a path under the directory the database file is in: an absolute path and one that climbs out with `..` are refused. Neither may name the database file, its `-wal`, `-shm` or `-journal`, `initial-password`, or the other one, with the case ignored. See [Where the files go](#where-the-files-go) |
+| `security_key_file`, `logging_file_path` | Not empty, and a path under the directory the database file is in: an absolute path and one that climbs out with `..` are refused. Neither may name the database file, its `-wal`, `-shm` or `-journal`, `initial-password`, `install.lock`, or the other one, with the case ignored. See [Where the files go](#where-the-files-go) |
 | `logging_level` | `debug`, `info`, `warn`, `error`, `dpanic`, `panic` or `fatal` |
 | `logging_format` | `json` or `console` |
 | `logging_file_max_size`, `logging_file_max_backups`, `logging_file_max_age` | Zero or more |

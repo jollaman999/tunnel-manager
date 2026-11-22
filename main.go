@@ -1366,6 +1366,18 @@ func (a installation) runInstall(out io.Writer) error {
 		plan = plan.WithDatabase(a.database)
 	}
 
+	// One install of an installation runs at a time. A press on the Update
+	// screen, the loop that installs on its own and an operator at a terminal
+	// can each start one, and two that overlap would each stop the service and
+	// copy over the other. The lock is taken before the download, so that the
+	// second is refused before it has done anything at all.
+	unlock, err := install.LockInstall(plan.DataDir)
+	if err != nil {
+		return err
+	}
+
+	defer unlock()
+
 	dir, err := os.MkdirTemp("", "tunnel-manager-install-")
 	if err != nil {
 		return fmt.Errorf("failed to make a directory to download the release into: %w", err)

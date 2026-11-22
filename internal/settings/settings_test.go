@@ -919,6 +919,8 @@ func TestValidateFilesRefusesAPathOnAFileOfTheInstallation(t *testing.T) {
 		"./tunnel-manager.db-wal",
 		"logs/../TUNNEL-MANAGER.db-shm",
 		"./Initial-Password",
+		"install.lock",
+		"./Install.Lock",
 	}
 
 	for _, file := range files {
