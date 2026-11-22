@@ -9,6 +9,7 @@ import (
 	"crypto/x509/pkix"
 	"encoding/json"
 	"encoding/pem"
+	"fmt"
 	"io"
 	"math/big"
 	"net"
@@ -16,6 +17,7 @@ import (
 	"net/http/httptest"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -101,6 +103,18 @@ func certificateRequest(t *testing.T, h *CertificateHandler, method string,
 	body string) *httptest.ResponseRecorder {
 	t.Helper()
 
+	rec, err := certificateCall(h, method, body)
+	if err != nil {
+		t.Fatalf("the handler returned an error: %v", err)
+	}
+
+	return rec
+}
+
+// certificateCall is certificateRequest for a goroutine other than the one the
+// test runs on, which may not end the test: it hands the error back instead.
+func certificateCall(h *CertificateHandler, method string,
+	body string) (*httptest.ResponseRecorder, error) {
 	e := echo.New()
 
 	var reader io.Reader
@@ -126,14 +140,10 @@ func certificateRequest(t *testing.T, h *CertificateHandler, method string,
 	case http.MethodPut:
 		err = h.InstallCertificate(c)
 	default:
-		t.Fatalf("no handler for %s", method)
+		err = fmt.Errorf("no handler for %s", method)
 	}
 
-	if err != nil {
-		t.Fatalf("the handler returned an error: %v", err)
-	}
-
-	return rec
+	return rec, err
 }
 
 // decodeCertificateAnswer reads the envelope every answer of this API carries.
@@ -532,6 +542,115 @@ func TestTheCertificateCallsSayWhenHTTPSIsOff(t *testing.T) {
 		if !strings.Contains(failure, "HTTPS is turned off") {
 			t.Errorf("%s answered %q, want it to name the setting", method, failure)
 		}
+	}
+}
+
+// TestReplacementsThatOverlapServeWhatIsStored runs a renewal and an install at
+// once, with the renewal held between storing its row and serving it. Without
+// anything holding the second back, the install stored and served its pair in
+// that gap and the renewal then served its own over it: the server handed out
+// the renewal while the database held the install, and the next restart turned
+// the fingerprint into the install with no line in the log saying so.
+func TestReplacementsThatOverlapServeWhatIsStored(t *testing.T) {
+	h, db, cipher, holder, _ := newCertificateHandler(t)
+
+	original := fingerprintOf(t, holder.Current())
+
+	// The first write of the row is the renewal's, so that is the one held.
+	var writes atomic.Int32
+
+	stored := make(chan struct{})
+	release := make(chan struct{})
+
+	err := db.Callback().Update().After("gorm:commit_or_rollback_transaction").
+		Register("test:hold_the_first_write", func(*gorm.DB) {
+			if writes.Add(1) == 1 {
+				close(stored)
+				<-release
+			}
+		})
+	if err != nil {
+		t.Fatalf("failed to register the callback: %v", err)
+	}
+
+	type outcome struct {
+		rec *httptest.ResponseRecorder
+		err error
+	}
+
+	call := func(method string, body string) chan outcome {
+		done := make(chan outcome, 1)
+
+		go func() {
+			rec, err := certificateCall(h, method, body)
+			done <- outcome{rec, err}
+		}()
+
+		return done
+	}
+
+	renewed := call(http.MethodPost, "")
+	<-stored
+
+	pair := issuedPair(t, time.Now())
+	installed := call(http.MethodPut, installBody(pair))
+
+	// The renewal has stored its row and not yet served it, so an install that
+	// gets through now is the interleaving that leaves the two apart.
+	var install outcome
+
+	select {
+	case install = <-installed:
+		t.Errorf("the install finished while the renewal was between storing and serving")
+	case <-time.After(300 * time.Millisecond):
+	}
+
+	close(release)
+
+	renew := <-renewed
+	if install.rec == nil {
+		install = <-installed
+	}
+
+	for name, got := range map[string]outcome{"renewal": renew, "install": install} {
+		if got.err != nil {
+			t.Fatalf("the %s returned an error: %v", name, got.err)
+		}
+		if got.rec.Code != http.StatusOK {
+			t.Fatalf("the %s answered %d, want 200. Body: %s", name, got.rec.Code, got.rec.Body.String())
+		}
+	}
+
+	_, _, renewData := decodeCertificateAnswer(t, renew.rec)
+	renewCertificate, _ := renewData["certificate"].(map[string]any)
+	renewFingerprint, _ := renewCertificate["fingerprint_sha256"].(string)
+
+	if renewData["previous_fingerprint_sha256"] != original {
+		t.Errorf("the renewal reports the old fingerprint as %v, want the original %s",
+			renewData["previous_fingerprint_sha256"], original)
+	}
+
+	// The install came second, so what it replaced is what the renewal served.
+	_, _, installData := decodeCertificateAnswer(t, install.rec)
+	if installData["previous_fingerprint_sha256"] != renewFingerprint {
+		t.Errorf("the install reports the old fingerprint as %v, want the renewal's %s",
+			installData["previous_fingerprint_sha256"], renewFingerprint)
+	}
+
+	// A restart serves what the database holds, so the two have to agree.
+	served := fingerprintOf(t, holder.Current())
+
+	_, info, err := tlsserve.LoadOrCreate(db, cipher, time.Now())
+	if err != nil {
+		t.Fatalf("failed to read the stored certificate back: %v", err)
+	}
+
+	if served != info.Fingerprint {
+		t.Errorf("the server is holding %s while the database holds %s", served, info.Fingerprint)
+	}
+	if info.Fingerprint != pair.fingerprint {
+		t.Errorf("the database holds %s, want the install that came last, %s",
+			info.Fingerprint, pair.fingerprint)
 	}
 }
 

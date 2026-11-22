@@ -7,6 +7,7 @@ import (
 	"encoding/pem"
 	"errors"
 	"net/http"
+	"sync"
 	"time"
 
 	"github.com/jollaman999/tunnel-manager/internal/crypto"
@@ -33,6 +34,15 @@ type CertificateHandler struct {
 	cipher *crypto.Cipher
 	logger *zap.Logger
 	holder *tlsserve.Holder
+
+	// replaceMu holds one replacement from the moment it reads the certificate
+	// it replaces until the holder serves the new one. Storing and serving are
+	// two steps, and two replacements interleaved across them left the server
+	// on one certificate and the database on the other, which the next restart
+	// settles by changing the fingerprint with no line in the log. It also
+	// makes the previous fingerprint each answer and log line reports the one
+	// that was actually replaced.
+	replaceMu sync.Mutex
 }
 
 func NewCertificateHandler(db *gorm.DB, cipher *crypto.Cipher, logger *zap.Logger,
@@ -158,6 +168,9 @@ func (h *CertificateHandler) GetCertificate(c *echo.Context) error {
 // @Failure  409  {object}  api.errorBody  "api_https_enabled is off, so no certificate is in use"
 // @Router       /certificate/renew [post]
 func (h *CertificateHandler) RenewCertificate(c *echo.Context) error {
+	h.replaceMu.Lock()
+	defer h.replaceMu.Unlock()
+
 	previous := h.holder.Current()
 	if previous == nil {
 		return h.noCertificate(c)
@@ -201,6 +214,14 @@ func (h *CertificateHandler) InstallCertificate(c *echo.Context) error {
 	if err != nil {
 		return unreadableBody(err).answer(c)
 	}
+
+	// The lock is taken once the body is read, so that a client that sends it
+	// slowly holds up no other replacement, and what is being replaced is read
+	// again under it: another replacement may have finished in the meantime.
+	h.replaceMu.Lock()
+	defer h.replaceMu.Unlock()
+
+	previous = h.holder.Current()
 
 	now := time.Now()
 
