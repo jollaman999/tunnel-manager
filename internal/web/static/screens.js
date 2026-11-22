@@ -3441,23 +3441,29 @@ function hostRow(host, known) {
 }
 
 // hostStateCell is the enabled column of a Host. A Host that was presented a
-// key it does not trust says so there instead, with the press that answers it
-// under the badge, the way a row of the status screen does. The press is not
-// one of the buttons at the end of the row: those fold into a menu wherever
-// the table is wider than its box, and a Host that cannot connect until
-// somebody looks at its key would then read like every other row.
+// key it does not trust says so there as well, with the badge under whether it
+// is enabled and the press that answers it under the badge, the way a row of
+// the status screen does. Whether it is enabled stays on top because this
+// column is the one place the list says so, and a disabled Host may still hold
+// a key it was presented before it was switched off. The press is not one of
+// the buttons at the end of the row: those fold into a menu wherever the table
+// is wider than its box, and a Host that cannot connect until somebody looks
+// at its key would then read like every other row.
 //
 // Which of the two questions it is follows from whether the Host trusts a key
 // already: none is a Host never approved, and one is a key that changed.
 function hostStateCell(host) {
+  const enabled = host.enabled ? t("common.yes.text") : t("common.no.text");
+
   if (typeof host.pending_host_key_fingerprint !== "string" || host.pending_host_key_fingerprint === "") {
-    return host.enabled ? t("common.yes.text") : t("common.no.text");
+    return enabled;
   }
 
   const trusted = typeof host.host_key_fingerprint === "string" && host.host_key_fingerprint !== "";
   const cell = document.createElement("div");
 
   cell.className = "state-cell";
+  cell.appendChild(element("span", enabled));
   cell.appendChild(statusBadge(trusted ? "host_key_mismatch" : "host_key_unapproved"));
   cell.appendChild(actionButton(t("hosts.jump-approve.button"), "host-approve-" + host.id, async function () {
     const approved = await openHostKeyPanel(host.id);

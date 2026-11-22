@@ -1735,6 +1735,13 @@ td > .badge[data-status]:only-child,
   white-space: nowrap;
 }
 
+/* On the Host list the track over the badge holds whether the Host is
+   enabled, set down against the badge so the two read as one answer. */
+.state-cell > span:not(.badge) {
+  grid-row: 1;
+  align-self: end;
+}
+
 .socks-cell {
   display: grid;
   grid-template-columns: 5ch auto;
