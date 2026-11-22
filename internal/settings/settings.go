@@ -401,6 +401,13 @@ const initialPasswordFileName = "initial-password"
 // that read it while it was still empty would remove it.
 const installLockFileName = "install.lock"
 
+// installProblemFileName is the name an install started by the Update screen or
+// the update loop leaves its reason under when it fails, beside the database
+// file, spelled again here for the same reason as installLockFileName. The
+// service removes the file before every such install, so a key or a log kept
+// there would be gone after the next one.
+const installProblemFileName = "update-install.problem"
+
 // installFile is a file this installation keeps beside the database file under
 // a name no setting chooses, together with the words it is named by in a
 // refusal.
@@ -423,6 +430,7 @@ func installFiles(databaseFile string) []installFile {
 		{name: base + "-journal", what: "the rollback journal of the database file"},
 		{name: initialPasswordFileName, what: "the initial password file"},
 		{name: installLockFileName, what: "the lock an install holds while it runs"},
+		{name: installProblemFileName, what: "the reason a failed update leaves for the Update screen"},
 	}
 }
 

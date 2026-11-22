@@ -776,7 +776,7 @@ MCowBQYDK2VwAyEA57QsNFJidOS2ncMcnBU4nAiWvuw+M1+M9UKsIjdsvLw=
 開けるファイルならどれでも読ませる通り道にしてしまいます。
 
 **どちらも、tunnel-manager がほかのものを入れているファイルを指せません。** データベースファイル、
-その `-wal`、`-shm`、`-journal`、`initial-password`、`install.lock`、そして 2 つのうちのもう一方です。比較は
+その `-wal`、`-shm`、`-journal`、`initial-password`、`install.lock`、`update-install.problem`、そして 2 つのうちのもう一方です。比較は
 大文字と小文字を区別せず、`./x` と `x` を同じファイルとして読みます。データベースファイルは既定値
 ではなく `-db` が指すファイルです。ロガーはキーを読むより前に開かれるので、キーファイルを指す
 ログファイルはキーに書き込み、次の起動は読めないキーで止まります。
@@ -1491,7 +1491,7 @@ Tunnel Manager サーバーが表示する言語であり、言語を選んだ�
 | `api_port` | 1 から 65535。ローカルフォワードか SOCKS5 プロキシが開くポートに変えると `409` で拒否されます。[ローカルフォワード](#ローカルフォワード)を参照してください |
 | `monitoring_interval_sec`, `reconcile_interval_sec` | 1 から 3600。以前のバージョンには上限がなく、そのとき 3600 より大きく保存された値は次の起動で 3600 に下げられ、設定の名前と前後の値が警告としてログに残る。設定のインポートも同じ値を同じように下げ、`items` に載せる |
 | `reconnect_max_interval_sec` | 1 から 3600 |
-| `security_key_file`, `logging_file_path` | 空でなく、データベースファイルがあるディレクトリの下のパスであること。絶対パスと `..` で外へ出るパスは拒否されます。大文字と小文字を区別せず、データベースファイル、その `-wal`、`-shm`、`-journal`、`initial-password`、`install.lock`、またはもう一方を指すこともできません。[ファイルが置かれる場所](#ファイルが置かれる場所)を参照してください |
+| `security_key_file`, `logging_file_path` | 空でなく、データベースファイルがあるディレクトリの下のパスであること。絶対パスと `..` で外へ出るパスは拒否されます。大文字と小文字を区別せず、データベースファイル、その `-wal`、`-shm`、`-journal`、`initial-password`、`install.lock`、`update-install.problem`、またはもう一方を指すこともできません。[ファイルが置かれる場所](#ファイルが置かれる場所)を参照してください |
 | `logging_level` | `debug`, `info`, `warn`, `error`, `dpanic`, `panic`, `fatal` のいずれか |
 | `logging_format` | `json` か `console` |
 | `logging_file_max_size`, `logging_file_max_backups`, `logging_file_max_age` | 0 以上 |

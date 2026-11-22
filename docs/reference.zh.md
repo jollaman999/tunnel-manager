@@ -675,7 +675,7 @@ Logs 页面又把它的末尾读回来，所以一个能离开那个目录的路
 任何一个文件里写、并读取它能打开的任何一个文件的通道。
 
 **两者都不能指向 tunnel-manager 用来存放别的东西的文件：** 数据库文件，它的 `-wal`、`-shm` 和
-`-journal`，`initial-password`，`install.lock`，或者两者中的另一个。比较时忽略大小写，并把 `./x` 和 `x` 当作同一个
+`-journal`，`initial-password`，`install.lock`，`update-install.problem`，或者两者中的另一个。比较时忽略大小写，并把 `./x` 和 `x` 当作同一个
 文件；数据库文件指的是 `-db` 给的那个文件，不是默认值。日志器在读取密钥之前就打开了，所以指向密钥
 文件的日志文件会写进密钥里，下次启动就会停在一个读不了的密钥上。
 
@@ -1296,7 +1296,7 @@ Settings 页面。同样的值通过 `GET /api/settings` 和 `PUT /api/settings`
 | `api_port` | 1 到 65535。改成某个本地转发或 SOCKS5 代理打开的端口会被 `409` 拒绝，见[本地转发](#本地转发) |
 | `monitoring_interval_sec`、`reconcile_interval_sec` | 1 到 3600。以前的版本没有上限，那时存下的大于 3600 的值会在下次启动时降到 3600，并在日志里留下一条警告，写明设置名和前后两个值。设置导入也会这样降低这类值，并列在 `items` 里 |
 | `reconnect_max_interval_sec` | 1 到 3600 |
-| `security_key_file`、`logging_file_path` | 不能为空，而且要是数据库文件所在的目录底下的路径：绝对路径和用 `..` 爬出去的路径都会被拒绝。两者都不能指向数据库文件、它的 `-wal`、`-shm` 或 `-journal`、`initial-password`、`install.lock`，或者另一个，比较时忽略大小写。见[文件放在哪里](#文件放在哪里) |
+| `security_key_file`、`logging_file_path` | 不能为空，而且要是数据库文件所在的目录底下的路径：绝对路径和用 `..` 爬出去的路径都会被拒绝。两者都不能指向数据库文件、它的 `-wal`、`-shm` 或 `-journal`、`initial-password`、`install.lock`、`update-install.problem`，或者另一个，比较时忽略大小写。见[文件放在哪里](#文件放在哪里) |
 | `logging_level` | `debug`、`info`、`warn`、`error`、`dpanic`、`panic` 或 `fatal` |
 | `logging_format` | `json` 或 `console` |
 | `logging_file_max_size`、`logging_file_max_backups`、`logging_file_max_age` | 零或更大 |

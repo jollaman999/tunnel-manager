@@ -921,6 +921,8 @@ func TestValidateFilesRefusesAPathOnAFileOfTheInstallation(t *testing.T) {
 		"./Initial-Password",
 		"install.lock",
 		"./Install.Lock",
+		"update-install.problem",
+		"./Update-Install.Problem",
 	}
 
 	for _, file := range files {

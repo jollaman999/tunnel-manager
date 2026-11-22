@@ -882,7 +882,7 @@ open.
 
 **Neither may name a file tunnel-manager keeps something else in:** the
 database file, its `-wal`, `-shm` and `-journal`, `initial-password`,
-`install.lock`, or the other of the two. The comparison ignores case and reads `./x` and `x` as the
+`install.lock`, `update-install.problem`, or the other of the two. The comparison ignores case and reads `./x` and `x` as the
 same file, and the database file is named by the file `-db` names, not by the
 default. The logger is opened before the key is read, so a log file on the key
 file writes into the key and the next start stops on a key it cannot read.
@@ -1683,7 +1683,7 @@ A save is refused before it is stored when a value would not hold:
 | `api_port` | 1 to 65535. A new port a local forward or a SOCKS5 proxy opens is refused with `409`, see [Local forwards](#local-forwards) |
 | `monitoring_interval_sec`, `reconcile_interval_sec` | 1 to 3600. An earlier version held them to no ceiling, and one it stored above 3600 is lowered to 3600 at the next start, with a warning in the log that names the setting and both values. A settings import lowers one the same way and lists it in `items` |
 | `reconnect_max_interval_sec` | 1 to 3600 |
-| `security_key_file`, `logging_file_path` | Not empty, and a path under the directory the database file is in: an absolute path and one that climbs out with `..` are refused. Neither may name the database file, its `-wal`, `-shm` or `-journal`, `initial-password`, `install.lock`, or the other one, with the case ignored. See [Where the files go](#where-the-files-go) |
+| `security_key_file`, `logging_file_path` | Not empty, and a path under the directory the database file is in: an absolute path and one that climbs out with `..` are refused. Neither may name the database file, its `-wal`, `-shm` or `-journal`, `initial-password`, `install.lock`, `update-install.problem`, or the other one, with the case ignored. See [Where the files go](#where-the-files-go) |
 | `logging_level` | `debug`, `info`, `warn`, `error`, `dpanic`, `panic` or `fatal` |
 | `logging_format` | `json` or `console` |
 | `logging_file_max_size`, `logging_file_max_backups`, `logging_file_max_age` | Zero or more |
