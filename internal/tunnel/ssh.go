@@ -1376,28 +1376,40 @@ func (t *SSHTunnel) Start(m *Manager, tunnel *models.Tunnel) {
 					return
 				}
 
-				wait, reason := t.backoff.after(err)
-				t.logger.Error("connection failed, retrying in "+strconv.Itoa(retryInSec(wait))+" seconds",
-					logid.TunnelConnectFailedRetrying.Field(),
-					zap.Int("retry_in_sec", retryInSec(wait)),
-					retryReasonField(reason),
-					zap.String("local", t.Local.String()),
-					zap.String("server", t.Server),
-					zap.String("remote", t.Remote),
-					zap.Error(err))
-
-				if !t.waitBeforeRetry(wait) {
+				if !t.retryAfter(m, tunnel, err) {
 					return
 				}
-
-				t.tunnelMu.Lock()
-				tunnel.Status = "reconnecting"
-				tunnel.RetryCount++
-				t.saveTunnelStatus(m, tunnel)
-				t.tunnelMu.Unlock()
 			}
 		}
 	}
+}
+
+// retryAfter waits out err, the failure of an attempt to connect that is to be
+// tried again, and reports the tunnel as reconnecting before the next attempt.
+// It reports whether that attempt is to be made, which it is not once the
+// tunnel was stopped during the wait.
+func (t *SSHTunnel) retryAfter(m *Manager, tunnel *models.Tunnel, err error) bool {
+	wait, reason := t.backoff.after(err)
+	t.logger.Error("connection failed, retrying in "+strconv.Itoa(retryInSec(wait))+" seconds",
+		logid.TunnelConnectFailedRetrying.Field(),
+		zap.Int("retry_in_sec", retryInSec(wait)),
+		retryReasonField(reason),
+		zap.String("local", t.Local.String()),
+		zap.String("server", t.Server),
+		zap.String("remote", t.Remote),
+		zap.Error(err))
+
+	if !t.waitBeforeRetry(wait) {
+		return false
+	}
+
+	t.tunnelMu.Lock()
+	tunnel.Status = "reconnecting"
+	tunnel.RetryCount++
+	t.saveTunnelStatus(m, tunnel)
+	t.tunnelMu.Unlock()
+
+	return true
 }
 
 func (t *SSHTunnel) Stop(m *Manager) error {
