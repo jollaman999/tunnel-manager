@@ -50,9 +50,10 @@ const passwordHeaderSize = 3 + passwordSaltSize
 
 // acceptedScryptParameters lists every (log2(N), r, p) a v1 file may state,
 // and a file that states anything else is refused as damaged before scrypt
-// runs. A file names its own parameters and an import asks for no account
-// password, so whatever this list lets through is the memory and the time
-// anyone who reaches the import page can make this process spend per request.
+// runs. A file names its own parameters and the settings import asks for no
+// account password, so whatever this list lets through is the memory and the
+// time any session, or any token holding the transfer scope, can make this
+// process spend per request.
 // A bound on memory alone is not enough: p multiplies the time and not the
 // memory, and N of 2^17, r of 8 and p of 32 held one core for eight seconds
 // under a 128 MiB cap.
