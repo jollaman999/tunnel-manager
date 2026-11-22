@@ -85,6 +85,13 @@ type UninstallHandler struct {
 	// removed.
 	stopReconcile func()
 	paths         UninstallPaths
+	// begin tells the startup that this uninstall got past its password and
+	// is about to stop and remove things. It is called before anything is
+	// touched, so that a shutdown that was already on its way for another
+	// reason - a restart pressed a moment earlier - ends the process the way
+	// this one would, and does not run this program again on the files that
+	// are about to go.
+	begin func()
 	// exit ends the process. It is a function of the startup rather than
 	// os.Exit, so that the process goes down the same way a signal takes it
 	// down and so that a test is not ended by the code it is testing.
@@ -95,13 +102,14 @@ type UninstallHandler struct {
 }
 
 func NewUninstallHandler(db *gorm.DB, logger *zap.Logger, manager tunnelStopper,
-	stopReconcile func(), paths UninstallPaths, exit func()) *UninstallHandler {
+	stopReconcile func(), paths UninstallPaths, begin func(), exit func()) *UninstallHandler {
 	return &UninstallHandler{
 		db:            db,
 		logger:        logger,
 		manager:       manager,
 		stopReconcile: stopReconcile,
 		paths:         paths,
+		begin:         begin,
 		exit:          exit,
 		exitAfter:     uninstallExitDelay,
 	}
@@ -207,6 +215,8 @@ func (h *UninstallHandler) Uninstall(c *echo.Context) error {
 	}
 
 	attempt.succeeded()
+
+	h.begin()
 
 	h.logger.Warn("the uninstall was asked for and the password opens the account. The tunnels are "+
 		"stopped, the files of this installation are removed and the process ends",

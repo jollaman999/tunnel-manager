@@ -113,3 +113,35 @@ func TestReexecHelperProcess(t *testing.T) {
 	// above reading one round out of the output rather than a failure.
 	t.Fatalf("running this program again returned: %v", err)
 }
+
+// TestAnUninstallDecidesHowTheShutdownEnds is the order a restart and an
+// uninstall can arrive in. The select in serve wakes up to whichever of the
+// two closes its channel first, and a restart pressed a moment before an
+// uninstall is that one: running this program again then would start an
+// empty installation on the files the uninstall removed, under the same PID
+// the service manager is watching.
+func TestAnUninstallDecidesHowTheShutdownEnds(t *testing.T) {
+	cases := []struct {
+		name           string
+		restartAsked   bool
+		uninstallBegun bool
+		runAgain       bool
+		uninstalled    bool
+	}{
+		{name: "a restart", restartAsked: true, runAgain: true},
+		{name: "a restart, then an uninstall", restartAsked: true, uninstallBegun: true, uninstalled: true},
+		{name: "an uninstall", uninstallBegun: true, uninstalled: true},
+		{name: "a signal"},
+	}
+
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			runAgain, uninstalled := endOfShutdown(c.restartAsked, c.uninstallBegun)
+
+			if runAgain != c.runAgain || uninstalled != c.uninstalled {
+				t.Errorf("the shutdown ends with runAgain=%v uninstalled=%v, want runAgain=%v uninstalled=%v",
+					runAgain, uninstalled, c.runAgain, c.uninstalled)
+			}
+		})
+	}
+}

@@ -1843,6 +1843,9 @@ macOS 에서는 이 경우만이 아니라 0 으로 끝나는 것은 전부 다�
   쓰는지는 돌고 있는 프로세스에게 묻는데, 이 뒤에는 도는 것이 없습니다. `-uninstall` 이 등록과
   실행 파일을 지우고, 그 뒤의 `-install` 은 처음부터 설치합니다.
 
+재시작이 실행되기 전 기다리는 몇 초 사이에 제거를 누르면 제거가 재시작을 대신합니다. 프로세스는
+제거로 끝나고 프로그램을 다시 띄우지 않습니다.
+
 ```bash
 curl -s -b cookies.txt -X POST "$BASE/api/uninstall" \
   -H 'Content-Type: application/json' \

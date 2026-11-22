@@ -2237,6 +2237,19 @@ func serve() bool {
 		})
 	}
 
+	// uninstallBegun is set by the uninstall once the password has opened the
+	// account and before it stops or removes anything, seconds before it
+	// closes the channel above. The shutdown reads it and not only that
+	// channel, because the select below wakes up to whichever channel closes
+	// first: a restart pressed a moment before the uninstall closes its own
+	// channel first, and running this program again then would start an empty
+	// installation in place of the one the uninstall removed.
+	var uninstallBegun atomic.Bool
+
+	beginUninstall := func() {
+		uninstallBegun.Store(true)
+	}
+
 	// restarting is what the Settings screen asks for a restart through. It is
 	// the sibling of the channel above and is read by the same select, so a
 	// restart runs the very shutdown a signal runs: the API is drained, the
@@ -2380,7 +2393,7 @@ func serve() bool {
 			KeyFile:             keyFile,
 			InitialPasswordFile: initialPasswordFile,
 			LogFile:             resolveInstallPath(installDir, set.LoggingFilePath),
-		}, endAfterUninstall)
+		}, beginUninstall, endAfterUninstall)
 	// The restart is handed the shutdown above and what this build can do about
 	// coming back. canReexec is asked here, in the one place that knows it is
 	// the process, rather than in the handler: the handler answers with it, and
@@ -2700,10 +2713,6 @@ func serve() bool {
 	// what it is followed by is not.
 	restartAsked := false
 
-	// uninstalledEnd is the shutdown the uninstall asked for, which ends the
-	// process with what keeps the service manager from starting it again.
-	uninstalledEnd := false
-
 	select {
 	case sig := <-sigChan:
 		logger.Info("Received signal, shutting down...",
@@ -2717,8 +2726,6 @@ func serve() bool {
 			logid.ShutdownSignalReceived.Field(),
 			zap.String("signal", "service manager stop"))
 	case <-uninstalled:
-		uninstalledEnd = true
-
 		logger.Info("The installation was removed, shutting down...", logid.ShutdownUninstalled.Field())
 	case <-restarting:
 		restartAsked = true
@@ -2773,7 +2780,19 @@ func serve() bool {
 	// too, and every one of those steps is one the image that replaces this
 	// process needs to have finished: the port above all, since a listener that
 	// is still open is one the new image cannot bind.
-	if restartAsked {
+	//
+	// The flag is read here, once the API has been drained, so that an
+	// uninstall that was being answered when the shutdown began has said
+	// whether it began by the time this asks.
+	runAgain, uninstalledEnd := endOfShutdown(restartAsked, uninstallBegun.Load())
+
+	if restartAsked && !runAgain {
+		logger.Info("an uninstall began after the restart was asked for and removed what the restart "+
+			"would run, so this process ends instead of running this program again",
+			logid.ShutdownUninstalled.Field())
+	}
+
+	if runAgain {
 		finishRestart(logger, apiPort)
 	}
 
@@ -2786,6 +2805,25 @@ func serve() bool {
 	}
 
 	return uninstalledEnd
+}
+
+// endOfShutdown says what follows the ordered shutdown: whether this program
+// is run again in place of this process, and whether the process ends as the
+// uninstall on the Settings screen ends it.
+//
+// An uninstall that got past its password decides, whatever the select woke
+// up to. The restart and the uninstall each wait three seconds after their
+// answer before they close their channel, so a restart pressed just before an
+// uninstall is the one the select sees, and running this program again then
+// would start an empty installation on the files the uninstall removed. A
+// signal or a stop from the service manager that arrived during an uninstall
+// ends it the same way, since the installation is gone either way.
+func endOfShutdown(restartAsked bool, uninstallBegun bool) (runAgain bool, uninstalled bool) {
+	if uninstallBegun {
+		return false, true
+	}
+
+	return restartAsked, false
 }
 
 // finishRestart runs this program again in place of this process.

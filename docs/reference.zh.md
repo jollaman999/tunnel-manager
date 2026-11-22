@@ -1650,6 +1650,8 @@ API 也按给出按钮的同一条件判断。如果上一次查看没有找到�
 - **在运行 `-uninstall` 之前，`-install` 会被拒绝。** 已注册的服务用的是哪个数据库，要问正在运行的
   进程，而这之后什么也没在运行。`-uninstall` 会删除注册和可执行文件，之后的 `-install` 从头安装。
 
+在重启真正执行前等待的那几秒里按下卸载，卸载会取代重启：进程按卸载的方式结束，不会再运行程序。
+
 ```bash
 curl -s -b cookies.txt -X POST "$BASE/api/uninstall" \
   -H 'Content-Type: application/json' \

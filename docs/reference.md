@@ -2163,6 +2163,10 @@ still started again.
   runs. `-uninstall` takes out the entry and the executable, and an `-install`
   after it installs afresh.
 
+An uninstall pressed in the seconds a restart waits before it goes takes the
+place of the restart: the process ends as an uninstall ends and does not run the
+program again.
+
 ```bash
 curl -s -b cookies.txt -X POST "$BASE/api/uninstall" \
   -H 'Content-Type: application/json' \

@@ -219,6 +219,8 @@ func newUninstallHandler(t *testing.T, inst *installation) (*UninstallHandler, *
 	h := NewUninstallHandler(db, zap.NewNop(), steps, func() {
 		steps.record("reconcile")
 	}, inst.paths, func() {
+		steps.record("begin")
+	}, func() {
 		close(exited)
 	})
 
@@ -585,7 +587,7 @@ func TestUninstallStopsTheLoopAndTheTunnelsBeforeTheFilesGo(t *testing.T) {
 
 	names, fileWasThere := steps.taken()
 
-	if strings.Join(names, ",") != "reconcile,tunnels" {
+	if strings.Join(names, ",") != "begin,reconcile,tunnels" {
 		t.Fatalf("the uninstall took the steps %v, want the loop stopped and then the tunnels",
 			names)
 	}
@@ -594,6 +596,37 @@ func TestUninstallStopsTheLoopAndTheTunnelsBeforeTheFilesGo(t *testing.T) {
 		if !there {
 			t.Fatalf("%s was stopped after the database file was already removed", names[index])
 		}
+	}
+}
+
+// TestUninstallSaysItBeganBeforeAnythingIsStopped is what keeps a restart that
+// was pressed a moment earlier from running this program again on the files
+// this removes. The startup is told before the first step, while the database
+// file is still there, and is told nothing for a password that does not open
+// the account (TestUninstallRefusesAPasswordThatDoesNotOpenTheAccount).
+func TestUninstallSaysItBeganBeforeAnythingIsStopped(t *testing.T) {
+	inst := newInstallation(t)
+	h, steps, _, _ := newUninstallHandler(t, inst)
+
+	rec := postUninstall(t, h, `{"password":"`+uninstallPassword+`"}`)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("POST /api/uninstall = %d (%s), want %d", rec.Code, rec.Body.String(),
+			http.StatusOK)
+	}
+
+	names, fileWasThere := steps.taken()
+
+	if len(names) == 0 || names[0] != "begin" {
+		t.Fatalf("the uninstall took the steps %v, want it to say it began before the first of them", names)
+	}
+
+	if !fileWasThere[0] {
+		t.Fatalf("the uninstall said it began after the database file was already removed")
+	}
+
+	if strings.Count(strings.Join(names, ","), "begin") != 1 {
+		t.Fatalf("the uninstall took the steps %v, want it to say it began once", names)
 	}
 }
 
