@@ -154,6 +154,13 @@ type Manager struct {
 	// meantime; StartTunnel waits on the channel for that reason.
 	stopping map[string]chan struct{}
 
+	// starting holds, under m.mu, the tunnels that StartTunnel has registered
+	// in m.tunnels and is still making the row of, by the same key. The
+	// channel is closed once the row is made, or once the tunnel is taken out
+	// of m.tunnels again because it could not be. A stop of the tunnel waits on
+	// it, since the row is what the stop deletes and the start may yet fail.
+	starting map[string]chan struct{}
+
 	// signers holds the private key of every Host as it was last read, so
 	// that the key is read once rather than once for every connection made
 	// with it. What is kept and when it is read again is at signerCache.
@@ -258,6 +265,7 @@ func NewManager(db *gorm.DB, logger *zap.Logger, cipher *crypto.Cipher, monitori
 		db:                    db,
 		tunnels:               make(map[string]*SSHTunnel),
 		stopping:              make(map[string]chan struct{}),
+		starting:              make(map[string]chan struct{}),
 		logger:                logger,
 		cipher:                cipher,
 		monitoringIntervalSec: monitoringIntervalSec,
@@ -1084,7 +1092,6 @@ func (m *Manager) StartTunnel(host *models.Host, sp *models.ServicePort, bindSco
 	t.connFP = connectionFingerprint(host, sp, bindScope, creds, jumps)
 
 	m.mu.Lock()
-	defer m.mu.Unlock()
 
 	// A stop of the tunnel under this key that has not finished is waited
 	// for, since it is still to delete the row this start is about to make.
@@ -1102,30 +1109,54 @@ func (m *Manager) StartTunnel(host *models.Host, sp *models.ServicePort, bindSco
 	// Asked again under the lock, since another start of the same tunnel can
 	// have registered it while this one was being built.
 	if _, exists := m.tunnels[key]; exists {
+		m.mu.Unlock()
 		return fmt.Errorf("tunnel already exists")
 	}
+
+	// The tunnel is registered before its row is made, and the row is made
+	// with m.mu let go. Making it takes as long as the database does, and
+	// every status call and every pass waits on m.mu. Registered, the key is
+	// taken for that time, so another start of the same tunnel is refused, and
+	// whatever reads m.tunnels finds the tunnel there, which is what it found
+	// when it had to wait for the row to be made under the lock. The key is
+	// marked in m.starting until the row is made, which StopTunnel waits on.
+	started := make(chan struct{})
+	m.tunnels[key] = t
+	m.starting[key] = started
+	m.mu.Unlock()
 
 	err = m.db.Where("host_id = ? AND sp_id = ?", host.ID, sp.ID).
 		Attrs(tunnel).
 		FirstOrCreate(&tunnel).Error
+
+	if err == nil {
+		go func(m *Manager, t *SSHTunnel, tunnel *models.Tunnel) {
+			t.Start(m, tunnel)
+		}(m, t, &tunnel)
+	}
+
+	m.mu.Lock()
+	delete(m.starting, key)
+	// A tunnel without a row was not started, so it does not keep the key
+	// taken. Nothing else took it out in the meantime: a start of the same
+	// tunnel is refused and a stop of it waits for this one.
+	if err != nil {
+		delete(m.tunnels, key)
+	}
+	m.mu.Unlock()
+	close(started)
+
 	if err != nil {
 		return fmt.Errorf("failed to create tunnel information: %w", err)
 	}
 
-	// Registered only once nothing is left that can fail, so a tunnel that was
-	// not started does not keep the key taken.
-	m.tunnels[key] = t
-
-	go func(m *Manager, t *SSHTunnel, tunnel *models.Tunnel) {
-		t.Start(m, tunnel)
-	}(m, t, &tunnel)
-
 	return nil
 }
 
-// tunnelRegistered reports whether a tunnel runs under key. StartTunnel asks
-// it before building anything, so that a tunnel that is running costs no
-// reading of its key, and asks again under the lock before it registers one.
+// tunnelRegistered reports whether a tunnel runs under key, or is being started
+// under it and its row is still being made. StartTunnel asks it before
+// building anything, so that a tunnel that is running costs no reading of its
+// key, and asks again under the lock before it registers one.
 func (m *Manager) tunnelRegistered(key string) bool {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
@@ -1142,10 +1173,26 @@ func (m *Manager) tunnelRegistered(key string) bool {
 // then deletes its row, both of which take as long as the database does, and
 // every status call and every pass waits on m.mu. The key is marked in
 // m.stopping for that time, which StartTunnel waits on.
+//
+// A tunnel whose start is still making its row is waited for, and stopped once
+// the row is made. That is the tunnel the stop found when the start made the
+// row under the lock, and a stop that went ahead would delete a row the start
+// then makes. A start that could not make the row leaves nothing to stop.
 func (m *Manager) StopTunnel(hostID uint, spID uint) error {
 	key := tunnelKey(hostID, spID)
 
 	m.mu.Lock()
+	for {
+		started, starting := m.starting[key]
+		if !starting {
+			break
+		}
+
+		m.mu.Unlock()
+		<-started
+		m.mu.Lock()
+	}
+
 	tunnel, exists := m.tunnels[key]
 	if !exists {
 		m.mu.Unlock()
@@ -1172,9 +1219,6 @@ func (m *Manager) StopTunnel(hostID uint, spID uint) error {
 }
 
 func (m *Manager) GetHostTunnels(hostID uint) (*[]models.Tunnel, error) {
-	m.mu.RLock()
-	defer m.mu.RUnlock()
-
 	var tunnels []models.Tunnel
 	err := m.db.Where("host_id = ?", hostID).Find(&tunnels).Error
 	if err != nil {
@@ -1189,9 +1233,6 @@ func (m *Manager) GetHostTunnels(hostID uint) (*[]models.Tunnel, error) {
 }
 
 func (m *Manager) GetAllTunnels() (*[]models.Tunnel, error) {
-	m.mu.RLock()
-	defer m.mu.RUnlock()
-
 	var tunnels []models.Tunnel
 	err := m.db.Find(&tunnels).Error
 	if err != nil {

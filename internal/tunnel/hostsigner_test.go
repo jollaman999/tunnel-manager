@@ -267,9 +267,9 @@ func awaitWithin(call func(), within time.Duration) bool {
 }
 
 // TestGetHostTunnelsDoesNotWaitForAKeyBeingRead covers the status calls while a
-// tunnel is being started with a passphrase key. They wait on m.mu, and the key
-// is read before that lock is taken, so they answer at once rather than after
-// the bcrypt run.
+// tunnel is being started with a passphrase key. The key is read before the
+// start takes any lock the status calls could wait on, so they answer at once
+// rather than after the bcrypt run.
 func TestGetHostTunnelsDoesNotWaitForAKeyBeingRead(t *testing.T) {
 	cipher := newTestCipher(t)
 
