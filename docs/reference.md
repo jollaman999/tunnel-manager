@@ -1827,6 +1827,8 @@ is sent again; the failure goes to the log.
   "event": "down",
   "kind": "service_port",
   "host": "192.0.2.10",
+  "host_id": 1,
+  "host_ssh_port": 22,
   "local_port": 18080,
   "since": "2026-09-26T01:02:03Z",
   "last_error": "<the last error the forward reported>",
@@ -1839,13 +1841,19 @@ is sent again; the failure goes to the log.
 | `event` | `down`, `up`, or `test` for the test button |
 | `kind` | `service_port`, `local_forward` or `socks` |
 | `host` | The address of the Host the forward goes through |
+| `host_id` | The id of that Host, as `GET /api/hosts` answers it. `0` in a `test` |
+| `host_ssh_port` | The SSH port of that Host. Two Hosts behind one NAT share `host`, and this and `host_id` tell them apart. `0` in a `test` |
 | `local_port` | The port the forward opens: on the Host for a service port, on the Tunnel Manager server for a local forward and a SOCKS5 proxy |
 | `since` | When the forward was first seen without a connection, RFC 3339 in UTC. An `up` carries the same time as the `down` it answers |
 | `last_error` | The last error seen during the outage |
 | `installation` | The host name of the Tunnel Manager server, so that alerts from several Tunnel Manager servers sent to one place can be told apart |
 
-**Mail is a plain text message** with the same fields, under a subject such as
+**Mail is a plain text message** with the same fields, one `name: value` line
+each, under a subject such as
 `[tunnel-manager <installation>] DOWN: <kind> <local_port> on <host>`. The
+subject names the address alone and is kept that way, so that a mail filter
+written for it keeps matching; `host_id` and `host_ssh_port` are in the body. A
+test message carries only `event` and `installation`. The
 connection security is `tls` on port 465 by default, and `starttls` (587) and
 `none` (25) are the others; `starttls` fails when the server does not offer it.
 Picking one on the screen puts its port in the port box, and nothing is stored

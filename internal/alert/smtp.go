@@ -298,6 +298,8 @@ func message(config SMTPConfig, event Event, now time.Time) []byte {
 	if event.Event != EventTest {
 		b.WriteString("kind: " + event.Kind + "\r\n")
 		b.WriteString("host: " + event.Host + "\r\n")
+		b.WriteString("host_id: " + strconv.FormatUint(uint64(event.HostID), 10) + "\r\n")
+		b.WriteString("host_ssh_port: " + strconv.Itoa(event.HostSSHPort) + "\r\n")
 		b.WriteString("local_port: " + strconv.Itoa(event.LocalPort) + "\r\n")
 		b.WriteString("since: " + event.Since + "\r\n")
 		b.WriteString("last_error: " + headerValue(event.LastError) + "\r\n")

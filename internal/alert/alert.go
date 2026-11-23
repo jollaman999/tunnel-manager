@@ -69,6 +69,12 @@ type Condition struct {
 	Kind string
 	// Host is the address of the Host the forward goes through.
 	Host string
+	// HostID and HostSSHPort name that Host as well, since the address alone
+	// is shared by two Hosts behind one NAT that differ only in their SSH
+	// port, and an alert that names only the address leaves whoever reads it
+	// unable to tell which of them it is about.
+	HostID      uint
+	HostSSHPort int
 	// LocalPort is the port the forward opens: on the Host for a service
 	// port, on this system for a local forward and a SOCKS5 proxy.
 	LocalPort int
@@ -78,10 +84,14 @@ type Condition struct {
 
 // Event is one alert, and it is also the body the webhook is posted.
 type Event struct {
-	Event     string `json:"event"`
-	Kind      string `json:"kind"`
-	Host      string `json:"host"`
-	LocalPort int    `json:"local_port"`
+	Event string `json:"event"`
+	Kind  string `json:"kind"`
+	Host  string `json:"host"`
+	// HostID and HostSSHPort are the id and the SSH port of the Host the
+	// forward goes through. A test names no forward, so it carries 0 in both.
+	HostID      uint `json:"host_id"`
+	HostSSHPort int  `json:"host_ssh_port"`
+	LocalPort   int  `json:"local_port"`
 	// Since is when the forward was first seen without a connection, written
 	// as RFC 3339 in UTC. An up carries the same time as the down it answers,
 	// so the two are matched by it and the length of the outage is the
@@ -261,6 +271,8 @@ func (w *Watcher) queueEvent(config Config, kind string, condition Condition, kn
 		Event:        kind,
 		Kind:         condition.Kind,
 		Host:         condition.Host,
+		HostID:       condition.HostID,
+		HostSSHPort:  condition.HostSSHPort,
 		LocalPort:    condition.LocalPort,
 		Since:        known.since.UTC().Format(time.RFC3339),
 		LastError:    known.lastError,
@@ -272,6 +284,8 @@ func (w *Watcher) queueEvent(config Config, kind string, condition Condition, kn
 			logid.AlertUp.Field(),
 			zap.String("kind", event.Kind),
 			zap.String("host", event.Host),
+			zap.Uint("host_id", event.HostID),
+			zap.Int("host_ssh_port", event.HostSSHPort),
 			zap.Int("local_port", event.LocalPort),
 			zap.String("since", event.Since))
 	} else {
@@ -279,6 +293,8 @@ func (w *Watcher) queueEvent(config Config, kind string, condition Condition, kn
 			logid.AlertDown.Field(),
 			zap.String("kind", event.Kind),
 			zap.String("host", event.Host),
+			zap.Uint("host_id", event.HostID),
+			zap.Int("host_ssh_port", event.HostSSHPort),
 			zap.Int("local_port", event.LocalPort),
 			zap.String("since", event.Since))
 	}
@@ -291,6 +307,8 @@ func (w *Watcher) queueEvent(config Config, kind string, condition Condition, kn
 			zap.String("event", event.Event),
 			zap.String("kind", event.Kind),
 			zap.String("host", event.Host),
+			zap.Uint("host_id", event.HostID),
+			zap.Int("host_ssh_port", event.HostSSHPort),
 			zap.Int("local_port", event.LocalPort))
 	}
 }

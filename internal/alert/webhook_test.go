@@ -46,6 +46,8 @@ func TestTheWebhookIsPostedTheEventAsJSON(t *testing.T) {
 		Event:        EventDown,
 		Kind:         KindLocalForward,
 		Host:         "ssh.example.com",
+		HostID:       7,
+		HostSSHPort:  2222,
 		LocalPort:    15432,
 		Since:        "2026-09-26T01:00:00Z",
 		LastError:    "ssh: handshake failed",
@@ -64,13 +66,15 @@ func TestTheWebhookIsPostedTheEventAsJSON(t *testing.T) {
 	}
 
 	want := map[string]interface{}{
-		"event":        "down",
-		"kind":         "local_forward",
-		"host":         "ssh.example.com",
-		"local_port":   float64(15432),
-		"since":        "2026-09-26T01:00:00Z",
-		"last_error":   "ssh: handshake failed",
-		"installation": "tm.example.com",
+		"event":         "down",
+		"kind":          "local_forward",
+		"host":          "ssh.example.com",
+		"host_id":       float64(7),
+		"host_ssh_port": float64(2222),
+		"local_port":    float64(15432),
+		"since":         "2026-09-26T01:00:00Z",
+		"last_error":    "ssh: handshake failed",
+		"installation":  "tm.example.com",
 	}
 
 	if len(r.body) != len(want) {

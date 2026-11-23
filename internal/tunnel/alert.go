@@ -24,6 +24,22 @@ func serverHost(server string) string {
 	return host
 }
 
+// serverPort is the SSH port of a server address, the one the Host was
+// registered with. An address that names none is 0.
+func serverPort(server string) int {
+	_, port, err := net.SplitHostPort(server)
+	if err != nil {
+		return 0
+	}
+
+	number, err := strconv.Atoi(port)
+	if err != nil {
+		return 0
+	}
+
+	return number
+}
+
 // runningTunnel is what an alert needs of a running tunnel that the row does
 // not say plainly.
 type runningTunnel struct {
@@ -79,12 +95,14 @@ func (m *Manager) AlertConditions() ([]alert.Condition, error) {
 			}
 
 			conditions = append(conditions, alert.Condition{
-				Key:       alertKey(alert.KindServicePort, key, t.server, t.port),
-				Kind:      alert.KindServicePort,
-				Host:      serverHost(t.server),
-				LocalPort: t.port,
-				Connected: row.Status == statusConnected,
-				LastError: row.LastError,
+				Key:         alertKey(alert.KindServicePort, key, t.server, t.port),
+				Kind:        alert.KindServicePort,
+				Host:        serverHost(t.server),
+				HostID:      row.HostID,
+				HostSSHPort: serverPort(t.server),
+				LocalPort:   t.port,
+				Connected:   row.Status == statusConnected,
+				LastError:   row.LastError,
 			})
 		}
 	}
@@ -101,12 +119,14 @@ func (m *Manager) AlertConditions() ([]alert.Condition, error) {
 		id := strconv.FormatUint(uint64(key.HostID), 10) + "-" + strconv.FormatUint(uint64(key.Number), 10)
 
 		conditions = append(conditions, alert.Condition{
-			Key:       alertKey(alert.KindLocalForward, id, f.server, f.listen.port()),
-			Kind:      alert.KindLocalForward,
-			Host:      serverHost(f.server),
-			LocalPort: f.listen.port(),
-			Connected: state.Status == statusConnected,
-			LastError: state.LastError,
+			Key:         alertKey(alert.KindLocalForward, id, f.server, f.listen.port()),
+			Kind:        alert.KindLocalForward,
+			Host:        serverHost(f.server),
+			HostID:      key.HostID,
+			HostSSHPort: serverPort(f.server),
+			LocalPort:   f.listen.port(),
+			Connected:   state.Status == statusConnected,
+			LastError:   state.LastError,
 		})
 	}
 
@@ -121,12 +141,14 @@ func (m *Manager) AlertConditions() ([]alert.Condition, error) {
 		state := p.snapshot()
 
 		conditions = append(conditions, alert.Condition{
-			Key:       alertKey(alert.KindSocks, strconv.FormatUint(uint64(id), 10), p.server, p.listen.port()),
-			Kind:      alert.KindSocks,
-			Host:      serverHost(p.server),
-			LocalPort: p.listen.port(),
-			Connected: state.Status == statusConnected,
-			LastError: state.LastError,
+			Key:         alertKey(alert.KindSocks, strconv.FormatUint(uint64(id), 10), p.server, p.listen.port()),
+			Kind:        alert.KindSocks,
+			Host:        serverHost(p.server),
+			HostID:      id,
+			HostSSHPort: serverPort(p.server),
+			LocalPort:   p.listen.port(),
+			Connected:   state.Status == statusConnected,
+			LastError:   state.LastError,
 		})
 	}
 

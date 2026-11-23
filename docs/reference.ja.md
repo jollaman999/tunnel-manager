@@ -1620,6 +1620,8 @@ Host のアドレスや SSH ポートが変わった転送と、Host を削除�
   "event": "down",
   "kind": "service_port",
   "host": "192.0.2.10",
+  "host_id": 1,
+  "host_ssh_port": 22,
   "local_port": 18080,
   "since": "2026-09-26T01:02:03Z",
   "last_error": "<転送が最後に報告したエラー>",
@@ -1632,13 +1634,17 @@ Host のアドレスや SSH ポートが変わった転送と、Host を削除�
 | `event` | `down`、`up`、それにテストボタンが送る `test` |
 | `kind` | `service_port`、`local_forward`、`socks` のいずれか |
 | `host` | その転送が経由する Host のアドレス |
+| `host_id` | その Host の id。`GET /api/hosts` が返す値です。`test` では `0` |
+| `host_ssh_port` | その Host の SSH ポート。1 つの NAT の後ろにある 2 つの Host は `host` が同じになるので、この値と `host_id` で見分けます。`test` では `0` |
 | `local_port` | その転送が開くポート。サービスポートは Host の上に、ローカルフォワードと SOCKS5 プロキシはTunnel Manager サーバーに開きます |
 | `since` | 接続がないのを最初に見た時刻。UTC の RFC 3339 で、`up` は対応する `down` と同じ時刻を載せます |
 | `last_error` | 切れていたあいだに見た最後のエラー |
 | `installation` | Tunnel Manager サーバーのホスト名。複数の Tunnel Manager サーバーが 1 か所へ送った通知を見分けるためのものです |
 
-**メールは同じ項目を載せたプレーンテキストのメッセージです。** 件名は
-`[tunnel-manager <installation>] DOWN: <kind> <local_port> on <host>` のような形です。接続の
+**メールは同じ項目を 1 行に 1 つずつ `名前: 値` で載せたプレーンテキストのメッセージです。** 件名は
+`[tunnel-manager <installation>] DOWN: <kind> <local_port> on <host>` のような形です。件名はアドレス
+だけのまま変えず、その件名に合わせたメールフィルターが引き続き合うようにしてあり、`host_id` と
+`host_ssh_port` は本文に載せます。テストのメッセージは `event` と `installation` だけを載せます。接続の
 セキュリティは既定が 465 番ポートの `tls` で、ほかに `starttls` (587) と `none` (25) があります。
 `starttls` はサーバーが提供していなければ失敗します。画面で 1 つを選ぶとそのポートがポートの欄に
 入り、カードを保存するまでは何も保存されません。ログイン方式は既定が `login` で、ほかに

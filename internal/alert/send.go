@@ -132,6 +132,8 @@ func (s *Sender) Send(ctx context.Context, config Config, event Event) {
 				logid.AlertWebhookFailed.Field(),
 				zap.String("event", event.Event),
 				zap.String("host", event.Host),
+				zap.Uint("host_id", event.HostID),
+				zap.Int("host_ssh_port", event.HostSSHPort),
 				zap.Int("local_port", event.LocalPort),
 				zap.Error(err))
 		} else {
@@ -139,6 +141,8 @@ func (s *Sender) Send(ctx context.Context, config Config, event Event) {
 				logid.AlertWebhookSent.Field(),
 				zap.String("event", event.Event),
 				zap.String("host", event.Host),
+				zap.Uint("host_id", event.HostID),
+				zap.Int("host_ssh_port", event.HostSSHPort),
 				zap.Int("local_port", event.LocalPort))
 		}
 	}
@@ -150,6 +154,8 @@ func (s *Sender) Send(ctx context.Context, config Config, event Event) {
 				logid.AlertMailFailed.Field(),
 				zap.String("event", event.Event),
 				zap.String("host", event.Host),
+				zap.Uint("host_id", event.HostID),
+				zap.Int("host_ssh_port", event.HostSSHPort),
 				zap.Int("local_port", event.LocalPort),
 				zap.Error(err))
 		} else {
@@ -157,6 +163,8 @@ func (s *Sender) Send(ctx context.Context, config Config, event Event) {
 				logid.AlertMailSent.Field(),
 				zap.String("event", event.Event),
 				zap.String("host", event.Host),
+				zap.Uint("host_id", event.HostID),
+				zap.Int("host_ssh_port", event.HostSSHPort),
 				zap.Int("local_port", event.LocalPort))
 		}
 	}

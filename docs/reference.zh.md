@@ -1409,6 +1409,8 @@ curl -s -b cookies.txt -H "X-CSRF-Token: $CSRF" "$BASE/api/settings"
   "event": "down",
   "kind": "service_port",
   "host": "192.0.2.10",
+  "host_id": 1,
+  "host_ssh_port": 22,
   "local_port": 18080,
   "since": "2026-09-26T01:02:03Z",
   "last_error": "<转发最后报告的错误>",
@@ -1421,13 +1423,17 @@ curl -s -b cookies.txt -H "X-CSRF-Token: $CSRF" "$BASE/api/settings"
 | `event` | `down`、`up`，以及测试按钮发的 `test` |
 | `kind` | `service_port`、`local_forward` 或 `socks` |
 | `host` | 这个转发经过的 Host 的地址 |
+| `host_id` | 这个 Host 的 id，即 `GET /api/hosts` 返回的值。`test` 中为 `0` |
+| `host_ssh_port` | 这个 Host 的 SSH 端口。同一个 NAT 后面的两个 Host 的 `host` 相同，靠它和 `host_id` 区分。`test` 中为 `0` |
 | `local_port` | 这个转发打开的端口：服务端口开在 Host 上，本地转发和 SOCKS5 代理开在Tunnel Manager 服务器 |
 | `since` | 第一次看到它没有连接的时间，UTC 的 RFC 3339；`up` 带的是它所对应的 `down` 的同一个时间 |
 | `last_error` | 断开期间看到的最后一个错误 |
 | `installation` | Tunnel Manager 服务器的主机名，用来区分多台 Tunnel Manager 服务器发到同一处的告警 |
 
-**邮件是带同样字段的纯文本消息**，主题形如
-`[tunnel-manager <installation>] DOWN: <kind> <local_port> on <host>`。连接安全默认是 465 端口的
+**邮件是带同样字段的纯文本消息**，每个字段一行，写成 `名称: 值`，主题形如
+`[tunnel-manager <installation>] DOWN: <kind> <local_port> on <host>`。主题保持只写地址，
+让按这个主题写的邮件过滤规则继续生效；`host_id` 和 `host_ssh_port` 写在正文里。测试邮件只带
+`event` 和 `installation`。连接安全默认是 465 端口的
 `tls`，另有 `starttls`（587）和 `none`（25）；服务器不提供 STARTTLS 时 `starttls` 会失败。在界面上
 选一个会把它的端口填进端口框，保存卡片之前什么都不会保存。登录方式默认是 `login`，另有 `plain` 和
 `none`。除非邮件服务器就运行在 Tunnel Manager 服务器本身上，否则不会在没有 TLS 的连接上发送密码。

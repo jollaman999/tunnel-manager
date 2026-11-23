@@ -1571,6 +1571,8 @@ id 와 함께 그 포워딩이 거쳐 가는 Host 의 주소와 SSH 포트, 그�
   "event": "down",
   "kind": "service_port",
   "host": "192.0.2.10",
+  "host_id": 1,
+  "host_ssh_port": 22,
   "local_port": 18080,
   "since": "2026-09-26T01:02:03Z",
   "last_error": "<포워딩이 마지막으로 알린 오류>",
@@ -1583,13 +1585,17 @@ id 와 함께 그 포워딩이 거쳐 가는 Host 의 주소와 SSH 포트, 그�
 | `event` | `down`, `up`, 그리고 시험 버튼이 보내는 `test` |
 | `kind` | `service_port`, `local_forward`, `socks` 중 하나 |
 | `host` | 그 포워딩이 거쳐 가는 Host 의 주소 |
+| `host_id` | 그 Host 의 id. `GET /api/hosts` 가 답하는 값입니다. `test` 에서는 `0` |
+| `host_ssh_port` | 그 Host 의 SSH 포트. NAT 하나 뒤의 두 Host 는 `host` 가 같아서, 이 값과 `host_id` 로 구분합니다. `test` 에서는 `0` |
 | `local_port` | 그 포워딩이 여는 포트. 서비스 포트는 Host 에, 로컬 포워딩과 SOCKS5 프록시는 Tunnel Manager 서버에 엽니다 |
 | `since` | 연결이 없는 것을 처음 본 시각. UTC 의 RFC 3339 이고, `up` 은 짝이 되는 `down` 과 같은 시각을 싣습니다 |
 | `last_error` | 끊겨 있는 동안 본 마지막 오류 |
 | `installation` | Tunnel Manager 서버의 호스트 이름. 여러 Tunnel Manager 서버가 한 곳으로 보낸 알림을 구분하게 해 줍니다 |
 
-**메일은 같은 항목을 담은 일반 텍스트 메시지입니다.** 제목은
-`[tunnel-manager <installation>] DOWN: <kind> <local_port> on <host>` 같은 모양입니다. 연결 보안은
+**메일은 같은 항목을 한 줄에 하나씩 `이름: 값` 으로 담은 일반 텍스트 메시지입니다.** 제목은
+`[tunnel-manager <installation>] DOWN: <kind> <local_port> on <host>` 같은 모양입니다. 제목은 주소만
+담은 채로 두어 그 제목에 맞춘 메일 필터가 계속 맞게 하고, `host_id` 와 `host_ssh_port` 는 본문에
+담습니다. 시험 메시지는 `event` 와 `installation` 만 담습니다. 연결 보안은
 기본이 465 포트의 `tls` 이고, 그 밖에 `starttls`(587)와 `none`(25) 이 있습니다. `starttls` 는
 서버가 제공하지 않으면 실패합니다. 화면에서 하나를 고르면 그 포트가 포트 칸에 들어가고, 카드를
 저장하기 전에는 아무것도 저장되지 않습니다. 로그인 방식은 기본이 `login` 이고, 그 밖에 `plain` 과
