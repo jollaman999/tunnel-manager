@@ -496,10 +496,10 @@ func narrowInstallFiles(logger *zap.Logger, installDir, databaseFile string, s *
 //
 // The third return is what empties the log file, which the Logs screen offers
 // as a press. It comes from here because the writer that holds the file open
-// is built here and the emptying has to go through it: see emptyLogFile. The
-// fourth is what closes the file for good, which the uninstall on the Settings
-// screen does right before it removes it: see logFileWriter. Both are nil when
-// nothing is writing to a file.
+// is built here and the emptying has to go through it: see logFileWriter.empty.
+// The fourth is what closes the file for good, which the uninstall on the
+// Settings screen does right before it removes it: see logFileWriter. Both are
+// nil when nothing is writing to a file.
 func initLogger(s *settings.Settings, installDir string) (zapcore.Core, zap.AtomicLevel,
 	func() error, func() error, error) {
 	// An unusable log file is not fatal. The logger falls back to the console
@@ -545,7 +545,7 @@ func initLogger(s *settings.Settings, installDir string) (zapcore.Core, zap.Atom
 		file := &logFileWriter{writer: logWriter}
 
 		empty = func() error {
-			return emptyLogFile(logWriter, path)
+			return file.empty(path)
 		}
 		closeFile = file.closeForGood
 
@@ -616,7 +616,7 @@ func (w *logFileWriter) closeForGood() error {
 	return w.writer.Close()
 }
 
-// emptyLogFile empties the file the rotating writer is writing to.
+// empty empties the file the rotating writer is writing to.
 //
 // The writer is closed before the file is cut. It holds the file open across
 // writes and carries the size it last wrote at, and neither is read again
@@ -625,15 +625,31 @@ func (w *logFileWriter) closeForGood() error {
 // one that fills the file and rotate it on the spot. Closed, the writer opens
 // the file again on the next line and reads its size then, which is nought.
 //
+// The close and the cut are made while the lock that every line is written
+// under is held. The rest of the service goes on logging while the press is
+// handled, and a line that came between the two would open the file again and
+// read its size before the cut, which is the same stale size by another way.
+// The rotation that follows pushes the oldest backup past the count that is
+// kept, and that removes it, when the press only asked for the current file
+// to be emptied. Held here, such a line waits and is written to the emptied
+// file.
+//
 // The file is cut rather than removed so that it keeps the mode and the owner
 // it was given. Removed, it would be created again by the writer with the mode
 // that writer defaults to, which is not the one the startup narrowed it to.
 //
-// A line written in the moment between the close and the cut is lost. It is a
-// line from before the press that asked for the file to be emptied, which is
-// what the press is throwing away.
-func emptyLogFile(writer *lumberjack.Logger, path string) error {
-	err := writer.Close()
+// A file closed for good is left alone and the emptying is refused. It was
+// closed for the uninstall that is removing it, and on Windows the handle the
+// cut opens would be what keeps that removal from deleting it.
+func (w *logFileWriter) empty(path string) error {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+
+	if w.closed {
+		return errors.New("the log file is closed for good, because it is being removed")
+	}
+
+	err := w.writer.Close()
 	if err != nil {
 		return fmt.Errorf("failed to close the log file: %v", err)
 	}

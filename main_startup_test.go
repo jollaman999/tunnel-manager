@@ -26,7 +26,9 @@ import (
 	"path/filepath"
 	"regexp"
 	"runtime"
+	"slices"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -2687,12 +2689,14 @@ func TestEmptyingTheLogLeavesTheWriterWritingToTheFile(t *testing.T) {
 		_ = writer.Close()
 	})
 
-	_, err := writer.Write([]byte("a line from before the emptying\n"))
+	file := &logFileWriter{writer: writer}
+
+	_, err := file.Write([]byte("a line from before the emptying\n"))
 	if err != nil {
 		t.Fatalf("failed to write the first line: %v", err)
 	}
 
-	err = emptyLogFile(writer, path)
+	err = file.empty(path)
 	if err != nil {
 		t.Fatalf("failed to empty the log: %v", err)
 	}
@@ -2706,7 +2710,7 @@ func TestEmptyingTheLogLeavesTheWriterWritingToTheFile(t *testing.T) {
 		t.Fatalf("the emptied log is %d bytes, want 0", info.Size())
 	}
 
-	_, err = writer.Write([]byte("a line from after the emptying\n"))
+	_, err = file.Write([]byte("a line from after the emptying\n"))
 	if err != nil {
 		t.Fatalf("failed to write after the emptying: %v", err)
 	}
@@ -2746,11 +2750,187 @@ func TestEmptyingTheLogSaysWhenTheFileIsGone(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "tunnel-manager.log")
 
-	writer := &lumberjack.Logger{Filename: path, MaxSize: 1}
+	file := &logFileWriter{writer: &lumberjack.Logger{Filename: path, MaxSize: 1}}
 
-	err := emptyLogFile(writer, filepath.Join(dir, "not-there", "tunnel-manager.log"))
+	err := file.empty(filepath.Join(dir, "not-there", "tunnel-manager.log"))
 	if err == nil {
 		t.Error("emptying a file that is not there was reported as done")
+	}
+}
+
+// TestEmptyingALogClosedForGoodLeavesTheFileAlone is a press on the Logs
+// screen that arrives after the uninstall closed the file. The file is being
+// removed, and on Windows the handle the cut opens would keep the removal from
+// deleting it, so the file is not touched and the press is not answered as
+// done.
+func TestEmptyingALogClosedForGoodLeavesTheFileAlone(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "tunnel-manager.log")
+
+	file := &logFileWriter{writer: &lumberjack.Logger{Filename: path, MaxSize: 1}}
+
+	_, err := file.Write([]byte("a line from before the close\n"))
+	if err != nil {
+		t.Fatalf("failed to write the first line: %v", err)
+	}
+
+	err = file.closeForGood()
+	if err != nil {
+		t.Fatalf("failed to close the log for good: %v", err)
+	}
+
+	err = file.empty(path)
+	if err == nil {
+		t.Error("emptying a log closed for good was reported as done")
+	}
+
+	body, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("failed to read the log back: %v", err)
+	}
+
+	if string(body) != "a line from before the close\n" {
+		t.Errorf("the log reads %q, want it as it was at the close", string(body))
+	}
+}
+
+// TestEmptyingTheLogWhileLinesAreWrittenRotatesNothing is the emptying with
+// the rest of the service still logging, which is how the press on the Logs
+// screen always arrives.
+//
+// A line written between the close of the writer and the cut of the file opens
+// the file again and reads its size before the cut, so the writer goes on
+// carrying the size of a full file over an empty one. The next lines then
+// rotate it for nothing, and that rotation pushes the oldest backup past the
+// count that is kept, which removes it. The press only asked for the current
+// file to be emptied, so the backups have to read the same afterwards.
+//
+// The window is short, so it is tried many times. The file is grown to a
+// little under the size that rotates it without writing that much: with the
+// writer closed by an emptying, the file is stretched to that size, and the
+// writer reads it on the next line. A line after the emptying that is larger
+// than what is left under that size is what turns a stale size into a
+// rotation, while a correct size of a few lines is far from one.
+func TestEmptyingTheLogWhileLinesAreWrittenRotatesNothing(t *testing.T) {
+	dir := t.TempDir()
+	logFile := filepath.Join(dir, "tunnel-manager.log")
+
+	// The backups are named the way lumberjack names them, so it counts them
+	// as its own. Exactly as many as it keeps are there, so one more rotation
+	// is enough to remove the oldest. MaxAge is left at 0 so that their age
+	// removes none of them.
+	backups := []string{
+		"tunnel-manager-2026-01-01T00-00-00.000.log",
+		"tunnel-manager-2026-01-02T00-00-00.000.log",
+	}
+
+	for _, name := range backups {
+		err := os.WriteFile(filepath.Join(dir, name), []byte("an older line\n"), 0600)
+		if err != nil {
+			t.Fatalf("failed to create the backup %s: %v", name, err)
+		}
+	}
+
+	set := newLoggingSettings(logFile)
+	set.LoggingFileMaxBackups = len(backups)
+	set.LoggingFileMaxAge = 0
+
+	core, _, empty, err := initLoggerForTest(t, set, "")
+	if err != nil {
+		t.Fatalf("failed to build the logger: %v", err)
+	}
+
+	logger := zap.New(core)
+
+	const (
+		maxSize = 1024 * 1024
+		// headroom is what is left under the size that rotates the file. The
+		// lines written around the emptying come to less than this, so they
+		// cannot fill the file on their own.
+		headroom = 64 * 1024
+		writers  = 4
+		lines    = 50
+		tries    = 300
+	)
+
+	// largeLine fits in what the file holds after an emptying, and does not fit
+	// in the headroom.
+	largeLine := strings.Repeat("x", headroom+headroom/2)
+
+	want := append([]string{filepath.Base(logFile)}, backups...)
+	slices.Sort(want)
+
+	for try := 0; try < tries; try++ {
+		// Nothing else is writing here, so this emptying leaves the writer
+		// closed and the file at nought, and the stretch is read on the next
+		// line.
+		err = empty()
+		if err != nil {
+			t.Fatalf("try %d: failed to empty the log: %v", try, err)
+		}
+
+		err = os.Truncate(logFile, maxSize-headroom)
+		if err != nil {
+			t.Fatalf("try %d: failed to stretch the log: %v", try, err)
+		}
+
+		logger.Info("a line that opens the stretched file")
+
+		var (
+			start = make(chan struct{})
+			wg    sync.WaitGroup
+			errs  = make(chan error, 1)
+		)
+
+		for i := 0; i < writers; i++ {
+			wg.Add(1)
+
+			go func() {
+				defer wg.Done()
+
+				<-start
+
+				for n := 0; n < lines; n++ {
+					logger.Info("a line written around the emptying")
+				}
+			}()
+		}
+
+		wg.Add(1)
+
+		go func() {
+			defer wg.Done()
+
+			<-start
+
+			errs <- empty()
+		}()
+
+		close(start)
+		wg.Wait()
+
+		err = <-errs
+		if err != nil {
+			t.Fatalf("try %d: failed to empty the log: %v", try, err)
+		}
+
+		logger.Info(largeLine)
+
+		entries, err := os.ReadDir(dir)
+		if err != nil {
+			t.Fatalf("try %d: failed to read the directory: %v", try, err)
+		}
+
+		got := make([]string, 0, len(entries))
+		for _, entry := range entries {
+			got = append(got, entry.Name())
+		}
+
+		slices.Sort(got)
+
+		if !slices.Equal(got, want) {
+			t.Fatalf("try %d: the directory holds %v, want %v: the emptying left the writer "+
+				"with the size of the file before it, and the next line rotated it", try, got, want)
+		}
 	}
 }
 
