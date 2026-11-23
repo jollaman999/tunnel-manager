@@ -900,6 +900,18 @@ sudo tunnel-manager -uninstall -purge
 `-uninstall` 通常就是用装上去的那个可执行文件执行的。这时会把这个文件交给下一次开机去删，
 报告里写的也不是 `removed`，而是 `removed at the next reboot of this machine`。
 
+**`-install` 会撤回这些删除预约。** `-install` 把文件放到下次启动时要删除的路径上，那次启动就会把
+新文件删掉，服务随后会以 "The system cannot find the file specified" 启动失败。所以 `-install`
+在放好可执行文件之后，会从 Windows 存放预约的 `PendingFileRenameOperations` 里去掉可执行文件、
+数据目录及其下内容的删除预约，并写进报告：
+
+```text
+  at reboot     no longer deleted, which an earlier uninstall had set: C:\Program Files\tunnel-manager\tunnel-manager.exe
+```
+
+其他程序放在那里的条目保持原样。撤回不了删除预约时，安装会失败，而不是留下一个从下次启动起就
+起不来的服务。
+
 **真正跑起来过的只有 Linux。** macOS 和 Windows 的后端只经过编译器、对应平台的 vet 工具，
 以及把生成的 plist 和服务配置固定下来的单元测试的检查。两者都没有在各自的操作系统上安装过、
 启动过或者卸载过。
@@ -1681,9 +1693,9 @@ macOS 和 Windows 只做到编译和单元测试。
   注册里的。再运行一次 `-install` 会换成现在的注册；在更新页面安装的更新也会运行 `-install`，效果一样。
 - **Docker Compose 会把容器再拉起来。** compose 文件里的 `restart: always` 不论以什么结束都会
   重新拉起，所以卸载完成后请运行 `docker compose down`。
-- **在 Windows 上，请在下次重启之后再重新安装。** 程序文件和交给下次重启的数据目录会在那次重启时
-  按路径删除，所以在那之前 `-install` 放到同一路径的文件会被删掉；进程结束之前，服务注册也还占着
-  这个名字。
+- **在 Windows 上，请在进程结束之后再重新安装。** 在那之前服务注册还占着这个名字。程序文件和交给
+  下次重启的数据目录会在那次重启时按路径删除，但 `-install` 会撤回这些删除预约，所以在重启之前
+  安装，也不会被那次重启删掉。
 
 在重启真正执行前等待的那几秒里按下卸载，卸载会取代重启：进程按卸载的方式结束，不会再运行程序。
 

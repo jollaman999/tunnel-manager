@@ -224,14 +224,23 @@ func (f *fakeService) UnregisterSelf(installed Installed) error {
 
 // allowPrivilege runs the flow as if this process were root. The check itself
 // is the platform's and is not what these cover.
+//
+// It also runs it with nothing waiting for the next boot. On Windows the hook
+// that takes those deletions back reads and writes the registry of the
+// machine the tests run on, which a test of the flow has no business with; the
+// tests that are about it put their own fake in place after this one.
 func allowPrivilege(t *testing.T) {
 	t.Helper()
 
 	was := privileged
 	privileged = func() bool { return true }
 
+	wasCancel := cancelRemovalAtReboot
+	cancelRemovalAtReboot = nil
+
 	t.Cleanup(func() {
 		privileged = was
+		cancelRemovalAtReboot = wasCancel
 	})
 }
 
@@ -934,6 +943,140 @@ func TestOutcomeReportWithoutAFileBefore(t *testing.T) {
 	// service instead of being blank.
 	if !strings.Contains(out.String(), "registered as "+serviceName) {
 		t.Errorf("the report does not name the registration:\n%s", out.String())
+	}
+}
+
+// stubCancelRemovalAtReboot puts a fake in place of taking back the deletions
+// at the next boot for one test. It records the paths it was asked about and
+// whether the new executable was in place when it was asked.
+type cancelRemovalCall struct {
+	executable   string
+	dataDir      string
+	newBuildHere bool
+}
+
+func stubCancelRemovalAtReboot(t *testing.T, answer []string, err error) *[]cancelRemovalCall {
+	t.Helper()
+
+	var calls []cancelRemovalCall
+
+	was := cancelRemovalAtReboot
+	cancelRemovalAtReboot = func(executable string, dataDir string) ([]string, error) {
+		body, _ := os.ReadFile(executable)
+		calls = append(calls, cancelRemovalCall{executable, dataDir, string(body) == "the new build"})
+
+		return answer, err
+	}
+
+	t.Cleanup(func() {
+		cancelRemovalAtReboot = was
+	})
+
+	return &calls
+}
+
+// TestInstallTakesBackTheDeletionsAnUninstallLeftForTheNextBoot is the
+// install that Windows undid at its next boot: an uninstall had handed the
+// executable to the next boot to delete, and an install before that boot put
+// a new one at the same path. The deletions of the executable and the data
+// directory are taken back once the new executable is in place, and the report
+// says which.
+func TestInstallTakesBackTheDeletionsAnUninstallLeftForTheNextBoot(t *testing.T) {
+	allowPrivilege(t)
+
+	plan := planIn(t)
+	source := writeFile(t, filepath.Join(t.TempDir(), "downloaded"), "the new build")
+	calls := stubCancelRemovalAtReboot(t, []string{plan.ExecutablePath}, nil)
+
+	svc := &fakeService{
+		currentErr:    ErrNotInstalled,
+		afterRegister: Installed{ExecutablePath: plan.ExecutablePath, DatabaseFile: plan.DatabaseFile},
+	}
+
+	var out strings.Builder
+
+	outcome, err := install(svc, plan, source, "the release", &out)
+	if err != nil {
+		t.Fatalf("the install failed: %v", err)
+	}
+
+	if len(*calls) != 1 {
+		t.Fatalf("the deletions were taken back %d times, want once", len(*calls))
+	}
+
+	call := (*calls)[0]
+
+	if call.executable != plan.ExecutablePath || call.dataDir != plan.DataDir {
+		t.Errorf("asked about %s and %s, want %s and %s", call.executable, call.dataDir,
+			plan.ExecutablePath, plan.DataDir)
+	}
+
+	if !call.newBuildHere {
+		t.Error("the deletions were taken back before the new executable was in place")
+	}
+
+	if len(outcome.NotRemovedAtReboot) != 1 || outcome.NotRemovedAtReboot[0] != plan.ExecutablePath {
+		t.Errorf("the outcome names %v, want the executable", outcome.NotRemovedAtReboot)
+	}
+
+	if !strings.Contains(out.String(), "at reboot") || !strings.Contains(out.String(), plan.ExecutablePath) {
+		t.Errorf("the report does not say what was taken back:\n%s", out.String())
+	}
+
+	t.Logf("\n%s", out.String())
+}
+
+// TestInstallSaysNothingOfTheNextBootWhenNothingWasTakenBack keeps the line
+// out of the report of every other install.
+func TestInstallSaysNothingOfTheNextBootWhenNothingWasTakenBack(t *testing.T) {
+	allowPrivilege(t)
+
+	plan := planIn(t)
+	source := writeFile(t, filepath.Join(t.TempDir(), "downloaded"), "the new build")
+	stubCancelRemovalAtReboot(t, nil, nil)
+
+	svc := &fakeService{
+		currentErr:    ErrNotInstalled,
+		afterRegister: Installed{ExecutablePath: plan.ExecutablePath, DatabaseFile: plan.DatabaseFile},
+	}
+
+	var out strings.Builder
+
+	_, err := install(svc, plan, source, "the release", &out)
+	if err != nil {
+		t.Fatalf("the install failed: %v", err)
+	}
+
+	if strings.Contains(out.String(), "at reboot") {
+		t.Errorf("the report speaks of the next boot with nothing taken back:\n%s", out.String())
+	}
+}
+
+// TestInstallFailsWhenTheDeletionsCannotBeTakenBack covers a value that could
+// not be read or written. The service it would register starts until the next
+// boot and not after, so the install fails, and a service it stopped is put
+// back up.
+func TestInstallFailsWhenTheDeletionsCannotBeTakenBack(t *testing.T) {
+	allowPrivilege(t)
+
+	plan := planIn(t)
+	writeFile(t, plan.ExecutablePath, "the old build")
+	source := writeFile(t, filepath.Join(t.TempDir(), "downloaded"), "the new build")
+	stubCancelRemovalAtReboot(t, nil, errors.New("access is denied"))
+
+	registered := Installed{ExecutablePath: plan.ExecutablePath, DatabaseFile: plan.DatabaseFile}
+	svc := &fakeService{current: registered, afterRegister: registered}
+
+	var out strings.Builder
+
+	_, err := install(svc, plan, source, "the release", &out)
+	if err == nil || !strings.Contains(err.Error(), "access is denied") {
+		t.Fatalf("the install answered %v, want the failure to take the deletions back", err)
+	}
+
+	want := []string{"current", "checkplan", "stop", "start"}
+	if strings.Join(svc.calls, ",") != strings.Join(want, ",") {
+		t.Errorf("the backend was used as %v, want %v", svc.calls, want)
 	}
 }
 

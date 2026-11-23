@@ -372,6 +372,10 @@ type Outcome struct {
 	Replaced bool
 	// Started says the service was started and came up.
 	Started bool
+	// NotRemovedAtReboot is every path an earlier uninstall had handed to the
+	// next boot to delete and that this install took back, because it put its
+	// own files there. Only Windows has such a list.
+	NotRemovedAtReboot []string
 }
 
 // Report writes the outcome for a person to read.
@@ -401,6 +405,11 @@ func (o Outcome) Report(w io.Writer) error {
 		reportLine(&b, "state", "started")
 	} else {
 		reportLine(&b, "state", "not started")
+	}
+
+	if len(o.NotRemovedAtReboot) > 0 {
+		reportLine(&b, "at reboot", "no longer deleted, which an earlier uninstall had set: "+
+			strings.Join(o.NotRemovedAtReboot, ", "))
 	}
 
 	_, err := io.WriteString(w, b.String())
@@ -433,6 +442,13 @@ func definitionText(definition string) string {
 
 	return definition
 }
+
+// cancelRemovalAtReboot takes back the deletions an uninstall handed to the
+// next boot for the executable and the data directory an install puts its
+// files at, and answers the paths it took back. It is set by the platform that
+// has such deletions, which is Windows (pending_rename_windows.go), and is nil
+// everywhere else.
+var cancelRemovalAtReboot func(executable string, dataDir string) ([]string, error)
 
 // Install puts executable in place and registers the service.
 //
@@ -542,6 +558,19 @@ func install(svc service, plan Plan, executable string, source string, out io.Wr
 	outcome.DigestAfter, err = fileDigest(plan.ExecutablePath)
 	if err != nil {
 		return failed(err)
+	}
+
+	// Taken back once the executable is in place, so that an install that
+	// failed before it leaves the deletions an uninstall set as they were. An
+	// install that cannot take them back fails: the service it registers
+	// would start until the next boot and then not at all, with nothing on the
+	// console to say why.
+	if cancelRemovalAtReboot != nil {
+		outcome.NotRemovedAtReboot, err = cancelRemovalAtReboot(plan.ExecutablePath, plan.DataDir)
+		if err != nil {
+			return failed(fmt.Errorf("the executable is in place, but an earlier uninstall set it or the "+
+				"data directory to be deleted at the next reboot, and that could not be taken back: %w", err))
+		}
 	}
 
 	err = svc.Register(plan, existing)

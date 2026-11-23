@@ -994,6 +994,19 @@ sudo tunnel-manager -uninstall -purge
 파일을 다음 부팅 때 지우도록 넘기고, 보고에 `removed` 대신
 `removed at the next reboot of this machine` 이라고 적습니다.
 
+**`-install` 은 그 삭제 예약을 거둡니다.** 다음 부팅 때 지우기로 한 경로에 `-install` 이 파일을
+놓으면 그 부팅이 새 파일을 지우고, 서비스는 "The system cannot find the file specified" 로
+시작하지 못합니다. 그래서 `-install` 은 실행 파일을 놓은 뒤, Windows 가 예약을 두는
+`PendingFileRenameOperations` 에서 실행 파일과 데이터 디렉터리와 그 아래 것의 삭제 예약을 빼고
+보고에 적습니다.
+
+```text
+  at reboot     no longer deleted, which an earlier uninstall had set: C:\Program Files\tunnel-manager\tunnel-manager.exe
+```
+
+다른 프로그램이 거기 둔 항목은 그대로 둡니다. 삭제 예약을 거두지 못하면, 다음 부팅부터 시작되지
+않는 서비스를 남기는 대신 설치가 실패합니다.
+
 **실제로 돌려 본 것은 Linux 뿐입니다.** macOS 와 Windows 백엔드는 컴파일러와 그 플랫폼용 vet
 도구, 그리고 만들어지는 plist 와 서비스 설정을 고정한 단위 테스트로만 확인했습니다. 어느
 쪽도 그 OS 에서 설치하거나 띄우거나 제거해 본 적이 없습니다.
@@ -1880,9 +1893,10 @@ macOS 에서는 이 경우만이 아니라 0 으로 끝나는 것은 전부 다�
   화면에서 설치한 업데이트도 `-install` 을 돌리므로 마찬가지입니다.
 - **Docker Compose 는 컨테이너를 다시 띄웁니다.** compose 파일의 `restart: always` 는 무엇으로
   끝났든 다시 띄우므로, 제거가 끝나면 `docker compose down` 을 돌리십시오.
-- **Windows 에서는 다음 재시작 뒤에 다시 설치하십시오.** 실행 파일과, 다음 재시작으로 넘긴
-  데이터 디렉터리는 그 재시작 때 경로로 지워지므로, 그 전에 `-install` 이 같은 경로에 놓은 파일이
-  대신 지워집니다. 프로세스가 끝나기 전에는 서비스 등록도 이름을 쥐고 있습니다.
+- **Windows 에서는 프로세스가 끝난 뒤에 다시 설치하십시오.** 그 전에는 서비스 등록이 이름을
+  쥐고 있습니다. 실행 파일과, 다음 재시작으로 넘긴 데이터 디렉터리는 그 재시작 때 경로로
+  지워지는데, `-install` 이 그 삭제 예약을 거두므로 재시작 전에 설치해도 재시작이 설치를 지우지
+  않습니다.
 
 재시작이 실행되기 전 기다리는 몇 초 사이에 제거를 누르면 제거가 재시작을 대신합니다. 프로세스는
 제거로 끝나고 프로그램을 다시 띄우지 않습니다.

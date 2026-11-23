@@ -1151,6 +1151,21 @@ very executable that was installed. The file is then handed to the next boot to
 be removed, and the report says `removed at the next reboot of this machine`
 in place of `removed`.
 
+**`-install` takes those deletions back.** A file it puts at a path the next boot
+is set to delete would be deleted by that boot, and the service would then fail
+to start with "The system cannot find the file specified". So once the executable
+is in place, `-install` takes the deletions of the executable, of the data
+directory and of anything under it out of `PendingFileRenameOperations`, where
+Windows keeps them, and says so in the report:
+
+```text
+  at reboot     no longer deleted, which an earlier uninstall had set: C:\Program Files\tunnel-manager\tunnel-manager.exe
+```
+
+The entries other programs keep there are left as they were. An install that
+cannot take the deletions back fails rather than leave a service that stops
+starting at the next boot.
+
 **Only the Linux path has been run.** The macOS and the Windows backends are
 built and checked by the compiler, by the vet tool for their platform and by unit
 tests that hold the plist and the service configuration they produce. Neither has
@@ -2205,11 +2220,11 @@ still started again.
 - **Docker Compose starts the container again.** `restart: always` in the
   compose file starts it whatever it exited with, so run `docker compose down`
   once the uninstall is over.
-- **On Windows, install again after the next restart.** The program file, and a
-  data directory left for the next restart, are deleted at that restart by their
-  paths, so a file `-install` put at the same path before it would be the one
-  that goes, and until the process has ended the service entry still holds its
-  name.
+- **On Windows, install again once the process has ended.** Until then the
+  service entry still holds its name. The program file, and a data directory
+  left for the next restart, are deleted at that restart by their paths, and
+  `-install` takes those deletions back, so an install before the restart is
+  not undone by it.
 
 An uninstall pressed in the seconds a restart waits before it goes takes the
 place of the restart: the process ends as an uninstall ends and does not run the
