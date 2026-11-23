@@ -19,6 +19,7 @@ import (
 	"time"
 
 	"github.com/glebarez/sqlite"
+	"github.com/jollaman999/tunnel-manager/internal/logid"
 	"github.com/jollaman999/tunnel-manager/internal/models"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
@@ -1362,9 +1363,7 @@ func TestMonitorTickIsNotHeldByAnUnresponsivePeer(t *testing.T) {
 		<-exited
 	}()
 
-	// The server accepts, so the dial succeeds and the tick reaches the
-	// keepalive. One tick to wake, plus the dial and keepalive budgets, is well
-	// inside this.
+	// One tick to wake, plus the keepalive budget, is well inside this.
 	deadline := time.Now().Add(10 * time.Second)
 	for time.Now().Before(deadline) {
 		tun.clientMu.RLock()
@@ -1432,6 +1431,17 @@ func TestSendKeepaliveLeavesTheConnectionAlone(t *testing.T) {
 // after delay, the way a live server behind a busy or slow link does. It
 // reports when each keepalive arrived.
 func startSlowSSHServer(t *testing.T, delay time.Duration) (string, func() []time.Time) {
+	t.Helper()
+
+	addr, arrivals, _ := startCountingSlowSSHServer(t, delay)
+
+	return addr, arrivals
+}
+
+// startCountingSlowSSHServer is startSlowSSHServer that also reports how many
+// TCP connections it has accepted, which is how a test sees that something
+// other than the client connected to the SSH server.
+func startCountingSlowSSHServer(t *testing.T, delay time.Duration) (string, func() []time.Time, func() int) {
 	t.Helper()
 
 	_, priv, err := ed25519.GenerateKey(rand.Reader)
@@ -1514,11 +1524,16 @@ func startSlowSSHServer(t *testing.T, delay time.Duration) (string, func() []tim
 	}()
 
 	return ln.Addr().String(), func() []time.Time {
-		mu.Lock()
-		defer mu.Unlock()
+			mu.Lock()
+			defer mu.Unlock()
 
-		return append([]time.Time(nil), arrivals...)
-	}
+			return append([]time.Time(nil), arrivals...)
+		}, func() int {
+			mu.Lock()
+			defer mu.Unlock()
+
+			return len(conns)
+		}
 }
 
 // TestSlowKeepaliveReplyKeepsTheConnection is what the timeout of one interval
@@ -1533,7 +1548,7 @@ func TestSlowKeepaliveReplyKeepsTheConnection(t *testing.T) {
 	client, conn, closeClient := dialTestSSHClient(t, serverAddr)
 	defer closeClient()
 
-	checkSSHConnection(serverAddr, client, monitorCheckTimeout(5*time.Second), zap.NewNop(),
+	checkSSHConnection(client, monitorCheckTimeout(5*time.Second), zap.NewNop(),
 		func(extra ...zap.Field) []zap.Field { return extra })
 
 	if conn.closed.Load() {
@@ -1562,7 +1577,7 @@ func TestWatchSSHConnectionDoesNotCatchUp(t *testing.T) {
 	stop := make(chan struct{})
 	exited := make(chan struct{})
 	go func() {
-		watchSSHConnection(stop, interval, serverAddr, func() *ssh.Client { return client },
+		watchSSHConnection(stop, interval, func() *ssh.Client { return client },
 			zap.NewNop(), func(extra ...zap.Field) []zap.Field { return extra })
 		close(exited)
 	}()
@@ -1696,6 +1711,164 @@ func TestMonitorConnectionKeepsATunnelWithASlowReply(t *testing.T) {
 	if status != "connected" || retries != 0 {
 		t.Fatalf("status = %q with %d retries, want %q with none, "+
 			"a slow reply was taken for a lost server", status, retries, "connected")
+	}
+}
+
+// waitForKeepalives waits until the server has seen n keepalives and fails the
+// test if it has not within the bound of the monitor tests.
+func waitForKeepalives(t *testing.T, arrivals func() []time.Time, n int) {
+	t.Helper()
+
+	deadline := time.Now().Add(15 * time.Second)
+	for len(arrivals()) < n && time.Now().Before(deadline) {
+		time.Sleep(20 * time.Millisecond)
+	}
+	if got := len(arrivals()); got < n {
+		t.Fatalf("the server saw %d keepalives, want at least %d", got, n)
+	}
+}
+
+// TestMonitorConnectionOpensNoConnectionToTheServer pins that a check is the
+// keepalive on the connection that stands and nothing more. The check used to
+// open a TCP connection to the SSH server first and close it unused, and an
+// SSH server writes a line to its authentication log for every connection that
+// ends before it logs in ("Connection closed by ... [preauth]" on OpenSSH), so
+// every tunnel added one line to the log of its Host every interval, and a
+// rule that counts those lines as an attack could block this machine.
+func TestMonitorConnectionOpensNoConnectionToTheServer(t *testing.T) {
+	m := newSSHTestManager(t, 1)
+	serverAddr, arrivals, accepted := startCountingSlowSSHServer(t, 0)
+	tun, tunnel := newSSHTestTunnel(t, serverAddr)
+
+	client, conn, closeClient := dialTestSSHClient(t, serverAddr)
+	defer closeClient()
+
+	tun.clientMu.Lock()
+	tun.client = client
+	tun.clientMu.Unlock()
+
+	stop := make(chan struct{})
+	exited := make(chan struct{})
+	go func() {
+		tun.monitorConnection(m, tunnel, stop)
+		close(exited)
+	}()
+
+	waitForKeepalives(t, arrivals, 3)
+	close(stop)
+	<-exited
+
+	if got := accepted(); got != 1 {
+		t.Fatalf("the SSH server accepted %d connections over 3 checks, want only the one the "+
+			"tunnel holds, a check that connects writes a line to the Host's authentication log", got)
+	}
+	if conn.closed.Load() {
+		t.Fatal("the monitor closed a connection whose server answered every keepalive")
+	}
+}
+
+// TestWatchSSHConnectionOpensNoConnectionToTheServer is
+// TestMonitorConnectionOpensNoConnectionToTheServer for the loop the local
+// forwards and the SOCKS5 proxies share.
+func TestWatchSSHConnectionOpensNoConnectionToTheServer(t *testing.T) {
+	serverAddr, arrivals, accepted := startCountingSlowSSHServer(t, 0)
+
+	client, conn, closeClient := dialTestSSHClient(t, serverAddr)
+	defer closeClient()
+
+	stop := make(chan struct{})
+	exited := make(chan struct{})
+	go func() {
+		watchSSHConnection(stop, 200*time.Millisecond, func() *ssh.Client { return client },
+			zap.NewNop(), func(extra ...zap.Field) []zap.Field { return extra })
+		close(exited)
+	}()
+
+	waitForKeepalives(t, arrivals, 3)
+	close(stop)
+	<-exited
+
+	if got := accepted(); got != 1 {
+		t.Fatalf("the SSH server accepted %d connections over 3 checks, want only the one the "+
+			"forward holds, a check that connects writes a line to the Host's authentication log", got)
+	}
+	if conn.closed.Load() {
+		t.Fatal("the check closed a connection whose server answered every keepalive")
+	}
+}
+
+// TestAFailedKeepaliveNamesTheTunnel pins what the one line a lost tunnel
+// writes carries. The check used to write a line of its own when the SSH
+// server refused a TCP connection, with the local and remote address of the
+// tunnel on it. The keepalive is the whole check now, so its line is the one
+// left, and it carries both so that it still says which tunnel was lost.
+func TestAFailedKeepaliveNamesTheTunnel(t *testing.T) {
+	m := newSSHTestManager(t, 1)
+	serverAddr := startMuteSSHServer(t)
+	tun, tunnel := newSSHTestTunnel(t, serverAddr)
+
+	core, logs := observer.New(zapcore.DebugLevel)
+	tun.logger = zap.New(core)
+
+	client, _, closeClient := dialTestSSHClient(t, serverAddr)
+	defer closeClient()
+
+	tun.clientMu.Lock()
+	tun.client = client
+	tun.clientMu.Unlock()
+
+	tun.checkConnection(m, tunnel, 300*time.Millisecond)
+
+	lines := logs.FilterField(logid.TunnelKeepaliveFailed.Field()).All()
+	if len(lines) != 1 {
+		t.Fatalf("the check wrote %d keepalive failure lines, want 1", len(lines))
+	}
+
+	fields := lines[0].ContextMap()
+	want := map[string]string{
+		"local":  tun.Local.String(),
+		"server": serverAddr,
+		"remote": tun.Remote,
+	}
+	for key, value := range want {
+		if got, ok := fields[key]; !ok || got != value {
+			t.Errorf("the keepalive failure line has %s = %v, want %q", key, got, value)
+		}
+	}
+}
+
+// TestWatchSSHConnectionClosesAConnectionThatStoppedAnswering is
+// TestMonitorTickIsNotHeldByAnUnresponsivePeer for the loop the local forwards
+// and the SOCKS5 proxies share. With the keepalive the only check, a server
+// that stopped answering is found by it alone: the connection is closed within
+// the wait of one check, and closing it is what takes the forward or the proxy
+// down to be connected again.
+func TestWatchSSHConnectionClosesAConnectionThatStoppedAnswering(t *testing.T) {
+	client, conn, closeClient := dialTestSSHClient(t, startMuteSSHServer(t))
+	defer closeClient()
+
+	const interval = 200 * time.Millisecond
+
+	stop := make(chan struct{})
+	exited := make(chan struct{})
+	go func() {
+		watchSSHConnection(stop, interval, func() *ssh.Client { return client },
+			zap.NewNop(), func(extra ...zap.Field) []zap.Field { return extra })
+		close(exited)
+	}()
+	defer func() {
+		close(stop)
+		<-exited
+	}()
+
+	// One interval to the check, and the 3s floor the keepalive waits.
+	deadline := time.Now().Add(interval + monitorCheckTimeout(interval) + 5*time.Second)
+	for !conn.closed.Load() && time.Now().Before(deadline) {
+		time.Sleep(20 * time.Millisecond)
+	}
+	if !conn.closed.Load() {
+		t.Fatal("the check left open a connection whose server stopped answering keepalives, " +
+			"the forward would never be connected again")
 	}
 }
 

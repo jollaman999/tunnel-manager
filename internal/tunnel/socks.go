@@ -716,7 +716,7 @@ func (p *socksTunnel) Start() {
 	monitorWg.Add(1)
 	go func() {
 		defer monitorWg.Done()
-		watchSSHConnection(stopMonitor, p.interval, firstServer(p.jumps, p.server), p.currentClient, p.logger, p.fields)
+		watchSSHConnection(stopMonitor, p.interval, p.currentClient, p.logger, p.fields)
 	}()
 
 	defer func() {

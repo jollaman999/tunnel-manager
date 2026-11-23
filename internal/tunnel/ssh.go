@@ -211,15 +211,16 @@ func (t *SSHTunnel) reconnect(m *Manager, tunnel *models.Tunnel, observed *ssh.C
 }
 
 // minMonitorCheckTimeout is the shortest a monitor check waits for the SSH
-// server. It is three seconds because that is when TCP sends a lost SYN for
-// the second time (the first retry goes out after the initial one second
-// retransmission timeout, RFC 6298), so a probe is not given up on after a
-// single lost packet. It also keeps a short monitoring interval from turning
-// into a limit a loaded link cannot meet.
+// server. It is three seconds because that is when TCP has sent a lost packet
+// for the second time where it has not measured the link yet (the first retry
+// goes out after the initial one second retransmission timeout, RFC 6298, and
+// the wait doubles after it), so a keepalive is not given up on after a single
+// lost packet. It also keeps a short monitoring interval from turning into a
+// limit a loaded link cannot meet.
 const minMonitorCheckTimeout = 3 * time.Second
 
-// monitorCheckTimeout returns how long the monitor waits for the SSH server,
-// both for the TCP handshake of its probe and for the reply to its keepalive.
+// monitorCheckTimeout returns how long the monitor waits for the SSH server to
+// reply to its keepalive.
 // The wait is how long a silent server is tolerated before its connection is
 // dropped, not a share of the tick: the checks run one after the other and the
 // next one is scheduled an interval after the last one ended, so a long wait
@@ -291,8 +292,17 @@ func (t *SSHTunnel) monitorConnection(m *Manager, tunnel *models.Tunnel, stop <-
 }
 
 // checkConnection is one check of monitorConnection: the SSH server has to
-// accept a TCP connection and answer a keepalive on the current one, each
-// within timeout, or the current connection is torn down.
+// answer a keepalive on the current connection within timeout, or the
+// connection is torn down.
+//
+// The keepalive is the whole check. It travels the connection the tunnel
+// holds, through every jump host on the way, so a reply says that the way to
+// the Host and the Host itself are both still there, and a server that is gone
+// or cut off fails it on the timer. A TCP connection of its own to the SSH
+// server would add nothing to that, and it would cost the Host a line in its
+// authentication log every interval: an SSH server logs every connection that
+// ends before it logs in ("Connection closed by ... [preauth]" on OpenSSH), and
+// a rule that counts such lines as an attack could block this machine.
 func (t *SSHTunnel) checkConnection(m *Manager, tunnel *models.Tunnel, timeout time.Duration) {
 	t.clientMu.RLock()
 	client := t.client
@@ -302,24 +312,13 @@ func (t *SSHTunnel) checkConnection(m *Manager, tunnel *models.Tunnel, timeout t
 		return
 	}
 
-	conn, err := net.DialTimeout("tcp", t.probeServer(), timeout)
-	if err != nil {
-		t.logger.Warn("SSH connection lost, attempting reconnection",
-			logid.TunnelServerUnreachable.Field(),
-			zap.String("local", t.Local.String()),
-			zap.String("server", t.Server),
-			zap.String("remote", t.Remote),
-			zap.Error(err))
-		t.reconnect(m, tunnel, client)
-		return
-	}
-	_ = conn.Close()
-
-	err = sendKeepalive(client, timeout)
+	err := sendKeepalive(client, timeout)
 	if err != nil {
 		t.logger.Warn("SSH keepalive check failed, attempting reconnection",
 			logid.TunnelKeepaliveFailed.Field(),
+			zap.String("local", t.Local.String()),
 			zap.String("server", t.Server),
+			zap.String("remote", t.Remote),
 			zap.Error(err))
 		t.reconnect(m, tunnel, client)
 	}
@@ -695,31 +694,12 @@ func (t *SSHTunnel) route() []sshHop {
 	return withTarget(t.jumps, hostID, t.Server, t.Config)
 }
 
-// probeServer is the address the monitor dials to see that the way to the SSH
-// server is still there. It is the first server of the route, because that is
-// the only one this machine reaches on its own: a Host behind a jump route is
-// reached through the connection, and a dial of its address from here fails
-// whether the connection stands or not.
-func (t *SSHTunnel) probeServer() string {
-	return firstServer(t.jumps, t.Server)
-}
-
 // withTarget is the route of jumps with the Host at its end.
 func withTarget(jumps []sshHop, hostID uint, addr string, config *ssh.ClientConfig) []sshHop {
 	route := make([]sshHop, 0, len(jumps)+1)
 	route = append(route, jumps...)
 
 	return append(route, sshHop{hostID: hostID, addr: addr, config: config})
-}
-
-// firstServer is the address the route of jumps ending at server is entered
-// by.
-func firstServer(jumps []sshHop, server string) string {
-	if len(jumps) > 0 {
-		return jumps[0].addr
-	}
-
-	return server
 }
 
 // dialSSHClient is dialSSH for any route, so the local forwards and the SOCKS5

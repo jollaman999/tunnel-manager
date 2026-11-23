@@ -581,7 +581,7 @@ func (f *localTunnel) recordForwardReach(measured *ssh.Client) {
 // Closing it is all it does: establish sees the connection end and takes the
 // forward down to be connected again.
 func (f *localTunnel) monitor(stop <-chan struct{}) {
-	watchSSHConnection(stop, f.interval, firstServer(f.jumps, f.server), f.currentClient, f.logger, f.fields)
+	watchSSHConnection(stop, f.interval, f.currentClient, f.logger, f.fields)
 }
 
 func (f *localTunnel) currentClient() *ssh.Client {
@@ -594,10 +594,9 @@ func (f *localTunnel) currentClient() *ssh.Client {
 // watchSSHConnection is the loop of monitor, shared with the SOCKS5 proxies,
 // which hold their connection the same way. current returns the connection
 // that stands, or a nil client while there is none, and fields are what every
-// line about the owner carries. server is the address the route to the Host is
-// entered by, for the reason SSHTunnel.probeServer gives. It waits on a timer
-// set again after each check for the reason SSHTunnel.monitorConnection does.
-func watchSSHConnection(stop <-chan struct{}, interval time.Duration, server string,
+// line about the owner carries. It waits on a timer set again after each check
+// for the reason SSHTunnel.monitorConnection does.
+func watchSSHConnection(stop <-chan struct{}, interval time.Duration,
 	current func() *ssh.Client, logger *zap.Logger, fields func(extra ...zap.Field) []zap.Field) {
 	timer := time.NewTimer(interval)
 	defer timer.Stop()
@@ -609,7 +608,7 @@ func watchSSHConnection(stop <-chan struct{}, interval time.Duration, server str
 		case <-stop:
 			return
 		case <-timer.C:
-			checkSSHConnection(server, current(), timeout, logger, fields)
+			checkSSHConnection(current(), timeout, logger, fields)
 			timer.Reset(interval)
 		}
 	}
@@ -618,22 +617,15 @@ func watchSSHConnection(stop <-chan struct{}, interval time.Duration, server str
 // checkSSHConnection is one check of watchSSHConnection. It is
 // SSHTunnel.checkConnection for a connection that has nothing to report but
 // its end: a client that fails the check is closed, and a nil one is skipped.
-func checkSSHConnection(server string, client *ssh.Client, timeout time.Duration,
+// The keepalive is the whole check, for the reason SSHTunnel.checkConnection
+// gives.
+func checkSSHConnection(client *ssh.Client, timeout time.Duration,
 	logger *zap.Logger, fields func(extra ...zap.Field) []zap.Field) {
 	if client == nil {
 		return
 	}
 
-	conn, err := net.DialTimeout("tcp", server, timeout)
-	if err != nil {
-		logger.Warn("SSH connection lost, attempting reconnection",
-			append([]zap.Field{logid.TunnelServerUnreachable.Field()}, fields(zap.Error(err))...)...)
-		_ = client.Close()
-		return
-	}
-	_ = conn.Close()
-
-	err = sendKeepalive(client, timeout)
+	err := sendKeepalive(client, timeout)
 	if err != nil {
 		logger.Warn("SSH keepalive check failed, attempting reconnection",
 			append([]zap.Field{logid.TunnelKeepaliveFailed.Field()}, fields(zap.Error(err))...)...)

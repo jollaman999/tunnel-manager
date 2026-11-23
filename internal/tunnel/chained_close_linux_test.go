@@ -31,8 +31,7 @@ import (
 // grows it past that. A client with that much room stops on the channel window
 // with its socket still taking writes, which is not the state being tested.
 // shrunk counts the clients whose send buffer was made small. One that closed
-// before it was looked for, such as a monitor probe, has no socket left and is
-// not counted.
+// before it was looked for has no socket left and is not counted.
 type stallingProxy struct {
 	addr    string
 	stalled atomic.Bool
