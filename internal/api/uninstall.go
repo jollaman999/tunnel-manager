@@ -111,6 +111,17 @@ type UninstallHandler struct {
 	// install.RemoveThisService for why the service is not stopped, and why a
 	// process no service manager runs is left as it is.
 	removeService func(databaseFile string) install.ServiceRemoval
+	// closeLog closes the log file this process writes to, for good: a line
+	// logged after it reaches the console alone. It is called right before the
+	// log file is removed, because Windows does not delete a file this process
+	// holds open, and a log file left there keeps the data directory there as
+	// well. It is nil where nothing is written to a file.
+	closeLog func() error
+	// removeFile removes one file and says whether it had to be left for the
+	// next restart of the system, which only Windows answers, for a file some
+	// other handle still holds. It is install.RemoveFile, and a field so that a
+	// test can answer the Windows case on any platform.
+	removeFile func(path string) (bool, error)
 	// exit ends the process. It is a function of the startup rather than
 	// os.Exit, so that the process goes down the same way a signal takes it
 	// down and so that a test is not ended by the code it is testing.
@@ -122,7 +133,8 @@ type UninstallHandler struct {
 
 func NewUninstallHandler(db *gorm.DB, logger *zap.Logger, manager tunnelStopper,
 	stopReconcile func(), paths UninstallPaths, begin func(),
-	removeService func(databaseFile string) install.ServiceRemoval, exit func()) *UninstallHandler {
+	removeService func(databaseFile string) install.ServiceRemoval, closeLog func() error,
+	exit func()) *UninstallHandler {
 	return &UninstallHandler{
 		db:            db,
 		logger:        logger,
@@ -131,6 +143,8 @@ func NewUninstallHandler(db *gorm.DB, logger *zap.Logger, manager tunnelStopper,
 		paths:         paths,
 		begin:         begin,
 		removeService: removeService,
+		closeLog:      closeLog,
+		removeFile:    install.RemoveFile,
 		exit:          exit,
 		exitAfter:     uninstallExitDelay,
 	}
@@ -153,6 +167,10 @@ type removedFile struct {
 	WhatCode textCode `json:"what_code"`
 	// Error is filled in only for a file that could not be removed.
 	Error string `json:"error,omitempty"`
+	// AtReboot says the file is among the removed ones because it goes at the
+	// next restart of the system, which only Windows answers: a file some
+	// other handle still held open.
+	AtReboot bool `json:"at_reboot,omitempty"`
 }
 
 // What became of the service this process runs as, as uninstallService.State
@@ -178,9 +196,10 @@ const (
 // it.
 const (
 	uninstallPartRemoved = "removed"
-	// uninstallPartRemovedAtReboot is the executable on Windows, which a
-	// running process cannot delete and which goes at the next restart of the
-	// system instead.
+	// uninstallPartRemovedAtReboot is a part that goes at the next restart of
+	// the system instead, which only Windows answers: the executable, which a
+	// running process cannot delete, and a data directory that still holds a
+	// file some other handle keeps open.
 	uninstallPartRemovedAtReboot = "removed_at_reboot"
 	uninstallPartFailed          = "failed"
 	// uninstallPartKept is a part left in place on purpose, with the reason as
@@ -483,9 +502,11 @@ func (h *UninstallHandler) closeDatabase() {
 // became of each file.
 //
 // A file that cannot be removed does not stop the rest. On Windows a file that
-// is open cannot be deleted, and the log file this process writes to is exactly
-// that, so a run that stopped at the first failure would leave the database and
-// the key behind over the one file that was never going to go.
+// is open cannot be deleted, and a run that stopped at the first failure would
+// leave the database and the key behind over one file that could not go. The
+// log file this process writes to is closed right before it is removed, which
+// is the last of them (installedFiles), and one that some other handle still
+// holds is handed to the next restart of the system there.
 func (h *UninstallHandler) removeFiles() uninstallResult {
 	result := uninstallResult{
 		Removed: []removedFile{},
@@ -493,9 +514,22 @@ func (h *UninstallHandler) removeFiles() uninstallResult {
 	}
 
 	for _, file := range h.installedFiles() {
-		err := os.Remove(file.Path)
+		if file.WhatCode == textUninstallLog {
+			h.closeLogFile()
+		}
+
+		atReboot, err := h.removeFile(file.Path)
 
 		switch {
+		case err == nil && atReboot:
+			h.logger.Info("set a file of the installation to be removed at the next restart of the "+
+				"system, since it is in use until then",
+				logid.UninstallFileAtReboot.Field(),
+				zap.String("what", file.What),
+				zap.String("path", file.Path))
+
+			file.AtReboot = true
+			result.Removed = append(result.Removed, file)
 		case err == nil:
 			h.logger.Info("removed a file of the installation",
 				logid.UninstallFileRemoved.Field(),
@@ -525,6 +559,37 @@ func (h *UninstallHandler) removeFiles() uninstallResult {
 	}
 
 	return result
+}
+
+// closeLogFile closes the log file this process writes to before it is
+// removed.
+//
+// The line that says so is written before the close, so that it is the last
+// line of the file for as long as the file is there. What is logged after it
+// reaches the console alone: lumberjack opens the file again on the next line
+// after a close, and on Windows that would make the file again inside the
+// data directory that is about to be removed.
+//
+// On Linux and macOS the close changes nothing that can be seen. A file that
+// is open is removed all the same there, and the lines a process writes into a
+// file that has been removed are read by nobody, so they reached no one before
+// either.
+func (h *UninstallHandler) closeLogFile() {
+	if h.closeLog == nil {
+		return
+	}
+
+	h.logger.Info("closing the log file so that it can be removed. What is logged from here on "+
+		"reaches the console alone",
+		logid.UninstallLogFileClosing.Field(),
+		zap.String("path", h.paths.LogFile))
+
+	err := h.closeLog()
+	if err != nil {
+		h.logger.Error("failed to close the log file, so removing it may fail",
+			logid.UninstallLogFileCloseFailed.Field(),
+			zap.Error(err))
+	}
 }
 
 // The names of the files the uninstall removes, as the answer says them.

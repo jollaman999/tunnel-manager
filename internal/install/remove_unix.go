@@ -25,3 +25,12 @@ func removeExecutable(path string) (bool, error) {
 
 	return false, nil
 }
+
+// RemoveFile removes a file of the installation and says whether it had to be
+// left for the next reboot, which here it never does, for the reason
+// removeExecutable gives: a file another process holds open is removed all the
+// same. The error of os.Remove is answered as it is, so that the caller tells a
+// file that was not there from one that could not go.
+func RemoveFile(path string) (bool, error) {
+	return false, os.Remove(path)
+}

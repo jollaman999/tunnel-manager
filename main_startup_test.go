@@ -83,7 +83,7 @@ func initLoggerForTest(t *testing.T, s *settings.Settings, installDir string) (z
 	func() error, error) {
 	t.Helper()
 
-	core, level, empty, err := initLogger(s, installDir)
+	core, level, empty, _, err := initLogger(s, installDir)
 	if empty != nil {
 		t.Cleanup(func() {
 			_ = empty()
@@ -2751,5 +2751,86 @@ func TestEmptyingTheLogSaysWhenTheFileIsGone(t *testing.T) {
 	err := emptyLogFile(writer, filepath.Join(dir, "not-there", "tunnel-manager.log"))
 	if err == nil {
 		t.Error("emptying a file that is not there was reported as done")
+	}
+}
+
+// TestClosingTheLogForGoodKeepsTheFileClosed is what the uninstall on the
+// Settings screen closes the log file with before it removes it. The uninstall
+// goes on logging after that, and on Windows a line that opened the file again
+// would make it again inside the data directory that is being removed, and
+// keep that directory there.
+func TestClosingTheLogForGoodKeepsTheFileClosed(t *testing.T) {
+	dir := t.TempDir()
+
+	// lumberjack on its own opens the file again on the next line after a
+	// close. That is what emptying the log relies on, and it is why closing it
+	// for good needs more than its Close.
+	plainPath := filepath.Join(dir, "plain.log")
+	plain := &lumberjack.Logger{Filename: plainPath, MaxSize: 1}
+
+	_, _ = plain.Write([]byte("a line\n"))
+	_ = plain.Close()
+	_ = os.Remove(plainPath)
+	_, _ = plain.Write([]byte("a line after the close\n"))
+	_ = plain.Close()
+
+	if _, err := os.Stat(plainPath); err != nil {
+		t.Fatalf("lumberjack did not open the file again after a close (%v), so this test no "+
+			"longer shows what it is about", err)
+	}
+
+	logFile := filepath.Join(dir, "logs", "tunnel-manager.log")
+
+	core, _, _, closeLog, err := initLogger(newLoggingSettings(logFile), "")
+	if err != nil {
+		t.Fatalf("failed to build the logger: %v", err)
+	}
+
+	if closeLog == nil {
+		t.Fatal("a logger that writes to a file answered no way to close it")
+	}
+
+	logger := zap.New(core)
+	logger.Info("a line from before the close")
+
+	err = closeLog()
+	if err != nil {
+		t.Fatalf("closing the log file failed: %v", err)
+	}
+
+	err = os.Remove(logFile)
+	if err != nil {
+		t.Fatalf("failed to remove the closed log file: %v", err)
+	}
+
+	logger.Info("a line from after the close")
+
+	if _, err := os.Stat(logFile); !os.IsNotExist(err) {
+		t.Fatalf("a line logged after the close made the log file again (%v)", err)
+	}
+}
+
+// TestALoggerWithoutAFileHasNothingToClose is the console-only logger, which
+// a log file that cannot be opened falls back to.
+func TestALoggerWithoutAFileHasNothingToClose(t *testing.T) {
+	logFile := filepath.Join(t.TempDir(), "tunnel-manager.log")
+
+	err := os.Mkdir(logFile, 0755)
+	if err != nil {
+		t.Fatalf("failed to create the directory that takes the place of the log file: %v", err)
+	}
+
+	var closeLog func() error
+
+	withStdoutCaptured(t, func() {
+		_, _, _, closeLog, err = initLogger(newLoggingSettings(logFile), "")
+	})
+
+	if err != nil {
+		t.Fatalf("failed to build the logger: %v", err)
+	}
+
+	if closeLog != nil {
+		t.Fatal("a logger that writes to no file answered a way to close one")
 	}
 }

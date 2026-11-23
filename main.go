@@ -496,10 +496,12 @@ func narrowInstallFiles(logger *zap.Logger, installDir, databaseFile string, s *
 //
 // The third return is what empties the log file, which the Logs screen offers
 // as a press. It comes from here because the writer that holds the file open
-// is built here and the emptying has to go through it: see emptyLogFile. It is
-// nil when nothing is writing to a file.
+// is built here and the emptying has to go through it: see emptyLogFile. The
+// fourth is what closes the file for good, which the uninstall on the Settings
+// screen does right before it removes it: see logFileWriter. Both are nil when
+// nothing is writing to a file.
 func initLogger(s *settings.Settings, installDir string) (zapcore.Core, zap.AtomicLevel,
-	func() error, error) {
+	func() error, func() error, error) {
 	// An unusable log file is not fatal. The logger falls back to the console
 	// only, but the reason has to be visible since nothing is written to the file.
 	fileErr := prepareLogFile(s, installDir)
@@ -511,7 +513,7 @@ func initLogger(s *settings.Settings, installDir string) (zapcore.Core, zap.Atom
 	level := zap.NewAtomicLevel()
 	err := level.UnmarshalText([]byte(s.LoggingLevel))
 	if err != nil {
-		return nil, level, nil, fmt.Errorf("failed to parse log level: %v", err)
+		return nil, level, nil, nil, fmt.Errorf("failed to parse log level: %v", err)
 	}
 
 	encoderConfig := newEncoderConfig()
@@ -524,8 +526,9 @@ func initLogger(s *settings.Settings, installDir string) (zapcore.Core, zap.Atom
 	}
 
 	var (
-		cores []zapcore.Core
-		empty func() error
+		cores     []zapcore.Core
+		empty     func() error
+		closeFile func() error
 	)
 
 	if fileErr == nil {
@@ -539,13 +542,16 @@ func initLogger(s *settings.Settings, installDir string) (zapcore.Core, zap.Atom
 			Compress:   s.LoggingFileCompress,
 		}
 
+		file := &logFileWriter{writer: logWriter}
+
 		empty = func() error {
 			return emptyLogFile(logWriter, path)
 		}
+		closeFile = file.closeForGood
 
 		cores = append(cores, zapcore.NewCore(
 			encoder,
-			zapcore.AddSync(logWriter),
+			zapcore.AddSync(file),
 			level,
 		))
 	}
@@ -566,7 +572,48 @@ func initLogger(s *settings.Settings, installDir string) (zapcore.Core, zap.Atom
 			zap.String("message", "logs are written to the console only"))
 	}
 
-	return core, level, empty, nil
+	return core, level, empty, closeFile, nil
+}
+
+// logFileWriter is the rotating writer of the log file, with a way to close the
+// file for good.
+//
+// lumberjack opens the file again on the next line after a Close, which is
+// what emptying the file on the Logs screen relies on. The uninstall on the
+// Settings screen needs the other thing: it closes the file right before it
+// removes it, because Windows refuses to delete a file a handle holds open
+// without sharing the deletion - which is how the log file, and with it the
+// data directory, stayed behind after an uninstall there ("being used by
+// another process"). The uninstall goes on logging after that, and a line that
+// opened the file again would make it again inside the directory that is being
+// removed. So once the file is closed for good a line is dropped here and
+// reaches the console core alone, which is the stdout the service manager
+// keeps: the journal under systemd, and nothing for a Windows service.
+type logFileWriter struct {
+	mu     sync.Mutex
+	writer *lumberjack.Logger
+	closed bool
+}
+
+func (w *logFileWriter) Write(p []byte) (int, error) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+
+	if w.closed {
+		return len(p), nil
+	}
+
+	return w.writer.Write(p)
+}
+
+// closeForGood closes the file and keeps it closed.
+func (w *logFileWriter) closeForGood() error {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+
+	w.closed = true
+
+	return w.writer.Close()
 }
 
 // emptyLogFile empties the file the rotating writer is writing to.
@@ -2065,7 +2112,7 @@ func serve() bool {
 	// From here the logger is the one the settings describe. logLevel is the
 	// handle the Settings screen changes the level through, which is why the
 	// level is not fixed into the core.
-	core, logLevel, emptyLog, err := initLogger(set, installDir)
+	core, logLevel, emptyLog, closeLog, err := initLogger(set, installDir)
 	if err != nil {
 		pathRepair.log(logger)
 		intervalRepair.log(logger)
@@ -2410,7 +2457,7 @@ func serve() bool {
 			InstallProblemFile:  installProblemPath(updateDataDir),
 			UpdateCheckFile:     updateCheckPath(updateDataDir),
 			InstallReportFile:   installReportPath(databaseFile, false),
-		}, beginUninstall, install.RemoveThisService, endAfterUninstall)
+		}, beginUninstall, install.RemoveThisService, closeLog, endAfterUninstall)
 	// The restart is handed the shutdown above and what this build can do about
 	// coming back. canReexec and serviceStartsAgain are asked here, in the one
 	// place that knows it is the process, rather than in the handler: the

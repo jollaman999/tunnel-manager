@@ -2205,10 +2205,11 @@ still started again.
 - **Docker Compose starts the container again.** `restart: always` in the
   compose file starts it whatever it exited with, so run `docker compose down`
   once the uninstall is over.
-- **On Windows, install again after the next restart.** The program file is
-  deleted at that restart by its path, so a file `-install` put at the same path
-  before it would be the one that goes, and until the process has ended the
-  service entry still holds its name.
+- **On Windows, install again after the next restart.** The program file, and a
+  data directory left for the next restart, are deleted at that restart by their
+  paths, so a file `-install` put at the same path before it would be the one
+  that goes, and until the process has ended the service entry still holds its
+  name.
 
 An uninstall pressed in the seconds a restart waits before it goes takes the
 place of the restart: the process ends as an uninstall ends and does not run the
@@ -2243,11 +2244,22 @@ curl -s -b cookies.txt -X POST "$BASE/api/uninstall" \
 ```
 
 A file that could not be removed is reported under `failed` with the reason and
-is left on disk for you to deal with. It does not stop the rest: on Windows the
-log file this process is writing to cannot be deleted while it is open, and a run
-that stopped there would leave the database and the key behind over the one file
-that was never going to go. The same file keeps the data directory there on
-Windows.
+is left on disk for you to deal with. It does not stop the rest, so one file that
+cannot go does not leave the database and the key behind with it.
+
+**The log file goes last, and is closed right before it goes.** Everything else
+the uninstall did is in it until then, and what is logged after the close reaches
+the console alone: the journal under systemd, nothing for a Windows service.
+Windows does not delete a file that is open, and the open log file is what kept
+it, and with it the data directory, behind. On Linux and macOS an open file is
+removed all the same, and the close changes nothing that can be seen.
+
+**On Windows a file some other program still holds open goes at the next
+restart.** A viewer following the log or a virus scanner reading a file keeps it
+there after the close. Such a file is handed to Windows to delete at the next
+restart (`MoveFileEx`), listed under `removed` with `"at_reboot": true`, and so is
+what is left of the data directory: `service.data_dir` is then
+`removed_at_reboot`.
 
 `service.state` says what became of the start at boot:
 
@@ -2264,7 +2276,7 @@ when this process was the service, each with the `path` it is about and a
 | `state` | Meaning |
 |---------|---------|
 | `removed` | It went. A service entry that went takes the start at boot with it, whatever `service.state` says |
-| `removed_at_reboot` | The program file on Windows, deleted at the next restart |
+| `removed_at_reboot` | On Windows, deleted at the next restart: the program file, and a data directory that still holds a file some other program keeps open |
 | `failed` | It could not be removed. `error` says why; `-uninstall` removes what is left |
 | `kept` | It was left on purpose, and `error` says why: the program file while the service entry is still there, or a data directory `-purge` would refuse as well |
 

@@ -150,6 +150,30 @@ type uninstallSteps struct {
 	// removedFor the database file it was handed.
 	removal    install.ServiceRemoval
 	removedFor string
+	// logFile is the log file of the installation, and leftAtLogClose what of
+	// the other files of the installation was still there when the log file was
+	// closed, with the log file itself among them only if it was still there.
+	logFile        string
+	others         []string
+	leftAtLogClose []string
+}
+
+// closeLog stands in for closing the log file for good. It records the step
+// and what was still on disk at that moment.
+func (s *uninstallSteps) closeLog() error {
+	s.record("close log")
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	for _, path := range append([]string{s.logFile}, s.others...) {
+		_, err := os.Stat(path)
+		if err == nil {
+			s.leftAtLogClose = append(s.leftAtLogClose, path)
+		}
+	}
+
+	return nil
 }
 
 func (s *uninstallSteps) removeService(databaseFile string) install.ServiceRemoval {
@@ -238,15 +262,23 @@ func newUninstallHandler(t *testing.T, inst *installation) (*UninstallHandler, *
 	writeFile(t, inst.paths.DatabaseFile+"-wal")
 	writeFile(t, inst.paths.DatabaseFile+"-shm")
 
+	others := []string{}
+
+	for _, path := range inst.installedFilePaths() {
+		if path != inst.paths.LogFile {
+			others = append(others, path)
+		}
+	}
+
 	steps := &uninstallSteps{databaseFile: inst.paths.DatabaseFile,
-		removal: install.ServiceRemoval{IsService: true}}
+		removal: install.ServiceRemoval{IsService: true}, logFile: inst.paths.LogFile, others: others}
 	exited := make(chan struct{})
 
 	h := NewUninstallHandler(db, zap.NewNop(), steps, func() {
 		steps.record("reconcile")
 	}, inst.paths, func() {
 		steps.record("begin")
-	}, steps.removeService, func() {
+	}, steps.removeService, steps.closeLog, func() {
 		close(exited)
 	})
 
@@ -615,13 +647,13 @@ func TestUninstallStopsTheLoopAndTheTunnelsBeforeTheFilesGo(t *testing.T) {
 
 	names, fileWasThere := steps.taken()
 
-	if strings.Join(names, ",") != "begin,reconcile,tunnels,service" {
+	if strings.Join(names, ",") != "begin,reconcile,tunnels,close log,service" {
 		t.Fatalf("the uninstall took the steps %v, want the loop stopped, then the tunnels, "+
-			"and the service taken off the system last", names)
+			"the log file closed and the service taken off the system last", names)
 	}
 
 	for index, there := range fileWasThere {
-		if names[index] == "service" {
+		if names[index] == "service" || names[index] == "close log" {
 			if there {
 				t.Fatalf("the service was taken off the system before the files went")
 			}
@@ -809,6 +841,69 @@ func TestUninstallClosesTheDatabase(t *testing.T) {
 	}
 }
 
+// TestUninstallClosesTheLogFileRightBeforeItGoes is the uninstall on Windows,
+// where the log file this process holds open cannot be deleted and kept the
+// data directory there with it. It is closed after every other file has gone,
+// so that what the uninstall did is in it for as long as it is there, and
+// before it is removed itself.
+func TestUninstallClosesTheLogFileRightBeforeItGoes(t *testing.T) {
+	inst := newInstallation(t)
+	h, steps, _, _ := newUninstallHandler(t, inst)
+
+	rec := postUninstall(t, h, `{"password":"`+uninstallPassword+`"}`)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("POST /api/uninstall = %d (%s), want %d", rec.Code, rec.Body.String(), http.StatusOK)
+	}
+
+	steps.mu.Lock()
+	left := append([]string(nil), steps.leftAtLogClose...)
+	steps.mu.Unlock()
+
+	if len(left) != 1 || left[0] != inst.paths.LogFile {
+		t.Fatalf("when the log file was closed these were on disk: %v, want the log file alone", left)
+	}
+
+	if exists(t, inst.paths.LogFile) {
+		t.Fatalf("the log file %s is still there", inst.paths.LogFile)
+	}
+}
+
+// TestUninstallReportsAFileThatGoesAtTheNextRestart covers the log file some
+// other handle still held on Windows, which is handed to the next restart of
+// the system. It is reported among the removed files and marked as such, and
+// not as left behind.
+func TestUninstallReportsAFileThatGoesAtTheNextRestart(t *testing.T) {
+	inst := newInstallation(t)
+	h, _, _, _ := newUninstallHandler(t, inst)
+
+	h.removeFile = func(path string) (bool, error) {
+		if path == inst.paths.LogFile {
+			return true, nil
+		}
+
+		return false, os.Remove(path)
+	}
+
+	result := decodeUninstall(t, postUninstall(t, h, `{"password":"`+uninstallPassword+`"}`))
+
+	if len(result.Failed) != 0 {
+		t.Fatalf("the uninstall reported %v as left behind, want nothing", result.Failed)
+	}
+
+	atReboot := []string{}
+
+	for _, file := range result.Removed {
+		if file.AtReboot {
+			atReboot = append(atReboot, file.Path)
+		}
+	}
+
+	if len(atReboot) != 1 || atReboot[0] != inst.paths.LogFile {
+		t.Fatalf("the files marked to go at the next restart are %v, want %s alone", atReboot, inst.paths.LogFile)
+	}
+}
+
 // TestUninstallGoesOnWhenAFileCannotBeRemoved is the Windows case: the log file
 // is open while this runs and cannot be deleted there. The run has to carry on
 // and say what was left behind, because stopping at the first failure would
@@ -959,8 +1054,9 @@ func TestRemoveFilesTakesTheDatabaseSidecarsThatAreStillThere(t *testing.T) {
 	writeFile(t, databaseFile+"-shm")
 
 	h := &UninstallHandler{
-		logger: zap.NewNop(),
-		paths:  UninstallPaths{DatabaseFile: databaseFile},
+		logger:     zap.NewNop(),
+		paths:      UninstallPaths{DatabaseFile: databaseFile},
+		removeFile: install.RemoveFile,
 	}
 
 	result := h.removeFiles()

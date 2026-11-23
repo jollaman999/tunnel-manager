@@ -4364,6 +4364,10 @@
         "api.removedFile": {
             "type": "object",
             "properties": {
+                "at_reboot": {
+                    "description": "AtReboot says the file is among the removed ones because it goes at the\nnext restart of the system, which only Windows answers: a file some\nother handle still held open.",
+                    "type": "boolean"
+                },
                 "error": {
                     "description": "Error is filled in only for a file that could not be removed.",
                     "type": "string"

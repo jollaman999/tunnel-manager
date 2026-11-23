@@ -4,6 +4,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -384,4 +385,193 @@ func TestRemoveThisServiceSaysWhatWasLeft(t *testing.T) {
 			t.Fatalf("the parts are %+v, want the registration and the executable removed", removal)
 		}
 	})
+}
+
+// TestAtRebootOrderPutsEveryDirectoryAfterWhatIsInIt holds the order a tree is
+// handed to the next boot in. The session manager deletes a directory only
+// once it is empty and carries the deletions out in the order they were handed
+// over, so a directory ahead of anything in it would stay.
+func TestAtRebootOrderPutsEveryDirectoryAfterWhatIsInIt(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "data")
+
+	writeFile(t, filepath.Join(root, "logs", "tunnel-manager.log"), "")
+	writeFile(t, filepath.Join(root, "logs", "old", "tunnel-manager-1.log"), "")
+	writeFile(t, filepath.Join(root, "keys", "tunnel-manager.key"), "")
+
+	order, err := atRebootOrder(root)
+	if err != nil {
+		t.Fatalf("reading the tree failed: %v", err)
+	}
+
+	want := map[string]bool{
+		root:                               true,
+		filepath.Join(root, "logs"):        true,
+		filepath.Join(root, "logs", "old"): true,
+		filepath.Join(root, "keys"):        true,
+		filepath.Join(root, "logs", "tunnel-manager.log"):          true,
+		filepath.Join(root, "logs", "old", "tunnel-manager-1.log"): true,
+		filepath.Join(root, "keys", "tunnel-manager.key"):          true,
+	}
+
+	if len(order) != len(want) {
+		t.Fatalf("the order holds %d paths, want %d: %v", len(order), len(want), order)
+	}
+
+	position := map[string]int{}
+
+	for i, path := range order {
+		if !want[path] {
+			t.Fatalf("the order holds %s, which is not in the tree", path)
+		}
+
+		position[path] = i
+	}
+
+	for path, i := range position {
+		for other, j := range position {
+			if other != path && strings.HasPrefix(other, path+string(filepath.Separator)) && j > i {
+				t.Errorf("%s is handed over before %s, which is in it", path, other)
+			}
+		}
+	}
+
+	if order[len(order)-1] != root {
+		t.Errorf("the last path is %s, want the directory itself", order[len(order)-1])
+	}
+
+	t.Logf("order: %v", order)
+}
+
+// stubRemoveAtReboot puts a recorder in place of the deletion at the next boot
+// for one test, and answers the paths it was handed.
+func stubRemoveAtReboot(t *testing.T, failOn string) *[]string {
+	t.Helper()
+
+	var handed []string
+
+	before := removeAtReboot
+	removeAtReboot = func(path string) error {
+		if path == failOn {
+			return errors.New("refused")
+		}
+
+		handed = append(handed, path)
+
+		return nil
+	}
+
+	t.Cleanup(func() {
+		removeAtReboot = before
+	})
+
+	return &handed
+}
+
+// heldDataDir is a data directory RemoveAll cannot take all of: one file in it
+// cannot be removed, and everything else goes. On Windows the file is held
+// open, which is the log file the uninstall could not delete there. Elsewhere
+// an open file is removed all the same, and a directory without the write bit
+// stands in for it.
+func heldDataDir(t *testing.T) (selfRemovalFixture, string) {
+	t.Helper()
+
+	fixture := newSelfRemovalFixture(t)
+	held := writeFile(t, filepath.Join(fixture.dataDir, "logs", "held", "tunnel-manager.log"), "")
+
+	if runtime.GOOS == "windows" {
+		file, err := os.Open(held)
+		if err != nil {
+			t.Fatalf("failed to open %s: %v", held, err)
+		}
+
+		t.Cleanup(func() {
+			_ = file.Close()
+		})
+
+		return fixture, held
+	}
+
+	if os.Geteuid() == 0 {
+		t.Skip("root removes a file from a directory without the write bit, so nothing is held")
+	}
+
+	err := os.Chmod(filepath.Dir(held), 0o500)
+	if err != nil {
+		t.Fatalf("failed to take the write bit off %s: %v", filepath.Dir(held), err)
+	}
+
+	t.Cleanup(func() {
+		_ = os.Chmod(filepath.Dir(held), 0o700)
+	})
+
+	return fixture, held
+}
+
+// TestRemoveDataDirHandsWhatIsLeftToTheNextBoot is the uninstall on Windows
+// with a file some other handle keeps open: what RemoveAll could not take goes
+// at the next boot, every directory after what is in it, and the answer says
+// so instead of reporting the data directory as left behind.
+func TestRemoveDataDirHandsWhatIsLeftToTheNextBoot(t *testing.T) {
+	fixture, held := heldDataDir(t)
+	handed := stubRemoveAtReboot(t, "")
+
+	part := removeDataDir(fixture.databaseFile)
+
+	if !part.Removed || !part.AtReboot || part.Err != nil || part.Path != fixture.dataDir {
+		t.Fatalf("the data directory is reported as %+v, want %s removed at the next reboot",
+			part, fixture.dataDir)
+	}
+
+	want := []string{
+		held,
+		filepath.Dir(held),
+		filepath.Join(fixture.dataDir, "logs"),
+		fixture.dataDir,
+	}
+
+	if strings.Join(*handed, "\n") != strings.Join(want, "\n") {
+		t.Fatalf("handed to the next boot:\n%s\nwant:\n%s", strings.Join(*handed, "\n"), strings.Join(want, "\n"))
+	}
+
+	if there(t, filepath.Join(fixture.dataDir, "logs", "kept-by-hand.txt")) {
+		t.Errorf("a file that could be removed was left for the next boot")
+	}
+}
+
+// TestRemoveDataDirSaysWhatCouldNotBeHandedOver covers a deletion at the next
+// boot that was refused as well: the data directory is reported as left, with
+// both reasons.
+func TestRemoveDataDirSaysWhatCouldNotBeHandedOver(t *testing.T) {
+	fixture, held := heldDataDir(t)
+	stubRemoveAtReboot(t, held)
+
+	part := removeDataDir(fixture.databaseFile)
+
+	if part.Removed || part.AtReboot || part.Err == nil {
+		t.Fatalf("the data directory is reported as %+v, want it failed", part)
+	}
+
+	if !strings.Contains(part.Err.Error(), "next reboot") {
+		t.Errorf("the reason %q does not say the deletion at the next reboot was refused", part.Err)
+	}
+}
+
+// TestRemoveDataDirWithoutADeletionAtReboot is every platform but Windows,
+// where a file in use is removed all the same and nothing is handed to a next
+// boot: a data directory that could not go is reported as left.
+func TestRemoveDataDirWithoutADeletionAtReboot(t *testing.T) {
+	fixture, _ := heldDataDir(t)
+
+	before := removeAtReboot
+	removeAtReboot = nil
+
+	t.Cleanup(func() {
+		removeAtReboot = before
+	})
+
+	part := removeDataDir(fixture.databaseFile)
+
+	if part.Removed || part.AtReboot || part.Err == nil {
+		t.Fatalf("the data directory is reported as %+v, want it failed", part)
+	}
 }

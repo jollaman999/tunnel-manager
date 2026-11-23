@@ -3,7 +3,10 @@ package install
 import (
 	"errors"
 	"fmt"
+	"io/fs"
 	"os"
+	"path/filepath"
+	"slices"
 )
 
 // startedByServiceManager answers whether this process could have been started
@@ -24,8 +27,9 @@ type RemovedPart struct {
 	// no file to name, it is the name of the service.
 	Path string
 	// Removed says the part went. AtReboot says it goes at the next restart of
-	// the system instead, which only the executable on Windows answers: see
-	// removeExecutable there.
+	// the system instead, which only Windows answers: for the executable it is
+	// running from (removeExecutable there), and for a data directory that
+	// still holds a file some handle keeps open (removeDataDir).
 	Removed  bool
 	AtReboot bool
 	// Kept says the part was left in place on purpose, and Err then says why.
@@ -235,13 +239,90 @@ func removeDataDir(databaseFile string) RemovedPart {
 	}
 
 	err = os.RemoveAll(dataDir)
-	if err != nil {
-		part.Err = fmt.Errorf("failed to remove the data directory %s: %w", dataDir, err)
+	if err == nil {
+		part.Removed = true
 
 		return part
 	}
 
+	part.Err = fmt.Errorf("failed to remove the data directory %s: %w", dataDir, err)
+
+	if removeAtReboot == nil {
+		return part
+	}
+
+	// What RemoveAll left is what was in use: it goes on past a file it cannot
+	// remove and takes the rest. On Windows that is a file some other handle
+	// still holds, and the directories it is in, and they are handed to the next
+	// boot rather than left for the operator to find.
+	err = removeTreeAtReboot(dataDir, removeAtReboot)
+	if err != nil {
+		part.Err = fmt.Errorf("%w, and what is left of it could not be set to be removed at the next "+
+			"reboot either: %w", part.Err, err)
+
+		return part
+	}
+
+	part.Err = nil
 	part.Removed = true
+	part.AtReboot = true
 
 	return part
+}
+
+// removeAtReboot hands a path to the operating system to delete at the next
+// boot. It is set by the platform that has such a thing, which is Windows
+// (remove_windows.go), and is nil everywhere else: on Unix a file that is in
+// use is removed all the same, so nothing that RemoveAll left is in use.
+var removeAtReboot func(path string) error
+
+// removeTreeAtReboot hands root and everything under it to schedule, in the
+// order atRebootOrder puts them in.
+//
+// It stops at the first path that cannot be handed over. What was handed over
+// before it stays handed over: there is no call that takes a deletion at the
+// next boot back, and the removal it asks for is the one the uninstall wanted
+// anyway.
+func removeTreeAtReboot(root string, schedule func(path string) error) error {
+	paths, err := atRebootOrder(root)
+	if err != nil {
+		return err
+	}
+
+	for _, path := range paths {
+		err = schedule(path)
+		if err != nil {
+			return fmt.Errorf("failed to set %s to be removed at the next reboot: %w", path, err)
+		}
+	}
+
+	return nil
+}
+
+// atRebootOrder is root and everything under it, each directory after
+// everything in it.
+//
+// The session manager carries out the deletions in the order they were handed
+// over and deletes a directory only once it is empty, so a directory handed
+// over ahead of its files would stay. Reversing the walk, which visits a
+// directory before what is in it, is that order.
+func atRebootOrder(root string) ([]string, error) {
+	var walked []string
+
+	err := filepath.WalkDir(root, func(path string, _ fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+
+		walked = append(walked, path)
+
+		return nil
+	})
+	if err != nil {
+		return nil, fmt.Errorf("failed to read what is left in %s: %w", root, err)
+	}
+
+	slices.Reverse(walked)
+
+	return walked, nil
 }

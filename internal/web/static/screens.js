@@ -12216,7 +12216,12 @@ function drawUninstalled() {
   }
 
   const removed = listOfFiles(uninstallResult.removed).map(function (file) {
-    return [serverText(file.what, file.what_code, null), file.path];
+    const what = serverText(file.what, file.what_code, null);
+
+    // A file Windows would not delete while some other handle held it goes at
+    // the next restart instead, and the row says so: it is still on disk until
+    // then.
+    return [file.at_reboot === true ? t("uninstalled.file-reboot.text", { what: what }) : what, file.path];
   }).concat(parts.removed);
 
   if (removed.length === 0) {
@@ -12262,10 +12267,17 @@ function uninstalledServiceParts(service) {
     return parts;
   }
 
+  // atReboot is what a part that goes at the next restart is called. Only
+  // Windows answers that, for the program file it ran from and for a data
+  // directory that still held a file some other handle kept open; the entry
+  // is never one.
   const named = [
-    { part: service.registration, what: "uninstalled.part-registration.text" },
-    { part: service.executable, what: "uninstalled.part-executable.text" },
-    { part: service.data_dir, what: "uninstalled.part-data-dir.text" }
+    { part: service.registration, what: "uninstalled.part-registration.text",
+      atReboot: "uninstalled.part-registration.text" },
+    { part: service.executable, what: "uninstalled.part-executable.text",
+      atReboot: "uninstalled.part-executable-reboot.text" },
+    { part: service.data_dir, what: "uninstalled.part-data-dir.text",
+      atReboot: "uninstalled.part-data-dir-reboot.text" }
   ];
 
   for (const entry of named) {
@@ -12280,7 +12292,7 @@ function uninstalledServiceParts(service) {
     if (part.state === "removed") {
       parts.removed.push([t(entry.what), part.path]);
     } else if (part.state === "removed_at_reboot") {
-      parts.removed.push([t("uninstalled.part-executable-reboot.text"), part.path]);
+      parts.removed.push([t(entry.atReboot), part.path]);
     } else {
       parts.left.push([t(entry.what), part.path, typeof part.error === "string" ? part.error : ""]);
     }
