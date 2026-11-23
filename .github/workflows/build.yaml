@@ -57,5 +57,9 @@ jobs:
           exit 1
         fi
 
+    # The api package alone took 1010s and then 1180s under -race on this
+    # runner before it went past 20 minutes with no test hung: each run that
+    # timed out was in a different test. The limit is there to stop a hung
+    # test, not to bound a slow one.
     - name: Test
-      run: go test ./... -count=1 -race -timeout 20m
+      run: go test ./... -count=1 -race -timeout 45m
