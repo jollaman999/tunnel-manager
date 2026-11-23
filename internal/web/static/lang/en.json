@@ -1052,6 +1052,8 @@
   "restart.moving-one.empty": "If the service does not come back at this address, this page opens {address} in {seconds} second.",
   "restart.open-now.text": "Or open it now: ",
   "restart.screen.title": "Restarting",
+  "restart.started-again-moved.text": "This process ends, and the Windows service manager starts the program again a few seconds later, as the registration of this service tells it to after a failure. It comes back at {address}, which is not where this page is, so this page goes there rather than waiting here for something that is not coming.",
+  "restart.started-again-same.text": "This process ends, and the Windows service manager starts the program again a few seconds later, as the registration of this service tells it to after a failure. The service is back within seconds and answers at the same address it does now.",
   "restart.stops.text": "This platform cannot replace the image of a running process, so the restart ends with the process stopped. Whatever supervises the service is what starts it again, and a service that was started by hand does not come back at all.",
   "restart.stuck.text": "Nothing further happens on this page. Reload it once the service is running again.",
   "restart.unknown.notice": "What a restart would do could not be read, so it is not offered here: {reason}",

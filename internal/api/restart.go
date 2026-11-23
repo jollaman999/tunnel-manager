@@ -32,11 +32,16 @@ const restartExitDelay = 3 * time.Second
 // replaced it would fail to bind the port it was serving on a moment earlier.
 type RestartHandler struct {
 	logger *zap.Logger
-	// comesBack says whether this process can run this program again in place
-	// of itself. It is carried into the answer, because it decides what the
-	// operator has to do next: on a platform without exec the process ends and
-	// starting it again is left to whatever supervises it.
-	comesBack bool
+	// inPlace says whether this process can run this program again in place
+	// of itself, which is exec on Unix.
+	inPlace bool
+	// startedAgain says whether, on a platform without exec, the service
+	// manager starts this program again once the restart has ended the
+	// process: the Windows service whose registration restarts it after a
+	// failure. Both are carried into the answer, because they decide what the
+	// operator has to do next: where neither holds the process ends and
+	// starting it again is left to whatever supervises it, if anything does.
+	startedAgain bool
 	// restart begins the ordered shutdown that ends in the restart. It returns
 	// at once; the shutdown runs on the goroutine main is waiting on.
 	restart func()
@@ -46,27 +51,34 @@ type RestartHandler struct {
 	restartAfter time.Duration
 }
 
-func NewRestartHandler(logger *zap.Logger, comesBack bool, restart func()) *RestartHandler {
+func NewRestartHandler(logger *zap.Logger, inPlace bool, startedAgain bool, restart func()) *RestartHandler {
 	return &RestartHandler{
 		logger:       logger,
-		comesBack:    comesBack,
+		inPlace:      inPlace,
+		startedAgain: startedAgain,
 		restart:      restart,
 		restartAfter: restartExitDelay,
 	}
 }
 
-// restartView is what both calls answer with. The two fields are what the
-// screen needs before the press as well as after it: how long it is before the
-// service goes, and whether it comes back on its own.
+// restartView is what both calls answer with. The fields are what the screen
+// needs before the press as well as after it: how long it is before the
+// service goes, whether it comes back on its own, and how.
 type restartView struct {
 	// ExitInSec is how long the process stays up after the answer. The screen
 	// says it and waits it out, so the number comes from the side that decides
 	// it.
 	ExitInSec int `json:"exit_in_sec"`
-	// ComesBack is whether this process runs this program again in place of
-	// itself. It is false on a platform without exec, where the restart is an
-	// ordered stop and nothing more.
+	// ComesBack is whether the service comes back on its own: this process
+	// runs this program again in place of itself, or the service manager
+	// starts it again once the process has ended. It is false where neither
+	// holds, and the restart is then an ordered stop and nothing more.
 	ComesBack bool `json:"comes_back"`
+	// InPlace is whether it comes back as this same process, which is exec on
+	// Unix. Where ComesBack is true and this is false, the process ends and
+	// the service manager starts a new one a few seconds later: a Windows
+	// service.
+	InPlace bool `json:"in_place"`
 }
 
 // GetRestart says what a restart would do, without doing it.
@@ -98,8 +110,8 @@ func (h *RestartHandler) GetRestart(c *echo.Context) error {
 // it does cannot be taken back; this one ends in the service running again, and
 // a question that is put to every action is one that stops being read.
 //
-// @Summary      Take the service down in order and run the program again in place of this process
-// @Description  Where the platform has exec. The answer is written before the process goes.
+// @Summary      Take the service down in order and run the program again
+// @Description  In place of this process where the platform has exec. A Windows service ends and is started again by the service control manager where its registration has the failure actions apply to a stop with an exit code. The answer is written before the process goes.
 // @Tags         restart
 // @Produce  json
 // @Security  CSRFToken
@@ -111,7 +123,7 @@ func (h *RestartHandler) Restart(c *echo.Context) error {
 		"every tunnel comes down and this program runs again",
 		logid.RestartAsked.Field(),
 		zap.Duration("in", h.restartAfter),
-		zap.Bool("comes_back", h.comesBack))
+		zap.Bool("comes_back", h.comesBack()))
 
 	// The answer is written before the timer starts, so the wait is the time
 	// the browser has to receive it in rather than time the writing ate into.
@@ -135,6 +147,11 @@ func (h *RestartHandler) Restart(c *echo.Context) error {
 func (h *RestartHandler) view() restartView {
 	return restartView{
 		ExitInSec: int(h.restartAfter / time.Second),
-		ComesBack: h.comesBack,
+		ComesBack: h.comesBack(),
+		InPlace:   h.inPlace,
 	}
+}
+
+func (h *RestartHandler) comesBack() bool {
+	return h.inPlace || h.startedAgain
 }

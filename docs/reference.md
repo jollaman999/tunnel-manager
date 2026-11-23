@@ -1007,7 +1007,7 @@ Where things go when no path is given:
 | Data directory | `/var/lib/tunnel-manager` | `/Library/Application Support/tunnel-manager` | `C:\ProgramData\tunnel-manager` |
 | Registration | a systemd unit at `/usr/lib/systemd/system/tunnel-manager.service`, whatever was registered before. It is written as `/lib/systemd/system`, which is the same directory on a system that merged `/usr` | the LaunchDaemon `/Library/LaunchDaemons/io.github.jollaman999.tunnel-manager.plist` | the `tunnel-manager` service of the service control manager |
 | The account it runs as | `root` | `root` | `LocalSystem` |
-| Started again when it exits | `Restart=always`, 5 seconds later | `KeepAlive`, unless it exited with 0 | three restarts, 5 seconds apart |
+| Started again when it exits | `Restart=always`, 5 seconds later | `KeepAlive`, unless it exited with 0 | a restart 5 seconds later, after a crash and after a stop with an exit code other than 0 |
 
 `-bin` puts the executable somewhere else and `-db` puts the database somewhere
 else. The database path given here is the one the registration passes to the
@@ -1909,12 +1909,25 @@ program that replaces it binds that same port a moment later. Replacing the
 binary on disk and then restarting is what runs the new one: the file is read at
 that moment.
 
-**Windows has no exec.** There the restart is an ordered stop and nothing else,
-and starting the program again is left to whatever supervises the service; one
-that was started by hand does not come back. Both answers carry `comes_back` so
-that the screen can say which of the two the Tunnel Manager server is before
-anything is
-pressed, and `GET /api/restart` answers that without doing anything.
+**Windows has no exec.** There the restart ends the process, and a service comes
+back because the service control manager starts it again: the process reports a
+failure on the way out (exit code 1), and the registration `-install` writes
+restarts the service 5 seconds after one, however many there have been that day.
+A stop from `services.msc` or `sc stop`, and the uninstall below, report 0 and
+stay down. A process that was started by hand does not come back. Both answers
+carry `comes_back`, whether it comes back on its own, and `in_place`, whether it
+comes back as the same process, so that the screen can say which of the three the
+Tunnel Manager server is before anything is pressed, and `GET /api/restart`
+answers that without doing anything.
+
+**A Windows service registered by an earlier release stays down after a
+restart.** The service control manager restarts a service that reported it
+stopped with an exit code only where the registration says so, which
+`sc qfailureflag tunnel-manager` shows as
+`FAILURE_ACTIONS_ON_NONCRASH_FAILURES: TRUE`, and a registration made before this
+release does not. Running `-install` again writes it, and so does an update
+installed from the Update screen, since it runs `-install`. Until then
+`comes_back` is `false` there and the screen says the service may stay down.
 
 The sessions are held in memory, so they go with the process. The screen asks for
 the login again once the service is back.
@@ -1929,7 +1942,8 @@ curl -s -b cookies.txt -X POST "$BASE/api/restart" \
   "success": true,
   "data": {
     "exit_in_sec": 3,
-    "comes_back": true
+    "comes_back": true,
+    "in_place": true
   }
 }
 ```
@@ -2177,7 +2191,7 @@ leave down:
 |---|-----------------------|-----------------------------|
 | Linux | exit status 5 | `RestartPreventExitStatus=5` beside `Restart=always` |
 | macOS | exit status 0 | `KeepAlive` with `SuccessfulExit` false: started again only after an exit that was not successful |
-| Windows | the service reporting that it stopped | the restart actions, which apply to a failure and not to a stop |
+| Windows | the service reporting that it stopped, with exit code 0 | the restart actions, which apply to a crash and to a stop with an exit code other than 0, and not to this one |
 
 On macOS this leaves down every exit with 0, not only this one: a process stopped
 with `kill` (SIGTERM) ends its shutdown with 0 and stays down until

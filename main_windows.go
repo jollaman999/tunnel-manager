@@ -161,12 +161,14 @@ func (h serviceHandler) Execute(_ []string, requests <-chan svc.ChangeRequest, s
 			// The uninstall on the Settings screen removed the data and
 			// marked this registration for deletion, which the SCM carries
 			// out once the service has stopped (install.RemoveThisService).
-			// Reported as a stop, which the failure actions leave alone:
-			// reported as a failure it would be started again with an empty
-			// database a few seconds after the screen said the installation
-			// was gone, if the deletion had not gone through. It is told apart from the restart below
-			// by what run answered, and not by how it ended, since both end
-			// the same way with nobody having asked the SCM for anything.
+			// Reported as a stop with exit code 0, which the failure actions
+			// leave alone even with the flag that takes in a stop with an
+			// exit code: reported as a failure it would be started again
+			// with an empty database a few seconds after the screen said the
+			// installation was gone, if the deletion had not gone through.
+			// It is told apart from the restart below by what run answered,
+			// and not by how it ended, since both end the same way with
+			// nobody having asked the SCM for anything.
 			if uninstalled {
 				return false, 0
 			}
@@ -179,8 +181,14 @@ func (h serviceHandler) Execute(_ []string, requests <-chan svc.ChangeRequest, s
 			// leave down. A startup that failed or a server that could not
 			// bind never gets here: those end the process from inside run.
 			//
-			// Not verified on Windows: that the SCM takes this as a failure and
-			// applies the restart actions has not been watched happen.
+			// The SCM reports this as WIN32_EXIT_CODE 1066 with a service
+			// exit code of 1 and logs event 7024, and it applies the failure
+			// actions to it only where the registration has the flag that
+			// takes in a stop with an exit code (failureActionsFlag in
+			// internal/install). Watched on Windows with a registration
+			// without the flag: the service stayed stopped. That it is
+			// started again with the flag set is the documented behaviour
+			// and has not been watched happen.
 			return true, 1
 		}
 	}

@@ -1052,6 +1052,8 @@
   "restart.moving-one.empty": "Se o serviço não voltar aqui, esta página abre {address} em {seconds} segundo.",
   "restart.open-now.text": "Ou abra agora: ",
   "restart.screen.title": "Reiniciando",
+  "restart.started-again-moved.text": "Este processo termina e o gerenciador de serviços do Windows inicia o programa de novo alguns segundos depois, como o registro deste serviço manda fazer após uma falha. Ele volta em {address}, que não é onde esta página está, então esta página vai para lá em vez de ficar aqui esperando algo que não vem.",
+  "restart.started-again-same.text": "Este processo termina e o gerenciador de serviços do Windows inicia o programa de novo alguns segundos depois, como o registro deste serviço manda fazer após uma falha. O serviço volta em alguns segundos e responde no mesmo endereço de agora.",
   "restart.stops.text": "Esta plataforma não consegue substituir a imagem de um processo em execução, então o reinício termina com o processo parado. Quem inicia de novo é quem supervisiona o serviço, e um serviço iniciado manualmente não volta de jeito nenhum.",
   "restart.stuck.text": "Nada mais acontece nesta página. Recarregue-a quando o serviço estiver rodando de novo.",
   "restart.unknown.notice": "Não foi possível ler o que um reinício faria, então ele não é oferecido aqui: {reason}",

@@ -18,12 +18,12 @@ const restartWait = 5 * time.Second
 
 // newRestartHandler returns the handler together with the channel its shutdown
 // closes, so a test can see whether the restart was begun and when.
-func newRestartHandler(t *testing.T, comesBack bool) (*RestartHandler, chan struct{}) {
+func newRestartHandler(t *testing.T, inPlace bool, startedAgain bool) (*RestartHandler, chan struct{}) {
 	t.Helper()
 
 	begun := make(chan struct{})
 
-	h := NewRestartHandler(zap.NewNop(), comesBack, func() {
+	h := NewRestartHandler(zap.NewNop(), inPlace, startedAgain, func() {
 		close(begun)
 	})
 
@@ -89,7 +89,7 @@ func decodeRestart(t *testing.T, rec *httptest.ResponseRecorder) restartView {
 // answer is what it draws the waiting screen from, and an answer written after
 // the API stopped serving is one that never arrives.
 func TestRestartAnswersBeforeTheServiceGoesDown(t *testing.T) {
-	h, begun := newRestartHandler(t, true)
+	h, begun := newRestartHandler(t, true, false)
 
 	rec := callRestart(t, h, http.MethodPost)
 
@@ -111,17 +111,37 @@ func TestRestartAnswersBeforeTheServiceGoesDown(t *testing.T) {
 	}
 }
 
-// TestRestartSaysWhetherTheServiceComesBack covers both builds. The screen puts
-// a different question to the operator for each, and it has to be told which
-// one this is rather than guessing from the platform the browser runs on.
+// TestRestartSaysWhetherTheServiceComesBack covers the three ways a restart
+// ends. The screen puts a different question to the operator for each, and it
+// has to be told which one this is rather than guessing from the platform the
+// browser runs on. A Windows service whose registration restarts it after a
+// failure comes back, but not as the same process, and the screen says that
+// rather than the exec it does not have.
 func TestRestartSaysWhetherTheServiceComesBack(t *testing.T) {
-	for _, comesBack := range []bool{true, false} {
-		h, begun := newRestartHandler(t, comesBack)
+	cases := []struct {
+		name         string
+		inPlace      bool
+		startedAgain bool
+		comesBack    bool
+	}{
+		{"exec, on Unix", true, false, true},
+		{"a Windows service the service manager starts again", false, true, true},
+		{"nothing starts it again", false, false, false},
+	}
+
+	for _, c := range cases {
+		h, begun := newRestartHandler(t, c.inPlace, c.startedAgain)
 
 		view := decodeRestart(t, callRestart(t, h, http.MethodPost))
 
-		if view.ComesBack != comesBack {
-			t.Fatalf("a handler built with comes_back=%t answered %t", comesBack, view.ComesBack)
+		if view.ComesBack != c.comesBack || view.InPlace != c.inPlace {
+			t.Fatalf("%s: answered comes_back=%t in_place=%t, want comes_back=%t in_place=%t",
+				c.name, view.ComesBack, view.InPlace, c.comesBack, c.inPlace)
+		}
+
+		get := decodeRestart(t, callRestart(t, h, http.MethodGet))
+		if get != view {
+			t.Fatalf("%s: GET answered %+v and POST %+v", c.name, get, view)
 		}
 
 		if view.ExitInSec != int(h.restartAfter/time.Second) {
@@ -136,7 +156,7 @@ func TestRestartSaysWhetherTheServiceComesBack(t *testing.T) {
 		select {
 		case <-begun:
 		case <-time.After(restartWait):
-			t.Fatalf("the shutdown was not begun for a handler with comes_back=%t", comesBack)
+			t.Fatalf("%s: the shutdown was not begun", c.name)
 		}
 	}
 }
@@ -145,7 +165,7 @@ func TestRestartSaysWhetherTheServiceComesBack(t *testing.T) {
 // It is made on every visit to the Settings screen, so a read that restarted
 // anything would restart the service on arrival.
 func TestGetRestartTakesNothingDown(t *testing.T) {
-	h, begun := newRestartHandler(t, true)
+	h, begun := newRestartHandler(t, true, false)
 
 	rec := callRestart(t, h, http.MethodGet)
 
@@ -170,7 +190,7 @@ func TestGetRestartTakesNothingDown(t *testing.T) {
 // starts waiting from the number in the answer, so a handler that went down
 // sooner than it said would be gone while the screen was still counting.
 func TestRestartWaitsTheDelayTheAnswerNames(t *testing.T) {
-	h := NewRestartHandler(zap.NewNop(), true, func() {})
+	h := NewRestartHandler(zap.NewNop(), true, false, func() {})
 
 	if h.restartAfter != restartExitDelay {
 		t.Fatalf("the handler waits %s, want %s", h.restartAfter, restartExitDelay)

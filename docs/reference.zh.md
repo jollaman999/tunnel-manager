@@ -782,7 +782,7 @@ sudo ./tunnel-manager-linux-amd64 -install
 | 数据目录 | `/var/lib/tunnel-manager` | `/Library/Application Support/tunnel-manager` | `C:\ProgramData\tunnel-manager` |
 | 服务注册 | systemd unit `/usr/lib/systemd/system/tunnel-manager.service`，不论之前注册在哪里都写在这里。写入时用的是 `/lib/systemd/system`，在合并了 `/usr` 的系统上是同一个目录 | LaunchDaemon `/Library/LaunchDaemons/io.github.jollaman999.tunnel-manager.plist` | 服务控制管理器里的 `tunnel-manager` 服务 |
 | 运行用的账号 | `root` | `root` | `LocalSystem` |
-| 退出后再起来 | `Restart=always`，5 秒后 | `KeepAlive`，以 0 退出时不再起来 | 每隔 5 秒重启，共三次 |
+| 退出后再起来 | `Restart=always`，5 秒后 | `KeepAlive`，以 0 退出时不再起来 | 5 秒后重启：崩溃时，以及以非 0 退出码停止时 |
 
 `-bin` 把可执行文件放到别处，`-db` 把数据库放到别处。这里给的数据库路径会原样进到服务注册里，
 以后卸载从那份注册里读出来的也是这个路径：
@@ -1469,9 +1469,18 @@ systemd 和 Docker 看不出发生过什么，没有东西被启动两次，也�
 在替换映像之前就释放了，因为接替它的程序过一会儿要绑定同一个端口。先把磁盘上的可执行文件换掉再
 重启，运行的就是新的：文件是在那一刻读取的。
 
-**Windows 没有 exec。** 在那里重启就是一次有序的停止，仅此而已，重新启动程序的工作留给管理
-这个服务的进程管理器；手动启动的不会恢复。两种响应里都带有 `comes_back`，这样在按下之前页面就能
-说清Tunnel Manager 服务器属于哪一种，而 `GET /api/restart` 不做任何操作就能返回这个。
+**Windows 没有 exec。** 在那里重启会结束进程，服务之所以能恢复，是因为服务控制管理器把它重新
+启动：进程退出时报告一次失败（退出码 1），而 `-install` 写入的注册会在失败 5 秒后重新启动服务，
+不管当天是第几次失败。用 `services.msc` 或 `sc stop` 停止的，以及下面的卸载，报告的是 0，
+不会被重新启动。手动启动的进程不会恢复。两种响应里都带有 `comes_back`（是否会自己恢复）和
+`in_place`（是否以同一个进程恢复），这样在按下之前页面就能说清 Tunnel Manager 服务器属于三种中的
+哪一种，而 `GET /api/restart` 不做任何操作就能返回这个。
+
+**由早先版本注册的 Windows 服务在重启后会一直停着。** 服务控制管理器只有在注册里这样写明时，才会
+重新启动一个带着退出码报告已停止的服务，`sc qfailureflag tunnel-manager` 显示为
+`FAILURE_ACTIONS_ON_NONCRASH_FAILURES: TRUE`，而本版本之前做的注册里没有这一项。再运行一次
+`-install` 就会写入；从更新页面安装的更新也会运行 `-install`，效果相同。在那之前，那里的
+`comes_back` 是 `false`，页面会提示服务可能一直停着。
 
 会话存在内存里，所以随进程一起消失。服务恢复之后，页面会重新要求登录。
 
@@ -1485,7 +1494,8 @@ curl -s -b cookies.txt -X POST "$BASE/api/restart" \
   "success": true,
   "data": {
     "exit_in_sec": 3,
-    "comes_back": true
+    "comes_back": true,
+    "in_place": true
   }
 }
 ```
@@ -1661,7 +1671,7 @@ macOS 和 Windows 只做到编译和单元测试。
 |---|--------------|----------------------|
 | Linux | 退出码 5 | `Restart=always` 旁边的 `RestartPreventExitStatus=5` |
 | macOS | 退出码 0 | `SuccessfulExit` 为 false 的 `KeepAlive`：只在没有成功退出时才重新拉起 |
-| Windows | 服务报告自己已停止 | 重启动作，只对失败生效，对停止不生效 |
+| Windows | 服务报告自己以退出码 0 停止 | 重启动作，只对崩溃和以非 0 退出码的停止生效，对这一种不生效 |
 
 在 macOS 上，不只是这一种情况，凡是以 0 退出的都不会再被拉起。用 `kill` (SIGTERM) 停下的进程
 以 0 结束关闭流程，在 `launchctl kickstart` 或下次开机之前一直停着。失败、崩溃和 `kill -9`

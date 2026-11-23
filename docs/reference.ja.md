@@ -894,7 +894,7 @@ Windows では、**管理者として実行**で開いた PowerShell かコマ�
 | データディレクトリ | `/var/lib/tunnel-manager` | `/Library/Application Support/tunnel-manager` | `C:\ProgramData\tunnel-manager` |
 | サービスの登録 | systemd ユニット `/usr/lib/systemd/system/tunnel-manager.service`。以前に何が登録されていてもこの場所に書きます。`/lib/systemd/system` として書き、`/usr` を統合したシステムでは同じディレクトリです | LaunchDaemon `/Library/LaunchDaemons/io.github.jollaman999.tunnel-manager.plist` | サービス制御マネージャーの `tunnel-manager` サービス |
 | 実行するアカウント | `root` | `root` | `LocalSystem` |
-| 落ちたときの再起動 | `Restart=always`、5 秒後 | `KeepAlive`。0 で終わったときは起動しない | 5 秒間隔で 3 回 |
+| 落ちたときの再起動 | `Restart=always`、5 秒後 | `KeepAlive`。0 で終わったときは起動しない | 5 秒後。異常終了したときと、0 以外の終了コードで停止したとき |
 
 `-bin` は実行ファイルを、`-db` はデータベースを別の場所に置きます。ここで指定したデータベース
 のパスがそのままサービスの登録に入り、あとでアンインストールがその登録から読み出すのも、この
@@ -1692,10 +1692,22 @@ curl -s -b cookies.txt -X POST "$BASE/api/settings/alert/test-webhook" \
 同じポートを bind するからです。ディスク上のバイナリを置き換えてから再起動すると新しいほうが
 実行されます。ファイルはその瞬間に読まれるからです。
 
-**Windows には exec がありません。** そこでの再起動は順序どおりに停止するだけで、プログラムを
-もう一度起動するのは、そのサービスを監視している仕組みに任されます。手動で起動したものは復旧しません。
-どちらの応答にも `comes_back` が載るので、何かを押す前に、Tunnel Manager サーバーがどちらなのかを
-画面が示せます。`GET /api/restart` は、何もせずにそれだけを答えます。
+**Windows には exec がありません。** そこでの再起動はプロセスを終了させ、サービスはサービス
+コントロール マネージャーが起動し直すことで復旧します。プロセスは終了するときに失敗 (終了コード 1)
+を報告し、`-install` が書く登録は、失敗の 5 秒後にサービスを起動し直します。その日何度目の失敗でも
+同じです。`services.msc` や `sc stop` による停止と、下のアンインストールは 0 を報告するので、
+起動し直されません。手動で起動したプロセスは復旧しません。どちらの応答にも、ひとりでに戻るかどうかを
+表す `comes_back` と、同じプロセスのまま戻るかどうかを表す `in_place` が載るので、何かを押す前に、
+Tunnel Manager サーバーが 3 つのうちどれなのかを画面が示せます。`GET /api/restart` は、何もせずに
+それだけを答えます。
+
+**以前のリリースが登録した Windows サービスは、再起動のあと停止したままになります。** サービス
+コントロール マネージャーが、終了コード付きで停止を報告したサービスを起動し直すのは、登録にそう
+書かれているときだけです。`sc qfailureflag tunnel-manager` が
+`FAILURE_ACTIONS_ON_NONCRASH_FAILURES: TRUE` と表示する設定で、このリリースより前に作られた登録には
+ありません。`-install` をもう一度実行すると書き込まれ、更新画面からインストールした更新も
+`-install` を実行するので同じです。それまでは `comes_back` が `false` になり、画面はサービスが
+停止したままになるかもしれないと伝えます。
 
 セッションはメモリの中にあるので、プロセスと一緒に消えます。サービスが復旧したら、画面は
 もう一度ログインを求めます。
@@ -1710,7 +1722,8 @@ curl -s -b cookies.txt -X POST "$BASE/api/restart" \
   "success": true,
   "data": {
     "exit_in_sec": 3,
-    "comes_back": true
+    "comes_back": true,
+    "in_place": true
   }
 }
 ```
@@ -1921,7 +1934,7 @@ tunnel-manager をもう一度起動しかねません。そのためプロセ�
 |---|--------------------|----------------------------------|
 | Linux | 終了コード 5 | `Restart=always` の隣の `RestartPreventExitStatus=5` |
 | macOS | 終了コード 0 | `SuccessfulExit` が false の `KeepAlive`。成功で終わらなかったときだけ起動し直す |
-| Windows | サービスが停止したと報告する | 再起動の動作。失敗にだけかかり、停止にはかからない |
+| Windows | サービスが終了コード 0 で停止したと報告する | 再起動の動作。異常終了と、0 以外の終了コードでの停止にだけかかり、これにはかからない |
 
 macOS では、この場合に限らず 0 で終わったものはすべて起動し直されません。`kill` (SIGTERM) で
 止めたプロセスは終了処理を 0 で終え、`launchctl kickstart` か次の起動まで止まったままです。

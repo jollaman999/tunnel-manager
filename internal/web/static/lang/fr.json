@@ -1052,6 +1052,8 @@
   "restart.moving-one.empty": "Si le service ne revient pas ici, cette page ouvre {address} dans {seconds} seconde.",
   "restart.open-now.text": "Ou ouvrez-la tout de suite : ",
   "restart.screen.title": "Redémarrage",
+  "restart.started-again-moved.text": "Ce processus s'arrête et le gestionnaire de services de Windows relance le programme quelques secondes plus tard, comme l'enregistrement de ce service le prévoit après un échec. Il sera joignable à l'adresse {address}, qui n'est pas celle de cette page, et cette page s'y rend plutôt que d'attendre ici quelque chose qui ne viendra pas.",
+  "restart.started-again-same.text": "Ce processus s'arrête et le gestionnaire de services de Windows relance le programme quelques secondes plus tard, comme l'enregistrement de ce service le prévoit après un échec. Le service est de retour en quelques secondes et répond à la même adresse que maintenant.",
   "restart.stops.text": "Cette plateforme ne peut pas remplacer l'image d'un processus en cours d'exécution : le redémarrage se termine donc avec l'arrêt du processus. C'est ce qui supervise le service qui le relance, et un service lancé à la main ne redémarre pas du tout.",
   "restart.stuck.text": "Il ne se passe plus rien sur cette page. Rechargez-la une fois le service redémarré.",
   "restart.unknown.notice": "Impossible de lire ce que ferait un redémarrage, il n'est donc pas proposé ici : {reason}",

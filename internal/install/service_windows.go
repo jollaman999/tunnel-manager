@@ -37,16 +37,22 @@ const (
 // "sc failure restart/5000" line.
 //
 // Five seconds is long enough that a machine which is still coming up has
-// finished doing so before the second attempt, and short enough that a tunnel
-// is back before an operator has finished reading the alert. Three attempts,
-// because a service that failed three times in a row is failing for a reason
-// no further restart is going to change, and a reset period of a day, so that
-// a machine which failed once a month is started every time rather than having
-// used up its three attempts a year ago.
+// finished doing so before the next attempt, and short enough that a tunnel is
+// back before an operator has finished reading the alert.
 //
-// Not verified on Windows: what the SCM does after the third action is exhausted
-// is documented to be nothing until the reset period passes, but this has not
-// been watched happen.
+// The count of actions does not limit how often the service is started again.
+// The documentation of SERVICE_FAILURE_ACTIONS says the SCM counts the failures
+// since the boot, takes element [N-1] of the actions for the Nth failure, and
+// "if N is greater than cActions, the service controller repeats the last
+// action in the array"; the count goes back to 0 after the reset period passes
+// without a failure. So every failure after the third is a restart as well,
+// which is what lets the restart on the Settings screen be pressed any number
+// of times a day: each press ends the process as a failure (main_windows.go).
+// Three actions rather than one is what services.msc shows as its three rows,
+// first, second and subsequent failures, all of them a restart.
+//
+// Not verified on Windows: the repeat of the last action is the documented
+// behaviour and has not been watched happen past the third failure.
 const (
 	serviceRestartDelay       = 5 * time.Second
 	serviceRestartActions     = 3
@@ -227,7 +233,9 @@ func (scmService) Register(plan Plan, existing *Installed) error {
 
 	// The failure actions are set after the service exists, because they are a
 	// second call either way: CreateService does not carry them and neither
-	// does UpdateConfig.
+	// does UpdateConfig. They are set on every registration, a written over one
+	// included, so that a registration an earlier release made without the
+	// flag in recoverySettings gets it from the next -install or update.
 	err = setFailureActions(service.Handle)
 	if err != nil {
 		return err
@@ -672,28 +680,145 @@ func failureActions() (windows.SERVICE_FAILURE_ACTIONS, []windows.SC_ACTION) {
 	}, actions
 }
 
-// setFailureActions is the sc failure line of the design.
+// failureActionsFlag is what has the failure actions apply to a service that
+// reported it stopped with an exit code other than 0, as well as to one whose
+// process ended without reporting anything.
 //
-// The flag that would make these actions apply to a service which exited
-// cleanly is deliberately not set. Left alone, the SCM restarts the service
-// when it ends without having reported that it stopped, which is a crash, and
-// leaves it down when it was stopped on purpose - and an uninstall stops it on
-// purpose.
+// Without it the restart on the Settings screen leaves the service down. That
+// restart ends the process with the service reported stopped and a
+// service-specific exit code of 1 (main_windows.go), and the documentation of
+// SERVICE_FAILURE_ACTIONS_FLAG says that while fFailureActionsOnNonCrashFailures
+// is FALSE "the failure actions are queued only if the service process
+// terminates without reporting a status of SERVICE_STOPPED". This was watched
+// happen on Windows: the service stayed STOPPED with WIN32_EXIT_CODE 1066 and
+// SERVICE_EXIT_CODE 1, and the SCM logged event 7024 and started nothing.
+//
+// With it TRUE the actions are queued also "if it enters the SERVICE_STOPPED
+// state but the dwWin32ExitCode member of the SERVICE_STATUS structure is not
+// ERROR_SUCCESS (0)". Every stop that is meant to leave the service down
+// reports 0, so none of them is restarted: a stop or a shutdown the SCM asked
+// for, and the uninstall on the Settings screen, all end in Execute answering
+// (false, 0), which the svc package reports as NO_ERROR. A stop that the SCM
+// asked for is not a failure in the first place, whatever it ends with.
+// (The documented behaviour of that flag, not watched happen with it set.)
+func failureActionsFlag() windows.SERVICE_FAILURE_ACTIONS_FLAG {
+	return windows.SERVICE_FAILURE_ACTIONS_FLAG{FailureActionsOnNonCrashFailures: 1}
+}
+
+// serviceSetting is one ChangeServiceConfig2 call: the information level and
+// the structure handed with it.
+//
+// The structure is carried as itself rather than only as the pointer the call
+// takes, so that a test reads the values a registration is made with, and so
+// that the memory the pointer points into is held by the same value that
+// carries it.
+type serviceSetting struct {
+	infoLevel uint32
+	failure   *windows.SERVICE_FAILURE_ACTIONS
+	actions   []windows.SC_ACTION
+	flag      *windows.SERVICE_FAILURE_ACTIONS_FLAG
+}
+
+// pointer is what ChangeServiceConfig2 is handed for this setting.
+func (s serviceSetting) pointer() *byte {
+	if s.flag != nil {
+		return (*byte)(unsafe.Pointer(s.flag))
+	}
+
+	return (*byte)(unsafe.Pointer(s.failure))
+}
+
+// recoverySettings is every ChangeServiceConfig2 call a registration makes, in
+// the order it makes them: the actions, and then the flag that has them apply
+// to the restart on the Settings screen. The flag is set after the actions
+// because it says when they are taken, and a flag with no actions configured
+// has nothing to queue.
+func recoverySettings() []serviceSetting {
+	failure, actions := failureActions()
+	flag := failureActionsFlag()
+
+	return []serviceSetting{
+		{infoLevel: windows.SERVICE_CONFIG_FAILURE_ACTIONS, failure: &failure, actions: actions},
+		{infoLevel: windows.SERVICE_CONFIG_FAILURE_ACTIONS_FLAG, flag: &flag},
+	}
+}
+
+// setFailureActions is the sc failure and the sc failureflag lines of the
+// design.
 //
 // Not verified on Windows: that the SCM took these values is only checked by
 // the test beside this, which holds the values themselves.
 func setFailureActions(handle windows.Handle) error {
-	failure, actions := failureActions()
+	settings := recoverySettings()
 
-	err := windows.ChangeServiceConfig2(handle, windows.SERVICE_CONFIG_FAILURE_ACTIONS,
-		(*byte)(unsafe.Pointer(&failure)))
-	if err != nil {
-		return fmt.Errorf("failed to set what the %s service does after it fails: %w", serviceName, err)
+	for _, setting := range settings {
+		err := windows.ChangeServiceConfig2(handle, setting.infoLevel, setting.pointer())
+		if err != nil {
+			return fmt.Errorf("failed to set what the %s service does after it fails (level %d): %w",
+				serviceName, setting.infoLevel, err)
+		}
 	}
 
-	// The slice is held until the call has returned. The structure points into
-	// it, and the SCM has read it by the time this returns.
-	runtime.KeepAlive(actions)
+	// The settings are held until every call has returned. Each structure
+	// points into memory the settings own, and the SCM has read it by the time
+	// the call returns.
+	runtime.KeepAlive(settings)
 
 	return nil
+}
+
+// RestartsAfterFailure answers whether the SCM starts the service again once
+// its process has reported it stopped with an exit code other than 0, which is
+// how the restart on the Settings screen ends the process on this platform.
+//
+// It is read out of the registration rather than assumed from what Register
+// writes, because a registration an earlier release made carries the actions
+// without the flag, and that one leaves the service down after the restart
+// until -install or an update writes it again. The screen says beforehand
+// whether the service comes back, and it has to say what this registration
+// does and not what a new one would.
+//
+// It is asked by the process that is the service, which runs as LocalSystem
+// and may read its own registration.
+func RestartsAfterFailure() (bool, error) {
+	opened, err := openService()
+	if err != nil {
+		return false, err
+	}
+
+	defer opened.close()
+
+	flag, err := opened.service.RecoveryActionsOnNonCrashFailures()
+	if err != nil {
+		return false, fmt.Errorf("failed to read when the failure actions of the %s service apply: %w",
+			serviceName, err)
+	}
+
+	actions, err := opened.service.RecoveryActions()
+	if err != nil {
+		return false, fmt.Errorf("failed to read the failure actions of the %s service: %w", serviceName, err)
+	}
+
+	return restartsAfterFailure(flag, actions), nil
+}
+
+// restartsAfterFailure is RestartsAfterFailure once the two settings have been
+// read, apart so that a test holds it without an SCM.
+//
+// Every action has to be a restart, and not only the first. Which action is
+// taken depends on how many failures there have been since the count was last
+// reset (see serviceRestartActions), and a restart pressed for the third time
+// in a day is answered by the third action and every one after by the last.
+func restartsAfterFailure(flag bool, actions []mgr.RecoveryAction) bool {
+	if !flag || len(actions) == 0 {
+		return false
+	}
+
+	for _, action := range actions {
+		if action.Type != mgr.ServiceRestart {
+			return false
+		}
+	}
+
+	return true
 }

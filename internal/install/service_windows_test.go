@@ -6,6 +6,7 @@ import (
 	"errors"
 	"testing"
 	"time"
+	"unsafe"
 
 	"golang.org/x/sys/windows"
 	"golang.org/x/sys/windows/svc/mgr"
@@ -338,6 +339,84 @@ func TestFailureActions(t *testing.T) {
 
 	t.Logf("reset period %d seconds\nactions      %d x restart after %d ms",
 		failure.ResetPeriod, len(actions), actions[0].Delay)
+}
+
+// TestRecoverySettingsTurnTheFlagOn holds the calls a registration makes after
+// the service exists. The flag is what has the actions apply to a service that
+// reported it stopped with an exit code other than 0, which is how the restart
+// on the Settings screen ends the process; without it the SCM left the service
+// stopped after that restart on Windows, with event 7024 and no restart.
+func TestRecoverySettingsTurnTheFlagOn(t *testing.T) {
+	settings := recoverySettings()
+
+	if len(settings) != 2 {
+		t.Fatalf("a registration makes %d ChangeServiceConfig2 calls, want 2: the actions and the flag",
+			len(settings))
+	}
+
+	actionsCall := settings[0]
+
+	if actionsCall.infoLevel != windows.SERVICE_CONFIG_FAILURE_ACTIONS {
+		t.Errorf("the first call is level %d, want SERVICE_CONFIG_FAILURE_ACTIONS (%d)",
+			actionsCall.infoLevel, windows.SERVICE_CONFIG_FAILURE_ACTIONS)
+	}
+
+	if actionsCall.failure == nil || actionsCall.failure.ActionsCount != serviceRestartActions ||
+		actionsCall.failure.Actions != &actionsCall.actions[0] {
+		t.Errorf("the first call does not carry the restart actions: %+v", actionsCall.failure)
+	}
+
+	if actionsCall.pointer() != (*byte)(unsafe.Pointer(actionsCall.failure)) {
+		t.Error("the first call hands the SCM a pointer to something other than the actions")
+	}
+
+	flagCall := settings[1]
+
+	if flagCall.infoLevel != windows.SERVICE_CONFIG_FAILURE_ACTIONS_FLAG {
+		t.Errorf("the second call is level %d, want SERVICE_CONFIG_FAILURE_ACTIONS_FLAG (%d)",
+			flagCall.infoLevel, windows.SERVICE_CONFIG_FAILURE_ACTIONS_FLAG)
+	}
+
+	if flagCall.flag == nil || flagCall.flag.FailureActionsOnNonCrashFailures != 1 {
+		t.Fatalf("the second call sets the flag to %+v, want FailureActionsOnNonCrashFailures 1",
+			flagCall.flag)
+	}
+
+	if flagCall.pointer() != (*byte)(unsafe.Pointer(flagCall.flag)) {
+		t.Error("the second call hands the SCM a pointer to something other than the flag")
+	}
+
+	t.Logf("level %d: %d actions\nlevel %d: FailureActionsOnNonCrashFailures %d",
+		actionsCall.infoLevel, actionsCall.failure.ActionsCount,
+		flagCall.infoLevel, flagCall.flag.FailureActionsOnNonCrashFailures)
+}
+
+// TestRestartsAfterFailure holds what the restart on the Settings screen is
+// told about coming back. A registration an earlier release made has the
+// actions and not the flag, and that one is left down after the restart.
+func TestRestartsAfterFailure(t *testing.T) {
+	restart := mgr.RecoveryAction{Type: mgr.ServiceRestart, Delay: serviceRestartDelay}
+	nothing := mgr.RecoveryAction{Type: mgr.NoAction}
+
+	cases := []struct {
+		name    string
+		flag    bool
+		actions []mgr.RecoveryAction
+		want    bool
+	}{
+		{"what Register writes", true, []mgr.RecoveryAction{restart, restart, restart}, true},
+		{"the actions an earlier release wrote, without the flag", false,
+			[]mgr.RecoveryAction{restart, restart, restart}, false},
+		{"the flag with no actions", true, nil, false},
+		{"a later failure that does nothing", true, []mgr.RecoveryAction{restart, nothing}, false},
+	}
+
+	for _, c := range cases {
+		got := restartsAfterFailure(c.flag, c.actions)
+		if got != c.want {
+			t.Errorf("%s: answered %v, want %v", c.name, got, c.want)
+		}
+	}
 }
 
 // TestPollLimitIsBounded checks that the wait for a start or a stop ends.

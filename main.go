@@ -2412,11 +2412,11 @@ func serve() bool {
 			InstallReportFile:   installReportPath(databaseFile, false),
 		}, beginUninstall, install.RemoveThisService, endAfterUninstall)
 	// The restart is handed the shutdown above and what this build can do about
-	// coming back. canReexec is asked here, in the one place that knows it is
-	// the process, rather than in the handler: the handler answers with it, and
-	// a screen that had to work it out would be guessing from the browser it
-	// runs in.
-	restartHandler := api.NewRestartHandler(logger, canReexec(), endBeforeRestart)
+	// coming back. canReexec and serviceStartsAgain are asked here, in the one
+	// place that knows it is the process, rather than in the handler: the
+	// handler answers with them, and a screen that had to work it out would be
+	// guessing from the browser it runs in.
+	restartHandler := api.NewRestartHandler(logger, canReexec(), serviceStartsAgain(), endBeforeRestart)
 	// The update screen is handed what it needs to look and what it needs to
 	// install. Both are functions rather than the packages themselves, so that
 	// a test drives the handler without reaching GitHub or replacing anything.

@@ -866,7 +866,7 @@ Windows 에서는 **관리자 권한으로 실행**한 PowerShell 이나 명령 
 | 데이터 디렉터리 | `/var/lib/tunnel-manager` | `/Library/Application Support/tunnel-manager` | `C:\ProgramData\tunnel-manager` |
 | 서비스 등록 | systemd 유닛 `/usr/lib/systemd/system/tunnel-manager.service`. 전에 무엇이 등록돼 있었든 이 자리에 씁니다. `/lib/systemd/system` 으로 쓰는데, `/usr` 를 합친 시스템에서는 같은 디렉터리입니다 | LaunchDaemon `/Library/LaunchDaemons/io.github.jollaman999.tunnel-manager.plist` | 서비스 제어 관리자의 `tunnel-manager` 서비스 |
 | 실행 계정 | `root` | `root` | `LocalSystem` |
-| 꺼졌을 때 다시 띄우기 | `Restart=always`, 5초 뒤 | `KeepAlive`. 0 으로 끝났으면 띄우지 않음 | 5초 간격으로 세 번 |
+| 꺼졌을 때 다시 띄우기 | `Restart=always`, 5초 뒤 | `KeepAlive`. 0 으로 끝났으면 띄우지 않음 | 5초 뒤. 비정상 종료와, 0 이 아닌 종료 코드로 멈췄을 때 |
 
 `-bin` 은 실행 파일을, `-db` 는 데이터베이스를 다른 자리에 둡니다. 여기서 지정한 데이터베이스
 경로가 서비스 등록에 그대로 들어가고, 나중에 제거가 그 등록에서 읽어내는 것도 그 경로입니다.
@@ -1639,10 +1639,21 @@ Settings 화면에 **Restart** 버튼이 있고, 스크립트에서는 `POST /ap
 이유는 곧이어 실행되는 프로그램이 같은 포트를 열기 때문입니다. 디스크의 바이너리를 바꿔 놓고
 재기동하면 새 바이너리가 실행됩니다. 그 시점에 파일을 읽습니다.
 
-**윈도우에는 exec 가 없습니다.** 윈도우에서는 정상 종료까지가 전부고, 다시 시작하는 것은 이
-서비스를 관리하는 쪽의 몫입니다. 손으로 띄운 경우에는 다시 시작되지 않습니다. 두 응답 모두
-`comes_back` 을 담고 있어서, 화면이 누르기 전에 Tunnel Manager 서버가 둘 중 어느 쪽인지 알려 줄 수 있습니다.
-`GET /api/restart` 는 아무것도 하지 않고 그 값만 응답합니다.
+**윈도우에는 exec 가 없습니다.** 윈도우에서는 재기동이 프로세스를 끝내고, 서비스는 서비스 제어
+관리자가 다시 띄워서 돌아옵니다. 프로세스가 끝날 때 실패(종료 코드 1)로 보고하고, `-install` 이
+쓰는 등록은 실패 뒤 5초 있다가 서비스를 다시 띄웁니다. 그날 몇 번째 실패든 같습니다.
+`services.msc` 나 `sc stop` 으로 멈춘 것과 아래의 제거는 0 으로 보고하므로 다시 띄우지 않습니다.
+손으로 띄운 프로세스는 다시 시작되지 않습니다. 두 응답 모두 저절로 돌아오는지를 뜻하는
+`comes_back` 과 같은 프로세스로 돌아오는지를 뜻하는 `in_place` 를 담고 있어서, 화면이 누르기 전에
+Tunnel Manager 서버가 셋 중 어느 쪽인지 알려 줄 수 있습니다. `GET /api/restart` 는 아무것도 하지
+않고 그 값만 응답합니다.
+
+**이전 릴리스가 등록한 윈도우 서비스는 재기동 뒤 멈춘 채로 남습니다.** 서비스 제어 관리자는 종료
+코드를 달고 멈췄다고 보고한 서비스를 등록에 그렇게 적혀 있을 때만 다시 띄웁니다.
+`sc qfailureflag tunnel-manager` 가 `FAILURE_ACTIONS_ON_NONCRASH_FAILURES: TRUE` 로 보여 주는
+설정이고, 이번 릴리스 전에 만든 등록에는 없습니다. `-install` 을 다시 실행하면 써지고, 업데이트
+화면에서 설치한 업데이트도 `-install` 을 실행하므로 마찬가지입니다. 그 전까지는 `comes_back` 이
+`false` 이고 화면은 서비스가 멈춘 채로 남을 수 있다고 알립니다.
 
 세션은 메모리에 있으므로 프로세스와 함께 사라집니다. 서비스가 다시 시작되면 화면이 로그인을 다시
 요구합니다.
@@ -1657,7 +1668,8 @@ curl -s -b cookies.txt -X POST "$BASE/api/restart" \
   "success": true,
   "data": {
     "exit_in_sec": 3,
-    "comes_back": true
+    "comes_back": true,
+    "in_place": true
   }
 }
 ```
@@ -1857,7 +1869,7 @@ tunnel-manager 를 다시 띄울 수 있습니다. 그래서 프로세스는 `-i
 |---|------------------------|------------------------|
 | Linux | 종료 코드 5 | `Restart=always` 옆의 `RestartPreventExitStatus=5` |
 | macOS | 종료 코드 0 | `SuccessfulExit` 가 false 인 `KeepAlive`. 성공으로 끝나지 않았을 때만 다시 띄움 |
-| Windows | 서비스가 멈췄다고 알림 | 재시작 동작. 실패에만 걸리고 멈춤에는 안 걸림 |
+| Windows | 서비스가 종료 코드 0 으로 멈췄다고 알림 | 재시작 동작. 비정상 종료와 0 이 아닌 종료 코드로 멈춘 것에만 걸리고 이것에는 안 걸림 |
 
 macOS 에서는 이 경우만이 아니라 0 으로 끝나는 것은 전부 다시 뜨지 않습니다. `kill`(SIGTERM)로
 멈춘 프로세스는 종료 절차를 0 으로 끝내고, `launchctl kickstart` 나 다음 부팅까지 꺼진 채로

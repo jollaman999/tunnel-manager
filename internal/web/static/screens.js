@@ -11812,15 +11812,22 @@ function restartOutcome(view, newAddress) {
   const address = newAddress === undefined ? null : newAddress;
 
   if (view.comes_back) {
+    // A Windows service comes back as well, but as a new process the service
+    // manager starts once this one has ended, and saying it keeps the process
+    // it already is would be untrue there.
+    const inPlace = view.in_place === true;
+
     if (address === null) {
-      return t("restart.in-place-same.text");
+      return inPlace ? t("restart.in-place-same.text") : t("restart.started-again-same.text");
     }
 
     // A stored setting this restart puts into place moves where the service
     // answers. Saying "the same address" here would be wrong in exactly the
     // case an operator is most likely to be restarting for, and the address
     // they have to go to next is the useful part.
-    return t("restart.in-place-moved.text", { address: address });
+    return inPlace
+      ? t("restart.in-place-moved.text", { address: address })
+      : t("restart.started-again-moved.text", { address: address });
   }
 
   return t("restart.stops.text");

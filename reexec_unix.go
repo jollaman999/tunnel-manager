@@ -15,6 +15,12 @@ func canReexec() bool {
 	return true
 }
 
+// serviceStartsAgain says that nothing has to start this program again after
+// the restart, since the restart here is the same process running it again.
+func serviceStartsAgain() bool {
+	return false
+}
+
 // reexec replaces the image of this process with this program again.
 //
 // apiPort is the port the API was served on. It is handed over in

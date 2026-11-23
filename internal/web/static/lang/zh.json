@@ -1052,6 +1052,8 @@
   "restart.moving-one.empty": "如果服务没有在这个地址恢复，这个页面 {seconds} 秒后打开 {address}。",
   "restart.open-now.text": "或者现在就打开 ",
   "restart.screen.title": "正在重启",
+  "restart.started-again-moved.text": "这个进程会结束，Windows 服务管理器会按照这个服务的注册设置，在几秒后重新启动程序。它会在 {address} 恢复，而不是这个页面所在的地址，所以这个页面会跳转过去，而不是在这里等待一个不会到来的响应。",
+  "restart.started-again-same.text": "这个进程会结束，Windows 服务管理器会按照这个服务的注册设置，在几秒后重新启动程序。服务几秒内就会恢复，并在与现在相同的地址响应。",
   "restart.stops.text": "这个平台无法替换正在运行的进程的映像，所以这次重启以进程停止告终。重新启动它要靠管理这个服务的进程管理器，手动启动的服务不会恢复。",
   "restart.stuck.text": "这个页面不会再有其他动作。等服务重新运行后，请重新加载。",
   "restart.unknown.notice": "无法读取重启会做什么，所以这里不提供重启：{reason}",

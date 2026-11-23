@@ -1921,14 +1921,14 @@
                         "CSRFToken": []
                     }
                 ],
-                "description": "Where the platform has exec. The answer is written before the process goes.",
+                "description": "In place of this process where the platform has exec. A Windows service ends and is started again by the service control manager where its registration has the failure actions apply to a stop with an exit code. The answer is written before the process goes.",
                 "produces": [
                     "application/json"
                 ],
                 "tags": [
                     "restart"
                 ],
-                "summary": "Take the service down in order and run the program again in place of this process",
+                "summary": "Take the service down in order and run the program again",
                 "responses": {
                     "200": {
                         "description": "OK",
@@ -4384,12 +4384,16 @@
             "type": "object",
             "properties": {
                 "comes_back": {
-                    "description": "ComesBack is whether this process runs this program again in place of\nitself. It is false on a platform without exec, where the restart is an\nordered stop and nothing more.",
+                    "description": "ComesBack is whether the service comes back on its own: this process\nruns this program again in place of itself, or the service manager\nstarts it again once the process has ended. It is false where neither\nholds, and the restart is then an ordered stop and nothing more.",
                     "type": "boolean"
                 },
                 "exit_in_sec": {
                     "description": "ExitInSec is how long the process stays up after the answer. The screen\nsays it and waits it out, so the number comes from the side that decides\nit.",
                     "type": "integer"
+                },
+                "in_place": {
+                    "description": "InPlace is whether it comes back as this same process, which is exec on\nUnix. Where ComesBack is true and this is false, the process ends and\nthe service manager starts a new one a few seconds later: a Windows\nservice.",
+                    "type": "boolean"
                 }
             }
         },

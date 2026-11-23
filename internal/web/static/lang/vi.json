@@ -1052,6 +1052,8 @@
   "restart.moving-one.empty": "Nếu dịch vụ không hoạt động trở lại ở địa chỉ này, trang này sẽ mở {address} sau {seconds} giây.",
   "restart.open-now.text": "Hoặc mở ngay bây giờ: ",
   "restart.screen.title": "Đang khởi động lại",
+  "restart.started-again-moved.text": "Tiến trình này kết thúc, rồi trình quản lý dịch vụ của Windows chạy lại chương trình sau vài giây, theo cách mà đăng ký của dịch vụ này quy định sau một lỗi. Nó hoạt động trở lại ở {address}, không phải địa chỉ của trang này, nên trang này sẽ chuyển sang đó thay vì chờ ở đây một thứ sẽ không tới.",
+  "restart.started-again-same.text": "Tiến trình này kết thúc, rồi trình quản lý dịch vụ của Windows chạy lại chương trình sau vài giây, theo cách mà đăng ký của dịch vụ này quy định sau một lỗi. Dịch vụ hoạt động trở lại trong vài giây và vẫn trả lời ở đúng địa chỉ như bây giờ.",
   "restart.stops.text": "Nền tảng này không thay được tệp thực thi của một tiến trình đang chạy, nên lượt khởi động lại kết thúc với tiến trình đã dừng. Thứ đang quản lý dịch vụ mới là bên chạy nó lại, còn dịch vụ được chạy bằng tay thì không hoạt động trở lại.",
   "restart.stuck.text": "Trang này sẽ không có gì diễn ra thêm. Hãy tải lại trang khi dịch vụ đã chạy trở lại.",
   "restart.unknown.notice": "Không đọc được việc khởi động lại sẽ gây ra chuyện gì, nên ở đây không đưa ra lựa chọn đó: {reason}",
