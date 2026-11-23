@@ -1041,7 +1041,7 @@
                         "CSRFToken": []
                     }
                 ],
-                "description": "The Tunnel Manager server opens local_port and carries every connection to it over the SSH connection of the Host to target_address:target_port, as seen from the Host. target_address is a host name or an IP address, resolved by the Host.\nbind_scope is where local_port is opened on the Tunnel Manager server: loopback, wildcard, or left out for the wildcard.\nenabled is whether the forward runs. Left out, it is true. A forward that is off opens no port and makes no SSH connection, and still holds local_port.\nallowed_sources is the addresses and CIDR blocks a client may connect to local_port from, separated by commas or spaces; empty or left out lets every address in. It is taken and held to on either bind_scope, the way socks_allowed_sources of a Host is.",
+                "description": "The Tunnel Manager server opens local_port and carries every connection to it over the SSH connection of the Host to target_address:target_port, as seen from the Host. target_address is a host name or an IP address, resolved by the Host.\nbind_scope is where local_port is opened on the Tunnel Manager server: loopback or wildcard. Left out or sent empty, it is loopback.\nenabled is whether the forward runs. Left out, it is true. A forward that is off opens no port and makes no SSH connection, and still holds local_port.\nallowed_sources is the addresses and CIDR blocks a client may connect to local_port from, separated by commas or spaces; empty or left out lets every address in. It is taken and held to on either bind_scope, the way socks_allowed_sources of a Host is.",
                 "consumes": [
                     "application/json"
                 ],
@@ -1169,7 +1169,7 @@
                         "CSRFToken": []
                     }
                 ],
-                "description": "local_port, target_address and target_port are all required. The Host it is carried by is not changed, and neither is its number.\nenabled switches the forward on or off. Left out, it keeps what is stored.\nallowed_sources left out keeps what is stored; sent empty it lets every address in.",
+                "description": "local_port, target_address and target_port are all required. The Host it is carried by is not changed, and neither is its number.\nbind_scope is loopback or wildcard. Left out or sent empty, it keeps what is stored.\nenabled switches the forward on or off. Left out, it keeps what is stored.\nallowed_sources left out keeps what is stored; sent empty it lets every address in.",
                 "consumes": [
                     "application/json"
                 ],

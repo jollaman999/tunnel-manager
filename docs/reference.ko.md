@@ -341,7 +341,7 @@ Hosts 화면에서 그 Host 행의 **Local forwards** 버튼이나 API 로 추�
 | 항목 | 무엇인가 |
 |------|----------|
 | `local_port` | Tunnel Manager 서버에 여는 포트. 1 ~ 65535 |
-| `bind_scope` | Tunnel Manager 서버의 어느 주소에 열지. 아래 참고 |
+| `bind_scope` | Tunnel Manager 서버의 어느 주소에 열지. 아래 참고. 생성에서 빼거나 빈 값으로 보내면 `loopback` 에 열고, 수정에서 빼거나 빈 값으로 보내면 저장된 값을 유지 |
 | `target_address` | Host 에서 연결해 나갈 곳. Host 가 찾는 호스트 이름이나 IPv4, IPv6 주소 |
 | `target_port` | 대상의 포트. 1 ~ 65535 |
 | `description` | 자유 텍스트 |
@@ -353,8 +353,13 @@ Hosts 화면에서 그 Host 행의 **Local forwards** 버튼이나 API 로 추�
 
 | `bind_scope` | Tunnel Manager 서버에서 `local_port` 를 여는 곳 |
 |--------------|--------------------------------------|
-| `wildcard`, 그리고 빈 값 | `0.0.0.0` 과 `::`. 요청이 이 필드를 빼면 이 값입니다. 화면의 추가 폼은 `loopback` 으로 열립니다 |
-| `loopback` | `127.0.0.1` 과 `::1` |
+| `wildcard`, 그리고 빈 값 | `0.0.0.0` 과 `::`. 범위 없이 저장된 로컬 포워딩은 여기에 있습니다 |
+| `loopback` | `127.0.0.1` 과 `::1`. 생성에서 이 필드를 빼면 이 값입니다. API 로 만들든 화면의 추가 폼으로 만들든 같습니다 |
+
+**범위 없이 추가한 로컬 포워딩은 `loopback` 에 열립니다.** 이전 릴리즈는 API 로 `bind_scope` 없이
+추가한 로컬 포워딩을 와일드카드에 열었고, `bind_scope` 를 뺀 수정은 로컬 포워딩을 와일드카드로
+옮겼습니다. 범위 없이 저장된 로컬 포워딩, 곧 범위를 낱말로 적기 전에 저장된 것은 지금까지 돌던
+와일드카드에 그대로 있고, `bind_scope` 를 뺀 수정도 그대로 둡니다.
 
 **와일드카드는 Tunnel Manager 서버를 Host 쪽 망으로 들어가는 문으로 만듭니다.** Tunnel Manager 서버의 `local_port`
 에 닿는 사람이면 누구나 Host 에 로그인하지 않고 Host 가 보는 `target_address:target_port` 에
@@ -2814,10 +2819,10 @@ curl -s -b cookies.txt -X POST "$BASE/api/host/1/local-forward" \
 객체이므로, `data[0]` 을 읽던 클라이언트는 `data.items[0]` 을 읽습니다.
 
 생성과 수정의 본문은 같은 항목을 받고, 수정은 전부를 받습니다. `local_port`, `target_address`,
-`target_port` 는 둘 다에서 필수이고, **수정에서 `bind_scope` 를 빼면 와일드카드로 바뀝니다.**
-지금 범위를 유지하려면 그 범위를 보내십시오. `enabled` 와 `allowed_sources` 는 수정에서
-빼도 유지되는 두 항목입니다. 빼면 켜져 있든 꺼져 있든 그대로 두고 목록도 그대로 두며, 생성에서
-빼면 모든 주소를 받는 도는 로컬 포워딩이 됩니다.
+`target_port` 는 둘 다에서 필수입니다. `bind_scope`, `enabled`, `allowed_sources` 는 수정에서
+빼도 유지되는 항목입니다. 빼면 지금 범위에 그대로 두고, 켜져 있든 꺼져 있든 그대로 두고, 목록도
+그대로 두며, 생성에서 빼면 모든 주소를 받는 `loopback` 의 도는 로컬 포워딩이 됩니다. `bind_scope` 를
+빈 값으로 보내면 둘 다에서 뺀 것으로 읽습니다.
 
 ```bash
 # Host 1 의 1 번 로컬 포워딩을 끕니다. 수정은 항목 전부를 받으므로 유지할 값도 다시 보냅니다.

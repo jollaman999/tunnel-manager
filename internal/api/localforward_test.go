@@ -6,6 +6,7 @@ import (
 	"net/http/httptest"
 	"path/filepath"
 	"reflect"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -220,8 +221,8 @@ func storedLocalForwards(t *testing.T, db *gorm.DB) []models.LocalForward {
 }
 
 // TestCreateHostLocalForwardStoresTheRow pins a creation: the row is stored
-// under the Host of the path, an empty scope is stored and answered as the
-// wildcard, the answer carries the status of a forward nothing runs for yet,
+// under the Host of the path, a scope left out is stored and answered as the
+// loopback, the answer carries the status of a forward nothing runs for yet,
 // and the loop is woken.
 func TestCreateHostLocalForwardStoresTheRow(t *testing.T) {
 	db := newLocalForwardDB(t, []models.Host{statusHost(1, true)}, nil)
@@ -244,16 +245,16 @@ func TestCreateHostLocalForwardStoresTheRow(t *testing.T) {
 		got.TargetPort != 5432 || got.Description != "db" {
 		t.Errorf("answer = %+v, want the row that was sent under Host 1", got)
 	}
-	if got.BindScope != models.BindScopeWildcard {
-		t.Errorf("bind_scope = %q, want %q", got.BindScope, models.BindScopeWildcard)
+	if got.BindScope != models.BindScopeLoopback {
+		t.Errorf("bind_scope = %q, want %q", got.BindScope, models.BindScopeLoopback)
 	}
 	if got.Status != localForwardStatusStopped {
 		t.Errorf("status = %q, want %q", got.Status, localForwardStatusStopped)
 	}
 
 	rows := storedLocalForwards(t, db)
-	if len(rows) != 1 || rows[0].BindScope != models.BindScopeWildcard || rows[0].HostID != 1 {
-		t.Errorf("stored = %+v, want one wildcard row under Host 1", rows)
+	if len(rows) != 1 || rows[0].BindScope != models.BindScopeLoopback || rows[0].HostID != 1 {
+		t.Errorf("stored = %+v, want one loopback row under Host 1", rows)
 	}
 
 	wakes, _ := manager.counts()
@@ -635,6 +636,113 @@ func TestUpdateLocalForwardChangesTheRow(t *testing.T) {
 	wakes, _ := manager.counts()
 	if wakes != 2 {
 		t.Errorf("reconcile wake-ups = %d, want 2", wakes)
+	}
+}
+
+// TestACreationLeftWithoutAScopeIsOpenedOnTheLoopback pins the scope a
+// creation gets when it names none: the loopback, whether bind_scope is left
+// out or sent empty, and the wildcard only when it is asked for. A forward is a
+// TCP relay with no login of its own, so one a client did not think to scope is
+// opened where only this machine reaches it.
+func TestACreationLeftWithoutAScopeIsOpenedOnTheLoopback(t *testing.T) {
+	db := newLocalForwardDB(t, []models.Host{statusHost(1, true)}, nil)
+	h := NewHandler(db, &wakeRecorder{tx: &txConnPool{}}, zap.NewNop(), newTestCipher(t))
+
+	for i, tc := range []struct {
+		scope string
+		want  string
+	}{
+		{scope: "", want: models.BindScopeLoopback},
+		{scope: `"bind_scope":"",`, want: models.BindScopeLoopback},
+		{scope: `"bind_scope":"wildcard",`, want: models.BindScopeWildcard},
+		{scope: `"bind_scope":"loopback",`, want: models.BindScopeLoopback},
+	} {
+		localPort := 15001 + i
+		body := `{` + tc.scope + `"local_port":` + strconv.Itoa(localPort) +
+			`,"target_address":"127.0.0.1","target_port":5432}`
+
+		c, rec := localForwardRequest(t, http.MethodPost, "/api/host/1/local-forward", body, "1")
+
+		err := h.CreateHostLocalForward(c)
+		if err != nil {
+			t.Fatalf("CreateHostLocalForward returned error: %v", err)
+		}
+		if rec.Code != http.StatusCreated {
+			t.Fatalf("%s: status = %d, want %d, body: %s", body, rec.Code, http.StatusCreated, rec.Body.String())
+		}
+
+		got := readLocalForwardAnswer(t, rec)
+		if got.BindScope != tc.want {
+			t.Errorf("%s: answered bind_scope = %q, want %q", body, got.BindScope, tc.want)
+		}
+
+		var row models.LocalForward
+
+		err = db.Where("host_id = ? AND local_port = ?", 1, localPort).First(&row).Error
+		if err != nil {
+			t.Fatalf("failed to read the row of %s: %v", body, err)
+		}
+		if row.BindScope != tc.want {
+			t.Errorf("%s: stored bind_scope = %q, want %q", body, row.BindScope, tc.want)
+		}
+	}
+}
+
+// TestAnUpdateKeepsTheScopeOfALocalForwardUnlessItSays pins the scope of a
+// change: left out or sent empty it keeps what is stored, and said it is
+// stored. A client that sends the fields it knows of and not bind_scope would
+// otherwise open a forward that was kept to this machine to every address.
+//
+// The row stored empty is one written before the scope was stored as a word.
+// It is kept empty rather than given a word on the way, and it goes on being
+// answered as the wildcard it has been running on.
+func TestAnUpdateKeepsTheScopeOfALocalForwardUnlessItSays(t *testing.T) {
+	for _, tc := range []struct {
+		stored  string
+		scope   string
+		want    string
+		answers string
+	}{
+		{stored: models.BindScopeLoopback, scope: "", want: models.BindScopeLoopback, answers: models.BindScopeLoopback},
+		{stored: models.BindScopeLoopback, scope: `"bind_scope":"",`, want: models.BindScopeLoopback,
+			answers: models.BindScopeLoopback},
+		{stored: models.BindScopeLoopback, scope: `"bind_scope":"wildcard",`, want: models.BindScopeWildcard,
+			answers: models.BindScopeWildcard},
+		{stored: models.BindScopeWildcard, scope: "", want: models.BindScopeWildcard, answers: models.BindScopeWildcard},
+		{stored: models.BindScopeWildcard, scope: `"bind_scope":"loopback",`, want: models.BindScopeLoopback,
+			answers: models.BindScopeLoopback},
+		{stored: "", scope: "", want: "", answers: models.BindScopeWildcard},
+	} {
+		stored := storedLocalForward(1, 1, 15001)
+		stored.BindScope = tc.stored
+
+		db := newLocalForwardDB(t, []models.Host{statusHost(1, true)}, []models.LocalForward{stored})
+		h := NewHandler(db, &wakeRecorder{tx: &txConnPool{}}, zap.NewNop(), newTestCipher(t))
+
+		body := `{` + tc.scope + `"local_port":15001,"target_address":"127.0.0.1","target_port":5433}`
+
+		c, rec := localForwardRowRequest(t, http.MethodPut, "/api/host/1/local-forward/1", body, "1", "1")
+
+		err := h.UpdateLocalForward(c)
+		if err != nil {
+			t.Fatalf("UpdateLocalForward returned error: %v", err)
+		}
+		if rec.Code != http.StatusOK {
+			t.Fatalf("stored %q, sent %s: status = %d, want %d, body: %s",
+				tc.stored, body, rec.Code, http.StatusOK, rec.Body.String())
+		}
+
+		got := readLocalForwardAnswer(t, rec)
+		rows := storedLocalForwards(t, db)
+
+		if len(rows) != 1 || rows[0].BindScope != tc.want || rows[0].TargetPort != 5433 {
+			t.Errorf("stored %q, sent %s: stored %+v, want bind_scope %q and target_port 5433",
+				tc.stored, body, rows, tc.want)
+		}
+		if got.BindScope != tc.answers {
+			t.Errorf("stored %q, sent %s: answered bind_scope = %q, want %q",
+				tc.stored, body, got.BindScope, tc.answers)
+		}
 	}
 }
 

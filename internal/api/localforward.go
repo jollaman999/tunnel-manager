@@ -459,7 +459,7 @@ func (h *Handler) ListHostLocalForwards(c *echo.Context) error {
 
 // @Summary      Add a local forward to a Host
 // @Description  The Tunnel Manager server opens local_port and carries every connection to it over the SSH connection of the Host to target_address:target_port, as seen from the Host. target_address is a host name or an IP address, resolved by the Host.
-// @Description  bind_scope is where local_port is opened on the Tunnel Manager server: loopback, wildcard, or left out for the wildcard.
+// @Description  bind_scope is where local_port is opened on the Tunnel Manager server: loopback or wildcard. Left out or sent empty, it is loopback.
 // @Description  enabled is whether the forward runs. Left out, it is true. A forward that is off opens no port and makes no SSH connection, and still holds local_port.
 // @Description  allowed_sources is the addresses and CIDR blocks a client may connect to local_port from, separated by commas or spaces; empty or left out lets every address in. It is taken and held to on either bind_scope, the way socks_allowed_sources of a Host is.
 // @Tags         local forwards
@@ -537,11 +537,18 @@ func (h *Handler) CreateHostLocalForward(c *echo.Context) error {
 		return refused.answer(c)
 	}
 
-	// An empty scope is stored as the word it stands for, so that the row says
-	// what was chosen and every answer carries the same value for it.
+	// A creation that names no scope is opened on the loopback, the way a SOCKS
+	// proxy is. A forward is a TCP relay with no login of its own, so one a
+	// client did not think to scope would otherwise carry anyone who reaches
+	// this machine on to the far side of the Host. The scope is stored as the
+	// word it stands for, so that the row says what was chosen and every answer
+	// carries the same value for it.
+	//
+	// This is not what an empty stored scope means. That is still the
+	// wildcard, which every row written before the column existed runs on.
 	bindScope := req.BindScope
 	if bindScope == "" {
-		bindScope = models.BindScopeWildcard
+		bindScope = models.BindScopeLoopback
 	}
 
 	number, err := nextLocalForwardNumber(tx, host.ID)
@@ -631,6 +638,7 @@ func (h *Handler) GetLocalForward(c *echo.Context) error {
 
 // @Summary      Update a local forward of a Host
 // @Description  local_port, target_address and target_port are all required. The Host it is carried by is not changed, and neither is its number.
+// @Description  bind_scope is loopback or wildcard. Left out or sent empty, it keeps what is stored.
 // @Description  enabled switches the forward on or off. Left out, it keeps what is stored.
 // @Description  allowed_sources left out keeps what is stored; sent empty it lets every address in.
 // @Tags         local forwards
@@ -718,9 +726,12 @@ func (h *Handler) UpdateLocalForward(c *echo.Context) error {
 		return failure(c, http.StatusInternalServerError, errHostFetchFailed)
 	}
 
-	lf.BindScope = req.BindScope
-	if lf.BindScope == "" {
-		lf.BindScope = models.BindScopeWildcard
+	// A change that names no scope keeps the one stored, for the reason it
+	// keeps the allowed sources: a client that sends the fields it knows of
+	// would otherwise move a forward kept to this machine onto every address.
+	// A row stored empty stays empty, which is the wildcard it runs on.
+	if req.BindScope != "" {
+		lf.BindScope = req.BindScope
 	}
 	lf.LocalPort = req.LocalPort
 	lf.TargetAddress = req.TargetAddress

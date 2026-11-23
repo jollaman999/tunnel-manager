@@ -559,8 +559,9 @@ type CreateServicePortRequest struct {
 }
 
 // LocalForwardRequest creates or changes a local forward of a Host. The Host
-// is named by the path rather than by the body, and an empty BindScope is the
-// wildcard, as it is on LocalForward.
+// is named by the path rather than by the body. An empty BindScope is a scope
+// left out, which a creation opens on the loopback and a change keeps as it is
+// stored; it is not the wildcard an empty LocalForward.BindScope stands for.
 type LocalForwardRequest struct {
 	BindScope     string `json:"bind_scope" validate:"omitempty,oneof=loopback wildcard"`
 	LocalPort     int    `json:"local_port" validate:"required,min=1,max=65535"`

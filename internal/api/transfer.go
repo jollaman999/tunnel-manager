@@ -1967,9 +1967,14 @@ func (h *TransferHandler) planLocalForwards(withIDs bool, host hostContent, host
 				errorArgs{"host": host.Address, "local_port": localPort})
 		}
 
-		// An empty scope of a file without ids is stored as the word it
-		// stands for, the way a create stores it. A file with ids is stored
-		// as the row it was exported from held it.
+		// An empty scope of a file without ids is stored as the wildcard it
+		// stands for, and not as the loopback a create that names no scope is
+		// given now. Such a file was written by a release in which a forward
+		// with no scope ran on the wildcard, so that is where its clients
+		// reached it, and an import that read it as the loopback would narrow
+		// it and cut them off on a move that was asked for nothing of the
+		// sort. A file with ids is stored as the row it was exported from
+		// held it.
 		bindScope := lf.BindScope
 		if bindScope == "" && !withIDs {
 			bindScope = models.BindScopeWildcard

@@ -311,7 +311,7 @@ Host 的编号是没有缺口的 1、2、3。代价是写在日志或记录里�
 | 字段 | 是什么 |
 |------|--------|
 | `local_port` | 在Tunnel Manager 服务器打开的端口，1 到 65535 |
-| `bind_scope` | 开在Tunnel Manager 服务器的哪些地址上，见下文 |
+| `bind_scope` | 开在Tunnel Manager 服务器的哪些地址上，见下文。创建时不带或发成空就开在 `loopback` 上，修改时不带或发成空就保持已保存的值 |
 | `target_address` | 从 Host 出发连接的地方。由 Host 解析的主机名，或 IPv4、IPv6 地址 |
 | `target_port` | 目标的端口，1 到 65535 |
 | `description` | 自由文本 |
@@ -322,8 +322,12 @@ Host 的编号是没有缺口的 1、2、3。代价是写在日志或记录里�
 
 | `bind_scope` | 在Tunnel Manager 服务器的哪里打开 `local_port` |
 |--------------|-------------------------------|
-| `wildcard`，以及空值 | `0.0.0.0` 和 `::`。请求不带这个字段时就是它。页面上的添加表单默认是 `loopback` |
-| `loopback` | `127.0.0.1` 和 `::1` |
+| `wildcard`，以及空值 | `0.0.0.0` 和 `::`。没有范围就保存下来的本地转发在这里 |
+| `loopback` | `127.0.0.1` 和 `::1`。创建时不带这个字段就是它，通过 API 创建和用页面上的添加表单创建都一样 |
+
+**不带范围添加的本地转发开在 `loopback` 上。** 以前的版本把通过 API 不带 `bind_scope` 添加的本地转发
+开在通配范围上，不带 `bind_scope` 的修改也会把本地转发移到通配范围。没有范围就保存下来的本地转发，
+也就是在范围以词保存之前存下的那些，留在它一直运行的通配范围上，不带 `bind_scope` 的修改也让它留在那里。
 
 **通配范围会让Tunnel Manager 服务器成为通往 Host 那边网络的一扇门。** 任何能连到Tunnel Manager 服务器 `local_port` 的人，不用登录
 Host 就能到达 Host 眼中的 `target_address:target_port`，因为 SSH 登录已经由 tunnel-manager 做过了。
@@ -2550,9 +2554,9 @@ curl -s -b cookies.txt -X POST "$BASE/api/host/1/local-forward" \
 `data[0]` 的客户端现在读 `data.items[0]`。
 
 创建和修改的请求体收同样的字段，而且修改要收全部字段：两者都必须有 `local_port`、`target_address` 和
-`target_port`，**修改时不带 `bind_scope` 会把这个转发改成通配范围**，要保持原来的范围就把它一起发。
-`enabled` 和 `allowed_sources` 是修改时不带也能保持的两个字段：不带时，开启还是关闭都照旧，列表也
-照旧；创建时不带，就是放行所有地址、正在运行的本地转发。
+`target_port`。`bind_scope`、`enabled` 和 `allowed_sources` 是修改时不带也能保持的字段：不带时，
+范围照旧，开启还是关闭都照旧，列表也照旧；创建时不带，就是开在 `loopback` 上、放行所有地址、正在运行的
+本地转发。`bind_scope` 发成空，在两者中都按不带处理。
 
 ```bash
 # 关闭 Host 1 的 1 号本地转发。修改要收全部字段，所以要保持的值也再发一次。

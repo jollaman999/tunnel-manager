@@ -397,7 +397,7 @@ rather than the row it was written about.
 | Field | What it is |
 |-------|------------|
 | `local_port` | The port opened on the Tunnel Manager server, 1 to 65535 |
-| `bind_scope` | Which addresses of the Tunnel Manager server it is opened on, see below |
+| `bind_scope` | Which addresses of the Tunnel Manager server it is opened on, see below. A create that leaves it out or sends it empty opens on `loopback`, and an update that leaves it out or sends it empty keeps what is stored |
 | `target_address` | Where a connection goes from the Host: a host name, which the Host looks up, or an IPv4 or an IPv6 address |
 | `target_port` | The port of the target, 1 to 65535 |
 | `description` | Free text |
@@ -409,8 +409,15 @@ words an assignment does and names the same pairs of addresses.
 
 | `bind_scope` | Where `local_port` is opened on the Tunnel Manager server |
 |--------------|-----------------------------------------------------------|
-| `wildcard`, and the empty value | `0.0.0.0` and `::`. This is what a request that leaves the field out gets. The add form on the screen opens on `loopback` |
-| `loopback` | `127.0.0.1` and `::1` |
+| `wildcard`, and the empty value | `0.0.0.0` and `::`. A forward stored with no scope is on it |
+| `loopback` | `127.0.0.1` and `::1`. This is what a create that leaves the field out gets, from the API and from the add form on the screen alike |
+
+**A forward added without a scope is opened on `loopback`.** Earlier releases
+opened one the API added without `bind_scope` on the wildcard, and an update
+that left `bind_scope` out moved the forward onto the wildcard. A forward
+stored with no scope, which is one stored before the scope was written as a
+word, stays on the wildcard where it has been running, and an update that
+leaves `bind_scope` out leaves it there.
 
 **The wildcard makes the Tunnel Manager server a door into the network of the
 Host.** Anybody who can reach the Tunnel Manager server on `local_port` reaches `target_address:target_port` as the
@@ -3237,11 +3244,11 @@ paged now and `data` is the object above, so a client reading `data[0]` reads
 
 The body of a create and of an update takes the same fields, and an update
 takes the whole of them: `local_port`, `target_address` and `target_port` are
-required on both, and **an update that leaves `bind_scope` out puts the forward
-on the wildcard**, so send the scope it is on to keep it there. `enabled` and
-`allowed_sources` are the two fields an update can leave out and keep: left
-out, the forward stays on or off as it is and keeps its list, while a create
-that leaves them out makes a forward that runs and lets every address in.
+required on both. `bind_scope`, `enabled` and `allowed_sources` are the
+fields an update can leave out and keep: left out, the forward stays on the
+scope it is on, stays on or off as it is and keeps its list, while a create
+that leaves them out makes a forward on `loopback` that runs and lets every
+address in. `bind_scope` sent empty is read as left out on both.
 
 ```bash
 # Switch forward 1 of Host 1 off. The update takes the whole of the fields, so
