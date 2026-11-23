@@ -871,6 +871,7 @@
   "log.tunnel.status_save_failed.text": "터널의 연결 상태를 갱신하지 못했습니다",
   "log.tunnel.stop_failed.text": "터널을 멈추지 못했습니다",
   "log.tunnel.stop_skipped_not_running.text": "멈출 터널이 없습니다",
+  "log.tunnel.stop_wait_timed_out.text": "멈춘 터널이 아직 연결하는 중이었고 제때 끝나지 않아서, 기다리지 않고 진행합니다",
   "log.tunnel.tunnels_fetch_failed.text": "터널을 가져오지 못했습니다",
   "log.ulimit.change_failed.text": "ulimit 를 바꾸지 못했습니다",
   "log.ulimit.change_not_needed.text": "ulimit 를 바꿀 필요가 없습니다",

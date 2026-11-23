@@ -100,7 +100,16 @@ type SSHTunnel struct {
 	done      chan bool
 	isStopped bool
 	stopMu    sync.Mutex
-	logger    *zap.Logger
+	// ended is closed when Start returns, and is nil until Start begins. A
+	// stop waits on it before the same tunnel is started again, because a
+	// Start that was still dialing or asking for the forwarded port when the
+	// stop came finds out only when that is done, and until then the
+	// connection it is making may hold the port on the Host that the next one
+	// is about to ask for. It is made under stopMu, and Start makes it only
+	// while the tunnel is not stopped, so once Stop has returned it either is
+	// nil for good or is the channel of the one Start there is.
+	ended  chan struct{}
+	logger *zap.Logger
 	// conns and overLimit are localTunnel.conns and localTunnel.overLimit for
 	// the service port.
 	conns     *connLimit
@@ -927,6 +936,19 @@ func (t *SSHTunnel) establishConnection(m *Manager, tunnel *models.Tunnel) error
 		return fmt.Errorf("failed to establish SSH connection: %w", err)
 	}
 
+	// A stop that came while the connection was being made is seen before the
+	// forwarded port is asked for. The tunnel is about to be started again or
+	// to go away, and asking would have the Host open the port for a
+	// connection that is closed a moment later, holding it against the next
+	// one in the meantime.
+	select {
+	case <-t.done:
+		_ = client.Close()
+
+		return errTunnelStopped
+	default:
+	}
+
 	opened, err := t.openForwards(client)
 	if err != nil {
 		// The client is kept on the tunnel only once a forward is open, so on
@@ -1276,7 +1298,37 @@ func (t *SSHTunnel) waitBeforeRetry(wait time.Duration) bool {
 	}
 }
 
+// begin makes the channel Start closes when it returns, and reports whether
+// Start is to go on. A tunnel that was stopped before Start began is not
+// started at all and gets no channel, so a stop has nothing to wait for.
+func (t *SSHTunnel) begin() bool {
+	t.stopMu.Lock()
+	defer t.stopMu.Unlock()
+
+	if t.isStopped {
+		return false
+	}
+
+	t.ended = make(chan struct{})
+
+	return true
+}
+
+// startEnded returns the channel that is closed when Start returns, or nil when
+// Start never began. It is asked after Stop, when neither can change any more.
+func (t *SSHTunnel) startEnded() <-chan struct{} {
+	t.stopMu.Lock()
+	defer t.stopMu.Unlock()
+
+	return t.ended
+}
+
 func (t *SSHTunnel) Start(m *Manager, tunnel *models.Tunnel) {
+	if !t.begin() {
+		return
+	}
+	defer close(t.ended)
+
 	t.logger.Info("attempting to start tunnel",
 		logid.TunnelStarting.Field(),
 		zap.String("local", t.Local.String()),

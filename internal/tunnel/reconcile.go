@@ -257,11 +257,18 @@ func (m *Manager) runningTunnelFingerprints() map[string]connFingerprint {
 // tunnel is built, so an existing one keeps using the old ones. A stop that
 // fails leaves the tunnel as it is, and a start that fails leaves nothing
 // running under the key. Either way the next pass sees the difference again
-// and tries again.
-func (m *Manager) restartTunnel(want desiredTunnel, jumps []jumpHop) error {
-	err := m.StopTunnel(want.host.ID, want.sp.ID)
+// and tries again. The stop waits for the old Start out of wait, the one wait
+// of the pass, before the tunnel is started again, and a pass whose loop was
+// stopped in the meantime does not start it again: the tunnels are being
+// stopped for good.
+func (m *Manager) restartTunnel(ctx context.Context, want desiredTunnel, jumps []jumpHop, wait *stopWait) error {
+	err := m.stopTunnel(want.host.ID, want.sp.ID, wait)
 	if err != nil && !errors.Is(err, ErrTunnelNotExist) {
 		return err
+	}
+
+	if ctx.Err() != nil {
+		return ctx.Err()
 	}
 
 	return m.StartTunnel(want.host, want.sp, want.bindScope, jumps)
@@ -290,7 +297,23 @@ func (m *Manager) restartTunnel(want desiredTunnel, jumps []jumpHop) error {
 // that could not read the database keeps nothing, and the counts stay those of
 // the last pass that could.
 func (m *Manager) Reconcile() (ReconcileResult, error) {
+	return m.reconcile(context.Background())
+}
+
+// reconcile is Reconcile for a pass of RunReconcileLoop, which ends early once
+// ctx is done. The shutdown stops the loop, waits for it a short while and then
+// stops every tunnel, so a pass still running then must start nothing more: it
+// would start a tunnel behind the shutdown that stopped them all. The wait for
+// the Starts of what it stops ends with ctx as well, since nothing is going to
+// be started after it.
+func (m *Manager) reconcile(ctx context.Context) (ReconcileResult, error) {
 	var result ReconcileResult
+
+	// Every tunnel the pass stops waits for its Start out of this one wait, so
+	// a pass that meets several tunnels still connecting is held up by the
+	// limit once and not once for each of them.
+	wait := m.newStopWait()
+	wait.cancel = ctx.Done()
 
 	hostByID, err := m.hostsByID()
 	if err != nil {
@@ -323,11 +346,15 @@ func (m *Manager) Reconcile() (ReconcileResult, error) {
 	// start it again on a new connection. It is stopped here, inside the pass,
 	// rather than by the request, so that it cannot race a pass that is
 	// starting or stopping the same forwards.
-	m.dropReconnecting(&result)
+	m.dropReconnecting(&result, wait)
 
 	running := m.runningTunnelFingerprints()
 
 	for key, want := range desired {
+		if ctx.Err() != nil {
+			return result, nil
+		}
+
 		route := routes[want.host.ID]
 		current, isRunning := running[key]
 		if !isRunning {
@@ -363,7 +390,10 @@ func (m *Manager) Reconcile() (ReconcileResult, error) {
 			continue
 		}
 
-		err = m.restartTunnel(want, route.hops)
+		err = m.restartTunnel(ctx, want, route.hops, wait)
+		if ctx.Err() != nil {
+			return result, nil
+		}
 		if err != nil {
 			m.logger.Error("failed to restart a tunnel whose connection settings changed",
 				logid.TunnelRestartFailed.Field(),
@@ -392,7 +422,7 @@ func (m *Manager) Reconcile() (ReconcileResult, error) {
 			continue
 		}
 
-		err := m.StopTunnel(hostID, spID)
+		err := m.stopTunnel(hostID, spID, wait)
 		if err != nil {
 			if errors.Is(err, ErrTunnelNotExist) {
 				// Already gone, which is what this pass wanted.
@@ -411,11 +441,23 @@ func (m *Manager) Reconcile() (ReconcileResult, error) {
 		result.Stopped++
 	}
 
+	if ctx.Err() != nil {
+		return result, nil
+	}
+
 	// The local forwards and the proxies are all stopped before any of them
 	// is started, for the reason stopLocalForwardsOfPass gives: one of them
 	// can be moved to the port another lets go of in this pass.
 	localStarts := m.stopLocalForwardsOfPass(desiredLocal, routes, &result)
 	socksStarts := m.stopSocksOfPass(desiredSocksOf(hostByID), routes, &result)
+
+	// The stops above can take a while, and a loop told to stop in the
+	// meantime is one whose forwards are being stopped for good: starting
+	// them now would open them after that.
+	if ctx.Err() != nil {
+		return result, nil
+	}
+
 	m.startLocalForwardsOfPass(localStarts, &result)
 	m.startSocksOfPass(socksStarts, &result)
 
@@ -460,7 +502,7 @@ func (m *Manager) RunReconcileLoop(ctx context.Context, intervalSec int) {
 		default:
 		}
 
-		result, err := m.Reconcile()
+		result, err := m.reconcile(ctx)
 		if err != nil {
 			m.logger.Error("reconcile pass failed, waiting for the next one", logid.TunnelReconcileFailed.Field(), zap.Error(err))
 		} else if result.Started > 0 || result.Stopped > 0 || result.Restarted > 0 || result.Failed > 0 {

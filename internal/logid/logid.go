@@ -92,6 +92,7 @@ const (
 	TunnelKeyUnreadable               ID = "tunnel.key_unreadable"
 	TunnelStopSkippedNotRunning       ID = "tunnel.stop_skipped_not_running"
 	TunnelStopFailed                  ID = "tunnel.stop_failed"
+	TunnelStopWaitTimedOut            ID = "tunnel.stop_wait_timed_out"
 	TunnelStartFailed                 ID = "tunnel.start_failed"
 	TunnelRestartFailed               ID = "tunnel.restart_failed"
 	TunnelReconcileFailed             ID = "tunnel.reconcile_failed"

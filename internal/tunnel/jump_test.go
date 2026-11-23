@@ -49,6 +49,12 @@ type jumpTestServer struct {
 	conns  []net.Conn
 	hold   chan struct{}
 	asked  chan struct{}
+	// forwardHook, set by onForward, is called for every tcpip-forward the
+	// server goes on to answer, before the port is opened, with the number of
+	// the connection it came on and the address it asks for. What it hands
+	// back is called with whether the port was opened once the request was
+	// answered, and may be nil.
+	forwardHook func(seq int64, addr string) func(opened bool)
 
 	handshakes atomic.Int64
 	active     atomic.Int64
@@ -84,6 +90,36 @@ func (s *jumpTestServer) waitForHold() {
 	}
 
 	<-hold
+}
+
+// onForward sets the hook every tcpip-forward is run through. A test uses it to
+// order the requests of two connections against each other, which is what a
+// hold over all of them cannot do.
+func (s *jumpTestServer) onForward(hook func(seq int64, addr string) func(opened bool)) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	s.forwardHook = hook
+}
+
+// forwardAsked runs the hook for a tcpip-forward and hands back what is to be
+// called once it was answered, which does nothing when there is no hook or the
+// hook asked for nothing.
+func (s *jumpTestServer) forwardAsked(seq int64, addr string) func(opened bool) {
+	s.mu.Lock()
+	hook := s.forwardHook
+	s.mu.Unlock()
+
+	if hook == nil {
+		return func(bool) {}
+	}
+
+	answered := hook(seq, addr)
+	if answered == nil {
+		return func(bool) {}
+	}
+
+	return answered
 }
 
 func (s *jumpTestServer) targets() []string {
@@ -211,9 +247,12 @@ func (s *jumpTestServer) serve(conn net.Conn, config *ssh.ServerConfig) {
 				continue
 			}
 
+			answered := s.forwardAsked(seq, asked.Addr)
+
 			ln, err := net.Listen("tcp", net.JoinHostPort(asked.Addr, strconv.Itoa(int(asked.Port))))
 			if err != nil {
 				_ = req.Reply(false, nil)
+				answered(false)
 				continue
 			}
 
@@ -223,6 +262,7 @@ func (s *jumpTestServer) serve(conn net.Conn, config *ssh.ServerConfig) {
 
 			bound := uint32(ln.Addr().(*net.TCPAddr).Port)
 			_ = req.Reply(true, ssh.Marshal(struct{ Port uint32 }{Port: bound}))
+			answered(true)
 
 			go forwardAccepted(sshConn, ln, asked.Addr, bound)
 		}

@@ -871,6 +871,7 @@
   "log.tunnel.status_save_failed.text": "トンネルの接続状態を更新できませんでした",
   "log.tunnel.stop_failed.text": "トンネルを停止できませんでした",
   "log.tunnel.stop_skipped_not_running.text": "停止するトンネルがありません",
+  "log.tunnel.stop_wait_timed_out.text": "停止したトンネルがまだ接続中で時間内に終わらなかったので、待たずに進みます",
   "log.tunnel.tunnels_fetch_failed.text": "トンネルを取得できませんでした",
   "log.ulimit.change_failed.text": "ulimit を変更できませんでした",
   "log.ulimit.change_not_needed.text": "ulimit を変更する必要はありません",

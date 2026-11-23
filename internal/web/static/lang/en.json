@@ -871,6 +871,7 @@
   "log.tunnel.status_save_failed.text": "failed to update tunnel connected status",
   "log.tunnel.stop_failed.text": "failed to stop tunnel",
   "log.tunnel.stop_skipped_not_running.text": "no tunnel to stop",
+  "log.tunnel.stop_wait_timed_out.text": "a stopped tunnel was still connecting and did not end in time, going on without waiting for it",
   "log.tunnel.tunnels_fetch_failed.text": "failed to fetch tunnels",
   "log.ulimit.change_failed.text": "failed to change ulimit",
   "log.ulimit.change_not_needed.text": "no need to change ulimit",

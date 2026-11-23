@@ -871,6 +871,7 @@
   "log.tunnel.status_save_failed.text": "falha ao atualizar o status de conexão do túnel",
   "log.tunnel.stop_failed.text": "falha ao parar o túnel",
   "log.tunnel.stop_skipped_not_running.text": "não há túnel para parar",
+  "log.tunnel.stop_wait_timed_out.text": "um túnel parado ainda estava se conectando e não terminou a tempo, seguindo sem esperar por ele",
   "log.tunnel.tunnels_fetch_failed.text": "falha ao buscar os túneis",
   "log.ulimit.change_failed.text": "falha ao alterar o ulimit",
   "log.ulimit.change_not_needed.text": "não é preciso alterar o ulimit",

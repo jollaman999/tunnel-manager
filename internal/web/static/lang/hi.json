@@ -871,6 +871,7 @@
   "log.tunnel.status_save_failed.text": "टनल के जुड़े होने की स्थिति सेव नहीं की जा सकी",
   "log.tunnel.stop_failed.text": "टनल रोका नहीं जा सका",
   "log.tunnel.stop_skipped_not_running.text": "रोकने के लिए कोई टनल है ही नहीं",
+  "log.tunnel.stop_wait_timed_out.text": "रोका गया टनल अभी भी जुड़ रहा था और समय रहते खत्म नहीं हुआ, उसका इंतज़ार किए बिना आगे बढ़ रहे हैं",
   "log.tunnel.tunnels_fetch_failed.text": "टनल लाए नहीं जा सके",
   "log.ulimit.change_failed.text": "ulimit बदला नहीं जा सका",
   "log.ulimit.change_not_needed.text": "ulimit बदलने की ज़रूरत नहीं",

@@ -82,8 +82,9 @@ func (m *Manager) takeReconnects() map[uint]bool {
 //
 // A stop that fails leaves that forward running on its old connection, which
 // is logged; the Host is not asked about again, since the request was served
-// as far as it could be.
-func (m *Manager) dropReconnecting(result *ReconcileResult) {
+// as far as it could be. The tunnels wait for their Starts out of wait, the one
+// wait of the pass.
+func (m *Manager) dropReconnecting(result *ReconcileResult, wait *stopWait) {
 	hosts := m.takeReconnects()
 	if len(hosts) == 0 {
 		return
@@ -95,7 +96,7 @@ func (m *Manager) dropReconnecting(result *ReconcileResult) {
 			continue
 		}
 
-		err := m.StopTunnel(hostID, spID)
+		err := m.stopTunnel(hostID, spID, wait)
 		if err != nil && !errors.Is(err, ErrTunnelNotExist) {
 			m.logger.Error("failed to stop a tunnel to reconnect it",
 				logid.TunnelStopFailed.Field(),

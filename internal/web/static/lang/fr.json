@@ -871,6 +871,7 @@
   "log.tunnel.status_save_failed.text": "échec de la mise à jour de l'état connecté du tunnel",
   "log.tunnel.stop_failed.text": "échec de l'arrêt du tunnel",
   "log.tunnel.stop_skipped_not_running.text": "aucun tunnel à arrêter",
+  "log.tunnel.stop_wait_timed_out.text": "un tunnel arrêté était encore en cours de connexion et n'a pas fini à temps, on continue sans l'attendre",
   "log.tunnel.tunnels_fetch_failed.text": "échec de la récupération des tunnels",
   "log.ulimit.change_failed.text": "échec du changement d'ulimit",
   "log.ulimit.change_not_needed.text": "pas besoin de changer ulimit",

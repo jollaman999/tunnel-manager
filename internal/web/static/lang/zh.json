@@ -871,6 +871,7 @@
   "log.tunnel.status_save_failed.text": "更新隧道的连接状态失败",
   "log.tunnel.stop_failed.text": "停止隧道失败",
   "log.tunnel.stop_skipped_not_running.text": "没有隧道要停",
+  "log.tunnel.stop_wait_timed_out.text": "已停止的隧道仍在连接，未能按时结束，不再等待，继续进行",
   "log.tunnel.tunnels_fetch_failed.text": "获取隧道失败",
   "log.ulimit.change_failed.text": "修改 ulimit 失败",
   "log.ulimit.change_not_needed.text": "不需要修改 ulimit",

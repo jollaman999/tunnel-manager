@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/jollaman999/tunnel-manager/internal/tunnel"
 	"golang.org/x/sys/windows/svc"
 )
 
@@ -30,11 +31,13 @@ const windowsServiceName = "tunnel-manager"
 
 // serviceStopWaitHint is what the SCM is told a stop takes.
 //
-// It is the two waits the shutdown is made of: draining the API server and
-// letting the reconcile pass that is running end. The SCM kills a service that
-// says nothing for longer than its wait hint, and killing this one part way
-// through leaves the tunnels it built behind on the hosts.
-const serviceStopWaitHint = shutdownTimeout + reconcileStopTimeout
+// It is the three waits the shutdown is made of: draining the API server,
+// letting the reconcile pass that is running end, and letting the tunnels that
+// were still connecting when they were stopped end their attempt
+// (tunnel.StartEndWaitLimit). The SCM kills a service that says nothing for
+// longer than its wait hint, and killing this one part way through leaves the
+// tunnels it built behind on the hosts.
+const serviceStopWaitHint = shutdownTimeout + reconcileStopTimeout + tunnel.StartEndWaitLimit
 
 // runningAsService says whether this process was started by the service control
 // manager rather than by somebody at a console.

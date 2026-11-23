@@ -871,6 +871,7 @@
   "log.tunnel.status_save_failed.text": "تعذّر تحديث حالة اتصال النفق",
   "log.tunnel.stop_failed.text": "تعذّر إيقاف النفق",
   "log.tunnel.stop_skipped_not_running.text": "لا يوجد نفق ليُوقف",
+  "log.tunnel.stop_wait_timed_out.text": "كان نفق موقوف لا يزال يتصل ولم ينته في الوقت المحدد، ويُتابَع دون انتظاره",
   "log.tunnel.tunnels_fetch_failed.text": "تعذّر جلب الأنفاق",
   "log.ulimit.change_failed.text": "تعذّر تغيير ulimit",
   "log.ulimit.change_not_needed.text": "لا حاجة إلى تغيير ulimit",

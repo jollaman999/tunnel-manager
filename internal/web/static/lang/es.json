@@ -871,6 +871,7 @@
   "log.tunnel.status_save_failed.text": "no se pudo actualizar el estado de conexión del túnel",
   "log.tunnel.stop_failed.text": "no se pudo detener el túnel",
   "log.tunnel.stop_skipped_not_running.text": "no hay ningún túnel que detener",
+  "log.tunnel.stop_wait_timed_out.text": "un túnel detenido aún se estaba conectando y no terminó a tiempo, se continúa sin esperarlo",
   "log.tunnel.tunnels_fetch_failed.text": "no se pudieron obtener los túneles",
   "log.ulimit.change_failed.text": "no se pudo cambiar el ulimit",
   "log.ulimit.change_not_needed.text": "no hace falta cambiar el ulimit",

@@ -871,6 +871,7 @@
   "log.tunnel.status_save_failed.text": "không cập nhật được trạng thái kết nối của tunnel",
   "log.tunnel.stop_failed.text": "không dừng được tunnel",
   "log.tunnel.stop_skipped_not_running.text": "không có tunnel nào để dừng",
+  "log.tunnel.stop_wait_timed_out.text": "một tunnel đã dừng vẫn đang kết nối và không kết thúc kịp, tiếp tục mà không chờ nó",
   "log.tunnel.tunnels_fetch_failed.text": "không lấy được các tunnel",
   "log.ulimit.change_failed.text": "không đổi được ulimit",
   "log.ulimit.change_not_needed.text": "không cần đổi ulimit",

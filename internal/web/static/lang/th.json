@@ -871,6 +871,7 @@
   "log.tunnel.status_save_failed.text": "แก้ไขสถานะการเชื่อมต่อของอุโมงค์ไม่สำเร็จ",
   "log.tunnel.stop_failed.text": "หยุดอุโมงค์ไม่สำเร็จ",
   "log.tunnel.stop_skipped_not_running.text": "ไม่มีอุโมงค์ให้หยุด",
+  "log.tunnel.stop_wait_timed_out.text": "อุโมงค์ที่หยุดแล้วยังเชื่อมต่ออยู่และไม่จบภายในเวลาที่กำหนด จะทำต่อไปโดยไม่รอ",
   "log.tunnel.tunnels_fetch_failed.text": "ดึงรายการอุโมงค์ไม่สำเร็จ",
   "log.ulimit.change_failed.text": "เปลี่ยน ulimit ไม่สำเร็จ",
   "log.ulimit.change_not_needed.text": "ไม่จำเป็นต้องเปลี่ยน ulimit",

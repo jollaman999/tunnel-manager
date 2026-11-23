@@ -165,6 +165,11 @@ type Manager struct {
 	// that the key is read once rather than once for every connection made
 	// with it. What is kept and when it is read again is at signerCache.
 	signers signerCache
+
+	// startEndWait is how long a stop waits for the Starts of the tunnels it
+	// stopped (waitForStarts). It is StartEndWaitLimit, and a field so that a
+	// test can wait less.
+	startEndWait time.Duration
 }
 
 // parseHostKey is what a stored private key is read with, rather than
@@ -273,6 +278,7 @@ func NewManager(db *gorm.DB, logger *zap.Logger, cipher *crypto.Cipher, monitori
 		localForwards:         make(map[LocalForwardKey]*localTunnel),
 		socksProxies:          make(map[uint]*socksTunnel),
 		reconnectHosts:        make(map[uint]bool),
+		startEndWait:          StartEndWaitLimit,
 	}, nil
 }
 
@@ -1178,10 +1184,115 @@ func (m *Manager) tunnelRegistered(key string) bool {
 // the row is made. That is the tunnel the stop found when the start made the
 // row under the lock, and a stop that went ahead would delete a row the start
 // then makes. A start that could not make the row leaves nothing to stop.
+//
+// The key stays marked until the Start of the tunnel has returned as well, for
+// up to StartEndWaitLimit (waitForStarts).
 func (m *Manager) StopTunnel(hostID uint, spID uint) error {
+	return m.stopTunnel(hostID, spID, m.newStopWait())
+}
+
+// stopTunnel is StopTunnel with the wait for the Start of the tunnel taken out
+// of wait, which a reconcile pass shares between every tunnel it stops.
+func (m *Manager) stopTunnel(hostID uint, spID uint, wait *stopWait) error {
+	s, err := m.takeTunnel(hostID, spID)
+	if err != nil {
+		return err
+	}
+
+	err = s.tunnel.Stop(m)
+
+	m.waitForStarts([]*stoppingTunnel{s}, wait)
+	m.letGo(s)
+
+	if err != nil {
+		return fmt.Errorf("failed to stop tunnel: %w", err)
+	}
+
+	return nil
+}
+
+// StartEndWaitLimit is how long a stop waits for the Start of the tunnel to
+// return, and how long a reconcile pass and StopAllTunnels wait for all the
+// Starts of the tunnels they stop. One attempt to connect to a Host gives up
+// after ten seconds, and nothing else is reconciled while a pass waits. The
+// shutdown takes up to this long on top of its own waits, which is why it is
+// exported: the stop the Windows service reports is told it.
+const StartEndWaitLimit = 30 * time.Second
+
+// stopWait is one wait for the Starts of stopped tunnels, shared by every stop
+// that is given it. A pass hands the same one to every tunnel it stops, so
+// what it waits in all is the limit once rather than once for every tunnel
+// still connecting, one after the other. The limit starts to run the first
+// time a stop has a Start to wait for, so the work a pass does before that
+// does not eat into it. It is used from one goroutine and has no lock.
+//
+// cancel, when closed, ends the wait at once, which is what a pass of a loop
+// that is being stopped needs. It is nil for a wait that only the limit ends.
+type stopWait struct {
+	limit    time.Duration
+	deadline time.Time
+	cancel   <-chan struct{}
+}
+
+func (m *Manager) newStopWait() *stopWait {
+	return &stopWait{limit: m.startEndWait}
+}
+
+// forEnd waits for ended to be closed until the wait runs out and reports
+// whether it was.
+func (w *stopWait) forEnd(ended <-chan struct{}) bool {
+	select {
+	case <-ended:
+		return true
+	default:
+	}
+
+	if w.deadline.IsZero() {
+		w.deadline = time.Now().Add(w.limit)
+	}
+
+	left := time.Until(w.deadline)
+	if left > 0 {
+		timer := time.NewTimer(left)
+		defer timer.Stop()
+
+		select {
+		case <-ended:
+			return true
+		case <-timer.C:
+		case <-w.cancel:
+		}
+	}
+
+	select {
+	case <-ended:
+		return true
+	default:
+		return false
+	}
+}
+
+// stoppingTunnel is a tunnel StopTunnel has taken out of m.tunnels, with the
+// key it is marked under in m.stopping and the channel closed when it is let
+// go.
+type stoppingTunnel struct {
+	hostID  uint
+	spID    uint
+	key     string
+	tunnel  *SSHTunnel
+	stopped chan struct{}
+}
+
+// takeTunnel takes the tunnel under the Host and the service port out of
+// m.tunnels and marks its key in m.stopping, which StartTunnel waits on until
+// letGo. A start that is still making the row of the tunnel is waited for
+// first.
+func (m *Manager) takeTunnel(hostID uint, spID uint) (*stoppingTunnel, error) {
 	key := tunnelKey(hostID, spID)
 
 	m.mu.Lock()
+	defer m.mu.Unlock()
+
 	for {
 		started, starting := m.starting[key]
 		if !starting {
@@ -1195,27 +1306,55 @@ func (m *Manager) StopTunnel(hostID uint, spID uint) error {
 
 	tunnel, exists := m.tunnels[key]
 	if !exists {
-		m.mu.Unlock()
-		return ErrTunnelNotExist
+		return nil, ErrTunnelNotExist
 	}
 
-	stopped := make(chan struct{})
+	s := &stoppingTunnel{hostID: hostID, spID: spID, key: key, tunnel: tunnel, stopped: make(chan struct{})}
 	delete(m.tunnels, key)
-	m.stopping[key] = stopped
-	m.mu.Unlock()
+	m.stopping[key] = s.stopped
 
-	err := tunnel.Stop(m)
+	return s, nil
+}
 
+// letGo takes the key of a stopped tunnel out of m.stopping, which lets a
+// start under it go ahead.
+func (m *Manager) letGo(s *stoppingTunnel) {
 	m.mu.Lock()
-	delete(m.stopping, key)
+	delete(m.stopping, s.key)
 	m.mu.Unlock()
-	close(stopped)
+	close(s.stopped)
+}
 
-	if err != nil {
-		return fmt.Errorf("failed to stop tunnel: %w", err)
+// waitForStarts waits for the Start of every tunnel given to return, out of
+// the one wait given, and is called after Stop.
+//
+// Stop closes the connection the tunnel holds, but a Start that was still
+// dialing or still asking for the forwarded port holds none yet, and it ends
+// only once that is done. Its connection may by then have opened the port on
+// the Host, and a start of the same tunnel that asked for it in the meantime
+// would be refused it, or be given one address of the pair and keep running on
+// it. A Start that does not end within the wait is logged and left to end on
+// its own, which it does as soon as it sees the stop. A tunnel whose Start
+// never began has nothing to wait for.
+//
+// It holds no lock while it waits: Start takes the locks of the tunnel and
+// m.mu is what every status call waits on.
+func (m *Manager) waitForStarts(stopped []*stoppingTunnel, wait *stopWait) {
+	for _, s := range stopped {
+		ended := s.tunnel.startEnded()
+		if ended == nil || wait.forEnd(ended) {
+			continue
+		}
+
+		m.logger.Warn("a stopped tunnel was still connecting and did not end in time, going on without waiting for it",
+			logid.TunnelStopWaitTimedOut.Field(),
+			zap.Uint("host_id", s.hostID),
+			zap.Uint("sp_id", s.spID),
+			zap.Duration("waited", wait.limit),
+			zap.String("local", s.tunnel.Local.String()),
+			zap.String("server", s.tunnel.Server),
+			zap.String("remote", s.tunnel.Remote))
 	}
-
-	return nil
 }
 
 func (m *Manager) GetHostTunnels(hostID uint) (*[]models.Tunnel, error) {
@@ -1272,9 +1411,16 @@ func (m *Manager) RestoreAllTunnels() error {
 // It is a reconcile pass with an empty desired state, and it reads no rows:
 // what is running is in m.tunnels, m.localForwards and m.socksProxies, and a
 // database that is away on shutdown must not leave a tunnel up.
+//
+// Every tunnel is stopped first and their Starts are waited for together
+// afterwards, against one limit for all of them. Waiting after each stop would
+// add the wait of every tunnel that was still connecting to the shutdown, one
+// after the other.
 func (m *Manager) StopAllTunnels() {
 	defer m.stopAllSocks()
 	defer m.stopAllLocalForwards()
+
+	var stopped []*stoppingTunnel
 
 	for _, key := range m.runningTunnelKeys() {
 		hostID, spID, ok := parseTunnelKey(key)
@@ -1285,22 +1431,30 @@ func (m *Manager) StopAllTunnels() {
 			continue
 		}
 
-		err := m.StopTunnel(hostID, spID)
+		s, err := m.takeTunnel(hostID, spID)
 		if err != nil {
-			if errors.Is(err, ErrTunnelNotExist) {
-				m.logger.Debug("no tunnel to stop",
-					logid.TunnelStopSkippedNotRunning.Field(),
-					zap.Uint("host_id", hostID),
-					zap.Uint("sp_id", spID))
-				continue
-			}
-
-			m.logger.Error("failed to stop tunnel",
-				logid.TunnelStopFailed.Field(),
-				zap.Error(err),
+			m.logger.Debug("no tunnel to stop",
+				logid.TunnelStopSkippedNotRunning.Field(),
 				zap.Uint("host_id", hostID),
 				zap.Uint("sp_id", spID))
 			continue
 		}
+
+		stopped = append(stopped, s)
+
+		err = s.tunnel.Stop(m)
+		if err != nil {
+			m.logger.Error("failed to stop tunnel",
+				logid.TunnelStopFailed.Field(),
+				zap.Error(fmt.Errorf("failed to stop tunnel: %w", err)),
+				zap.Uint("host_id", hostID),
+				zap.Uint("sp_id", spID))
+		}
+	}
+
+	m.waitForStarts(stopped, m.newStopWait())
+
+	for _, s := range stopped {
+		m.letGo(s)
 	}
 }

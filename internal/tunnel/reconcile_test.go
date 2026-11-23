@@ -154,6 +154,116 @@ func TestReconcileStopsWhatIsNotWanted(t *testing.T) {
 	}
 }
 
+// TestAPassWaitsForTheStartsItStopsAgainstOneLimit is a pass that stops three
+// tunnels whose Starts never end: one over a Host asked to reconnect and two
+// that are no longer wanted. The pass waits for them against one limit for all
+// of them, or a pass that met a few tunnels stuck connecting would take the
+// limit once for each of them, and nothing else is reconciled in the meantime.
+func TestAPassWaitsForTheStartsItStopsAgainstOneLimit(t *testing.T) {
+	m, err := NewManager(newStubDB(t, nil, nil, nil), zap.NewNop(), newTestCipher(t), 1)
+	if err != nil {
+		t.Fatalf("failed to create manager: %v", err)
+	}
+
+	const limit = 300 * time.Millisecond
+	m.startEndWait = limit
+
+	for _, hostID := range []uint{1, 2, 3} {
+		tun := registerStoppedTunnel(t, m, hostID, 2)
+
+		tun.stopMu.Lock()
+		tun.ended = make(chan struct{})
+		tun.stopMu.Unlock()
+	}
+
+	m.RequestReconnect(1)
+
+	began := time.Now()
+	_, err = m.Reconcile()
+	took := time.Since(began)
+	if err != nil {
+		t.Fatalf("Reconcile returned an error: %v", err)
+	}
+
+	if took < limit || took >= 2*limit {
+		t.Fatalf("the pass took %v, want the one limit of %v for all the tunnels it stopped", took, limit)
+	}
+
+	if running := runningKeys(m); len(running) != 0 {
+		t.Fatalf("the pass left %d tunnels registered, want none", len(running))
+	}
+}
+
+// TestAStoppedLoopStartsNothingAfterTheTunnelsAreStopped is the shutdown
+// meeting a pass that is waiting for the Start of a tunnel it is restarting.
+// The shutdown stops the loop, waits for it a short while and then stops every
+// tunnel. The pass must give up its wait when the loop is stopped and start
+// nothing after that, or it starts the tunnel again behind the shutdown, once
+// every tunnel was stopped.
+func TestAStoppedLoopStartsNothingAfterTheTunnelsAreStopped(t *testing.T) {
+	hosts := []models.Host{enabledHost(1, true)}
+	sps := []models.ServicePort{testServicePort(2)}
+
+	m, err := NewManager(newWritableStubDB(t, hosts, sps), zap.NewNop(), newTestCipher(t), 1)
+	if err != nil {
+		t.Fatalf("failed to create manager: %v", err)
+	}
+	t.Cleanup(m.StopAllTunnels)
+
+	const limit = 2 * time.Second
+	m.startEndWait = limit
+
+	// The tunnel runs on settings that are not the ones it should have, so the
+	// pass restarts it, and its Start never ends, so the pass waits for it.
+	tun := registerStoppedTunnel(t, m, 1, 2)
+	tun.stopMu.Lock()
+	tun.ended = make(chan struct{})
+	tun.stopMu.Unlock()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	returned := make(chan struct{})
+	go func() {
+		defer close(returned)
+		m.RunReconcileLoop(ctx, 3600)
+	}()
+
+	waitFor(t, 5*time.Second, "the pass to stop the tunnel it restarts", func() bool {
+		tun.stopMu.Lock()
+		defer tun.stopMu.Unlock()
+
+		return tun.isStopped
+	})
+
+	cancel()
+
+	endedInTime := false
+	select {
+	case <-returned:
+		endedInTime = true
+	case <-time.After(limit / 4):
+	}
+
+	m.StopAllTunnels()
+
+	select {
+	case <-returned:
+	case <-time.After(2 * limit):
+		t.Fatal("RunReconcileLoop did not return after the context was cancelled")
+	}
+
+	if running := runningKeys(m); len(running) != 0 {
+		t.Fatalf("the pass started %d tunnels after the loop was stopped and every tunnel was stopped, want none",
+			len(running))
+	}
+
+	if !endedInTime {
+		t.Fatalf("the pass went on waiting for the Start of the tunnel after the loop was stopped, "+
+			"and the loop did not return within %v", limit/4)
+	}
+}
+
 func TestReconcileLeavesRunningTunnelsAlone(t *testing.T) {
 	hosts := []models.Host{enabledHost(1, true)}
 	sps := []models.ServicePort{testServicePort(2)}

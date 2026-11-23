@@ -871,6 +871,7 @@
   "log.tunnel.status_save_failed.text": "не удалось обновить признак подключения туннеля",
   "log.tunnel.stop_failed.text": "не удалось остановить туннель",
   "log.tunnel.stop_skipped_not_running.text": "останавливать нечего, туннеля нет",
+  "log.tunnel.stop_wait_timed_out.text": "остановленный туннель ещё подключался и не завершился вовремя, работа продолжается без ожидания",
   "log.tunnel.tunnels_fetch_failed.text": "не удалось получить туннели",
   "log.ulimit.change_failed.text": "не удалось изменить ulimit",
   "log.ulimit.change_not_needed.text": "менять ulimit не нужно",
