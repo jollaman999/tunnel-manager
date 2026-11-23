@@ -910,31 +910,27 @@ func desiredSocksOf(hostByID map[uint]*models.Host) map[uint]*models.Host {
 	return desired
 }
 
-// reconcileSocks is the SOCKS5 half of a pass, with the rules
-// reconcileLocalForwards applies.
-func (m *Manager) reconcileSocks(desired map[uint]*models.Host, routes map[uint]hostRoute, result *ReconcileResult) {
+// socksStart is a proxy a pass starts once it has stopped everything it
+// stops, the way localForwardStart is a forward.
+type socksStart struct {
+	host    *models.Host
+	route   hostRoute
+	restart bool
+}
+
+// stopSocksOfPass is the SOCKS5 half of stopLocalForwardsOfPass, with its
+// rules and for its reason: what it returns is started by startSocksOfPass
+// after the forwards and the proxies have all been stopped.
+func (m *Manager) stopSocksOfPass(desired map[uint]*models.Host, routes map[uint]hostRoute,
+	result *ReconcileResult) []socksStart {
 	running := m.runningSocksFingerprints()
 
+	var starts []socksStart
 	for id, host := range desired {
 		route := routes[id]
 		current, isRunning := running[id]
 		if !isRunning {
-			err := route.err
-			if err == nil {
-				err = m.startSocks(host, route.hops)
-			}
-			if err != nil {
-				m.logger.Error("failed to start tunnel",
-					logid.TunnelStartFailed.Field(),
-					zap.Error(err),
-					zap.Uint("host_id", id),
-					zap.String("host_ip", host.Address),
-					zap.Int("socks_port", host.SocksPort))
-				result.Failed++
-				continue
-			}
-
-			result.Started++
+			starts = append(starts, socksStart{host: host, route: route})
 			continue
 		}
 
@@ -951,18 +947,7 @@ func (m *Manager) reconcileSocks(desired map[uint]*models.Host, routes map[uint]
 		// The only error stopping returns is a proxy that is already gone.
 		_ = m.stopSocks(id)
 
-		err = m.startSocks(host, route.hops)
-		if err != nil {
-			m.logger.Error("failed to restart a tunnel whose connection settings changed",
-				logid.TunnelRestartFailed.Field(),
-				zap.Error(err),
-				zap.Uint("host_id", id),
-				zap.Int("socks_port", host.SocksPort))
-			result.Failed++
-			continue
-		}
-
-		result.Restarted++
+		starts = append(starts, socksStart{host: host, route: route, restart: true})
 	}
 
 	for id := range running {
@@ -976,6 +961,44 @@ func (m *Manager) reconcileSocks(desired map[uint]*models.Host, routes map[uint]
 		}
 
 		result.Stopped++
+	}
+
+	return starts
+}
+
+// startSocksOfPass starts what stopSocksOfPass returned.
+func (m *Manager) startSocksOfPass(starts []socksStart, result *ReconcileResult) {
+	for _, start := range starts {
+		host := start.host
+
+		err := start.route.err
+		if err == nil {
+			err = m.startSocks(host, start.route.hops)
+		}
+		if err != nil {
+			if start.restart {
+				m.logger.Error("failed to restart a tunnel whose connection settings changed",
+					logid.TunnelRestartFailed.Field(),
+					zap.Error(err),
+					zap.Uint("host_id", host.ID),
+					zap.Int("socks_port", host.SocksPort))
+			} else {
+				m.logger.Error("failed to start tunnel",
+					logid.TunnelStartFailed.Field(),
+					zap.Error(err),
+					zap.Uint("host_id", host.ID),
+					zap.String("host_ip", host.Address),
+					zap.Int("socks_port", host.SocksPort))
+			}
+			result.Failed++
+			continue
+		}
+
+		if start.restart {
+			result.Restarted++
+		} else {
+			result.Started++
+		}
 	}
 }
 

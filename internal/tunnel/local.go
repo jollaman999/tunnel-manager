@@ -937,33 +937,38 @@ func (m *Manager) DesiredLocalForwardCount() (int, error) {
 	return len(desired), nil
 }
 
-// reconcileLocalForwards is the local forward half of a pass, with the rules
-// Reconcile applies to the tunnels: start what is missing, rebuild what runs
-// on settings it should no longer have, stop what is not wanted.
-func (m *Manager) reconcileLocalForwards(desired map[LocalForwardKey]desiredLocalForward,
-	routes map[uint]hostRoute, result *ReconcileResult) {
+// localForwardStart is a forward a pass starts once it has stopped everything
+// it stops: one that was not running, or one it stopped to rebuild, which
+// restart says and which decides whether it is counted as started or as
+// restarted.
+type localForwardStart struct {
+	want    desiredLocalForward
+	route   hostRoute
+	restart bool
+}
+
+// stopLocalForwardsOfPass is the first local forward step of a pass, with the
+// rules Reconcile applies to the tunnels: it stops what runs on settings it
+// should no longer have and what is not wanted, and returns what is to be
+// started, which startLocalForwardsOfPass does once the proxies have been
+// stopped as well.
+//
+// Nothing is started until everything is stopped because a port a forward is
+// moved to can be the one another forward or a proxy is moved off in the same
+// pass, as when two of them trade ports in an import. Started first, the
+// forward would find the port still held and report an error until the retry
+// after it. Stopping waits for the port to be let go (localTunnel.Stop), so
+// once every stop has returned, the ports the pass frees are free.
+func (m *Manager) stopLocalForwardsOfPass(desired map[LocalForwardKey]desiredLocalForward,
+	routes map[uint]hostRoute, result *ReconcileResult) []localForwardStart {
 	running := m.runningLocalForwardFingerprints()
 
+	var starts []localForwardStart
 	for key, want := range desired {
 		route := routes[want.host.ID]
 		current, isRunning := running[key]
 		if !isRunning {
-			err := route.err
-			if err == nil {
-				err = m.startLocalForward(want.host, want.lf, route.hops)
-			}
-			if err != nil {
-				m.logger.Error("failed to start tunnel",
-					logid.TunnelStartFailed.Field(),
-					zap.Error(err),
-					zap.Uint("local_forward_number", want.lf.Number),
-					zap.String("host_ip", want.host.Address),
-					zap.Int("local_port", want.lf.LocalPort))
-				result.Failed++
-				continue
-			}
-
-			result.Started++
+			starts = append(starts, localForwardStart{want: want, route: route})
 			continue
 		}
 
@@ -978,23 +983,10 @@ func (m *Manager) reconcileLocalForwards(desired map[LocalForwardKey]desiredLoca
 		}
 
 		// The only error stopping returns is a forward that is already gone,
-		// which leaves nothing in the way of starting it again. The row is
-		// stopped before it is started again, so a forward whose local port
-		// changed has let go of the old one before the new one is opened.
+		// which leaves nothing in the way of starting it again.
 		_ = m.stopLocalForward(key)
 
-		err = m.startLocalForward(want.host, want.lf, route.hops)
-		if err != nil {
-			m.logger.Error("failed to restart a tunnel whose connection settings changed",
-				logid.TunnelRestartFailed.Field(),
-				zap.Error(err),
-				zap.Uint("local_forward_number", want.lf.Number),
-				zap.Uint("host_id", want.host.ID))
-			result.Failed++
-			continue
-		}
-
-		result.Restarted++
+		starts = append(starts, localForwardStart{want: want, route: route, restart: true})
 	}
 
 	for key := range running {
@@ -1010,6 +1002,44 @@ func (m *Manager) reconcileLocalForwards(desired map[LocalForwardKey]desiredLoca
 		}
 
 		result.Stopped++
+	}
+
+	return starts
+}
+
+// startLocalForwardsOfPass starts what stopLocalForwardsOfPass returned.
+func (m *Manager) startLocalForwardsOfPass(starts []localForwardStart, result *ReconcileResult) {
+	for _, start := range starts {
+		want := start.want
+
+		err := start.route.err
+		if err == nil {
+			err = m.startLocalForward(want.host, want.lf, start.route.hops)
+		}
+		if err != nil {
+			if start.restart {
+				m.logger.Error("failed to restart a tunnel whose connection settings changed",
+					logid.TunnelRestartFailed.Field(),
+					zap.Error(err),
+					zap.Uint("local_forward_number", want.lf.Number),
+					zap.Uint("host_id", want.host.ID))
+			} else {
+				m.logger.Error("failed to start tunnel",
+					logid.TunnelStartFailed.Field(),
+					zap.Error(err),
+					zap.Uint("local_forward_number", want.lf.Number),
+					zap.String("host_ip", want.host.Address),
+					zap.Int("local_port", want.lf.LocalPort))
+			}
+			result.Failed++
+			continue
+		}
+
+		if start.restart {
+			result.Restarted++
+		} else {
+			result.Started++
+		}
 	}
 }
 

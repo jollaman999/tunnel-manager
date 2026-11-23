@@ -411,8 +411,13 @@ func (m *Manager) Reconcile() (ReconcileResult, error) {
 		result.Stopped++
 	}
 
-	m.reconcileLocalForwards(desiredLocal, routes, &result)
-	m.reconcileSocks(desiredSocksOf(hostByID), routes, &result)
+	// The local forwards and the proxies are all stopped before any of them
+	// is started, for the reason stopLocalForwardsOfPass gives: one of them
+	// can be moved to the port another lets go of in this pass.
+	localStarts := m.stopLocalForwardsOfPass(desiredLocal, routes, &result)
+	socksStarts := m.stopSocksOfPass(desiredSocksOf(hostByID), routes, &result)
+	m.startLocalForwardsOfPass(localStarts, &result)
+	m.startSocksOfPass(socksStarts, &result)
 
 	m.keepDesiredCounts(desiredCounts{tunnels: len(desired), localForwards: len(desiredLocal)})
 
