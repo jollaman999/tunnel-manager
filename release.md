@@ -1,3 +1,38 @@
+# v5.0.0
+
+## Add/fix features:
+
+- **An update installs only a release signed with the release key.** `make release` signs `SHA256SUMS` with an ed25519 key and the release carries `SHA256SUMS.sig`. The Update screen and the update loop check the signature against the public key built into the binary before they trust a checksum, and a signature that does not match stops the update before the binary is downloaded. An update whose release carries no signature, no `SHA256SUMS` or no line for this platform stops as well, and nothing is stopped or replaced. `-install` typed at a terminal still puts the running executable in place in that case, as before.
+- **The Update screen says why an install did not go through**, as soon as the install ends, rather than after waiting out three minutes with no reason. An install that failed after the service was stopped leaves the reason for the process that comes back, and the Update tab shows it after signing in again.
+- **The first look for a newer release is one interval after the last one, across restarts.** The time of every look is kept in the data directory, so a server restarted more often than the interval still looks once an interval, and a server that restarts in a loop no longer asks GitHub every time round.
+- **`make build` is a development build.** It installs a release without checking its signature, still checks the checksum, and says so in the log at startup and on the Update screen. `make release` and the images are built as before.
+- **The session cookie alone opens nothing.** The key of a session is handed out only in the body of the login, kept by the page in the local storage of its origin, and asked for in `X-CSRF-Token` on every request, reads included. A cookie is sent to every port of a host name, so a web page reached through a local forward on the same host name got the session cookie, and with the key in a cookie as well it could use the session. The device value that lets a browser past a hold on the account goes the same way, in the body and in `X-TM-Device`.
+- **A browser that signed in before gets past a hold on the account.** Thirty wrong passwords from other addresses no longer lock the operator out: a login that gets the password right is remembered by that browser, and its attempts are counted against its address and that device value instead of the account.
+- **A login or an API token made with the password a change replaced does not survive the change.** A login or a token request that checked the old password while the account was being changed is refused instead of leaving a session or a token behind.
+- **Moving a Host that holds a stored login and has no approved key asks for the account password**, for a change of its address, its SSH port or its jump route.
+- **The uninstall on the Settings screen removes the installation.** It deletes the database, the key, the logs and the files the updates leave, turns off the start at boot, removes the service registration, the executable and the data directory, and ends without the service manager starting it again, on systemd, launchd and the Windows service manager alike. On Windows the executable goes at the next restart, and an `-install` before that restart takes the deletion back. An uninstall pressed in the seconds after a restart ends as an uninstall.
+- **The Restart button on the Settings screen brings a Windows service back.** The service is registered so that the service manager starts it again after the restart, and the screen says so beforehand.
+- **The monitoring and reconcile intervals are held to an hour, and the log size and the log age to 1048576 MB and 3650 days.** A larger value overflowed and stopped every start, deleted every rotated log at the first line written, or stopped the log file from being written to. A stored or imported value past the ceiling is lowered to it and the startup says so in the log file.
+- **A SOCKS5 proxy stored or imported without a scope opens on loopback** rather than on every address.
+- **A Host that waits on its host key shows it in its own row**, with the approve button under the badge, on the Hosts screen as on the status screen.
+- **A local forward and a SOCKS5 proxy say which half of the address pair opened**, and the status search finds a row by the address it shows.
+- **`/metrics` labels the series of a Host with its id**, so two Hosts on one address are told apart.
+- **A tunnel that stops while a Host on its route stalls closes that route first** instead of waiting on it. A key that cannot be used is reported once, a dropped forward is counted once, and a session a Host opened after the request gave up is closed.
+- **Two installs of one installation, or two update installs, no longer run at once**, and an update install where nothing newer was found is refused.
+- **Two certificate replacements no longer leave the server and the database on different certificates.**
+- **A sealed file is opened only under the scrypt parameters this build writes**, so a file naming heavier ones cannot hold a core.
+- The image is built on golang:1.27.4-trixie and runs on alpine:3.24.4, Echo is 5.4.7, and the module now names go 1.27.
+
+## Notes:
+
+- **A script that used the session cookie alone has to send the key.** Take `csrf_token` and `device` from the body of `POST /api/login`, then send `X-CSRF-Token` on every request and `X-TM-Device` on every login. An API token (`Authorization: Bearer`) works as before and needs neither. The `tm_csrf` and `tm_device` cookies are no longer handed out, and a browser that still holds them is told to drop them.
+- **After the upgrade every browser signs in once more**, and is no longer remembered past a hold on the account until that login.
+- **Releases from this one on carry `SHA256SUMS.sig`.** An update from this release to a later one checks it. A release without it is not installed by an update.
+- **The uninstall on the Settings screen now does what `-uninstall -purge` does.** A Docker Compose container is still started again by `restart: always`, so run `docker compose down` after it.
+- **A Windows service registered by an earlier release** is not started again by the Restart button until it is registered again by `-install` or by an update. `sc qfailureflag tunnel-manager` shows `TRUE` once it is.
+- **`GET /api/update` carries `install_problem`**, `GET /api/restart` carries `in_place`, and `POST /api/uninstall` carries `service` with what became of the registration, the executable and the data directory.
+- **A password is held to 8 to 72 bytes**, as the code has always done; the reference said 12.
+
 # v4.1.10
 
 ## Add/fix features:
