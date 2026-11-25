@@ -41,8 +41,8 @@ What it does, in order:
    | `site-b-app` | `2001:db8:b::21` | `bastion`, `site-b-gw` |
    | `site-b-db` | `2001:db8:b::22`, its web server on every address | `bastion`, `site-b-gw` |
 
-4. Starts the demo service (`service/`) on `127.0.0.1:8000`, `127.0.0.1:8001`
-   and `127.0.0.1:8002` at once. Each answers with a page that names its port.
+4. Starts the demo service (`service/`) on `127.0.0.1:18000`, `127.0.0.1:18001`
+   and `127.0.0.1:18002` at once. Each answers with a page that names its port.
 5. Builds tunnel-manager from this repository and starts it with a data
    directory of its own under a new temporary directory. Nothing of an
    installation that is already on the machine is read or changed.
@@ -78,8 +78,8 @@ What it does, in order:
    and last without dithering, when it comes out larger than 5 MB.
 
 It needs Go, Docker, ffmpeg and Google Chrome, and these addresses free:
-`127.0.0.1:8888` (tunnel-manager), `127.0.0.1:8000`, `127.0.0.1:8001`,
-`127.0.0.1:8002`, `127.0.0.1:18080` and `127.0.0.1:1080`. The script says which
+`127.0.0.1:8888` (tunnel-manager), `127.0.0.1:18000`, `127.0.0.1:18001`,
+`127.0.0.1:18002`, `127.0.0.1:18080` and `127.0.0.1:1080`. The script says which
 one is taken if one is, and stops as well when a container or a network of the
 names above is already there, or when this machine has a route inside one of
 the three subnets.

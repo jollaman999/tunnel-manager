@@ -21,7 +21,7 @@ IMAGE=tunnel-manager-demo-host
 PREFIX=tunnel-manager-demo
 UI_ADDR=127.0.0.1:8888
 SERVICE_IP=127.0.0.1
-SERVICE_PORTS=(8000 8001 8002)
+SERVICE_PORTS=(18000 18001 18002)
 # The ports the Hosts open for the service ports, one for each.
 HOST_OPEN_PORTS=(8080 8081 8082)
 FORWARD_ADDR=127.0.0.1:18080

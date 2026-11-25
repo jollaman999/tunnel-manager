@@ -61,7 +61,7 @@ func main() {
 	flag.StringVar(&cfg.account, "account", "admin", "username the setup gives the account")
 	flag.StringVar(&cfg.accountPassword, "account-password", "demo-account-password", "password the setup gives the account")
 	flag.StringVar(&cfg.serviceIP, "service-ip", "127.0.0.1", "address of the demo service")
-	servicePorts := flag.String("service-ports", "8000,8001,8002", "comma-separated ports of the demo service")
+	servicePorts := flag.String("service-ports", "18000,18001,18002", "comma-separated ports of the demo service")
 	localPorts := flag.String("local-ports", "8080,8081,8082", "comma-separated ports the Host opens for them, one for each")
 	hosts := flag.String("hosts", "", "comma-separated names of the Hosts, in the order they are added")
 	hostAddresses := flag.String("host-addresses", "", "comma-separated name=address:port of every Host, the address it is registered at")

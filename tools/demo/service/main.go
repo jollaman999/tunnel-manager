@@ -42,7 +42,7 @@ const page = `<!DOCTYPE html>
 `
 
 func main() {
-	listen := flag.String("listen", "127.0.0.1:8000,127.0.0.1:8001,127.0.0.1:8002",
+	listen := flag.String("listen", "127.0.0.1:18000,127.0.0.1:18001,127.0.0.1:18002",
 		"comma-separated addresses to listen on")
 	flag.Parse()
 
