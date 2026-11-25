@@ -1,3 +1,26 @@
+# v5.1.0
+
+## Add/fix features:
+
+- **A release names its version inside what it signs.** `SHA256SUMS` now begins with `# tunnel-manager vX.Y.Z`, and the signature in `SHA256SUMS.sig` covers that line with the rest of the file. An install refuses a release whose signed version is not its tag, so the files of an older release put up again under a newer tag are no longer installed. A release whose `SHA256SUMS` carries no such line, which is every release up to v5.0.0, is not installed either: an update stops with nothing stopped or replaced, and `-install` puts the running executable in place.
+- **An install never puts an older release over what runs.** A release older than the running build, or one whose version cannot be read, is treated the same way: an update stops, and `-install` puts the running executable in place. A release of the same version is installed as before.
+- **A local forward made through the API without `bind_scope` opens on loopback**, the way the add form on the Hosts screen has opened it since v4.1.0. An update that leaves `bind_scope` out keeps the scope that is stored, where it used to put the forward on every address.
+- **Alerts say which Host they are about.** The webhook body and the mail carry `host_id` and `host_ssh_port`, so two Hosts on one address with different SSH ports are told apart. The mail subject is unchanged.
+- **A tunnel is watched with its SSH keepalive alone.** The watch no longer opens a TCP connection to the Host every interval, which left a `Connection closed by ... [preauth]` line in the log of its SSH server each time, one per tunnel per interval.
+- **A tunnel that is started again waits for its old connection to end**, for up to 30 seconds. A restart that came while the old connection was still asking for the port no longer comes up refused, or connected on one half of its address pair only. One pass of the reconcile loop, and the stop of the service, wait no longer than those 30 seconds in all, and a pass told to stop starts nothing more.
+- **Local forwards and SOCKS5 proxies that trade ports in one change come up at once.** Every one of them that a pass stops is stopped before any is started, so one no longer fails for a moment on the port another was about to let go of.
+- **Emptying the log while lines are being written no longer pushes out the oldest rotated log.**
+- The Windows service tells the service manager it may take 50 seconds to stop, which covers the wait for the old connections above.
+
+## Notes:
+
+- **A script that creates a local forward without `bind_scope` now gets loopback.** Send `"bind_scope": "wildcard"` to open it on every address as before. A local forward stored before this release keeps the scope it had, and a file exported without scopes is still imported on every address.
+- **A webhook receiver gets two more fields**, `host_id` and `host_ssh_port`. Both are `0` in the test alert.
+- **A Host whose SSH server stops taking new connections while the open one still answers keeps its tunnels up**, where the watch used to reconnect them. A Host that stops answering is noticed when its keepalive goes unanswered, within the monitoring interval plus the keepalive timeout, as before. The log no longer writes `tunnel.server_unreachable`; the keepalive failure line names the tunnel instead.
+- **An installation of v5.0.0 updates to this release as it would to any other.** Its check of the signature is unchanged, and the version line is a comment it skips. To check a release by hand, verify `SHA256SUMS.sig` against `SHA256SUMS` with `openssl` as the reference shows, then compare the first line with the tag.
+- **Emptying the log while the Settings screen is uninstalling the service answers with a failure**, since the file is being removed.
+- For those building from the repository: `make release` signs only a tag of `v` and three numbers, writes the version line into `SHA256SUMS`, and stops before building when the commit carries a `v` tag other than the version in `main.go`. The demo recorder in tools/demo runs its demo service on ports 18000 to 18002, and the demo at the top of the README is recorded again.
+
 # v5.0.0
 
 ## Add/fix features:
