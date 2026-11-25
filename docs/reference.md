@@ -840,6 +840,14 @@ answers `Signature Verified Successfully`. Check the signature first and the
 checksum after it: a checksum read out of a file nobody vouched for says only
 that the file and the download agree.
 
+The first line of `SHA256SUMS` names the version of the release, as a comment:
+`# tunnel-manager v5.0.1`. `sha256sum -c` and `shasum -c` pass over it. It is
+there because the rest of the file names files and no version, so a signature
+over it alone would stay good for an old release put up again under a newer
+tag. The line is inside what the signature covers, so it is the version the
+release key vouched for, and it has to be the tag the release is published
+under. Releases up to v5.0.0 carry no such line.
+
 The flags are all of them:
 
 | Flag | What it does |
@@ -1029,15 +1037,22 @@ sudo ./tunnel-manager-linux-amd64 -install -bin /opt/tunnel-manager/tunnel-manag
 file that was run.** `-install` reads the newest release from GitHub and
 downloads the asset for this platform and architecture. First it checks
 `SHA256SUMS.sig`, the signature of the release's `SHA256SUMS`, against the
-release key the program carries, and only then reads the line for that asset
-out of `SHA256SUMS` and checks the download against it. A signature that does
-not match stops the install before the asset is downloaded at all, and a
-checksum that does not match stops it rather than putting the file in place.
-Everything else - a release that cannot be read, a release with no asset for
-this platform, a release with no `SHA256SUMS` or no `SHA256SUMS.sig`, which is
-what releases made before the checksums were signed look like, a download that
-failed - installs the executable of the running process instead, with the
-reason. An install started from the Update screen, or by the settings, does not:
+release key the program carries, then reads the version the first line of
+`SHA256SUMS` names (see [Install and run](#install-and-run)), and only then reads the line
+for that asset out of `SHA256SUMS` and checks the download against it. A
+signature that does not match, or a version line that names another version
+than the tag of the release, or one that is not the single
+`# tunnel-manager vX.Y.Z` line at the top, stops the install before the asset is
+downloaded at all, and a checksum that does not match stops it rather than
+putting the file in place. Everything else - a release that cannot be read, a
+release older than the version that runs or with a tag that cannot be read as a
+version, a release with no asset for this platform, a release with no
+`SHA256SUMS` or no `SHA256SUMS.sig`, which is what releases made before the
+checksums were signed look like, a release whose `SHA256SUMS` has no version
+line, which is what releases up to v5.0.0 look like, a download that failed -
+installs the executable of the running process instead, with the reason. A
+release of the version that runs is installed, so an executable of that version
+that was damaged can be put right. An install started from the Update screen, or by the settings, does not:
 it installs the release or nothing (see [Installing](#installing)). Which of the
 two landed is in the report:
 
@@ -1057,7 +1072,9 @@ tunnel-manager install
 The development build that `make` makes (see [From source](#from-source)) does
 not check the signature. It installs a release on its checksum alone, with or
 without `SHA256SUMS.sig`, and the report says `checksum verified, signature not
-checked (a development build)`. A checksum that does not match still stops it.
+checked (a development build)`. A checksum that does not match still stops it,
+and the version line is still read and held to the tag and to the version that
+runs.
 
 What an install does on a machine that already carries one depends on the paths
 the registration holds:
@@ -1197,10 +1214,16 @@ binary from `make release` or from a release page, or the container image,
 which are built without the tag and check the signature.
 
 `make release` builds one for every platform in the table above, writes `SHA256SUMS` for them and signs it
-into `SHA256SUMS.sig`. Signing takes the private release key, a PKCS#8 PEM
-ed25519 key named by `RELEASE_SIGNING_KEY`, and `make release` stops before it
-builds anything when that file is not there, or refuses to sign with a key that
-is not the one the program checks releases against.
+into `SHA256SUMS.sig`. The first line it writes into `SHA256SUMS` is
+`# tunnel-manager v` and the version in `main.go`, the version the binaries say
+they are, and the release has to go up under exactly that tag: an install
+refuses a release whose version line names another one. Signing takes the
+private release key, a PKCS#8 PEM ed25519 key named by `RELEASE_SIGNING_KEY`,
+and `make release` stops before it builds anything when that file is not there,
+or when the commit already carries `v` tags and none of them is the one the
+version names. It refuses to sign with a key that is not the one the program
+checks releases against, under a tag that is not `v` and three numbers, and
+checksums whose version line is not that tag.
 
 ## HTTPS and the certificate
 
@@ -2065,17 +2088,19 @@ every tunnel.
 run again as a process of its own, with the flag. A process cannot replace its
 own file and then run itself again, so the work is handed to one that has not.
 The release is downloaded, checked against the `SHA256SUMS` the release
-publishes once the signature over that file has been checked, put in place, and
-the service manager restarts the service. A release whose signature does not
-match stops the install. The development build is the exception: it does not
+publishes once the signature over that file has been checked and its version
+line has been found to name the tag, put in place, and the service manager
+restarts the service. A release whose signature or version line does not match
+stops the install. The development build is the exception: it does not
 check the signature, says so under the version on the tab, and
 `GET /api/update` answers it with `dev_build: true`. See [From source](#from-source).
 
 **An update installs the release or nothing.** Where `-install` typed at a
 terminal would put the running executable in place instead - a release made
-before releases were signed, which carries no `SHA256SUMS.sig`, a release with
-no `SHA256SUMS` or no line in it for this platform, a release that cannot be
-read or downloaded - the update stops. Put in place, that executable is the
+before releases were signed, which carries no `SHA256SUMS.sig`, a release whose
+`SHA256SUMS` has no version line, a release older than the version that runs, a
+release with no `SHA256SUMS` or no line in it for this platform, a release that
+cannot be read or downloaded - the update stops. Put in place, that executable is the
 version the service already runs: the service would be stopped and started
 again for nothing, the newer release would still be there, and the process the
 restart started would find it again one interval later and start the same
@@ -2116,10 +2141,11 @@ in place of the button, and `POST /api/update/install` answers `409`.
 The call asks what the press is offered on. Where the last check found nothing
 newer, found a tag that cannot be compared, failed, or has not run yet,
 `POST /api/update/install` answers `409` with `update.nothing_newer` and
-installs nothing. `-install` puts the newest release in place whatever is
-running, so a call that went through there would put the running release in
-place again, or an older one over a build that is ahead of it, and take every
-tunnel down to do so.
+installs nothing. `-install` puts the newest release in place when it is the
+version that runs as well, and turns to the running executable only when the
+release is older or its tag cannot be compared, so a call that went through
+there would put the version that runs in place again and take every tunnel down
+to do so.
 
 **One install is started at a time.** Once a press has handed an install over,
 another press, and the loop under [Installing without being asked](#installing-without-being-asked),

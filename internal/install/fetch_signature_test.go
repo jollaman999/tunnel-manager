@@ -32,7 +32,7 @@ func TestFetchFallsBackWhenTheReleaseHasNoSignature(t *testing.T) {
 
 	dir := t.TempDir()
 
-	fetched, err := fetchFrom(context.Background(), dir, url)
+	fetched, err := fetchFrom(context.Background(), dir, testRunning, url)
 	if err != nil {
 		t.Fatalf("a release without a signature is not an error: %v", err)
 	}
@@ -100,7 +100,7 @@ func TestFetchFallsBackWhenTheSignatureCannotBeRead(t *testing.T) {
 		http.NotFound(w, r)
 	})
 
-	fetched, err := fetchFrom(context.Background(), t.TempDir(), server.URL+"/releases/latest")
+	fetched, err := fetchFrom(context.Background(), t.TempDir(), testRunning, server.URL+"/releases/latest")
 	if err != nil {
 		t.Fatalf("a signature that cannot be read is not an error: %v", err)
 	}
@@ -126,7 +126,7 @@ func TestFetchFallsBackWhenTheSignatureCannotBeRead(t *testing.T) {
 // even asked for.
 func TestFetchFailsWhenTheSignatureDoesNotMatch(t *testing.T) {
 	name := platformAsset(t)
-	sums := sha256Line(testBinary, name)
+	sums := versioned("v9.9.9", sha256Line(testBinary, name))
 
 	flipped := signed(sums)
 	flipped[10] ^= 0x01
@@ -135,7 +135,8 @@ func TestFetchFailsWhenTheSignatureDoesNotMatch(t *testing.T) {
 		name      string
 		signature []byte
 	}{
-		{"checksums changed after they were signed", signed(sha256Line([]byte("the binary that was released"), name))},
+		{"checksums changed after they were signed", signed(versioned("v9.9.9", sha256Line([]byte("the binary that was released"), name)))},
+		{"the version line changed after it was signed", signed(versioned("v5.0.1", sha256Line(testBinary, name)))},
 		{"signed with a key that is not the release key", ed25519.Sign(otherSigningKey, sums)},
 		{"a signature with one bit turned", flipped},
 		{"a file that is not a signature at all", []byte("not a signature\n")},
@@ -152,7 +153,7 @@ func TestFetchFailsWhenTheSignatureDoesNotMatch(t *testing.T) {
 
 			dir := t.TempDir()
 
-			fetched, err := fetchFrom(context.Background(), dir, url)
+			fetched, err := fetchFrom(context.Background(), dir, testRunning, url)
 			if err == nil {
 				source := fetched.Source
 				fetched.Close()

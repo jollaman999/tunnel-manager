@@ -1308,7 +1308,7 @@ func TestAnUpdateWhoseReleaseCannotBeCheckedDoesNotRestartTheService(t *testing.
 	var looks, starts, restarts atomic.Int32
 
 	steps := installSteps{
-		fetch: func(context.Context, string) (*install.Fetched, error) {
+		fetch: func(context.Context, string, string) (*install.Fetched, error) {
 			return &install.Fetched{Path: "/usr/local/bin/tunnel-manager", Source: install.SourceRunning,
 				Why: "release v99.0.0 carries no SHA256SUMS.sig"}, nil
 		},

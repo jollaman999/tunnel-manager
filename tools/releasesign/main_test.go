@@ -12,6 +12,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/jollaman999/tunnel-manager/internal/install"
 )
 
 // writeKey puts key into a PKCS#8 PEM file the way openssl genpkey writes one
@@ -36,10 +38,21 @@ func writeKey(t *testing.T, dir string, key any) (string, []byte) {
 	return path, encoded
 }
 
+// checksumLine is one line of SHA256SUMS the way sha256sum writes it.
+const checksumLine = "1111111111111111111111111111111111111111111111111111111111111111  tunnel-manager-linux-amd64\n"
+
+// writeSums writes SHA256SUMS the way the release target does for v5.1.0: the
+// version line first, then the checksums.
 func writeSums(t *testing.T, dir string) (string, []byte) {
 	t.Helper()
 
-	sums := []byte("1111111111111111111111111111111111111111111111111111111111111111  tunnel-manager-linux-amd64\n")
+	return writeSumsOf(t, dir, "# tunnel-manager v5.1.0\n"+checksumLine)
+}
+
+func writeSumsOf(t *testing.T, dir string, content string) (string, []byte) {
+	t.Helper()
+
+	sums := []byte(content)
 	path := filepath.Join(dir, "SHA256SUMS")
 
 	err := os.WriteFile(path, sums, 0o644)
@@ -50,14 +63,18 @@ func writeSums(t *testing.T, dir string) (string, []byte) {
 	return path, sums
 }
 
+// TestRunSignsWithTheReleaseKey signs a release and holds what was written to
+// what an install checks: a signature over every byte of SHA256SUMS, the
+// version line included, and a line that names the tag.
 func TestRunSignsWithTheReleaseKey(t *testing.T) {
 	dir := t.TempDir()
 
 	key := ed25519.NewKeyFromSeed(bytes.Repeat([]byte{1}, ed25519.SeedSize))
+	public := key.Public().(ed25519.PublicKey)
 	keyPath, _ := writeKey(t, dir, key)
 	sumsPath, sums := writeSums(t, dir)
 
-	written, err := run(keyPath, sumsPath, key.Public().(ed25519.PublicKey))
+	written, err := run(keyPath, sumsPath, "v5.1.0", public)
 	if err != nil {
 		t.Fatalf("run: %v", err)
 	}
@@ -75,12 +92,93 @@ func TestRunSignsWithTheReleaseKey(t *testing.T) {
 		t.Errorf("the signature is %d bytes, want the %d raw bytes ed25519 makes", len(signature), ed25519.SignatureSize)
 	}
 
-	if !ed25519.Verify(key.Public().(ed25519.PublicKey), sums, signature) {
+	if !ed25519.Verify(public, sums, signature) {
 		t.Error("the signature does not check against the key it was made with")
 	}
 
-	if ed25519.Verify(key.Public().(ed25519.PublicKey), append(sums, '\n'), signature) {
+	if ed25519.Verify(public, append(sums, '\n'), signature) {
 		t.Error("the signature checks against checksums it was not made over")
+	}
+
+	unversioned := []byte(checksumLine)
+	if ed25519.Verify(public, unversioned, signature) {
+		t.Error("the signature checks against the checksums without their version line")
+	}
+
+	version, err := install.SignedVersion(sums, "v5.1.0")
+	if err != nil || version != "v5.1.0" {
+		t.Errorf("an install reads the signed checksums as %q, %v, want v5.1.0", version, err)
+	}
+}
+
+// TestRunRefusesChecksumsThatDoNotNameTheTag is SHA256SUMS whose version line
+// is missing, names another version than the tag, or is not where the release
+// build writes it. An install refuses or passes over every one of them, so
+// nothing is signed.
+func TestRunRefusesChecksumsThatDoNotNameTheTag(t *testing.T) {
+	key := ed25519.NewKeyFromSeed(bytes.Repeat([]byte{1}, ed25519.SeedSize))
+
+	cases := []struct {
+		name    string
+		content string
+		want    string
+	}{
+		{"no version line", checksumLine, "no first line"},
+		{"another version", "# tunnel-manager v5.0.1\n" + checksumLine, "signed as v5.0.1 and the release is tagged v5.1.0"},
+		{"the line after the checksums", checksumLine + "# tunnel-manager v5.1.0\n", "line 2"},
+	}
+
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			dir := t.TempDir()
+
+			keyPath, _ := writeKey(t, dir, key)
+			sumsPath, _ := writeSumsOf(t, dir, c.content)
+
+			_, err := run(keyPath, sumsPath, "v5.1.0", key.Public().(ed25519.PublicKey))
+			if err == nil {
+				t.Fatal("checksums that do not name the tag were signed")
+			}
+
+			if !strings.Contains(err.Error(), c.want) {
+				t.Errorf("the refusal says %q, want it to say %q", err, c.want)
+			}
+
+			_, statErr := os.Stat(sumsPath + ".sig")
+			if !os.IsNotExist(statErr) {
+				t.Errorf("a signature was left behind for checksums that were refused: %v", statErr)
+			}
+		})
+	}
+}
+
+// TestRunRefusesATagAnInstallCannotRead is a release signed under a tag that is
+// not v and three numbers. An install takes no release whose tag it cannot
+// compare with its own version, so the signature is not made at all.
+func TestRunRefusesATagAnInstallCannotRead(t *testing.T) {
+	key := ed25519.NewKeyFromSeed(bytes.Repeat([]byte{1}, ed25519.SeedSize))
+
+	for _, tag := range []string{"", "5.1.0", "v5.1", "v5.1.0-rc1", "v5.1.0\n", " v5.1.0", "latest"} {
+		t.Run(tag, func(t *testing.T) {
+			dir := t.TempDir()
+
+			keyPath, _ := writeKey(t, dir, key)
+			sumsPath, _ := writeSums(t, dir)
+
+			_, err := run(keyPath, sumsPath, tag, key.Public().(ed25519.PublicKey))
+			if err == nil {
+				t.Fatalf("the checksums were signed under %q", tag)
+			}
+
+			if !strings.Contains(err.Error(), "three numbers") {
+				t.Errorf("the refusal says %q, want it to say what a tag should be", err)
+			}
+
+			_, statErr := os.Stat(sumsPath + ".sig")
+			if !os.IsNotExist(statErr) {
+				t.Errorf("a signature was left behind for a refused tag: %v", statErr)
+			}
+		})
 	}
 }
 
@@ -112,7 +210,7 @@ func TestRunRefusesAKeyThatIsNotTheReleaseKey(t *testing.T) {
 			keyPath, keyPEM := writeKey(t, dir, c.key)
 			sumsPath, _ := writeSums(t, dir)
 
-			_, err := run(keyPath, sumsPath, releaseKey.Public().(ed25519.PublicKey))
+			_, err := run(keyPath, sumsPath, "v5.1.0", releaseKey.Public().(ed25519.PublicKey))
 			if err == nil {
 				t.Fatal("a key that is not the release key signed the checksums")
 			}
@@ -147,7 +245,7 @@ func TestRunRefusesAFileThatIsNotAKey(t *testing.T) {
 	sumsPath, _ := writeSums(t, dir)
 	want := ed25519.NewKeyFromSeed(bytes.Repeat([]byte{1}, ed25519.SeedSize)).Public().(ed25519.PublicKey)
 
-	_, err = run(keyPath, sumsPath, want)
+	_, err = run(keyPath, sumsPath, "v5.1.0", want)
 	if err == nil {
 		t.Fatal("a file that holds no key signed the checksums")
 	}

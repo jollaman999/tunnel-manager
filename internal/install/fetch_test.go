@@ -9,6 +9,7 @@ import (
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net"
 	"net/http"
@@ -100,10 +101,22 @@ var (
 	otherSigningKey = ed25519.NewKeyFromSeed(bytes.Repeat([]byte{2}, ed25519.SeedSize))
 )
 
+// testRunning is the version the tests hand Fetch as the one that is running.
+// It is before every tag the fake releases carry, so that a release is newer
+// unless a test says otherwise.
+const testRunning = "1.0.0"
+
 // signed is the release signature of sums, the file the release build writes
 // beside them as SHA256SUMS.sig.
 func signed(sums []byte) []byte {
 	return ed25519.Sign(testSigningKey, sums)
+}
+
+// versioned is sums with the version line the release build writes at the top
+// of SHA256SUMS, naming tag. A release without it is one an install does not
+// take, so every fake release that is meant to be installed carries it.
+func versioned(tag string, sums []byte) []byte {
+	return append([]byte(versionLinePrefix+tag+"\n"), sums...)
 }
 
 // fakeRelease stands in for the release API. It answers the latest release with
@@ -191,8 +204,8 @@ func sha256Line(body []byte, name string) []byte {
 func TestFetchTakesTheReleaseWhenTheChecksumMatches(t *testing.T) {
 	name := platformAsset(t)
 
-	sums := append([]byte("0000000000000000000000000000000000000000000000000000000000000000  something-else\n"),
-		sha256Line(testBinary, name)...)
+	sums := versioned("v9.9.9", append([]byte("0000000000000000000000000000000000000000000000000000000000000000  something-else\n"),
+		sha256Line(testBinary, name)...))
 
 	url := fakeRelease(t, "v9.9.9", map[string][]byte{
 		name:            testBinary,
@@ -202,7 +215,7 @@ func TestFetchTakesTheReleaseWhenTheChecksumMatches(t *testing.T) {
 
 	dir := t.TempDir()
 
-	fetched, err := fetchFrom(context.Background(), dir, url)
+	fetched, err := fetchFrom(context.Background(), dir, testRunning, url)
 	if err != nil {
 		t.Fatalf("fetchFrom: %v", err)
 	}
@@ -276,7 +289,7 @@ func TestFetchFallsBackWhenTheReleaseHasNoChecksumFile(t *testing.T) {
 
 	dir := t.TempDir()
 
-	fetched, err := fetchFrom(context.Background(), dir, url)
+	fetched, err := fetchFrom(context.Background(), dir, testRunning, url)
 	if err != nil {
 		t.Fatalf("a release without checksums is not an error: %v", err)
 	}
@@ -323,7 +336,7 @@ func TestFetchFallsBackWhenTheReleaseHasNoChecksumFile(t *testing.T) {
 func TestFetchFailsWhenTheChecksumDoesNotMatch(t *testing.T) {
 	name := platformAsset(t)
 
-	sums := sha256Line([]byte("a different binary"), name)
+	sums := versioned("v9.9.9", sha256Line([]byte("a different binary"), name))
 
 	url := fakeRelease(t, "v9.9.9", map[string][]byte{
 		name:            testBinary,
@@ -333,7 +346,7 @@ func TestFetchFailsWhenTheChecksumDoesNotMatch(t *testing.T) {
 
 	dir := t.TempDir()
 
-	fetched, err := fetchFrom(context.Background(), dir, url)
+	fetched, err := fetchFrom(context.Background(), dir, testRunning, url)
 	if err == nil {
 		fetched.Close()
 		t.Fatal("a file that does not hash to what the release says it does has to be an error")
@@ -406,7 +419,7 @@ func TestFetchFallsBackWhenTheAPIIsDown(t *testing.T) {
 	url := server.URL + "/releases/latest"
 	server.Close()
 
-	fetched, err := fetchFrom(context.Background(), t.TempDir(), url)
+	fetched, err := fetchFrom(context.Background(), t.TempDir(), testRunning, url)
 	if err != nil {
 		t.Fatalf("a release that cannot be read is not an error: %v", err)
 	}
@@ -447,7 +460,7 @@ func TestFetchFallsBackWhenTheAPIAnswersAnError(t *testing.T) {
 	}))
 	t.Cleanup(server.Close)
 
-	fetched, err := fetchFrom(context.Background(), t.TempDir(), server.URL)
+	fetched, err := fetchFrom(context.Background(), t.TempDir(), testRunning, server.URL)
 	if err != nil {
 		t.Fatalf("an API that refuses is not an error: %v", err)
 	}
@@ -467,7 +480,7 @@ func TestFetchFallsBackWhenTheAPIAnswersAnError(t *testing.T) {
 func TestFetchFallsBackWhenTheReleaseHasNoAssetForThisPlatform(t *testing.T) {
 	url := fakeRelease(t, "v9.9.9", map[string][]byte{"tunnel-manager-plan9-mips": testBinary})
 
-	fetched, err := fetchFrom(context.Background(), t.TempDir(), url)
+	fetched, err := fetchFrom(context.Background(), t.TempDir(), testRunning, url)
 	if err != nil {
 		t.Fatalf("fetchFrom: %v", err)
 	}
@@ -489,7 +502,7 @@ func TestFetchFallsBackWhenTheReleaseHasNoAssetForThisPlatform(t *testing.T) {
 func TestFetchFallsBackWhenTheChecksumsDoNotListTheAsset(t *testing.T) {
 	name := platformAsset(t)
 
-	sums := sha256Line(testBinary, "tunnel-manager-some-other-platform")
+	sums := versioned("v9.9.9", sha256Line(testBinary, "tunnel-manager-some-other-platform"))
 
 	url := fakeRelease(t, "v9.9.9", map[string][]byte{
 		name:            testBinary,
@@ -497,7 +510,7 @@ func TestFetchFallsBackWhenTheChecksumsDoNotListTheAsset(t *testing.T) {
 		signatureAsset:  signed(sums),
 	})
 
-	fetched, err := fetchFrom(context.Background(), t.TempDir(), url)
+	fetched, err := fetchFrom(context.Background(), t.TempDir(), testRunning, url)
 	if err != nil {
 		t.Fatalf("fetchFrom: %v", err)
 	}
@@ -518,7 +531,7 @@ func TestFetchFallsBackWhenTheChecksumsDoNotListTheAsset(t *testing.T) {
 // told it worked and is left on the version they started with.
 func TestFetchRetriesAServerThatIsBusy(t *testing.T) {
 	name := platformAsset(t)
-	sums := sha256Line(testBinary, name)
+	sums := versioned("v9.9.9", sha256Line(testBinary, name))
 
 	var tries atomic.Int32
 
@@ -556,7 +569,7 @@ func TestFetchRetriesAServerThatIsBusy(t *testing.T) {
 		_, _ = w.Write(sums)
 	})
 
-	fetched, err := fetchFrom(context.Background(), t.TempDir(), server.URL+"/releases/latest")
+	fetched, err := fetchFrom(context.Background(), t.TempDir(), testRunning, server.URL+"/releases/latest")
 	if err != nil {
 		t.Fatalf("a server that came back is not an error: %v", err)
 	}
@@ -588,7 +601,7 @@ func TestFetchFallsBackWhenAServerStaysBusy(t *testing.T) {
 	}))
 	t.Cleanup(server.Close)
 
-	fetched, err := fetchFrom(context.Background(), t.TempDir(), server.URL+"/releases/latest")
+	fetched, err := fetchFrom(context.Background(), t.TempDir(), testRunning, server.URL+"/releases/latest")
 	if err != nil {
 		t.Fatalf("a server that stays down is not an error: %v", err)
 	}
@@ -618,7 +631,7 @@ func TestFetchDoesNotRetryARefusal(t *testing.T) {
 	}))
 	t.Cleanup(server.Close)
 
-	fetched, err := fetchFrom(context.Background(), t.TempDir(), server.URL+"/releases/latest")
+	fetched, err := fetchFrom(context.Background(), t.TempDir(), testRunning, server.URL+"/releases/latest")
 	if err != nil {
 		t.Fatalf("an API that refuses is not an error: %v", err)
 	}
@@ -820,7 +833,7 @@ func TestFetchFallsBackWhenTheReleaseRedirectsOffHTTPS(t *testing.T) {
 
 	dir := t.TempDir()
 
-	fetched, err := fetchFrom(context.Background(), dir, server.URL+"/releases/latest")
+	fetched, err := fetchFrom(context.Background(), dir, testRunning, server.URL+"/releases/latest")
 	if err != nil {
 		t.Fatalf("a redirect that was refused is not an error: %v", err)
 	}
@@ -880,7 +893,7 @@ func TestFetchFallsBackWhenTheReleaseNamesAPlainHTTPAsset(t *testing.T) {
 
 	dir := t.TempDir()
 
-	fetched, err := fetchFrom(context.Background(), dir, server.URL+"/releases/latest")
+	fetched, err := fetchFrom(context.Background(), dir, testRunning, server.URL+"/releases/latest")
 	if err != nil {
 		t.Fatalf("an address that was refused is not an error: %v", err)
 	}
@@ -920,7 +933,7 @@ func TestFetchFallsBackWhenTheReleaseNamesAnAssetOffGitHub(t *testing.T) {
 	server := httptest.NewServer(mux)
 	t.Cleanup(server.Close)
 
-	sums := sha256Line(testBinary, name)
+	sums := versioned("v9.9.9", sha256Line(testBinary, name))
 
 	info := releaseInfo{TagName: "v9.9.9", Assets: []releaseAsset{
 		{Name: name, BrowserDownloadURL: "https://example.com/download/" + name},
@@ -944,7 +957,7 @@ func TestFetchFallsBackWhenTheReleaseNamesAnAssetOffGitHub(t *testing.T) {
 
 	dir := t.TempDir()
 
-	fetched, err := fetchFrom(context.Background(), dir, server.URL+"/releases/latest")
+	fetched, err := fetchFrom(context.Background(), dir, testRunning, server.URL+"/releases/latest")
 	if err != nil {
 		t.Fatalf("an address that was refused is not an error: %v", err)
 	}
@@ -1032,5 +1045,265 @@ func TestReleaseTargetKeepsTheQueryOutOfItsMessage(t *testing.T) {
 
 	if strings.Contains(err.Error(), "asignaturenobodyshouldsee") {
 		t.Errorf("the refusal puts the query of the address in its message: %v", err)
+	}
+}
+
+// TestFetchTakesTheRunningExecutableWhenTheReleaseIsNotAfterIt is a latest
+// release that is older than the version that runs, or whose tag cannot be
+// compared with it. Each is signed and checksummed the way a good release is,
+// with a version line that names its tag, so what turns it away is the version
+// alone, before anything of it is read. The development build turns it away
+// too: which version lands is not a question the signature answers.
+func TestFetchTakesTheRunningExecutableWhenTheReleaseIsNotAfterIt(t *testing.T) {
+	name := platformAsset(t)
+
+	cases := []struct {
+		name    string
+		running string
+		tag     string
+		why     string
+	}{
+		{"an older patch", "5.1.3", "v5.1.2", "older than the running version 5.1.3"},
+		{"an older minor", "5.1.0", "v5.0.9", "older than the running version 5.1.0"},
+		{"an older major", "5.0.0", "v4.9.9", "older than the running version 5.0.0"},
+		{"a tag with a suffix", "5.0.0", "v5.1.0-rc1", "cannot be compared"},
+		{"a tag that is a word", "5.0.0", "latest", "cannot be compared"},
+		{"a running version that cannot be read", "5.0.0-dev", "v5.1.0", "cannot be compared"},
+	}
+
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			sums := versioned(c.tag, sha256Line(testBinary, name))
+
+			url, asked := countedRelease(t, c.tag, map[string][]byte{
+				name:            testBinary,
+				sha256SumsAsset: sums,
+				signatureAsset:  signed(sums),
+			})
+
+			dir := t.TempDir()
+
+			fetched, err := fetchFrom(context.Background(), dir, c.running, url)
+			if err != nil {
+				t.Fatalf("a release that is not after the running version is not an error: %v", err)
+			}
+			defer fetched.Close()
+
+			if fetched.Source != SourceRunning {
+				t.Fatalf("source = %v, want SourceRunning. Why: %s", fetched.Source, fetched.Why)
+			}
+
+			if !strings.Contains(fetched.Why, c.tag) || !strings.Contains(fetched.Why, c.why) {
+				t.Errorf("Why = %q, want it to name %s and say %q", fetched.Why, c.tag, c.why)
+			}
+
+			for _, asset := range []string{name, sha256SumsAsset, signatureAsset} {
+				if got := asked(asset); got != 0 {
+					t.Errorf("%s was asked for %d times, want 0", asset, got)
+				}
+			}
+
+			left, err := os.ReadDir(dir)
+			if err != nil {
+				t.Fatalf("read the staging directory: %v", err)
+			}
+
+			if len(left) != 0 {
+				t.Errorf("something was downloaded for a release that is not after the running version: %v", left[0].Name())
+			}
+		})
+	}
+}
+
+// TestFetchTakesAReleaseOfTheRunningVersion is the release that is the version
+// already running. It is taken, so that an install typed at a terminal can
+// still put a damaged executable of that version right.
+func TestFetchTakesAReleaseOfTheRunningVersion(t *testing.T) {
+	name := platformAsset(t)
+	sums := versioned("v5.1.0", sha256Line(testBinary, name))
+
+	url := fakeRelease(t, "v5.1.0", map[string][]byte{
+		name:            testBinary,
+		sha256SumsAsset: sums,
+		signatureAsset:  signed(sums),
+	})
+
+	fetched, err := fetchFrom(context.Background(), t.TempDir(), "5.1.0", url)
+	if err != nil {
+		t.Fatalf("fetchFrom: %v", err)
+	}
+	defer fetched.Close()
+
+	if fetched.Source != SourceRelease {
+		t.Fatalf("source = %v, want SourceRelease. Why: %s", fetched.Source, fetched.Why)
+	}
+
+	if fetched.Tag != "v5.1.0" {
+		t.Errorf("tag = %q, want v5.1.0", fetched.Tag)
+	}
+}
+
+// TestFetchTakesTheRunningExecutableForAReleaseThatNamesNoVersion is a release
+// up to v5.0.0, whose SHA256SUMS carries no version line, taken as it was
+// published and put up again under a tag after every version there is. Its
+// signature and its checksum both match, and the tag is the one thing that
+// changed. Nothing signed says which version it is, so it is not installed:
+// the running executable is, without an error, the way a release with no
+// checksums is taken. The development build does the same.
+//
+// Before the version line, this installed the old release as v99.0.0.
+func TestFetchTakesTheRunningExecutableForAReleaseThatNamesNoVersion(t *testing.T) {
+	name := platformAsset(t)
+	sums := sha256Line(testBinary, name)
+
+	url, asked := countedRelease(t, "v99.0.0", map[string][]byte{
+		name:            testBinary,
+		sha256SumsAsset: sums,
+		signatureAsset:  signed(sums),
+	})
+
+	dir := t.TempDir()
+
+	fetched, err := fetchFrom(context.Background(), dir, "5.0.0", url)
+	if err != nil {
+		t.Fatalf("a release that names no version is not an error: %v", err)
+	}
+	defer fetched.Close()
+
+	if fetched.Source != SourceRunning {
+		t.Fatalf("source = %v, want SourceRunning. Why: %s", fetched.Source, fetched.Why)
+	}
+
+	if !strings.Contains(fetched.Why, "names no version") {
+		t.Errorf("Why should say the checksums name no version, got %q", fetched.Why)
+	}
+
+	if got := asked(name); got != 0 {
+		t.Errorf("the binary was asked for %d times, want 0", got)
+	}
+
+	left, err := os.ReadDir(dir)
+	if err != nil {
+		t.Fatalf("read the staging directory: %v", err)
+	}
+
+	if len(left) != 0 {
+		t.Errorf("something was downloaded for a release that names no version: %v", left[0].Name())
+	}
+}
+
+// TestFetchFailsWhenTheSignedVersionIsNotTheTag is a release whose SHA256SUMS
+// names a version, put up under the tag of another one, and the version lines
+// the release build does not write. The signature matches every one of them,
+// so it is the line that has to stop the install before the binary is asked
+// for, and it stops it rather than falling back: the release says one thing in
+// its tag and another in what it signed. The development build, which does not
+// look at the signature, still reads the line.
+func TestFetchFailsWhenTheSignedVersionIsNotTheTag(t *testing.T) {
+	name := platformAsset(t)
+	line := sha256Line(testBinary, name)
+
+	cases := []struct {
+		name string
+		sums []byte
+		want string
+	}{
+		{"a v5.0.1 release put up as v99.0.0", versioned("v5.0.1", line), "signed as v5.0.1 and the release is tagged v99.0.0"},
+		{"the line twice", versioned("v99.0.0", versioned("v99.0.0", line)), "2 lines"},
+		{"the line after the checksums", append(append([]byte{}, line...), versionLinePrefix+"v99.0.0\n"...), "line 2"},
+		{"no version after the name", append([]byte("# tunnel-manager\n"), line...), "is not"},
+		{"a version that is not three numbers", versioned("v99.0", line), "not a version"},
+		{"something after the version", versioned("v99.0.0 extra", line), "is not"},
+	}
+
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			url, asked := countedRelease(t, "v99.0.0", map[string][]byte{
+				name:            testBinary,
+				sha256SumsAsset: c.sums,
+				signatureAsset:  signed(c.sums),
+			})
+
+			dir := t.TempDir()
+
+			fetched, err := fetchFrom(context.Background(), dir, "5.0.0", url)
+			if err == nil {
+				source := fetched.Source
+				fetched.Close()
+				t.Fatalf("a version line that is not the tag has to be an error, got source %v", source)
+			}
+
+			if fetched != nil {
+				t.Errorf("a version line that is not the tag must not fall back, got source %v", fetched.Source)
+			}
+
+			if !strings.Contains(err.Error(), c.want) || !strings.Contains(err.Error(), "v99.0.0") {
+				t.Errorf("the error says %q, want it to name the tag and say %q", err, c.want)
+			}
+
+			if got := asked(name); got != 0 {
+				t.Errorf("the binary was asked for %d times, want 0", got)
+			}
+
+			left, err := os.ReadDir(dir)
+			if err != nil {
+				t.Fatalf("read the staging directory: %v", err)
+			}
+
+			if len(left) != 0 {
+				t.Errorf("something was downloaded for a release whose version line failed: %v", left[0].Name())
+			}
+		})
+	}
+}
+
+// TestSignedVersionReadsTheLineTheReleaseBuildWrites is the reading of the line
+// on its own, the way tools/releasesign uses it as well as Fetch.
+func TestSignedVersionReadsTheLineTheReleaseBuildWrites(t *testing.T) {
+	line := sha256Line(testBinary, "tunnel-manager-linux-amd64")
+
+	cases := []struct {
+		name    string
+		sums    []byte
+		tag     string
+		want    string
+		wantErr string // empty when it is read
+	}{
+		{"the line and its tag", versioned("v5.0.1", line), "v5.0.1", "v5.0.1", ""},
+		{"a tag without the v", versioned("v5.0.1", line), "5.0.1", "v5.0.1", ""},
+		{"a line without the v", versioned("5.0.1", line), "v5.0.1", "5.0.1", ""},
+		{"a line ended the Windows way", []byte(versionLinePrefix + "v5.0.1\r\n" + string(line)), "v5.0.1", "v5.0.1", ""},
+		{"another comment beside it", append(versioned("v5.0.1", []byte("# built by hand\n")), line...), "v5.0.1", "v5.0.1", ""},
+		{"another version", versioned("v5.0.1", line), "v5.0.2", "", "signed as v5.0.1 and the release is tagged v5.0.2"},
+		{"a tag that is not a version", versioned("v5.0.1", line), "latest", "", "not a version"},
+		{"the name without its space", append([]byte("#tunnel-manager v5.0.1\n"), line...), "v5.0.1", "", "is not"},
+		{"an empty file", nil, "v5.0.1", "", ErrNoSignedVersion.Error()},
+	}
+
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			got, err := SignedVersion(c.sums, c.tag)
+
+			if c.wantErr == "" {
+				if err != nil {
+					t.Fatalf("SignedVersion: %v", err)
+				}
+
+				if got != c.want {
+					t.Errorf("SignedVersion = %q, want %q", got, c.want)
+				}
+
+				return
+			}
+
+			if err == nil || !strings.Contains(err.Error(), c.wantErr) {
+				t.Errorf("SignedVersion answered %q, %v, want an error that says %q", got, err, c.wantErr)
+			}
+		})
+	}
+
+	_, err := SignedVersion(line, "v5.0.1")
+	if !errors.Is(err, ErrNoSignedVersion) {
+		t.Errorf("checksums with no version line answered %v, want ErrNoSignedVersion", err)
 	}
 }

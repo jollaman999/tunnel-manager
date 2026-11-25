@@ -175,15 +175,45 @@ RELEASE_SIGNING_KEY ?= $(HOME)/tunnel-manager/tm-jolla.key
 # signature does not match. tools/releasesign refuses a key that is not the one
 # the program checks against.
 #
-# The key is looked for before anything is built, and a release that cannot be
-# signed is not made: SHA256SUMS is taken away again when signing fails. A
-# release with checksums and no signature is one no install of this version
-# takes, and that is better found out here than after it was published.
+# The first line of SHA256SUMS names the version of the release, as the comment
+# "# tunnel-manager v5.0.1", and the signature over the file covers it. An
+# install refuses a release whose tag is not the version that line names, which
+# is what keeps an old release from being put up again as a new one, so the
+# release has to go up under that tag and no other. The line is a comment so
+# that sha256sum -c and shasum -c read the file as before, and the install of
+# v5.0.0, which passes over every line that is not a checksum, takes the
+# release as it took the ones before. The tag is v and the version main.go
+# carries, the version the binaries say they are, so the two cannot differ.
+# Where the commit is already tagged with a v tag and none of them is that one,
+# the release is not made: either main.go was not moved to the new version or
+# the tag is on the wrong commit, and a release signed as the version would then
+# go up under a tag it was not signed for. tools/releasesign reads the line back
+# and refuses to sign checksums whose line does not name the tag it is handed.
+#
+# The key and the tag are looked at before anything is built, and a release
+# that cannot be signed is not made: SHA256SUMS is taken away again when signing
+# fails. A release with checksums and no signature is one no install of this
+# version takes, and that is better found out here than after it was published.
 release: clean
 	@if [ ! -f "$(RELEASE_SIGNING_KEY)" ]; then \
 		echo "no signing key at $(RELEASE_SIGNING_KEY): a release is not made unsigned; set RELEASE_SIGNING_KEY to where the key is" >&2; \
 		exit 1; \
 	fi; \
+	version=$$(sed -n 's/^const version = "\(.*\)"$$/\1/p' main.go); \
+	if [ -z "$$version" ]; then \
+		echo "no const version in main.go: the tag a release is signed under is v and that version" >&2; \
+		exit 1; \
+	fi; \
+	tag=v$$version; \
+	if command -v git >/dev/null 2>&1; then \
+		head_tags=$$(git tag --list 'v*' --points-at HEAD 2>/dev/null); \
+		if [ -n "$$head_tags" ] && ! printf '%s\n' "$$head_tags" | grep -qxF "$$tag"; then \
+			echo "main.go says $$version, so the release would be signed as $$tag, and this commit is tagged" $$head_tags \
+				"instead: the release would go up under a tag it was not signed for; move the version or the tag" >&2; \
+			exit 1; \
+		fi; \
+	fi; \
+	echo "signing the release as $$tag"; \
 	files=; \
 	for p in $(RELEASE_PLATFORMS); do \
 		os=$${p%%/*}; arch=$${p##*/}; ext=; \
@@ -194,15 +224,15 @@ release: clean
 		files="$$files $$out"; \
 	done; \
 	if command -v sha256sum >/dev/null 2>&1; then \
-		sha256sum $$files > SHA256SUMS; \
+		{ printf '# tunnel-manager %s\n' "$$tag" && sha256sum $$files; } > SHA256SUMS || exit 1; \
 	elif command -v shasum >/dev/null 2>&1; then \
-		shasum -a 256 $$files > SHA256SUMS; \
+		{ printf '# tunnel-manager %s\n' "$$tag" && shasum -a 256 $$files; } > SHA256SUMS || exit 1; \
 	else \
 		echo "no sha256sum and no shasum: SHA256SUMS cannot be written" >&2; \
 		exit 1; \
 	fi; \
 	echo "wrote SHA256SUMS"; \
-	go run ./tools/releasesign "$(RELEASE_SIGNING_KEY)" SHA256SUMS || { rm -f SHA256SUMS; exit 1; }
+	go run ./tools/releasesign "$(RELEASE_SIGNING_KEY)" SHA256SUMS "$$tag" || { rm -f SHA256SUMS; exit 1; }
 
 clean:
 	rm -f $(APP_NAME) $(APP_NAME)-linux-* $(APP_NAME)-darwin-* $(APP_NAME)-windows-* SHA256SUMS SHA256SUMS.sig

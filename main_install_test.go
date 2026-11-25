@@ -28,7 +28,7 @@ func installStepsThat(t *testing.T, fetchErr error, putErr error) (installSteps,
 	}
 
 	return installSteps{
-		fetch: func(context.Context, string) (*install.Fetched, error) {
+		fetch: func(context.Context, string, string) (*install.Fetched, error) {
 			if fetchErr != nil {
 				return nil, fetchErr
 			}
@@ -147,7 +147,7 @@ func TestAnUpdateInstallsTheReleaseOrNothing(t *testing.T) {
 			reached := false
 
 			steps := installSteps{
-				fetch: func(context.Context, string) (*install.Fetched, error) {
+				fetch: func(context.Context, string, string) (*install.Fetched, error) {
 					return &install.Fetched{Path: "/usr/local/bin/tunnel-manager", Source: c.source,
 						Tag: "v3.7.5", Verified: c.source == install.SourceRelease, Why: why}, nil
 				},
@@ -175,6 +175,41 @@ func TestAnUpdateInstallsTheReleaseOrNothing(t *testing.T) {
 	}
 }
 
+// TestAnInstallHandsTheFetchTheRunningVersion is what the download is held to.
+// A release before the version of this process is not taken (install.Fetch),
+// and the only place that version comes from is the constant this binary was
+// built with: anything else handed in would let an older release through, or
+// turn away the one that is the same.
+func TestAnInstallHandsTheFetchTheRunningVersion(t *testing.T) {
+	plan := install.Defaults().WithDatabase(filepath.Join(t.TempDir(), "data", "tm.db"))
+
+	asked := "nothing was asked"
+
+	steps := installSteps{
+		fetch: func(_ context.Context, _ string, running string) (*install.Fetched, error) {
+			asked = running
+
+			return &install.Fetched{Path: "/usr/local/bin/tunnel-manager", Source: install.SourceRunning,
+				Why: "release v0.0.1 is older than the running version " + running}, nil
+		},
+		put: func(install.Plan, string, string, io.Writer) (install.Outcome, error) {
+			return install.Outcome{}, nil
+		},
+	}
+
+	err := installRelease(plan, steps, true, io.Discard)
+
+	if asked != version {
+		t.Errorf("the fetch was handed %q as the running version, want %q", asked, version)
+	}
+
+	// An update that finds the release older than what runs is one that finds
+	// nothing to install, and it stops before the service is touched.
+	if err == nil || !strings.Contains(err.Error(), "older than the running version") {
+		t.Errorf("the update answered %v, want it refused with the reason", err)
+	}
+}
+
 // TestAnUpdateThatFailedLeavesWhyForTheUpdateScreen is the reason an install
 // the service started ends with, left in the data directory for the service to
 // read. An install somebody typed has a terminal to say it on and leaves
@@ -199,7 +234,7 @@ func TestAnUpdateThatFailedLeavesWhyForTheUpdateScreen(t *testing.T) {
 			plan := install.Defaults().WithDatabase(filepath.Join(t.TempDir(), "tm.db"))
 
 			steps := installSteps{
-				fetch: func(context.Context, string) (*install.Fetched, error) {
+				fetch: func(context.Context, string, string) (*install.Fetched, error) {
 					if c.fetchErr != nil {
 						return nil, c.fetchErr
 					}
@@ -261,7 +296,7 @@ func TestAnInstallTakesAwayTheReasonAnUpdateBeforeItLeft(t *testing.T) {
 		}
 
 		steps := installSteps{
-			fetch: func(context.Context, string) (*install.Fetched, error) {
+			fetch: func(context.Context, string, string) (*install.Fetched, error) {
 				return &install.Fetched{Path: "/usr/local/bin/tunnel-manager", Source: install.SourceRelease,
 					Tag: "v3.7.5", Verified: true}, nil
 			},

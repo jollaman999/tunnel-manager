@@ -241,9 +241,12 @@ started with **Run as administrator**:
 **What is installed is the latest release**, downloaded from GitHub and checked
 against the `SHA256SUMS` of that release, once the signature over that file
 (`SHA256SUMS.sig`) has been checked against the release key the program
-carries. A signature or a checksum that does not match stops the install. A
-release that cannot be reached, or one made before releases were signed, is not
-a failure: the executable that was run is installed instead, and the report says
+carries. The first line of `SHA256SUMS`, `# tunnel-manager vX.Y.Z`, is signed
+with it and has to name the tag of the release. A signature, a version line or
+a checksum that does not match stops the install. A release that cannot be
+reached, one made before releases were signed, one up to v5.0.0, which carries
+no version line, or one older than the executable that was run, is not a
+failure: the executable that was run is installed instead, and the report says
 which of the two landed.
 
 `sudo tunnel-manager -uninstall` takes it away again. The service is stopped, the

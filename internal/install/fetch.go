@@ -40,6 +40,31 @@ const sha256SumsAsset = "SHA256SUMS"
 // anything do not carry it.
 const signatureAsset = sha256SumsAsset + ".sig"
 
+// versionLinePrefix starts the line the release build writes at the top of
+// SHA256SUMS to say which version the release is: "# tunnel-manager v5.0.1".
+//
+// SHA256SUMS names files and no version, and a signature over it alone stays
+// good for those files under whatever tag they are put up with. An old release
+// with a known flaw, taken as it was published and put up again under a tag
+// after every version there is, would then read as the newest release and pass.
+// The line is inside the bytes the signature is made over, so the version it
+// names is one the release key vouched for, and a release whose tag says
+// anything else is refused (SignedVersion).
+//
+// It is a comment so that the file stays one sha256sum -c reads without a
+// warning, and so that the install of v5.0.0, which reads SHA256SUMS with
+// sumFor and checks the signature over the same bytes, still takes a release
+// that carries it: sumFor passes over every line that is not two fields.
+// Releases up to v5.0.0 carry no such line.
+const versionLinePrefix = "# tunnel-manager "
+
+// ErrNoSignedVersion is SHA256SUMS without the version line, which is every
+// release up to v5.0.0 and every one of them put up again under another tag.
+// Nothing it says ties the checksums to a version, so an install does not take
+// it; it is not a failure of the release, though, and the install falls back
+// to the running executable the way it does for a release without checksums.
+var ErrNoSignedVersion = errors.New("SHA256SUMS names no version")
+
 // releaseKeyBytes is the public half of the key releases are signed with, as
 // the 32 raw bytes ed25519 works on.
 //
@@ -129,6 +154,9 @@ const (
 // Fetched is the binary to install and the story of where it came from, which
 // the install prints so the operator knows what landed.
 //
+// A release older than the version that is running is not taken by any build;
+// see fetchFrom.
+//
 // A release is taken with Verified false only by the development build
 // (DevBuild), which installs a release on its checksum and does not look at the
 // signature. Every other build leaves on the fallback or on an error wherever
@@ -169,23 +197,31 @@ func (f *Fetched) Close() {
 // A signature or a checksum that does not match is the one case that is an
 // error. There the release was read and either its checksums were not signed
 // with the release key or the file they named hashes to something else, and
-// putting that file in place would be installing content nobody published.
+// putting that file in place would be installing content nobody published. A
+// signed version line that names another version than the tag, or that cannot
+// be read, is an error for the same reason (SignedVersion).
 //
 // A release that publishes no checksums at all, no signature over them, or no
 // checksum for this platform's file, ends on the fallback too. Without them
 // there is nothing that tells the published file apart from whatever answered
 // the request, and an install has to know what it is putting in place.
 //
+// So does a release whose checksums name no version, which is every release up
+// to v5.0.0, and a release whose version is before running, the version of this
+// process, or cannot be compared with it. Installing it would put an older
+// program over a newer one, and the executable that is running is the newer of
+// the two.
+//
 // dir is where a downloaded file is put. Close removes what was written into
 // it; the directory itself belongs to the caller that made it.
-func Fetch(ctx context.Context, dir string) (*Fetched, error) {
-	return fetchFrom(ctx, dir, latestReleaseURL)
+func Fetch(ctx context.Context, dir string, running string) (*Fetched, error) {
+	return fetchFrom(ctx, dir, running, latestReleaseURL)
 }
 
 // fetchFrom is Fetch with the API address handed in, so the tests run against
 // an httptest server. Nothing else may point this anywhere but the constant:
 // the address decides what gets installed.
-func fetchFrom(ctx context.Context, dir string, latestURL string) (*Fetched, error) {
+func fetchFrom(ctx context.Context, dir string, running string, latestURL string) (*Fetched, error) {
 	ctx, cancel := context.WithTimeout(ctx, fetchTimeout)
 	defer cancel()
 
@@ -199,6 +235,27 @@ func fetchFrom(ctx context.Context, dir string, latestURL string) (*Fetched, err
 	latest, err := latestRelease(ctx, client, latestURL)
 	if err != nil {
 		return runningExecutable(fmt.Sprintf("the latest release could not be read: %v", err))
+	}
+
+	// The tag is held to the running version before anything of the release is
+	// read, so that a release that is plainly older costs no download at all.
+	// The tag is only what the release says about itself; what decides is the
+	// signed version line, which is held to the same test below. A release
+	// that is older than what runs is not an update, whatever its signature
+	// says: a signature only says the release key made that release, and every
+	// old release was made by it too. Neither is a tag that cannot be read as a
+	// version, which is "cannot tell" and never "newer" (isNewer). The
+	// development build makes the same comparison, because it is about which
+	// version lands and not about whether the release is genuine. A release
+	// with the same version as the running one is taken, so that an install can
+	// still put a damaged executable right.
+	older, comparable := isNewer(latest.TagName, running)
+	if !comparable {
+		return runningExecutable(fmt.Sprintf("release %s cannot be compared with the running version %s", latest.TagName, running))
+	}
+
+	if older {
+		return runningExecutable(fmt.Sprintf("release %s is older than the running version %s", latest.TagName, running))
 	}
 
 	binary := latest.asset(name)
@@ -238,6 +295,33 @@ func fetchFrom(ctx context.Context, dir string, latestURL string) (*Fetched, err
 		if fallback != "" {
 			return runningExecutable(fallback)
 		}
+	}
+
+	// The version is read out of the checksums once they are believed, and the
+	// development build reads it too: which version lands does not depend on
+	// whether the signature was looked at.
+	version, err := SignedVersion(body, latest.TagName)
+	if errors.Is(err, ErrNoSignedVersion) {
+		// A release up to v5.0.0, or one of them put up again under a newer
+		// tag. The two cannot be told apart from here, and the second is the
+		// one this line is there to stop, so neither is installed. The running
+		// executable is what an install of such a release falls back to, as it
+		// does for a release without checksums.
+		return runningExecutable(fmt.Sprintf("the %s of release %s names no version", sha256SumsAsset, latest.TagName))
+	}
+
+	if err != nil {
+		return nil, fmt.Errorf("release %s: %w", latest.TagName, err)
+	}
+
+	// The tag was held to the running version above and the line has just
+	// been held to the tag, so this asks again what was already answered. It
+	// is asked of the signed version all the same, because that is the one the
+	// release key vouched for, and the check above may go some day.
+	older, comparable = isNewer(version, running)
+	if !comparable || older {
+		return runningExecutable(fmt.Sprintf("release %s is signed as %s, which is older than the running version %s or cannot be compared with it",
+			latest.TagName, version, running))
 	}
 
 	want := sumFor(body, name)
@@ -629,6 +713,98 @@ func sumFor(sums []byte, name string) string {
 	}
 
 	return ""
+}
+
+// SignedVersion reads the version line out of SHA256SUMS and holds it to tag,
+// the tag the release went up under. It answers the version the line names.
+//
+// No line at all is ErrNoSignedVersion. Anything else that is not one line of
+// "# tunnel-manager vX.Y.Z" at the top of the file, naming the version tag
+// names, is an error: a line that is there and says something else, or is in
+// the wrong place, or is there twice, is not something the release build
+// writes, and the install does not guess which reading was meant. The two
+// versions are compared as three numbers, so a v on either side does not
+// matter.
+//
+// fetchFrom calls it on the checksums it downloaded, and tools/releasesign on
+// the checksums it is about to sign, so that a release whose line and tag
+// disagree is never signed in the first place.
+func SignedVersion(sums []byte, tag string) (string, error) {
+	type versionLine struct {
+		number int
+		text   string
+	}
+
+	var lines []versionLine
+
+	scanner := bufio.NewScanner(bytes.NewReader(sums))
+	number := 0
+
+	for scanner.Scan() {
+		number++
+
+		text := strings.TrimSuffix(scanner.Text(), "\r")
+
+		// A comment whose first word is the program's name is taken as an
+		// attempt at the version line however it is spaced, so that a line
+		// that is nearly right is refused rather than passed over as a
+		// comment, which would read as a release with no version.
+		if !strings.HasPrefix(text, "#") {
+			continue
+		}
+
+		words := strings.Fields(strings.TrimPrefix(text, "#"))
+		if len(words) == 0 || words[0] != "tunnel-manager" {
+			continue
+		}
+
+		lines = append(lines, versionLine{number: number, text: text})
+	}
+
+	err := scanner.Err()
+	if err != nil {
+		return "", fmt.Errorf("%s could not be read for its version line: %w", sha256SumsAsset, err)
+	}
+
+	if len(lines) == 0 {
+		return "", ErrNoSignedVersion
+	}
+
+	if len(lines) > 1 {
+		return "", fmt.Errorf("%s names a version on %d lines, and the release build writes one", sha256SumsAsset, len(lines))
+	}
+
+	line := lines[0]
+	if line.number != 1 {
+		return "", fmt.Errorf("the version line of %s is line %d, and the release build writes it first", sha256SumsAsset, line.number)
+	}
+
+	fields := strings.Fields(line.text)
+	if len(fields) != 3 || fields[0]+" "+fields[1]+" " != versionLinePrefix {
+		return "", fmt.Errorf("the version line of %s, %q, is not %q and a version", sha256SumsAsset, line.text, versionLinePrefix)
+	}
+
+	version := fields[2]
+
+	signed, ok := versionParts(version)
+	if !ok {
+		return "", fmt.Errorf("the version line of %s names %q, which is not a version", sha256SumsAsset, version)
+	}
+
+	tagged, ok := versionParts(tag)
+	if !ok {
+		return "", fmt.Errorf("the tag %q is not a version to hold the version line of %s to", tag, sha256SumsAsset)
+	}
+
+	if signed != tagged {
+		// The checksums were signed for one version and put up under the tag of
+		// another. That is what an old release taken as it was published and
+		// put up again under a newer tag looks like, and it is refused rather
+		// than fallen back from, the way a signature that does not match is.
+		return "", fmt.Errorf("its %s is signed as %s and the release is tagged %s", sha256SumsAsset, version, tag)
+	}
+
+	return version, nil
 }
 
 // maxRedirects is how many hops one request may be sent on. A release download

@@ -23,7 +23,7 @@ import (
 // was not looked at.
 func TestDevBuildTakesAReleaseWhateverItsSignature(t *testing.T) {
 	name := platformAsset(t)
-	sums := sha256Line(testBinary, name)
+	sums := versioned("v9.9.9", sha256Line(testBinary, name))
 
 	cases := []struct {
 		name   string
@@ -44,7 +44,7 @@ func TestDevBuildTakesAReleaseWhateverItsSignature(t *testing.T) {
 		t.Run(c.name, func(t *testing.T) {
 			url, asked := countedRelease(t, "v9.9.9", c.assets)
 
-			fetched, err := fetchFrom(context.Background(), t.TempDir(), url)
+			fetched, err := fetchFrom(context.Background(), t.TempDir(), testRunning, url)
 			if err != nil {
 				t.Fatalf("the development build stopped on the signature: %v", err)
 			}
@@ -82,12 +82,12 @@ func TestDevBuildStillStopsOnAChecksumThatDoesNotMatch(t *testing.T) {
 
 	url := fakeRelease(t, "v9.9.9", map[string][]byte{
 		name:            testBinary,
-		sha256SumsAsset: sha256Line([]byte("a different binary"), name),
+		sha256SumsAsset: versioned("v9.9.9", sha256Line([]byte("a different binary"), name)),
 	})
 
 	dir := t.TempDir()
 
-	fetched, err := fetchFrom(context.Background(), dir, url)
+	fetched, err := fetchFrom(context.Background(), dir, testRunning, url)
 	if err == nil {
 		fetched.Close()
 		t.Fatal("a file that does not hash to what the release says it does has to be an error in this build too")
@@ -119,7 +119,7 @@ func TestDevBuildStillFallsBackWithoutChecksums(t *testing.T) {
 
 	url, asked := countedRelease(t, "v3.5.1", map[string][]byte{name: testBinary})
 
-	fetched, err := fetchFrom(context.Background(), t.TempDir(), url)
+	fetched, err := fetchFrom(context.Background(), t.TempDir(), testRunning, url)
 	if err != nil {
 		t.Fatalf("a release without checksums is not an error: %v", err)
 	}

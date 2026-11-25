@@ -1597,8 +1597,11 @@ func (a installation) runInstall(out io.Writer) error {
 // change it: the download of the release and putting it in place. They are
 // handed to installRelease so that a test follows it in the order runInstall
 // takes it, without a download and without a service manager.
+//
+// fetch is handed the version of this process, which a release has to be at
+// least to be taken (install.Fetch).
 type installSteps struct {
-	fetch func(ctx context.Context, dir string) (*install.Fetched, error)
+	fetch func(ctx context.Context, dir string, running string) (*install.Fetched, error)
 	put   func(plan install.Plan, executable string, source string, out io.Writer) (install.Outcome, error)
 }
 
@@ -1659,7 +1662,7 @@ func installRelease(plan install.Plan, steps installSteps, fromUpdate bool, out 
 		_ = os.RemoveAll(dir)
 	}()
 
-	fetched, err := steps.fetch(context.Background(), dir)
+	fetched, err := steps.fetch(context.Background(), dir, version)
 	if err != nil {
 		return err
 	}
